@@ -49,8 +49,18 @@ msgstr "ターミナルの起動後に利用できます"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "エージェント用のブラウザーが実行中です。メモリを解放するには、ターミナルのメニューから閉じてください。"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "検索をクリア"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "ブラウザーを閉じる"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "ターミナルを停止できませんでした"
 msgid "Couldn't switch branch"
 msgstr "ブランチを切り替えられませんでした"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "ドラッグしてサイズを変更"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "{name} へ移動"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "非表示"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "ブラウザーを非表示"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "「以前」から消え、検索できなくなります。エージェ
 msgid "Its process may still be running."
 msgstr "プロセスがまだ実行中の可能性があります。"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "閉じるまで保持されます"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "新しいウィンドウで開く"
 #, fuzzy
 msgid "Open project folder"
 msgstr "プロジェクト フォルダーを開く"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "ページを保持中"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "会話を検索中..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "ブラウザーを表示"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "変更を表示"
 
@@ -348,6 +385,11 @@ msgstr "ターミナル名"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "ターミナルをパネルに戻しました。"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "ブラウザーの表示を切り替え"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

@@ -77,6 +77,9 @@ interface CallbackLog {
   shellPidExited: Array<{ sessionId: string; shellId: string }>;
   namedShellLikelyExited: Array<{ sessionId: string; shellId: string }>;
   namedShellTerminated: Array<{ sessionId: string; shellId: string }>;
+  ledgerShellTerminated: Array<{ sessionId: string; shellId: string }>;
+  transcriptAsks: string[][];
+  expiryChecks: string[];
   rootDied: string[];
   observedAlive: string[];
   agentAbsent: string[];
@@ -105,6 +108,8 @@ function makeWatcher(opts?: {
    */
   agentAbsenceCandidates?: Set<string>;
   agentAbsenceSweepIntervalMs?: number;
+  /** Shell ids only the session's open-work ledger still holds (the engine drained them). */
+  ledgerOnlyShellMap?: Map<string, string[]>;
 }) {
   const probe = new MockProcessTreeProbe();
   const log: CallbackLog = {
@@ -112,6 +117,9 @@ function makeWatcher(opts?: {
     shellPidExited: [],
     namedShellLikelyExited: [],
     namedShellTerminated: [],
+    ledgerShellTerminated: [],
+    transcriptAsks: [],
+    expiryChecks: [],
     rootDied: [],
     observedAlive: [],
     agentAbsent: [],
@@ -155,7 +163,17 @@ function makeWatcher(opts?: {
       return outputPaths.get(shellId) ?? null;
     },
     reportTerminatedShellsFromTranscript(_sessionId, shellIds) {
+      log.transcriptAsks.push([...shellIds]);
       return shellIds.filter((shellId) => terminatedShellIds.has(shellId));
+    },
+    getLedgerOnlyShellIds(sessionId) {
+      return opts?.ledgerOnlyShellMap?.get(sessionId) ?? [];
+    },
+    onLedgerShellTerminated(sessionId, shellId) {
+      log.ledgerShellTerminated.push({ sessionId, shellId });
+    },
+    endExpiredHolders(sessionId) {
+      log.expiryChecks.push(sessionId);
     },
     getRootPid(sessionId) {
       return rootPids.get(sessionId);
@@ -197,6 +215,85 @@ describe('BgShellWatcher', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  describe('a shell only the open-work ledger still holds', () => {
+    // The engine drains a shell on a guess (a quiet output file, the escape
+    // hatch); only its real end may close the ledger's entry. The watcher used
+    // to ask the transcript only about ids the engine still tracked, so that
+    // notice reached nobody, and a step check read the shell as running work
+    // for hours.
+    it('asks the transcript about it with no engine shell left, and closes only the ledger on its notice', async () => {
+      const ledgerOnlyShellMap = new Map([['s1', ['b3mntbkwh']]]);
+      const { watcher, probe, rootPids, log, terminatedShellIds } = makeWatcher({ ledgerOnlyShellMap });
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      watcher.registerSession('s1');
+
+      await watcher.pollNow();
+      expect(log.transcriptAsks).toEqual([['b3mntbkwh']]);
+      expect(log.ledgerShellTerminated).toEqual([]);
+
+      terminatedShellIds.add('b3mntbkwh');
+      await watcher.pollNow();
+
+      expect(log.ledgerShellTerminated).toEqual([{ sessionId: 's1', shellId: 'b3mntbkwh' }]);
+      // The engine had drained it: no engine drain is reported for it.
+      expect(log.namedShellTerminated).toEqual([]);
+      watcher.dispose();
+    });
+
+    it('asks on a cycle that skips the process listing too', async () => {
+      // A session with no tree work skips the enumeration; the transcript ask
+      // must still run there, or a shell the engine dropped is never closed.
+      const ledgerOnlyShellMap = new Map([['s1', ['b3mntbkwh']]]);
+      const { watcher, probe, rootPids, log, terminatedShellIds } = makeWatcher({ ledgerOnlyShellMap, agentAbsenceSweepIntervalMs: 60 * 60_000 });
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, []);
+      watcher.registerSession('s1');
+      await watcher.pollNow(); // the first-cycle anchor needs the tree
+      terminatedShellIds.add('b3mntbkwh');
+      probe.listAllCalls = 0;
+      log.ledgerShellTerminated.length = 0;
+
+      await watcher.pollNow();
+
+      expect(probe.listAllCalls).toBe(0);
+      expect(log.ledgerShellTerminated).toEqual([{ sessionId: 's1', shellId: 'b3mntbkwh' }]);
+      watcher.dispose();
+    });
+
+    it('asks about it in the same read as the engine\'s PID-less shells, since a second read would find the cursor past the notice', async () => {
+      const ledgerOnlyShellMap = new Map([['s1', ['b3mntbkwh']]]);
+      const namedShellMap = new Map([['s1', ['bshellaaa']]]);
+      const shellCountMap = new Map([['s1', 1]]);
+      const { watcher, probe, rootPids, log, terminatedShellIds } = makeWatcher({ ledgerOnlyShellMap, namedShellMap, shellCountMap });
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      terminatedShellIds.add('bshellaaa');
+      terminatedShellIds.add('b3mntbkwh');
+      watcher.registerSession('s1');
+
+      await watcher.pollNow();
+
+      expect(log.transcriptAsks[0]).toEqual(['bshellaaa', 'b3mntbkwh']);
+      expect(log.namedShellTerminated).toEqual([{ sessionId: 's1', shellId: 'bshellaaa' }]);
+      expect(log.ledgerShellTerminated).toEqual([{ sessionId: 's1', shellId: 'b3mntbkwh' }]);
+      watcher.dispose();
+    });
+
+    it('checks for expired holders every cycle, enumerating or not', async () => {
+      const { watcher, probe, rootPids, log } = makeWatcher();
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      watcher.registerSession('s1');
+
+      await watcher.pollNow();
+
+      expect(log.expiryChecks).toEqual(['s1']);
+      watcher.dispose();
+    });
   });
 
   it('does not start polling until a session is registered', () => {

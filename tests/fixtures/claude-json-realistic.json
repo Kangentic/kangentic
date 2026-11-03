@@ -1,0 +1,48 @@
+{
+  "numStartups": 212,
+  "installMethod": "native",
+  "autoUpdates": false,
+  "firstStartTime": "2026-01-05T14:02:11.482Z",
+  "tipsHistory": { "new-user-warmup": 3, "plan-mode-for-complex-tasks": 41, "memory-command": 87 },
+  "cachedStatsigGates": { "tengu_example_gate": true },
+  "userID": "0000000000000000000000000000000000000000000000000000000000000000",
+  "mcpServers": {
+    "context7": { "type": "stdio", "command": "npx", "args": ["-y", "@upstash/context7-mcp"], "env": {} }
+  },
+  "projects": {
+    "C:/Users/dev/Documents/GitHub/other-app": {
+      "allowedTools": [],
+      "history": [{ "display": "fix the build", "pastedContents": {} }],
+      "mcpContextUris": [],
+      "mcpServers": {},
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 4,
+      "lastCost": 1.2345,
+      "lastSessionId": "11111111-2222-3333-4444-555555555555"
+    },
+    "C:/Users/dev/Documents/GitHub/site": {
+      "allowedTools": ["Bash(npm run build)"],
+      "history": [{ "display": "open the page", "pastedContents": {} }],
+      "mcpContextUris": [],
+      "mcpServers": {
+        "e2e-browser": { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest"], "env": {} }
+      },
+      "enabledMcpjsonServers": [],
+      "disabledMcpjsonServers": [],
+      "hasTrustDialogAccepted": true,
+      "projectOnboardingSeenCount": 1,
+      "lastCost": 0.42,
+      "lastSessionId": "66666666-7777-8888-9999-000000000000"
+    },
+    "C:/Users/dev/Documents/GitHub/third": {
+      "allowedTools": [],
+      "history": [],
+      "mcpServers": {
+        "old-browser": { "type": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-puppeteer"] }
+      },
+      "hasTrustDialogAccepted": false
+    }
+  }
+}

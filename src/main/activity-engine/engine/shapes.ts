@@ -632,6 +632,15 @@ export interface SessionEngineState {
    */
   workSerial: number;
   /**
+   * The `workSerial` whose turn end was reported HELD (`onTurnEndedHeld`): the
+   * agent's Stop landed and only background work it left running keeps the
+   * session thinking. Null before the first. Compared with `workSerial`, never
+   * cleared, so a tool-less wake at the same serial (a background job's
+   * notification the agent answered with no tool call) reports nothing again,
+   * and the drain that follows says its turn end was already reported.
+   */
+  heldTurnEndSerial: number | null;
+  /**
    * The last `ActivityReason` handed to a consumer, or null before the first
    * one. Exists so a reason that changes KIND without the activity changing can
    * still be reported.
@@ -770,6 +779,7 @@ export interface BackgroundShellServiceOutcome {
  *   - `timer:stuck-pending-tools`  - 5-min hatch for orphan tool_starts
  *   - `timer:stuck-subagent`       - 5-min hatch for a stuck subagentDepth
  *   - `event:bg-shell-service:mcp` - the agent marked background shells as services
+ *   - `event:bg-shell-ended:expired` - a holder's own time limit (a Monitor's `timeoutMs`) passed
  *   - `interrupted`                - Interrupted event reset everything
  */
 export type TransitionTrigger =
@@ -905,8 +915,27 @@ export interface ActivityEngineCallbacks {
    * (`SessionEngineState.turnStartedAt`), or null when the engine never saw it
    * begin. `workSerial` is `SessionEngineState.workSerial` at the turn end: the
    * turn's identity, still current until the agent reports new work.
+   * `heldReported` is true when `onTurnEndedHeld` already reported this same
+   * turn end, so a consumer that acted on it then can skip what it already did.
    */
-  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number, heldReported: boolean): void;
+  /**
+   * Fired once per `workSerial` when the agent's own turn-end hook lands and
+   * the only thing keeping the session thinking is background work the turn
+   * left running (the reason is `background-shell`): no tool call, subagent,
+   * permission prompt or turn is still open. The turn is over, and its reply is
+   * final, though `onTurnEnded` waits for the drain.
+   *
+   * A hung background command (a `python -` waiting on stdin) never drains,
+   * and nothing ran on the turn end it held: one held a finished workflow task
+   * nearly nine hours. A consumer that may act before the drain (a running
+   * workflow's step) acts here; every other consumer keeps waiting for
+   * `onTurnEnded`, which still fires once the work drains, with `heldReported`.
+   *
+   * Fires inside the engine's step, so a listener does no I/O and must not
+   * throw.
+   */
+  onTurnEndedHeld?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
   /**
    * Fired each time the engine stamps `turnStartedAt`, with the stamp and what
    * set it (`TurnStartCause`). A consumer that ties something to the turn
@@ -981,6 +1010,12 @@ export const LOG_ONLY_EVENTS = new Set<EventType>([
 /**
  * Events that initiate a turn (transition idle/permission -> thinking
  * via `turnActive=true`).
+ *
+ * `Compact` only while a turn is active (`isCompactionOutsideTurn` in
+ * `activity-engine.ts`): a compaction the CLI starts with no turn active, on
+ * an idle session or one held only by background work, is not a turn. Counted
+ * as one, it showed a session working for 6.8 minutes and moved its
+ * `workSerial` past the reply a workflow's recovery had to read.
  */
 export const TURN_INITIATING_EVENTS = new Set<EventType>([
   EventType.ToolStart,

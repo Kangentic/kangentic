@@ -1,9 +1,10 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
+import { BROWSER_POLICY_DENY_TEXT, browserPolicySpec, type BrowserPolicyHookSpec } from '../../shared/browser-policy-hook';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 import { CLAUDE_PLAN_TOOL_APPROVAL_MATCHER } from './plan-tool-approval';
 import { CLAUDE_SUBAGENT_SPAWN_TOOL } from './subagent-usage-parser';
@@ -92,6 +93,13 @@ export interface BuildHooksOptions {
    */
   backgroundShellHintCommand?: string;
   /**
+   * The browser policy hook (`buildBrowserPolicyCommand` with
+   * `claudeBrowserPolicySpec`), registered on PreToolUse with its own matcher
+   * (`browserPolicyMatcher`), so it runs only for a call it may deny. The
+   * bridge reads the Agent Browser switch on every call.
+   */
+  browserPolicy?: { matcher: string; command: string };
+  /**
    * Builds each event hook's command in place of `node <event-bridge>`: for a
    * Claude installed in a WSL distro, the transport's `wslHookEventCommand`,
    * with the same event types and directives. Absent: the node bridge, as before.
@@ -168,6 +176,28 @@ export const CLAUDE_BACKGROUND_SHELL_HINT_SPEC: BackgroundShellHintSpec = {
     },
   },
 };
+
+/**
+ * Claude's browser policy spec for a session's browser servers. Claude reads a
+ * PreToolUse `permissionDecision: "deny"` as a refusal and shows the model the
+ * reason as the tool result. Probed on 2.1.317
+ * (`scripts/probe-claude-browser-deny.js`): it held in default, acceptEdits,
+ * plan and bypassPermissions, and for a subagent's call.
+ */
+export function claudeBrowserPolicySpec(servers: string[], configPath: string): BrowserPolicyHookSpec {
+  return browserPolicySpec({
+    toolField: 'tool_name',
+    servers,
+    configPath,
+    reply: {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: BROWSER_POLICY_DENY_TEXT,
+      },
+    },
+  });
+}
 
 export function buildHooks(
   eventBridge: string,
@@ -246,6 +276,12 @@ export function buildHooks(
         // Only such a call's own approval may let a `subagent_start` close the
         // permission prompt it awaited (`updatePermissionFlag`).
         markSubagentLaunch(CLAUDE_SUBAGENT_LAUNCH_TOOLS)) }] },
+      // The browser policy (task #977): deny a third-party browser server's
+      // tool while the Agent Browser is on. A separate script because the
+      // event bridge silences stdout for every agent.
+      ...(options.browserPolicy
+        ? [{ matcher: options.browserPolicy.matcher, hooks: [{ type: 'command', command: options.browserPolicy.command }] }]
+        : []),
     ],
     [H.PostToolUse]: [
       ...(existingHooks[H.PostToolUse] || []),
@@ -334,6 +370,13 @@ export function buildHooks(
         // terminal shapes: `completed` (stream ended), `stopped`, and the
         // status-less timeout marker.
         extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
+        // The Monitor's own limit bounds it, whatever its end notice says: CLI
+        // 2.1.316 renamed the timeout notice ("[Monitor expired after ..."),
+        // and the old marker held every expired Monitor open for good. A
+        // `persistent` Monitor runs until stopped, so it reports none. The
+        // response shape is a retained transcript's tool result:
+        // `{"taskId":"blwse3kzw","timeoutMs":1800000,"persistent":false}`.
+        extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)) }] },
       // The background shell hint (task #857): beside a background launch's
       // result, tell the agent the shell keeps its task working and how to

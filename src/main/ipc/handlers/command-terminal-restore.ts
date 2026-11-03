@@ -45,6 +45,7 @@ import {
   stopEndedCommandTerminalBackgroundSession,
   type EndedCommandTerminal,
 } from '../helpers/command-terminal-background-session';
+import { endCommandTerminalBrowserIfSlotEmpty } from '../helpers/command-terminal-browser';
 import type { CommandTerminalLeftoverTask } from '../helpers/command-terminal-leftovers';
 import { reapTaskLeftovers } from '../helpers/task-cleanup';
 import type { IpcContext } from '../ipc-context';
@@ -213,6 +214,9 @@ export function isRestorableAfterHostLoss(
  */
 export interface LostCommandTerminal {
   agentSessionId: string;
+  /** The lost session, and the slot whose Browser pane it kept for the restore. */
+  sessionId: string;
+  slot: string | null;
   claimed: boolean;
   ended: EndedCommandTerminal;
   task: CommandTerminalLeftoverTask;
@@ -240,6 +244,8 @@ export function claimLostCommandTerminal(context: IpcContext, session: Session |
   }
   return {
     agentSessionId,
+    sessionId: session.id,
+    slot: session.commandTerminalSlot ?? null,
     claimed: context.commandTerminalHistory?.claimResume(session.projectId, agentSessionId) === true,
     ended: {
       agentName: context.sessionManager.getSessionAgentName(session.id),
@@ -287,6 +293,12 @@ export async function restoreLostCommandTerminals(
     await restoreConversations(context, projectId, rows, reap);
   } finally {
     settleLostTerminalsRestore(context, projectId);
+    // The browser cleanup kept each lost slot's page, URL and layout for the
+    // restore (`isRestorableAfterHostLoss`). A slot no terminal came back to,
+    // refused or restored into another slot, ends them as its Stop would have.
+    for (const lost of lostTerminals) {
+      if (lost.slot) endCommandTerminalBrowserIfSlotEmpty(context, projectId, lost.slot, lost.sessionId);
+    }
   }
 }
 

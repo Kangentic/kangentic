@@ -7,7 +7,7 @@
  * branch picker or its Changes (`CommandTerminalRowMenu`).
  */
 
-import { CircleStop, FolderOpen, GitBranch, GitCompare, Pencil, SquareChevronRight } from 'lucide-react';
+import { CircleStop, FolderOpen, GitBranch, GitCompare, Globe, Pencil, SquareChevronRight } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { ShortcutGlyph } from '../../utils/swimlane-icons';
@@ -24,6 +24,13 @@ export interface CommandTerminalMenuActions {
   onSwitchBranch: () => void;
   changesOpen: boolean;
   onToggleChanges: () => void;
+  /** The terminal's Browser pane is showing (Hide browser) or not (Show browser). */
+  browserOpen: boolean;
+  onToggleBrowser: () => void;
+  /** A page is alive for this terminal (showing, hidden, popped out, or offscreen). */
+  browserAlive: boolean;
+  /** The user's Close: discard the page and free its memory, never the hide. */
+  onCloseBrowser: () => void;
   /** The board's shortcuts the menu lists, in order. */
   shortcuts: ShortcutConfig[];
   onShortcut: (action: ShortcutConfig) => void;
@@ -49,6 +56,10 @@ export function CommandTerminalMenuItems({
   onSwitchBranch,
   changesOpen,
   onToggleChanges,
+  browserOpen,
+  onToggleBrowser,
+  browserAlive,
+  onCloseBrowser,
   shortcuts,
   onShortcut,
   stopping,
@@ -92,6 +103,21 @@ export function CommandTerminalMenuItems({
           label={changesOpen ? t`Hide changes` : t`Show changes`}
           onClick={() => { close(); onToggleChanges(); }}
           data-testid={`${testIdPrefix}-toggle-changes`}
+        />
+      )}
+      {/* The task window's pair: Hide keeps the page for the agent, Close ends it. */}
+      <KebabMenuItem
+        icon={<Globe size={14} />}
+        label={browserOpen ? t`Hide browser` : t`Show browser`}
+        onClick={() => { close(); onToggleBrowser(); }}
+        data-testid={`${testIdPrefix}-toggle-browser`}
+      />
+      {browserAlive && (
+        <KebabMenuItem
+          icon={<CircleStop size={14} />}
+          label={t`Close browser`}
+          onClick={() => { close(); onCloseBrowser(); }}
+          data-testid={`${testIdPrefix}-close-browser`}
         />
       )}
       {shortcuts.length > 0 && (

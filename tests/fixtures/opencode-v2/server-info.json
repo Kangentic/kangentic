@@ -1,0 +1,14 @@
+{
+  "version": "2.2.5",
+  "pid": 4242,
+  "hostname": "dev-host",
+  "urls": [
+    "http://127.0.0.1:4096"
+  ],
+  "paths": {
+    "tmp": "/tmp/opencode"
+  },
+  "capabilities": {
+    "persistentPty": true
+  }
+}

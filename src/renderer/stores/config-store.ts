@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { AppConfig, CommandTerminalPanelGeometry, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import { readPanelPlaces } from '../../shared/command-terminal-panel';
+import type { AppConfig, CommandTerminalPanelPlaces, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
 import type { CommandTerminalRailState } from '../../shared/command-terminal-rail';
 import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
@@ -84,9 +85,11 @@ interface ConfigStore {
   saveCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
   /** Synchronous sibling of saveCommandTerminalWorkspace for the quit/unload flush. */
   flushCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
-  /** Persist where the Command Terminal panel sits (global, written whole). Applied
-   *  to the store first, so the panel reads back what it just wrote. */
-  saveCommandTerminalPanel: (geometry: CommandTerminalPanelGeometry) => void;
+  /** Persist where the Command Terminal panel sits for the given grid shapes
+   *  (global). `entries` is merged over the saved places and the whole map is
+   *  written, so a shape not named keeps its place. Applied to the store first,
+   *  so the panel reads back what it just wrote. */
+  saveCommandTerminalPanelPlaces: (entries: CommandTerminalPanelPlaces) => void;
   /** Persist the Command Terminal rail's width and whether it is folded (global,
    *  written whole). Applied to the store first, so the rail reads back what it
    *  just wrote. Not preserved across a refetch: the detached window writes it
@@ -244,6 +247,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
     const commandTerminalWorkspace = get().globalConfig.commandTerminalWorkspace ?? null;
     const commandTerminalPanel = get().globalConfig.commandTerminalPanel ?? null;
+    const commandTerminalPanelByShape = get().globalConfig.commandTerminalPanelByShape ?? {};
     // `commandTerminalRail` is not preserved either, for the same reason as
     // `monitorWorkspace` below: the detached Command Terminal window writes it,
     // and the panel must read that write back.
@@ -257,8 +261,8 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     // `configLoaded` is set here too, not only on the seeding fetch: a store pinned across
     // HMR from before the field existed is seeded but unmarked, and its next re-sync marks it.
     return {
-      config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
-      globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
+      config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel, commandTerminalPanelByShape },
+      globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel, commandTerminalPanelByShape },
       configLoaded: true,
     };
   };
@@ -438,12 +442,15 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
       window.electronAPI.config.set({ commandTerminalWorkspace: applyCommandWorkspaceOptimistic(workspace) });
     },
 
-    saveCommandTerminalPanel: (geometry) => {
+    saveCommandTerminalPanelPlaces: (entries) => {
+      // `commandTerminalPanelByShape` is a CONFIG_DICTIONARY_PATH, so this write
+      // REPLACES the map: send every shape's place, not just the ones that changed.
+      const places = { ...readPanelPlaces(get().globalConfig.commandTerminalPanelByShape), ...entries };
       set((state) => ({
-        config: { ...state.config, commandTerminalPanel: geometry },
-        globalConfig: { ...state.globalConfig, commandTerminalPanel: geometry },
+        config: { ...state.config, commandTerminalPanelByShape: places },
+        globalConfig: { ...state.globalConfig, commandTerminalPanelByShape: places },
       }));
-      window.electronAPI.config.set({ commandTerminalPanel: geometry });
+      window.electronAPI.config.set({ commandTerminalPanelByShape: places });
     },
 
     saveCommandTerminalRail: (rail) => {
@@ -746,7 +753,9 @@ if (import.meta.hot) {
   // the pinned instance. Safe only because this module is in no import cycle (Vite
   // turns an invalidate() from inside one into a full page reload). An edit to an
   // action body here still runs the pinned instance's original closure until a full
-  // reload. Prod is unaffected: import.meta.hot is undefined there.
+  // reload, and an action added or renamed here is missing from the pinned instance
+  // until then, so a component that calls it throws. Prod is unaffected:
+  // import.meta.hot is undefined there.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

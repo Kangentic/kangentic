@@ -34,8 +34,9 @@ which also brings agents back after a pty host loss (`resumeSuspendedSessions`),
 `SpawnOverrides.resumedBy`. Workflow recovery reads it: an agent Kangentic restarted lost the
 background commands it started, so its recovery starts over at once (see
 [Workflow engine](../workflows/workflow-engine.md)).
-A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
-from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
+A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, or as
+`'turn-ended-held'` when a running workflow task's Stop is held by background work, both separate
+events from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
 
 ## Where resume is refused
 

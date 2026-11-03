@@ -14,6 +14,7 @@ import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
 import { placeOfRecord } from '../../agent/shared/cli-target';
+import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type { Task, Swimlane, Project, AutoCommandMode } from '../../../shared/types';
@@ -175,6 +176,7 @@ export function createTransitionEngine(
         projectName: project?.name ?? null,
         gitConfig,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
+        browserAutomationEnabled: resolveBrowserAutomationConfig(config.browserAutomation).enabled,
         mcpServerUrl: context.mcpServerHandle?.urlForProject(projectId),
         mcpServerToken: context.mcpServerHandle?.token,
         defaultAgent: project?.default_agent ?? DEFAULT_AGENT,

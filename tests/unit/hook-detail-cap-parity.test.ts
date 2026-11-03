@@ -50,4 +50,8 @@ describe('HOOK_DETAIL_CAP matches the hook bridge', () => {
   it('equals the OpenCode plugin cap, which writes the same event shape directly', () => {
     expect(readCap('src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs', 'FIELD_CAP')).toBe(HOOK_DETAIL_CAP);
   });
+
+  it('equals the OpenCode 2 plugin cap, which writes the same event shape directly', () => {
+    expect(readCap('src/main/agent/adapters/opencode/plugin/kangentic-activity-v2.mjs', 'FIELD_CAP')).toBe(HOOK_DETAIL_CAP);
+  });
 });

@@ -11,6 +11,7 @@ import type { RequestResolver } from './project-resolver';
 import type { SessionSendCoordinator, SentMessageRecord } from './session-send';
 import type { HoldOutcome, HoldTaskMessageInput } from '../../held-messages/held-messages';
 import type { Task } from '../../../shared/types';
+import { resolveCallerTaskId } from './caller-task';
 
 /**
  * Steering tools: the write side of the session surface.
@@ -29,6 +30,10 @@ export interface SteeringSessionLookup {
    *  derive an isolated lane's cookie-jar partition. */
   findLiveSessionByTaskId(taskId: string): { id: string; cwd: string } | undefined;
   getSessionTaskId(sessionId: string): string | undefined;
+  /** A Command Terminal's slot, so its synthetic task id is never read as a task. */
+  getCommandTerminalSlot?(sessionId: string): string | undefined;
+  /** The name a project's live Command Terminal in a slot shows (the browser family's `list_panes`). */
+  getCommandTerminalName?(projectId: string, slot: string): string | undefined;
   getSessionProjectId(sessionId: string): string | undefined;
   /** Whether the session has a PTY to deliver into: running, not suspended, exited or still queued. */
   isWritable(sessionId: string): boolean;
@@ -82,9 +87,9 @@ export function registerSteeringTools(
    */
   function makeSentMessageRecorder(targetContext: { getProjectDb: () => Database.Database }) {
     return (delivery: SentMessageRecord): void => {
-      const callerTaskId = delivery.callerSessionId
-        ? sessions.getSessionTaskId(delivery.callerSessionId) ?? null
-        : null;
+      // Through the caller resolver: a Command Terminal's registry task id is
+      // synthetic, and recording it would name a task that does not exist.
+      const callerTaskId = resolveCallerTaskId({ callerSessionId: delivery.callerSessionId, sessions }) ?? null;
       const callerProjectId = delivery.callerSessionId
         ? sessions.getSessionProjectId(delivery.callerSessionId) ?? null
         : null;
@@ -196,7 +201,7 @@ export function registerSteeringTools(
               `Session ${sessionId} is not running and no task in "${resolved.projectName}" owns it, so there is nothing to hold the message for. Pass taskId, or use kangentic_list_sessions.`,
             );
           }
-          const callerTaskId = callerSessionId ? sessions.getSessionTaskId(callerSessionId) : undefined;
+          const callerTaskId = resolveCallerTaskId({ callerSessionId, sessions });
           if (callerTaskId === task.id) {
             return errorResult(
               'Refused: a session cannot send a message to its own task. To continue your own work, just keep going - this tool is for steering a DIFFERENT task.',

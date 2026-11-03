@@ -59,7 +59,7 @@ export const WSL_HOOK_DIRECTORY_ENV = 'KANGENTIC_WSL_HOOK_DIR';
 export const WSL_HOOK_RECORD_VERSION = 'K1';
 
 /** What a `reply` request asks for. Kangentic answers each with the matching bridge's logic. */
-export type WslHookReplyKind = 'plan-approval' | 'background-shell-hint';
+export type WslHookReplyKind = 'plan-approval' | 'background-shell-hint' | 'browser-policy';
 
 /** The head of an `mcp` request, whose argument line is `<token> <url>` and whose body is one JSON-RPC message. */
 export const WSL_MCP_REQUEST_HEAD = 'mcp';

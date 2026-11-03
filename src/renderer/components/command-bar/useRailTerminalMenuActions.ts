@@ -2,7 +2,7 @@
  * What a terminal's menu items do from the rail: its Running row and its mark
  * in the collapsed strip (`CommandTerminalRowMenu`).
  *
- * Commands, Switch branch and Show changes open something inside the terminal,
+ * Commands, Switch branch, Show changes and Show browser open something inside the terminal,
  * so they bring it to the front first (expanded over the others when one is
  * expanded, focused when they tile) and leave the slot's window a request to
  * open it there (`requestCommandTerminalWindowAction`). Open folder, the
@@ -20,6 +20,9 @@ import { commandTerminalChangesEntityId } from '../../stores/session-store/task-
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import type { CommandTerminalMenuActions } from './CommandTerminalMenuItems';
 import { rowMenuShortcuts, runCommandTerminalShortcut } from './command-terminal-shortcuts';
+import { useCommandTerminalBrowserAlive } from './command-terminal-browser';
+import { closeBrowserForTask } from '../browser/close-browser';
+import { commandTerminalBrowserOwner } from '../../../shared/browser-owner';
 
 /** A terminal as the rail lists it. */
 export interface RailCommandTerminal {
@@ -44,6 +47,9 @@ export function useRailTerminalMenuActions(
   const shortcuts = useBoardStore((state) => state.shortcuts);
   const menuShortcuts = useMemo(() => rowMenuShortcuts(shortcuts), [shortcuts]);
   const changesOpen = useSessionStore((state) => state.changesOpenTasks.has(commandTerminalChangesEntityId(terminal.slot)));
+  const browserOpen = useSessionStore((state) =>
+    projectId !== null && state.browserOpenTasks.has(commandTerminalBrowserOwner(projectId, terminal.slot)));
+  const browserAlive = useCommandTerminalBrowserAlive(projectId, terminal.slot);
   const branch = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, terminal.slot)]?.branch ?? null : null);
   const { onBringToFront, onStop, stopping, onRename, renameDisabledReason } = handlers;
@@ -63,6 +69,14 @@ export function useRailTerminalMenuActions(
     onSwitchBranch: () => bringUpAnd('switch-branch'),
     changesOpen,
     onToggleChanges: () => bringUpAnd('toggle-changes'),
+    browserOpen,
+    onToggleBrowser: () => bringUpAnd('toggle-browser'),
+    browserAlive,
+    // Acts where the page is, like Stop: a held or offscreen page has no pane
+    // on screen to bring up first.
+    onCloseBrowser: () => {
+      if (projectId) void closeBrowserForTask(commandTerminalBrowserOwner(projectId, terminal.slot), projectId);
+    },
     shortcuts: menuShortcuts,
     onShortcut: (action) => runCommandTerminalShortcut(action, projectPath, branch),
     stopping,

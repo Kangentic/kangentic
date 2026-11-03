@@ -52,6 +52,11 @@ export interface AutomationRunSummary {
   startedAgent: boolean;
   /** True when a row that ends its group (Move to column) ran and stopped the list. */
   endedGroup?: boolean;
+  /**
+   * The row whose move was held (`RunAutomationsOptions.holdMoves`): its guards
+   * passed, and the move waits. Held moves end the group as a move would.
+   */
+  heldMoveRowId?: string;
 }
 
 /**
@@ -165,6 +170,24 @@ export interface RunAutomationsOptions {
    * final message; a Text match is never stored there, so none is checked.
    */
   agentReply?: string | null;
+  /**
+   * Turn end of a running workflow's task only: why a row that moves the task
+   * (its manifest's `endsGroup`) does not move it now, when its guards passed.
+   * Set while background work the agent left is still open: a move suspends
+   * the agent and kills nothing, so a hung command would run on with no agent
+   * until the task's Done reap. The row is recorded as skipped with this
+   * reason, the group ends there as a move would end it, and the caller holds
+   * the move (`heldMoveRowId`) until the agent's next turn end with nothing
+   * open (owner's decision, 2026-11-02).
+   */
+  holdMoves?: string;
+  /**
+   * Rows whose move was held at an earlier turn end of this visit, run now:
+   * their Text match and Condition already passed then, so neither is checked
+   * again. The reply they are run on is the agent's answer to the nudge, which
+   * need not repeat its exit line.
+   */
+  releaseHeldMoves?: ReadonlySet<string>;
 }
 
 /**
@@ -336,11 +359,14 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       continue;
     }
 
+    // A held move released: its guards passed when it was held.
+    const released = options.releaseHeldMoves?.has(automation.id) === true;
+
     // Text match: the Condition kind checked here, in code, against the agent's
     // last line. Free, so it comes before anything that costs: a miss never
     // reaches an Automation agent. Like a Condition's no, a miss is not a run,
     // and what was read rides the run row either way.
-    if (hasFinalLine(automation)) {
+    if (hasFinalLine(automation) && !released) {
       if (options.agentReply === undefined) {
         runs.recordSkipped(started, TEXT_MATCH_NO_TURN_REASON);
         record('skipped', TEXT_MATCH_NO_TURN_REASON);
@@ -358,7 +384,7 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
 
     // Condition: a no is not a run. The answer, yes or no, rides the run row so
     // the log says why a row ran or did not.
-    if (hasCondition(automation)) {
+    if (hasCondition(automation) && !released) {
       const answer = conditionAnswers.get(automation.id);
       if (!answer) {
         started.backgroundCallId = conditionUnavailableCallId;
@@ -373,6 +399,15 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
         record('skipped', reason);
         continue;
       }
+    }
+
+    // A move whose guards passed while background work the agent left is still
+    // open: held, not run. The group ends here, as the move would have ended it.
+    if (options.holdMoves && adapter.manifest.endsGroup) {
+      runs.recordSkipped(started, options.holdMoves);
+      record('skipped', options.holdMoves);
+      summary.heldMoveRowId = automation.id;
+      break;
     }
 
     // The agent starts before the first row that needs it, not at a fixed point

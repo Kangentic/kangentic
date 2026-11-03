@@ -2,9 +2,11 @@
  * A single Command Terminal hosted inside a window-manager frame, one tile of
  * the Command Terminal panel (`CommandTerminalPanel`). The panel tiles its
  * terminals and owns moving, resizing and maximizing, so this component only
- * renders the CONTENT - a header (Stop + title + branch picker + command/changes
- * pills + kebab), the xterm body, an optional Changes panel, and the ContextBar
- * footer. Hiding the panel keeps the PTY alive; only Stop destroys the session.
+ * renders the CONTENT - a header (Stop + title + branch picker + command, changes
+ * and Browser pills + kebab), the xterm body, one side panel beside it (Changes,
+ * or the empty slot `CommandTerminalBrowserHost` lays the Browser pane over),
+ * and the ContextBar footer. Hiding the panel keeps the PTY alive; only Stop
+ * destroys the session.
  *
  * Lifecycle: an ephemeral transient session is spawned on mount (or reattached if
  * one is already alive for the project), scoped to the active project. Stop kills
@@ -16,7 +18,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderGit, GitCompare, Loader2, Maximize2, Minimize2, Pencil } from 'lucide-react';
+import { FolderGit, GitCompare, Globe, Loader2, Maximize2, Minimize2, Pencil } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -59,6 +61,21 @@ import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { startCommandTerminalSwapDrag } from './swap-drag';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { useTaskSplitResize } from '../../hooks/useTaskSplitResize';
+import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
+import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
+import { useKeybinding } from '../../hooks/useKeybinding';
+import { usePopOut } from '../../pop-out/usePopOut';
+import { closeBrowserForTask } from '../browser/close-browser';
+import { commandTerminalBrowserOwner } from '../../../shared/browser-owner';
+import {
+  COMMAND_TERMINAL_BROWSER_SLOT_ATTRIBUTE,
+  announceCommandTerminalBrowserSlot,
+  hydrateCommandTerminalBrowser,
+  toggleCommandTerminalBrowser,
+  toggleCommandTerminalChanges,
+  useCommandTerminalBrowserAlive,
+} from './command-terminal-browser';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -197,11 +214,56 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const projectPath = useMemo(() => (rawProjectPath ? resolveProjectRoot(rawProjectPath) : null), [rawProjectPath]);
   const shortcuts = useBoardStore((s) => s.shortcuts);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(commandTerminalEntityId));
-  const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
+  // The project this window's slot belongs to. The panel shows the current
+  // project's terminals only, and the detached window seeds its own store with
+  // its project, so this is the slot's project in both hosts.
+  const browserProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
+  // This terminal's Browser pane: the task window's pane, keyed by the slot's
+  // owner key in the same store sets. It renders in `CommandTerminalBrowserHost`,
+  // over the slot this window draws below, so a hide or a project switch never
+  // unmounts its page (see command-terminal-browser.ts).
+  const browserOwnerKey = browserProjectId ? commandTerminalBrowserOwner(browserProjectId, slot) : null;
+  const browserOpen = useSessionStore((s) => browserOwnerKey !== null && s.browserOpenTasks.has(browserOwnerKey));
+  const browserAlive = useCommandTerminalBrowserAlive(browserProjectId, slot);
+  const browserPopOut = usePopOut('browser', { taskId: browserOwnerKey ?? '', projectId: browserProjectId ?? '' });
+  const showBrowser = browserOpen && !browserPopOut.isOpen;
+  // Whether this terminal's agent is driving its page right now (the pill's
+  // dot), and the shaped envelope the pane's veil reads (the slot's accent edge).
+  const browserDriving = useIsAgentDrivingSession(sessionId);
+  const agentDrivingBrowser = useAgentDriveVeil(sessionId).visible && showBrowser;
+  // Browser and Changes share the terminal's side, as in a task window: the
+  // toggles put the other away, and Changes never shows beside a showing pane.
+  const showChanges = changesOpen && !showBrowser;
   const handleToggleChanges = useCallback(
-    () => changeLayout(() => toggleChangesOpen(commandTerminalEntityId)),
-    [changeLayout, toggleChangesOpen, commandTerminalEntityId],
+    () => changeLayout(() => { if (browserProjectId) toggleCommandTerminalChanges(browserProjectId, slot); }),
+    [changeLayout, browserProjectId, slot],
   );
+  const handleToggleBrowser = useCallback(
+    () => changeLayout(() => { if (browserProjectId) toggleCommandTerminalBrowser(browserProjectId, slot); }),
+    [changeLayout, browserProjectId, slot],
+  );
+  const handleCloseBrowser = useCallback(() => {
+    if (browserOwnerKey) void closeBrowserForTask(browserOwnerKey, browserProjectId);
+  }, [browserOwnerKey, browserProjectId]);
+  // The slot's saved layout, read once per renderer: the pane open again after
+  // a restart, and in the detached window, whose store starts empty.
+  useEffect(() => {
+    if (browserProjectId) void hydrateCommandTerminalBrowser(browserProjectId, slot);
+  }, [browserProjectId, slot]);
+  // The terminal / side-panel split, one ratio per slot, dragged on the seam as
+  // in a task window: 50/50 until moved, held between a quarter and three
+  // quarters (`useTaskSplitResize`).
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const { ratio: splitRatio, isResizing: isSplitResizing, onResizeStart: onSplitResizeStart } =
+    useTaskSplitResize(browserOwnerKey ?? commandTerminalEntityId, splitContainerRef);
+  const sidePanelPresent = showBrowser || (showChanges && projectPath !== null);
+  // The slot tells the host when it comes and goes, so the pane lands on it or
+  // hides at once, minimized window or not (CommandTerminalBrowserHost).
+  const announceSlotMount = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    announceCommandTerminalBrowserSlot();
+    return () => announceCommandTerminalBrowserSlot();
+  }, []);
 
   const spawnedRef = useRef(false);
   // The branch picker can fold into the kebab; this drives the kebab-anchored
@@ -242,6 +304,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     const specs: HeaderPillSpec[] = [];
     if (projectPath) specs.push({ id: 'folder', priority: 40 });
     if (projectPath) specs.push({ id: 'changes', priority: 30 });
+    specs.push({ id: 'browser', priority: 28 });
     specs.push({ id: 'branch', priority: 25 });
     for (const action of headerShortcuts) specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     return specs;
@@ -335,8 +398,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           variant: 'error',
         });
         // Drop just this window; the layer's count bridge hides the layer if it
-        // was the last one.
-        closeWindow(windowId);
+        // was the last one. The count changes, so the panel moves to its place.
+        changeLayout(() => closeWindow(windowId));
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -409,7 +472,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     // row is gone it succeeds, and if it lives main refuses its slot (`slot-taken`) and
     // the caller's catch says so. The kill handler's only refusal (a task's session)
     // cannot reach this path, so 'failed' means the invoke itself failed.
-    const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(projectId, slot);
+    // A respawn: main keeps the slot's Browser pane, which belongs to the slot.
+    const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(projectId, slot, { respawn: true });
     if (killOutcome === 'failed') {
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't stop the old terminal`),
@@ -485,10 +549,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       try {
         await spawnInSlot(grid, branch);
       } catch {
-        closeWindow(windowId);
+        changeLayout(() => closeWindow(windowId));
       }
     }
-  }, [slot, stopForRespawn, spawnInSlot, closeWindow, windowId]);
+  }, [slot, stopForRespawn, spawnInSlot, changeLayout, closeWindow, windowId]);
 
   // Take a resume the Earlier list asked of this slot, once the slot has a live
   // terminal. The list judged that terminal unused when it asked; if something
@@ -567,9 +631,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       if (action === 'commands') setShowCommandPalette(true);
       else if (action === 'switch-branch') setBranchMenuOpen(true);
       else if (action === 'toggle-changes') handleToggleChanges();
+      else if (action === 'toggle-browser') handleToggleBrowser();
       else startRename();
     });
-  }, [slot, handleToggleChanges, startRename]);
+  }, [slot, handleToggleChanges, handleToggleBrowser, startRename]);
+
+  // Mod+Shift+B, as in a task window: the focused terminal's own pane. Capture
+  // phase, so it beats the xterm's key handling.
+  const isFocusedWindow = layerStore((state) => state.focusedWindowId === windowId);
+  useKeybinding('commandTerminal.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocusedWindow && browserProjectId !== null });
   useEffect(() => useSessionStore.subscribe((state, previous) => {
     if (state.pendingCommandTerminalWindowActions !== previous.pendingCommandTerminalWindowActions) takeWindowAction();
   }), [takeWindowAction]);
@@ -703,6 +773,32 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
             </div>
           )}
 
+          {/* The task window's Browser pill: the same control, tip, shortcut and
+              running dot, for this terminal's own pane. */}
+          {showPill('browser') && (
+            <div data-pill-id="browser" className="relative flex-shrink-0">
+              <HeaderActionButton
+                icon={Globe}
+                onClick={handleToggleBrowser}
+                active={browserOpen}
+                tip={browserOpen ? t`Hide browser` : t`Show browser`}
+                keys="commandTerminal.toggleBrowser"
+                // Hiding is not closing: the page stays loaded, which the name does not say.
+                detail={browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
+                ariaLabel={t`Toggle browser`}
+                testId="command-bar-browser-toggle"
+              />
+              {browserAlive && (
+                <span
+                  aria-hidden="true"
+                  data-testid="command-bar-browser-toggle-alive"
+                  data-driving={browserDriving ? 'true' : undefined}
+                  className="pointer-events-none absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface-raised bg-active animate-pulse"
+                />
+              )}
+            </div>
+          )}
+
           {showPill('branch') && (
             <div data-pill-id="branch" className="flex-shrink-0">
               <BranchPicker
@@ -751,6 +847,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   onSwitchBranch={() => setBranchMenuOpen(true)}
                   changesOpen={changesOpen}
                   onToggleChanges={handleToggleChanges}
+                  browserOpen={browserOpen}
+                  onToggleBrowser={handleToggleBrowser}
+                  browserAlive={browserAlive}
+                  onCloseBrowser={handleCloseBrowser}
                   shortcuts={overflowMenuShortcuts}
                   onShortcut={handleShortcutExecute}
                   stopping={stopping}
@@ -806,14 +906,23 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         )}
       </div>
 
-      {/* Body */}
-      <div className="relative flex flex-1 min-h-0">
+      {/* Body: the task window's split row. The terminal, then the seam, then
+          the Browser slot or the Changes panel, never both: they share the
+          terminal's side. The terminal's share is the split ratio while a side
+          panel shows, and the seam drags it, 50/50 until moved. */}
+      <div ref={splitContainerRef} className="relative flex flex-1 min-h-0">
         {/* Terminal. min-w-0 lets this flex item shrink below the xterm's content
             width when the window narrows; without it `min-width: auto` pins the pane
             to the terminal's column width, so it overflows the window and fit() reads
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
-            the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
-        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: resolveTerminalBackground(config.terminal.colors) }}>
+            the brief pre-fit overflow. */}
+        <div
+          className={`${sidePanelPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} relative min-w-0 overflow-hidden`}
+          style={{
+            backgroundColor: resolveTerminalBackground(config.terminal.colors),
+            ...(sidePanelPresent ? { flexBasis: `${splitRatio * 100}%` } : {}),
+          }}
+        >
           {/* Covers the spawn in flight, before there is a pane. From then on
               the pane draws the overlay inside its own `data-terminal-host`
               until the agent is on screen (see CommandTerminalPane). */}
@@ -839,9 +948,45 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           )}
         </div>
 
+        {/* The seam between the terminal and the side panel: the task window's,
+            drag to resize, its highlight held through the drag. */}
+        {sidePanelPresent && (
+          <Tooltip label={t`Drag to resize`}>
+            <div
+              onMouseDown={onSplitResizeStart}
+              data-testid="command-bar-split-divider"
+              role="separator"
+              aria-orientation="vertical"
+              className="group relative z-10 w-1 -mx-0.5 flex-shrink-0 cursor-col-resize"
+            >
+              <span className="absolute inset-y-0 -inset-x-1" />
+              <span
+                className={`absolute inset-0 transition-colors ${
+                  isSplitResizing ? 'bg-accent/60' : 'group-hover:bg-accent/40'
+                }`}
+              />
+            </div>
+          </Tooltip>
+        )}
+
+        {/* The Browser pane's slot. The pane itself is never in this tree: it
+            lives in `CommandTerminalBrowserHost`, which lays it over the inner
+            element by its attribute, so hiding the panel or switching projects
+            never unmounts the page. The accent edge marks an agent driving it. */}
+        {showBrowser && browserOwnerKey && (
+          <div
+            className={`flex-1 min-h-0 min-w-0 overflow-hidden transition-colors border-l ${
+              agentDrivingBrowser ? 'border-accent' : 'border-edge'
+            }`}
+            data-testid="command-bar-browser-slot"
+          >
+            <div className="h-full w-full" ref={announceSlotMount} {...{ [COMMAND_TERMINAL_BROWSER_SLOT_ATTRIBUTE]: browserOwnerKey }} />
+          </div>
+        )}
+
         {/* Changes panel */}
-        {changesOpen && projectPath && (
-          <div className="w-1/2 min-h-0 border-l border-edge">
+        {showChanges && projectPath && (
+          <div className="flex-1 min-h-0 min-w-0 overflow-hidden border-l border-edge">
             <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
               <Suspense
                 fallback={
@@ -864,6 +1009,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
             </PanelErrorBoundary>
           </div>
         )}
+        {/* While the seam drags, this keeps the pointer's events flowing over
+            the page and the terminal's canvas, as in a task window. */}
+        {isSplitResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
       </div>
 
       {sessionId && <ContextBar sessionId={sessionId} agentFallback={projectAgent} />}

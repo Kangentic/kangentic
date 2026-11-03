@@ -150,3 +150,76 @@ describe('OpenCode command-injection verifier - part query bound', () => {
     expect(recorded.some((entry) => /FROM part/.test(entry.sql))).toBe(false);
   });
 });
+
+// OpenCode 2 (2.2.5) writes a session's turns to `session_message` only, with
+// the user's text in `data.text`. Read only V1's `message` table, a V2 session
+// reported every delivered auto_command as failed.
+describe('OpenCode command-injection verifier - an OpenCode 2 session', () => {
+  function v2Database(userRows: Array<{ id: string; time_created: number; data: string }>): new (...args: unknown[]) => unknown {
+    return class FakeDatabase {
+      prepare(sql: string): { all: (...params: unknown[]) => unknown[] } {
+        return {
+          all: (...params: unknown[]) => {
+            recorded.push({ sql, params });
+            // The query asks for `type = 'user'` rows only, so each row is one.
+            if (/FROM session_message/.test(sql)) return userRows.map((row) => ({ ...row, type: 'user' }));
+            return [];
+          },
+        };
+      }
+      close(): void {
+        // no-op
+      }
+    } as unknown as new (...args: unknown[]) => unknown;
+  }
+
+  it('confirms a submit from the session\'s user row in session_message', async () => {
+    const sentAt = Date.now();
+    mockLoadBetterSqlite3.mockReturnValue(v2Database([
+      { id: 'msg_user', time_created: sentAt + 40, data: JSON.stringify({ time: { created: sentAt + 40 }, text: '/pull-request', files: [] }) },
+    ]));
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    const result = await verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v2', sentAt });
+
+    expect(result).toBe(true);
+    const v2Query = recorded.find((entry) => /FROM session_message/.test(entry.sql));
+    expect(v2Query?.sql).toMatch(/type = 'user'/);
+    expect(v2Query?.params[0]).toBe('ses_v2');
+  });
+
+  it('returns false without throwing when the database has no session_message table (OpenCode 1)', async () => {
+    mockLoadBetterSqlite3.mockReturnValue(class FakeDatabase {
+      prepare(sql: string): { all: (...params: unknown[]) => unknown[] } {
+        if (/FROM session_message/.test(sql)) throw new Error('no such table: session_message');
+        return { all: () => [] };
+      }
+      close(): void {
+        // no-op
+      }
+    } as unknown as new (...args: unknown[]) => unknown);
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    await expect(verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v1', sentAt: Date.now() })).resolves.toBe(false);
+  });
+
+  it('confirms a submit whose row is not the newest of several user rows', async () => {
+    const sentAt = Date.now();
+    // Newest first, as the query's ORDER BY seq DESC returns them.
+    mockLoadBetterSqlite3.mockReturnValue(v2Database([
+      { id: 'msg_newest', time_created: sentAt + 300, data: JSON.stringify({ text: 'a later follow-up' }) },
+      { id: 'msg_middle', time_created: sentAt + 200, data: JSON.stringify({ text: '/pull-request' }) },
+      { id: 'msg_oldest', time_created: sentAt + 100, data: JSON.stringify({ text: 'an earlier message' }) },
+    ]));
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    expect(await verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v2', sentAt })).toBe(true);
+  });
+
+  it('does not confirm a different text, or one written before the send', async () => {
+    const sentAt = Date.now();
+    mockLoadBetterSqlite3.mockReturnValue(v2Database([
+      { id: 'msg_user', time_created: sentAt + 40, data: JSON.stringify({ text: 'something else' }) },
+      { id: 'msg_old', time_created: sentAt - 5_000, data: JSON.stringify({ text: '/pull-request' }) },
+    ]));
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    expect(await verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v2', sentAt })).toBe(false);
+  });
+});

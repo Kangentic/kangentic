@@ -33,6 +33,13 @@ export async function deliverMessageToSession(
     mode: AutoCommandMode;
     verifier: CommandVerifier | null;
     signal: AbortSignal;
+    /**
+     * A running workflow's held turn end, or a recovery nudge: a paste's turn
+     * wait also takes a turn the agent ended whose session only background
+     * work it left keeps thinking. Its agent sits at its prompt, and that work
+     * may never drain.
+     */
+    acceptHeld?: boolean;
   },
 ): Promise<void> {
   await deliverAgentMessageAndWait(context, {

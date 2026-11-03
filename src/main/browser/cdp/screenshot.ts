@@ -139,7 +139,8 @@ export interface FileScreenshotResponse extends ScreenshotResponseBase {
   mode: 'file';
   filePath: string;
   fileUri: string;
-  reason: 'over-inline-ceiling' | 'over-max-bytes';
+  /** Why the image is a file: past a byte budget, or the caller asked (`saveToFile`). */
+  reason: 'over-inline-ceiling' | 'over-max-bytes' | 'requested';
 }
 
 export type ScreenshotResponse = InlineScreenshotResponse | FileScreenshotResponse;
@@ -533,7 +534,11 @@ function devtoolsShotsDir(): string | null {
   return path.join(root, '.kangentic', 'devtools-shots');
 }
 
-export function pruneShotsDir(directory: string): void {
+/**
+ * Keep the newest files in `directory`, none older than a day. `isOwnFile`
+ * limits both to the files one writer made, in a folder another writer shares.
+ */
+export function pruneShotsDir(directory: string, isOwnFile: (fileName: string) => boolean = () => true): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(directory, { withFileTypes: true });
@@ -543,7 +548,7 @@ export function pruneShotsDir(directory: string): void {
   const now = Date.now();
   const records: { name: string; mtimeMs: number }[] = [];
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
+    if (!entry.isFile() || !isOwnFile(entry.name)) continue;
     const filePath = path.join(directory, entry.name);
     let stat: fs.Stats;
     try {

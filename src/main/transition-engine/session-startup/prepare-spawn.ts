@@ -6,6 +6,7 @@ import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
+import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import { resolveRemoteLaunch } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
@@ -365,6 +366,7 @@ export async function prepareAgentSpawn(input: {
     eventsOutputPath,
     shell,
     mcpServerEnabled: config.mcpServer?.enabled ?? true,
+    browserAutomationEnabled: resolveBrowserAutomationConfig(config.browserAutomation).enabled,
     // Carries this session's own id so the MCP server can identify the caller
     // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
     mcpServerUrl: appendCallerSession(input.mcpServerHandle?.urlForProject(projectId), sessionRecordId),

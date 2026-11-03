@@ -380,7 +380,7 @@ const api: ElectronAPI = {
     getToolBreakdown: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_BREAKDOWN, sessionId),
     getToolResultTokens: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_GET_TOOL_RESULT_TOKENS, sessionId),
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
-    killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
+    killTransient: (id, options) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id, options),
     setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
     renameTransient: (sessionId: string, name: string | null) => ipcRenderer.invoke(IPC.SESSION_RENAME_TRANSIENT, sessionId, name),
     listCommandTerminalHistory: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_LIST, projectId),
@@ -936,6 +936,10 @@ const api: ElectronAPI = {
     getOffscreenSurfaces: () => ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_SURFACES_GET),
     closeOffscreenSurface: (taskId, projectId) =>
       ipcRenderer.invoke(IPC.BROWSER_OFFSCREEN_CLOSE, taskId, projectId),
+    getCommandTerminalState: (projectId, slot) =>
+      ipcRenderer.invoke(IPC.BROWSER_COMMAND_TERMINAL_STATE_GET, projectId, slot),
+    setCommandTerminalState: (projectId, slot, state) =>
+      ipcRenderer.invoke(IPC.BROWSER_COMMAND_TERMINAL_STATE_SET, projectId, slot, state),
     onDownloadDone: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, download: BrowserDownloadDone) =>
         callback(download);

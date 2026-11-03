@@ -30,6 +30,7 @@ import { webContents } from 'electron';
 import { detachDebugger, isDebuggerAttached } from '../../src/main/browser/cdp/cdp';
 import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { BrowserPaneRegistry, type RegisterSurfaceInput } from '../../src/main/browser/browser-pane-registry';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 import {
   getViewportOverride,
   rememberViewportOverride,
@@ -519,6 +520,31 @@ describe('BrowserPaneRegistry', () => {
       registry.register(REGISTER_A);
       const result = registry.resolveTarget({ projectId: 'proj-1', callerSessionId: 'sess-nobody' });
       expect(result.ok && result.entry.sessionId).toBe('pane_aaaaaaaa');
+    });
+
+    // A Command Terminal agent's connection names its session, and resolves to
+    // its slot's owner key. Before that it named nothing, and a bare drive took
+    // the single pane open in the project: a task's, logged-in session included.
+    it('a Command Terminal caller never falls through to the one task pane open in its project', () => {
+      seedGuests(fakeGuest(11), fakeGuest(77));
+      registry.register(REGISTER_A); // task-1's pane, the only one in proj-1
+      const owner = commandTerminalBrowserOwner('proj-1', 'slot-1');
+      const result = registry.resolveTarget({ projectId: 'proj-1', callerSessionId: 'sess-terminal', callerTaskId: owner });
+      expect(result).toMatchObject({ ok: false, kind: 'no-pane-open' });
+      expect(result.ok === false && result.detail).toContain('your Command Terminal');
+    });
+
+    it("a Command Terminal caller resolves its own pane, and a task's only by naming it", () => {
+      seedGuests(fakeGuest(11), fakeGuest(77));
+      const owner = commandTerminalBrowserOwner('proj-1', 'slot-1');
+      registry.register(REGISTER_A);
+      registry.register({ handle: 'pane_77777777', ownerSessionId: 'sess-terminal', taskId: owner, projectId: 'proj-1', webContentsId: 77, url: null });
+      const own = registry.resolveTarget({ projectId: 'proj-1', callerSessionId: 'sess-terminal', callerTaskId: owner });
+      expect(own.ok && own.entry.sessionId).toBe('pane_77777777');
+      const named = registry.resolveTarget({ projectId: 'proj-1', taskId: 'task-1', callerSessionId: 'sess-terminal', callerTaskId: owner });
+      expect(named.ok && named.entry.sessionId).toBe('pane_aaaaaaaa');
+      const listed = registry.list().find((status) => status.sessionId === 'pane_77777777');
+      expect(listed).toMatchObject({ owner: 'command-terminal', commandTerminalSlot: 'slot-1' });
     });
 
     it("reports an own-task ambiguity against the caller's task", () => {

@@ -100,6 +100,36 @@ describe('migrateOpenCodeProjectData', () => {
     expect(rows.projectDir.directory).toBe(NEW_PATH);
   });
 
+  // OpenCode 2 (2.2.5) keeps the database and writes its sessions to
+  // `session_v2`, with forward slashes in `directory`. Left alone, a relocated
+  // project's V2 sessions no longer matched the session poll's directory. The
+  // rewrite keeps the stored separator: forward slashes stay forward slashes
+  // (on Windows `path.join` would hand back backslashes), and a native value
+  // stays native. On POSIX both forms are the same string.
+  it('rewrites OpenCode 2\'s session_v2 and worktree directories, keeping each value\'s separators', async () => {
+    const forwardSlashOld = OLD_PATH.replace(/\\/g, '/');
+    const forwardSlashNew = NEW_PATH.replace(/\\/g, '/');
+    const oldWorktree = path.join(OLD_PATH, '.kangentic', 'worktrees', 'feat-x').replace(/\\/g, '/');
+    createDb((db) => {
+      db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, path TEXT)');
+      db.exec('CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, path TEXT)');
+      db.exec('CREATE TABLE worktree (project_id TEXT, directory TEXT PRIMARY KEY)');
+      db.prepare('INSERT INTO session_v2 VALUES (?, ?, ?)').run('v2', forwardSlashOld, '');
+      db.prepare('INSERT INTO session_v2 VALUES (?, ?, ?)').run('v2-worktree', oldWorktree, '');
+      db.prepare('INSERT INTO worktree VALUES (?, ?)').run('p1', OLD_PATH);
+    });
+
+    await migrateOpenCodeProjectData(OLD_PATH, NEW_PATH);
+
+    const rows = queryDb((db) => ({
+      sessions: db.prepare('SELECT id, directory FROM session_v2 ORDER BY id').all() as Array<{ id: string; directory: string }>,
+      worktree: db.prepare('SELECT directory FROM worktree').get() as { directory: string },
+    }));
+    expect(rows.sessions.find((row) => row.id === 'v2')?.directory).toBe(forwardSlashNew);
+    expect(rows.sessions.find((row) => row.id === 'v2-worktree')?.directory).toBe(`${forwardSlashNew}/.kangentic/worktrees/feat-x`);
+    expect(rows.worktree.directory).toBe(NEW_PATH);
+  });
+
   it('tolerates a missing column (session without a path column)', async () => {
     createDb((db) => {
       db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)');

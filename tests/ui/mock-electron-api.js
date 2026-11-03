@@ -225,6 +225,8 @@
   // the UI tier drives them through the emit/seed helpers below.
   let browserOffscreenSubscribers = [];
   let browserOffscreenSeed = [];
+  // Each Command Terminal slot's saved Browser layout, keyed `<projectId>::<slot>`.
+  let commandTerminalBrowserStates = {};
   let browserDownloadSubscribers = [];
   let browserUserKeySubscribers = [];
   // Guest mouse back/forward presses forwarded from main. A real guest
@@ -420,6 +422,7 @@
     workspaceByProject: {},
     commandTerminalWorkspace: null,
     commandTerminalPanel: null,
+    commandTerminalPanelByShape: {},
     // Mirrors DEFAULT_CONFIG.commandTerminalRail.
     commandTerminalRail: { width: 300, collapsed: false },
     commandTerminalOpenProjectId: null,
@@ -3122,7 +3125,7 @@
             .filter(function (listener) { return listener !== callback; });
         };
       },
-      killTransient: async function (sessionId) {
+      killTransient: async function (sessionId, options) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
         if (index === -1) return;
         var removed = sessions.splice(index, 1)[0];
@@ -3130,6 +3133,18 @@
         // removal, so a spec sees the push a desktop Stop really produces.
         if (typeof window !== 'undefined' && window.__mockFireRemoved) {
           window.__mockFireRemoved(sessionId, removed, removed.projectId);
+        }
+        // And main's Command Terminal browser cleanup, which a final end runs and
+        // a respawn (a branch switch, a resume in place) skips: the slot's pane is
+        // closed through the same push an agent's close_pane uses.
+        var respawn = !!(options && options.respawn);
+        if (!respawn && removed.commandTerminalSlot && removed.projectId) {
+          var ownerKey = 'command-terminal::' + removed.projectId + '::' + removed.commandTerminalSlot;
+          delete commandTerminalBrowserStates[removed.projectId + '::' + removed.commandTerminalSlot];
+          delete browserUrls[ownerKey];
+          browserPaneCloseSubscribers.slice().forEach(function (callback) {
+            callback(removed.projectId, [ownerKey]);
+          });
         }
       },
       // Call log for test assertions. Each entry is the string[] of session IDs
@@ -3620,6 +3635,10 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
           config.commandTerminalPanel = partial.commandTerminalPanel;
         }
+        // The panel's places per grid shape: written whole, so a shape the renderer dropped goes.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanelByShape')) {
+          config.commandTerminalPanelByShape = Object.assign({}, partial.commandTerminalPanelByShape);
+        }
         // monitorWorkspace is the same kind of blob, for the Agent Monitor's detail layer.
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;
@@ -3647,6 +3666,10 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
           config.commandTerminalPanel = partial.commandTerminalPanel;
+        }
+        // The panel's places per grid shape: written whole, so a shape the renderer dropped goes.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanelByShape')) {
+          config.commandTerminalPanelByShape = Object.assign({}, partial.commandTerminalPanelByShape);
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;
@@ -7188,6 +7211,18 @@
         browserOffscreenSubscribers.slice().forEach(function (callback) { callback(next); });
         return Promise.resolve(true);
       },
+      // A Command Terminal slot's saved Browser layout, per project and slot,
+      // as main's command-terminal-browser-store keeps it. Seed and read through
+      // window.__mockBrowser.seedCommandTerminalState / getCommandTerminalStates.
+      getCommandTerminalState: function (projectId, slot) {
+        const saved = commandTerminalBrowserStates[projectId + '::' + slot];
+        return Promise.resolve(saved ? Object.assign({}, saved) : null);
+      },
+      setCommandTerminalState: function (projectId, slot, state) {
+        commandTerminalBrowserStates[projectId + '::' + slot] = Object.assign({}, state);
+        browserPaneCalls.push({ type: 'command-terminal-state', projectId: projectId, slot: slot, state: Object.assign({}, state) });
+        return Promise.resolve();
+      },
       // Main -> renderer "a pane download finished" push, behind the toast.
       // Driven via window.__mockBrowser.emitDownloadDone({fileName, filePath, state}).
       onDownloadDone: function (callback) {
@@ -7262,6 +7297,7 @@
       browserCaptureCalls = [];
       browserPaneCalls = [];
       browserZoomSubscribers = [];
+      commandTerminalBrowserStates = {};
       // NOT reset: the pane open/close subscribers are registered once by
       // useBrowserPaneRequestBridge at app mount, long before a test calls
       // reset(). Clearing them here would silently unsubscribe the bridge and
@@ -7355,6 +7391,14 @@
      *  offscreen before this renderer existed (a reload, or an HMR update). */
     seedOffscreenSurfaces: function (taskIds) {
       browserOffscreenSeed = taskIds.slice();
+    },
+    /** Seed a Command Terminal slot's saved Browser layout, as a restart finds it. */
+    seedCommandTerminalState: function (projectId, slot, state) {
+      commandTerminalBrowserStates[projectId + '::' + slot] = Object.assign({}, state);
+    },
+    /** Every saved Command Terminal Browser layout, keyed `<projectId>::<slot>`. */
+    getCommandTerminalStates: function () {
+      return JSON.parse(JSON.stringify(commandTerminalBrowserStates));
     },
     /** Fire main's "a pane download finished" push. */
     emitDownloadDone: function (download) {

@@ -2478,6 +2478,18 @@ export interface SessionEvent {
    */
   noActivityHold?: boolean;
   /**
+   * On a named `background_shell_start`: the holder ends by itself this many
+   * ms after it started, whatever its end notice says. The open-work ledger
+   * closes it then, and the engine drains it, a minute's grace later
+   * (`SessionTelemetry`), so a reworded end notice cannot keep a dead holder
+   * open: one CLI release renamed Claude's Monitor timeout, and every expired
+   * Monitor read as running work for good. Undefined means no limit reported.
+   *
+   * Source: Claude's Monitor PostToolUse `tool_response.timeoutMs`, for a
+   * Monitor that is not `persistent` (`extractHolderTimeout`).
+   */
+  expiresAfterMs?: number;
+  /**
    * On a `tool_start`: the call starts a subagent (Claude's Agent tool), so a
    * `subagent_start` may be its own approved call running. The engine closes a
    * permission prompt on a `subagent_start` only when the call it awaited
@@ -5006,12 +5018,20 @@ export interface AppConfig {
    *  Null until a layout is first saved. See
    *  src/renderer/components/command-bar/ + window-manager/persistence/. */
   commandTerminalWorkspace: SerializedWorkspace | null;
-  /** GLOBAL position and size of the Command Terminal panel over the board, as
-   *  fractions of the area between the title bar and the status bar, and whether
-   *  it is maximized. Shared across all projects, like the layout above. Null
-   *  until the panel is first moved, resized or maximized. Renderer-authoritative,
-   *  always written whole. See src/renderer/components/command-bar/. */
+  /** The Command Terminal panel's single place from before it kept one per grid
+   *  shape. Nothing writes it any more: a shape with no place in
+   *  `commandTerminalPanelByShape`, and no other shape saved, starts from it, so
+   *  an update moves no panel. Null on an install that never placed the panel. */
   commandTerminalPanel: CommandTerminalPanelGeometry | null;
+  /** GLOBAL position and size of the Command Terminal panel over the board, one
+   *  per grid shape (one terminal, two, three or four), as fractions of the area
+   *  between the title bar and the status bar, and whether it is maximized.
+   *  Shared across all projects, like the layout above, so every project showing
+   *  the same shape shows the same place. A shape gets its place when the panel
+   *  first shows it after a count change, or is moved, resized or maximized.
+   *  Renderer-authoritative, always written whole. See
+   *  src/shared/command-terminal-panel.ts. */
+  commandTerminalPanelByShape: CommandTerminalPanelPlaces;
   /** GLOBAL width of the Command Terminal panel's rail, as the user dragged its
    *  edge (200 to 400, 300 by default), and whether it is folded to its 37px
    *  strip. Shared across all projects and the detached Command Terminal window,
@@ -5294,6 +5314,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   commandTerminalPanel: null,
+  commandTerminalPanelByShape: {},
   commandTerminalRail: { width: COMMAND_RAIL_DEFAULT_WIDTH_PX, collapsed: false },
   commandTerminalOpenProjectId: null,
   monitorWorkspace: null,
@@ -7557,6 +7578,13 @@ export interface CommandTerminalPanelGeometry {
   maximized: boolean;
 }
 
+/** The panel's grid shapes, each with a place of its own: one terminal, two side
+ *  by side, and three or four in two columns by two rows, which share a minimum. */
+export type CommandTerminalPanelShape = 'one' | 'two' | 'grid';
+
+/** The panel's place for each grid shape that has one. */
+export type CommandTerminalPanelPlaces = Partial<Record<CommandTerminalPanelShape, CommandTerminalPanelGeometry>>;
+
 /**
  * One earlier conversation a project's Command Terminals held, for the panel's
  * Earlier list. Only conversations someone used, whose terminal has ended, and
@@ -8451,7 +8479,9 @@ export interface ElectronAPI {
      */
     getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<SpawnTransientSessionResult>;
-    killTransient: (sessionId: string) => Promise<void>;
+    /** `respawn`: a branch switch or a resume in place ends this session to
+     *  start the slot again at once, so the slot's Browser pane is kept. */
+    killTransient: (sessionId: string, options?: { respawn?: boolean }) => Promise<void>;
     /** Mirror where a Command Terminal's checkout actually sits, re-derived
      *  from live HEAD by the renderer, onto its live registry row so the
      *  Monitor row and a post-reload adopt agree with the pill. Last write
@@ -9246,6 +9276,14 @@ export interface ElectronAPI {
      *  window directly. True when something was closed. */
     closeOffscreenSurface: (taskId: string, projectId?: string | null) => Promise<boolean>;
     /**
+     * A Command Terminal slot's saved Browser layout (open, and the split), or
+     * null when it has none. A task keeps these on its row; a terminal has no
+     * row, so main keeps them per project and slot (`command-terminal-browser-store.ts`).
+     */
+    getCommandTerminalState: (projectId: string, slot: string) => Promise<CommandTerminalBrowserState | null>;
+    /** Save a Command Terminal slot's Browser layout. */
+    setCommandTerminalState: (projectId: string, slot: string, state: CommandTerminalBrowserState) => Promise<void>;
+    /**
      * A file download started from a Browser pane has finished. The pane saves
      * silently to the OS Downloads folder (what Chrome does), so this push is
      * what stops an agent-triggered download from being invisible.
@@ -9453,6 +9491,16 @@ export interface BrowserCaptureInput {
  */
 export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
 export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
+/**
+ * A Command Terminal slot's Browser layout, saved per project and slot so the
+ * pane comes back after a restart and in the detached Command Terminal window.
+ * `ratio` is the terminal's share of the split, as a task's `dividerRatio`.
+ */
+export interface CommandTerminalBrowserState {
+  open: boolean;
+  ratio?: number;
+}
 
 export interface BrowserPaneRegisterInput {
   /** The agent session this pane serves (the registry records it as the

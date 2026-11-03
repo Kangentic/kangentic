@@ -19,7 +19,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   OpenCodeAdapter,
   OpenCodeCommandBuilder,
+  OpenCodeDetector,
 } from '../../src/main/agent/adapters/opencode';
+import { OPENCODE_REMOTE_NEEDS_V1 } from '../../src/main/agent/adapters/opencode/version';
 import { OpenCodeSessionHistoryParser } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import { mapOpenCodeRemoteEntries } from '../../src/main/agent/adapters/opencode/transcript-parser';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages, type FetchLike } from '../../src/main/agent/adapters/opencode/remote-client';
@@ -419,6 +421,26 @@ describe('probeOpenCodeServer', () => {
     const result = await probeOpenCodeServer({ url: null, auth: { kind: 'none' } }, fetchImpl);
     expect(result).toEqual({ reachable: false, reason: 'No server URL configured' });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+});
+
+// The OpenCode 2 server client and its connection test are main's (#974). What
+// this task adds is the local side: the OpenCode 1 `attach` command a remote
+// spawn builds is not a command OpenCode 2 has, so a local V2 is refused.
+describe('remote mode with a local OpenCode 2', () => {
+  it('blocks the spawn with the reason, and the connection test answers it before the server is asked', async () => {
+    const versionSpy = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+    try {
+      const adapter = new OpenCodeAdapter();
+      expect(() => adapter.buildCommand(makeOptions({ executionTarget: REMOTE_TARGET }))).toThrow(OPENCODE_REMOTE_NEEDS_V1);
+      // Nothing is tracked for a spawn that never started.
+      expect(adapter.remoteExecution.knownTargets()).toEqual([]);
+      const probe = await adapter.remoteExecution.probeServer({ url: 'http://127.0.0.1:1', auth: { kind: 'none' } });
+      expect(probe).toEqual({ reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 });
+    } finally {
+      versionSpy.mockRestore();
+    }
   });
 });
 

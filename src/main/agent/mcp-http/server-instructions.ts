@@ -7,10 +7,10 @@
  * cross-project tool calls when the user's prompt names a project that
  * differs from the URL-path-bound "active" project (without this guidance
  * the agent silently defaults to the active project and misfiles tasks,
- * e.g. filing a Kangentic bug into OCC-RBDMS-OKIES because that's the
+ * e.g. filing a Kangentic bug into another project because that is the
  * project the Claude Code session is bound to); and (2) tell the agent
- * when to reach for the kangentic_browser_* tools to verify the running
- * app, advertising any Browser panes currently open in the active project.
+ * that the kangentic_browser_* tools are the only browser it drives,
+ * advertising any Browser panes currently open in the active project.
  *
  * The registered-project list is embedded live so the agent sees real
  * routing candidates without needing a separate kangentic_list_projects
@@ -25,23 +25,37 @@ import type { RequestResolver } from './project-resolver';
 export const INSTRUCTIONS_PROJECT_LIST_CAP = 20;
 
 /** Maximum number of open Browser panes named in the instructions string. */
-const INSTRUCTIONS_PANE_LIST_CAP = 5;
+export const INSTRUCTIONS_PANE_LIST_CAP = 5;
 
 /**
- * Browser-verification guidance for the `kangentic_browser_*` tools. A static
- * when/when-not paragraph (so natural prompts like "does the page render?"
- * trigger the tools without a magic prefix, and the agent does not drive the
- * browser proactively), plus a live advertisement of the panes currently open
- * in the active project so the agent knows the capability is available and
- * where it points - no `list_panes` round-trip needed to discover them.
+ * Claude Code cuts a server's instructions at 4,096 characters by default
+ * (MCP docs, "Scale with MCP tool search"), and the agent sees only the text
+ * before the cut. The builder never passes it: the project list is shortened
+ * first. `tests/unit/mcp-server-instructions-cap.test.ts` fails when the fixed
+ * text leaves too little room for a typical list.
+ */
+export const MCP_INSTRUCTIONS_CHARACTER_CAP = 4096;
+
+/** A pane URL is cut to this many characters in the instructions. */
+const INSTRUCTIONS_PANE_URL_CAP = 80;
+
+function shortenUrl(url: string): string {
+  return url.length > INSTRUCTIONS_PANE_URL_CAP ? `${url.slice(0, INSTRUCTIONS_PANE_URL_CAP - 3)}...` : url;
+}
+
+/**
+ * The browser policy for the `kangentic_browser_*` tools (task #977): the
+ * Agent Browser is the only browser, for any page and any purpose. Every agent
+ * gets this channel; an agent CLI that takes system prompt text also gets the
+ * longer `BROWSER_POLICY_PROMPT`, and Claude's PreToolUse hook denies the
+ * other browser servers. A live advertisement of the panes open in the active
+ * project follows, so no `list_panes` round trip is needed to find them.
  */
 function buildBrowserSection(activeProjectId: string | null): string[] {
   const lines = [
-    'BROWSER VERIFICATION (kangentic_browser_* tools):',
-    'Use the kangentic_browser_* tools for ANY request to verify, check, look at, click, type, or test something in the running app or a web page. They drive the embedded Browser pane of a task, which is the dev server the user actually has on screen.',
-    'Do NOT use mcp__claude-in-chrome__* tools, a desktop or system browser, a computer-use tool, or a Playwright/Puppeteer/Selenium script for this. Every one of those drives a DIFFERENT browser from the one the user is watching, with different cookies and a different session, so what you observe there is not what the user sees and cannot verify their app. Reach for one only if the user explicitly names it.',
-    'OPEN THE PANE. If no browser is open, call kangentic_browser_open_pane with a url - you do not need to ask the user, and "the user closed it" is not a reason to avoid reopening it. A task has exactly ONE browser surface, so there is nothing to choose: that call either shows the pane or, when your project is not the one currently open, brings the same surface up offscreen and tells you so.',
-    'Call kangentic_browser_list_panes first; target a tool with the surface handle it lists (passed as sessionId) or with a taskId, or omit both to use your own task\'s surface (a caller with no task falls back to the single pane open in this project). A handle names one tab for its lifetime; if that tab is gone the call fails with surface-gone and names the replacement. These tools only drive Browser panes in this project; one in another project is refused. Call kangentic_browser_close_pane when you are done to put the pane away. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
+    'BROWSER (kangentic_browser_* tools):',
+    'The Kangentic Agent Browser is the only browser you drive, for any page (localhost, staging, production or a third-party site) and any purpose: checking the app, screenshots or DOM for your own work or an artifact, comparing sites, scraping. Do NOT use mcp__playwright__* or mcp__claude-in-chrome__* tools, chrome-devtools or puppeteer MCP servers, computer use, or a Playwright/Puppeteer/Selenium script: each drives a different browser from the pane the user watches. Open a browser only when the work needs one.',
+    'OPEN THE PANE. If none is open, call kangentic_browser_open_pane with a url; you do not need to ask the user, even if they closed it. A task, and a Command Terminal, has exactly ONE browser surface. Omit sessionId and taskId to drive your own surface, or pass a handle from kangentic_browser_list_panes as sessionId. A gone tab fails with surface-gone and names the replacement. Panes in other projects are refused. kangentic_browser_screenshot, _screenshot_element, _query_dom and _eval take saveToFile for large output. Call kangentic_browser_close_pane when done.',
   ];
   const panes = browserPaneRegistry
     .list()
@@ -49,22 +63,22 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
   if (panes.length === 1) {
     const pane = panes[0];
     lines.push(
-      `A Browser pane is currently open${pane.url ? ` at ${pane.url}` : ''} (task ${pane.taskId}). You can drive it now with the kangentic_browser_* tools - drive this pane, not a separate external browser.`,
+      `A Browser pane is currently open${pane.url ? ` at ${shortenUrl(pane.url)}` : ''} (task ${pane.taskId}). Drive this pane, not a separate external browser.`,
     );
   } else if (panes.length > 1) {
     const summary = panes
       .slice(0, INSTRUCTIONS_PANE_LIST_CAP)
-      .map((pane) => `task ${pane.taskId}${pane.url ? ` (${pane.url})` : ''}`)
+      .map((pane) => `task ${pane.taskId}${pane.url ? ` (${shortenUrl(pane.url)})` : ''}`)
       .join(', ');
     lines.push(
-      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its handle as sessionId or its taskId - drive these panes, not a separate external browser.`,
+      `${panes.length} Browser panes are currently open: ${summary}. Drive one by passing its handle as sessionId or its taskId - drive these panes, not a separate external browser.`,
     );
   }
   return lines;
 }
 
 /**
- * @param browserAutomationEnabled When false, the BROWSER VERIFICATION section
+ * @param browserAutomationEnabled When false, the BROWSER section
  *   is omitted because the `kangentic_browser_*` tools are not registered (the
  *   global policy blocks them). Keeps the instructions consistent with the
  *   advertised tool set and sheds the section's tokens for opt-out users.
@@ -105,20 +119,26 @@ export function buildServerInstructions(
     lines.push('', ...buildBrowserSection(active?.id ?? null));
   }
 
-  if (projects.length > 0) {
-    lines.push('', 'Registered projects (use any name or id below as the `project` argument):');
-    const listed = projects.slice(0, INSTRUCTIONS_PROJECT_LIST_CAP);
-    for (const project of listed) {
-      const activeTag = project.isActive ? ' [active]' : '';
-      lines.push(`- ${sanitizeProjectName(project.name)}${activeTag}`);
-    }
-    if (projects.length > INSTRUCTIONS_PROJECT_LIST_CAP) {
-      const remaining = projects.length - INSTRUCTIONS_PROJECT_LIST_CAP;
-      lines.push(`- ... and ${remaining} more. Call kangentic_list_projects for the full list.`);
-    }
-  } else {
+  if (projects.length === 0) {
     lines.push('', 'Call kangentic_list_projects at any time to discover registered projects.');
+    return lines.join('\n');
   }
 
+  lines.push('', 'Registered projects (use any name or id below as the `project` argument):');
+  const fixedText = lines.join('\n');
+  const entries = projects.slice(0, INSTRUCTIONS_PROJECT_LIST_CAP).map((project) =>
+    `- ${sanitizeProjectName(project.name)}${project.isActive ? ' [active]' : ''}`);
+  const moreLine = (remaining: number): string => `- ... and ${remaining} more. Call kangentic_list_projects for the full list.`;
+  // Keep as many names as fit under the cap with the "more" line after them.
+  let listedCount = entries.length;
+  const lengthWith = (count: number): number => {
+    const omittedCount = projects.length - count;
+    const listText = [...entries.slice(0, count), ...(omittedCount > 0 ? [moreLine(omittedCount)] : [])].join('\n');
+    return fixedText.length + 1 + listText.length;
+  };
+  while (listedCount > 0 && lengthWith(listedCount) > MCP_INSTRUCTIONS_CHARACTER_CAP) listedCount -= 1;
+  const remaining = projects.length - listedCount;
+  lines.push(...entries.slice(0, listedCount));
+  if (remaining > 0) lines.push(moreLine(remaining));
   return lines.join('\n');
 }

@@ -339,6 +339,17 @@ reveals what that one cannot avoid.
   claim after an agent open. That is not a promise that a claim always survives an agent open:
   `windowFocusFingerprint()` invalidates a pending claim on ANY window open, so one made just before
   dies at tier 1 regardless.
+- **A Command Terminal panel an agent opens is stamped the same way.** `open_pane` from a
+  Command Terminal whose panel is hidden reaches `useCommandTerminalBrowserBridge`
+  (`components/command-bar/command-terminal-browser.ts`), which stamps every command window
+  `openedByAgent` before it asks for the panel, and again the moment the panel shows, since the
+  open can create the window it lands in. `resolveFocusedWindowTerminal` reads the focused command
+  window's stamp, so the agent-window tier denies every arriving terminal. A panel already showing
+  is left alone: nothing expands, nothing moves, nothing arrives. That makes it a fourth
+  agent-reachable bridge beside the three task-detail ones. Its stamp is pinned only by
+  `tests/ui/command-terminal-browser.spec.ts` (an agent open with the panel hidden, with and
+  without a window yet, takes no focus): `agent-driven-focus-sites.test.ts` pins the three
+  task-detail bridges by argument, not this one.
 - **`focusWindow` clears the stamp, and the agent path re-stamps after focusing.** The clear happens
   BEFORE the same-id early return, because an agent-opened window IS the focused one, so the user's
   pointer-down on its frame takes exactly that path. Default-by-omission is "user", so a user path

@@ -46,6 +46,13 @@ export interface TurnCompletionOptions {
   /** Give up after this long and report `timeout`. */
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Also count a turn the agent ended whose session only background work it
+   * left keeps thinking (`SessionManager.isTurnHeldByBackgroundWork`): its
+   * agent sits at its prompt. Only a running workflow asks for it, in its
+   * turn-end pass and its recovery nudge; every other caller waits for idle.
+   */
+  acceptHeld?: boolean;
 }
 
 const DEFAULT_QUIET_MS = 1_500;
@@ -98,7 +105,11 @@ export function waitForTurnCompletion(
         clearTimeout(quietTimer);
         quietTimer = null;
       }
-      if (!isTurnComplete(activity)) return;
+      // Not `isTurnSettled`: this reads the activity the wait last heard, not
+      // the cache, which a listener ahead of this one may not have written yet.
+      const complete = isTurnComplete(activity)
+        || (options.acceptHeld === true && sessionManager.isTurnHeldByBackgroundWork(sessionId));
+      if (!complete) return;
       const quietFor = Date.now() - lastOutputAt;
       if (quietFor >= quietMs) {
         finish('completed');

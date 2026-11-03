@@ -1815,6 +1815,48 @@ test.describe('Command Terminal', () => {
       expect(await spawnCountFor(page, PROJECT_B_ID)).toBe(1);
     });
 
+    test('the panel\'s place is global per terminal count: project B with two terminals opens at the two-terminal place set in project A', async () => {
+      const page = reconcilePage;
+      const panelBox = async () => {
+        const box = await page.getByTestId('command-terminal-panel').boundingBox();
+        if (!box) throw new Error('no panel');
+        return box;
+      };
+
+      // Two terminals in Project A, and the user moves that panel.
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await page.getByTestId('command-terminal-new').click();
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+      const before = await panelBox();
+      const header = await page.getByTestId('command-terminal-panel-header').boundingBox();
+      if (!header) throw new Error('no panel header');
+      await page.mouse.move(header.x + header.width / 2, header.y + header.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(header.x + header.width / 2 - 300, header.y + header.height / 2 + 50, { steps: 6 });
+      await page.mouse.up();
+      await expect.poll(async () => (await panelBox()).x, { timeout: 3000 }).toBeLessThan(before.x - 250);
+      const twoTerminalPlace = await panelBox();
+
+      // Hide, switch to Project B, and open: one terminal, at the one-terminal place.
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+      await page.locator('[role="button"]:has-text("Project Beta")').click();
+      await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      expect(Math.abs((await panelBox()).x - twoTerminalPlace.x)).toBeGreaterThan(250);
+
+      // A second terminal in B moves the panel to the place A's two terminals had.
+      await page.getByTestId('command-terminal-new').click();
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+      await expect.poll(async () => Math.abs((await panelBox()).x - twoTerminalPlace.x), { timeout: 3000 }).toBeLessThanOrEqual(3);
+      const inB = await panelBox();
+      expect(Math.abs(inB.y - twoTerminalPlace.y)).toBeLessThanOrEqual(3);
+      expect(Math.abs(inB.width - twoTerminalPlace.width)).toBeLessThanOrEqual(3);
+      expect(Math.abs(inB.height - twoTerminalPlace.height)).toBeLessThanOrEqual(3);
+    });
+
     test('returning to a project reopens a window per live session and reattaches without spawning', async () => {
       const page = reconcilePage;
 
@@ -2695,7 +2737,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel ?? null)).toBeNull();
+        expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape ?? {})).toEqual({});
 
         const area = await page.getByTestId('command-terminal-panel-area').boundingBox();
         const panel = await page.getByTestId('command-terminal-panel').boundingBox();
@@ -2762,9 +2804,10 @@ test.describe('Command Terminal', () => {
         // Fractions of the area that land between pixels, as a dragged panel's do.
         await page.evaluate(() => {
           const stores = (window as unknown as {
-            __zustandStores: { config: { getState: () => { saveCommandTerminalPanel: (geometry: { x: number; y: number; w: number; h: number; maximized: boolean }) => void } } };
+            __zustandStores: { config: { getState: () => { saveCommandTerminalPanelPlaces: (entries: Record<string, { x: number; y: number; w: number; h: number; maximized: boolean }>) => void } } };
           }).__zustandStores;
-          stores.config.getState().saveCommandTerminalPanel({ x: 0.0371, y: 0.0517, w: 0.8913, h: 0.8677, maximized: false });
+          const place = { x: 0.0371, y: 0.0517, w: 0.8913, h: 0.8677, maximized: false };
+          stores.config.getState().saveCommandTerminalPanelPlaces({ one: place, two: place });
         });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
@@ -2814,7 +2857,7 @@ test.describe('Command Terminal', () => {
         const moved = await panel.boundingBox();
         await expect.poll(() => page.evaluate(async () => {
           const config = await window.electronAPI.config.getGlobal();
-          return config.commandTerminalPanel !== null;
+          return config.commandTerminalPanelByShape?.one !== undefined;
         }), { timeout: 3000 }).toBe(true);
 
         await page.keyboard.press('Control+Shift+P');
@@ -2872,7 +2915,7 @@ test.describe('Command Terminal', () => {
         await page.mouse.up();
         await expect.poll(() => page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length), { timeout: 3000 }).toBe(1);
         expectNear((await panel.boundingBox())?.width ?? 0, before.width - 200, 'panel width after release');
-        await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel !== null), { timeout: 3000 }).toBe(true);
+        await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape?.one !== undefined), { timeout: 3000 }).toBe(true);
       } finally {
         await browser.close();
       }
@@ -2895,8 +2938,8 @@ test.describe('Command Terminal', () => {
 
     const resizeCallCount = (page: Page) => page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
 
-    /** The panel's saved place in global config, or null until it is moved or resized. */
-    const savedPanelPlace = (page: Page) => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel ?? null);
+    /** The one-terminal panel's saved place in global config, or null until it is moved or resized. */
+    const savedPanelPlace = (page: Page) => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape?.one ?? null);
 
     /** The grab point at the middle of one of the panel's resize edges. */
     async function edgePoint(page: Page, edge: string): Promise<{ x: number; y: number }> {
@@ -3024,6 +3067,68 @@ test.describe('Command Terminal', () => {
         await settleFrames(page, 20);
         expect(await savedPanelPlace(page)).toBeNull();
         expectSameBox(await boxOf(panel), before, 'panel after the release');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    /** Drag the panel by its header's empty middle, and wait for the move to land. */
+    async function movePanelBy(page: Page, deltaX: number, deltaY: number): Promise<Box> {
+      const panel = page.getByTestId('command-terminal-panel');
+      const before = await boxOf(panel);
+      const header = await page.getByTestId('command-terminal-panel-header').boundingBox();
+      if (!header) throw new Error('no panel header');
+      const grabX = header.x + header.width / 2;
+      const grabY = header.y + header.height / 2;
+      await page.mouse.move(grabX, grabY);
+      await page.mouse.down();
+      await page.mouse.move(grabX + deltaX, grabY + deltaY, { steps: 6 });
+      await page.mouse.up();
+      await expect.poll(async () => Math.abs((await boxOf(panel)).left - (before.left + deltaX)), { timeout: 3000 }).toBeLessThanOrEqual(PIXEL_TOLERANCE);
+      return boxOf(panel);
+    }
+
+    /** The saved places per grid shape, as global config holds them. */
+    const savedPlaceShapes = (page: Page) => page.evaluate(async () =>
+      Object.keys((await window.electronAPI.config.getGlobal()).commandTerminalPanelByShape ?? {}).sort());
+
+    test('each terminal count keeps its own place: a second terminal grows the panel around its center, and Stop brings the one-terminal place back', async () => {
+      // At 1920 the panel's default place is narrower than two terminals at the floor, so
+      // adding the second has to grow it.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), { width: 1920, height: 1080 });
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        const panel = page.getByTestId('command-terminal-panel');
+
+        // The user places the one-terminal panel.
+        const oneBox = await movePanelBy(page, -200, 40);
+        await expect.poll(() => savedPanelPlace(page), { timeout: 3000 }).not.toBeNull();
+
+        // A second terminal grows the panel around the one-terminal panel's center, not from its left edge.
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(async () => (await boxOf(panel)).width, { timeout: 3000 }).toBeGreaterThan(oneBox.width + 20);
+        const grown = await boxOf(panel);
+        expectNear(grown.left + grown.width / 2, oneBox.left + oneBox.width / 2, 'grown panel center');
+        expectNear(grown.top, oneBox.top, 'grown panel top');
+        await expect.poll(() => savedPlaceShapes(page), { timeout: 3000 }).toEqual(['one', 'two']);
+
+        // The user places the two-terminal panel somewhere else.
+        const twoBox = await movePanelBy(page, 120, -30);
+
+        // Stop the second: the panel goes back to the one-terminal place.
+        await page.locator('[data-command-slot="slot-2"]').getByTestId('command-bar-terminate-button').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => Math.abs((await boxOf(panel)).width - oneBox.width), { timeout: 3000 }).toBeLessThanOrEqual(PIXEL_TOLERANCE);
+        expectSameBox(await boxOf(panel), oneBox, 'one-terminal panel after Stop');
+
+        // Add again: the two-terminal place the user set, not one grown anew.
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(async () => Math.abs((await boxOf(panel)).left - twoBox.left), { timeout: 3000 }).toBeLessThanOrEqual(PIXEL_TOLERANCE);
+        expectSameBox(await boxOf(panel), twoBox, 'two-terminal panel after Add');
       } finally {
         await browser.close();
       }
@@ -3992,6 +4097,233 @@ test.describe('Command Terminal', () => {
         expect(await resizesOf(page, second)).toHaveLength(1);
         await expectNoFrameHoldRecovery(page, since);
         await expect(page.getByTestId('command-terminal-panel')).toHaveAttribute('data-maximized', 'true');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Panel place per shape - the panel keeps its place per grid shape (one, two,
+  // grid) in `commandTerminalPanelByShape`; three and four terminals share 'grid'.
+  // ---------------------------------------------------------------------------
+  test.describe('Panel place per shape', () => {
+    const WIDE_VIEWPORT = { width: 1920, height: 1080 };
+    const TOLERANCE = 3;
+
+    interface SavedPlace { x: number; y: number; w: number; h: number; maximized: boolean }
+    interface PlaceBox { left: number; top: number; width: number; height: number }
+
+    async function openTerminalCount(page: Page, count: number): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      for (let opened = 2; opened <= count; opened += 1) {
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(opened, { timeout: 5000 });
+      }
+    }
+
+    const panelPlaceBox = async (page: Page): Promise<PlaceBox> => {
+      const box = await page.getByTestId('command-terminal-panel').boundingBox();
+      if (!box) throw new Error('no panel');
+      return { left: box.x, top: box.y, width: box.width, height: box.height };
+    };
+
+    function expectBoxNear(actual: PlaceBox, expected: PlaceBox, label: string): void {
+      for (const key of ['left', 'top', 'width', 'height'] as const) {
+        expect(Math.abs(actual[key] - expected[key]), `${label} ${key}: ${actual[key]} vs ${expected[key]}`).toBeLessThanOrEqual(TOLERANCE);
+      }
+    }
+
+    /** Wait for the panel to rest at `expected`, then compare, so a late move is a failure and a slow one is not. */
+    async function expectPanelAt(page: Page, expected: PlaceBox, label: string): Promise<void> {
+      await expect.poll(async () => {
+        const actual = await panelPlaceBox(page);
+        return Math.max(...(['left', 'top', 'width', 'height'] as const).map((key) => Math.abs(actual[key] - expected[key])));
+      }, { message: label, timeout: 3000 }).toBeLessThanOrEqual(TOLERANCE);
+    }
+
+    const savedPlaces = (page: Page) => page.evaluate(async () =>
+      ((await window.electronAPI.config.getGlobal()) as unknown as { commandTerminalPanelByShape?: Record<string, SavedPlace> }).commandTerminalPanelByShape ?? {});
+    const savedKeys = async (page: Page) => Object.keys(await savedPlaces(page)).sort();
+
+    /** Move the panel by its header's empty middle and wait for it to land. */
+    async function movePanelHeader(page: Page, deltaX: number, deltaY: number): Promise<PlaceBox> {
+      const before = await panelPlaceBox(page);
+      const header = await page.getByTestId('command-terminal-panel-header').boundingBox();
+      if (!header) throw new Error('no panel header');
+      const grabX = header.x + header.width / 2;
+      const grabY = header.y + header.height / 2;
+      await page.mouse.move(grabX, grabY);
+      await page.mouse.down();
+      await page.mouse.move(grabX + deltaX, grabY + deltaY, { steps: 6 });
+      await page.mouse.up();
+      await expect.poll(async () => Math.abs((await panelPlaceBox(page)).left - (before.left + deltaX)), { timeout: 3000 }).toBeLessThanOrEqual(TOLERANCE);
+      return panelPlaceBox(page);
+    }
+
+    test('a terminal ended from outside the panel returns it to the one-terminal place saved earlier', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 1);
+        const oneBox = await movePanelHeader(page, -200, 40);
+        await expect.poll(async () => (await savedPlaces(page)).one !== undefined, { timeout: 3000 }).toBe(true);
+
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        // At 1920 the one-terminal place is too narrow for two, so the panel grew.
+        await expect.poll(async () => (await panelPlaceBox(page)).width, { timeout: 3000 }).toBeGreaterThan(oneBox.width + 20);
+        await expect.poll(() => savedKeys(page), { timeout: 3000 }).toEqual(['one', 'two']);
+
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
+        const ended = (await transientEntriesFor(page, MULTI_PROJECT_ID)).find((entry) => entry.slot === 'slot-2');
+        if (!ended) throw new Error('no slot-2 entry');
+        await fireTerminalRemoved(page, { id: ended.sessionId, projectId: MULTI_PROJECT_ID, slot: 'slot-2' });
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expectPanelAt(page, oneBox, 'panel back at the one-terminal place');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a terminal ended from outside the panel re-tiles the others as a layout change, each holding its frame', async () => {
+      // Pins closeCommandTerminalWindowInSlot's runTerminalLayoutChange wrapper: without it
+      // the resolver still moves the panel, but no terminal holds its frame.
+      test.setTimeout(45000);
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 2);
+        await markTerminalsReady(page, ['slot-1', 'slot-2']);
+        await expectNoFrameHold(page);
+        await settleResizes(page);
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
+        const ended = (await transientEntriesFor(page, MULTI_PROJECT_ID)).find((entry) => entry.slot === 'slot-2');
+        if (!ended) throw new Error('no slot-2 entry');
+        await watchFrameHolds(page);
+
+        await fireTerminalRemoved(page, { id: ended.sessionId, projectId: MULTI_PROJECT_ID, slot: 'slot-2' });
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        // The survivor held its frame through the re-tile, and drew it once it had repainted.
+        await expect.poll(async () => (await frameHolds(page)).length, { timeout: 3000 }).toBeGreaterThan(0);
+        await expectNoFrameHold(page);
+        expect((await frameHolds(page)).every((hold) => hold.drawn !== null)).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a config from before places per shape opens at the old single place, and saves it for the one-terminal shape', async () => {
+      const legacy = { x: 0.05, y: 0.1, w: 0.7, h: 0.8, maximized: false };
+      const preConfig = `${multiTerminalPreConfig()}
+        window.__mockPreConfigure(function (state) {
+          state.config.commandTerminalPanel = ${JSON.stringify(legacy)};
+          state.config.commandTerminalPanelByShape = {};
+        });`;
+      const { browser, page } = await launchWithState(preConfig, WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 1);
+        const area = await page.getByTestId('command-terminal-panel-area').boundingBox();
+        if (!area) throw new Error('no panel area');
+        await expectPanelAt(page, {
+          left: area.x + legacy.x * area.width,
+          top: area.y + legacy.y * area.height,
+          width: legacy.w * area.width,
+          height: legacy.h * area.height,
+        }, 'panel at the legacy place');
+
+        await expect.poll(async () => (await savedPlaces(page)).one !== undefined, { timeout: 3000 }).toBe(true);
+        const saved = (await savedPlaces(page)).one;
+        for (const key of ['x', 'y', 'w', 'h'] as const) {
+          expect(Math.abs(saved[key] - legacy[key]), `saved ${key}`).toBeLessThanOrEqual(0.01);
+        }
+        // The old place is read and never written.
+        const legacyAfter = await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel);
+        expect(legacyAfter).toEqual(legacy);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('going from three terminals to four neither moves nor resizes the panel, and saves no new shape', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 3);
+        await expect.poll(() => savedKeys(page), { timeout: 3000 }).toContain('grid');
+        await settleFrames(page, 10);
+        const threeBox = await panelPlaceBox(page);
+        const keysBefore = await savedKeys(page);
+        const gridBefore = (await savedPlaces(page)).grid;
+
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(4, { timeout: 5000 });
+        await settleFrames(page, 10);
+
+        await expectPanelAt(page, threeBox, 'panel with four terminals');
+        expect(await savedKeys(page)).toEqual(keysBefore);
+        expect((await savedPlaces(page)).grid).toEqual(gridBefore);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Expand with two terminals keeps the two-terminal place, saves no other shape, and Restore leaves it as it was', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 1);
+        // A one-terminal place of its own, so a jump to it would show.
+        await movePanelHeader(page, -200, 40);
+        await expect.poll(async () => (await savedPlaces(page)).one !== undefined, { timeout: 3000 }).toBe(true);
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(() => savedKeys(page), { timeout: 3000 }).toEqual(['one', 'two']);
+        await settleFrames(page, 10);
+        const twoBox = await panelPlaceBox(page);
+        const placesBefore = await savedPlaces(page);
+
+        const toggle = page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand');
+        await toggle.click();
+        await expect(page.locator('[data-command-slot="slot-1"]').locator('xpath=ancestor::*[@data-expanded="true"]')).toHaveCount(1);
+        await settleFrames(page, 10);
+        await expectPanelAt(page, twoBox, 'expanded panel');
+        expect(await savedPlaces(page)).toEqual(placesBefore);
+
+        await toggle.click();
+        await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0);
+        await settleFrames(page, 10);
+        await expectPanelAt(page, twoBox, 'restored panel');
+        expect(await savedPlaces(page)).toEqual(placesBefore);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a rail edge drag with two terminals saves the two-terminal place and leaves the one-terminal place alone', async () => {
+      test.setTimeout(45000);
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), WIDE_VIEWPORT);
+      try {
+        await openTerminalCount(page, 1);
+        await movePanelHeader(page, -200, 40);
+        await expect.poll(async () => (await savedPlaces(page)).one !== undefined, { timeout: 3000 }).toBe(true);
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(() => savedKeys(page), { timeout: 3000 }).toEqual(['one', 'two']);
+        await settleFrames(page, 10);
+        const before = await savedPlaces(page);
+
+        const edge = await page.getByTestId('command-terminal-rail-edge').boundingBox();
+        if (!edge) throw new Error('no rail edge');
+        const grabX = edge.x + 2;
+        const grabY = edge.y + edge.height / 2;
+        await page.mouse.move(grabX, grabY);
+        await page.mouse.down();
+        await page.mouse.move(grabX + 60, grabY, { steps: 6 });
+        await page.mouse.up();
+
+        await expect.poll(async () => (await savedPlaces(page)).two?.w ?? 0, { timeout: 3000 }).toBeGreaterThan(before.two.w);
+        expect((await savedPlaces(page)).one).toEqual(before.one);
       } finally {
         await browser.close();
       }

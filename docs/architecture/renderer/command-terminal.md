@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Command Terminal
-description: Why the Command Terminal is one auto-tiled panel over a second window-manager layer with main-owned slots, why it ends when its agent exits, why no pause reaches it, how ended conversations are recorded and resumed, expand and swap, its own window, naming in main, phone starts, leftover reaping, per-project branch and geometry, the title-bar toggle, and the sidebar indicator.
+description: Why the Command Terminal is one auto-tiled panel over a second window-manager layer with main-owned slots, why it ends when its agent exits, why no pause reaches it, how ended conversations are recorded and resumed, expand and swap, its own window, naming in main, phone starts, leftover reaping, per-project branch and geometry, each terminal's Browser pane, the title-bar toggle, and the sidebar indicator.
 tags: [command-terminal, window-manager, slots, design, resume]
 sources:
   - resource: src/renderer/components/command-bar/
@@ -17,6 +17,8 @@ sources:
   - resource: src/main/ipc/helpers/command-terminal-background-session.ts
   - resource: src/shared/command-terminal-name.ts
   - resource: src/shared/command-terminal-rail.ts
+  - resource: src/shared/command-terminal-panel.ts
+    title: The panel's place per grid shape
   - resource: src/renderer/utils/folding-edge-drag.ts
   - resource: src/renderer/components/terminal/context-bar-fold.ts
     title: The context bar's one-row fold, whose row sets the pane floor
@@ -30,6 +32,10 @@ sources:
   - resource: src/shared/terminal-input-content.ts
   - resource: src/renderer/components/layout/TitleBar.tsx
   - resource: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+  - resource: src/main/ipc/helpers/command-terminal-browser.ts
+    title: A terminal's browser ends with the terminal
+  - resource: src/main/browser/command-terminal-browser-store.ts
+  - resource: src/shared/browser-owner.ts
 ---
 # Command Terminal
 
@@ -56,11 +62,13 @@ manager-resize gate (`window-manager/terminal/manager-resize-gate.ts`) for the w
 terminals re-tile with the panel but keep their grids, and the gate holds every
 `scheduleWindowTerminalResize` the re-tiling asks for and sends one when the gesture ends, so each
 terminal refits once on release instead of sending its agent a SIGWINCH per pointer frame (12 for
-one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, fractions of that
-area, so it rescales with the window. A panel never moved opens centered at the size that gives a
-lone terminal what a Command Terminal window had before the panel (58% by 70% of the area, the
-window manager's first-window default), with the rail at its 300px default and the 40px header
-added around it. The default reads the rail's default width, never its live one, so a panel
+one test drag without the hold). Its place is kept per grid shape in
+`AppConfig.commandTerminalPanelByShape` (see "Geometry is global, population is per-project"
+below), fractions of that area, so it rescales with the window. A shape with no place opens from
+the nearest saved shape's center, else from the single place saved before shapes, else from the
+default: centered at the size that gives a lone terminal what a Command Terminal window had before
+the panel (58% by 70% of the area, the window manager's first-window default), with the rail at its
+300px default and the 40px header added around it. The default reads the rail's default width, never its live one, so a panel
 nobody moved opens at one size whatever the rail was left at.
 
 The rail is part of the panel. Dragging its edge, folding it and opening it change the panel's
@@ -73,9 +81,10 @@ follow, so an open the right edge cannot take grows the panel to the left. Where
 change (maximized, the detached window, or a drag whose right edge reaches the area's), the
 terminals give the rail its room, never under their floor. The rail's edge looks like a tile seam:
 a thin accent line on the boundary under the pointer and while it drags.
-Every user meets that default on the first open after updating, because the panel's place is a new
-setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
-it.
+Only a panel nobody ever placed meets that default. Someone who placed it before places were kept
+per shape keeps that place for every shape, so an update moves no panel. A first cut at 94% by 92%,
+from when the place was a new setting, made that first open jump from about half the window to all
+of it.
 
 ### Decision: the resize gate closes a drag itself (2026-10-25)
 
@@ -930,6 +939,33 @@ windows is reconciled to the current project's live Command Terminal sessions on
 (`reconcileCommandTerminalWindows` and `planCommandWindowReconciliation` in
 `command-window-reconcile.ts`).
 
+The place is kept per grid shape (`AppConfig.commandTerminalPanelByShape`,
+`src/shared/command-terminal-panel.ts`): one terminal, two side by side, and three or four,
+which share a place because both are two columns by two rows with the same minimum, so a fourth
+terminal never moves the panel. The shape comes from how many terminals the panel tiles; Expand
+is transient and never switches places. It was one place shared by every count, and that shipped
+two faults. The grow-to-fit save grew the box from its left edge, so a panel centered for one
+terminal sat off-center with two. And nothing shrank it again, so stopping a terminal left the
+bigger box, and a project with one terminal opened where the user had arranged two.
+
+A shape with no place starts from the nearest saved shape's center (the smaller one on a tie),
+grows around it to the grid's minimum, and stays inside the area. The nearest saved shape ranks
+above the single place from before shapes (`commandTerminalPanel`, read and never written): a
+user who moves the one-terminal panel after updating and then adds a terminal sees the panel grow
+where they put it. With nothing saved per shape, that single place is the start for every shape,
+so no panel moves on update. A shape's place is saved when it is moved, resized or maximized,
+when the rail's edge resizes the panel, and when the panel first shows it after a terminal
+starts or stops, together with the shape it left if that had none, so stopping back returns to
+it. A panel nobody placed, on the shape it opened with, saves nothing. The rail's width change
+saves only the shape on screen; another shape keeps its box, and `resolveRailWidth` narrows the
+rail there when the terminals need the room.
+
+A start or stop is a layout change (`runTerminalLayoutChange`), so the panel's move to the new
+shape's place lands with the terminals holding their frames. That holds for a terminal ended
+from outside the panel too (a phone's Stop, its agent exiting): `closeCommandTerminalWindowInSlot`
+runs its close as a layout change, the one change no user gesture starts that holds frames. A
+phone start opens no window while the panel is open; the reconcile adds it on the next open.
+
 Project switching keeps every slot's PTY alive in the map, with no stash or restore. The panel
 closes on switch, and on reopen the reconcile closes carried-over windows whose slot has no live
 session for the new project (keeping one default terminal) and opens a window for every live
@@ -957,6 +993,62 @@ cue is a still, faint accent border, shown only while two or more terminals are 
 expanded terminal has nothing to be told apart from. It used to carry a pulsing accent line along
 its top as well; that went on 2026-10-31 for every window the frame draws, task windows included,
 since the border alone tells the tiles apart and the motion only added noise.
+
+## Browser pane
+
+Each terminal has its own Browser pane, the task window's at parity: the Globe pill with its alive
+dot, `commandTerminal.toggleBrowser` (Mod+Shift+B), the terminal and the pane split 50/50 on a seam
+that drags from a quarter to three quarters (`useTaskSplitResize`), Browser and Changes on the same
+side and exclusive (opening one holds or closes the other), Show/Hide and Close browser in the kebab
+and the Running row's menu, the green `BrowserAliveGlobe` after a Running row's name and on a strip
+mark's corner, the Monitor row's globe, and pop out, to a window named for the terminal as a task's
+is for its task (`PopOutSurfaceRoot.tsx`). It is keyed by the slot's owner key,
+`command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`), in the same session-store
+sets a task uses. The key carries the project because the sets are flat and the pane outlives a
+project switch, and the slot rather than the session because a branch switch or a resume in place
+respawns the slot under a new id.
+
+**The pane never lives in the panel.** Before this, a Command Terminal agent that asked for a
+browser got `no-caller-task` and, in one reported session, went looking for the user's Chrome
+extension instead. Mounting the pane inside the window would not have been enough: the panel
+unmounts on every hide, project switch and Open in new window, and a `<webview>` dies with its
+node, so the page would reload and lose `sessionStorage` each time. So the window draws an empty
+slot (`data-command-terminal-browser-slot`), and `CommandTerminalBrowserHost`, mounted always in
+`AppLayout` and in the detached window's root, renders every open pane in a stable, keyed list and
+lays each over its slot. It re-places a pane when its slot mounts or unmounts (the slot announces
+both), when the panel shows or hides, and when the window store changes, and follows a moving slot
+on animation frames with a 250 ms timer beside them. Events carry the weight because a minimized
+window throttles both: measured in a preview, a poll alone left a hidden pane reporting `showing`
+for seconds after the panel hid. With no slot showing it (the panel hidden, another project, behind
+Expand, held, a swap drag in flight) the pane stays at its last rect at `opacity: 0`, inert and
+taking no pointer, which keeps the guest compositing for an agent's screenshot. A drag that locks
+the body's text selection (the seam, a window edge) also takes the pointer off the pane, since the
+host sits above the panel and the drag's capture overlay cannot cover it. Through a respawn's gap
+the pane keeps its last session and re-registers in place. The alternatives (a lane hand-off on
+every hide, or keeping the whole panel mounted) are in the embedded browser decision log,
+decision 43.
+
+**An agent opens it without taking the keyboard.** `useCommandTerminalBrowserBridge` handles
+main's open and close requests for terminal keys (the board's request bridge skips them). With the
+panel hidden it opens the panel through the pending-open flag, stamping every command window
+`openedByAgent` first and again as the panel shows, so the arrival-focus agent-window tier denies
+every terminal. A panel already showing is left as it is. The detached window runs the same bridge
+for its own project, and the main window leaves that project's panes to it.
+
+**It ends with the terminal, and its layout survives a restart.** Main's
+`ipc/helpers/command-terminal-browser.ts` listens on `session-removed` and, for a Command Terminal,
+closes the pane, its Browser pop-out and any offscreen lane, resets viewport overrides, and clears
+the saved URL and layout. The task path does this off a `sessions` row a terminal does not have. A
+branch switch and a resume in place kill with `{ respawn: true }`, which keeps all of it while the
+slot's next start runs. A respawn whose start fails leaves the slot empty, and a check
+`RESPAWN_SETTLE_MS` later (re-armed while a start holds the slot) ends the browser as Stop would
+have. A pty host crash keeps it for the restore (`isRestorableAfterHostLoss`, the leftover reaper's
+own check), and `restoreLostCommandTerminals` ends it for a lost slot no terminal came back to.
+Main saves a layout only while the slot has a live terminal, because the renderer can hear the
+end's close push before its removal push and save after the end cleared the entry. The open
+flag and the split are saved per project and slot (`command-terminal-browser-store.ts`,
+`.kangentic/command-terminal-browser.json`), never in the global workspace, and read once per
+renderer per slot, which is how a restart restore and the detached window reopen the pane.
 
 ## One title-bar toggle
 

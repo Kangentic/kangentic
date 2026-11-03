@@ -3230,7 +3230,9 @@ for (const scene of CUT_SCENES) {
         };
       };
       const ours = (node: Node): boolean => node instanceof Element && (node.closest('[data-demo-veil], [data-demo-cursor], .xterm') !== null);
-      const SHOWN = '[data-task-id], [role="dialog"], [data-dismissable-layer]';
+      // A menu is shown as much as a dialog is: a Command Terminal row's menu is a body portal with
+      // no dismissable-layer marker, so it is named here, or a reset that closes one reads as none.
+      const SHOWN = '[data-task-id], [role="dialog"], [role="menu"], [data-dismissable-layer]';
       // A dragged card, which plays its drop animation after the release; dnd-kit unmounts the
       // wrapper around it, so the overlay is looked for inside what came and went too.
       const OVERLAY = '.drag-overlay';
@@ -4476,8 +4478,10 @@ test('a Command Terminal that tiles beside a new one repaints from the boot reco
   const getUnexpectedErrors = collectUnexpectedErrors(page);
   // The panel opens maximized, as in the tiled scene: in the 1600px frame only a maximized panel
   // holds two terminals at the 650px floor, and at its default place the second would open
-  // expanded over the first instead of tiling beside it.
-  const maximizedPanel = { config: { commandTerminalPanel: { x: 0.18, y: 0.15, w: 0.64, h: 0.7, maximized: true } } };
+  // expanded over the first instead of tiling beside it. The panel keeps a place per grid shape,
+  // and the terminal opens alone before the second joins it, so both shapes are placed.
+  const maximizedPlace = { x: 0.18, y: 0.15, w: 0.64, h: 0.7, maximized: true };
+  const maximizedPanel = { config: { commandTerminalPanelByShape: { one: maximizedPlace, two: maximizedPlace } } };
   await gotoScene(page, { view: 'board', state: encodeState(maximizedPanel) });
   // spring-petclinic has no Command Terminal yet, so opening the layer boots one alone, at the
   // single-window width.

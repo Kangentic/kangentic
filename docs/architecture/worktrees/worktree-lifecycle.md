@@ -354,6 +354,7 @@ All in `src/main/agent/`:
 | `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
 | `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` or `tool_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode`; and matcher `mcp__.*|Artifact` for the tool approval entry | Approves the plan when the session's `plan-approval.json` says to, and while it does, an allowed MCP tool plan mode asks about and a built-in Artifact read, list or publish (no allow rule needed; a delete still prompts); otherwise prints nothing (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)) |
 | `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#background-shell-hint-bridgejs)) |
+| `browser-policy-bridge.js` | stdout | `PreToolUse`, matcher covering the browser-automation MCP servers (Claude) | Denies a Playwright, Puppeteer, chrome-devtools or Claude in Chrome tool while the Agent Browser is on, read live from the global config, and points the agent at `kangentic_browser_open_pane` (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#browser-policy-bridgejs)) |
 
 The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Claude Code](../../integrations/agents/claude-code.md#hook-injection) for the full mapping.
 
@@ -377,13 +378,13 @@ All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/
 
 ### Hook Identification
 
-A command is a Kangentic hook (`isKangenticHookCommand`) when it names a known bridge (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`) AND carries one of these markers:
+A command is a Kangentic hook (`isKangenticHookCommand`) when it names a known bridge (`activity-bridge`, `event-bridge`, `plan-approval-bridge`, `background-shell-hint-bridge` or `browser-policy-bridge`) AND carries one of these markers:
 - `.kangentic` or `/kangentic/` in a path (a session directory, a workspace bridge copy, a source checkout, a Windows install)
 - the events path named through `env:KANGENTIC_EVENTS_PATH`
-- for a `background-shell-hint-bridge` command, a base64 spec that names `kangentic_mark_background_service`
+- for a `background-shell-hint-bridge` command, a base64 spec that names `kangentic_mark_background_service`; for a `browser-policy-bridge` command, one that names `kangentic_browser_open_pane`
 - the exact path the running app ships that bridge at
 
-The first three hold wherever the app is installed, so they also catch a hook an earlier install wrote from another path. Requiring a bridge name plus a marker prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
+The first three hold wherever the app is installed, so they also catch a hook an earlier install wrote from another path. Requiring a bridge name plus a marker prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge`, `plan-approval-bridge`, `background-shell-hint-bridge` and `browser-policy-bridge`.
 
 ## Session Directory
 

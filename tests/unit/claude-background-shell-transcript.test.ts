@@ -374,6 +374,44 @@ describe('reportTerminatedBackgroundShells', () => {
     expect(result).toEqual(['bunv416j8']);
   });
 
+  it('drains a Monitor that expired, in the wording Claude Code 2.1.316 writes', () => {
+    // Verbatim from a 2.1.316 transcript, the only wording any retained
+    // transcript holds. The old marker alone matched none of them, so every
+    // expired Monitor held its task working for good: 25 of one task's 30
+    // holders at its first step check.
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['b3mntbkwh'] });
+
+    fs.appendFileSync(
+      transcriptPath,
+      `${monitorEventLine('b3mntbkwh', '[Monitor expired after 15m with 19 events delivered. Re-arm it if you still need the watch.]')}\n`,
+    );
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['b3mntbkwh'] });
+
+    expect(result).toEqual(['b3mntbkwh']);
+  });
+
+  it('never drains a live Monitor whose summary only quotes "[Monitor expired"', () => {
+    fs.writeFileSync(transcriptPath, '');
+    reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    const content =
+      `<task-notification>\n<task-id>bmon1live</task-id>\n` +
+      `<summary>Log line quoted from the rig: "[Monitor expired after 3m]"</summary>\n` +
+      `<event>[rig] still booting</event>\n</task-notification>`;
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content },
+      sessionId: agentSessionId,
+      uuid: 'a7b8c9d0-e1f2-4a3b-8c4d-5e6f7a8b9c0d',
+      timestamp: '2026-11-02T08:21:40.000Z',
+    });
+    fs.appendFileSync(transcriptPath, `${line}\n`);
+    const result = reportTerminatedBackgroundShells({ cwd, agentSessionId, shellIds: ['bmon1live'] });
+
+    expect(result).toEqual([]);
+  });
+
   it('treats status "stopped" as terminal', () => {
     // Emitted when a Monitor or shell is stopped from the UI. It was absent
     // from the terminal-status set, so those holders were never drained here.

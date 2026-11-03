@@ -31,6 +31,8 @@ import type { McpRelayInput } from '../../src/main/pty/readers/wsl-mcp-relay';
 import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import { extractTool, extractToolId } from '../../src/main/agent/shared/directive-builders';
 import { planApprovalDecisionPath } from '../../src/main/agent/shared/plan-approval-hook';
+import { encodeHookSpec } from '../../src/main/agent/shared/hook-utils';
+import { claudeBrowserPolicySpec } from '../../src/main/agent/adapters/claude/hook-manager';
 
 /** The directives a tool_start hook carries, from the real builders. */
 function buildToolStartDirectives(): string[] {
@@ -237,6 +239,34 @@ describe('the inbox relays MCP messages', () => {
     });
     expect(answer).toBe('{"jsonrpc":"2.0","id":3,"result":{}}\n');
     await waitFor(() => (fs.readdirSync(paths.requests).length === 0 ? true : null));
+  });
+
+  // A Claude in a WSL distro runs its hooks there, with no node: the browser
+  // policy request is answered by main with the bridge's own logic, reading the
+  // Agent Browser switch from this machine's config file (task #977).
+  it('answers a browser policy request with the deny for a browser server, and nothing for another tool', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined });
+    openInboxes.push(inbox);
+    const configPath = path.join(sessionDirectory, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ browserAutomation: { enabled: true } }));
+    const spec = encodeHookSpec(claudeBrowserPolicySpec(['claude-in-chrome'], configPath));
+
+    writeRequest(paths.requests, '1767225600000000001-7', 'browser-policy', spec, '{"tool_name":"mcp__playwright__browser_navigate"}');
+    writeRequest(paths.requests, '1767225600000000002-8', 'browser-policy', spec, '{"tool_name":"mcp__kangentic__kangentic_browser_navigate"}');
+    inbox.start();
+
+    const denied = await waitFor(() => {
+      try { return fs.readFileSync(path.join(paths.responses, '1767225600000000001-7.res'), 'utf-8'); } catch { return null; }
+    });
+    expect(JSON.parse(denied)).toMatchObject({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' } });
+    const allowed = await waitFor(() => {
+      try { return fs.readFileSync(path.join(paths.responses, '1767225600000000002-8.res'), 'utf-8'); } catch { return null; }
+    });
+    expect(allowed).toBe('');
   });
 
   it('ends a relay still running when the session ends', async () => {
@@ -545,7 +575,7 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
       JSON.stringify({ tool_name: 'Write', tool_use_id: `toolu_${index}`, tool_input: { content: index % 3 === 0 ? big : 'small' } }),
     )));
 
-    const lines = await waitFor(() => { const read = readEventLines(eventsPath); return read.length >= 12 ? read : null; });
+    const lines = await waitFor(() => { const read = readEventLines(eventsPath); return read.length >= 12 ? read : null; }, 20_000);
     const ids = lines.map((line) => (JSON.parse(line) as { toolId: string }).toolId).sort();
     expect(ids).toEqual(Array.from({ length: 12 }, (_unused, index) => `toolu_${index}`).sort());
     // Each file is stamped when its stdin is read, just before its rename, so
@@ -555,7 +585,10 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     const times = lines.map((line) => (JSON.parse(line) as { ts: number }).ts);
     const worstInversion = times.reduce((worst, time, index) => (index === 0 ? 0 : Math.max(worst, times[index - 1] - time)), 0);
     expect(worstInversion).toBeLessThanOrEqual(250);
-  });
+    // Twelve sh processes at once: alone this takes about a second, but beside
+    // another file's shell round trips Windows process creation ran it past the
+    // default 5 s. The bound is for the starts, not the ordering asserted above.
+  }, 30_000);
 
   it('answers a background shell hint request, and prints nothing for a call it does not answer', async () => {
     const sessionDirectory = makeSessionDirectory();

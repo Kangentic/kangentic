@@ -74,7 +74,7 @@ function extractSessionEvent(event, now = Date.now()) {
  * next `tool_start` or `session.idle` clears the wait. A plain idle here would
  * be read as the agent's own turn end, which a reply is not.
  *
- * OpenCode v2 does not run v1 plugins, so a v2 session reports no waits.
+ * OpenCode 2 does not run this plugin; kangentic-activity-v2.mjs reports its waits.
  */
 function extractWaitEvent(event, now = Date.now()) {
   if (!event || typeof event !== 'object') return null;

@@ -268,7 +268,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Aider | `<cwd>/.aider.chat.history.md` | Direct path in the working directory, returned only when the file exists. One history file per project directory, with no session id in its name |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
 | Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
-| OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
+| OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table, or `session_v2` for OpenCode 2) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
 | Droid | `~/.factory/sessions/<cwd-slug>/<sessionId>.jsonl` | Direct path construction, polled up to 10 times at 500 ms because Droid creates the file after the spawn returns |
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/updates.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). The attach-time `runtime.sessionHistory.locate` additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |

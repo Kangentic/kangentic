@@ -1,0 +1,7 @@
+{
+  "status": 401,
+  "body": {
+    "_tag": "UnauthorizedError",
+    "message": "Authentication required"
+  }
+}

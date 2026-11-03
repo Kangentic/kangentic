@@ -21,6 +21,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { useWindowStore } from '../store/window-store';
+import { isCommandTerminalBrowserOwner } from '../../../shared/browser-owner';
 
 /** Whether the board layer already has a VISIBLE task-detail window for this
  *  task. A parked window does not count: it is closed as far as the user is
@@ -41,6 +42,10 @@ export function useBrowserPaneRequestBridge(): void {
     // that fires after teardown would write to a store instance nothing renders.
     let pendingReopen: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = browser.onPaneOpenRequest((_projectId, taskId) => {
+      // A Command Terminal's pane is no task's: opening a task-detail window for
+      // its key would open a window for a task that does not exist.
+      // `useCommandTerminalBrowserBridge` owns those requests.
+      if (isCommandTerminalBrowserOwner(taskId)) return;
       const session = useSessionStore.getState();
 
       // Open the pane BEFORE asking for the window, so a window that mounts as a
@@ -97,7 +102,9 @@ export function useBrowserPaneRequestBridge(): void {
       // holds the OPEN project's tasks, so a pane retained for a backgrounded
       // project would be invisible to any lookup this renderer could do.
       const setBrowserOpen = useSessionStore.getState().setBrowserOpen;
-      for (const taskId of taskIds) setBrowserOpen(taskId, false);
+      for (const taskId of taskIds) {
+        if (!isCommandTerminalBrowserOwner(taskId)) setBrowserOpen(taskId, false);
+      }
     });
   }, []);
 }

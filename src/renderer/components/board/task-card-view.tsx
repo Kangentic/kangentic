@@ -335,10 +335,12 @@ function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardView
  * shown in the pane. Not a click target: the card's own click opens the task,
  * where the kebab's "Close browser" is. Shared with the Agent Monitor's card.
  */
-export function BrowserAliveGlobe({ testId }: { testId: string }) {
+export function BrowserAliveGlobe({ testId, tip }: { testId: string; tip?: string }) {
   const { t } = useLingui();
+  // A Command Terminal's Running row passes its own tip: its Close browser is in
+  // the terminal's menu, not a task's.
   return (
-    <Tooltip label={t`Browser running for the agent. Close it from the task menu to free memory.`}>
+    <Tooltip label={tip ?? t`Browser running for the agent. Close it from the task menu to free memory.`}>
       <span className="text-active shrink-0 flex" data-testid={testId}>
         <Globe size={12} aria-label={t`Browser running`} />
       </span>

@@ -6,6 +6,9 @@ import { findSessionForTask } from '../../stores/session-store/session-index';
 import { BrowserPane } from '../../components/browser/BrowserPane';
 import { usePopOutTaskRow } from '../use-pop-out-task-row';
 import type { PopOutTaskParams } from '../../../shared/pop-out';
+import { parseCommandTerminalBrowserOwner } from '../../../shared/browser-owner';
+import { resolveProjectRoot } from '../../../shared/git-utils';
+import { findLiveCommandTerminalSession } from '../../../shared/session-owner';
 
 /**
  * Pop-out root for the 'browser' surface (the hard case). Resolves the task,
@@ -25,9 +28,16 @@ import type { PopOutTaskParams } from '../../../shared/pop-out';
  * `kangentic_browser_pop_out` timing out on it.
  */
 export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
-  const { task, projectPath, loading: taskLoading } = usePopOutTaskRow(params.projectId, params.taskId);
+  // A Command Terminal's pane, popped out: its "task" is the slot's owner key,
+  // which names no task row, so its session and directory come from the slot's
+  // live terminal instead.
+  const commandTerminal = parseCommandTerminalBrowserOwner(params.taskId);
+  const { task, projectPath, loading: taskLoading } = usePopOutTaskRow(params.projectId, commandTerminal ? null : params.taskId);
   const sessionId = useSessionStore((state) =>
-    findSessionForTask(state.sessions, params.taskId)?.id ?? null,
+    commandTerminal ? null : findSessionForTask(state.sessions, params.taskId)?.id ?? null,
+  );
+  const terminalSession = useSessionStore((state) =>
+    commandTerminal ? findLiveCommandTerminalSession(state.sessions, commandTerminal.projectId, commandTerminal.slot) ?? null : null,
   );
 
   // The session list is unscoped, so it holds a backgrounded task's agent too.
@@ -44,6 +54,17 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
       });
     return () => { cancelled = true; };
   }, []);
+
+  if (commandTerminal && terminalSession) {
+    return (
+      <BrowserPane
+        sessionId={terminalSession.id}
+        taskId={params.taskId}
+        cwd={resolveProjectRoot(terminalSession.cwd)}
+        projectId={params.projectId}
+      />
+    );
+  }
 
   if (task && sessionId && projectPath) {
     // projectId comes from `params`, never this window's own project store: a

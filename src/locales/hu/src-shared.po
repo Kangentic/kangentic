@@ -1145,6 +1145,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "A leírás panel megjelenítése vagy elrejtése a feladat részletei párbeszédablakban."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "A projekt oldalsávjának megjelenítése vagy elrejtése."
@@ -1385,6 +1389,10 @@ msgstr "Módosítások panel be/ki"
 #, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "Parancsterminál be/ki"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

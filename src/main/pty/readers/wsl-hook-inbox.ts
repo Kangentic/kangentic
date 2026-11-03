@@ -5,6 +5,7 @@ import { FileWatcher } from './file-watcher';
 import { transformHookEvent } from '../../agent/event-bridge';
 import { planApprovalAnswer } from '../../agent/plan-approval-bridge';
 import { backgroundShellHintReply } from '../../agent/background-shell-hint-bridge';
+import { browserPolicyReply } from '../../agent/browser-policy-bridge';
 import { planApprovalDecisionPath } from '../../agent/shared/plan-approval-hook';
 import {
   WSL_MCP_REQUEST_HEAD,
@@ -290,6 +291,11 @@ export class WslHookInbox {
     const kind = record.head as WslHookReplyKind;
     if (kind === 'background-shell-hint') {
       return backgroundShellHintReply(record.argument, record.stdin) ?? '';
+    }
+    if (kind === 'browser-policy') {
+      // The spec names Kangentic's config file by this machine's path, which
+      // main reads as the node bridge would.
+      return browserPolicyReply(record.argument, record.stdin) ?? '';
     }
     if (kind === 'plan-approval') {
       const decisionPath = planApprovalDecisionPath(this.options.sessionDirectory);

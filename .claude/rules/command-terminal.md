@@ -71,13 +71,15 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   terminals, 50/50. A seam whose pair has no room above both floors (the panel at its minimum)
   shows no resize cursor or line and takes no drag; a seam never grows the panel. So the
   edge stops where the grid still fits,
-  and a terminal added (from anywhere) or a Restore grows the panel to fit, and the panel saves the
-  size it grew to, so the next Expand does not shrink it back. Nothing falls back to one terminal
+  and a terminal added (from anywhere) moves the panel to that count's place (below), grown to fit,
+  and a Restore grows the panel to fit and saves the size it grew to for the shape on screen, so
+  the next Expand does not shrink it back. Nothing falls back to one terminal
   expanded and Restore is never off: only an area smaller than the minimum (a small window, the
   detached window resized small) tiles the terminals under the floor. There is no per-terminal
   pop-out, float or maximize. The panel's
-  own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
-  the status bar), it moves by its header and resizes live from its edges, and it maximizes. Its
+  own place is kept per grid shape in `AppConfig.commandTerminalPanelByShape` (fractions of the
+  area between the title bar and the status bar; see the GEOMETRY bullet), it moves by its header
+  and resizes live from its edges, and it maximizes. Its
   box is snapped to whole pixels (`toWholePixels`): the tiles are cut from the terminal area's
   whole-pixel client size, so a fractional panel left each tile a fraction of a pixel past the
   panel's clip, which cut off the bottom border that marks the focused terminal. A
@@ -104,7 +106,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   draws that frame once, here as for a maximize, a task window or the bottom panel: on screen,
   pinned to the bottom, where the frame still fills its new box, and not drawn where the box grew.
   Nothing holds the pointer meanwhile. Only a user's gesture holds; a change main or an agent
-  makes refits as it lands. Never add a Command-Terminal-only veil beside it.
+  makes refits as it lands. The one exception is a terminal ended from outside the panel (a
+  phone's Stop, its agent exiting): `closeCommandTerminalWindowInSlot` closes its window as a
+  layout change, because the count change moves the panel to that count's place, as a Stop from
+  the panel does. Never add a Command-Terminal-only veil beside it.
   A header drag swaps
   two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
   taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
@@ -304,9 +309,19 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   agree with the pill. The Changes panel embed passes the effective default base as
   `baseBranch`, never `"HEAD"`.
 - **GEOMETRY is global, POPULATION is per-project, and the reconcile runs BEFORE the layer
-  mounts.** The panel's place (`AppConfig.commandTerminalPanel`) and the terminals' layout
-  (`AppConfig.commandTerminalWorkspace`) are shared across all projects, but which slots get
-  windows is reconciled to the current project's live transient sessions on open
+  mounts.** The panel's place and the terminals' layout (`AppConfig.commandTerminalWorkspace`)
+  are shared across all projects. The place is kept per grid shape
+  (`AppConfig.commandTerminalPanelByShape`, `src/shared/command-terminal-panel.ts`): one
+  terminal, two, and three or four, which share one place because they share the 2 by 2 grid's
+  minimum. The shape comes from the tiled count, never from Expand. A shape with no place starts
+  from the nearest saved shape's center, then the single place from before shapes
+  (`commandTerminalPanel`, read and never written, so an update moves no panel), then the
+  default, grown around it to the grid's minimum inside the area. Every save writes only the
+  shape on screen (the rail's width change included) through `saveCommandTerminalPanelPlaces`,
+  which sends the whole map. A start or stop while the panel is open saves the new shape's place
+  and the one it left, if either had none, so stopping back returns to it. A start or stop runs
+  as a layout change, so the panel's move lands with the terminals holding their frames. But which
+  slots get windows is reconciled to the current project's live transient sessions on open
   (`reconcileCommandTerminalWindows` + `planCommandWindowReconciliation` in
   `command-window-reconcile.ts`). Project switching keeps every slot's PTY alive in the map, with
   no stash or restore. The reconcile closes carried-over windows whose slot has no live session
@@ -322,6 +337,40 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   terminal narrows. While the name field is open the folded set is frozen, so nothing in the
   header moves. The focused terminal's cue is the frame's still accent border, shown only while
   two or more terminals are visible; there is no pulsing line.
+- **Each terminal has its own Browser pane, the task window's, and it never lives inside the
+  panel.** The panel unmounts on every hide, project switch and Open in new window, and a
+  `<webview>` dies with its node. So the pane renders in `CommandTerminalBrowserHost`, mounted
+  always (in `AppLayout`, and in the detached window's root for its project), and is laid over the
+  empty slot the window draws (`data-command-terminal-browser-slot`). The host re-places the pane
+  when the slot mounts or unmounts (it announces both), when the panel shows or hides, and when
+  the window store changes, and follows a moving slot on animation frames, with a 250 ms timer
+  beside them, since a minimized window throttles frames and timers alike; with no slot
+  showing it (panel hidden, another project, behind Expand, held, a swap drag) the pane stays at
+  its last rect at `opacity: 0`, inert. It is keyed by the slot's owner key
+  (`command-terminal::<projectId>::<slot>`), never re-parented, and keeps its last session through
+  a respawn's gap, re-registering in place. Parity with a task window: the Globe pill and its alive
+  dot, `commandTerminal.toggleBrowser` (Mod+Shift+B), the 50/50 split dragged on a seam
+  (`useTaskSplitResize`, 25 to 75 percent), Browser and Changes on the same side and exclusive,
+  Show/Hide and Close browser in the kebab and the row menu (one `CommandTerminalMenuItems`), the
+  green `BrowserAliveGlobe` after a Running row's name and on a strip mark's corner, the Monitor
+  row's globe, and pop out. An agent's `open_pane` with the panel hidden opens it through the
+  pending-open flag with every command window stamped agent-opened
+  (`useCommandTerminalBrowserBridge`), so no terminal takes the keyboard. The open can create the
+  window it lands in, and a window's own open clears a stamp, so every window change re-stamps
+  until the panel has shown and settled or the user presses anywhere. The browser ends with
+  the terminal: main's `command-terminal-browser.ts` listens on `session-removed` and closes the
+  pane, its pop-out and any lane, and clears the saved URL and layout. A branch switch and a
+  resume in place kill with `{ respawn: true }`, which keeps it while the slot's next start runs;
+  a slot still empty once no start holds it ends its browser, as Stop would have. Main saves a
+  layout only for a slot with a live terminal, so a save that lands after the end's clear
+  never recreates the entry. The layout (open, split) is saved
+  per project and slot (`command-terminal-browser-store.ts`, `.kangentic/command-terminal-browser.json`),
+  so a restart restore and the detached window, whose store starts empty, reopen it. The detached
+  window declares `needsWebview` and the browser open, close and offscreen pushes. A pty host
+  crash removes a terminal's row before its restore; the cleanup asks the restore's own
+  `isRestorableAfterHostLoss`, as the leftover reaper does, and keeps the page, URL and layout
+  for the restore. Once the restore has run, a lost slot no terminal came back to ends them
+  (`restoreLostCommandTerminals`).
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
   panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
@@ -358,6 +407,14 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   decides which slots get windows on open. `tests/unit/command-terminal-summary.test.ts` locks
   the shared count/tone selector, and `tests/unit/command-terminal-name.test.ts` the titles. All
   run in CI via `npm run test:unit`.
+- **Test (place per shape):** `tests/unit/command-terminal-panel-places.test.ts` runs the
+  resolver: the shape for each count (3 and 4 sharing), the own place, the nearest saved shape
+  ahead of the place from before shapes, the tie, the fallback that moves nothing, growth around
+  the center and the clamp. `config-manager.test.ts` pins the map's whole-write replace, and
+  `config-store-command-terminal-rail.test.ts` the merged whole-map save and the refetch preserve.
+  `command-terminal.spec.ts` places one terminal, adds a second (grown around that center),
+  moves it, stops back to the first place and adds back to the second, and opens a second
+  project's two terminals at the two-terminal place.
 - **Test (floor):** `tests/unit/command-terminal-grid-fit.test.ts` pins the grid's minimum at the
   630px floor for each count and while one is expanded, and `command-terminal.spec.ts` that two
   tile at 1920 with the panel's edge stopping where they still fit, that an expanded terminal's
@@ -467,6 +524,12 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   after a fold, the strip's activity marks and the one in front, the narrowed rail at the window floor, and the cut-name tip.
   `tests/unit/demo-fit-layout-blob.test.ts` holds the web demo's panel fit to the rail width the
   frame's config gives, and the sample install's seeded rail to the fit's fallback.
+- **Test (Browser pane):** `tests/unit/mcp-caller-command-terminal.test.ts` (the caller resolves
+  to its slot, never a task), `tests/unit/command-terminal-browser-cleanup.test.ts` (a final end
+  closes the pane, lanes, pop-out, URL and layout; a respawn keeps them), and
+  `tests/ui/command-terminal-browser.spec.ts` (the pill, the split, exclusivity with Changes, the
+  same registered guest across a hide, an agent's open with no focus moved, the Running row
+  globe, a saved layout reopening the pane).
 - **Review:** the header layout ordering and the title-bar placement are visual conventions with
   no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
 

@@ -22,11 +22,48 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// `discoverCapabilities` reads `--help` on OpenCode 1 only. The exec seam records
+// each help read (and answers with a help text that has no --model flag) while a
+// test arms it; unarmed, every call goes to the real function.
+const helpReads = vi.hoisted(() => ({ armed: false, calls: [] as string[] }));
+vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
+  return {
+    ...actual,
+    execAsync: (...args: Parameters<typeof actual.execAsync>) => {
+      if (!helpReads.armed) return actual.execAsync(...args);
+      helpReads.calls.push(String(args[0]));
+      return Promise.resolve({ stdout: 'opencode [project]\n\nOptions:\n  --help  show help\n', stderr: '' });
+    },
+    execFileAsync: (...args: Parameters<typeof actual.execFileAsync>) => {
+      if (!helpReads.armed) return actual.execFileAsync(...args);
+      helpReads.calls.push(String(args[0]));
+      return Promise.resolve({ stdout: 'opencode [project]\n\nOptions:\n  --help  show help\n', stderr: '' });
+    },
+  };
+});
+
+// A WSL distro's facts are a fixture: the home share is a temp folder a test plants files in.
+const distroHome = vi.hoisted(() => ({ path: '' }));
+vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/wsl-distro')>();
+  const facts = () => ({
+    distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: distroHome.path, uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as const,
+  });
+  return { ...actual, resolveWslDistroFacts: async () => facts(), peekWslDistroFacts: () => facts() };
+});
+
 import {
   OpenCodeAdapter,
   OpenCodeDetector,
   OpenCodeCommandBuilder,
 } from '../../src/main/agent/adapters/opencode';
+import { isOpenCodeV2, openCodeMajorVersion } from '../../src/main/agent/adapters/opencode/version';
+import { isDistroOpenCodeV2 } from '../../src/main/agent/adapters/opencode/distro-sessions';
+import type { CliTarget } from '../../src/main/agent/shared/cli-target';
+import { loadBetterSqlite3 } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -337,6 +374,97 @@ describe('OpenCode Adapter', () => {
         path.join(__dirname, '..', 'fixtures', 'opencode-auth.json'),
         'utf8',
       );
+      // The project detected an OpenCode 1 just before; no test here runs a CLI.
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+    });
+
+    // OpenCode 2 keeps sign-ins in its database's `credential` table, and
+    // imports a V1 auth.json there at start (measured on 2.2.5). A V2 user who
+    // signed in only through V2 has no auth.json, and was warned they were not.
+    describe('on OpenCode 2', () => {
+      let fakeHome: string;
+
+      function plantCredentials(count: number, home: string = fakeHome): void {
+        const DatabaseConstructor = loadBetterSqlite3();
+        if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+        const directory = path.join(home, '.local', 'share', 'opencode');
+        fs.mkdirSync(directory, { recursive: true });
+        const database = new DatabaseConstructor(path.join(directory, 'opencode.db'));
+        database.exec('CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT)');
+        for (let index = 0; index < count; index += 1) {
+          database.prepare('INSERT INTO credential VALUES (?, ?, ?, ?)').run(`cred_${index}`, 'opencode', 'API key', 'secret');
+        }
+        database.close();
+      }
+
+      beforeEach(() => {
+        fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-v2-auth-'));
+        vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+      });
+
+      afterEach(() => {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      });
+
+      it('reads a sign-in from the database\'s credential table, with no auth.json', async () => {
+        plantCredentials(1);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(true);
+      });
+
+      it('falls back to auth.json, and reports no sign-in when neither has one', async () => {
+        plantCredentials(0);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(false);
+        fs.writeFileSync(path.join(fakeHome, '.local', 'share', 'opencode', 'auth.json'), JSON.stringify({ anthropic: { type: 'api' } }));
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(true);
+      });
+
+      it('does not consult the credential table on OpenCode 1, whose sign-in is auth.json alone', async () => {
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+        plantCredentials(2);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(false);
+      });
+
+      it('falls through to auth.json when OpenCode 2 has no database yet', async () => {
+        const directory = path.join(fakeHome, '.local', 'share', 'opencode');
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(path.join(directory, 'auth.json'), JSON.stringify({ anthropic: { type: 'api' } }));
+        expect(fs.existsSync(path.join(directory, 'opencode.db'))).toBe(false);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(true);
+      });
+
+      it('reports no sign-in for an OpenCode 2 database with no credential table and no auth.json', async () => {
+        const DatabaseConstructor = loadBetterSqlite3();
+        if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+        const directory = path.join(fakeHome, '.local', 'share', 'opencode');
+        fs.mkdirSync(directory, { recursive: true });
+        const database = new DatabaseConstructor(path.join(directory, 'opencode.db'));
+        database.exec('CREATE TABLE session (id TEXT PRIMARY KEY)');
+        database.close();
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(false);
+      });
+
+      it('never opens a database for a CLI in a WSL distro: its sign-in is the distro\'s auth.json', async () => {
+        // The host holds a V2 credential database, and so does the distro's share;
+        // neither may count. Opening the share's database from Windows is what the
+        // distro path exists to avoid.
+        distroHome.path = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-distro-home-'));
+        const realPlatform = process.platform;
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        try {
+          plantCredentials(1);
+          plantCredentials(1, distroHome.path);
+          const distroCliPath = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.opencode\\bin\\opencode';
+          expect(await adapter.probeAuth(distroCliPath)).toBe(false);
+          // The distro's auth.json is still read, so a V2 sign-in of that shape counts.
+          const distroDirectory = path.join(distroHome.path, '.local', 'share', 'opencode');
+          fs.writeFileSync(path.join(distroDirectory, 'auth.json'), JSON.stringify({ anthropic: { type: 'api' } }));
+          expect(await adapter.probeAuth(distroCliPath)).toBe(true);
+        } finally {
+          Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+          fs.rmSync(distroHome.path, { recursive: true, force: true });
+        }
+      });
     });
 
     afterEach(() => {
@@ -426,6 +554,79 @@ describe('OpenCode Adapter', () => {
       mockReadFileSync(() => 'null');
       const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
+    });
+  });
+
+  describe('liveTelemetryUnsupported', () => {
+    it('declares a label and a title, so the card shows a static pill instead of "Starting agent..."', () => {
+      expect(adapter.liveTelemetryUnsupported).toBeDefined();
+      expect(adapter.liveTelemetryUnsupported?.unavailableLabel).toBeTypeOf('string');
+      expect(adapter.liveTelemetryUnsupported?.unavailableLabel.length).toBeGreaterThan(0);
+      expect(adapter.liveTelemetryUnsupported?.unavailableTitle).toBeTypeOf('string');
+      expect(adapter.liveTelemetryUnsupported?.unavailableTitle.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('discoverCapabilities after a detection-cache miss', () => {
+    afterEach(() => {
+      helpReads.armed = false;
+      helpReads.calls.length = 0;
+      vi.restoreAllMocks();
+    });
+
+    it('detects the path again, and reports the model override for a V2 without reading help', async () => {
+      helpReads.armed = true;
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(null);
+      const detectSpy = vi.spyOn(OpenCodeDetector.prototype, 'detect').mockResolvedValue({ found: true, path: '/opt/opencode2/bin/opencode', version: 'v2.2.5' });
+
+      const capabilities = await adapter.discoverCapabilities('/opt/opencode2/bin/opencode');
+
+      expect(detectSpy).toHaveBeenCalledWith('/opt/opencode2/bin/opencode');
+      expect(capabilities).toEqual({ supportsModelOverride: true, effortLevels: [] });
+      expect(helpReads.calls).toEqual([]);
+    });
+
+    it('takes the OpenCode 1 path, reading help, when the detection rejects', async () => {
+      helpReads.armed = true;
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(null);
+      vi.spyOn(OpenCodeDetector.prototype, 'detect').mockRejectedValue(new Error('spawn ENOENT'));
+
+      const capabilities = await adapter.discoverCapabilities('/usr/local/bin/opencode');
+
+      expect(capabilities).toEqual({ supportsModelOverride: false, effortLevels: [] });
+      expect(helpReads.calls).toHaveLength(1);
+    });
+
+    it('does not detect again when the cache answers', async () => {
+      helpReads.armed = true;
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+      const detectSpy = vi.spyOn(OpenCodeDetector.prototype, 'detect');
+
+      await adapter.discoverCapabilities('/opt/opencode2/bin/opencode');
+
+      expect(detectSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('invalidateDetectionCache', () => {
+    it('makes the next distro version check ask the CLI for --version again', async () => {
+      const distroTarget: CliTarget = {
+        kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.opencode/bin/opencode',
+        facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '/tmp/unused', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' },
+      };
+      const versions = ['1.18.31', 'v2.2.5'];
+      const askVersion = vi.fn(async () => ({ stdout: versions.shift() ?? '', stderr: '' }));
+
+      adapter.invalidateDetectionCache();
+      expect(await isDistroOpenCodeV2(distroTarget, askVersion)).toBe(false);
+      // Kept: a second check does not ask.
+      expect(await isDistroOpenCodeV2(distroTarget, askVersion)).toBe(false);
+      expect(askVersion).toHaveBeenCalledTimes(1);
+
+      adapter.invalidateDetectionCache();
+      // The CLI was upgraded in the distro, and the reset lets the check see it.
+      expect(await isDistroOpenCodeV2(distroTarget, askVersion)).toBe(true);
+      expect(askVersion).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -650,6 +851,159 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
 
     concurrentAdapter.removeHooks(projectDir, undefined);
     expect(fs.existsSync(pluginPath())).toBe(false);
+  });
+});
+
+/**
+ * OpenCode 2 (GitHub #720). Its TUI command rejects `--agent` and `--model`
+ * ("Unrecognized flag: --agent"), and without `--standalone` it joins one shared
+ * background service per user that never reads this spawn's
+ * `OPENCODE_CONFIG_CONTENT`. So a V2 spawn is `opencode --standalone`, and the
+ * agent and model ride in the inline config. Gated on the detected version: an
+ * OpenCode 1 spawn must come out exactly as before.
+ */
+describe('OpenCode 2 spawns', () => {
+  const V2 = 'v2.2.5';
+  const builder = new OpenCodeCommandBuilder();
+  const base = { opencodePath: '/usr/bin/opencode', taskId: 'task-001', cwd: '/home/dev/project' };
+  const mcp = { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc', mcpServerToken: 'token-deadbeef' };
+  const configOf = (env: Record<string, string> | null): Record<string, unknown> => JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? 'null');
+
+  describe('openCodeMajorVersion', () => {
+    it('reads the major from each version shape the detector hands over', () => {
+      expect(openCodeMajorVersion('v2.2.5')).toBe(2); // `opencode v2.2.5` after the detector's prefix strip
+      expect(openCodeMajorVersion('opencode v2.2.5')).toBe(2);
+      expect(openCodeMajorVersion('2.0.0')).toBe(2);
+      expect(openCodeMajorVersion('1.18.31')).toBe(1);
+    });
+
+    it('reads a bare major, with or without the v', () => {
+      expect(openCodeMajorVersion('2')).toBe(2);
+      expect(openCodeMajorVersion('v2')).toBe(2);
+      expect(isOpenCodeV2('v2')).toBe(true);
+      expect(isOpenCodeV2('2')).toBe(true);
+      expect(isOpenCodeV2('1')).toBe(false);
+    });
+
+    it('does not read a major out of a digit run that is not followed by a dot or the end', () => {
+      expect(openCodeMajorVersion('2beta')).toBeNull();
+      expect(isOpenCodeV2('2beta')).toBe(false);
+    });
+
+    it('reads nothing from no version or one it does not know, which means OpenCode 1', () => {
+      expect(openCodeMajorVersion(null)).toBeNull();
+      expect(openCodeMajorVersion('')).toBeNull();
+      expect(openCodeMajorVersion('dev build')).toBeNull();
+      expect(isOpenCodeV2(null)).toBe(false);
+      expect(isOpenCodeV2('dev build')).toBe(false);
+      expect(isOpenCodeV2('1.19.5')).toBe(false);
+      expect(isOpenCodeV2('v2.2.5')).toBe(true);
+      expect(isOpenCodeV2('3.0.0')).toBe(true);
+    });
+  });
+
+  describe('command', () => {
+    it('starts a fresh Build or Plan session with --standalone and the prompt, never --agent or --model', () => {
+      for (const permissionMode of ['acceptEdits', 'plan'] as PermissionMode[]) {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode, model: 'anthropic/claude-sonnet', prompt: 'fix the bug', cliVersion: V2 });
+        expect(command).toBe(`/usr/bin/opencode --standalone --prompt ${q('fix the bug')}`);
+      }
+    });
+
+    it('starts with --standalone alone when there is no prompt', () => {
+      const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', cliVersion: V2 });
+      expect(command).toBe('/usr/bin/opencode --standalone');
+    });
+
+    it('resumes with --standalone --session and no prompt', () => {
+      const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', resume: true, sessionId: 'ses_abc123def456', prompt: 'dropped', cliVersion: V2 });
+      expect(command).toBe('/usr/bin/opencode --standalone --session ses_abc123def456');
+    });
+
+    it('keeps the OpenCode 1 command for a V1 or unknown version', () => {
+      for (const cliVersion of ['1.18.31', null]) {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', model: 'anthropic/claude-sonnet', prompt: 'fix the bug', cliVersion });
+        expect(command).toBe(`/usr/bin/opencode --agent plan --model anthropic/claude-sonnet --prompt ${q('fix the bug')}`);
+      }
+    });
+
+    it('blocks a remote-mode spawn with the reason, since attach is OpenCode 1\'s', () => {
+      const executionTarget = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' as const }, workingDirectory: '/srv/project' };
+      expect(() => builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', executionTarget, cliVersion: V2 }))
+        .toThrow(/remote mode needs OpenCode 1/);
+    });
+  });
+
+  describe('env', () => {
+    it('names the agent, the model and the Kangentic MCP server on a fresh spawn', () => {
+      const plan = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: ' anthropic/claude-sonnet ', cliVersion: V2 }));
+      expect(plan.default_agent).toBe('plan');
+      expect(plan.model).toBe('anthropic/claude-sonnet');
+      expect(plan.mcp).toEqual({ kangentic: { type: 'remote', url: mcp.mcpServerUrl, enabled: true, headers: { 'X-Kangentic-Token': mcp.mcpServerToken } } });
+
+      const build = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'acceptEdits', cliVersion: V2 }));
+      expect(build.default_agent).toBe('build');
+      expect(build).not.toHaveProperty('model');
+    });
+
+    it('names no agent or model on a resume, so the session keeps the agent picked with Tab', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: 'anthropic/claude-sonnet', resume: true, sessionId: 'ses_abc123def456', cliVersion: V2 }));
+      expect(Object.keys(config)).toEqual(['mcp']);
+    });
+
+    it('still names the agent with MCP off, and gives no config when there is nothing to name', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, permissionMode: 'plan', cliVersion: V2 }));
+      expect(config).toEqual({ default_agent: 'plan' });
+      expect(builder.buildOpenCodeEnv({ ...base, permissionMode: 'default', cliVersion: V2 })).toBeNull();
+    });
+
+    it('keeps the OpenCode 1 config to the MCP entry alone', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: 'anthropic/claude-sonnet', cliVersion: '1.18.31' }));
+      expect(Object.keys(config)).toEqual(['mcp']);
+      expect(builder.buildOpenCodeEnv({ ...base, permissionMode: 'plan', cliVersion: '1.18.31' })).toBeNull();
+    });
+  });
+
+  describe('adapter wiring', () => {
+    let projectDir: string;
+
+    beforeEach(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-v2-'));
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    it('reads the detected version for the spawned path, and installs and holds the V2 plugin, not the V1 file', () => {
+      const versionSpy = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(V2);
+      const adapter = new OpenCodeAdapter();
+      const options = makeOptions({
+        agentPath: '/opt/opencode2/bin/opencode',
+        cwd: projectDir,
+        projectRoot: projectDir,
+        ptySessionId: 'session-v2',
+        permissionMode: 'plan',
+        prompt: 'go',
+        eventsOutputPath: path.join(projectDir, 'events.jsonl'),
+      });
+
+      const command = adapter.buildCommand(options);
+      const env = adapter.buildEnv(options);
+
+      expect(versionSpy).toHaveBeenCalledWith('/opt/opencode2/bin/opencode');
+      expect(command).toContain('--standalone');
+      expect(command).not.toContain('--agent');
+      expect(configOf(env).default_agent).toBe('plan');
+      // OpenCode 2 does not run V1 plugins: it gets its own, as a directory entry.
+      const v2Plugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
+      expect(fs.existsSync(v2Plugin)).toBe(true);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(false);
+      // Held for the session like the V1 file, and gone once it releases.
+      adapter.removeHooks(projectDir, 'session-v2');
+      expect(fs.existsSync(v2Plugin)).toBe(false);
+    });
   });
 });
 

@@ -63,6 +63,8 @@ const DRAG_CARRY_MS = 900;
 const STILL_TRAVEL_FRAMES = 8;
 /** How long a press is held before its release, live. */
 const PRESS_HOLD_MS = 90;
+/** The beat between a double-click's two clicks, live. It is well inside any system's double-click time. */
+const DOUBLE_CLICK_GAP_MS = 120;
 /** The beat between two keystrokes of a typed text, live. */
 const KEYSTROKE_MS = 85;
 /** Frames the pointer spends homing in on a target that is still moving once it has arrived (a layout animation), and how many still frames end that. */
@@ -70,7 +72,7 @@ const SETTLE_FRAMES = 45;
 const SETTLED_FRAMES = 3;
 /** Pacing after a step that names none. */
 const DEFAULT_PACING_MS: Record<string, number> = {
-  hover: 900, click: 900, contextmenu: 1200, drag: 900, drop: 900, type: 700, key: 500, choose: 1200, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
+  hover: 900, click: 900, dblclick: 900, contextmenu: 1200, drag: 900, drop: 900, type: 700, key: 500, choose: 1200, scroll: 700, hotkeyDown: 900, hotkeyUp: 900,
 };
 /** The rest a visitor sees before the first cycle, and between cycles. */
 const FIRST_REST_MS = 2500;
@@ -428,6 +430,7 @@ function commonAncestor(first: Element, second: Element): Element {
 function targetOf(step: ChoreographyStep): ChoreographyTarget | null {
   if ('hover' in step) return step.hover;
   if ('click' in step) return step.click;
+  if ('dblclick' in step) return step.dblclick;
   if ('contextmenu' in step) return step.contextmenu;
   if ('drag' in step) return step.drag.from;
   if ('type' in step && document.activeElement !== document.querySelector(step.type.into)) return step.type.into;
@@ -491,7 +494,7 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
   }
 
   function sendMouse(type: string, target: Element, init: MouseEventInit): boolean {
-    if (compatibilitySuppressed && type !== 'click' && type !== 'contextmenu') return true;
+    if (compatibilitySuppressed && type !== 'click' && type !== 'dblclick' && type !== 'contextmenu') return true;
     return target.dispatchEvent(new MouseEvent(type, init));
   }
 
@@ -626,7 +629,8 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     }
   }
 
-  function release(button: 0 | 2): void {
+  /** `clickCount` is the click's `detail`: a double-click's second release sends 2, then the dblclick a browser follows it with. */
+  function release(button: 0 | 2, clickCount = 1): void {
     if (!point || buttons === 0) return;
     const hit = document.elementFromPoint(point.x, point.y) ?? document.documentElement;
     const captured = captureTarget();
@@ -637,7 +641,11 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     sendMouse('mouseup', target, init);
     compatibilitySuppressed = false;
     syntheticPressed = false;
-    if (button === 0 && pressedOn) sendMouse('click', commonAncestor(pressedOn, target), { ...init, detail: 1 });
+    if (button === 0 && pressedOn) {
+      const clicked = commonAncestor(pressedOn, target);
+      sendMouse('click', clicked, { ...init, detail: clickCount });
+      if (clickCount === 2) sendMouse('dblclick', clicked, { ...init, detail: 2 });
+    }
     if (button === 2) sendMouse('contextmenu', target, init);
     pressedOn = null;
     // The button coming up ends a capture, as a browser releases it implicitly after pointerup. The
@@ -653,10 +661,18 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     await delay(milliseconds / rate);
   }
 
-  async function pressAndRelease(button: 0 | 2): Promise<void> {
+  async function pressAndRelease(button: 0 | 2, clickCount = 1): Promise<void> {
     press(button);
     if (instant) await nextFrame(); else await delay(PRESS_HOLD_MS / rate);
-    release(button);
+    release(button, clickCount);
+  }
+
+  /** Two clicks in place, the second a beat after the first, as a browser counts a double-click. */
+  async function doubleClick(): Promise<void> {
+    await pressAndRelease(0, 1);
+    if (stopped) return;
+    if (instant) await nextFrame(); else await delay(DOUBLE_CLICK_GAP_MS / rate);
+    await pressAndRelease(0, 2);
   }
 
   async function keystroke(): Promise<void> {
@@ -746,6 +762,9 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     } else if ('click' in step) {
       await travel(await locate(step.click), TRAVEL_MS);
       await pressAndRelease(0);
+    } else if ('dblclick' in step) {
+      await travel(await locate(step.dblclick), TRAVEL_MS);
+      await doubleClick();
     } else if ('contextmenu' in step) {
       await travel(await locate(step.contextmenu), TRAVEL_MS);
       await pressAndRelease(2);

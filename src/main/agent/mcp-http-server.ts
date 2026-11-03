@@ -55,7 +55,8 @@ import { isAnswerCaller, workflowIdOfCaller } from './mcp-http/caller-url';
 import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
-import { resolveCallerTaskId } from './mcp-http/caller-task';
+import { resolveMcpCaller, callerBrowserOwner } from './mcp-http/caller-task';
+import { browserCaptureDirectory } from './mcp-http/browser-capture-file';
 import {
   registerBrowserTools,
   type AutomationConfigReader,
@@ -127,6 +128,15 @@ export interface McpHttpServerHandle {
 }
 
 /**
+ * The folder a session's agent works in, where a browser tool's saveToFile
+ * writes (`browserCaptureDirectory`). The command's cwd, not the PTY's: a
+ * shell that started in the home folder (a UNC path under cmd) moves into it.
+ */
+interface BrowserCaptureSessionLookup {
+  getSessionCommandCwd(sessionId: string): string | undefined;
+}
+
+/**
  * Main-process singletons the steering tools need. `CommandContext` carries
  * only the project DB and board callbacks, so these are threaded in at
  * registration time instead (the `browser-tools.ts` precedent). Read lazily
@@ -134,7 +144,7 @@ export interface McpHttpServerHandle {
  * context does not exist yet at `startMcpHttpServer` time.
  */
 export interface McpSteeringContext {
-  sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker;
+  sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker & BrowserCaptureSessionLookup;
   terminalSubmit: SessionSendTerminalSubmit;
   /** Hold a message for a task with no running agent (src/main/held-messages). */
   holdTaskMessage: HeldMessageHolder;
@@ -183,24 +193,37 @@ export async function startMcpHttpServer(
   // one); the session lookup is read lazily for the same reason as above.
   const resolveBrowser = (
     projectId: string,
-    callerSessionId?: string,
+    callerSessionId: string | undefined,
+    projectPath: () => string | null,
   ): BrowserToolDependencies => {
     const sessionManager = getSteeringContext()?.sessionManager ?? null;
     return {
       projectId,
       callerSessionId,
+      // Where saveToFile writes: a Kangentic folder inside the caller's own
+      // working directory, so it can Read the file back without a prompt.
+      // Read only when a tool saves.
+      captureDirectory: () => browserCaptureDirectory({
+        projectPath: projectPath(),
+        callerSessionId,
+        sessionCwd: callerSessionId ? sessionManager?.getSessionCommandCwd(callerSessionId) ?? null : null,
+        projectId,
+      }),
       // A narrow adapter over SessionManager: these tools only need to resolve
-      // the caller's own task id. The lane's cookie jar is keyed by that task
-      // id, so no worktree path lookup is needed here.
+      // the caller's own task, or its Command Terminal's slot. The lane's
+      // cookie jar is keyed by that owner, so no worktree path lookup is
+      // needed here.
       sessions: sessionManager && {
         getSessionTaskId: (sessionId: string) => sessionManager.getSessionTaskId(sessionId),
+        getCommandTerminalSlot: (sessionId: string) => sessionManager.getCommandTerminalSlot?.(sessionId),
+        getCommandTerminalName: (projectId: string, slot: string) => sessionManager.getCommandTerminalName?.(projectId, slot),
       },
     };
   };
 
   // Caller scope for kangentic_mark_background_service: the caller marks only
-  // its own session's shells, so a connection that names no session (a Command
-  // Terminal, a client outside Kangentic) is not offered the tool at all, nor is
+  // its own session's shells, so a connection that names no session (a client
+  // outside Kangentic) is not offered the tool at all, nor is
   // a session whose agent does not report background commands (task #859),
   // since nothing would ever start a shell for a mark to act on. Null before
   // the IPC context exists, which is strictly before any agent could have
@@ -398,7 +421,11 @@ export function buildConfiguredMcpServer(
   // tools scope their default pane to it, and the move tool's workflow lock
   // lets a task's own agent move it while its workflow runs. Its session goes
   // with it, so a move that ends that session lets its turn finish first.
-  const callerTaskId = resolveCallerTaskId(browser);
+  // A Command Terminal resolves to no task here, by design: its registry row's
+  // task id is synthetic. Its browser surface is keyed by its own owner key.
+  const caller = resolveMcpCaller(browser);
+  const callerTaskId = caller.taskId;
+  const browserOwner = callerBrowserOwner(browser.projectId, caller);
   registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null, browser.callerSessionId ?? null);
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver, callerTaskId ?? null);
@@ -409,7 +436,7 @@ export function buildConfiguredMcpServer(
   registerUsageTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
   if (browserAutomationEnabled) {
-    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser, callerTaskId);
+    registerBrowserTools(mcpServer, getBrowserAutomationConfig, browser, browserOwner);
   }
   // Steering needs live main-process singletons. They are absent only before
   // the IPC context exists (the server starts ahead of createWindow), which is
@@ -512,7 +539,7 @@ async function handleHttpRequest(
   getBrowserAutomationConfig: AutomationConfigReader,
   networkConfig: McpServerNetworkConfig,
   resolveSteering: (callerSessionId?: string) => SteeringToolDependencies | null,
-  resolveBrowser: (projectId: string, callerSessionId?: string) => BrowserToolDependencies,
+  resolveBrowser: (projectId: string, callerSessionId: string | undefined, projectPath: () => string | null) => BrowserToolDependencies,
   resolveBackgroundShells: (callerSessionId?: string) => BackgroundShellToolDependencies | null,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
@@ -580,7 +607,13 @@ async function handleHttpRequest(
         taskCounter,
         getBrowserAutomationConfig,
         resolveSteering(callerSessionId),
-        resolveBrowser(projectId, callerSessionId),
+        resolveBrowser(projectId, callerSessionId, () => {
+          try {
+            return resolver.defaultContextResolved().context.getProjectPath();
+          } catch {
+            return null;
+          }
+        }),
         toolArgumentNotices,
         resolveBackgroundShells(callerSessionId),
       );

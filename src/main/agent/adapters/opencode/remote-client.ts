@@ -6,12 +6,15 @@ import type { AgentExecutionServer, AgentExecutionServerAuth, RemoteServerStatus
  * no real network call happens under test.
  */
 export interface FetchLike {
-  (url: string, init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal }): Promise<{
+  (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }): Promise<{
     ok: boolean;
     status: number;
     json(): Promise<unknown>;
   }>;
 }
+
+/** OpenCode 2's fixed Basic auth username (`migrate-v1.mdx`, "Server authentication"). */
+export const OPENCODE_V2_USERNAME = 'opencode';
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -44,11 +47,18 @@ export interface OpenCodeRemoteMessageEntry {
   parts: OpenCodeRemotePart[];
 }
 
-function trimTrailingSlash(url: string): string {
+export function trimTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-function authHeaders(auth: AgentExecutionServerAuth): Record<string, string> {
+/** The major of an OpenCode version string (`2.2.5`, `v1.18.31`), or null when it has none. */
+export function openCodeMajorVersion(version: string): number | null {
+  const match = /^v?(\d+)\./i.exec(version.trim());
+  return match ? Number(match[1]) : null;
+}
+
+/** Basic auth with the configured username, as an OpenCode 1 server expects. */
+export function authHeaders(auth: AgentExecutionServerAuth): Record<string, string> {
   if (auth.kind === 'basic') {
     const token = Buffer.from(`${auth.username}:${auth.password}`, 'utf8').toString('base64');
     return { Authorization: `Basic ${token}` };
@@ -81,16 +91,63 @@ export async function probeOpenCodeServer(
       // configured username/password (or the absence of any) was rejected.
       // Surfacing this separately is what makes "Test connection" actually
       // test credentials, not just reachability.
+      // An OpenCode 2 server rejects every username but `opencode`.
+      if (server.auth.kind === 'basic' && server.auth.username !== OPENCODE_V2_USERNAME) {
+        const openCode2Version = await openCode2ServerVersion(server, fetchImpl);
+        if (openCode2Version !== null) return openCode2MismatchStatus(openCode2Version);
+      }
       return { reachable: false, reason: 'Authentication failed - check the username and password' };
     }
     if (!response.ok) {
       return { reachable: false, reason: `Server responded with HTTP ${response.status}` };
     }
-    const body = (await response.json()) as { healthy?: boolean; version?: string };
+    let body: { healthy?: boolean; version?: string };
+    try {
+      body = (await response.json()) as { healthy?: boolean; version?: string };
+    } catch {
+      // An OpenCode 2 server answers this route with its web app's HTML and a
+      // 200. The local CLI and the server must be the same major, so the
+      // probe names the server's version from its own /api/info.
+      const openCode2Version = await openCode2ServerVersion(server, fetchImpl);
+      if (openCode2Version !== null) return openCode2MismatchStatus(openCode2Version);
+      return { reachable: false, reason: 'The server did not answer as an OpenCode server' };
+    }
     if (!body.healthy) return { reachable: false, reason: 'Server reported unhealthy' };
     return { reachable: true, version: body.version ?? null };
   } catch (error) {
     return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+function openCode2MismatchStatus(openCode2Version: string): RemoteServerStatus {
+  return { reachable: false, reason: `The server runs OpenCode ${openCode2Version}, and the local OpenCode is version 1` };
+}
+
+/**
+ * The version an OpenCode 2 server reports on `GET /api/info`, or null for
+ * anything else. A V2 server's username is always `opencode`, so the request
+ * sends that with the configured password, and no header without one, as
+ * `openCodeV2AuthHeaders` does.
+ */
+async function openCode2ServerVersion(server: AgentExecutionServer, fetchImpl: FetchLike): Promise<string | null> {
+  if (!server.url) return null;
+  try {
+    const headers = server.auth.kind === 'basic' && server.auth.password
+      ? authHeaders({ kind: 'basic', username: OPENCODE_V2_USERNAME, password: server.auth.password })
+      : {};
+    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/api/info`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { version?: unknown } | null;
+    const version = body?.version;
+    if (typeof version !== 'string') return null;
+    const major = openCodeMajorVersion(version);
+    return major !== null && major >= 2 ? version : null;
+  } catch {
+    return null;
   }
 }
 

@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import {
+  browserPartitionForCommandTerminals,
   browserPartitionForProjectIdentity,
   browserPartitionForTask,
   partitionDirName,
@@ -125,6 +126,12 @@ describe('enumerateProjectPartitions', () => {
     expect(partitions).not.toContain(browserPartitionForTask(PROJECT_GONE, TASK_LIVE));
   });
 
+  it("includes the project's Command Terminal jar, so Clear browser data reaches it", () => {
+    const terminals = browserPartitionForCommandTerminals(PROJECT);
+    mockReaddirSync.mockReturnValue([dirent(partitionDirName(terminals))]);
+    expect(enumerateProjectPartitions(PROJECT, USER_DATA)).toContain(terminals);
+  });
+
   it('returns only the legacy jar when no project is open', () => {
     expect(enumerateProjectPartitions(null, USER_DATA)).toEqual(['persist:kangentic-browser']);
   });
@@ -174,6 +181,16 @@ describe('sweepOrphanedBrowserPartitions', () => {
     ]);
     const summary = await sweepOrphanedBrowserPartitions(USER_DATA);
     expect(summary.removed).toEqual([taskDir(PROJECT, TASK_GONE)]);
+  });
+
+  // The Command Terminals' jar names no task, so a task-row check would read it
+  // as an orphan and delete every terminal's login at the next launch.
+  it("keeps a live project's Command Terminal jar, and removes a gone project's", async () => {
+    silenceConsole();
+    const terminalsDir = (projectId: string) => partitionDirName(browserPartitionForCommandTerminals(projectId));
+    mockReaddir.mockResolvedValue([dirent(terminalsDir(PROJECT)), dirent(terminalsDir(PROJECT_GONE))]);
+    const summary = await sweepOrphanedBrowserPartitions(USER_DATA);
+    expect(summary.removed).toEqual([terminalsDir(PROJECT_GONE)]);
   });
 
   it('removes every jar of a project that is gone', async () => {

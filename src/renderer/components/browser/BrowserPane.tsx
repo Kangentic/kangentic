@@ -22,7 +22,7 @@ import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
-import { browserPartitionForTask } from '../../../shared/browser-partition';
+import { browserPartitionForOwner } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
@@ -194,7 +194,7 @@ function BrowserPaneActive({
   // partition cannot change after attach). Keyed by task identity so it follows
   // the task through any worktree path change; the identity jar shares the IdP
   // login across the project. See shared/browser-partition.ts.
-  const [partition] = useState(() => browserPartitionForTask(projectId, taskId));
+  const [partition] = useState(() => browserPartitionForOwner(projectId, taskId));
   const [drawMode, setDrawMode] = useState(false);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
@@ -1103,8 +1103,8 @@ function BrowserPaneActive({
         <webview
           ref={webviewRef as unknown as React.Ref<HTMLElement>}
           src={initialSrc}
-          // Per-task persistent cookie jar (browserPartitionForTask, computed
-          // above). The jar follows the task through any worktree path change;
+          // Per-task persistent cookie jar, or the project's terminals jar for
+          // a Command Terminal (browserPartitionForOwner, computed above). The jar follows the task through any worktree path change;
           // the project identity jar shares the IdP login across tasks. Settings
           // -> Browser -> Clear browser data wipes them.
           partition={partition}

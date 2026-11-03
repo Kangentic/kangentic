@@ -49,8 +49,18 @@ msgstr "터미널이 시작되면 사용 가능"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "에이전트용 브라우저가 실행 중입니다. 메모리를 확보하려면 터미널 메뉴에서 닫으세요."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "검색 지우기"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "브라우저 닫기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "터미널을 중지할 수 없음"
 msgid "Couldn't switch branch"
 msgstr "분기를 전환할 수 없음"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "드래그하여 크기 조정"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "{name}(으)로 이동"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "숨기기"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "브라우저 숨기기"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "이전 항목에서 사라지며 더 이상 검색할 수 없습니다. 
 msgid "Its process may still be running."
 msgstr "프로세스가 아직 실행 중일 수 있습니다."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "닫을 때까지 유지됨"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "새 창에서 열기"
 #, fuzzy
 msgid "Open project folder"
 msgstr "프로젝트 폴더 열기"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "페이지 유지됨"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "대화 검색 중..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "브라우저 표시"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "변경 내용 표시"
 
@@ -348,6 +385,11 @@ msgstr "터미널 이름"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "터미널이 패널로 돌아왔습니다."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "브라우저 전환"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

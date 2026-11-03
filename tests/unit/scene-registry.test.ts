@@ -133,7 +133,7 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose', 'cut'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'dblclick', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose', 'cut'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
@@ -264,6 +264,7 @@ describe('scene registry', () => {
         }
         if ('hover' in step) expect(isTarget(step.hover), `${where}.hover`).toBe(true);
         if ('click' in step) expect(isTarget(step.click), `${where}.click`).toBe(true);
+        if ('dblclick' in step) expect(isTarget(step.dblclick), `${where}.dblclick`).toBe(true);
         if ('contextmenu' in step) expect(isTarget(step.contextmenu), `${where}.contextmenu`).toBe(true);
         if ('drag' in step) {
           const drag = step.drag as { from?: ChoreographyTarget; to?: ChoreographyTarget; by?: { x: number; y: number } };
@@ -521,15 +522,18 @@ describe('scene registry', () => {
 
   it('fits the Command Terminal panel only to a session the recordings index carries', () => {
     // The panel lays its terminals out itself, so a scene fits the PANEL to its lone terminal's
-    // recording (demo-dataset.ts, fitCommandTerminalPanel) rather than a window.
+    // recording (demo-dataset.ts, fitCommandTerminalPanel) rather than a window. The panel keeps a
+    // place per grid shape, and each place may carry the marker.
     const recorded = new Set(Object.keys(loadDemoRecordings().sessions));
     let fitted = 0;
     for (const scene of scenes) {
-      const panel = (scene.config?.commandTerminalPanel ?? null) as { fitToRecording?: unknown } | null;
-      if (!panel || panel.fitToRecording === undefined) continue;
-      fitted += 1;
-      expect(typeof panel.fitToRecording, `${scene.name} names a fitToRecording that is not a session id`).toBe('string');
-      expect(recorded.has(String(panel.fitToRecording)), `${scene.name} fits the panel to ${String(panel.fitToRecording)}, which has no recording`).toBe(true);
+      const places = (scene.config?.commandTerminalPanelByShape ?? {}) as Record<string, { fitToRecording?: unknown } | undefined>;
+      for (const [shape, panel] of Object.entries(places)) {
+        if (!panel || panel.fitToRecording === undefined) continue;
+        fitted += 1;
+        expect(typeof panel.fitToRecording, `${scene.name} (${shape}) names a fitToRecording that is not a session id`).toBe('string');
+        expect(recorded.has(String(panel.fitToRecording)), `${scene.name} (${shape}) fits the panel to ${String(panel.fitToRecording)}, which has no recording`).toBe(true);
+      }
     }
     // Vacuity guard: the command-terminal scene is fitted.
     expect(fitted).toBeGreaterThanOrEqual(1);

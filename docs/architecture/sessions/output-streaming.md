@@ -377,7 +377,8 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   terminals goes through `runTerminalLayoutChange` (`terminal-layout-transition.ts`): a maximize or
   restore, a keyboard snap, a drop that docks or maximizes, a released edge, seam or footprint
   drag, closing a tiled window, a task window's panel toggles, the Command Terminal panel's maximize
-  and released resize, Expand and Restore, adding, resuming or stopping a Command Terminal, each
+  and released resize, Expand and Restore, adding, resuming or stopping a Command Terminal (and a terminal ended from outside the panel, a
+  phone's Stop or its agent exiting, which moves the panel to the new count's place), each
   step of a Command Terminal swap drag's preview and its cancel, and the bottom panel's released
   height drag. The change runs at once and opens a landing on the nearest
   `data-terminal-layout-scope` (a window layer's overlay, the Command Terminal panel area, the

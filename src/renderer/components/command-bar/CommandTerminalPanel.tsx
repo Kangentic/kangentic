@@ -5,11 +5,15 @@
  * bar; the terminals inside never float on their own (the window layer tiles
  * them into the panel's terminal area, `hostArranged`).
  *
- * Its place is GLOBAL (`AppConfig.commandTerminalPanel`), like the terminals'
- * layout: fractions of the area it sits in, so it rescales with the window. A
- * move or a resize follows the pointer live and is saved once, on release. A
- * resize holds the manager-resize gate for the whole gesture, so the terminals
- * inside keep their grid while the panel changes size and refit once, after.
+ * Its place is GLOBAL, like the terminals' layout, and kept per grid shape (one
+ * terminal, two, three or four: `AppConfig.commandTerminalPanelByShape`,
+ * `shared/command-terminal-panel.ts`): fractions of the area it sits in, so it
+ * rescales with the window. A terminal started or stopped moves the panel to
+ * its new shape's place; a shape with no place grows around the nearest saved
+ * shape's center. A move or a resize follows the pointer live and is saved
+ * once, on release, for the shape on screen. A resize holds the manager-resize
+ * gate for the whole gesture, so the terminals inside keep their grid while the
+ * panel changes size and refit once, after.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -23,7 +27,8 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { beginManagerResize, type ManagerResizeGesture } from '../../window-manager/terminal/manager-resize-gate';
 import { runTerminalLayoutChange } from '../../utils/terminal-layout-transition';
 import type { ContainerSize as PanelSize, PixelRect } from '../../window-manager/store/geometry';
-import type { CommandTerminalPanelGeometry } from '../../../shared/types';
+import type { CommandTerminalPanelGeometry, CommandTerminalPanelPlaces, CommandTerminalPanelShape } from '../../../shared/types';
+import { commandTerminalPanelShape, readPanelPlaces, resolvePanelPlace } from '../../../shared/command-terminal-panel';
 import type { PanelWidthChange } from './panel-edge-push';
 
 /** The panel header's height, which the terminals' area excludes. */
@@ -58,15 +63,6 @@ function defaultPanelGeometry(area: PanelSize, chrome: PanelSize): CommandTermin
   const widthShare = Math.min(1, (RELEASED_TERMINAL_SHARE.width * area.width + chrome.width) / area.width);
   const heightShare = Math.min(1, (RELEASED_TERMINAL_SHARE.height * area.height + chrome.height) / area.height);
   return { x: (1 - widthShare) / 2, y: (1 - heightShare) / 2, w: widthShare, h: heightShare, maximized: false };
-}
-
-/**
- * A saved place whose numbers can be laid out. config.json is the user's to
- * edit, and a place with a missing or non-numeric field would size the panel
- * to NaN and leave it nowhere on screen.
- */
-function isUsableGeometry(geometry: CommandTerminalPanelGeometry | null | undefined): geometry is CommandTerminalPanelGeometry {
-  return !!geometry && [geometry.x, geometry.y, geometry.w, geometry.h].every((value) => Number.isFinite(value));
 }
 
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -146,6 +142,8 @@ interface PanelGesture {
   startRect: PixelRect;
   area: PanelSize;
   floor: PanelSize;
+  /** The grid shape on screen at the press, whose place the gesture saves. */
+  shape: CommandTerminalPanelShape;
   /** The resize's hold on the manager-resize gate, opened by its first move; null for a move or before one. */
   resizeGesture: ManagerResizeGesture | null;
   /** The last pointer position the gesture followed, which an abandoned resize commits. */
@@ -182,6 +180,10 @@ interface CommandTerminalPanelProps {
   onTerminalAreaReady: (element: HTMLElement | null) => void;
   /** The smallest the panel may be: the terminals' grid at the pane floor beside the rail. */
   minSize: PanelSize;
+  /** How many terminals the panel tiles, an expanded one included: it picks the place's shape. */
+  terminalCount: number;
+  /** The smallest panel for that count's whole grid, expanded or not: a shape with no place grows to it. */
+  placeMinSize: PanelSize;
   /** The terminal area's minimum width (`commandTerminalAreaMinWidth`), a CSS length. */
   terminalAreaMinWidth: string;
   /** Runs as an edge resize or a maximize begins: the terminals adopt the layout on screen. */
@@ -201,6 +203,8 @@ export function CommandTerminalPanel({
   rail,
   onTerminalAreaReady,
   minSize,
+  terminalCount,
+  placeMinSize,
   terminalAreaMinWidth,
   onResizeStart,
   widthChangeRef,
@@ -212,30 +216,69 @@ export function CommandTerminalPanel({
   const areaRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
-  const savedGeometry = useConfigStore((state) => state.globalConfig.commandTerminalPanel);
-  const saveGeometry = useConfigStore((state) => state.saveCommandTerminalPanel);
-  const geometry = isUsableGeometry(savedGeometry) ? savedGeometry : defaultPanelGeometry(areaSize, chrome);
+  const savedPlaces = useConfigStore((state) => state.globalConfig.commandTerminalPanelByShape);
+  const legacyGeometry = useConfigStore((state) => state.globalConfig.commandTerminalPanel);
+  const savePlaces = useConfigStore((state) => state.saveCommandTerminalPanelPlaces);
+  const shape = commandTerminalPanelShape(terminalCount);
+  const places = useMemo(() => readPanelPlaces(savedPlaces), [savedPlaces]);
+  const resolved = useMemo(() => resolvePanelPlace({
+    places,
+    legacy: legacyGeometry,
+    shape,
+    area: areaSize,
+    minSize: placeMinSize,
+    defaultGeometry: defaultPanelGeometry(areaSize, chrome),
+  }), [places, legacyGeometry, shape, areaSize, placeMinSize, chrome]);
+  const geometry = resolved.geometry;
   const rect = toPixels(geometry, areaSize, minSize);
+  /** Save the place of the shape on screen. */
+  const saveGeometry = useCallback((next: CommandTerminalPanelGeometry) => savePlaces({ [shape]: next }), [savePlaces, shape]);
 
   // The gesture in flight. A move translates the panel; a resize writes its box
   // straight to the element, and React takes it back over on the save.
   const gestureRef = useRef<PanelGesture | null>(null);
 
-  // A panel its terminals outgrew (one added, or the grid restored from an
-  // expanded terminal) already shows at the larger size, since `toPixels` holds
-  // it above the floor. Saving that size keeps it, so the next Expand does not
-  // shrink the panel back; the box on screen does not move. A floor the area
-  // cannot hold (a small window) is not a size to keep.
+  // A panel its terminals outgrew (the grid restored from an expanded terminal,
+  // or a saved place the window has grown too small for) already shows at the
+  // larger size, since `toPixels` holds it above the floor. Saving that size
+  // keeps it, so the next Expand does not shrink the panel back; the box on
+  // screen does not move. Only a shape's own place is kept this way: one with
+  // no place of its own is grown around its center and saved below. A floor
+  // the area cannot hold (a small window) is not a size to keep.
+  const ownPlace = places[shape];
   const previousMinSizeRef = useRef(minSize);
   useLayoutEffect(() => {
     const previous = previousMinSizeRef.current;
     previousMinSizeRef.current = minSize;
     if (minSize.width <= previous.width && minSize.height <= previous.height) return;
     if (gestureRef.current) return;
-    if (!isUsableGeometry(savedGeometry) || savedGeometry.maximized || areaSize.width === 0 || areaSize.height === 0) return;
+    if (!ownPlace || ownPlace.maximized || areaSize.width === 0 || areaSize.height === 0) return;
     if (minSize.width > areaSize.width || minSize.height > areaSize.height) return;
-    if (savedGeometry.w * areaSize.width >= minSize.width && savedGeometry.h * areaSize.height >= minSize.height) return;
+    if (ownPlace.w * areaSize.width >= minSize.width && ownPlace.h * areaSize.height >= minSize.height) return;
     saveGeometry(toGeometry(rect, areaSize));
+  });
+
+  // A shape with no place of its own takes the one it shows. It is saved when it
+  // came from a saved place (another shape's, or the place from before shapes),
+  // or when a terminal started or stopped while the panel was open; then the
+  // shape the panel left is saved too, if it had no place, so stopping back
+  // returns to it. A panel nobody placed, showing the shape it opened on, saves
+  // nothing. Nothing is saved before the panel has its terminals and its area,
+  // during a gesture, or when the area cannot hold the shape's grid.
+  const shownRef = useRef<{ shape: CommandTerminalPanelShape; geometry: CommandTerminalPanelGeometry } | null>(null);
+  useLayoutEffect(() => {
+    if (terminalCount === 0 || areaSize.width === 0 || areaSize.height === 0) return;
+    const shown = shownRef.current;
+    shownRef.current = { shape, geometry };
+    if (gestureRef.current) return;
+    if (placeMinSize.width > areaSize.width || placeMinSize.height > areaSize.height) return;
+    const shapeChanged = shown !== null && shown.shape !== shape;
+    // A place grown from a saved one, or the default shown after a start or stop.
+    const placeIsDerived = resolved.source === 'nearest' || resolved.source === 'legacy' || (resolved.source === 'default' && shapeChanged);
+    const entries: CommandTerminalPanelPlaces = {};
+    if (placeIsDerived) entries[shape] = geometry;
+    if (shown && shapeChanged && !places[shown.shape]) entries[shown.shape] = shown.geometry;
+    if (Object.keys(entries).length > 0) savePlaces(entries);
   });
 
   useLayoutEffect(() => {
@@ -266,14 +309,15 @@ export function CommandTerminalPanel({
 
   // The rail's width changes the panel's (`panel-edge-push.ts`), from the box the
   // change found, its left edge held. The values are read through a ref, so the
-  // change stays one object for the panel's life.
-  const widthStateRef = useRef({ rect, areaSize, maximized: geometry.maximized === true });
+  // change stays one object for the panel's life. It saves the place of the
+  // shape on screen when it began.
+  const widthStateRef = useRef({ rect, areaSize, maximized: geometry.maximized === true, shape });
   useLayoutEffect(() => {
-    widthStateRef.current = { rect, areaSize, maximized: geometry.maximized === true };
+    widthStateRef.current = { rect, areaSize, maximized: geometry.maximized === true, shape };
   });
   const widthChange = useMemo<PanelWidthChange>(() => ({
     begin(options = {}) {
-      const { rect: startRect, areaSize: area, maximized } = widthStateRef.current;
+      const { rect: startRect, areaSize: area, maximized, shape: startShape } = widthStateRef.current;
       if (maximized || gestureRef.current) return null;
       let box = startRect;
       let open = true;
@@ -292,7 +336,7 @@ export function CommandTerminalPanel({
         commit() {
           if (!open) return;
           open = false;
-          if (box !== startRect) saveGeometry(toGeometry(box, area));
+          if (box !== startRect) savePlaces({ [startShape]: toGeometry(box, area) });
         },
         cancel() {
           if (!open) return;
@@ -301,7 +345,7 @@ export function CommandTerminalPanel({
         },
       };
     },
-  }), [saveGeometry]);
+  }), [savePlaces]);
   useLayoutEffect(() => {
     if (!widthChangeRef) return;
     widthChangeRef.current = widthChange;
@@ -330,7 +374,7 @@ export function CommandTerminalPanel({
     if (gesture.edge === null) {
       releaseGesture(gesture, panelRef.current);
       const offset = movedBy(gesture, deltaX, deltaY);
-      saveGeometry(toGeometry({ ...gesture.startRect, left: gesture.startRect.left + offset.x, top: gesture.startRect.top + offset.y }, gesture.area));
+      savePlaces({ [gesture.shape]: toGeometry({ ...gesture.startRect, left: gesture.startRect.left + offset.x, top: gesture.startRect.top + offset.y }, gesture.area) });
       return;
     }
     // The panel already has its final box, so the save changes nothing the
@@ -340,7 +384,7 @@ export function CommandTerminalPanel({
     gesture.stopListening();
     runTerminalLayoutChange(areaRef.current, () => {
       applyBox(panelRef.current, box);
-      saveGeometry(toGeometry(box, gesture.area));
+      savePlaces({ [gesture.shape]: toGeometry(box, gesture.area) });
       gesture.resizeGesture?.end();
     });
   };
@@ -391,6 +435,7 @@ export function CommandTerminalPanel({
       startRect: rect,
       area: areaSize,
       floor: minSize,
+      shape,
       resizeGesture: null,
       lastX: event.clientX,
       lastY: event.clientY,

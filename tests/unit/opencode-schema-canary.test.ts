@@ -307,3 +307,145 @@ describe('captureSessionIdFromFilesystem - schema canary indirect path', () => {
     expect(opencodeWarnings).toEqual([]);
   });
 });
+
+/**
+ * OpenCode 2 migrates the same `opencode.db` in place (measured on 2.2.5): it
+ * leaves `session` as OpenCode 1 wrote it, copies its rows into `session_v2`,
+ * and writes every new session to `session_v2` only, with forward slashes in
+ * `directory`. Without reading `session_v2` a V2 spawn's id is never captured,
+ * and every resume silently starts a fresh session.
+ */
+describe('captureSessionIdFromFilesystem - an OpenCode 2 database', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let homedirSpy: ReturnType<typeof vi.spyOn>;
+  let fakeHome: string;
+  let projectDirectory: string;
+
+  const SESSION_TABLE_COLUMNS = `(
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    directory TEXT NOT NULL,
+    time_created INTEGER NOT NULL,
+    time_updated INTEGER NOT NULL
+  )`;
+
+  /** A database as OpenCode 2 leaves it: both tables, rows given per table. */
+  function plantDatabase(rows: { session?: Array<[string, number]>; sessionV2?: Array<[string, number]> }): void {
+    const opencodeDir = path.join(fakeHome, '.local', 'share', 'opencode');
+    fs.mkdirSync(opencodeDir, { recursive: true });
+    const database = new Database(path.join(opencodeDir, 'opencode.db'));
+    database.exec(`CREATE TABLE session ${SESSION_TABLE_COLUMNS}`);
+    database.exec(`CREATE TABLE session_v2 ${SESSION_TABLE_COLUMNS}`);
+    // OpenCode writes the directory with forward slashes on every platform.
+    const directory = projectDirectory.replace(/\\/g, '/');
+    for (const [table, tableRows] of [['session', rows.session ?? []], ['session_v2', rows.sessionV2 ?? []]] as const) {
+      const insert = database.prepare(`INSERT INTO ${table} (id, project_id, directory, time_created, time_updated) VALUES (?, 'project', ?, ?, ?)`);
+      for (const [id, created] of tableRows) insert.run(id, directory, created, created);
+    }
+    database.close();
+  }
+
+  beforeEach(() => {
+    __resetSchemaCanaryForTests();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-v2-db-'));
+    projectDirectory = path.join(fakeHome, 'project');
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+  });
+
+  afterEach(() => {
+    homedirSpy.mockRestore();
+    warnSpy.mockRestore();
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('captures a session OpenCode 2 wrote only to session_v2', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({
+      session: [['ses_v1copyOlderThanTheSpawnAAA', spawnedAt.getTime() - 3_600_000]],
+      sessionV2: [
+        ['ses_v1copyOlderThanTheSpawnAAA', spawnedAt.getTime() - 3_600_000],
+        ['ses_e601c5bccffeTD1q4jpiKAT40X', spawnedAt.getTime() + 400],
+      ],
+    });
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 });
+
+    expect(result).toBe('ses_e601c5bccffeTD1q4jpiKAT40X');
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('still captures an OpenCode 1 session written to session after the migration', async () => {
+    const spawnedAt = new Date();
+    plantDatabase({ session: [['ses_writtenByOpenCodeOneAfterV2', spawnedAt.getTime() + 300]] });
+
+    const result = await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({ spawnedAt, cwd: projectDirectory, maxAttempts: 1 });
+
+    expect(result).toBe('ses_writtenByOpenCodeOneAfterV2');
+  });
+
+  it('locates a session that is only in session_v2', async () => {
+    plantDatabase({ sessionV2: [['ses_e601c5bccffeTD1q4jpiKAT40X', Date.now()]] });
+
+    const located = await OpenCodeSessionHistoryParser.locate({ agentSessionId: 'ses_e601c5bccffeTD1q4jpiKAT40X', cwd: projectDirectory });
+
+    expect(located).toBe(path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db'));
+  });
+
+  it('warns about an incomplete session_v2 with no session table, naming the table, the missing column and the version', () => {
+    const fixture = createDbWithSchema('CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL)');
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const message = String(warnSpy.mock.calls[0]?.[0]);
+    expect(message).toContain('`time_created`');
+    expect(message).toContain('`session_v2` table');
+    expect(message).toContain('(detected version: v2.2.5)');
+    expect(message).toContain('Verified against 1.14.25 and 2.2.5');
+  });
+
+  it('does not warn about an incomplete session_v2 beside a complete session', () => {
+    const fixture = createDbWithSchema(
+      `CREATE TABLE session_v2 (id TEXT PRIMARY KEY);
+       CREATE TABLE session ${SESSION_TABLE_COLUMNS}`,
+    );
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns that the session table is missing when neither session table exists', () => {
+    const fixture = createDbWithSchema('CREATE TABLE unrelated (id TEXT PRIMARY KEY)');
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('`session` table is missing');
+  });
+
+  it('does not warn about a fresh OpenCode 2 database, which has no session table at all', () => {
+    const fixture = createDbWithSchema(`CREATE TABLE session_v2 ${SESSION_TABLE_COLUMNS}`);
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});

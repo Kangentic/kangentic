@@ -8,6 +8,7 @@ sources:
   - resource: src/main/browser/browser-pane-driver.ts
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/dev-server-error.ts
+  - resource: src/main/agent/mcp-http/browser-capture-file.ts
 ---
 # Browser actions
 
@@ -58,7 +59,10 @@ Capture the pane's loaded page and return an inline image plus viewport and scal
 | `fullPage` | boolean | No | Capture the full scrollable page instead of the viewport. Default false. On a pane the page is scaled down to fit the pane's own pixels. |
 | `format` | string | No | `png` or `jpeg`. Default `jpeg`. |
 | `quality` | number | No | JPEG quality 1-100, ignored for png. Defaults to 80 for jpeg. |
-| `maxBytes` | number | No | Soft cap on decoded image bytes; the capture downscales and recompresses to fit. |
+| `maxBytes` | number | No | Soft cap on decoded image bytes; the capture downscales and recompresses to fit. Ignored with `saveToFile`. |
+| `saveToFile` | boolean | No | Write the image to a file and return a `resource_link` to it instead of the inline image. |
+
+With `saveToFile` the capture skips the inline byte budget, so it keeps its format and quality, and is still planned to the pane's own pixels (below). The file goes only to a gitignored `.kangentic/` folder inside the caller's own working directory, so the agent can Read it back without a permission prompt: the session's `captures/` folder (`.kangentic/sessions/<callerSessionId>/captures/`, where the pane's Send capture writes) for a task on the main checkout, `<worktree>/.kangentic/captures/<callerSessionId>/` for a worktree task, `<projectRoot>/.kangentic/captures/shared/` for a caller with no session (a Command Terminal), and a temp folder only when none of those is known. Each save first prunes its own files in the folder (`screenshot-`, `element-`, `dom-` and `eval-`) to the newest 100, none older than a day (`pruneShotsDir`, the dev screenshot folder's rule), so a long run of captures cannot grow it for the life of the session or worktree, and the pane's Send captures beside them are never removed. The working directory is the one the session's command was built for (`getSessionCommandCwd`), which differs from the PTY's when a shell started elsewhere moves into it. The metadata carries `mode: 'file'`, `reason: 'requested'` and `filePath`. A write that fails returns `save-failed`. This is for captures an agent reads, copies or builds an artifact from: one that needed full-page PNGs and large DOM captures as files drove Playwright MCP instead, because these tools could only answer inline (task #977).
 
 The metadata carries `pixelsPerCssPixel`, the number to divide an image coordinate by for the page's CSS one. It is not always `deviceScaleFactor`, the page's own ratio: a capture scaled to fit its pane or a byte budget holds fewer pixels than the page renders at. `note` appears when the pane is the reason a capture is small, and says where to go for detail.
 
@@ -84,9 +88,10 @@ Capture a screenshot clipped to a single element, at up to 1:1 (one image pixel 
 | `selector` | string | Yes | CSS selector (or `text=` / `aria=` form) of the element to capture. |
 | `format` | string | No | `png` or `jpeg`. Default `png`. |
 | `quality` | number | No | JPEG quality 1-100, ignored for png. |
-| `maxBytes` | number | No | Soft cap on decoded image bytes. |
+| `maxBytes` | number | No | Soft cap on decoded image bytes. Ignored with `saveToFile`. |
+| `saveToFile` | boolean | No | Write the clip to a file in the caller's capture folder and return a `resource_link`, as `kangentic_browser_screenshot` does. |
 
-Error modes: `selector-not-found` when nothing matches, `screenshot-failed` when the clip returns no data.
+Error modes: `selector-not-found` when nothing matches, `screenshot-failed` when the clip returns no data, `save-failed` when the file cannot be written.
 
 ## kangentic_browser_query_dom
 
@@ -98,8 +103,9 @@ Read the `outerHTML` of the first element matching a selector. Capability tier: 
 | `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form). Defaults to `html`. |
 | `includeBox` | boolean | No | Also return the element's `{x, y, width, height}` viewport box. |
+| `saveToFile` | boolean | No | Write the `outerHTML` to an `.html` file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ selector, filePath, bytes }` instead of it. |
 
-Returns `{ selector, outerHTML }`, plus `box` when `includeBox` is set. `box` is `null` when the element matched but CDP returned no usable box model. Error mode: `selector-not-found`.
+Returns `{ selector, outerHTML }`, plus `box` when `includeBox` is set. `box` is `null` when the element matched but CDP returned no usable box model. With `saveToFile` the page's HTML goes to a file at the `observe` tier, so a DOM capture for an artifact needs neither `allowEval`, which is off by default, nor another browser. Error modes: `selector-not-found`, and `save-failed` when the file cannot be written.
 
 ## kangentic_browser_query_all
 
@@ -339,5 +345,6 @@ Evaluate a JavaScript expression in the loaded page's origin and return its valu
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
 | `expression` | string | Yes | JavaScript expression to evaluate. The resolved value is returned. |
+| `saveToFile` | boolean | No | Write the value to a file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ filePath, bytes }` instead of the value. |
 
-Returns `{ value }` with the serialized result. Error mode: `evaluate-failed`, carrying the page-side error text.
+Returns `{ value }` with the serialized result, or `{ filePath, bytes }` with `saveToFile`: a string value (page HTML, CSS, a URL list) is written as it is to a `.txt` file, anything else as indented JSON to a `.json` file. Error modes: `evaluate-failed`, carrying the page-side error text, and `save-failed` when the file cannot be written.

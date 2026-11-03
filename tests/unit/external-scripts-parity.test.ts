@@ -170,6 +170,39 @@ describe('external-scripts parity: deploy scripts', () => {
   });
 });
 
+describe('external-scripts parity: packaged app', () => {
+  // A hook runs `node <bridge>` with the system Node, which cannot read a file
+  // inside app.asar. resolveBridgeScript rewrites the path to app.asar.unpacked,
+  // so a script missing from asarUnpack is a path that does not exist in a
+  // release build. The CLI treats a hook that fails to start as a non-blocking
+  // error, so the feature the script carries (for browser-policy-bridge, the
+  // Agent Browser deny) is off for every packaged install with no sign of it,
+  // while dev and CI, which run from source, stay green.
+  it('every registered external script is unpacked from the asar by electron-builder.yml', () => {
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf-8');
+    const section = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    const unpackEntries = section
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('- '))
+      .map((line) => line.slice(2).trim().replace(/^["']|["']$/g, ''));
+    expect(unpackEntries.length, 'could not read the asarUnpack list').toBeGreaterThan(0);
+
+    const unpacked = (deployedPath: string): boolean => unpackEntries.some((entry) => (
+      entry === deployedPath
+      || (entry.endsWith('/**') && deployedPath.startsWith(entry.slice(0, -'**'.length)))
+    ));
+    const missing = registered
+      .map((entry) => path.posix.join('.vite/build', entry.destDir, entry.destFile))
+      .filter((deployedPath) => !unpacked(deployedPath));
+    expect(
+      missing,
+      `These external scripts are copied into .vite/build but not listed in asarUnpack in `
+        + `electron-builder.yml, so a packaged app's hook points at a file that does not exist:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+});
+
 describe('external-scripts parity: registry integrity', () => {
   it('every registered entry has an existing source file', () => {
     const missing = registered

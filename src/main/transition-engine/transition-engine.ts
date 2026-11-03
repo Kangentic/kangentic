@@ -74,6 +74,8 @@ interface TransitionEngineConfig {
   projectName: string | null;
   gitConfig: AppConfig['git'];
   mcpServerEnabled?: boolean;
+  /** The Agent Browser switch, resolved (`CommandOptions.browserAutomationEnabled`). */
+  browserAutomationEnabled?: boolean;
   /** Project-scoped URL for the in-process MCP HTTP server. */
   mcpServerUrl?: string;
   /** Per-launch MCP server token (X-Kangentic-Token header). */
@@ -261,6 +263,10 @@ interface AutomationGroupOptions {
   conditionUnavailableCallId?: string | null;
   /** Turn end only: move the task, for a Move to column row (`AutomationContext.moveTask`). */
   moveTask?: AutomationContext['moveTask'];
+  /** Turn end of a running workflow only: why a move is held. See `RunAutomationsOptions`. */
+  holdMoves?: string;
+  /** Turn end of a running workflow only: held moves run now. See `RunAutomationsOptions`. */
+  releaseHeldMoves?: ReadonlySet<string>;
 }
 
 export class TransitionEngine {
@@ -566,6 +572,8 @@ export class TransitionEngine {
       // A Text match reads it in code. Left undefined, not null, on enter and
       // exit: there is no final message there, rather than one that failed to read.
       agentReply: options.agentReply,
+      holdMoves: options.holdMoves,
+      releaseHeldMoves: options.releaseHeldMoves,
       // Enter and exit check their Conditions here, once for the group. The
       // turn-end group checked before it ran anything and passes its answers.
       // Each answer names the call that gave it, so the run rows link to it.
@@ -686,6 +694,7 @@ export class TransitionEngine {
       eventsOutputPath,
       shell,
       mcpServerEnabled: appConfig.mcpServerEnabled,
+      browserAutomationEnabled: appConfig.browserAutomationEnabled,
       // Carries this session's own id so the MCP server can identify the caller
       // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
       mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, input.ptySessionId),

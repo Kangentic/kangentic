@@ -8,8 +8,8 @@ import { isCommandTerminalSession } from '../../../shared/session-owner';
 import {
   MAX_COMMAND_TERMINALS,
   commandTerminalSlotId,
-  commandTerminalSlotNumber,
   commandTerminalTitle,
+  isCommandTerminalSlotId,
 } from '../../../shared/command-terminal-name';
 import { fetchIfStale } from '../../git/fetch-throttle';
 import { gitAt, type GitClient } from '../../git/git-client';
@@ -19,10 +19,13 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
+import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
 import { DEFAULT_AGENT } from '../../../shared/types';
+import { appendCallerSession } from '../../agent/mcp-http/caller-url';
+import { markCommandTerminalRespawn, forgetCommandTerminalRespawn } from '../helpers/command-terminal-browser';
 import type {
   CommandTerminalHistorySearchResult,
   SpawnTransientSessionInput,
@@ -119,6 +122,11 @@ export function clearCommandTerminalReservations(): void {
   reservedSlotsByProject.clear();
 }
 
+/** Whether a start in flight holds `slot` of `projectId`. */
+export function isCommandTerminalSlotStarting(projectId: string, slot: string): boolean {
+  return reservedSlotsByProject.get(projectId)?.has(slot) === true;
+}
+
 /**
  * A path as `projectRootIsShared` compares it. Not run through
  * `resolveProjectRoot`: that maps a task's worktree to the project root, and a
@@ -158,16 +166,8 @@ function reserveCommandTerminalSlot(
   projectId: string,
   requestedSlot: string | undefined,
 ): { slot: string; release: () => void } {
-  if (requestedSlot) {
-    const requestedNumber = commandTerminalSlotNumber(requestedSlot);
-    if (
-      requestedNumber === null
-      || requestedNumber < 1
-      || requestedNumber > MAX_COMMAND_TERMINALS
-      || requestedSlot !== commandTerminalSlotId(requestedNumber)
-    ) {
-      throw new Error(`Not a Command Terminal slot: ${requestedSlot}`);
-    }
+  if (requestedSlot && !isCommandTerminalSlotId(requestedSlot)) {
+    throw new Error(`Not a Command Terminal slot: ${requestedSlot}`);
   }
   const reserved = reservedSlotsByProject.get(projectId) ?? new Set<string>();
   const occupied = new Set<string>(reserved);
@@ -403,7 +403,13 @@ export async function startCommandTerminal(
       ptySessionId: sessionId,
       shell,
       mcpServerEnabled: config.mcpServer.enabled,
-      mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
+      browserAutomationEnabled: resolveBrowserAutomationConfig(config.browserAutomation).enabled,
+      // Names the caller, as a task's spawn does (`prepare-spawn.ts`), so the
+      // MCP server can tell this terminal's agent from a human client: it
+      // resolves to the terminal's slot (`resolveMcpCaller`), which keys its
+      // own Browser pane, and never to its synthetic task id. Each respawn of
+      // the slot mints its own session id and so its own URL.
+      mcpServerUrl: appendCallerSession(context.mcpServerHandle?.urlForProject(input.projectId), sessionId),
       mcpServerToken: context.mcpServerHandle?.token,
       // Project default model/effort, same tier board-task spawns apply. A
       // fresh Command Terminal starts on the project's preferred combo
@@ -713,12 +719,27 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     return context.sessionManager.renameCommandTerminal(sessionId, name);
   });
 
-  ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
+  ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string, options?: { respawn?: boolean }) => {
     // The handler returns at once - the window closes at once - and only the
     // session directory's delete waits for the shell (endCommandTerminal). An
     // id with no live row is a no-op, as it always was; a task's session is
     // refused, since this channel ends a Command Terminal and nothing else.
-    const outcome = context.sessionManager.endCommandTerminal(sessionId);
+    //
+    // `respawn` is a branch switch or a resume in place: the slot starts again
+    // at once under a new session, so its Browser pane is kept (see
+    // `command-terminal-browser.ts`). Marked before the end, whose removal push
+    // is what the browser cleanup listens for, and forgotten once the end
+    // returns: the removal is synchronous, so a mark still set then is one no
+    // removal spent (no row, a task's row, or a throw), and it must not keep
+    // the browser through a later end of the same id.
+    const respawn = options?.respawn === true;
+    if (respawn) markCommandTerminalRespawn(sessionId);
+    let outcome: ReturnType<typeof context.sessionManager.endCommandTerminal>;
+    try {
+      outcome = context.sessionManager.endCommandTerminal(sessionId);
+    } finally {
+      if (respawn) forgetCommandTerminalRespawn(sessionId);
+    }
     if (outcome === 'not-command-terminal') throw new Error('Not a Command Terminal session');
   });
 

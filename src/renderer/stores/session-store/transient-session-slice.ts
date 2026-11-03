@@ -43,7 +43,7 @@ export interface TransientSessionEntry {
 export type TransientKillOutcome = 'killed' | 'no-session' | 'failed';
 
 /** What a rail row's menu can ask a terminal's window to open once it is expanded. */
-export type CommandTerminalWindowAction = 'commands' | 'switch-branch' | 'toggle-changes' | 'rename';
+export type CommandTerminalWindowAction = 'commands' | 'switch-branch' | 'toggle-changes' | 'toggle-browser' | 'rename';
 
 /** Composite map key. One Command Terminal window owns one (project, slot) PTY. */
 export function transientKey(projectId: string, slot: string): string {
@@ -232,7 +232,7 @@ export interface TransientSessionSlice {
    *  IPC at all and a rejected kill was swallowed, so both resolved exactly like a
    *  successful kill. A caller that surfaces "stopped" on every path tells the user a
    *  PTY died when it may still be running. The renderer state is scrubbed either way. */
-  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<TransientKillOutcome>;
+  killTransientSessionBySlot: (projectId: string, slot: string, options?: { respawn?: boolean }) => Promise<TransientKillOutcome>;
   /** Remove a transient session's renderer state by session id, no IPC (the PTY
    *  already exited naturally). Drops its (project, slot) map entry too. */
   clearTransientSessionById: (sessionId: string) => void;
@@ -406,7 +406,7 @@ export function createTransientSessionSlice(preserved: {
       }));
     },
 
-    killTransientSessionBySlot: async (projectId, slot) => {
+    killTransientSessionBySlot: async (projectId, slot, options) => {
       const entry = get().transientSessions[transientKey(projectId, slot)];
       // No entry means no PTY to address. Nothing was killed, and saying so is the
       // point: this path issues no IPC and the caller cannot otherwise tell.
@@ -419,7 +419,12 @@ export function createTransientSessionSlice(preserved: {
       // own: Stop closes the window itself, and a branch switch respawns into it.
       get().clearTransientSessionById(entry.sessionId);
       try {
-        await window.electronAPI.sessions.killTransient(entry.sessionId);
+        // A respawn (branch switch, resume in place) tells main to keep the
+        // slot's Browser pane: the slot starts again at once. Any other end
+        // sends the session id alone, the call shape every other caller and
+        // `transient-debugger-wiring.test.ts` pin.
+        if (options?.respawn) await window.electronAPI.sessions.killTransient(entry.sessionId, { respawn: true });
+        else await window.electronAPI.sessions.killTransient(entry.sessionId);
       } catch {
         // The renderer already let go of a PTY it can no longer address; report
         // the failure rather than passing as a kill.

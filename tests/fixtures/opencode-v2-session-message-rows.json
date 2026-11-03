@@ -1,0 +1,130 @@
+[
+  {
+    "id": "msg_19ffcd4c2001172b2h60XYacTf",
+    "session_id": "ses_e60032c8bfferWu10UkhIFtoX4",
+    "type": "agent-switched",
+    "seq": 1,
+    "time_created": 1793685509315,
+    "data": "{\"time\":{\"created\":1793685509315},\"agent\":\"build\",\"previous\":\"build\"}"
+  },
+  {
+    "id": "msg_19ffcd48c001T6n1Fo7jL9TLLn",
+    "session_id": "ses_e60032c8bfferWu10UkhIFtoX4",
+    "type": "user",
+    "seq": 5,
+    "time_created": 1793685509433,
+    "data": "{\"time\":{\"created\":1793685509433},\"text\":\"SHELLTEST v2 plugin\",\"files\":[]}"
+  },
+  {
+    "id": "msg_19ffcd5490017nrYi4pUjO6FNA",
+    "session_id": "ses_e60032c8bfferWu10UkhIFtoX4",
+    "type": "assistant",
+    "seq": 6,
+    "time_created": 1793685509524,
+    "data": "{\"time\":{\"created\":1793685509524,\"streamed\":1793685509572,\"completed\":1793685510193},\"agent\":\"build\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"tool\",\"id\":\"call_shell_1\",\"name\":\"shell\",\"executed\":false,\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"echo shelltest > shelltest-ran.txt\",\"description\":\"write a marker file\"},\"content\":[{\"type\":\"text\",\"text\":\"(no output)\"}],\"metadata\":{\"status\":\"completed\",\"truncated\":false,\"exit\":0}},\"time\":{\"created\":1793685509565,\"ran\":1793685509570,\"completed\":1793685510191}}],\"finish\":\"tool-calls\",\"rawFinish\":\"tool_calls\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ffcd837001zoxZYdZXfC179z",
+    "session_id": "ses_e60032c8bfferWu10UkhIFtoX4",
+    "type": "assistant",
+    "seq": 15,
+    "time_created": 1793685510201,
+    "data": "{\"time\":{\"created\":1793685510201,\"streamed\":1793685510218,\"completed\":1793685510219},\"agent\":\"build\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"text\",\"text\":\"TOOL RESULT: (no output)\"}],\"finish\":\"stop\",\"rawFinish\":\"stop\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ffcd84d001rji54R8EMm7knk",
+    "session_id": "ses_e60032c8bfferWu10UkhIFtoX4",
+    "type": "idle",
+    "seq": 20,
+    "time_created": 1793685510221,
+    "data": "{\"time\":{\"created\":1793685510221},\"outcome\":\"succeeded\"}"
+  },
+  {
+    "id": "msg_19ffbd264001wVnygOATNuCs68",
+    "session_id": "ses_e60042ee8ffeAy5Cq2RJH2s4gd",
+    "type": "agent-switched",
+    "seq": 1,
+    "time_created": 1793685443172,
+    "data": "{\"time\":{\"created\":1793685443172},\"agent\":\"build\",\"previous\":\"build\"}"
+  },
+  {
+    "id": "msg_19ffbd256001AG0vEsPwlECHNH",
+    "session_id": "ses_e60042ee8ffeAy5Cq2RJH2s4gd",
+    "type": "user",
+    "seq": 5,
+    "time_created": 1793685443316,
+    "data": "{\"time\":{\"created\":1793685443316},\"text\":\"READENV probe two\",\"files\":[]}"
+  },
+  {
+    "id": "msg_19ffbd300001NVrkpWkDby82QB",
+    "session_id": "ses_e60042ee8ffeAy5Cq2RJH2s4gd",
+    "type": "assistant",
+    "seq": 6,
+    "time_created": 1793685443383,
+    "data": "{\"time\":{\"created\":1793685443383,\"streamed\":1793685443420,\"completed\":1793685443439},\"agent\":\"build\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"tool\",\"id\":\"call_read_1\",\"name\":\"read\",\"executed\":false,\"state\":{\"status\":\"error\",\"input\":{\"path\":\".env\"},\"error\":{\"type\":\"permission.rejected\",\"message\":\"This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.\"}},\"time\":{\"created\":1793685443415,\"ran\":1793685443419,\"completed\":1793685443438}}],\"finish\":\"tool-calls\",\"rawFinish\":\"tool_calls\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ffbd375001AP4dqpOwEDUoLH",
+    "session_id": "ses_e60042ee8ffeAy5Cq2RJH2s4gd",
+    "type": "assistant",
+    "seq": 14,
+    "time_created": 1793685443447,
+    "data": "{\"time\":{\"created\":1793685443447,\"streamed\":1793685443464,\"completed\":1793685443465},\"agent\":\"build\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"text\",\"text\":\"Stub reply from the test model\"}],\"finish\":\"stop\",\"rawFinish\":\"stop\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ffbd38b001Bz0CkeHa5wqImi",
+    "session_id": "ses_e60042ee8ffeAy5Cq2RJH2s4gd",
+    "type": "idle",
+    "seq": 19,
+    "time_created": 1793685443467,
+    "data": "{\"time\":{\"created\":1793685443467},\"outcome\":\"succeeded\"}"
+  },
+  {
+    "id": "msg_19ff50084001yQ4jqb2VPT8W0H",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "agent-switched",
+    "seq": 2,
+    "time_created": 1793684996228,
+    "data": "{\"time\":{\"created\":1793684996228},\"agent\":\"plan\",\"previous\":\"plan\"}"
+  },
+  {
+    "id": "msg_19ff5007c001eUoGdAVe2GMFH9",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "synthetic",
+    "seq": 6,
+    "time_created": 1793684996333,
+    "data": "{\"time\":{\"created\":1793684996333},\"text\":\"<system-reminder>\\nYou are in Plan mode. Discuss the plan with the user directly in the conversation. Do not create or update plan files unless the user explicitly asks you to; when they do, write them only in:\\nC:\\\\Users\\\\dev\\\\.opencode\\\\plan\\n\\nDo not modify any other files or ask a subagent to do so.\\n\\nYou remain in Plan mode until the user switches agents. If the user asks you to implement changes, do not do so. Tell them they need to switch agents.\\n</system-reminder>\"}"
+  },
+  {
+    "id": "msg_19ff500800018kKWHVDRAqEN3u",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "user",
+    "seq": 7,
+    "time_created": 1793684996334,
+    "data": "{\"time\":{\"created\":1793684996334},\"text\":\"SHELLTEST baseline\",\"files\":[]}"
+  },
+  {
+    "id": "msg_19ff500f8001beSU6T7I2V6AZY",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "assistant",
+    "seq": 8,
+    "time_created": 1793684996399,
+    "data": "{\"time\":{\"created\":1793684996399,\"streamed\":1793684996430,\"completed\":1793684996905},\"agent\":\"plan\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"tool\",\"id\":\"call_shell_1\",\"name\":\"shell\",\"executed\":false,\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"echo shelltest > shelltest-ran.txt\",\"description\":\"write a marker file\"},\"content\":[{\"type\":\"text\",\"text\":\"(no output)\"}],\"metadata\":{\"status\":\"completed\",\"truncated\":false,\"exit\":0}},\"time\":{\"created\":1793684996426,\"ran\":1793684996429,\"completed\":1793684996902}}],\"finish\":\"tool-calls\",\"rawFinish\":\"tool_calls\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ff50330001YL4KMOfSm3ZBog",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "assistant",
+    "seq": 17,
+    "time_created": 1793684996914,
+    "data": "{\"time\":{\"created\":1793684996914,\"streamed\":1793684996928,\"completed\":1793684996929},\"agent\":\"plan\",\"model\":{\"id\":\"stub-model\",\"providerID\":\"stub\"},\"content\":[{\"type\":\"text\",\"text\":\"TOOL RESULT: (no output)\"}],\"finish\":\"stop\",\"rawFinish\":\"stop\",\"cost\":0,\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}}"
+  },
+  {
+    "id": "msg_19ff50343001ysP4oOJymQKyky",
+    "session_id": "ses_e600b00a9ffe66juGOEwP8ldrY",
+    "type": "idle",
+    "seq": 22,
+    "time_created": 1793684996931,
+    "data": "{\"time\":{\"created\":1793684996931},\"outcome\":\"succeeded\"}"
+  }
+]

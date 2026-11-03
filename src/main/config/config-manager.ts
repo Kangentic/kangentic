@@ -27,7 +27,9 @@ function platformDefaults(): AppConfig {
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
  *  covers true `Record<string, ...>` dictionaries (where merge would leak deleted
  *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`,
- *  `commandTerminalPanel`, `monitorWorkspace`) the renderer always writes in full.
+ *  `commandTerminalPanel`, `commandTerminalPanelByShape`, `monitorWorkspace`) the
+ *  renderer always writes in full. The panel's places are a map of shapes, so a
+ *  merge would keep a shape the renderer dropped.
  *
  *  What the layout blobs actually need this for is their OBJECT-shaped fields, not
  *  their arrays: `deepMerge` already assigns an array wholesale (it recurses only
@@ -47,6 +49,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'workspaceByProject',
   'commandTerminalWorkspace',
   'commandTerminalPanel',
+  'commandTerminalPanelByShape',
   'monitorWorkspace',
   'popOutBounds',
   'terminal.colors',

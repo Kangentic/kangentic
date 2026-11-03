@@ -49,8 +49,18 @@ msgstr "Disponibile all'avvio del terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "Browser in esecuzione per l'agente. Chiudilo dal menu del terminale per liberare memoria."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "Cancella ricerca"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "Chiudi browser"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "Impossibile arrestare il terminale"
 msgid "Couldn't switch branch"
 msgstr "Impossibile cambiare ramo"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "Trascina per ridimensionare"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "Vai a {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "Nascondi"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "Nascondi browser"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "Verrà rimossa da Precedenti e non sarà più ricercabile. L'agente cons
 msgid "Its process may still be running."
 msgstr "Il processo potrebbe essere ancora in esecuzione."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "Mantenuta attiva finché non la chiudi"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "Apri in una nuova finestra"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Apri cartella del progetto"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "Pagina mantenuta"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "Ricerca conversazioni..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "Mostra browser"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "Mostra modifiche"
 
@@ -348,6 +385,11 @@ msgstr "Nome del terminale"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "I terminali sono tornati nel pannello."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "Attiva/disattiva browser"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

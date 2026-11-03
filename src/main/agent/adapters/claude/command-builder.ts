@@ -5,7 +5,15 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { toClaudeModelArgument } from './model-display-name';
 import { peekModelPickerAliasIds } from './model-picker-probe';
-import { buildHooks, CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
+import { buildHooks, CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC, claudeBrowserPolicySpec } from './hook-manager';
+import {
+  BROWSER_POLICY_PROMPT,
+  browserPolicyMatcher,
+  browserServerToolPrefix,
+  buildBrowserPolicyCommand,
+} from '../../shared/browser-policy-hook';
+import { claudeBrowserServerNames } from './browser-servers';
+import { PATHS } from '../../../config/paths';
 import type { ClaudeHookEntry } from './hook-manager';
 import {
   buildPlanApprovalCommand,
@@ -370,6 +378,23 @@ export class CommandBuilder {
     if (options.readOnly) {
       parts.push('--tools', quoteArg(READ_ONLY_TOOLS, shell), '--strict-mcp-config', '--no-chrome');
     }
+    // While the Agent Browser is on, it is the only browser (task #977): the
+    // policy as system prompt text, and Claude in Chrome turned off at the CLI,
+    // which also drops its own system prompt section telling the agent to use
+    // it. The PreToolUse hook denies the rest.
+    //
+    // `--append-system-prompt`, not `-file`: the file form is missing from
+    // `claude --help` with no recorded first version, and Claude exits on an
+    // unknown option ("error: unknown option", 2.1.317), so a CLI that predates
+    // it would fail every spawn. The text is one line with no character a host
+    // shell treats specially (BROWSER_POLICY_PROMPT), quoted like the prompt.
+    // Claude records the system prompt on a conversation's first request, so a
+    // resumed conversation keeps the one it started with until it compacts,
+    // and a subagent never gets it (probed on 2.1.317). The hook covers both.
+    if (options.browserAutomationEnabled === true) {
+      parts.push('--append-system-prompt', quoteArg(BROWSER_POLICY_PROMPT, shell));
+      if (!options.readOnly) parts.push('--no-chrome');
+    }
     // Other checkouts the agent may read with no permission prompt (a workflow
     // agent's other projects). One flag per directory: `--add-dir` takes a list,
     // and the prompt, which would otherwise join it, comes after `--` below.
@@ -557,6 +582,9 @@ export class CommandBuilder {
     // Merge event-bridge hooks (preserve existing user hooks)
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     if (eventsPath) {
+      // The browser-automation servers this session will load, by the name its
+      // tools carry (browser-servers.ts). Claude in Chrome is always among them.
+      const browserServers = claudeBrowserServerNames({ cwd: options.cwd, place });
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
       // Registered on every spawn, whatever the column says: the decision file
       // in the session's own directory decides at run time, so a column switched
@@ -571,7 +599,12 @@ export class CommandBuilder {
       // The same bridge, and the same decision file, on a prompt for an MCP
       // tool the user's allow rules name, which plan mode asks about anyway
       // (plan-tool-approval.ts). Registered only when a rule names one.
-      const toolApprovalRules = planToolApprovalRules([baseSettings.permissions, this.readUserSettings(place).permissions]);
+      // While the Agent Browser is on, a browser server's tool is denied, so the
+      // plan approval hook never answers for one either.
+      const toolApprovalRules = planToolApprovalRules(
+        [baseSettings.permissions, this.readUserSettings(place).permissions],
+        options.browserAutomationEnabled === true ? browserServers.map(browserServerToolPrefix) : [],
+      );
       const planToolApprovalCommand = toolApprovalRules
         ? planApprovalHook(claudePlanToolApprovalSpec(toolApprovalRules))
         : undefined;
@@ -584,11 +617,22 @@ export class CommandBuilder {
           ? wslHookReplyCommand(wslHooks, place, 'background-shell-hint', encodeHookSpec(CLAUDE_BACKGROUND_SHELL_HINT_SPEC))
           : buildBackgroundShellHintCommand(CLAUDE_BRIDGE_SHELL, shippedHintBridgePath(), CLAUDE_BACKGROUND_SHELL_HINT_SPEC);
       }
+      // Registered on every spawn, whatever the Agent Browser switch says: the
+      // bridge reads it from the global config on each call, so turning the
+      // Agent Browser off frees this session at once, and on blocks at once.
+      const browserPolicySpec = claudeBrowserPolicySpec(browserServers, PATHS.configFile);
+      const browserPolicy = {
+        matcher: browserPolicyMatcher(browserPolicySpec),
+        command: wslHooks && place
+          ? wslHookReplyCommand(wslHooks, place, 'browser-policy', encodeHookSpec(browserPolicySpec))
+          : buildBrowserPolicyCommand(CLAUDE_BRIDGE_SHELL, toForwardSlash(resolveBridgeScript('browser-policy-bridge')), browserPolicySpec),
+      };
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
         capturePromptText: options.capturePromptText === true,
         planApprovalCommand,
         planToolApprovalCommand,
         backgroundShellHintCommand,
+        browserPolicy,
         ...(wslHooks && place
           ? { eventCommand: (eventType: string, ...directives: string[]) => wslHookEventCommand(wslHooks, place, eventType, ...directives) }
           : {}),

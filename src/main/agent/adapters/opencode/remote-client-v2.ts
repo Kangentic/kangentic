@@ -1,0 +1,382 @@
+import type {
+  AgentExecutionServer,
+  AgentExecutionServerAuth,
+  RemoteServerStatus,
+  TranscriptBlock,
+  TranscriptEntry,
+} from '../../../../shared/types';
+import { parseWindowBytes } from '../../shared/transcript-truncation';
+import {
+  authHeaders,
+  OPENCODE_V2_USERNAME,
+  openCodeMajorVersion,
+  trimTrailingSlash,
+  type FetchLike,
+} from './remote-client';
+
+/**
+ * Client for an OpenCode 2 server's API, the remote-mode counterpart of
+ * `remote-client.ts` (OpenCode 1). OpenCode 2 replaced the V1 server API and
+ * removed `opencode attach`, so a V2 remote session is a TUI started with
+ * `opencode --server <url>`, and Kangentic reads its transcript from here.
+ *
+ * Shapes are from `@opencode/client` 2.2.5 (`dist/promise/generated/types.d.ts`)
+ * and were checked against a live `opencode serve` 2.2.5 on 2026-11-03. The
+ * fixtures in `tests/fixtures/opencode-v2/` are that server's own responses.
+ * What the probe found:
+ *
+ * - Auth is HTTP Basic and the username is always `opencode`. Any other
+ *   username gets a 401, and a V2 server always has a password (`opencode
+ *   serve` generates one when none is set). The TUI reads it from
+ *   `OPENCODE_PASSWORD` for `--server`, and exits with "requires a password;
+ *   set OPENCODE_PASSWORD" without it.
+ * - `GET /api/info` answers a bare `ServerInfo` (no `data` envelope, no
+ *   `healthy` field). Each major answers the other's route with its web app's
+ *   HTML and a 200: `/global/health` on a V2 server, and `/api/info` on an
+ *   OpenCode 1.18.31 server, whose own `/global/health` answers
+ *   `{ healthy, version }`. The probe uses that route to name a V1 server.
+ * - `GET /api/session/{id}/message` answers `{ data, cursor }`. With
+ *   `order=desc` the first page is the newest, and `cursor.next` walks to older
+ *   pages; a cursor is not combined with `order`. `cursor.next` is set even on
+ *   the last page with data, and the page after it is empty with null cursors.
+ * - `POST /api/session` takes an optional `id` and a `location.directory`, and
+ *   answers `{ data: SessionInfo }`. The server does not check that the
+ *   directory exists. With no location, the session's directory is the one
+ *   the server was started in.
+ * - The TUI started with `--server` creates its session in the CLIENT's local
+ *   working directory (`location.directory` is the local cwd), and its
+ *   positional `[directory]` is a local `chdir`. It prints the session id only
+ *   when it exits (`Continue  opencode -s ses_...`). A session created first
+ *   through `POST /api/session` and then opened with `--session <id>
+ *   --prompt <text>` keeps its own directory and receives the prompt.
+ */
+
+/** The parts of the global `fetch` this module uses, injectable for tests. */
+export type OpenCodeV2Fetch = FetchLike;
+
+const REQUEST_TIMEOUT_MS = 10_000;
+const MESSAGE_PAGE_LIMIT = 100;
+const MAX_MESSAGE_PAGES = 20;
+/** The whole paging walk's limit, so a slow server cannot hold a transcript read for every page's timeout in turn. */
+const PAGING_DEADLINE_MS = 30_000;
+
+interface OpenCodeV2ToolContent {
+  type: string;
+  text?: string;
+  uri?: string;
+  name?: string | null;
+}
+
+interface OpenCodeV2ToolState {
+  status: string;
+  input?: unknown;
+  content?: OpenCodeV2ToolContent[];
+  error?: { message?: string };
+}
+
+interface OpenCodeV2AssistantContent {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  state?: OpenCodeV2ToolState;
+}
+
+/** One entry of `SessionMessageInfo`. Only the fields the transcript reads are typed. */
+export interface OpenCodeV2Message {
+  id: string;
+  type: string;
+  time?: { created?: number };
+  text?: string;
+  model?: { id?: string };
+  content?: OpenCodeV2AssistantContent[];
+}
+
+/**
+ * Basic auth as `opencode:<password>`. The configured username is ignored,
+ * because a V2 server rejects every other one. No password sends no header,
+ * which the server answers with a 401. `bearerEnv` sends none either: OpenCode
+ * authenticates with Basic only, as `authHeaders` in `remote-client.ts` notes.
+ */
+export function openCodeV2AuthHeaders(auth: AgentExecutionServerAuth): Record<string, string> {
+  if (auth.kind !== 'basic' || !auth.password) return {};
+  return authHeaders({ kind: 'basic', username: OPENCODE_V2_USERNAME, password: auth.password });
+}
+
+/**
+ * Reachability and credential check for an OpenCode 2 server: `GET /api/info`.
+ * Never throws: every failure resolves to `{ reachable: false, reason }`.
+ */
+export async function probeOpenCodeV2Server(
+  server: AgentExecutionServer,
+  fetchImpl: OpenCodeV2Fetch = fetch,
+): Promise<RemoteServerStatus> {
+  if (!server.url) return { reachable: false, reason: 'No server URL configured' };
+  const target = { ...server, url: server.url };
+  try {
+    const response = await fetchImpl(`${trimTrailingSlash(target.url)}/api/info`, {
+      method: 'GET',
+      headers: openCodeV2AuthHeaders(server.auth),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (response.status === 401 || response.status === 403) {
+      // An OpenCode 1 server with its own username rejects `opencode`.
+      if (server.auth.kind === 'basic' && server.auth.username && server.auth.username !== OPENCODE_V2_USERNAME) {
+        const mismatch = await openCode1MismatchStatus(target, fetchImpl);
+        if (mismatch) return mismatch;
+      }
+      const hasPassword = server.auth.kind === 'basic' && Boolean(server.auth.password);
+      return {
+        reachable: false,
+        reason: hasPassword ? 'Authentication failed - check the password' : 'The server requires a password',
+      };
+    }
+    if (!response.ok) return { reachable: false, reason: `Server responded with HTTP ${response.status}` };
+    const version = await versionFromBody(response);
+    if (version === null || openCodeMajorVersion(version) === 1) {
+      // An OpenCode 1 server answers /api/info with its web app's HTML. The
+      // local CLI and the server must be the same major, so the probe names
+      // the server's version from its own health route.
+      const mismatch = await openCode1MismatchStatus(target, fetchImpl);
+      return mismatch ?? { reachable: false, reason: 'The server did not answer as an OpenCode 2 server' };
+    }
+    return { reachable: true, version };
+  } catch (error) {
+    return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+async function versionFromBody(response: { json(): Promise<unknown> }): Promise<string | null> {
+  try {
+    const body = await response.json();
+    const version = body && typeof body === 'object' ? (body as { version?: unknown }).version : undefined;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The probe result for an OpenCode 1 server, named by the version it reports
+ * on `GET /global/health`, or null when that route does not answer as one.
+ */
+async function openCode1MismatchStatus(
+  server: AgentExecutionServer & { url: string },
+  fetchImpl: OpenCodeV2Fetch,
+): Promise<RemoteServerStatus | null> {
+  try {
+    // An OpenCode 1 server's username is its own setting, so this request
+    // carries the configured one through the V1 client's own headers.
+    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/global/health`, {
+      method: 'GET',
+      headers: authHeaders(server.auth),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const version = await versionFromBody(response);
+    if (version === null || openCodeMajorVersion(version) !== 1) return null;
+    return { reachable: false, reason: `The server runs OpenCode ${version}, and the local OpenCode is version 2` };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create an empty session on the server, in `directory` when one is given, and
+ * return its id. The TUI then opens it with `--session <id>`, which is how a
+ * remote session gets a directory on the server rather than this machine's cwd,
+ * and how Kangentic knows its id before launch. Null on any failure.
+ */
+export async function createOpenCodeV2Session(
+  server: AgentExecutionServer,
+  options: { directory?: string | null },
+  fetchImpl: OpenCodeV2Fetch = fetch,
+): Promise<string | null> {
+  if (!server.url) return null;
+  const body = options.directory ? { location: { directory: options.directory } } : {};
+  try {
+    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/api/session`, {
+      method: 'POST',
+      headers: { ...openCodeV2AuthHeaders(server.auth), 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const parsed = (await response.json()) as { data?: { id?: unknown } } | null;
+    const id = parsed?.data?.id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+interface MessagesPage {
+  data: OpenCodeV2Message[];
+  next: string | null;
+}
+
+async function fetchMessagesPage(
+  server: AgentExecutionServer & { url: string },
+  sessionId: string,
+  cursor: string | null,
+  timeoutMs: number,
+  fetchImpl: OpenCodeV2Fetch,
+): Promise<MessagesPage | null> {
+  const query = cursor
+    ? `limit=${MESSAGE_PAGE_LIMIT}&cursor=${encodeURIComponent(cursor)}`
+    : `order=desc&limit=${MESSAGE_PAGE_LIMIT}`;
+  const response = await fetchImpl(
+    `${trimTrailingSlash(server.url)}/api/session/${encodeURIComponent(sessionId)}/message?${query}`,
+    { method: 'GET', headers: openCodeV2AuthHeaders(server.auth), signal: AbortSignal.timeout(timeoutMs) },
+  );
+  if (!response.ok) return null;
+  const body = (await response.json()) as { data?: unknown; cursor?: { next?: unknown } } | null;
+  if (!body || !Array.isArray(body.data)) return null;
+  const next = typeof body.cursor?.next === 'string' && body.cursor.next.length > 0 ? body.cursor.next : null;
+  return { data: body.data as OpenCodeV2Message[], next };
+}
+
+/** A session's messages, oldest first, and whether they reach back to its start. */
+export interface OpenCodeV2SessionMessages {
+  messages: OpenCodeV2Message[];
+  /**
+   * False when paging stopped before the history's end (the byte budget, the
+   * page cap, the deadline, or a failed page). The mapper drops bookkeeping messages, so the
+   * mapped entries can fit the transcript window although older messages were
+   * left out, and the caller then adds the truncation notice itself.
+   */
+  complete: boolean;
+}
+
+/**
+ * A session's newest messages, oldest first: pages newest to oldest until the
+ * pages hold `budgetBytes` of JSON (the transcript window the caller caps to),
+ * the history ends, `MAX_MESSAGE_PAGES` pages were read, or `PAGING_DEADLINE_MS`
+ * passed. Each page's timeout is the per-request one or the time left, whichever
+ * is shorter. A failure on the first page returns no messages, per
+ * `parseTranscript`'s must-not-throw contract; a failure on a later page keeps
+ * the newer pages already read.
+ */
+export async function fetchOpenCodeV2SessionMessages(
+  server: AgentExecutionServer,
+  sessionId: string,
+  options: { budgetBytes?: number; maxPages?: number; deadlineMs?: number } = {},
+  fetchImpl: OpenCodeV2Fetch = fetch,
+): Promise<OpenCodeV2SessionMessages> {
+  if (!server.url) return { messages: [], complete: false };
+  const target = { ...server, url: server.url };
+  const budget = options.budgetBytes ?? parseWindowBytes();
+  const maxPages = options.maxPages ?? MAX_MESSAGE_PAGES;
+  const deadline = Date.now() + (options.deadlineMs ?? PAGING_DEADLINE_MS);
+  const newestFirst: OpenCodeV2Message[] = [];
+  let bytes = 0;
+  let cursor: string | null = null;
+  let complete = false;
+  for (let page = 0; page < maxPages; page += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    let result: MessagesPage | null;
+    try {
+      result = await fetchMessagesPage(target, sessionId, cursor, Math.min(REQUEST_TIMEOUT_MS, remainingMs), fetchImpl);
+    } catch {
+      result = null;
+    }
+    if (!result) break;
+    for (const message of result.data) {
+      newestFirst.push(message);
+      bytes += JSON.stringify(message).length;
+    }
+    if (result.data.length === 0 || !result.next) {
+      complete = true;
+      break;
+    }
+    if (bytes >= budget) break;
+    cursor = result.next;
+  }
+  return { messages: newestFirst.reverse(), complete };
+}
+
+function isObject<T extends object>(value: T | null | undefined): value is T {
+  return typeof value === 'object' && value !== null;
+}
+
+function toolInput(state: OpenCodeV2ToolState): unknown {
+  // A tool still streaming its arguments carries them as raw JSON text
+  // (`SessionMessageToolStateStreaming.input: string` in the SDK types). No
+  // recorded fixture holds one, because the state lasts only while the model
+  // writes the call.
+  if (state.status === 'streaming' && typeof state.input === 'string') {
+    try {
+      return JSON.parse(state.input);
+    } catch {
+      return state.input;
+    }
+  }
+  return state.input;
+}
+
+function toolContentText(content: OpenCodeV2ToolContent[] | undefined): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (!isObject(part)) return '';
+      if (part.type === 'text' && typeof part.text === 'string') return part.text;
+      // `ToolFileContent` in the SDK types: `uri`, `mime` and an optional
+      // `name`. The recorded fixtures hold no file part.
+      if (part.type === 'file') return part.name ?? part.uri ?? '';
+      return '';
+    })
+    .filter((text) => text.length > 0)
+    .join('\n');
+}
+
+/**
+ * Map an OpenCode 2 session's messages into Kangentic's `TranscriptEntry[]`,
+ * the same entries `mapOpenCodeRemoteEntries` makes from a V1 server. A `user`
+ * message is the user's text. An `assistant` message's content becomes text,
+ * thinking and tool_use blocks, and each finished tool also a tool_result
+ * entry after it. Every other message type (agent and model switches,
+ * synthetic and system text, shell, compaction, idle) is the agent's own
+ * bookkeeping and maps to nothing, as V1's non-user, non-assistant roles do.
+ * The caller bounds the result with `capOpenCodeRemoteEntries`.
+ */
+export function mapOpenCodeV2Messages(messages: OpenCodeV2Message[]): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const message of messages) {
+    if (!message || typeof message.id !== 'string') continue;
+    const uuid = message.id;
+    const ts = typeof message.time?.created === 'number' ? message.time.created : Date.now();
+
+    if (message.type === 'user') {
+      const text = typeof message.text === 'string' ? message.text.trim() : '';
+      if (text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
+      continue;
+    }
+    if (message.type !== 'assistant' || !Array.isArray(message.content)) continue;
+
+    const model = typeof message.model?.id === 'string' ? message.model.id : undefined;
+    const blocks: TranscriptBlock[] = [];
+    const toolResults: TranscriptEntry[] = [];
+    for (const part of message.content) {
+      if (!isObject(part)) continue;
+      if (part.type === 'text' && typeof part.text === 'string') {
+        if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
+      } else if (part.type === 'reasoning' && typeof part.text === 'string') {
+        if (part.text.trim().length > 0) blocks.push({ type: 'thinking', text: part.text });
+      } else if (part.type === 'tool' && isObject(part.state)) {
+        const toolUseId = typeof part.id === 'string' ? part.id : '';
+        const name = typeof part.name === 'string' ? part.name : 'tool';
+        blocks.push({ type: 'tool_use', id: toolUseId, name, input: toolInput(part.state) });
+        if (part.state.status === 'completed') {
+          toolResults.push({ kind: 'tool_result', uuid, ts, toolUseId, content: toolContentText(part.state.content), isError: false });
+        } else if (part.state.status === 'error') {
+          const errorText = part.state.error?.message ?? toolContentText(part.state.content);
+          toolResults.push({ kind: 'tool_result', uuid, ts, toolUseId, content: errorText, isError: true });
+        }
+      }
+    }
+    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+    for (const result of toolResults) entries.push(result);
+  }
+  return entries;
+}

@@ -139,4 +139,7 @@ fails the moment a remount is introduced, whatever caused it.
 The dormant-window path: the board window manager, `BrowserPane` and its URL hook, the
 task-detail split row, the project-switch effect that applies retention, and the board-layer
 park policy and reaper. Command Terminal and Monitor layers never set `retainedProjectId` or
-`parked`; retention and parking are board-layer only.
+`parked`; retention and parking are board-layer only. A Command Terminal's Browser pane is kept
+another way: it never mounts inside the panel, but in `CommandTerminalBrowserHost`, which outlives
+the panel and hides a pane no slot shows at `opacity: 0` (`command-terminal.md`). The same physics
+holds there: never `visibility: hidden`, never offscreen, never a remount.

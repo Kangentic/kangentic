@@ -249,6 +249,14 @@ export interface CommandOptions {
   mcpServerUrl?: string;
   /** Per-launch MCP server token. Sent as the X-Kangentic-Token header. */
   mcpServerToken?: string;
+  /**
+   * The Agent Browser switch (`AppConfig.browserAutomation.enabled`, resolved)
+   * when the command is built. While on, the Agent Browser is the only browser
+   * an agent drives: an adapter that takes system prompt text gets the browser
+   * policy (`BROWSER_POLICY_PROMPT`). Every file that calls `buildCommand`
+   * sets it (`spawn-entry-point-parity.test.ts`).
+   */
+  browserAutomationEnabled?: boolean;
   /** Adapter-specific model identifier (e.g. Claude `--model opus`). Empty/undefined leaves the agent default in place. */
   model?: string;
   /** Adapter-specific effort/reasoning level (e.g. Claude `--effort xhigh`). Empty/undefined leaves the agent default in place. */

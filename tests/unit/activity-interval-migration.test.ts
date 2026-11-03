@@ -47,6 +47,7 @@ const EXPECTED_COLUMNS: Array<{ name: string; notnull: number }> = [
   { name: 'duration_ms', notnull: 0 },
   { name: 'exit_trigger', notnull: 0 },
   { name: 'recorded_at', notnull: 1 },
+  { name: 'reason_kind', notnull: 0 },
 ];
 
 const EXPECTED_INDEXES = [
@@ -72,6 +73,7 @@ function idleInput(overrides: Partial<OpenIntervalInput> = {}): OpenIntervalInpu
     previousState: 'thinking',
     enterTrigger: 'event:idle',
     startedMs: 1_000,
+    reasonKind: 'idle',
     ...overrides,
   };
 }
@@ -145,6 +147,40 @@ describe('runProjectMigrations - session_activity_intervals', () => {
     expect(closedInterval.endedAt).toBe(new Date(endedMs).toISOString());
     expect(closedInterval.startedAt).toBe(new Date(startedMs).toISOString());
     expect(closedInterval.exitTrigger).toBe('event:prompt');
+    expect(closedInterval.reasonKind).toBe('idle');
+  });
+
+  it('keeps what held a session: reason_kind round-trips, and hasOpenInterval reads the open row', () => {
+    const store = new ActivityIntervalStore(db);
+    expect(store.hasOpenInterval('session-1')).toBe(false);
+
+    store.openInterval(
+      idleInput({ disposition: 'active', state: 'thinking', previousState: 'thinking', enterTrigger: 'reason:background-shell', reasonKind: 'background-shell' }),
+      '2026-11-02T10:52:52.000Z',
+    );
+    expect(store.hasOpenInterval('session-1')).toBe(true);
+    expect(store.getForSession('session-1')[0].reasonKind).toBe('background-shell');
+
+    store.closeOpenInterval('session-1', 5_000, 'app-quit');
+    expect(store.hasOpenInterval('session-1')).toBe(false);
+  });
+
+  it('adds reason_kind to a table created before it, leaving old rows NULL', () => {
+    const legacy = new Database(':memory:');
+    try {
+      runProjectMigrations(legacy);
+      legacy.exec('ALTER TABLE session_activity_intervals DROP COLUMN reason_kind');
+      legacy.prepare(
+        `INSERT INTO session_activity_intervals (session_id, task_id, disposition, state, previous_state, enter_trigger, started_ms, started_at, recorded_at)
+         VALUES ('old', 'task-1', 'active', 'thinking', 'idle', 'event:prompt', 1, '1970-01-01T00:00:00.001Z', '2026-11-01T00:00:00.000Z')`,
+      ).run();
+
+      runProjectMigrations(legacy);
+
+      expect(new ActivityIntervalStore(legacy).getForSession('old')[0].reasonKind).toBeNull();
+    } finally {
+      legacy.close();
+    }
   });
 
   it('closeOpenInterval is a genuine no-op against real SQL when no interval is open', () => {

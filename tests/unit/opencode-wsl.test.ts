@@ -16,12 +16,17 @@ import os from 'node:os';
 import path from 'node:path';
 
 const executed = vi.hoisted(() => [] as Array<{ file: string; args: string[] }>);
-const answers = vi.hoisted(() => ({ stdout: '' }));
+// `--version` answers on its own (the distro CLI's major picks the flags); every other run gets `stdout`.
+const answers = vi.hoisted(() => ({ stdout: '', version: '1.14.25', versionFails: false }));
 vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
   return {
     ...actual,
     execFileAsync: async (file: string, args: string[]) => {
+      if (args[args.length - 1] === '--version') {
+        if (answers.versionFails) throw new Error('wsl.exe: --version failed');
+        return { stdout: answers.version, stderr: '' };
+      }
       executed.push({ file, args });
       return { stdout: answers.stdout, stderr: '' };
     },
@@ -40,13 +45,17 @@ vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
 
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import {
+  exportDistroOpenCodeSession,
+  isDistroOpenCodeV2,
+  forgetDistroOpenCodeVersions,
   captureDistroOpenCodeSessionId,
+  listDistroOpenCodeSessions,
   parseOpenCodeExport,
   parseOpenCodeSessionList,
   type DistroOpenCodeSession,
 } from '../../src/main/agent/adapters/opencode/distro-sessions';
 import { createOpenCodeCommandInjectionVerifier, findOpenCodeSubmittedTextInMessages } from '../../src/main/agent/adapters/opencode/command-injection-verifier';
-import { cliPathForTarget, placeFromStored, toStoredCliTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
+import { cliPathForTarget, placeFromStored, toStoredCliTarget, type CliTarget, type execCliForTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { OpenCodeRemoteMessageEntry } from '../../src/main/agent/adapters/opencode/remote-client';
@@ -68,6 +77,9 @@ beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   executed.length = 0;
   answers.stdout = '';
+  answers.version = '1.14.25';
+  answers.versionFails = false;
+  forgetDistroOpenCodeVersions();
   distroHome.path = makeDirectory('kangentic-opencode-wsl-home-');
 });
 
@@ -157,6 +169,30 @@ describe('an OpenCode session in a WSL distro', () => {
     expect(executed[0].args).toContain('/home/dev/.opencode/bin/opencode');
   });
 
+  // OpenCode 2 in the distro: no `--pure` (it rejects unknown flags), the export
+  // is `session export`, and `--standalone` keeps each run off the distro user's
+  // shared background service. Its export prints a record per message.
+  it('asks an OpenCode 2 distro CLI with its own flags, and reads its per-message export', async () => {
+    answers.version = 'opencode v2.2.5';
+    answers.stdout = JSON.stringify({
+      info: { id: SESSION_ID },
+      messages: [
+        { id: 'msg_reminder', type: 'synthetic', time: { created: 1_000 }, text: '<system-reminder>' },
+        { id: 'msg_user', type: 'user', time: { created: 2_000 }, text: 'run the tests', files: [] },
+        { id: 'msg_assistant', type: 'assistant', time: { created: 3_000 }, model: { id: 'stub-model', providerID: 'stub' }, content: [{ type: 'text', text: 'All green.' }] },
+        { id: 'msg_idle', type: 'idle', time: { created: 3_100 }, outcome: 'succeeded' },
+      ],
+    });
+    const place = placeFromStored(toStoredCliTarget(targetOn('nat')));
+    const parsed = await new OpenCodeAdapter().parseTranscript(SESSION_ID, 'C:\\Users\\dev\\project', place);
+    expect(parsed.entries.map((entry) => entry.kind)).toEqual(['user', 'assistant']);
+    expect(executed[0].args.slice(-4)).toEqual(['session', 'export', SESSION_ID, '--standalone']);
+
+    answers.stdout = '[]';
+    await listDistroOpenCodeSessions(targetOn('nat'), 'C:\\Users\\dev\\project');
+    expect(executed[1].args.slice(-7)).toEqual(['session', 'list', '--format', 'json', '-n', '25', '--standalone']);
+  });
+
   it('reads nothing for a session row from before the CLI path was kept', async () => {
     const stored = toStoredCliTarget(targetOn('nat'));
     const place = placeFromStored({ ...stored!, linuxCliPath: undefined });
@@ -217,6 +253,85 @@ describe('the distro CLI\'s session output', () => {
       spawnedAt: new Date(), cwd: 'C:\\Users\\dev\\project', target: targetOn('nat'), list, maxAttempts: 3, sleep: async () => undefined,
     })).resolves.toBeNull();
     expect(list).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('the distro CLI major cache', () => {
+  type ExecFunction = typeof execCliForTarget;
+  const V2_ANSWER = { stdout: 'opencode v2.2.5', stderr: '' };
+
+  it('asks --version once for two calls with the same target', async () => {
+    const exec = vi.fn<ExecFunction>(async () => V2_ANSWER);
+    await expect(isDistroOpenCodeV2(targetOn('nat'), exec)).resolves.toBe(true);
+    await expect(isDistroOpenCodeV2(targetOn('nat'), exec)).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec.mock.calls[0][1]).toEqual(['--version']);
+  });
+
+  it('asks again after a rejected --version, and the rejection reaches the caller', async () => {
+    const exec = vi.fn<ExecFunction>()
+      .mockRejectedValueOnce(new Error('wsl.exe timed out'))
+      .mockResolvedValueOnce(V2_ANSWER);
+    await expect(isDistroOpenCodeV2(targetOn('nat'), exec)).rejects.toThrow('wsl.exe timed out');
+    await expect(isDistroOpenCodeV2(targetOn('nat'), exec)).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a different distro and a different CLI path apart', async () => {
+    const exec = vi.fn<ExecFunction>(async (target) => (
+      target.distro === 'Debian' || target.linuxCliPath === '/opt/opencode2' ? V2_ANSWER : { stdout: '1.14.25', stderr: '' }
+    ));
+    const ubuntu = targetOn('nat');
+    await expect(isDistroOpenCodeV2(ubuntu, exec)).resolves.toBe(false);
+    await expect(isDistroOpenCodeV2({ ...ubuntu, distro: 'Debian' }, exec)).resolves.toBe(true);
+    await expect(isDistroOpenCodeV2({ ...ubuntu, linuxCliPath: '/opt/opencode2' }, exec)).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(3);
+    // Each answer stays with its own key.
+    await expect(isDistroOpenCodeV2(ubuntu, exec)).resolves.toBe(false);
+    await expect(isDistroOpenCodeV2({ ...ubuntu, distro: 'Debian' }, exec)).resolves.toBe(true);
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it('asks again after forgetDistroOpenCodeVersions', async () => {
+    const exec = vi.fn<ExecFunction>(async () => V2_ANSWER);
+    await isDistroOpenCodeV2(targetOn('nat'), exec);
+    forgetDistroOpenCodeVersions();
+    await isDistroOpenCodeV2(targetOn('nat'), exec);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects the session list and the export, and runs neither, when --version rejects', async () => {
+    answers.versionFails = true;
+    answers.stdout = '[]';
+    await expect(listDistroOpenCodeSessions(targetOn('nat'), 'C:\\Users\\dev\\project')).rejects.toThrow('--version failed');
+    await expect(exportDistroOpenCodeSession(targetOn('nat'), SESSION_ID, 'C:\\Users\\dev\\project')).rejects.toThrow('--version failed');
+    expect(executed).toHaveLength(0);
+  });
+});
+
+describe('an OpenCode 2 export replayed from real session_message rows', () => {
+  interface FixtureRow { id: string; type: string; data: string }
+
+  it('keeps the user and assistant turns, skips the other record types, and keeps tool results', () => {
+    const rows = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'opencode-v2-session-message-rows.json'), 'utf8')) as FixtureRow[];
+    const messages = rows.map((row) => ({ id: row.id, type: row.type, ...(JSON.parse(row.data) as Record<string, unknown>) }));
+    const entries = parseOpenCodeExport(JSON.stringify({ messages }));
+
+    const roles = entries.map((entry) => entry.info.role);
+    expect(roles.filter((role) => role === 'user')).toHaveLength(3);
+    expect(roles.filter((role) => role === 'assistant')).toHaveLength(6);
+    // agent-switched (3), synthetic (1) and idle (3) records never come through.
+    expect(entries).toHaveLength(9);
+    const userTexts = entries.filter((entry) => entry.info.role === 'user').map((entry) => entry.parts[0].text);
+    expect(userTexts).toEqual(['SHELLTEST v2 plugin', 'READENV probe two', 'SHELLTEST baseline']);
+
+    const toolParts = entries.flatMap((entry) => entry.parts).filter((part) => part.type === 'tool');
+    const shell = toolParts.find((part) => part.tool === 'shell');
+    expect(shell?.state?.status).toBe('completed');
+    expect(shell?.state?.output).toBe('(no output)');
+    const rejectedRead = toolParts.find((part) => part.tool === 'read');
+    expect(rejectedRead?.state?.status).toBe('error');
+    expect(rejectedRead?.state?.output).toBe('This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.');
   });
 });
 

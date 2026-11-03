@@ -171,8 +171,12 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   // A plan column's work ends at the plan's approval, which moves the task on
   // by itself while the conversation carries on. An agent told it may move the
   // task itself read that approval as the cue to do so, and skipped a column.
+  // An agent told only that, beside "end your turn when the column's work is
+  // done", stopped at the approval and waited a recovery nudge to begin: 8 of
+  // 9 planned tasks of one run (2026-11-02). So it says the turn goes on.
   if (input.column && input.planExitTo) {
-    lines.push(`- ${escapeXml(input.column)} plans the work. Approving your plan moves the task on to ${escapeXml(input.planExitTo)}, so do not move it yourself.`);
+    const planExitTo = escapeXml(input.planExitTo);
+    lines.push(`- ${escapeXml(input.column)} plans the work. Approving your plan moves the task on to ${planExitTo} in this same turn. Do not move it yourself and do not end your turn there: carry straight on with ${planExitTo}'s work.`);
   } else {
     lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
   }

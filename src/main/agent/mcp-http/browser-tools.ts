@@ -43,7 +43,14 @@ import {
   captureScreenshotWithBudget,
   captureElementClip,
   describeViewportCapture,
+  type ScreenshotResponse,
 } from '../../browser/cdp/screenshot';
+import {
+  browserCaptureDirectory,
+  evaluatedValueText,
+  saveScreenshotToFile,
+  writeBrowserCaptureFile,
+} from './browser-capture-file';
 import {
   applyViewport,
   clearViewport,
@@ -53,7 +60,7 @@ import {
   WINDOW_ANCHORS,
   type ApplyViewportOutcome,
 } from '../../browser/viewport-override';
-import { driverToolResult, screenshotToolResult, errorToolResult } from './tool-result';
+import { driverToolResult, screenshotToolResult, errorToolResult, type McpToolResult } from './tool-result';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 
 /**
@@ -76,9 +83,9 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
  */
 
 const SESSION_DESC =
-  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your task\'s current surface. Must be in your own project. Omit to use your own task\'s one surface (its visible pane, or the offscreen form of it); a caller with no task falls back to the single pane open in the project. This is NOT a Kangentic agent session id.';
+  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your current surface. Must be in your own project. Omit to use your own one surface, your task\'s or your Command Terminal\'s (its visible pane, or the offscreen form of it). This is NOT a Kangentic agent session id.';
 const TASK_DESC =
-  "Optional Kangentic taskId whose Browser surface to target. An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own task's surface.";
+  "Optional Kangentic taskId whose Browser surface to target. An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own surface.";
 
 const TARGET_SHAPE = {
   sessionId: z.string().optional().describe(SESSION_DESC),
@@ -102,6 +109,16 @@ export type AutomationConfigReader = () => ResolvedBrowserAutomationConfig;
  */
 export interface BrowserSessionLookup {
   getSessionTaskId(sessionId: string): string | undefined;
+  /**
+   * The session's Command Terminal slot, or undefined when it is not a
+   * Command Terminal. Asked FIRST by `resolveMcpCaller`: a Command Terminal's
+   * registry row carries a synthetic task id that names no task. Optional for
+   * a lookup that sees no Command Terminals (a test's fake); `SessionManager`
+   * always has it.
+   */
+  getCommandTerminalSlot?(sessionId: string): string | undefined;
+  /** The name a project's live Command Terminal in a slot shows, for `list_panes`. */
+  getCommandTerminalName?(projectId: string, slot: string): string | undefined;
 }
 
 export interface BrowserToolDependencies {
@@ -114,8 +131,8 @@ export interface BrowserToolDependencies {
   /**
    * The caller's session id, from the MCP URL path
    * (`/mcp/<projectId>/<callerSessionId>`). Undefined for a human-driven
-   * client, the two-segment `.kangentic/mcp-config.json` URL, and Command
-   * Terminal sessions. Never required: it only sharpens the implicit default.
+   * client and the two-segment `.kangentic/mcp-config.json` URL. Never
+   * required: it only sharpens the implicit default.
    */
   callerSessionId?: string;
   /**
@@ -124,6 +141,31 @@ export interface BrowserToolDependencies {
    * `createWindow`), which degrades the default rather than refusing.
    */
   sessions?: BrowserSessionLookup | null;
+  /**
+   * The folder `saveToFile` writes this caller's captures to
+   * (`browserCaptureDirectory`): a `.kangentic/` folder inside its working
+   * directory. Absent, a save goes to a temp folder. A getter, not a resolver:
+   * the family still has no path to another project.
+   */
+  captureDirectory?: () => string;
+}
+
+const SAVE_TO_FILE_DESC =
+  'Write the result to a file in a Kangentic captures folder inside your working directory and return its path and size instead of the inline result. Use it for large output you will read, copy or build on, such as page HTML or a screenshot for an artifact.';
+
+/**
+ * A capture's byte budget: the caller's `maxBytes` inline, or none when the
+ * capture goes to a file, which keeps its full quality. It is still planned
+ * to the pane's own pixels.
+ */
+function captureBudget(saveToFile: boolean | undefined, maxBytes: number | undefined): { inlineCeiling: number } | { maxBytes: number | undefined } {
+  return saveToFile === true ? { inlineCeiling: Number.MAX_SAFE_INTEGER } : { maxBytes };
+}
+
+/** A saveToFile write that failed, as the tool's error result. */
+function saveFailedResult(subject: string, error: unknown): McpToolResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return errorToolResult({ kind: 'save-failed', detail: `${subject} could not be written: ${message}` });
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -179,11 +221,16 @@ export function registerBrowserTools(
   server: McpServer,
   getAutomationConfig: AutomationConfigReader,
   dependencies: BrowserToolDependencies,
-  // From `resolveCallerTaskId` (caller-task.ts), passed in so one request
-  // looks it up once.
+  // From `callerBrowserOwner` (caller-task.ts), passed in so one request
+  // looks it up once. It is the caller's task id, or its Command Terminal's
+  // owner key (`src/shared/browser-owner.ts`): the browser pipeline keys a
+  // surface by that one string, so it rides the `callerTaskId` fields below.
   callerTaskId: string | undefined,
 ): void {
   const { projectId, callerSessionId } = dependencies;
+  const captureDirectory = (): string =>
+    dependencies.captureDirectory?.()
+      ?? browserCaptureDirectory({ projectPath: null, callerSessionId: undefined, sessionCwd: null, projectId });
 
   // Caller scope is stamped here, not taken from tool arguments, so no tool can
   // opt out of it. This is the single point that scopes the 20 tools driving
@@ -210,6 +257,20 @@ export function registerBrowserTools(
       fn,
     );
 
+  /** A screenshot as the tool returns it: inline, or written to a file when the caller asked. */
+  const screenshotResult = async (
+    shot: ScreenshotResponse,
+    save: boolean,
+    prefix: 'screenshot' | 'element',
+  ): Promise<McpToolResult> => {
+    if (!save || shot.mode === 'file') return screenshotToolResult({ ok: true, data: shot });
+    try {
+      return screenshotToolResult({ ok: true, data: await saveScreenshotToFile(captureDirectory(), prefix, shot) });
+    } catch (error) {
+      return saveFailedResult('The screenshot', error);
+    }
+  };
+
   // ── Discovery ─────────────────────────────────────────────────────────
   server.registerTool(
     'kangentic_browser_list_panes',
@@ -235,6 +296,11 @@ export function registerBrowserTools(
       const panes = (args.includeOtherProjects ? browserPaneRegistry.list() : scoped.panes).map(
         (pane) => ({
           ...pane,
+          // A Command Terminal's pane names its terminal as its header does, so an
+          // agent can tell the user which terminal's browser it means.
+          commandTerminalName: pane.commandTerminalSlot && pane.projectId
+            ? dependencies.sessions?.getCommandTerminalName?.(pane.projectId, pane.commandTerminalSlot) ?? null
+            : null,
           sameProject: pane.projectId === projectId,
           driveable: pane.projectId === projectId,
         }),
@@ -361,11 +427,12 @@ export function registerBrowserTools(
         fullPage: z.boolean().optional().describe('Capture the full scrollable page instead of just the viewport. On a pane this is scaled down to fit the pane\'s own pixels, so a long page comes back small; scroll and take viewport screenshots for detail.'),
         format: z.enum(['png', 'jpeg']).optional().describe('Image format. Default jpeg.'),
         quality: z.number().int().min(1).max(100).optional().describe('JPEG quality 1-100 (ignored for png).'),
-        maxBytes: z.number().int().positive().optional().describe('Soft cap on decoded image bytes; the capture downscales/recompresses to fit.'),
+        maxBytes: z.number().int().positive().optional().describe('Soft cap on decoded image bytes; the capture downscales/recompresses to fit. Ignored with saveToFile.'),
+        saveToFile: z.boolean().optional().describe(SAVE_TO_FILE_DESC),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, fullPage, format, quality, maxBytes }) => {
+    async ({ sessionId, taskId, fullPage, format, quality, maxBytes, saveToFile }) => {
       // Probe for a build-error overlay in the SAME drive as the capture, so the
       // two cannot disagree about what was on screen. Returning a picture of a
       // full-screen error overlay is technically correct and practically
@@ -385,7 +452,7 @@ export function registerBrowserTools(
             format: format ?? 'jpeg',
             quality: quality ?? (format === 'png' ? undefined : 80),
             fullPage: fullPage === true,
-            maxBytes,
+            ...captureBudget(saveToFile, maxBytes),
             surface: guestCaptureSurface(webContents, entry),
           }),
         };
@@ -395,7 +462,7 @@ export function registerBrowserTools(
         return errorToolResult({ kind: 'dev-server-error', detail: describeDevServerError(result.data.blocked) });
       }
       if (!result.data.shot) return errorToolResult({ kind: 'screenshot-failed', detail: 'Page.captureScreenshot returned no data.' });
-      return screenshotToolResult({ ok: true, data: result.data.shot });
+      return screenshotResult(result.data.shot, saveToFile === true, 'screenshot');
     },
   );
 
@@ -408,23 +475,24 @@ export function registerBrowserTools(
         selector: z.string().describe('CSS selector (or text=/aria= form) of the element to capture.'),
         format: z.enum(['png', 'jpeg']).optional().describe('Image format. Default png.'),
         quality: z.number().int().min(1).max(100).optional(),
-        maxBytes: z.number().int().positive().optional(),
+        maxBytes: z.number().int().positive().optional().describe('Soft cap on decoded image bytes. Ignored with saveToFile.'),
+        saveToFile: z.boolean().optional().describe(SAVE_TO_FILE_DESC),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector, format, quality, maxBytes }) => {
+    async ({ sessionId, taskId, selector, format, quality, maxBytes, saveToFile }) => {
       const result = await drive('observe', { sessionId, taskId }, (webContents, entry) =>
         captureElementClip(webContents, selector, {
           format: format ?? 'png',
           quality,
-          maxBytes,
+          ...captureBudget(saveToFile, maxBytes),
           surface: guestCaptureSurface(webContents, entry),
         }),
       );
       if (!result.ok) return errorToolResult(result.error);
       if (!result.data) return errorToolResult({ kind: 'screenshot-failed', detail: 'Element clip capture returned no data.' });
       if ('error' in result.data) return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
-      return screenshotToolResult({ ok: true, data: result.data });
+      return screenshotResult(result.data, saveToFile === true, 'element');
     },
   );
 
@@ -437,10 +505,11 @@ export function registerBrowserTools(
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector (or text=/aria= form). Defaults to "html".').default('html'),
         includeBox: z.boolean().optional().describe('Also return the element\'s {x,y,width,height} viewport box.'),
+        saveToFile: z.boolean().optional().describe(`${SAVE_TO_FILE_DESC} The outerHTML is written as an .html file.`),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, selector, includeBox }) => {
+    async ({ sessionId, taskId, selector, includeBox, saveToFile }) => {
       const result = await drive('observe', { sessionId, taskId }, async (webContents) => {
         const html = await getOuterHtml(webContents, selector);
         if (html === null) return { error: 'selector-not-found' as const };
@@ -461,6 +530,17 @@ export function registerBrowserTools(
       });
       if (result.ok && 'error' in result.data) {
         return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
+      }
+      // A page's HTML, written to a file at the observe tier, so capturing a
+      // DOM for an artifact needs neither eval nor another browser (task #977).
+      if (result.ok && saveToFile === true && !('error' in result.data)) {
+        const { outerHTML, ...rest } = result.data;
+        try {
+          const saved = await writeBrowserCaptureFile(captureDirectory(), 'dom', 'html', outerHTML);
+          return driverToolResult({ ok: true, data: { ...rest, filePath: saved.filePath, bytes: saved.bytes } });
+        } catch (error) {
+          return saveFailedResult('The HTML', error);
+        }
       }
       return driverToolResult(result);
     },
@@ -1129,14 +1209,15 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_eval',
     {
-      description: "Evaluate a JavaScript expression in the task's Browser pane (the loaded page's origin) and return its value. Off by default - enable in Settings -> Agent Browser -> Allow eval.",
+      description: "Evaluate a JavaScript expression in the task's Browser pane (the loaded page's origin) and return its value. Off by default - enable in Settings -> Agent Browser -> Allow eval. With saveToFile, a string value (page HTML, CSS) is written as it is and anything else as JSON.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         expression: z.string().describe('JavaScript expression to evaluate. The resolved value is returned.'),
+        saveToFile: z.boolean().optional().describe(SAVE_TO_FILE_DESC),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ sessionId, taskId, expression }) => {
+    async ({ sessionId, taskId, expression, saveToFile }) => {
       const result = await drive('eval', { sessionId, taskId }, (webContents) =>
         // Bounded, because this is the one body that runs CALLER-AUTHORED page
         // JavaScript and `runtimeEvaluate` defaults to `awaitPromise: true`. An
@@ -1151,6 +1232,15 @@ export function registerBrowserTools(
       );
       if (result.ok && result.data.error) {
         return errorToolResult({ kind: 'evaluate-failed', detail: result.data.error });
+      }
+      if (result.ok && saveToFile === true) {
+        const { text, extension } = evaluatedValueText(result.data.value);
+        try {
+          const saved = await writeBrowserCaptureFile(captureDirectory(), 'eval', extension, text);
+          return driverToolResult({ ok: true, data: { filePath: saved.filePath, bytes: saved.bytes } });
+        } catch (error) {
+          return saveFailedResult('The value', error);
+        }
       }
       if (result.ok) return driverToolResult({ ok: true, data: { value: result.data.value } });
       return driverToolResult(result);

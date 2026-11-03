@@ -7,7 +7,8 @@
  * collapse to a single key.
  */
 import { describe, it, expect } from 'vitest';
-import { popOutInstanceKey, parsePopOutInstanceKey, parseProjectPopOutInstanceKey, isPopOutKind, isProjectPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
+import { popOutInstanceKey,parsePopOutInstanceKey, parseProjectPopOutInstanceKey, isPopOutKind, isProjectPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
 import { englishText } from '../../src/shared/i18n/english';
 import { IPC } from '../../src/shared/ipc-channels';
 
@@ -162,6 +163,17 @@ describe('parsePopOutInstanceKey', () => {
     expect(parsePopOutInstanceKey(key)).toEqual({ kind: 'changes-file', projectId: 'p1', taskId: 't1' });
   });
 
+  it('round-trips a "browser" key whose task is a Command Terminal owner key full of colons', () => {
+    const ownerKey = commandTerminalBrowserOwner('p1', 'slot-2');
+    const key = popOutInstanceKey('browser', { taskId: ownerKey, projectId: 'p1' });
+
+    expect(parsePopOutInstanceKey(key)).toEqual({ kind: 'browser', projectId: 'p1', taskId: ownerKey });
+  });
+
+  it('still reads segment 2 alone for a non-browser task-scoped kind', () => {
+    expect(parsePopOutInstanceKey('changes:p1:t1:extra')).toEqual({ kind: 'changes', projectId: 'p1', taskId: 't1' });
+  });
+
   it('returns null for a global surface, which carries no task', () => {
     expect(parsePopOutInstanceKey(popOutInstanceKey('stats', {}))).toBeNull();
     expect(parsePopOutInstanceKey(popOutInstanceKey('monitor', {}))).toBeNull();
@@ -204,6 +216,14 @@ describe('project-scoped surfaces', () => {
     expect(parseProjectPopOutInstanceKey('stats')).toBeNull();
     expect(parseProjectPopOutInstanceKey('command-terminal:')).toBeNull();
     expect(parseProjectPopOutInstanceKey('bogus:p1')).toBeNull();
+  });
+
+  it('mounts a webview and declares the Browser pane pushes its terminals read', () => {
+    const meta = POP_OUT_SURFACES['command-terminal'];
+    expect(meta.needsWebview).toBe(true);
+    for (const channel of [IPC.BROWSER_PANE_OPEN_REQUEST, IPC.BROWSER_PANE_CLOSE_REQUEST, IPC.BROWSER_OFFSCREEN_SURFACES]) {
+      expect(meta.channels).toContain(channel);
+    }
   });
 
   it('titles the window by the project name its params carry', () => {

@@ -1,7 +1,7 @@
 import { BrowserWindow, screen, type WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { browserPaneRegistry } from './browser-pane-registry';
-import { browserPartitionForTask } from '../../shared/browser-partition';
+import { browserPartitionForOwner } from '../../shared/browser-partition';
 import { syncJarFromIdentity } from './jar-seeder';
 import { applyBrowserUserAgent } from './browser-user-agent';
 import { installEmbeddedBrowserSessionPolicy } from './guest-session-policy';
@@ -295,7 +295,7 @@ export async function openLane(input: OpenLaneInput): Promise<OpenLaneResult> {
   // Share the task's cookie jar rather than minting a fresh one. The jar is keyed
   // by task identity, so a lane inherits it automatically; isolation here is about
   // not fighting over a viewport, not credentials.
-  const partition = browserPartitionForTask(input.projectId, input.taskId);
+  const partition = browserPartitionForOwner(input.projectId, input.taskId);
 
   // Log the jar a lane binds (main-side, since renderer console never persists).
   console.log(`[browser-lane] open lane=${laneId} task=${input.taskId.slice(0, 8)} partition=${partition}`);

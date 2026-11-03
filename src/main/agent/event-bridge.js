@@ -44,6 +44,10 @@
  *                                 than a flag on extractDetail so a stale copy of this
  *                                 script rejects it via `default` instead of silently
  *                                 ignoring the scoping and extracting for every tool.
+ *   extractHolderTimeout       { whenTool, field, nested?, unlessField? }
+ *                              -> event.expiresAfterMs = Number(ctx[nested][field]) when
+ *                                 ctx.tool_name === whenTool, the value is a positive
+ *                                 number, and ctx[nested][unlessField] is not true.
  *   setDetail                  { value }            -> event.detail = value
  *   setTypeWhen                { whenTool?, nested?:[p,f], field?, equals, to }
  *                                 -> if (no whenTool or ctx.tool_name===whenTool) AND
@@ -336,6 +340,19 @@ function transformHookEvent(options) {
         if (event.subagentId !== undefined) break;
         const value = firstNonNull(ctx, payload.fields);
         if (value !== undefined) event.subagentId = value;
+        break;
+      }
+      case 'extractHolderTimeout': {
+        // A background holder that ends by itself: its time limit in ms, read
+        // from ctx[nested][field] for one tool, and only when the payload's
+        // `unlessField` (in the same container) is not true. A holder that
+        // runs until stopped reports nothing.
+        if (!ctx || ctx.tool_name !== payload.whenTool || !payload.field) break;
+        const container = payload.nested ? ctx[payload.nested] : ctx;
+        if (!container || typeof container !== 'object') break;
+        if (payload.unlessField && container[payload.unlessField] === true) break;
+        const value = Number(container[payload.field]);
+        if (Number.isFinite(value) && value > 0) event.expiresAfterMs = value;
         break;
       }
       case 'extractPlanMode': {

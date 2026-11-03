@@ -77,7 +77,7 @@ describe('{{workflow_xml}}', () => {
 
   it('says a plan column\'s approval moves the task on, and does not offer "next" there', () => {
     const xml = buildWorkflowXml({ ...WORKFLOW, route: ['Planning', 'Executing', 'Done'], column: 'Planning', planExitTo: 'Executing' });
-    expect(xml).toContain('- Planning plans the work. Approving your plan moves the task on to Executing, so do not move it yourself.');
+    expect(xml).toContain('- Planning plans the work. Approving your plan moves the task on to Executing in this same turn. Do not move it yourself and do not end your turn there: carry straight on with Executing\'s work.');
     expect(xml).not.toContain('column "next"');
   });
 

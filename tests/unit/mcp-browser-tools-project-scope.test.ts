@@ -80,6 +80,7 @@ import type {
   BrowserSessionLookup,
 } from '../../src/main/agent/mcp-http/browser-tools';
 import type { ResolveTargetSelector } from '../../src/main/browser/browser-pane-registry';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 
 const CALLER_PROJECT = 'p1';
 
@@ -318,6 +319,42 @@ describe('kangentic_browser_* caller scoping', () => {
     expect(payload.otherProjectPaneCount).toBe(2);
     expect(payload.unknownProjectPaneCount).toBe(1);
     expect(vi.mocked(browserPaneRegistry.list)).not.toHaveBeenCalled();
+    await close();
+  });
+
+  // A Command Terminal's session carries a synthetic task id. The selector must
+  // carry the terminal's own owner key instead, or a bare drive would resolve
+  // to a task that does not exist (or, before this, to the one task pane open).
+  it("threads a Command Terminal caller's owner key, never its synthetic task id", async () => {
+    const sessions: BrowserSessionLookup = {
+      getSessionTaskId: vi.fn(() => 'synthetic-process-tag'),
+      getCommandTerminalSlot: vi.fn(() => 'slot-2'),
+    };
+    const { client, close } = await connect({ projectId: CALLER_PROJECT, callerSessionId: 'sess-terminal', sessions });
+    await client.callTool({ name: 'kangentic_browser_screenshot', arguments: {} });
+    expect(lastSelector()).toMatchObject({
+      projectId: CALLER_PROJECT,
+      callerSessionId: 'sess-terminal',
+      callerTaskId: commandTerminalBrowserOwner(CALLER_PROJECT, 'slot-2'),
+    });
+    await close();
+  });
+
+  it("names a Command Terminal's pane by the terminal's own name", async () => {
+    vi.mocked(browserPaneRegistry.listForProject).mockReturnValue({
+      panes: [{ sessionId: 'pane_77777777', ownerSessionId: 'sess-terminal', taskId: commandTerminalBrowserOwner(CALLER_PROJECT, 'slot-2'), projectId: CALLER_PROJECT, webContentsId: 77, url: null, registeredAt: 0, kind: 'pane', alive: true, debuggerAttached: false, owner: 'command-terminal', commandTerminalSlot: 'slot-2' }],
+      otherProjectPaneCount: 0,
+      unknownProjectPaneCount: 0,
+    } as never);
+    const getCommandTerminalName = vi.fn(() => 'Verify checkout flow');
+    const { client, close } = await connect({
+      projectId: CALLER_PROJECT,
+      sessions: { getSessionTaskId: () => undefined, getCommandTerminalName },
+    });
+    const result = await client.callTool({ name: 'kangentic_browser_list_panes', arguments: {} });
+    const payload = result.structuredContent as { panes: { commandTerminalName: string | null; owner: string }[] };
+    expect(payload.panes[0]).toMatchObject({ owner: 'command-terminal', commandTerminalName: 'Verify checkout flow' });
+    expect(getCommandTerminalName).toHaveBeenCalledWith(CALLER_PROJECT, 'slot-2');
     await close();
   });
 
