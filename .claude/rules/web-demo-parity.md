@@ -43,7 +43,7 @@ three things staying in step, and each is enforced rather than remembered.
 - **A scene is data, and so is how it moves.** Config overrides, task-row patches, session
   activity, `__mock*` seeds, at most a short list of boot steps (a click, a typed query, or a held
   hotkey, each a state with no timing), and how it moves under `loop=1`: a `choreography` (steps
-  from a closed vocabulary, the pointer's `hover`, `click`, `contextmenu`, `drag` and `drop`, the
+  from a closed vocabulary, the pointer's `hover`, `click`, `dblclick`, `contextmenu`, `drag` and `drop`, the
   keyboard's `type`, an arrow `key` and a held `hotkeyDown`/`hotkeyUp`, a select's `choose`, a `scroll`, one
   `pose`, and one `cut`, with pacing as a number on a step and every effect a step depends on a selector waited
   for; never Escape, never Enter, and never a write a visitor would have to undo, so a dialog's

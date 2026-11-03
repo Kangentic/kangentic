@@ -133,7 +133,7 @@ const SESSION_PATCH_VALUES: Record<string, readonly unknown[]> = {
 const BOOT_STEP_KEYS = ['click', 'type', 'text', 'press', 'waitFor'];
 
 /** The gestures a choreography step may make (ChoreographyGesture), and what may ride beside one. */
-const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose', 'cut'];
+const CHOREOGRAPHY_GESTURES = ['hover', 'click', 'dblclick', 'contextmenu', 'drag', 'drop', 'type', 'key', 'choose', 'scroll', 'hotkeyDown', 'hotkeyUp', 'pose', 'cut'];
 const CHOREOGRAPHY_STEP_EXTRAS = ['waitFor', 'ms'];
 
 /** Whether a scene moves under loop=1 by its own declaration: a cycle to play, a timeline, or a stated reason. */
@@ -264,6 +264,7 @@ describe('scene registry', () => {
         }
         if ('hover' in step) expect(isTarget(step.hover), `${where}.hover`).toBe(true);
         if ('click' in step) expect(isTarget(step.click), `${where}.click`).toBe(true);
+        if ('dblclick' in step) expect(isTarget(step.dblclick), `${where}.dblclick`).toBe(true);
         if ('contextmenu' in step) expect(isTarget(step.contextmenu), `${where}.contextmenu`).toBe(true);
         if ('drag' in step) {
           const drag = step.drag as { from?: ChoreographyTarget; to?: ChoreographyTarget; by?: { x: number; y: number } };

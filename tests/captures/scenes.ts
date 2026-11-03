@@ -30,7 +30,7 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SAMPLE_INSTALL_RAIL_WIDTH_PX, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_CHANGES, DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
@@ -79,6 +79,8 @@ export type ChoreographyGesture =
   /** Travel to the target and rest there, as a visitor's mouse does. */
   | { hover: ChoreographyTarget }
   | { click: ChoreographyTarget }
+  /** Two clicks in place, the second counted as one (`detail: 2`), then the dblclick a browser sends. */
+  | { dblclick: ChoreographyTarget }
   | { contextmenu: ChoreographyTarget }
   /** Press on `from`, travel to `to`, and release, or with `hold` stay pressed: the gesture in
    *  flight (the drag overlay, the dock preview). `by` in place of `to` carries it that far as
@@ -433,6 +435,34 @@ const COMMAND_TERMINAL_SECOND = '[data-command-slot="slot-2"]';
 const COMMAND_TERMINAL_SECOND_MODEL = `${COMMAND_TERMINAL_SECOND} [data-testid^="context-bar-model-"]`;
 /** The panel header's Maximize, which holds every terminal (a terminal has none of its own). */
 const COMMAND_TERMINAL_PANEL_MAXIMIZE = '[data-testid="command-terminal-panel-maximize"]';
+/** The seam between two tiled terminals (TileSplitter), its double-click evening the pair. */
+const COMMAND_TERMINAL_SEAM = '[data-testid="command-terminal-panel"] [data-testid^="tile-splitter-"][data-movable="true"]';
+/** The rail, its right edge (whose aria-valuenow is the rail's width), and the fold button at its foot. */
+const COMMAND_TERMINAL_RAIL = '[data-testid="command-terminal-rail"]';
+const COMMAND_TERMINAL_RAIL_EDGE = '[data-testid="command-terminal-rail-edge"]';
+const COMMAND_TERMINAL_RAIL_TOGGLE = '[data-testid="command-terminal-rail-toggle"]';
+/** The rail back at the width its recordings were measured beside, which a cycle that drags its edge must end on. */
+const COMMAND_TERMINAL_RAIL_AT_REST = `${COMMAND_TERMINAL_RAIL_EDGE}[aria-valuenow="${SAMPLE_INSTALL_RAIL_WIDTH_PX}"]`;
+/** The rail's Earlier search field, and the heading the conversation text hits arrive under. */
+const COMMAND_TERMINAL_EARLIER_SEARCH = '[data-testid="command-terminal-earlier-search"]';
+const COMMAND_TERMINAL_EARLIER_TEXT_HEADING = '[data-testid="command-terminal-earlier-text-heading"]';
+const COMMAND_TERMINAL_EARLIER_SEARCH_CLEAR = '[data-testid="command-terminal-earlier-search-clear"]';
+const COMMAND_TERMINAL_EARLIER_MENU = '[data-testid="command-terminal-earlier-menu"]';
+const COMMAND_TERMINAL_EARLIER_MENU_RESUME = '[data-testid="command-terminal-earlier-menu-resume"]';
+/** Any Earlier row; the first one matched is the list's newest. */
+const COMMAND_TERMINAL_EARLIER_ROW = '[data-testid="command-terminal-earlier-row"]';
+/** The second terminal's name field, which its title's pencil opens. */
+const COMMAND_TERMINAL_SECOND_NAME_FIELD = `${COMMAND_TERMINAL_SECOND} [data-testid="command-bar-name-field"]`;
+
+/** An Earlier row by its conversation. */
+function earlierRow(agentSessionId: string): string {
+  return `${COMMAND_TERMINAL_EARLIER_ROW}[data-agent-session-id="${agentSessionId}"]`;
+}
+
+/** The label of the Earlier conversation the search finds by its text alone, last in the list: the one the pointer reads. */
+const INVOICE_CONVERSATION_LABEL = 'Invoice PDF layout';
+const INVOICE_CONVERSATION_SESSION_ID = DEMO_COMMAND_TERMINAL_EARLIER.find((conversation) => conversation.label === INVOICE_CONVERSATION_LABEL)?.agentSessionId;
+if (!INVOICE_CONVERSATION_SESSION_ID) throw new Error(`DEMO_COMMAND_TERMINAL_EARLIER no longer carries the ${INVOICE_CONVERSATION_LABEL} conversation the command-terminal-earlier scene reads`);
 
 /**
  * The GLOBAL Command Terminal layout blob (`AppConfig.commandTerminalWorkspace`): one terminal,
@@ -1790,7 +1820,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail shows no Earlier list, which is what the desktop shows a project in that state.',
+    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail shows no Earlier list, which is what the desktop shows a project in that state. The command-terminal-earlier scene shows the list, from conversations only it seeds.',
     alt: 'The Command Terminal panel open over the blurred board, a rail with Add terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
     ready: COMMAND_TERMINAL_WINDOW,
@@ -1815,8 +1845,8 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal-tiled': {
     name: 'command-terminal-tiled',
     reach: 'boot',
-    description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then Add terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
-    alt: 'The Command Terminal panel with two terminals side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
+    description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then Add terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame. The pair is the pose and the poster. The live cycle then names the second terminal with the pencil after its title, drags the seam between the two and double-clicks it to even them, drags the rail\'s edge in and back out, and folds the rail with Hide rail and opens it again. The panel is maximized, so the rail\'s room comes from the terminals rather than the panel. The name commits on a click into the terminal, since a choreography never presses Enter. The cut stops the second terminal, so its name goes with it.',
+    alt: 'The Command Terminal panel with two terminals side by side, a repository summary on the left and a second Claude Code at its prompt on the right.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(false) },
     // The second window's model pill, which the context bar shows only once the session's first
     // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
@@ -1825,10 +1855,25 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: COMMAND_TERMINAL_SECOND_MODEL,
     // The toggle opens the panel after the pointer rests on it long enough for its tip, and the
     // rail's Add terminal starts a second terminal beside the first after a short rest (a labelled
-    // button, so it has no tip to wait for). The pair is the pose. Then
-    // the pointer looks at the second terminal's model pill, and the cut stops that terminal (Stop
-    // ends it for good, so the next Add terminal takes slot-2 again) and hides the layer behind the
-    // veil, so the frame fades in on the board and the next cycle opens both again.
+    // button, so it has no tip to wait for). The pair is the pose, and the site crops its poster,
+    // so nothing before it may change. Then the pointer looks at the second terminal's model pill
+    // and works the panel's controls:
+    //   - The pencil after the second terminal's title names it. The name commits on a click into
+    //     the terminal, the field's blur, because a choreography never presses Enter. It is the
+    //     second terminal's name, which ends with that terminal at the cut, so nothing undoes it.
+    //   - The seam between the two is dragged, then double-clicked, which evens the pair again.
+    //     The seam goes first: it and the rail share the room the two 630px floors leave, about
+    //     90px in the 1600px frame the stage and the site host (a frame much narrower leaves the
+    //     seam no room, and this step waits for a movable one).
+    //   - The rail's edge is dragged in and back out by the same distance, and the cycle waits for
+    //     the rail at the width its recordings were measured beside, so the next cycle starts
+    //     there. The distance keeps the rail off its 200px hold in any frame up to 2400px wide,
+    //     which would otherwise bring it back wider. The panel is maximized, so the terminals take
+    //     the room rather than the panel.
+    //   - Hide rail folds it to its strip, and the same button, on the same pixel, opens it again.
+    // The cut stops the second terminal (Stop ends it for good, so the next Add terminal takes
+    // slot-2 again, unnamed) and hides the layer behind the veil, so the frame fades in on the
+    // board and the next cycle opens both again.
     choreography: [
       { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
@@ -1836,9 +1881,48 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="command-terminal-new"]', waitFor: COMMAND_TERMINAL_SECOND_MODEL },
       { hover: `${COMMAND_TERMINAL_SECOND} .xterm`, ms: 600 },
       { pose: true },
-      { hover: COMMAND_TERMINAL_SECOND_MODEL, ms: 2400 },
+      { hover: COMMAND_TERMINAL_SECOND_MODEL, ms: 1600 },
+      { click: `${COMMAND_TERMINAL_SECOND} [data-testid="command-bar-rename"]`, waitFor: COMMAND_TERMINAL_SECOND_NAME_FIELD, ms: 400 },
+      { type: { into: COMMAND_TERMINAL_SECOND_NAME_FIELD, text: 'Release notes' }, ms: 500 },
+      { click: `${COMMAND_TERMINAL_SECOND} .xterm`, waitFor: gone(COMMAND_TERMINAL_SECOND_NAME_FIELD), ms: 1400 },
+      { drag: { from: COMMAND_TERMINAL_SEAM, by: { x: -0.025, y: 0 } }, ms: 1000 },
+      { dblclick: COMMAND_TERMINAL_SEAM, ms: 1400 },
+      { drag: { from: COMMAND_TERMINAL_RAIL_EDGE, by: { x: -0.02, y: 0 } }, ms: 800 },
+      { drag: { from: COMMAND_TERMINAL_RAIL_EDGE, by: { x: 0.02, y: 0 } }, waitFor: COMMAND_TERMINAL_RAIL_AT_REST, ms: 1000 },
+      { click: COMMAND_TERMINAL_RAIL_TOGGLE, waitFor: `${COMMAND_TERMINAL_RAIL}[data-collapsed="true"]`, ms: 1600 },
+      { click: COMMAND_TERMINAL_RAIL_TOGGLE, waitFor: `${COMMAND_TERMINAL_RAIL}[data-collapsed="false"]`, ms: 1400 },
       { cut: true },
       { click: `${COMMAND_TERMINAL_SECOND} [data-testid="command-bar-terminate-button"]`, waitFor: gone(COMMAND_TERMINAL_SECOND) },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: gone(COMMAND_TERMINAL_WINDOW) },
+    ],
+  },
+  'command-terminal-earlier': {
+    name: 'command-terminal-earlier',
+    reach: 'boot',
+    description: 'The Command Terminal panel as the command-terminal scene opens it, with Earlier conversations in its rail: ended contoso-web conversations (DEMO_COMMAND_TERMINAL_EARLIER), seeded only for this scene through the __mockCommandTerminalEarlier flag so every other Command Terminal figure keeps a rail with no Earlier list. Their names, first prompts and ended times are row metadata, timed from the page\'s own clock; one name is one a user typed. Search conversations is typed "checkout", which matches a name, a first prompt behind a name, and two conversations by their text alone under In conversations, each with its passage. That text is authored: no Command Terminal conversation in the sample install was recorded with a transcript. The matches are the pose and the poster. The live cycle then clears the search and right-clicks a row for its Resume, Rename and Remove menu, and the cut closes the menu and the panel without choosing.',
+    alt: 'The Command Terminal panel with its rail searching earlier conversations for checkout: rows whose name or first prompt matches, then two more under In conversations, each with the passage of the conversation that matched, beside a terminal running Claude Code.',
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
+    seeds: { __mockCommandTerminalEarlier: true },
+    // The In conversations heading, which shows only once the text search answers, 200 ms after
+    // typing stops, so a still waits for both halves of the search.
+    ready: COMMAND_TERMINAL_EARLIER_TEXT_HEADING,
+    focus: COMMAND_TERMINAL_RAIL,
+    // The toggle opens the panel, and the search field takes the word a keystroke at a time. The
+    // rows that match by name and first prompt show at once and the conversation text hits arrive
+    // under them, which is the pose. Then the pointer reads the last hit, the clear button empties
+    // the field and the whole list comes back, and a right-click on a row opens its menu, where the
+    // pointer rests on Resume. The cut closes the panel, whose press outside the menu closes the
+    // menu first, so nothing in it is chosen; the next cycle opens the panel on the full list.
+    choreography: [
+      { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
+      { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW, ms: 600 },
+      { type: { into: COMMAND_TERMINAL_EARLIER_SEARCH, text: 'checkout' }, waitFor: COMMAND_TERMINAL_EARLIER_TEXT_HEADING, ms: 600 },
+      { pose: true },
+      { hover: earlierRow(INVOICE_CONVERSATION_SESSION_ID), ms: 2200 },
+      { click: COMMAND_TERMINAL_EARLIER_SEARCH_CLEAR, waitFor: gone(COMMAND_TERMINAL_EARLIER_TEXT_HEADING), ms: 1400 },
+      { contextmenu: COMMAND_TERMINAL_EARLIER_ROW, waitFor: COMMAND_TERMINAL_EARLIER_MENU, ms: 600 },
+      { hover: COMMAND_TERMINAL_EARLIER_MENU_RESUME, ms: 1800 },
+      { cut: true },
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: gone(COMMAND_TERMINAL_WINDOW) },
     ],
   },
