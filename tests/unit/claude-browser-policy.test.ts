@@ -101,9 +101,12 @@ describe('Claude browser policy: the deny hook', () => {
     }));
     fs.writeFileSync(path.join(homeDir, '.claude.json'), JSON.stringify({
       mcpServers: { devtools: { command: 'npx', args: ['chrome-devtools-mcp@latest'] } },
+      // One key, spelled as Claude writes it: forward slashes, which on Windows
+      // is not the path the builder is handed, and on POSIX is the same string.
+      // A second key for the other spelling would collapse into this one on
+      // POSIX and, being empty, replace it.
       projects: {
-        [projectDir]: { mcpServers: { 'old browser': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-puppeteer'] } } },
-        [projectDir.replace(/\\/g, '/')]: { mcpServers: {} },
+        [projectDir.replace(/\\/g, '/')]: { mcpServers: { 'old browser': { command: 'npx', args: ['-y', '@modelcontextprotocol/server-puppeteer'] } } },
       },
     }));
 
