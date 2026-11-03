@@ -32,7 +32,7 @@ Implementations live next to each adapter. The run's `cwd` is the shared answer 
 | Codex | `codex exec --skip-git-repo-check --sandbox read-only --ephemeral [--model]` | stdin |
 | Gemini | Its answer run: `gemini --skip-trust --output-format stream-json --approval-mode plan --session-id <uuid> [--model]`, the chat removed after | stdin (non-TTY headless) |
 | Qwen Code | `qwen --output-format text --chat-recording=false [--model]` | stdin (non-TTY headless) |
-| OpenCode | Its answer run: `opencode run --agent plan --format json --pure [--model]`, the session deleted after | stdin |
+| OpenCode | Its answer run: `opencode run --agent plan --format json --pure [--model]` on OpenCode 1. OpenCode 2 has no `--pure`, so it runs `--standalone` in its place, with the inline config denying `shell` and `edit`. The session is deleted after (with `--standalone` on V2) | stdin |
 | Kimi | `kimi --print --quiet [--model]` | stdin |
 | Cursor | `agent --trust --output-format text [--model] -p "<prompt>"` | positional arg |
 | Droid | `droid exec -o text [--model] "<prompt>"` | positional arg |
