@@ -93,26 +93,36 @@ describe('probeOpenCodeV2Server', () => {
     expect(status).toEqual({ reachable: false, reason: 'The server requires a password' });
   });
 
-  it('names an OpenCode 1 server that answers with a version', async () => {
-    const { fetchImpl } = fakeFetch(() => jsonResponse(200, { version: '1.18.31' }));
+  // What an OpenCode 1.18.31 server answers on /api/info: its web app, as HTML.
+  const htmlPage = (): ReturnType<OpenCodeV2Fetch> => Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+  });
+
+  it('names an OpenCode 1 server from its own health route', async () => {
+    const { fetchImpl, calls } = fakeFetch((call) => (call.url.endsWith('/global/health')
+      ? jsonResponse(200, fixture('opencode1-global-health.json'))
+      : htmlPage()));
+    expect(await probeOpenCodeV2Server(SERVER, fetchImpl)).toEqual({
+      reachable: false,
+      reason: 'The server runs OpenCode 1.18.31, and the local OpenCode is version 2',
+    });
+    // A V1 server keeps its own username, so the health request carries the configured one.
+    expect(calls[1].headers).toEqual({ Authorization: `Basic ${Buffer.from('alice:hunter2').toString('base64')}` });
+  });
+
+  it('names an OpenCode 1 server with its own username, which rejects opencode', async () => {
+    const { fetchImpl } = fakeFetch((call) => (call.url.endsWith('/global/health')
+      ? jsonResponse(200, fixture('opencode1-global-health.json'))
+      : jsonResponse(401, {})));
     const status = await probeOpenCodeV2Server(SERVER, fetchImpl);
     expect(status.reachable).toBe(false);
     if (!status.reachable) expect(status.reason).toContain('OpenCode 1.18.31');
   });
 
-  it('treats a 404 as a server without the V2 API', async () => {
-    const { fetchImpl } = fakeFetch(() => jsonResponse(404, {}));
-    const status = await probeOpenCodeV2Server(SERVER, fetchImpl);
-    expect(status.reachable).toBe(false);
-    if (!status.reachable) expect(status.reason).toContain('OpenCode 2 API');
-  });
-
-  it('treats a non-JSON 200 (a web page) as not an OpenCode 2 server', async () => {
-    const { fetchImpl } = fakeFetch(() => Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () => Promise.reject(new SyntaxError('Unexpected token <')),
-    }));
+  it('treats a server that answers neither API as not an OpenCode 2 server', async () => {
+    const { fetchImpl } = fakeFetch(() => htmlPage());
     expect(await probeOpenCodeV2Server(SERVER, fetchImpl)).toEqual({
       reachable: false,
       reason: 'The server did not answer as an OpenCode 2 server',
@@ -123,6 +133,10 @@ describe('probeOpenCodeV2Server', () => {
     expect(await probeOpenCodeV2Server(SERVER, fakeFetch(() => jsonResponse(500, {})).fetchImpl)).toEqual({
       reachable: false,
       reason: 'Server responded with HTTP 500',
+    });
+    expect(await probeOpenCodeV2Server(SERVER, fakeFetch(() => jsonResponse(404, {})).fetchImpl)).toEqual({
+      reachable: false,
+      reason: 'Server responded with HTTP 404',
     });
     const network = await probeOpenCodeV2Server(SERVER, fakeFetch(() => Promise.reject(new Error('ECONNREFUSED'))).fetchImpl);
     expect(network).toEqual({ reachable: false, reason: 'ECONNREFUSED' });
@@ -180,36 +194,41 @@ describe('fetchOpenCodeV2SessionMessages', () => {
 
   it('pages newest to oldest until the history ends, and returns oldest first', async () => {
     const { fetchImpl, calls } = pagedServer();
-    const messages = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_kangentic0probe0000000002', {}, fetchImpl);
+    const { messages, complete } = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_kangentic0probe0000000002', {}, fetchImpl);
     expect(messages.map((message) => message.id)).toEqual(ascending.map((message) => message.id));
+    expect(complete).toBe(true);
     expect(calls).toHaveLength(3);
     expect(calls[0].url).toContain('/api/session/ses_kangentic0probe0000000002/message?');
     expect(calls[0].headers).toEqual({ Authorization: EXPECTED_AUTH });
   });
 
-  it('stops once the pages hold the byte budget', async () => {
+  it('stops once the pages hold the byte budget, and says the history is partial', async () => {
     const { fetchImpl, calls } = pagedServer();
-    const messages = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', { budgetBytes: 1 }, fetchImpl);
+    const { messages, complete } = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', { budgetBytes: 1 }, fetchImpl);
     expect(calls).toHaveLength(1);
+    expect(complete).toBe(false);
     expect(messages.map((message) => message.id)).toEqual([...pages[0].data].reverse().map((message) => message.id));
   });
 
-  it('stops at the page cap', async () => {
+  it('stops at the page cap, and says the history is partial', async () => {
     const { fetchImpl, calls } = pagedServer();
-    await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', { maxPages: 2 }, fetchImpl);
+    const { complete } = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', { maxPages: 2 }, fetchImpl);
     expect(calls).toHaveLength(2);
+    expect(complete).toBe(false);
   });
 
   it('keeps the newer pages when a later page fails', async () => {
     const { fetchImpl } = pagedServer({ failOnCursor: true });
-    const messages = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fetchImpl);
+    const { messages, complete } = await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fetchImpl);
     expect(messages).toHaveLength(pages[0].data.length);
+    expect(complete).toBe(false);
   });
 
   it('returns nothing when the first page fails', async () => {
-    expect(await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fakeFetch(() => jsonResponse(404, {})).fetchImpl)).toEqual([]);
-    expect(await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fakeFetch(() => Promise.reject(new Error('down'))).fetchImpl)).toEqual([]);
-    expect(await fetchOpenCodeV2SessionMessages({ url: null, auth: { kind: 'none' } }, 'ses_x')).toEqual([]);
+    const empty = { messages: [], complete: false };
+    expect(await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fakeFetch(() => jsonResponse(404, {})).fetchImpl)).toEqual(empty);
+    expect(await fetchOpenCodeV2SessionMessages(SERVER, 'ses_x', {}, fakeFetch(() => Promise.reject(new Error('down'))).fetchImpl)).toEqual(empty);
+    expect(await fetchOpenCodeV2SessionMessages({ url: null, auth: { kind: 'none' } }, 'ses_x')).toEqual(empty);
   });
 });
 

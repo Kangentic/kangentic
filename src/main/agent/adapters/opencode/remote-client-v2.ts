@@ -24,15 +24,18 @@ import { parseWindowBytes } from '../../shared/transcript-truncation';
  *   `OPENCODE_PASSWORD` for `--server`, and exits with "requires a password;
  *   set OPENCODE_PASSWORD" without it.
  * - `GET /api/info` answers a bare `ServerInfo` (no `data` envelope, no
- *   `healthy` field). The V1 health path `/global/health` answers 200 with the
- *   web app's HTML on a V2 server, so the V1 probe cannot tell the two apart.
+ *   `healthy` field). Each major answers the other's route with its web app's
+ *   HTML and a 200: `/global/health` on a V2 server, and `/api/info` on an
+ *   OpenCode 1.18.31 server, whose own `/global/health` answers
+ *   `{ healthy, version }`. The probe uses that route to name a V1 server.
  * - `GET /api/session/{id}/message` answers `{ data, cursor }`. With
  *   `order=desc` the first page is the newest, and `cursor.next` walks to older
  *   pages; a cursor is not combined with `order`. `cursor.next` is set even on
  *   the last page with data, and the page after it is empty with null cursors.
  * - `POST /api/session` takes an optional `id` and a `location.directory`, and
  *   answers `{ data: SessionInfo }`. The server does not check that the
- *   directory exists.
+ *   directory exists. With no location, the session's directory is the one
+ *   the server was started in.
  * - The TUI started with `--server` creates its session in the CLIENT's local
  *   working directory (`location.directory` is the local cwd), and its
  *   positional `[directory]` is a local `chdir`. It prints the session id only
@@ -120,39 +123,74 @@ export async function probeOpenCodeV2Server(
   fetchImpl: OpenCodeV2Fetch = fetch,
 ): Promise<RemoteServerStatus> {
   if (!server.url) return { reachable: false, reason: 'No server URL configured' };
+  const target = { ...server, url: server.url };
   try {
-    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/api/info`, {
+    const response = await fetchImpl(`${trimTrailingSlash(target.url)}/api/info`, {
       method: 'GET',
       headers: openCodeV2AuthHeaders(server.auth),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (response.status === 401 || response.status === 403) {
+      // An OpenCode 1 server with its own username rejects `opencode`.
+      if (server.auth.kind === 'basic' && server.auth.username && server.auth.username !== OPENCODE_V2_USERNAME) {
+        const openCode1Version = await openCode1ServerVersion(target, fetchImpl);
+        if (openCode1Version !== null) {
+          return { reachable: false, reason: `The server runs OpenCode ${openCode1Version}, and the local OpenCode is version 2` };
+        }
+      }
       const hasPassword = server.auth.kind === 'basic' && Boolean(server.auth.password);
       return {
         reachable: false,
         reason: hasPassword ? 'Authentication failed - check the password' : 'The server requires a password',
       };
     }
-    if (response.status === 404) {
-      return { reachable: false, reason: 'The server does not serve the OpenCode 2 API. It may run OpenCode 1' };
-    }
     if (!response.ok) return { reachable: false, reason: `Server responded with HTTP ${response.status}` };
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
+    const version = await versionFromBody(response);
+    if (version === null || majorVersion(version) === 1) {
+      // An OpenCode 1 server answers /api/info with its web app's HTML. Its
+      // own health route says which version it runs, which is the useful
+      // answer here: the local CLI and the server must be the same major.
+      const openCode1Version = await openCode1ServerVersion(target, fetchImpl);
+      if (openCode1Version !== null) {
+        return { reachable: false, reason: `The server runs OpenCode ${openCode1Version}, and the local OpenCode is version 2` };
+      }
       return { reachable: false, reason: 'The server did not answer as an OpenCode 2 server' };
-    }
-    const version = body && typeof body === 'object' ? (body as { version?: unknown }).version : undefined;
-    if (typeof version !== 'string') {
-      return { reachable: false, reason: 'The server did not answer as an OpenCode 2 server' };
-    }
-    if (majorVersion(version) === 1) {
-      return { reachable: false, reason: `The server runs OpenCode ${version}, and the local OpenCode is version 2` };
     }
     return { reachable: true, version };
   } catch (error) {
     return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+async function versionFromBody(response: { json(): Promise<unknown> }): Promise<string | null> {
+  try {
+    const body = await response.json();
+    const version = body && typeof body === 'object' ? (body as { version?: unknown }).version : undefined;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The version an OpenCode 1 server reports on `GET /global/health`, or null for anything else. */
+async function openCode1ServerVersion(server: AgentExecutionServer & { url: string }, fetchImpl: OpenCodeV2Fetch): Promise<string | null> {
+  try {
+    // An OpenCode 1 server's username is its own setting, so this request
+    // carries the configured one, as the V1 client does.
+    const auth = server.auth;
+    const headers: Record<string, string> = auth.kind === 'basic' && auth.password
+      ? { Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`, 'utf8').toString('base64')}` }
+      : {};
+    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/global/health`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const version = await versionFromBody(response);
+    return version !== null && majorVersion(version) === 1 ? version : null;
+  } catch {
+    return null;
   }
 }
 
@@ -210,26 +248,39 @@ async function fetchMessagesPage(
   return { data: body.data as OpenCodeV2Message[], next };
 }
 
+/** A session's messages, oldest first, and whether they reach back to its start. */
+export interface OpenCodeV2SessionMessages {
+  messages: OpenCodeV2Message[];
+  /**
+   * False when paging stopped before the history's end (the byte budget, the
+   * page cap, or a failed page). The mapper drops bookkeeping messages, so the
+   * mapped entries can fit the transcript window although older messages were
+   * left out, and the caller then adds the truncation notice itself.
+   */
+  complete: boolean;
+}
+
 /**
  * A session's newest messages, oldest first: pages newest to oldest until the
  * pages hold `budgetBytes` of JSON (the transcript window the caller caps to),
  * the history ends, or `MAX_MESSAGE_PAGES` pages were read. A failure on the
- * first page returns `[]`, per `parseTranscript`'s must-not-throw contract; a
- * failure on a later page keeps the newer pages already read.
+ * first page returns no messages, per `parseTranscript`'s must-not-throw
+ * contract; a failure on a later page keeps the newer pages already read.
  */
 export async function fetchOpenCodeV2SessionMessages(
   server: AgentExecutionServer,
   sessionId: string,
   options: { budgetBytes?: number; maxPages?: number } = {},
   fetchImpl: OpenCodeV2Fetch = fetch,
-): Promise<OpenCodeV2Message[]> {
-  if (!server.url) return [];
+): Promise<OpenCodeV2SessionMessages> {
+  if (!server.url) return { messages: [], complete: false };
   const target = { ...server, url: server.url };
   const budget = options.budgetBytes ?? parseWindowBytes();
   const maxPages = options.maxPages ?? MAX_MESSAGE_PAGES;
   const newestFirst: OpenCodeV2Message[] = [];
   let bytes = 0;
   let cursor: string | null = null;
+  let complete = false;
   for (let page = 0; page < maxPages; page += 1) {
     let result: MessagesPage | null;
     try {
@@ -242,10 +293,14 @@ export async function fetchOpenCodeV2SessionMessages(
       newestFirst.push(message);
       bytes += JSON.stringify(message).length;
     }
-    if (result.data.length === 0 || !result.next || bytes >= budget) break;
+    if (result.data.length === 0 || !result.next) {
+      complete = true;
+      break;
+    }
+    if (bytes >= budget) break;
     cursor = result.next;
   }
-  return newestFirst.reverse();
+  return { messages: newestFirst.reverse(), complete };
 }
 
 function toolInput(state: OpenCodeV2ToolState): unknown {
