@@ -4905,12 +4905,20 @@ export interface AppConfig {
    *  Null until a layout is first saved. See
    *  src/renderer/components/command-bar/ + window-manager/persistence/. */
   commandTerminalWorkspace: SerializedWorkspace | null;
-  /** GLOBAL position and size of the Command Terminal panel over the board, as
-   *  fractions of the area between the title bar and the status bar, and whether
-   *  it is maximized. Shared across all projects, like the layout above. Null
-   *  until the panel is first moved, resized or maximized. Renderer-authoritative,
-   *  always written whole. See src/renderer/components/command-bar/. */
+  /** The Command Terminal panel's single place from before it kept one per grid
+   *  shape. Nothing writes it any more: a shape with no place in
+   *  `commandTerminalPanelByShape`, and no other shape saved, starts from it, so
+   *  an update moves no panel. Null on an install that never placed the panel. */
   commandTerminalPanel: CommandTerminalPanelGeometry | null;
+  /** GLOBAL position and size of the Command Terminal panel over the board, one
+   *  per grid shape (one terminal, two, three or four), as fractions of the area
+   *  between the title bar and the status bar, and whether it is maximized.
+   *  Shared across all projects, like the layout above, so every project showing
+   *  the same shape shows the same place. A shape gets its place when the panel
+   *  first shows it after a count change, or is moved, resized or maximized.
+   *  Renderer-authoritative, always written whole. See
+   *  src/shared/command-terminal-panel.ts. */
+  commandTerminalPanelByShape: CommandTerminalPanelPlaces;
   /** GLOBAL width of the Command Terminal panel's rail, as the user dragged its
    *  edge (200 to 400, 300 by default), and whether it is folded to its 37px
    *  strip. Shared across all projects and the detached Command Terminal window,
@@ -5193,6 +5201,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   commandTerminalPanel: null,
+  commandTerminalPanelByShape: {},
   commandTerminalRail: { width: COMMAND_RAIL_DEFAULT_WIDTH_PX, collapsed: false },
   commandTerminalOpenProjectId: null,
   monitorWorkspace: null,
@@ -7437,6 +7446,13 @@ export interface CommandTerminalPanelGeometry {
   h: number;
   maximized: boolean;
 }
+
+/** The panel's grid shapes, each with a place of its own: one terminal, two side
+ *  by side, and three or four in two columns by two rows, which share a minimum. */
+export type CommandTerminalPanelShape = 'one' | 'two' | 'grid';
+
+/** The panel's place for each grid shape that has one. */
+export type CommandTerminalPanelPlaces = Partial<Record<CommandTerminalPanelShape, CommandTerminalPanelGeometry>>;
 
 /**
  * One earlier conversation a project's Command Terminals held, for the panel's

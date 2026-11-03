@@ -8,9 +8,11 @@
  * resize by their seams, and the panel never resizes under that grid. The panel
  * itself moves, resizes and maximizes.
  *
- * GEOMETRY is GLOBAL: the panel's place (`AppConfig.commandTerminalPanel`) and
- * the terminals' seams (`AppConfig.commandTerminalWorkspace`) are shared across
- * all projects. POPULATION is PER-PROJECT: which slots get windows is derived
+ * GEOMETRY is GLOBAL: the panel's place, one per grid shape
+ * (`AppConfig.commandTerminalPanelByShape`), and the terminals' seams
+ * (`AppConfig.commandTerminalWorkspace`) are shared across all projects, so a
+ * project with two terminals opens at the two-terminal place. POPULATION is
+ * PER-PROJECT: which slots get windows is derived
  * from the current project's live transient sessions on open (see
  * `reconcileCommandTerminalWindows`), because the session store is keyed per
  * `(projectId, slot)`. Without that split the window count carried over from
@@ -113,13 +115,21 @@ function nextFreeSlot(usedSlots: Set<string>): string | null {
  * died). Works on the module-singleton store whether the layer is mounted or
  * not; when that was the last window, `useHideLayerWhenEmpty` hides the layer,
  * as it does after Stop.
+ *
+ * On screen, the close is a layout change, as a Stop from the panel is: the
+ * panel moves to the new count's place, and the terminals left hold their
+ * frames until they have repainted. With the layer hidden there is no scope,
+ * and the close runs plainly.
  */
 export function closeCommandTerminalWindowInSlot(slot: string): void {
   const store = commandWindowManager.store;
   const managedWindow = Object.values(store.getState().windows).find((candidate) => candidate.anchor === slot);
   if (!managedWindow) return;
-  store.getState().closeWindow(managedWindow.id);
-  arrangeCommandTerminals();
+  const scope = terminalLayoutScopeOf(document.querySelector('[data-testid="command-terminal-area"]'));
+  runTerminalLayoutChange(scope, () => {
+    store.getState().closeWindow(managedWindow.id);
+    arrangeCommandTerminals();
+  });
 }
 
 /**
@@ -561,6 +571,9 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const expanded = commandWindowManager.store((state) => state.expandedWindowId !== null);
   const gridMinimum = commandTerminalGridMinimum(terminalCount, expanded, COMMAND_LAYER_OPTIONS.minSize);
+  // The whole grid's minimum, expanded or not: a shape with no place of its own
+  // grows to it, since Expand never switches the panel's place.
+  const placeGridMinimum = commandTerminalGridMinimum(terminalCount, false, COMMAND_LAYER_OPTIONS.minSize);
   // The rail's narrowest: its strip folded, its drag minimum open.
   const railFolded = useConfigStore((state) => state.config.commandTerminalRail?.collapsed === true);
   const railMinimumWidth = railFolded ? COMMAND_RAIL_COLLAPSED_WIDTH_PX : COMMAND_RAIL_MIN_WIDTH_PX;
@@ -568,6 +581,11 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const panelMinSize = useMemo(
     () => panelMinSizeFor({ width: gridMinimum.width, height: gridMinimum.height }, railMinimumWidth),
     [gridMinimum.width, gridMinimum.height, railMinimumWidth],
+  );
+  const { width: placeGridMinimumWidth, height: placeGridMinimumHeight } = placeGridMinimum;
+  const placeMinSize = useMemo(
+    () => panelMinSizeFor({ width: placeGridMinimumWidth, height: placeGridMinimumHeight }, railMinimumWidth),
+    [placeGridMinimumWidth, placeGridMinimumHeight, railMinimumWidth],
   );
   const atCap = useCommandTerminalAtCap(projectId);
   const terminalsStarting = useTerminalsStarting(projectId);
@@ -602,6 +620,11 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   }, [changeLayout]);
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
     changeLayout(() => resumeCommandTerminalConversation(entry.agentSessionId));
+  }, [changeLayout]);
+  // A window that finds its terminal already used opens the resume beside it,
+  // later than the rail's click: another terminal, so the panel moves too.
+  const handleResumeBeside = useCallback((agentSessionId: string) => {
+    changeLayout(() => resumeCommandTerminalBeside(agentSessionId));
   }, [changeLayout]);
   const { terminals: railTerminals, frontWindowId } = useRailTerminals();
   // A rail entry's click: expanded over the others while one is expanded, else
@@ -661,7 +684,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
 
   return (
     <PanelWidthContext.Provider value={widthChange}>
-    <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
+    <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={handleResumeBeside}>
       {layerRoot === null ? (
         // The window's own title bar takes the place of the panel header.
         <div className="flex flex-1 min-h-0" data-testid="command-terminal-detached">
@@ -676,6 +699,8 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
           <CommandTerminalPanel
             onHide={onHide}
             minSize={panelMinSize}
+            terminalCount={terminalCount}
+            placeMinSize={placeMinSize}
             terminalAreaMinWidth={terminalAreaMinWidth}
             onResizeStart={adoptHeldLayout}
             widthChangeRef={panelWidthRef}

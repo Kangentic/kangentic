@@ -17,6 +17,8 @@ sources:
   - resource: src/main/ipc/helpers/command-terminal-background-session.ts
   - resource: src/shared/command-terminal-name.ts
   - resource: src/shared/command-terminal-rail.ts
+  - resource: src/shared/command-terminal-panel.ts
+    title: The panel's place per grid shape
   - resource: src/renderer/utils/folding-edge-drag.ts
   - resource: src/renderer/components/terminal/context-bar-fold.ts
     title: The context bar's one-row fold, whose row sets the pane floor
@@ -56,11 +58,13 @@ manager-resize gate (`window-manager/terminal/manager-resize-gate.ts`) for the w
 terminals re-tile with the panel but keep their grids, and the gate holds every
 `scheduleWindowTerminalResize` the re-tiling asks for and sends one when the gesture ends, so each
 terminal refits once on release instead of sending its agent a SIGWINCH per pointer frame (12 for
-one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, fractions of that
-area, so it rescales with the window. A panel never moved opens centered at the size that gives a
-lone terminal what a Command Terminal window had before the panel (58% by 70% of the area, the
-window manager's first-window default), with the rail at its 300px default and the 40px header
-added around it. The default reads the rail's default width, never its live one, so a panel
+one test drag without the hold). Its place is kept per grid shape in
+`AppConfig.commandTerminalPanelByShape` (see "Geometry is global, population is per-project"
+below), fractions of that area, so it rescales with the window. A shape with no place opens from
+the nearest saved shape's center, else from the single place saved before shapes, else from the
+default: centered at the size that gives a lone terminal what a Command Terminal window had before
+the panel (58% by 70% of the area, the window manager's first-window default), with the rail at its
+300px default and the 40px header added around it. The default reads the rail's default width, never its live one, so a panel
 nobody moved opens at one size whatever the rail was left at.
 
 The rail is part of the panel. Dragging its edge, folding it and opening it change the panel's
@@ -73,9 +77,10 @@ follow, so an open the right edge cannot take grows the panel to the left. Where
 change (maximized, the detached window, or a drag whose right edge reaches the area's), the
 terminals give the rail its room, never under their floor. The rail's edge looks like a tile seam:
 a thin accent line on the boundary under the pointer and while it drags.
-Every user meets that default on the first open after updating, because the panel's place is a new
-setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
-it.
+Only a panel nobody ever placed meets that default. Someone who placed it before places were kept
+per shape keeps that place for every shape, so an update moves no panel. A first cut at 94% by 92%,
+from when the place was a new setting, made that first open jump from about half the window to all
+of it.
 
 ### Decision: the resize gate closes a drag itself (2026-10-25)
 
@@ -929,6 +934,33 @@ The panel's place and the terminals' layout are shared across projects, but whic
 windows is reconciled to the current project's live Command Terminal sessions on open
 (`reconcileCommandTerminalWindows` and `planCommandWindowReconciliation` in
 `command-window-reconcile.ts`).
+
+The place is kept per grid shape (`AppConfig.commandTerminalPanelByShape`,
+`src/shared/command-terminal-panel.ts`): one terminal, two side by side, and three or four,
+which share a place because both are two columns by two rows with the same minimum, so a fourth
+terminal never moves the panel. The shape comes from how many terminals the panel tiles; Expand
+is transient and never switches places. It was one place shared by every count, and that shipped
+two faults. The grow-to-fit save grew the box from its left edge, so a panel centered for one
+terminal sat off-center with two. And nothing shrank it again, so stopping a terminal left the
+bigger box, and a project with one terminal opened where the user had arranged two.
+
+A shape with no place starts from the nearest saved shape's center (the smaller one on a tie),
+grows around it to the grid's minimum, and stays inside the area. The nearest saved shape ranks
+above the single place from before shapes (`commandTerminalPanel`, read and never written): a
+user who moves the one-terminal panel after updating and then adds a terminal sees the panel grow
+where they put it. With nothing saved per shape, that single place is the start for every shape,
+so no panel moves on update. A shape's place is saved when it is moved, resized or maximized,
+when the rail's edge resizes the panel, and when the panel first shows it after a terminal
+starts or stops, together with the shape it left if that had none, so stopping back returns to
+it. A panel nobody placed, on the shape it opened with, saves nothing. The rail's width change
+saves only the shape on screen; another shape keeps its box, and `resolveRailWidth` narrows the
+rail there when the terminals need the room.
+
+A start or stop is a layout change (`runTerminalLayoutChange`), so the panel's move to the new
+shape's place lands with the terminals holding their frames. That holds for a terminal ended
+from outside the panel too (a phone's Stop, its agent exiting): `closeCommandTerminalWindowInSlot`
+runs its close as a layout change, the one change no user gesture starts that holds frames. A
+phone start opens no window while the panel is open; the reconcile adds it on the next open.
 
 Project switching keeps every slot's PTY alive in the map, with no stash or restore. The panel
 closes on switch, and on reopen the reconcile closes carried-over windows whose slot has no live

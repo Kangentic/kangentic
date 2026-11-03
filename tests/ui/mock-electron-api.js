@@ -420,6 +420,7 @@
     workspaceByProject: {},
     commandTerminalWorkspace: null,
     commandTerminalPanel: null,
+    commandTerminalPanelByShape: {},
     // Mirrors DEFAULT_CONFIG.commandTerminalRail.
     commandTerminalRail: { width: 300, collapsed: false },
     commandTerminalOpenProjectId: null,
@@ -3617,6 +3618,10 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
           config.commandTerminalPanel = partial.commandTerminalPanel;
         }
+        // The panel's places per grid shape: written whole, so a shape the renderer dropped goes.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanelByShape')) {
+          config.commandTerminalPanelByShape = Object.assign({}, partial.commandTerminalPanelByShape);
+        }
         // monitorWorkspace is the same kind of blob, for the Agent Monitor's detail layer.
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;
@@ -3644,6 +3649,10 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
           config.commandTerminalPanel = partial.commandTerminalPanel;
+        }
+        // The panel's places per grid shape: written whole, so a shape the renderer dropped goes.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanelByShape')) {
+          config.commandTerminalPanelByShape = Object.assign({}, partial.commandTerminalPanelByShape);
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;

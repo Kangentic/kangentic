@@ -11,7 +11,7 @@
  *    reads the rail back from disk must not write what it just read, or two windows
  *    would ping-pong the setting.
  *  - The refetch merge (`withSeededWorkspace`) does NOT preserve the rail, unlike
- *    `commandTerminalPanel`. The other window writes the rail, so a refetch has to
+ *    the panel's places. The other window writes the rail, so a refetch has to
  *    read that write back. Preserving this window's copy would keep its own stale
  *    value and hide the other window's drag.
  *
@@ -92,17 +92,27 @@ describe('config-store command terminal rail', () => {
     expect(useConfigStore.getState().globalConfig.commandTerminalRail).toEqual(fetchedRail);
   });
 
-  it('the same refetch DOES keep this window\'s panel geometry, which is what makes the rail case a deliberate difference', async () => {
+  it('the same refetch DOES keep this window\'s panel places, which is what makes the rail case a deliberate difference', async () => {
     useConfigStore.setState({ workspaceSeeded: true });
-    useConfigStore.getState().saveCommandTerminalPanel(PANEL);
+    useConfigStore.getState().saveCommandTerminalPanelPlaces({ one: PANEL });
 
-    configGet.mockResolvedValue({ ...DEFAULT_CONFIG, commandTerminalPanel: OTHER_PANEL });
-    configGetGlobal.mockResolvedValue({ ...DEFAULT_CONFIG, commandTerminalPanel: OTHER_PANEL });
+    configGet.mockResolvedValue({ ...DEFAULT_CONFIG, commandTerminalPanelByShape: { one: OTHER_PANEL } });
+    configGetGlobal.mockResolvedValue({ ...DEFAULT_CONFIG, commandTerminalPanelByShape: { one: OTHER_PANEL } });
     await useConfigStore.getState().loadConfig();
 
     // The panel is written by this renderer alone, so a stale disk read must not revert it.
-    expect(useConfigStore.getState().config.commandTerminalPanel).toEqual(PANEL);
-    expect(useConfigStore.getState().globalConfig.commandTerminalPanel).toEqual(PANEL);
+    expect(useConfigStore.getState().config.commandTerminalPanelByShape).toEqual({ one: PANEL });
+    expect(useConfigStore.getState().globalConfig.commandTerminalPanelByShape).toEqual({ one: PANEL });
+  });
+
+  it('saveCommandTerminalPanelPlaces merges a shape into the saved places and writes the whole map', () => {
+    // The map is replaced whole on disk (CONFIG_DICTIONARY_PATHS), so a write that sent only
+    // the shape it changed would drop every other shape's place.
+    useConfigStore.getState().saveCommandTerminalPanelPlaces({ one: PANEL });
+    useConfigStore.getState().saveCommandTerminalPanelPlaces({ two: OTHER_PANEL });
+
+    expect(useConfigStore.getState().globalConfig.commandTerminalPanelByShape).toEqual({ one: PANEL, two: OTHER_PANEL });
+    expect(configSet).toHaveBeenLastCalledWith({ commandTerminalPanelByShape: { one: PANEL, two: OTHER_PANEL } });
   });
 
   it('the first fetch seeds the rail from disk like every other field', async () => {
