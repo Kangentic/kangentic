@@ -1,0 +1,144 @@
+{
+  "data": [
+    {
+      "id": "msg_19ff191c50010f2KWcmIsIeKaV",
+      "time": {
+        "created": 1793684771689
+      },
+      "text": "Read readme.txt and missing.txt.",
+      "type": "user"
+    },
+    {
+      "id": "msg_19ff19371001OQtN7RvZIlupPO",
+      "time": {
+        "created": 1793684771701,
+        "streamed": 1793684771735,
+        "completed": 1793684771745
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "stub-model",
+        "providerID": "stub",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "reasoning",
+          "text": "I will read both files the user named.",
+          "native": {
+            "reasoningField": "reasoning_content"
+          },
+          "time": {
+            "created": 1793684771724,
+            "completed": 1793684771730
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_read_ok",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "path": "readme.txt"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Read file readme.txt, lines 1-1\n1: This is project A on the server."
+              }
+            ],
+            "metadata": {
+              "truncated": false
+            }
+          },
+          "time": {
+            "created": 1793684771727,
+            "ran": 1793684771732,
+            "completed": 1793684771743
+          }
+        },
+        {
+          "type": "tool",
+          "id": "call_read_missing",
+          "name": "read",
+          "executed": false,
+          "state": {
+            "status": "error",
+            "input": {
+              "path": "missing.txt"
+            },
+            "error": {
+              "type": "tool.execution",
+              "message": "File not found: missing.txt"
+            }
+          },
+          "time": {
+            "created": 1793684771728,
+            "ran": 1793684771734,
+            "completed": 1793684771742
+          }
+        }
+      ],
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 100,
+        "output": 20,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_19ff193a70013rnQe6HQu4U4Cm",
+      "time": {
+        "created": 1793684771755,
+        "streamed": 1793684771761,
+        "completed": 1793684771762
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "stub-model",
+        "providerID": "stub",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "readme.txt says this is project A. missing.txt does not exist."
+        }
+      ],
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 150,
+        "output": 15,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_19ff193b3002WVVClt1zD3kB0o",
+      "time": {
+        "created": 1793684771763
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    }
+  ],
+  "cursor": {
+    "previous": "eyJpZCI6Im1zZ18xOWZmMTkxYzUwMDEwZjJLV2NtSXNJZUthViIsIm9yZGVyIjoiYXNjIiwiZGlyZWN0aW9uIjoicHJldmlvdXMifQ",
+    "next": "eyJpZCI6Im1zZ18xOWZmMTkzYjMwMDJXVlZDbHQxekQza0IwbyIsIm9yZGVyIjoiYXNjIiwiZGlyZWN0aW9uIjoibmV4dCJ9"
+  }
+}
