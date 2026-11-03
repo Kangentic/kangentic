@@ -155,6 +155,14 @@ describe('pty host out-of-process boundary', () => {
       'src/main/activity-engine/background-shell/process-tree.ts': 'LocalSpawnService\'s probe; the utility host lists through the worker',
       'src/main/shared/child-tree-stop.ts': 'host-cli-processes, and a by-pid stop of a run a dead worker left',
       'src/main/pty/process-tag/darwin-reader.ts': 'runTool\'s default; the utility host passes runToolThrough(the spawn service)',
+      // The one entry here that DOES start a process on the terminal thread (#913): `ssh`, when a
+      // remote host's link dials or redials. Never per terminal, so it costs a start once per host
+      // at launch and once per reconnect. On Windows CreateProcess holds the thread for its
+      // duration, 20 to 40 ms idle and up to 454 ms under disk load (the figure above), which
+      // pauses local terminals for that long. The accepted interim of hosting the hub in this
+      // process (one renderer port serves local and remote); the fix is to start ssh on the spawn
+      // worker, tracked for the PR before it leaves draft.
+      'src/main/remote/link/ssh-connection.ts': 'ssh for a remote host\'s link, on dial and redial only; known to hold the thread for one CreateProcess (see above)',
     };
     for (const devBuild of [false, true]) {
       const inputs = await bundleInputs(HOST_ENTRY, devBuild);

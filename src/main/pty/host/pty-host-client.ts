@@ -656,6 +656,12 @@ export class PtyHostClient {
       rawHandle?.deliverExit(event.exitCode, event.signal);
       return;
     }
+    if (event.type === 'remoteSessions') {
+      this.endLostRemoteSessions(event.lost);
+      // The adoptable ones are for whoever reconciles; main's session manager hears the event too.
+      this.eventHandler?.(event);
+      return;
+    }
     if (event.type === 'exit') {
       const handle = this.handles.get(event.ptyId);
       handle?.markExited();
@@ -669,9 +675,29 @@ export class PtyHostClient {
   }
 
   /**
-   * Every PTY the host still runs, as handles: the host went away, and each of
-   * these must be reported exited. Clears the routing.
+   * A host's reconnect found sessions it no longer holds: the daemon there was restarted, or the
+   * machine was, and their PTYs went with it. Each ends as a lost local host ends its PTYs, through
+   * its own exit listener with the lost code, and the recovery path resumes the agents.
    */
+  private endLostRemoteSessions(lostSessionIds: readonly string[]): void {
+    const lost = new Set(lostSessionIds);
+    const lostSessions: string[] = [];
+    for (const handle of [...this.handles.values()]) {
+      if (!handle.isOnRemoteHost || !lost.has(handle.sessionId)) continue;
+      const listener = this.exitListeners.get(handle.ptyId);
+      this.handles.delete(handle.ptyId);
+      this.exitListeners.delete(handle.ptyId);
+      handle.markExited();
+      lostSessions.push(handle.sessionId);
+      try {
+        listener?.(PTY_HOST_LOST_EXIT_CODE);
+      } catch (error) {
+        console.error('[pty-host] exit handling after a remote session was lost failed:', error);
+      }
+    }
+    if (lostSessions.length > 0) this.lifecycleHandler?.onHostLost(lostSessions);
+  }
+
   /**
    * The PTYs a dead local host took with it. A PTY on a remote host (#913) is not one of them: the
    * local host crashing says nothing of an agent running on another machine, whose end is reported by

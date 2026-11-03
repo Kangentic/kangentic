@@ -24,6 +24,7 @@ import { loadWin32OrphanApi } from '../process-tag/win32-reader';
 import { createTaggedProcessReader } from '../process-tag/reader-factory';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
+import { HostRouter } from '../../remote/host-router';
 import { HostProcessTable } from './host-process-table';
 import { setMainExecutable } from './host-exec';
 import { runToolThrough, type SpawnServiceHooks } from './host-spawn-service';
@@ -91,7 +92,12 @@ function transcriptSinkFor(projectId: string): TranscriptSink | null {
   return repository;
 }
 
-let core: PtyHostCore | null = null;
+/**
+ * What every message from main goes to. The router sends a PTY or session that lives on an SSH host
+ * to the link hub it holds (#913) and everything else to the core, so a remote terminal shares each
+ * renderer's one port with the local ones.
+ */
+let router: HostRouter | null = null;
 
 /**
  * Every child process this host starts runs on the spawn worker's thread, never
@@ -126,7 +132,7 @@ function initialize(message: PtyHostInitMessage): void {
   };
   /** POSIX: `ps` per call on the spawn worker (no child kept); unused on Windows. */
   const preKillProcessTable = new HostProcessTable({ createFallbackProbe: () => spawnServiceOf().processTableProbe() });
-  core = new PtyHostCore({
+  const core = new PtyHostCore({
     emit: post,
     resolveAgent: (_sessionId, agentName) => (agentName ? agentRegistry.get(agentName) : undefined),
     transcriptSinkFor,
@@ -144,6 +150,7 @@ function initialize(message: PtyHostInitMessage): void {
     listProcessesBeforeKill: () => preKillProcessTable.list(),
     onBatchStarted: (method) => post({ type: 'batch-started', method }),
   });
+  router = new HostRouter({ core, emit: post, log: (line) => console.log(line) });
   if (__KANGENTIC_DEV__) {
     relaySlowSyncSpans((label, elapsedMs) => post({ type: 'slow-span', label, ms: Math.round(elapsedMs) }));
     setTerminalTraceRelay((sessionId, event, detail, ts) => post({ type: 'trace', sessionId, event, detail, ts }));
@@ -156,12 +163,12 @@ function initialize(message: PtyHostInitMessage): void {
 }
 
 async function dispatchRequest(message: PtyHostRequest): Promise<void> {
-  if (!core) {
+  if (!router) {
     post({ type: 'reply', id: message.id, ok: false, error: { message: 'The pty host is not initialized' } });
     return;
   }
   try {
-    const result = await core.handleRequest(message.method, message.params);
+    const result = await router.handleRequest(message.method, message.params);
     post({ type: 'reply', id: message.id, ok: true, result });
   } catch (error) {
     post({ type: 'reply', id: message.id, ok: false, error: toPtyHostError(error) });
@@ -174,15 +181,17 @@ async function dispatchRequest(message: PtyHostRequest): Promise<void> {
  * stops.
  */
 function shutdown(exitWaitMs: number | undefined): void {
-  const hostCore = core;
-  if (!hostCore) process.exit(0);
-  hostCore.handleCommand({ type: 'shutdown' });
+  const hostRouter = router;
+  if (!hostRouter) process.exit(0);
   const waitMs = typeof exitWaitMs === 'number' && Number.isFinite(exitWaitMs)
     ? Math.max(0, Math.min(MAX_SHUTDOWN_EXIT_WAIT_MS, exitWaitMs))
     : DEFAULT_SHUTDOWN_EXIT_WAIT_MS;
+  // The links send their quit frame within the same bound the PTYs' exits get.
+  hostRouter.beginShutdown(waitMs);
   const deadline = Date.now() + waitMs;
   const waitForExits = (): void => {
-    if (hostCore.liveChildCount === 0 || Date.now() >= deadline) {
+    // The PTYs the core still runs, and the links still sending their quit frame (#913).
+    if (hostRouter.liveChildCount === 0 || Date.now() >= deadline) {
       process.exit(0);
       return;
     }
@@ -208,10 +217,10 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
     case 'attachRendererPort': {
       // A renderer's own port: its keystrokes and output skip main entirely.
       const port = event.ports[0];
-      if (port) core?.attachRendererPort(message.rendererId, port);
+      if (port) router?.attachRendererPort(message.rendererId, port);
       return;
     }
     default:
-      core?.handleCommand(message);
+      router?.handleCommand(message);
   }
 });

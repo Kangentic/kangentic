@@ -111,6 +111,8 @@ export class RemoteLink implements PtyHostTransport {
   private quitPlan: (() => SuspendPlan[]) | null = null;
   private currentState: RemoteLinkState = 'connecting';
   private stopped = true;
+  /** The quit frame is sent and the link has not let go yet: the app's quit waits for this. */
+  private shutdownInFlight = false;
   private everConnected = false;
   private cycleWaiter: (() => void) | null = null;
   private cycleAttached = false;
@@ -152,6 +154,7 @@ export class RemoteLink implements PtyHostTransport {
   /** Stop dialing and let go of the connection. Every agent keeps running on the host. */
   stop(): void {
     this.stopped = true;
+    this.shutdownInFlight = false;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.endpoint.detach('the link stopped');
     this.failPending(new Error('the link stopped'));
@@ -218,8 +221,17 @@ export class RemoteLink implements PtyHostTransport {
    */
   shutdown(exitWaitMs = 1_300): void {
     if (this.stopped) return;
-    const finish = (): void => this.stop();
+    this.shutdownInFlight = true;
+    const finish = (): void => {
+      this.shutdownInFlight = false;
+      this.stop();
+    };
     this.requestHelper('suspendAll', { ownerEpoch: this.ownerEpoch, sessions: this.quitPlan?.() ?? [] }, exitWaitMs).then(finish, finish);
+  }
+
+  /** True from the quit frame being sent until the link lets go. */
+  get isShuttingDown(): boolean {
+    return this.shutdownInFlight;
   }
 
   /** A request only the helper answers. */

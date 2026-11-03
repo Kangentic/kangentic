@@ -30,6 +30,7 @@ import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedRe
 import type { WriteOrigin } from '../prompt-draft-ledger';
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
+import type { HelperSessionRecord, RemoteHostRequest, SuspendPlan } from '../../remote/protocol/messages';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -137,6 +138,11 @@ export interface RendererPort {
 }
 
 export type PtyHostCommand =
+  /** The app is quitting and these sessions run on `hostId` (#913): how each one ends, which only
+   *  the app knows (it holds the adapters). The link sends it as the one `suspendAll` frame when the
+   *  `shutdown` that follows arrives, so it must be posted first. A command, not a request, because
+   *  the quit path cannot wait for an answer. */
+  | { type: 'remoteQuitPlan'; hostId: string; sessions: SuspendPlan[] }
   /** Straight to the PTY, ahead of anything queued: the exit sequence, a
    *  bracketed-paste packet after a `drainWrites`, a probe's keys. */
   | { type: 'write'; ptyId: number; data: string }
@@ -309,6 +315,9 @@ export interface PtyHostRequestMap {
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };
   ping: { params: Record<string, never>; result: 'pong' };
+  /** Add, remove or ask an SSH host (#913). The pty host holds the links, so a remote terminal
+   *  shares each renderer's one port with the local ones. The result depends on `op`. */
+  remote: { params: RemoteHostRequest; result: unknown };
   /** Close the host's handle on a project's database. A request, not a
    *  command, so a project delete can wait for it before unlinking the file
    *  (Windows will not unlink a file another process has open). */
@@ -414,7 +423,12 @@ export type PtyHostEvent =
   /** An SSH host's connection changed state (#913). Only the link hub emits it, and it is its
    *  own push: a drop is never an `exit`, because every agent on the host keeps running.
    *  `detail` is the reason in the peer's or ssh's own words, null when there is none. */
-  | { type: 'remoteLink'; hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null };
+  | { type: 'remoteLink'; hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }
+  /** What a link found on connect that the app must settle (#913). `lost` are sessions the app held
+   *  alive that the host no longer has; `adoptable` are live ones the app holds no row for. A
+   *  `lost` session is over, so it ends as an exit does; an `adoptable` one is reconciled by the
+   *  startup recovery path, never adopted blindly. */
+  | { type: 'remoteSessions'; hostId: string; lost: string[]; adoptable: HelperSessionRecord[] };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

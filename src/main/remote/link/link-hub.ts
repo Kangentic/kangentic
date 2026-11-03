@@ -22,6 +22,7 @@ import type {
   RendererPort,
 } from '../../pty/host/protocol';
 import type { PtyHostRequestOptions, PtyHostTransport } from '../../pty/host/pty-host-client';
+import type { SuspendPlan } from '../protocol/messages';
 import { RemoteLink, type RemoteLinkHandlers, type RemoteLinkOptions } from './remote-link';
 
 export interface HubHostOptions extends Omit<RemoteLinkOptions, 'log'> {
@@ -81,6 +82,14 @@ export class LinkHub implements PtyHostTransport {
         this.eventListener?.({ type: 'remoteLink', hostId, state, detail });
         this.handlers.onStateChanged?.(state, detail);
       },
+      onSessionsLost: (sessionIds) => {
+        this.eventListener?.({ type: 'remoteSessions', hostId, lost: sessionIds, adoptable: [] });
+        this.handlers.onSessionsLost?.(sessionIds);
+      },
+      onAdoptable: (records) => {
+        this.eventListener?.({ type: 'remoteSessions', hostId, lost: [], adoptable: records });
+        this.handlers.onAdoptable?.(records);
+      },
     });
     this.links.set(hostId, link);
     for (const [rendererId, port] of this.ports) link.attachRendererPort(rendererId, port);
@@ -109,6 +118,29 @@ export class LinkHub implements PtyHostTransport {
 
   hostOfSession(sessionId: string): string | null {
     return this.sessionHosts.get(sessionId) ?? null;
+  }
+
+  /** Whether this command follows a PTY or session a link holds, so a router sends it here and not to the local core. */
+  ownsCommand(command: PtyHostCommand): boolean {
+    return this.linkForCommand(command) !== undefined;
+  }
+
+  /** Whether this request follows a session or PTY a link holds, or is a spawn onto a host. */
+  ownsRequest<M extends PtyHostMethod>(method: M, params: PtyHostRequestMap[M]['params']): boolean {
+    if (method === 'spawn') return (params as PtyHostSpawnParams).hostId !== undefined;
+    return this.linkForRequest(method, params) !== undefined;
+  }
+
+  /** How each session on `hostId` ends if the app quits. Sent as the one `suspendAll` frame at `shutdown`. */
+  setQuitPlan(hostId: string, sessions: SuspendPlan[]): void {
+    this.links.get(hostId)?.setQuitPlan(() => sessions);
+  }
+
+  /** Links that have sent, or are sending, their quit frame and have not let go yet. The quit waits for these. */
+  get shuttingDownCount(): number {
+    let count = 0;
+    for (const link of this.links.values()) if (link.isShuttingDown) count += 1;
+    return count;
   }
 
   // PtyHostTransport

@@ -102,6 +102,26 @@ export interface HelperRequestMap {
   pathPresence: { params: { paths: string[] }; result: Array<'present' | 'absent'> };
 }
 
+/** What the process that holds the links needs to dial one SSH host. Plain data: it crosses a process boundary. */
+export interface RemoteHostConnection {
+  /** The `ssh` program, by full path where the platform has more than one. */
+  sshPath: string;
+  /** Everything before the remote command: options, then the destination. */
+  args: string[];
+  /** What runs on the host and speaks frames on its stdio (`InstalledHost.relayCommand`). */
+  remoteCommand: string;
+  /** This install, so the helper tells a reconnect from a stranger. */
+  installId: string;
+  /** How this computer names itself to the host's log, such as its hostname. */
+  label: string;
+}
+
+/** The operations on the links, as the single `remote` request of the pty host carries them. */
+export type RemoteHostRequest =
+  | { op: 'addHost'; hostId: string; connection: RemoteHostConnection }
+  | { op: 'removeHost'; hostId: string }
+  | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown };
+
 export type HelperMethod = keyof HelperRequestMap;
 export type RemoteMethod = PtyHostMethod | HelperMethod;
 

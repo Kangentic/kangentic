@@ -61,8 +61,11 @@ describe('routing by host', () => {
     await settle();
     const first = await spawnOn(rig, 'host-a', 's1', 'task-1');
     const second = await spawnOn(rig, 'host-b', 's2', 'task-2');
-    expect(first.pid).toBe(4242);
-    expect(second.pid).toBe(4342);
+    // The host's pids (4242, 4342) name processes on another machine, so the handles carry none.
+    expect(first.pid).toBeNull();
+    expect(second.pid).toBeNull();
+    expect(rig.hosts['host-a'].spawnPty).toHaveBeenCalledTimes(1);
+    expect(rig.hosts['host-b'].spawnPty).toHaveBeenCalledTimes(1);
 
     first.write('to a');
     second.kill();

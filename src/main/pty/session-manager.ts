@@ -1121,6 +1121,11 @@ export class SessionManager extends EventEmitter {
         // sessions on the host are neither marked exited nor respawned because of it.
         this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
         return;
+      case 'remoteSessions':
+        // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable
+        // ones are live agents on a host that this app holds no row for; whoever reconciles hears them.
+        this.emit('remote-sessions-adoptable', { hostId: event.hostId, adoptable: event.adoptable });
+        return;
       case 'exit':
       case 'rawData':
       case 'rawExit':

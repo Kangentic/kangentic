@@ -894,6 +894,10 @@ export class PtyHostCore {
       case 'devCpuProfile':
         if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
         return captureThreadCpuProfile((params as PtyHostRequestMap['devCpuProfile']['params']).durationMs) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'remote':
+        // The SSH links are held by the host router in front of this core (`host-router.ts`); a core
+        // that runs alone, such as the in-process fallback, holds none.
+        throw new Error('SSH hosts are not available here');
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -1038,6 +1042,9 @@ export class PtyHostCore {
         // token in it, on disk after the app is gone. Main's stopAllCliRuns
         // has posted most of these stops already; a second is a no-op.
         this.spawnService.stopAllCli();
+        return;
+      case 'remoteQuitPlan':
+        // For a link, handled by the host router; a core with no links has nothing to end remotely.
         return;
       default: {
         const unknownCommand: never = command;

@@ -72,6 +72,16 @@ at the Windows timer floor.
   the core and it is not on this machine: the SSH helper's `HelperServer` (`src/main/remote/helper/`)
   runs it on a Linux host behind a resumable link, for a remote project (#913). Main reaches that
   core only through `RemoteLink`, a `PtyHostTransport`, and never holds it.
+- **The SSH links live in this host, behind `HostRouter`** (`src/main/remote/host-router.ts`), so a
+  remote terminal shares each renderer's one port with the local ones (a `MessagePortMain` belongs
+  to one process). The router sends a spawn that names a `hostId`, and everything that follows its
+  PTY or session, to the `LinkHub`, focus and tap commands to both, and everything else to the core.
+  A PTY on a host has no pid on this machine: `PtyHandle.pid` is `number | null`, so a local kill,
+  wait or probe cannot be aimed at it, and a local host dying ends no remote PTY. **Known cost.**
+  `ssh` is started on the terminal thread when a link dials or redials (classified in
+  `pty-host-boundary.test.ts`), which on Windows holds local terminals for one CreateProcess. The
+  fix is to start it on the spawn worker; the plan's separate `kangentic-ssh-link` process was set
+  aside for the one-port reason above.
 - **A shell that exits on its own has its leftovers ended in the host (Windows).** The host core
   asks the agent the dead shell left running to exit through that shell's still-open console, then
   terminates what is left after the grace, by parentage and creation time (`dead-root-orphans.ts`,
