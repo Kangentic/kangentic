@@ -42,7 +42,7 @@ import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
-import type { SuspendPlan } from '../remote/protocol/messages';
+import type { RemoteHostRequest, SuspendPlan } from '../remote/protocol/messages';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
@@ -1174,6 +1174,11 @@ export class SessionManager extends EventEmitter {
    *  drain: the host flushes and exits after the PTYs die. */
   getPtyHostPid(): number | null {
     return this.host.hostPid;
+  }
+
+  /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
+  remoteHostRequest(request: RemoteHostRequest): Promise<unknown> {
+    return this.host.remote(request);
   }
 
   /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */

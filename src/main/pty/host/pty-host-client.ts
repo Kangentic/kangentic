@@ -32,6 +32,7 @@ import {
   type RendererPort,
   type SeedFrameResult,
 } from './protocol';
+import type { RemoteHostRequest } from '../../remote/protocol/messages';
 import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
@@ -447,6 +448,11 @@ export class PtyHostClient {
 
   post(command: PtyHostCommand): void {
     this.transport.post(command);
+  }
+
+  /** Add or remove an SSH host's link, or ask its helper (#913). The result depends on the operation. */
+  remote(request: RemoteHostRequest): Promise<unknown> {
+    return this.transport.request('remote', request);
   }
 
   async spawn(params: Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'>): Promise<PtyHostSpawnOutcome> {
