@@ -26,6 +26,9 @@ import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/term
 /** How far the pointer travels before a press on a header becomes a drag. */
 const DRAG_THRESHOLD_PX = 5;
 
+/** The test id on the picture a swap drag moves; the Browser host hides its panes while one exists. */
+export const SWAP_FLOAT_TEST_ID = 'command-terminal-swap-float';
+
 /**
  * How long the drag waits for the picture before it previews the swap without
  * one. A capture measured 51 ms; a window that is not compositing may never
@@ -161,7 +164,7 @@ function buildFloat(dragged: Tile, tiles: Iterable<Tile>, grabX: number, grabY: 
   element.style.backgroundColor = background;
   element.style.opacity = '0.9';
   element.style.zIndex = '1000';
-  element.setAttribute('data-testid', 'command-terminal-swap-float');
+  element.setAttribute('data-testid', SWAP_FLOAT_TEST_ID);
   element.setAttribute('aria-hidden', 'true');
   const title = dragged.frame.querySelector('[data-testid="command-bar-label"]')?.textContent ?? '';
   const header = document.createElement('div');

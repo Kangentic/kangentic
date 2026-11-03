@@ -1,3 +1,6 @@
+import { isLiveSessionStatus } from './session-liveness';
+import type { SessionStatus } from './types';
+
 /**
  * Who owns a live session, in one place.
  *
@@ -24,4 +27,27 @@ export function isWorkflowAgentSession(session: SessionOwnerFields): boolean {
 /** A Command Terminal: transient, and no workflow's agent. */
 export function isCommandTerminalSession(session: SessionOwnerFields): boolean {
   return !!session.transient && !session.workflowId;
+}
+
+interface CommandTerminalSlotFields extends SessionOwnerFields {
+  projectId: string;
+  commandTerminalSlot?: string | null;
+  status: SessionStatus;
+}
+
+/**
+ * The live (running or queued) Command Terminal in a project's slot. Main asks
+ * it of its registry and the renderer of its replica, so the two agree on
+ * whether a slot is live.
+ */
+export function findLiveCommandTerminalSession<Row extends CommandTerminalSlotFields>(
+  sessions: readonly Row[],
+  projectId: string,
+  slot: string,
+): Row | undefined {
+  return sessions.find((session) =>
+    isCommandTerminalSession(session)
+    && session.projectId === projectId
+    && session.commandTerminalSlot === slot
+    && isLiveSessionStatus(session.status));
 }
