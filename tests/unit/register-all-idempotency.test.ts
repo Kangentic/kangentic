@@ -269,6 +269,7 @@ vi.mock('../../src/main/ipc/handlers/sessions', () => ({
 }));
 vi.mock('../../src/main/ipc/handlers/transient-sessions', () => ({
   registerTransientSessionHandlers: vi.fn(),
+  isCommandTerminalSlotStarting: vi.fn(() => false),
 }));
 vi.mock('../../src/main/ipc/handlers/board', () => ({
   registerBoardHandlers: vi.fn(),

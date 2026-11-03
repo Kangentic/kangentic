@@ -207,6 +207,8 @@ function makeContext() {
     sessionManager: {
       getSessionProjectId: fakeGetSessionProjectId,
       hasLiveSessionForTask: fakeFindLiveSessionByTaskId,
+      // registerBrowserHandlers listens for a Command Terminal's removal.
+      on: vi.fn(),
     },
   };
 }
@@ -347,6 +349,7 @@ describe('BROWSER_CLEAR_STORAGE IPC handler - with project open (multi-partition
       currentProjectPath: '/mock/project',
       currentProjectId: PROJECT_ID,
       configManager: { loadProjectOverrides: vi.fn(() => null) },
+      sessionManager: { on: vi.fn() },
     };
     registerBrowserHandlers(context as Parameters<typeof registerBrowserHandlers>[0]);
   });
@@ -725,6 +728,7 @@ function makeUrlContext(opts: {
     projectRepo: { getById },
     sessionManager: {
       getSessionProjectId: vi.fn(() => undefined),
+      on: vi.fn(),
     },
   };
 }

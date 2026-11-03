@@ -220,6 +220,7 @@ vi.mock('../../src/main/ipc/handlers/task-runtime-override', () => ({
 vi.mock('../../src/main/ipc/handlers/sessions', () => ({ registerSessionHandlers: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/transient-sessions', () => ({
   registerTransientSessionHandlers: vi.fn(),
+  isCommandTerminalSlotStarting: vi.fn(() => false),
 }));
 vi.mock('../../src/main/ipc/handlers/board', () => ({ registerBoardHandlers: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/backlog', () => ({ registerBacklogHandlers: vi.fn() }));
