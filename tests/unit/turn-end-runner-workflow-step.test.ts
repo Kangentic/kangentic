@@ -41,6 +41,7 @@ const hoisted = vi.hoisted(() => ({
   executeTransition: vi.fn(),
   checkConditions: vi.fn(),
   recordSkipped: vi.fn(),
+  heldMoveReason: vi.fn((): string | null => null),
   rows: [] as unknown[],
   task: {} as Record<string, unknown>,
   column: {} as Record<string, unknown>,
@@ -88,6 +89,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi
 vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
 vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(), routeOf: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-step', () => ({
+  heldMoveReason: hoisted.heldMoveReason,
   runWorkflowStep: hoisted.runWorkflowStep,
   workflowStepApplies: hoisted.workflowStepApplies,
 }));
@@ -136,6 +138,8 @@ interface FakeSessionManager extends EventEmitter {
 describe('a turn end and the workflow step', () => {
   let sessionManager: FakeSessionManager;
   let activity: Record<string, string>;
+  /** The agent's Stop landed and only background work it left keeps the session thinking. */
+  let heldByBackgroundWork: boolean;
   /** The session's current work serial, which new work the agent reports moves. */
   let currentWorkSerial: number;
   let taskCounter = 0;
@@ -179,9 +183,12 @@ describe('a turn end and the workflow step', () => {
     hoisted.rows = [KEEP_GOING_ROW];
 
     activity = { [SESSION_ID]: 'idle' };
+    heldByBackgroundWork = false;
+    hoisted.heldMoveReason.mockImplementation(() => null);
     currentWorkSerial = TURN_WORK_SERIAL;
     sessionManager = Object.assign(new EventEmitter(), {
       getActivityCache: () => activity,
+      isTurnHeldByBackgroundWork: () => heldByBackgroundWork,
       isLatestTurn: (sessionId: string, workSerial: number) =>
         sessionId === SESSION_ID && workSerial === currentWorkSerial,
       currentWorkSerial: () => currentWorkSerial,
@@ -324,6 +331,132 @@ describe('a turn end and the workflow step', () => {
       expect(hoisted.checkConditions).not.toHaveBeenCalled();
       expect(hoisted.executeTransition).not.toHaveBeenCalled();
       expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    });
+  });
+
+  // A hung `python -` the agent left in the background kept one finished
+  // workflow task thinking for nearly nine hours: the turn end waits for the
+  // drain, so its exit line was never read. A running workflow's task is
+  // judged at the Stop instead, once, and the drain runs only what is left.
+  describe('a Stop held by background work the agent left', () => {
+    const EXIT_ROW = {
+      id: 'row-exit',
+      type: 'move_to_column',
+      name: 'On to Code Review',
+      trigger: 'turn_end',
+      final_line: 'Implementation: complete',
+      config: {},
+      condition: null,
+      max_runs: null,
+    } as unknown as ColumnAutomation;
+
+    interface ExecuteOptions {
+      onlyIds: ReadonlySet<string>;
+      holdMoves?: string;
+    }
+
+    function turnEndPayload(extra: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        sessionId: SESSION_ID,
+        taskId,
+        projectId: PROJECT_ID,
+        agentSessionId: 'agent-session-1',
+        isolatedSwimlaneId: null,
+        turnStartedAt: null,
+        workSerial: TURN_WORK_SERIAL,
+        transcriptAnchor: null,
+        ...extra,
+      };
+    }
+
+    /** The rows each `executeTransition` call was handed, in order. */
+    function rowsRun(): string[][] {
+      return hoisted.executeTransition.mock.calls.map((call) => [...(call[3] as ExecuteOptions).onlyIds]);
+    }
+
+    beforeEach(() => {
+      hoisted.rows = [KEEP_GOING_ROW, EXIT_ROW];
+      hoisted.executeTransition.mockImplementation(async () => ({ results: [] }));
+      // The held pass's step answers: the turn was judged.
+      hoisted.runWorkflowStep.mockImplementation(async () => ({ verdict: 'working', reason: null, workSerial: TURN_WORK_SERIAL }));
+      activity[SESSION_ID] = 'thinking';
+      heldByBackgroundWork = true;
+    });
+
+    async function endHeldTurn(): Promise<void> {
+      hoisted.clearSpawnProgress.mockClear();
+      sessionManager.emit('turn-ended-held', turnEndPayload());
+      await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalledWith(MAIN_WINDOW, taskId));
+    }
+
+    it('judges the step and runs the rows behind a Text match at the Stop, leaving the rest for the drain', async () => {
+      await endHeldTurn();
+
+      expect(rowsRun()).toEqual([[EXIT_ROW.id]]);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ acceptHeld: true }));
+    });
+
+    it('at the drain of that same turn, runs only the rows with no Text match, and judges nothing again', async () => {
+      await endHeldTurn();
+      hoisted.executeTransition.mockClear();
+      hoisted.runWorkflowStep.mockClear();
+      hoisted.clearSpawnProgress.mockClear();
+      activity[SESSION_ID] = 'idle';
+      heldByBackgroundWork = false;
+
+      sessionManager.emit('turn-ended', turnEndPayload({ heldReported: true }));
+      await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalledWith(MAIN_WINDOW, taskId));
+
+      expect(rowsRun()).toEqual([[KEEP_GOING_ROW.id]]);
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    });
+
+    it('a drain whose held pass judged nothing (its step went unanswered) judges the turn in full', async () => {
+      // The step found the turn busy again: no verdict, so the held turn is not served.
+      hoisted.runWorkflowStep.mockImplementation(async () => undefined);
+      await endHeldTurn();
+      hoisted.executeTransition.mockClear();
+      hoisted.runWorkflowStep.mockClear();
+      hoisted.clearSpawnProgress.mockClear();
+      activity[SESSION_ID] = 'idle';
+      heldByBackgroundWork = false;
+
+      sessionManager.emit('turn-ended', turnEndPayload({ heldReported: true }));
+      await vi.waitFor(() => expect(hoisted.clearSpawnProgress).toHaveBeenCalledWith(MAIN_WINDOW, taskId));
+
+      expect(rowsRun()).toEqual([[KEEP_GOING_ROW.id, EXIT_ROW.id]]);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('a drain whose held end no pass judged (the pass was replaced) runs everything, as a turn end always has', async () => {
+      activity[SESSION_ID] = 'idle';
+      heldByBackgroundWork = false;
+
+      await endTurn();
+
+      expect(rowsRun()).toEqual([[KEEP_GOING_ROW.id, EXIT_ROW.id]]);
+      expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs nothing for a task in no running workflow: its rows keep waiting for the drain', async () => {
+      hoisted.workflowStepApplies.mockImplementation(() => false);
+
+      sessionManager.emit('turn-ended-held', turnEndPayload());
+      // Nothing to wait on: give the immediate and the pass a turn to run.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+    });
+
+    it('holds a move while background work is open, naming it, rather than moving the task away from it', async () => {
+      const reason = 'Held: the move waits until the agent\'s background command boeb2h7eo ends.';
+      hoisted.heldMoveReason.mockImplementation(() => reason);
+
+      await endHeldTurn();
+
+      expect((hoisted.executeTransition.mock.calls[0][3] as ExecuteOptions).holdMoves).toBe(reason);
     });
   });
 });

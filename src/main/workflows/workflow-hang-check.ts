@@ -22,8 +22,9 @@ import { announceWorkflowStall, startWorkflowRecoveryOver } from './workflow-rec
  *   checked.
  * - **Only a turn still in progress counts**: the session's reason is a tool, a
  *   subagent or the turn itself. A turn that ended with a background shell
- *   running stays working while the agent waits quietly for it, so it is left
- *   alone, and a question or a permission prompt is never working.
+ *   running is not hung: its Stop already reached the workflow
+ *   (`'turn-ended-held'`), whose step check and recovery bound that wait and
+ *   nudge about the shell. A question or a permission prompt is never working.
  * - **It reads the history from outside, in main.** The activity engine runs in
  *   the pty host, and the freeze above looked like that host stopping: none of
  *   the engine's own watchdogs fired.

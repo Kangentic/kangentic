@@ -214,6 +214,9 @@ interface FakeSessionManager extends EventEmitter {
   getReportedTranscriptPath: (sessionId: string) => string | null;
   write: (sessionId: string, data: string) => void;
   signalUserInterrupt: (sessionId: string) => void;
+  isTurnHeldByBackgroundWork: (sessionId: string) => boolean;
+  getBackgroundShellOutputBytes: (sessionId: string, shellId: string) => Promise<number | null>;
+  getHeldBackgroundShellIds: (sessionId: string) => string[];
 }
 
 describe('a running workflow task whose turn ends without its step done', () => {
@@ -248,6 +251,12 @@ describe('a running workflow task whose turn ends without its step done', () => 
   let activityReason: unknown;
   /** Keys written to the terminal outside a message delivery (the hang check's interrupt). */
   let typed: string[];
+  /** The agent's Stop landed and only background work it left holds the session thinking. */
+  let heldByBackgroundWork: boolean;
+  /** What each background shell's output file holds, by id; absent reads as not known. */
+  let outputBytes: Record<string, number>;
+  /** The shells the activity engine still holds the session for; the ledger's `openWork` can keep more. */
+  let engineHeldShellIds: string[];
   let historyDirectory: string;
   let historyFile: string;
 
@@ -375,6 +384,9 @@ describe('a running workflow task whose turn ends without its step done', () => 
     notifyPhone = vi.fn();
     activityReason = { kind: 'turn-active' };
     typed = [];
+    heldByBackgroundWork = false;
+    outputBytes = {};
+    engineHeldShellIds = [];
     historyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-recovery-history-'));
     historyFile = path.join(historyDirectory, 'agent-session-1.jsonl');
     fs.writeFileSync(historyFile, '{}\n');
@@ -412,6 +424,9 @@ describe('a running workflow task whose turn ends without its step done', () => 
       write: (_sessionId: string, data: string) => { typed.push(data); },
       // The engine's own settling of an interrupt; the tests drive the idle themselves.
       signalUserInterrupt: () => undefined,
+      isTurnHeldByBackgroundWork: (sessionId: string) => sessionId === SESSION_ID && heldByBackgroundWork,
+      getBackgroundShellOutputBytes: async (_sessionId: string, shellId: string) => outputBytes[shellId] ?? null,
+      getHeldBackgroundShellIds: (sessionId: string) => (sessionId === SESSION_ID ? engineHeldShellIds : []),
     });
     context = {
       sessionManager,
@@ -685,6 +700,184 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(hoisted.task.swimlane_id).toBe(nextLane.id);
     await wait(WORKING_WAIT_MS);
     expect(nudges()).toHaveLength(0);
+  });
+
+  /**
+   * The agent's Stop lands with a background command still alive: the engine
+   * reports the turn end held, as for the hung `python3 -` a subagent left,
+   * which held a finished task nearly nine hours with its exit line unread.
+   */
+  async function endHeldTurn(serial: number, reply: string | null): Promise<void> {
+    workSerial = serial;
+    activity = 'thinking';
+    heldByBackgroundWork = true;
+    currentReply = reply;
+    replyAt = Date.now();
+    sessionManager.emit('turn-ended-held', {
+      sessionId: SESSION_ID,
+      taskId,
+      projectId: PROJECT_ID,
+      agentSessionId: 'agent-session-1',
+      isolatedSwimlaneId: null,
+      turnStartedAt: Date.now() - MINUTE,
+      workSerial: serial,
+      transcriptAnchor: ANCHOR,
+    });
+    await settle();
+  }
+
+  /** The command a subagent left, waiting on stdin that never comes. */
+  function leaveHungCommand(ageMs: number): void {
+    openWork = {
+      ...openWork,
+      backgroundShells: [{ id: 'bzmas9lu2', command: 'python3 - <<\'EOF\' 2>/dev/null || node -e "console.log(\'no python\')"', since: Date.now() - ageMs }],
+    };
+    outputBytes = { bzmas9lu2: 0 };
+    engineHeldShellIds = ['bzmas9lu2'];
+  }
+
+  /** The agent stops its command: the engine drains it and the ledger closes it. */
+  function stopHungCommand(): void {
+    openWork = { ...openWork, backgroundShells: [] };
+    engineHeldShellIds = [];
+    heldByBackgroundWork = false;
+  }
+
+  describe('a Stop held by background work the agent left', () => {
+    it('judges the finished reply at the Stop, holds the move, and nudges at once naming the command and whose it is', async () => {
+      leaveHungCommand(10 * MINUTE);
+      await endHeldTurn(41, FINISHED_REPLY);
+      await wait(0);
+
+      // Done, but a move would leave the hung command running with no agent.
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      const step = runs.listForTask(taskId).find((run) => (run.type as string) === 'workflow_step');
+      expect(step?.detail).toContain('Step done. Held:');
+      expect(step?.detail).toContain('bzmas9lu2');
+
+      expect(nudges()).toHaveLength(1);
+      const nudge = nudges()[0];
+      expect(nudge).toContain(`moves on to ${nextLane.name}`);
+      expect(nudge).toContain('bzmas9lu2');
+      expect(nudge).toContain('python3 -');
+      expect(nudge).toContain('running 10 min, output file 0 bytes');
+      expect(nudge).toContain('It is this session\'s own work, even if a subagent started it.');
+      expect(nudge).toContain('kangentic_mark_background_service');
+      expect(nudge).toContain('Then end your turn.');
+      // Typed as keystrokes: one line, under the paste threshold.
+      expect(nudge).not.toContain('\n');
+      expect(nudge.length).toBeLessThan(1000);
+    });
+
+    it('moves the task at the next Stop with nothing left running, whatever that reply says', async () => {
+      leaveHungCommand(10 * MINUTE);
+      await endHeldTurn(41, FINISHED_REPLY);
+      await wait(0);
+      expect(nudges()).toHaveLength(1);
+
+      // The agent stops its command and says so, without repeating its exit line.
+      stopHungCommand();
+      startTurn(42);
+      await endTurn(42, 'Stopped bzmas9lu2: it was waiting on stdin.');
+
+      expect(hoisted.task.swimlane_id).toBe(nextLane.id);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      // One check paid for, at the held Stop. The release moves with none.
+      expect(hoisted.check).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not move on a reply that ends on the Needs owner line: the owner is asked', async () => {
+      leaveHungCommand(10 * MINUTE);
+      await endHeldTurn(41, FINISHED_REPLY);
+      await wait(0);
+
+      stopHungCommand();
+      startTurn(42);
+      await endTurn(42, QUESTION_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting' }));
+    });
+
+    it('a reply not done with the command open waits from when the command started, so a long-hung one is nudged at once', async () => {
+      // The agent believed its hung `python -` was a migration build and
+      // waited on it; nothing it waited on would wake it. Counted from the
+      // verdict, each new turn on the same command restarted the hour.
+      leaveHungCommand(WORKING_WAIT_MS - 10 * MINUTE);
+      await endHeldTurn(41, BACKGROUND_REPLY);
+
+      await wait(10 * MINUTE - 1_000);
+      expect(nudges()).toHaveLength(0);
+      await wait(1_000);
+
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).toContain('Check on the work you left running');
+      expect(nudges()[0]).toContain('bzmas9lu2');
+      expect(nudges()[0]).toContain('If it waits on input or is no longer needed, stop it.');
+    });
+
+    it('a working verdict whose command then ends with no turn of its own is a stall on the schedule, not an hour', async () => {
+      leaveHungCommand(MINUTE);
+      await endHeldTurn(41, BACKGROUND_REPLY);
+
+      // The command ends; the drain's turn end is the same turn, already judged.
+      stopHungCommand();
+      activity = 'idle';
+      sessionManager.emit('activity', SESSION_ID, 'idle');
+      sessionManager.emit('turn-ended', {
+        sessionId: SESSION_ID,
+        taskId,
+        projectId: PROJECT_ID,
+        agentSessionId: 'agent-session-1',
+        isolatedSwimlaneId: null,
+        turnStartedAt: Date.now() - MINUTE,
+        workSerial: 41,
+        transcriptAnchor: ANCHOR,
+        heldReported: true,
+      });
+      await settle();
+      // Judged once, at the held Stop.
+      expect(hoisted.check).toHaveBeenCalledTimes(1);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).toContain('Carry on from where you stopped.');
+    });
+
+    it('moves a done task whose only open shell is one the engine already drained on a guess', async () => {
+      // The ledger keeps a shell the engine dropped until its real end, and
+      // that end can be lost. Held on such a shell, the move would never run:
+      // the hold reads only the shells the engine still holds.
+      leaveHungCommand(10 * MINUTE);
+      engineHeldShellIds = [];
+
+      await endTurn(41, FINISHED_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(nextLane.id);
+      expect(nudges()).toHaveLength(0);
+    });
+
+    it('pays for no second check on a wake that repeats the working verdict, and judges one with a new last line', async () => {
+      // A Monitor's every event can wake the agent for a turn of its own,
+      // each with its own held Stop. Answered with the same last line, it
+      // could only be judged the same.
+      leaveHungCommand(MINUTE);
+      await endHeldTurn(41, BACKGROUND_REPLY);
+      expect(hoisted.check).toHaveBeenCalledTimes(1);
+
+      startTurn(42);
+      await endHeldTurn(42, BACKGROUND_REPLY);
+      expect(hoisted.check).toHaveBeenCalledTimes(1);
+
+      // The agent's exit line, with the command still open: judged, and the move held.
+      startTurn(43);
+      await endHeldTurn(43, FINISHED_REPLY);
+      expect(hoisted.check).toHaveBeenCalledTimes(2);
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_step' && (run.detail ?? '').startsWith('Step done. Held:'))).toBe(true);
+    });
   });
 
   it('sends the notice at once for the agent\'s own Needs owner line, nudges nothing, and lets the idle sweep apply', async () => {

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
@@ -334,6 +334,13 @@ export function buildHooks(
         // terminal shapes: `completed` (stream ended), `stopped`, and the
         // status-less timeout marker.
         extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
+        // The Monitor's own limit bounds it, whatever its end notice says: CLI
+        // 2.1.316 renamed the timeout notice ("[Monitor expired after ..."),
+        // and the old marker held every expired Monitor open for good. A
+        // `persistent` Monitor runs until stopped, so it reports none. The
+        // response shape is a retained transcript's tool result:
+        // `{"taskId":"blwse3kzw","timeoutMs":1800000,"persistent":false}`.
+        extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)) }] },
       // The background shell hint (task #857): beside a background launch's
       // result, tell the agent the shell keeps its task working and how to

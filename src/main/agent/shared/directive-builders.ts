@@ -152,6 +152,26 @@ export function extractDetail(
   return encodeDirective(options.whenTool ? 'extractDetailWhenTool' : 'extractDetail', payload);
 }
 
+/**
+ * Set `event.expiresAfterMs` from a background holder's own time limit: the
+ * number at `ctx[nested][field]`, for the tool `whenTool` only, unless the
+ * boolean `unlessField` in the same container is true (a holder that runs
+ * until stopped). The open-work ledger and the engine end the holder once
+ * that limit has passed, whatever its end notice says (`SessionTelemetry`).
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op): the holder then ends only on its notice, as before.
+ */
+export function extractHolderTimeout(
+  field: string,
+  options: { whenTool: string; nested?: string; unlessField?: string },
+): string {
+  const payload: { field: string; whenTool: string; nested?: string; unlessField?: string } = { field, whenTool: options.whenTool };
+  if (options.nested) payload.nested = options.nested;
+  if (options.unlessField) payload.unlessField = options.unlessField;
+  return encodeDirective('extractHolderTimeout', payload);
+}
+
 /** Set `event.detail` to a fixed value (no stdin lookup). */
 export function setDetail(value: string): string {
   return encodeDirective('setDetail', { value });

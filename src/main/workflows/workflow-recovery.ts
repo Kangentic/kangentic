@@ -13,19 +13,24 @@ import { tryReadSessionFinalReply } from '../automations/turn-end/final-reply-re
 import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
 import { isSessionInOwnCall } from '../ipc/handlers/own-call-turn-wait';
 import { automatedKeysRefusal, KeysReachedPermissionPromptError } from '../pty/automated-keys-guard';
+import { isTurnSettled } from '../pty/turn-settled';
 import { notifyWorkflowChanged } from './workflow-changed';
-import { runWorkflowStep, taskBaseBranch, workflowStepApplies, type WorkflowStepResult } from './workflow-step';
+import { heldBackgroundShells, runWorkflowStep, shortCommand, taskBaseBranch, workflowStepApplies, type WorkflowStepResult } from './workflow-step';
 import type { WorkflowBlocker } from './workflow-step-condition';
 import { workflowMemoryGate, type GateMemoryReading } from './workflow-memory-gate';
 import { workflowTasks } from './workflow-tasks';
 import { WORKFLOW_NEEDS_OWNER_LINE } from '../../shared/workflow-needs-owner';
+import { MARK_BACKGROUND_SERVICE_TOOL } from '../../shared/background-shell-hold';
 import {
   forgetWorkflowRecovery,
+  getHeldMove,
   getRecoveryEntry,
   recoveryEntryForSession,
+  setHeldMove,
   setRecoveryEntry,
   setRecoveryForgetListener,
   WORKING_WAIT_MS,
+  type HeldMove,
   type RecoveryEntry,
   type RecoveryVerdict,
 } from './workflow-recovery-state';
@@ -157,7 +162,7 @@ function handleVerdict(
   options: { resumedBy?: SessionResumer } = {},
 ): void {
   const parked = result.verdict === 'working' || result.verdict === 'stopped'
-    || result.verdict === 'check-failed' || result.verdict === 'move-failed';
+    || result.verdict === 'check-failed' || result.verdict === 'move-failed' || result.verdict === 'move-held';
   const restarted = options.resumedBy === 'recovery';
   if (parked && restarted) {
     startWorkflowRecoveryOver(context, target, { detail: RESTART_RECOVERY_DETAIL });
@@ -180,7 +185,14 @@ function handleVerdict(
       const entry = ensureEntry(context, target);
       if (!entry) return;
       takeVerdict(entry, result);
-      armWorkingWait(entry);
+      armWorkingWait(context, entry);
+      return;
+    }
+    case 'move-held': {
+      const entry = ensureEntry(context, target);
+      if (!entry) return;
+      takeVerdict(entry, result);
+      holdMove(entry, { columnId: target.columnId, sessionId: target.sessionId, kind: 'step', rowId: null, targetName: result.heldMoveTo ?? null });
       return;
     }
     case 'stopped':
@@ -222,17 +234,119 @@ const RESTART_RECOVERY_DETAIL = 'Kangentic started this agent again after a rest
  * next attempt holds from its own start.
  */
 function takeVerdict(entry: RecoveryEntry, result: WorkflowStepResult): RecoveryVerdict {
-  entry.verdict = { workSerial: result.workSerial, verdict: result.verdict, reason: result.reason, blockers: result.blockers ?? [] };
+  entry.verdict = {
+    workSerial: result.workSerial,
+    verdict: result.verdict,
+    reason: result.reason,
+    blockers: result.blockers ?? [],
+    finalLine: result.finalLine ?? null,
+  };
   entry.holdUntil = null;
   return entry.verdict;
 }
 
-/** A `'working'` verdict's one long wait. */
-function armWorkingWait(entry: RecoveryEntry): void {
+/**
+ * A `'working'` verdict's one long wait, counted from when the oldest work
+ * still open started, not from the verdict. A new turn on the same work (a
+ * background job's wake, an idle compaction) gives a new verdict, and counted
+ * from each, one task's wait restarted and ran a second full hour on the same
+ * dead holders.
+ */
+function armWorkingWait(context: IpcContext, entry: RecoveryEntry): void {
+  const now = Date.now();
+  const since = Math.min(now, oldestOpenWorkSince(context, entry.sessionId) ?? now);
   entry.workingWait = true;
-  entry.workingWaitSince = Date.now();
+  entry.workingWaitSince = since;
   entry.holdUntil = null;
-  arm(entry, WORKING_WAIT_MS);
+  arm(entry, Math.max(0, WORKING_WAIT_MS - (now - since)));
+}
+
+/** When the oldest background work the session still has open started, or null when none is open. */
+function oldestOpenWorkSince(context: IpcContext, sessionId: string): number | null {
+  const openWork = context.sessionManager.getOpenWork(sessionId);
+  const starts = [...openWork.backgroundShells, ...openWork.backgroundSubagents].map((work) => work.since);
+  return starts.length > 0 ? Math.min(...starts) : null;
+}
+
+/**
+ * A `working` verdict whose background work has ended since is a stall:
+ * nothing left will wake the agent. Made `stopped`; true when it was.
+ */
+function demoteWorkingIfWorkEnded(context: IpcContext, entry: RecoveryEntry, sessionId: string): boolean {
+  if (entry.verdict?.verdict !== 'working' || oldestOpenWorkSince(context, sessionId) !== null) return false;
+  entry.verdict = { ...entry.verdict, verdict: 'stopped' };
+  return true;
+}
+
+/**
+ * Hold a move the task earned while background work its agent left is still
+ * open (`HeldMove`), and nudge at once: the agent is asked to stop the work or
+ * mark it a service, and the move runs at its next turn end with none open.
+ */
+function holdMove(entry: RecoveryEntry, move: HeldMove): void {
+  setHeldMove(entry.taskId, move);
+  endWorkingWait(entry);
+  entry.holdUntil = null;
+  arm(entry, 0);
+}
+
+/**
+ * A Move to column row whose move was held at a turn end (`heldMoveRowId`):
+ * the same hold as the step's own move, from the turn-end runner.
+ */
+export function holdRowMoveForBackgroundWork(
+  context: IpcContext,
+  target: RecoveryTarget,
+  move: { rowId: string; targetName: string | null; workSerial: number },
+): void {
+  try {
+    const entry = ensureEntry(context, target);
+    if (!entry) return;
+    entry.verdict = { workSerial: move.workSerial, verdict: 'move-held', reason: null, blockers: [] };
+    holdMove(entry, { columnId: target.columnId, sessionId: target.sessionId, kind: 'row', rowId: move.rowId, targetName: move.targetName });
+  } catch (error) {
+    console.error(`[WORKFLOW] Could not hold task ${target.taskId.slice(0, 8)}'s move:`, error);
+  }
+}
+
+/**
+ * A held turn end that only repeats a `working` verdict this visit already
+ * has: the same final line, with background work still open. A background
+ * job's every event wakes the agent for a turn of its own. A notification
+ * that reaches an idle CLI fires its prompt hook (measured on Claude Code
+ * 2.1.289, a `prompt` event 126 ms after the task-notification turn), so each
+ * wake ends in a held Stop at a new `workSerial`. A Monitor that delivered 19
+ * events would otherwise pay for 19 step checks that can only answer the
+ * same. The wait is unchanged too: it counts from the work's start. A
+ * different final line, an exit line included, is judged.
+ */
+export function repeatsWorkingVerdict(taskId: string, columnId: string, finalLine: string | null): boolean {
+  const entry = getRecoveryEntry(taskId);
+  return entry !== undefined
+    && entry.columnId === columnId
+    && entry.verdict?.verdict === 'working'
+    && finalLine !== null
+    && entry.verdict.finalLine === finalLine;
+}
+
+/**
+ * The drain's turn end of a turn whose held end was already judged. A
+ * `'working'` verdict for that turn whose work has now ended is a stall: the
+ * cached verdict would otherwise keep the full wait past work that is gone.
+ * No paid check: the reply is the one already judged not done.
+ */
+export function noteHeldTurnDrained(context: IpcContext, target: RecoveryTarget): void {
+  try {
+    const entry = getRecoveryEntry(target.taskId);
+    // Any turn's `working` verdict this visit: a wake that repeated it kept
+    // the older verdict (`repeatsWorkingVerdict`), so the serials can differ.
+    if (!entry || entry.inFlight || entry.columnId !== target.columnId) return;
+    if (!demoteWorkingIfWorkEnded(context, entry, target.sessionId)) return;
+    endWorkingWait(entry);
+    armNext(context, entry);
+  } catch (error) {
+    console.error(`[WORKFLOW] Could not take task ${target.taskId.slice(0, 8)}'s drained work:`, error);
+  }
 }
 
 /** The working wait is over: ran out, or a newer verdict replaced it. */
@@ -579,7 +693,9 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     forgetWorkflowRecovery(entry.taskId);
     return;
   }
-  if (activity !== 'idle') {
+  // A turn the agent ended with only background work it left holding the
+  // session is over too: its agent sits at its prompt and takes a nudge.
+  if (!isTurnSettled(context.sessionManager, sessionId, { acceptHeld: true })) {
     // Working on something; its own turn end arms what comes next. A turn that
     // never ends does not keep recovery alive past its limit: the hang check
     // handles that turn, and the user was told when the schedule ran out.
@@ -601,11 +717,18 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     forgetWorkflowRecovery(entry.taskId);
     return;
   }
+  // A held move is not judged again: it was judged done. It waits on the
+  // background work, which the nudge names.
+  const heldMove = getHeldMove(entry.taskId);
+  const holding = heldMove !== undefined && heldMove.columnId === entry.columnId && heldMove.sessionId === sessionId;
+  demoteWorkingIfWorkEnded(context, entry, sessionId);
   const cached = entry.verdict && entry.verdict.workSerial === workSerial
     && (entry.verdict.verdict === 'stopped' || entry.verdict.verdict === 'working')
     ? entry.verdict
     : null;
-  let verdict = cached;
+  let verdict = holding
+    ? { workSerial, verdict: 'move-held' as const, reason: null, blockers: [] }
+    : cached;
   if (!verdict) {
     const judged = await judgeCurrentTurn(context, entry, subject, { sessionId, workSerial, signal });
     if (signal.aborted || getRecoveryEntry(entry.taskId) !== entry) return;
@@ -631,14 +754,19 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
         armNext(context, entry);
         return;
       case 'working':
-        // A newer turn said its work is still running: a fresh wait.
-        armWorkingWait(entry);
+        // A newer turn said its work is still running: the wait, counted from
+        // that work's start.
+        armWorkingWait(context, entry);
+        return;
+      case 'move-held':
+        // Judged done with its work still open: the hold nudges at once.
+        handleVerdict(context, recoveryTargetOf(entry), judged);
         return;
       case 'stopped':
         break;
     }
   } else if (verdict.verdict === 'working' && !waitRanOut) {
-    armWorkingWait(entry);
+    armWorkingWait(context, entry);
     return;
   }
 
@@ -665,8 +793,9 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   // A permission prompt that opened since would take the nudge's Enter as yes,
   // and so would one the engine lost track of: the guard also refuses while a
   // tool call has no end (`automated-keys-guard.ts`).
-  // activity-state-ok: granular, only an idle agent on the judged turn is nudged.
-  if (context.sessionManager.getActivityCache()[sessionId] !== 'idle' || !context.sessionManager.isLatestTurn(sessionId, workSerial)) {
+  // Only an agent whose judged turn is over is nudged: idle, or held by
+  // background work alone, which the nudge is about.
+  if (!isTurnSettled(context.sessionManager, sessionId, { acceptHeld: true }) || !context.sessionManager.isLatestTurn(sessionId, workSerial)) {
     arm(entry, HOLD_RECHECK_MS);
     return;
   }
@@ -685,6 +814,12 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     return;
   }
 
+  // Read before the gate: past it, only the delivery's own catch releases it.
+  const now = Date.now();
+  const namesShells = verdict.verdict === 'working' || verdict.verdict === 'move-held';
+  const openShells = namesShells ? await openShellFacts(context, sessionId, now, holding) : [];
+  if (signal.aborted || getRecoveryEntry(entry.taskId) !== entry) return;
+
   // Its turn in the workflow's memory gate: one load-making action at a time,
   // and none while memory reads low. A hold for memory spends nothing.
   const gateKey = workflowTaskGateKey(entry.taskId);
@@ -700,7 +835,6 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   entry.memoryHoldNoted = false;
 
   const label = attemptLabel(entry);
-  const now = Date.now();
   const message = nudgeMessage({
     columnName: column.name,
     reason: verdict.reason,
@@ -710,6 +844,8 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     memory: workflowMemoryGate.reading(),
     landedSiblings: landedSiblings(context, entry, task),
     baseBranch: taskBaseBranch(task),
+    openShells,
+    heldMove: holding ? { targetName: heldMove.targetName } : null,
   });
   try {
     await deliverMessageToSession(context, {
@@ -719,6 +855,7 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
       mode: 'immediate',
       verifier: resolveInjectionVerifier(task.agent, new SessionRepository(getProjectDb(entry.projectId)), entry.taskId),
       signal: AbortSignal.any([signal, AbortSignal.timeout(NUDGE_DELIVERY_TIMEOUT_MS)]),
+      acceptHeld: true,
     });
   } catch (error) {
     // Nothing started, so the gate moves on at once.
@@ -862,6 +999,9 @@ async function judgeCurrentTurn(
     columnId: subject.column.id,
     signal: turn.signal,
     readAgentReply: async () => read.reply?.text ?? null,
+    // The attempt runs only on a turn that is over: idle, or held by the
+    // background work it left.
+    acceptHeld: true,
   });
   return step === undefined || step === 'newer-turn' ? 'unjudged' : step;
 }
@@ -901,7 +1041,51 @@ export interface NudgeInput {
   /** Siblings whose PR landed on the base branch since this step began. */
   landedSiblings: ReadonlyArray<{ number: number; title: string }>;
   baseBranch: string;
+  /**
+   * The background commands the agent left running, named in the nudge, for a
+   * wait that ran out or a held move. Empty otherwise.
+   */
+  openShells?: ReadonlyArray<OpenShellFact>;
+  /** The step's move, or a Move to column row's, is held on those commands. */
+  heldMove?: { targetName: string | null } | null;
 }
+
+/** A background command as the nudge names it. */
+export interface OpenShellFact {
+  id: string;
+  command: string | null;
+  /** How long it has run (ms). */
+  ageMs: number;
+  /** Its output file's size, a hint only, or null when not known. */
+  outputBytes: number | null;
+}
+
+/**
+ * The background commands to name, oldest first, with their output sizes: for
+ * a held move the ones the engine holds it on (`heldBackgroundShells`), for a
+ * working wait the ones the step check read as open.
+ */
+async function openShellFacts(context: IpcContext, sessionId: string, now: number, heldOnly: boolean): Promise<OpenShellFact[]> {
+  const source = heldOnly ? heldBackgroundShells(context, sessionId) : context.sessionManager.getOpenWork(sessionId).backgroundShells;
+  const shells = [...source].sort((first, second) => first.since - second.since);
+  // Only the commands the nudge names get their output looked up: finding the
+  // file lists the agent's temp directory synchronously, and one task held 30.
+  return Promise.all(shells.map(async (shell, index) => ({
+    id: shell.id,
+    command: shell.command,
+    ageMs: Math.max(0, now - shell.since),
+    outputBytes: index < NUDGE_SHELLS_NAMED
+      ? await context.sessionManager.getBackgroundShellOutputBytes(sessionId, shell.id).catch(() => null)
+      : null,
+  })));
+}
+
+/** The longest nudge typed as keystrokes. Past 1000 characters a message goes as a paste, which waits for an idle turn. */
+const NUDGE_MAX_CHARS = 960;
+/** How many background commands a nudge names one by one. */
+const NUDGE_SHELLS_NAMED = 2;
+/** How much of a command a nudge quotes. */
+const NUDGE_COMMAND_CHARS = 80;
 
 const GIBIBYTE = 1024 * 1024 * 1024;
 
@@ -925,8 +1109,79 @@ const GIBIBYTE = 1024 * 1024 * 1024;
  *   else (owner's decision, 2026-10-31).
  */
 export function nudgeMessage(input: NudgeInput): string {
+  // One line under the keystroke limit. The commands give way first, then
+  // the background commands and the siblings, and a line still too long (a
+  // column or branch with a long name) is cut, so it never goes as a paste.
+  const tiers = [
+    () => composeNudge(input, true),
+    () => composeNudge(input, false),
+    () => composeNudge({ ...input, openShells: [], landedSiblings: [] }, false),
+  ];
+  let message = '';
+  for (const tier of tiers) {
+    message = tier();
+    if (message.length <= NUDGE_MAX_CHARS) return message;
+  }
+  return Array.from(message).slice(0, NUDGE_MAX_CHARS).join('');
+}
+
+/**
+ * The background commands, named so the agent can find them and told whose
+ * they are. One task's agent saw its hung `python3 -` and left it, because a
+ * subagent had started it and it "looked like someone else's"; a bare
+ * "continue" moved it nowhere, where another agent told only to carry on
+ * found and stopped its own in 40 seconds.
+ */
+function shellSentences(shells: ReadonlyArray<OpenShellFact>, withCommands: boolean): string[] {
+  if (shells.length === 0) return [];
+  const named = shells.slice(0, NUDGE_SHELLS_NAMED).map((shell) => {
+    const command = withCommands && shell.command
+      ? `, ${quoteCommand(shell.command)}`
+      : '';
+    const output = shell.outputBytes === null ? '' : `, output file ${shell.outputBytes} bytes`;
+    return `${typeable(shell.id)}${command} (running ${describeAge(shell.ageMs)}${output})`;
+  });
+  const more = shells.length > NUDGE_SHELLS_NAMED ? ` and ${shells.length - NUDGE_SHELLS_NAMED} more` : '';
+  const subject = shells.length === 1 ? 'Your background command' : 'Your background commands';
+  const verb = shells.length === 1 ? 'is' : 'are';
+  return [
+    `${subject} ${named.join('; ')}${more} ${verb} still running.`,
+    'It is this session\'s own work, even if a subagent started it.',
+    `If it waits on input or is no longer needed, stop it. If it is a service meant to keep running, mark it with ${MARK_BACKGROUND_SERVICE_TOOL}.`,
+  ];
+}
+
+/** A command, quoted and cut to fit a nudge. */
+function quoteCommand(command: string): string {
+  return `"${shortCommand(typeable(command), NUDGE_COMMAND_CHARS).replace(/"/g, '\'')}"`;
+}
+
+/** How long, in whole minutes or hours and minutes. */
+function describeAge(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
+function composeNudge(input: NudgeInput, withCommands: boolean): string {
   const base = typeable(input.baseBranch);
   const column = typeable(input.columnName);
+  const shells = shellSentences(input.openShells ?? [], withCommands);
+  const ownerLine = 'If only the owner can settle what you are stuck on (a change from the plan, something the owner must weigh in on, or a '
+    + `decision between options), end your reply with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it.`;
+  if (input.heldMove) {
+    // Done, and only the background work holds the move: the agent is asked
+    // about that work and nothing else, so it ends its turn when it is done.
+    const target = input.heldMove.targetName ? ` to ${typeable(input.heldMove.targetName)}` : '';
+    return [
+      `The ${column} step is done, and the task moves on${target} at your next turn end with no background command of yours running.`,
+      ...shells,
+      'Then end your turn.',
+      ownerLine,
+    ].join(' ');
+  }
   const instructions: string[] = [];
   if (input.restarted) {
     instructions.push('Kangentic restarted, so the background commands you started before it (such as a gate run) were stopped. Start them again.');
@@ -953,15 +1208,15 @@ export function nudgeMessage(input: NudgeInput): string {
     const why = sentence(input.reason);
     parts.push(`The ${column} step is not done yet${why ? `: ${why}` : '.'}`);
     parts.push(...siblingFacts);
+    parts.push(...shells);
     parts.push(input.leftRunning
       ? 'Check on the work you left running and carry on from where you stopped.'
       : 'Carry on from where you stopped.');
   } else {
-    parts.push(`The ${column} step is not done yet.`, ...instructions, ...siblingFacts);
+    parts.push(`The ${column} step is not done yet.`, ...instructions, ...siblingFacts, ...shells);
   }
   parts.push('Go ahead with this step\'s own work without asking first.');
-  parts.push('If only the owner can settle what you are stuck on (a change from the plan, something the owner must weigh in on, or a '
-    + `decision between options), end your reply with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it.`);
+  parts.push(ownerLine);
   return parts.join(' ');
 }
 

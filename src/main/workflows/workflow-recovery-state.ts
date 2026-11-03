@@ -26,6 +26,8 @@ export interface RecoveryVerdict {
   reason: string | null;
   /** What the reply says the agent is stuck on, for the nudge to aim at. */
   blockers: WorkflowBlocker[];
+  /** The judged reply's final line, or null for none or not known. */
+  finalLine?: string | null;
 }
 
 export interface RecoveryEntry {
@@ -70,7 +72,40 @@ export interface RecoveryEntry {
   inFlight: boolean;
 }
 
+/**
+ * A move a running workflow task earned while background work its agent left
+ * was still open (`heldMoveReason`, `workflow-step.ts`): the step check's own,
+ * or a Move to column row's. It runs at the agent's next turn end of the same
+ * visit with no background work left, unless that reply ends on `Needs owner:`
+ * (owner's decision, 2026-11-02). In memory only: a restart stops the
+ * commands that held it, and recovery starts over and judges the reply again.
+ * A new session for the task (a host crash's resume) drops it the same way.
+ */
+export interface HeldMove {
+  columnId: string;
+  /** The session whose background work held it. Another session's turn end never runs it. */
+  sessionId: string;
+  /** The step check's own move, or a Move to column row's (`rowId`). */
+  kind: 'step' | 'row';
+  rowId: string | null;
+  /** The column it moves the task to, for the nudge. Null when not known. */
+  targetName: string | null;
+}
+
 const entries = new Map<string, RecoveryEntry>();
+const heldMoves = new Map<string, HeldMove>();
+
+export function getHeldMove(taskId: string): HeldMove | undefined {
+  return heldMoves.get(taskId);
+}
+
+export function setHeldMove(taskId: string, move: HeldMove): void {
+  heldMoves.set(taskId, move);
+}
+
+export function clearHeldMove(taskId: string): void {
+  heldMoves.delete(taskId);
+}
 
 /** Told when a task's recovery stops, so the gate it waits in lets it go. */
 let forgetListener: ((taskId: string) => void) | null = null;
@@ -117,6 +152,9 @@ export function isInWorkingWait(taskId: string, now: number = Date.now()): boole
 
 /** Stop a task's recovery: it moved, its workflow paused or ended, or recovery is done. */
 export function forgetWorkflowRecovery(taskId: string): void {
+  // A held move belongs to the recovery: a move, a Pause or the step's end
+  // leaves nothing for it to run.
+  heldMoves.delete(taskId);
   const entry = entries.get(taskId);
   if (!entry) return;
   if (entry.timer) clearTimeout(entry.timer);
@@ -138,4 +176,5 @@ export function resetWorkflowRecoveryForTests(): void {
     if (entry.timer) clearTimeout(entry.timer);
   }
   entries.clear();
+  heldMoves.clear();
 }

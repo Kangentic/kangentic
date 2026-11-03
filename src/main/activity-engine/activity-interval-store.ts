@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { ActivityState } from '../../shared/types';
+import type { ActivityReason, ActivityState } from '../../shared/types';
 import type { ActivityDisposition } from '../../shared/activity-state';
 
 /** A new activity-disposition interval to open. */
@@ -15,6 +15,8 @@ export interface OpenIntervalInput {
   /** The engine's own TransitionTrigger label (e.g. 'event:idle', 'timer:stale-thinking'). */
   enterTrigger: string;
   startedMs: number;
+  /** The activity reason's kind when the interval opened (`ActivityReason['kind']`), or null when not known. */
+  reasonKind: ActivityReason['kind'] | null;
 }
 
 export interface SessionActivityInterval {
@@ -39,6 +41,14 @@ export interface SessionActivityInterval {
    *  (active -> idle, a real park), or 'session-exit'. Null while open. */
   exitTrigger: string | null;
   recordedAt: string;
+  /**
+   * What kept the session in this state: the activity reason's kind when the
+   * interval opened. A thinking span is split where its reason crosses into or
+   * out of `background-shell`, so a `background-shell` row is time the agent's
+   * turn was over and only work it left running held the session. Null on rows
+   * written before the column existed.
+   */
+  reasonKind: string | null;
 }
 
 interface ActivityIntervalRow {
@@ -56,6 +66,7 @@ interface ActivityIntervalRow {
   duration_ms: number | null;
   exit_trigger: string | null;
   recorded_at: string;
+  reason_kind: string | null;
 }
 
 function toInterval(row: ActivityIntervalRow): SessionActivityInterval {
@@ -74,6 +85,7 @@ function toInterval(row: ActivityIntervalRow): SessionActivityInterval {
     durationMs: row.duration_ms,
     exitTrigger: row.exit_trigger,
     recordedAt: row.recorded_at,
+    reasonKind: row.reason_kind ?? null,
   };
 }
 
@@ -105,8 +117,8 @@ export class ActivityIntervalStore {
     this.db
       .prepare(
         `INSERT INTO session_activity_intervals
-           (session_id, task_id, disposition, state, previous_state, enter_trigger, started_ms, started_at, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (session_id, task_id, disposition, state, previous_state, enter_trigger, started_ms, started_at, recorded_at, reason_kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.sessionId,
@@ -118,7 +130,15 @@ export class ActivityIntervalStore {
         input.startedMs,
         new Date(input.startedMs).toISOString(),
         recordedAt,
+        input.reasonKind ?? null,
       );
+  }
+
+  /** Whether the session has an interval still open. */
+  hasOpenInterval(sessionId: string): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM session_activity_intervals WHERE session_id = ? AND ended_ms IS NULL LIMIT 1')
+      .get(sessionId) !== undefined;
   }
 
   /**
@@ -128,8 +148,8 @@ export class ActivityIntervalStore {
    * Kangentic restart between open and close cannot orphan the mapping - the
    * next close still finds the right row by session id alone. A no-op
    * (zero rows affected) when no interval is open, which is expected right
-   * after a session's first real transition (the pre-first-transition seed
-   * window opened nothing to close) and for a session that crashed
+   * after a session's first real transition when it was seeded idle (a resumed
+   * session's seed opens nothing to close) and for a session that crashed
    * mid-interval: the row stays open forever, and consumers filter
    * `ended_ms IS NOT NULL`.
    */

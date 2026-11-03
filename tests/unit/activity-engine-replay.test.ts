@@ -1566,3 +1566,114 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 });
+
+/**
+ * session-035: the shape that held a finished workflow task nearly nine hours
+ * (and another six). The agent's foreground `python -` sat on an empty stdin,
+ * the CLI moved it to the background at its timeout, and the agent ended its
+ * turn with the shell still alive. A tool-less wake of the same turn followed.
+ * The session stays thinking on the shell alone, so no turn end ever fired
+ * and no workflow step read the reply. Now the Stop is reported held once,
+ * the wake reports nothing more, and the drain's own turn end says it was
+ * already reported.
+ */
+describe('session-035-stop-with-live-shell: a Stop held by a live shell reaches the workflow once', () => {
+  interface TurnEnd {
+    workSerial: number;
+    heldReported?: boolean;
+  }
+
+  function replayTurnEnds(): {
+    engine: ActivityEngine;
+    held: TurnEnd[];
+    ended: TurnEnd[];
+  } {
+    const held: TurnEnd[] = [];
+    const ended: TurnEnd[] = [];
+    const engine = new ActivityEngine(
+      {
+        onActivityChange() {},
+        onTurnEndedHeld(_sessionId, _turnStartedAt, workSerial) {
+          held.push({ workSerial });
+        },
+        onTurnEnded(_sessionId, _turnStartedAt, workSerial, heldReported) {
+          ended.push({ workSerial, heldReported });
+        },
+      },
+      { bgShellEscapeHatchMs: 60 * 60_000, staleThinkingTimeoutMs: 60 * 60_000, idleStabilityWindowMs: 0 },
+    );
+    engine.initSession(SESSION_ID);
+    for (const event of loadFixture('session-035-stop-with-live-shell.jsonl')) engine.processEvent(SESSION_ID, event);
+    return { engine, held, ended };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reports the held turn end once, at the Stop, and not again for the tool-less wake', () => {
+    const { engine, held, ended } = replayTurnEnds();
+    expect(held).toHaveLength(1);
+    expect(held[0].workSerial).toBe(engine.getState(SESSION_ID)!.workSerial);
+    expect(ended).toEqual([]);
+    // Held by the shell alone: the turn is over and its agent takes input.
+    expect(engine.getState(SESSION_ID)!.activity).toBe('thinking');
+    expect(engine.getActivityReason(SESSION_ID)?.kind).toBe('background-shell');
+    expect(engine.isTurnHeldByBackgroundWork(SESSION_ID)).toBe(true);
+    engine.dispose();
+  });
+
+  it('the drain fires the turn end with heldReported, so the workflow does not judge the turn again', () => {
+    const { engine, held, ended } = replayTurnEnds();
+    const workSerial = engine.getState(SESSION_ID)!.workSerial;
+
+    engine.markBackgroundShellEnded(SESSION_ID, 'boeb2h7eo');
+
+    expect(held).toHaveLength(1);
+    expect(ended).toEqual([{ workSerial, heldReported: true }]);
+    expect(engine.isTurnHeldByBackgroundWork(SESSION_ID)).toBe(false);
+    engine.dispose();
+  });
+
+  it('new work after the held Stop is a new turn: its own Stop with the shell still alive is reported held again', () => {
+    const { engine, held } = replayTurnEnds();
+    engine.processEvent(SESSION_ID, { ts: 1793614500000, type: EventType.Prompt, detail: 'stop the hung python' });
+    expect(engine.isTurnHeldByBackgroundWork(SESSION_ID)).toBe(false);
+    engine.processEvent(SESSION_ID, { ts: 1793614510000, type: EventType.Idle });
+
+    expect(held).toHaveLength(2);
+    expect(held[1].workSerial).toBe(held[0].workSerial + 1);
+    engine.dispose();
+  });
+
+  it('a compaction with no turn active is not a turn: no thinking, and the turn the step check reads stays put', () => {
+    // An idle compaction showed one task working for 6.8 minutes and moved
+    // its turn past the reply recovery had to read.
+    const { engine } = replayTurnEnds();
+    engine.markBackgroundShellEnded(SESSION_ID, 'boeb2h7eo');
+    const workSerial = engine.getState(SESSION_ID)!.workSerial;
+
+    engine.processEvent(SESSION_ID, { ts: 1793617200000, type: EventType.Compact });
+
+    expect(engine.getState(SESSION_ID)!.activity).toBe('idle');
+    expect(engine.getState(SESSION_ID)!.workSerial).toBe(workSerial);
+    engine.dispose();
+  });
+
+  it('a compaction inside a turn still carries the turn as before', () => {
+    const { engine } = replayTurnEnds();
+    engine.processEvent(SESSION_ID, { ts: 1793614500000, type: EventType.Prompt, detail: 'go on' });
+    const workSerial = engine.getState(SESSION_ID)!.workSerial;
+
+    engine.processEvent(SESSION_ID, { ts: 1793614501000, type: EventType.Compact });
+
+    expect(engine.getState(SESSION_ID)!.activity).toBe('thinking');
+    expect(engine.getState(SESSION_ID)!.turnActive).toBe(true);
+    expect(engine.getState(SESSION_ID)!.workSerial).toBe(workSerial + 1);
+    engine.dispose();
+  });
+});

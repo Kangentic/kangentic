@@ -9,6 +9,8 @@ sources:
   - resource: src/shared/workflow-lock.ts
   - resource: src/shared/workflow-refusals.ts
   - resource: src/shared/workflow-needs-owner.ts
+  - resource: src/shared/final-line-match.ts
+  - resource: src/main/pty/turn-settled.ts
 ---
 # Workflow engine
 
@@ -179,8 +181,9 @@ src/main/workflows/
   accept (after the column's own turn-end rows; see below), at plan approval, or when the task's own
   agent moves it. The answer is recorded in
   `automation_runs` as a `workflow_step` row. `runWorkflowStep` returns one verdict: `done`,
-  `move-failed`, `waiting` (only the owner can settle it), `working` (work of the agent's own is
-  still open), `stopped` (a stall to nudge), `check-failed`, or `human-gate` (no Automation agent).
+  `move-failed`, `move-held` (done, but background work of the agent's own holds the move; see
+  below), `waiting` (only the owner can settle it), `working` (work of the agent's own is still
+  open), `stopped` (a stall to nudge), `check-failed`, or `human-gate` (no Automation agent).
   A check that could not run is recorded too, with `condition_met` NULL, so it never counts as
   having judged the reply. A failed move is reported, not thrown.
   - **Only the agent's own word stops a task** (owner's decision, 2026-10-31). A reply whose last
@@ -196,6 +199,41 @@ src/main/workflows/
     (`SessionManager.getOpenWork`, the activity engine's open-work ledger), is `working`, with no
     second call. Read from the reply, one gate was still running at 04:47 and not done at 07:33,
     with nothing changed but the sentence.
+  - **A Stop held by background work is judged at the Stop.** A turn end waits for the background
+    work the turn left to drain, and a hung command never drains. Overnight, a `python3 -` a
+    subagent left on an empty stdin held a finished task 8h48m with its `Implementation: complete`
+    unread, and another `python -` held a review six hours. No stall notice went out: no turn end,
+    so no step check, no verdict, and no working wait to bound it. Now the engine reports the
+    agent's Stop when only its background shells keep the session thinking (`'turn-ended-held'`,
+    see [Activity event types](../activity/event-types.md)), and for a running workflow's task the
+    turn-end runner runs the `Needs owner:` read, the step check and the column's rows behind a
+    Text match then, once per turn. The rows with no Text match wait for the drain, whose pass runs
+    only them and judges nothing again (`drainOfHeld`). A background job's every event wakes the
+    agent for a turn of its own: a notification that reaches an idle CLI fires its prompt hook
+    (measured on Claude Code 2.1.289, a `prompt` event 126 ms after the task-notification turn),
+    each wake ending in a held Stop at a new `workSerial`. So a held turn whose final line
+    repeats this visit's `working` verdict pays for no second check (`repeatsWorkingVerdict`); a new
+    last line, an exit line included, is judged. A message a held pass's row sends waits on the same
+    held-aware turn wait. Off a workflow nothing changes: On agent
+    turn end still waits for the drain. Every gate that once asked "is the agent idle" accepts the
+    held state for these passes through one predicate (`isTurnSettled`, `src/main/pty/turn-settled.ts`).
+  - **A move waits while that work is open** (owner's decision, 2026-11-02). A move suspends the
+    agent and kills nothing mid-board (`task-process-tag.md`), and the Stop script does not run on
+    one, so moving would leave a hung command running with no agent until the task's Done reap.
+    When the step judges done, or a Move to column row's guards pass, while the activity engine
+    still holds a background shell for the session (`heldMoveReason`,
+    `SessionManager.getHeldBackgroundShellIds`), the step answers `move-held` and the row is
+    skipped with that reason, and recovery holds the move (`HeldMove`, in memory) and nudges at
+    once. A shell only the open-work ledger keeps (the engine drained it on a guess) never holds a
+    move: it may be dead with its end lost, and the move would never run. The
+    move runs at the agent's next turn end of the visit with no shell open, whatever that reply
+    says, unless it ends on the `Needs owner:` line (`settleHeldMove`). A release that does not
+    move the task (the turn busy again, the move failed) holds it again, so the retry is the same
+    release and not a second check of a reply that need not repeat the exit line. A restart drops
+    the held move: it stopped the commands, and recovery starts over and judges the reply again.
+    So does a new session for the task, such as a pty host crash's resume (`HeldMove.sessionId`).
+    The held pass records the turn it served only once it has judged it, so a held pass that found
+    the turn busy or threw leaves its drain to judge the turn in full.
   - **Anything else not done is `stopped`.** A second ask names what the reply says the agent is
     stuck on (`workflowBlockerConditions`), so the nudge can aim at it: `resource` (a run was
     stopped or failed because the machine was low on memory or too busy) and `main-fails-too`
@@ -233,8 +271,9 @@ src/main/workflows/
     did. The attempt reads it as a stall and nudges, with no paid check.
   - A nudge is one line typed into the terminal, only while nobody is there: no draft, no input
     typed into it in the last 5 minutes (`getLastUserInputAt`, `PRESENCE_WINDOW_MS`), nothing on
-    its way, the agent idle on the judged turn, and keys allowed (`automatedKeysRefusal`: no
-    permission prompt pending and no tool call open). A terminal on screen is not a person: one
+    its way, the agent's judged turn over (idle, or held only by background work it left, whose
+    agent sits at its prompt), and keys allowed (`automatedKeysRefusal`: no permission prompt
+    pending and no tool call open; a background shell is neither). A terminal on screen is not a person: one
     left on screen held a task an hour overnight with nobody typing.
   - The nudge (`nudgeMessage`) is aimed at what the agent is stuck on, each blocker with its own
     instruction. Memory is back, with the GB free, so run what was stopped again, one run at a
@@ -249,11 +288,24 @@ src/main/workflows/
     on. Every nudge says to go ahead with the step's own work without asking, and
     ends with the `Needs owner:` line. On the board measured, every message a person typed into a
     stopped workflow task said to keep going.
+  - A nudge after a working wait, or for a held move, names the background commands: id, command
+    (cut short), how long each has run and its output file's size, a hint only, since a gate that
+    redirects to its own log holds 0 bytes while it runs fine. It says the command is this
+    session's own work even if a subagent started it, to stop it if it waits on input or is no
+    longer needed, and to mark it with `kangentic_mark_background_service` if it is a service. One
+    agent saw its hung command and left it because it "looked like someone else's"; another,
+    told only to carry on, found and stopped its own in 40 seconds. The nudge stays one line under
+    1000 characters (commands give way first), so it types as keystrokes rather than as a paste,
+    which waits for an idle turn.
   - A sibling is named only when its PR merged, it was archived after the visit began (or after
     the last nudge that named siblings), and it has the same base branch. Reaching Done is not
     enough: some routes end at Done with no PR, and some siblings target another base.
-  - `working` gets one 60-minute wait first. On the board measured, 300 turn ends were woken by
-    the agent's own background work, none more than 30 minutes later.
+  - `working` gets one 60-minute wait first (`WORKING_WAIT_MS`), counted from when the oldest
+    background work still open started, not from the verdict, so a new turn on the same work (a
+    background job's wake, an idle compaction) cannot restart the hour. On the board measured, 300
+    turn ends were woken by the agent's own background work, none more than 30 minutes later. A
+    `working` verdict whose work has since ended with no turn of its own is a stall on the
+    schedule (`noteHeldTurnDrained`), not the rest of the hour.
   - **One at a time, and never into low memory.** Every nudge waits its turn in the workflow's
     memory gate (`workflow-memory-gate.ts`), one first-in, first-out queue it shares with memory
     resumes (below). Nothing goes while memory reads low, on the low-memory pause's own latch
@@ -336,9 +388,10 @@ src/main/workflows/
     memory, so a restart forgets them.
 - **A hung turn** (`workflow-hang-check.ts`) ends no turn, so recovery never sees it. Once a minute,
   main looks at each running workflow task whose agent shows working on a turn still in progress
-  (a tool, a subagent or the turn itself; never a turn a background shell holds, and never a
-  permission prompt or a question). When the agent's history and its subagents' have had no write
-  for the adapter's `hungTurn.quietLimitMs`, it writes the CLI's own interrupt, once, and records a
+  (a tool, a subagent or the turn itself; never a turn a background shell holds, whose Stop
+  already reached the step check and recovery, above, and never a permission prompt or a
+  question). When the agent's history and its subagents' have had no write for the adapter's
+  `hungTurn.quietLimitMs`, it writes the CLI's own interrupt, once, and records a
   `workflow_interrupt` row. It tells the activity engine the way a user's Ctrl+C does
   (`signalUserInterrupt`), since an interrupt between tool calls fires no hook and the turn would
   stay shown working. It starts the task's recovery over (`startWorkflowRecoveryOver`), so the

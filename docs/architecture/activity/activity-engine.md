@@ -280,6 +280,15 @@ start with `app-crash`, so the sweep never adds time the session may not have sp
 launch already runs (a phone started it, the project was open before) keeps its row. Readers still
 filter open rows.
 
+Each row also records what kept the session in its state, `reason_kind`, the activity reason's
+kind when it opened. A thinking span splits where its reason crosses into or out of
+`background-shell` (the `activity-reason` event, triggers `reason:background-shell` and
+`reason:turn-work`), so an ended turn held by a hung command is a row of its own. Splitting on
+every kind change would write a row per tool call. A session seeded `thinking` at its spawn opens
+an `active` row (`enter_trigger` `seed`) once, even when the seed is emitted again
+(`adoptSession`). Skipping that window lost a seeded session's whole first turn: one run's Code
+Review sessions recorded 38 of 709 minutes, and one review's first 6h35m had no row.
+
 Priority ladder: `permission > tool > subagent > background-shell > turn-active > idle`. Anchored to `state.activity` for consistency - when forced paths (Interrupted, forceIdle) commit a transition that diverges from the bare predicate (e.g. clearing all counters on Esc), the reason follows the committed state.
 
 ## ActivityDetectionStrategy variants
@@ -370,9 +379,14 @@ work ended closes an entry:
   transcript, and at the session's end. A `subagent_start`, a `prompt`, an `idle_hint` or a reset
   closes nothing.
 - **A background shell** opens when the engine starts holding a named shell, so an exempt service
-  never opens. It closes on an end that names it, a PID exit or transcript drain the watcher
-  applied, being marked a service, and the session's end. The hatch and the output-quiescence
-  reclaim close nothing.
+  never opens. It carries the command that started it: an anonymous launch's, or the `tool_start`
+  detail of the call the CLI moved to the background (a foreground Bash at its timeout, a
+  `Monitor`), carried by that call's own id so a parallel launch never lends it its command. It
+  closes on an end that names it, a PID exit or transcript drain the watcher applied, the
+  transcript's notice even after the engine drained the shell on a guess (the watcher keeps asking
+  about ledger-only ids), its own time limit a minute past (a `Monitor`'s `timeoutMs`, see
+  [Background shells](background-shells.md)), being marked a service, and the session's end. The
+  hatch and the output-quiescence reclaim close nothing.
 - **A subagent** opens on its `subagent_start` and closes on its named `subagent_stop`,
   `interrupted`, `turn_failed` and the session's end. One started before the main agent's latest
   turn end is background work.
@@ -382,9 +396,12 @@ resumed agent carries nothing its old process left open. Three readers act on it
 keystrokes guard, where an open tool call holds every automated key (see
 [Command injection](../automations/command-injection.md#the-automated-keystrokes-guard)); the
 low-memory pause, which skips an agent with an open background shell or background subagent; and
-the workflow step check, which reads open background work as still working. A lost end fails safe:
-Kangentic types nothing and pauses nothing while an entry is open, and the workflow's working wait
-bounds how long it waits.
+the workflow step check, which reads open background work as still working, and holds a move
+while a shell is open. A lost end fails safe: Kangentic types nothing and pauses nothing while an
+entry is open, and the workflow's working wait bounds how long it waits. It is a real bound: a
+running workflow's turn is judged at the agent's Stop even while a shell holds the session
+(`onTurnEndedHeld`, see [Activity event types](event-types.md)), and the wait counts from when the
+oldest open entry started.
 
 ## Resume reconciliation (deliberately none)
 
@@ -419,6 +436,7 @@ Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot`
 | `event:<type>:<detail>` | A hook event with a detail qualifier, e.g. `event:idle:permission` (paused awaiting approval). |
 | `event:bg-shell-ended:<shellId>` | Id-keyed named drain - the watcher saw a named shell's OS process leave the tree (Tier A PID-exit), OR reclaimed a PID-less named shell whose output froze while it showed a persistent process-tree deficit (output-quiescence reclaim). |
 | `event:bg-shell-ended:transcript` | Definitive drain - the watcher observed a tracked shell's own terminal `<task-notification>` directly in the durable session transcript (task #386). Fires independent of process-tree count or output-file state; distinct from the Tier A / quiescence label above even though both are id-keyed. |
+| `event:bg-shell-ended:expired` | Time-limit drain - a held shell's own time limit (`SessionEvent.expiresAfterMs`, a Monitor's `timeoutMs`) passed a minute ago and no end notice closed it (`SessionTelemetry.endExpiredHolders`). |
 | `event:bg-shell-ended:watcher` | Tier B count-heuristic drain - an anonymous shell reclaimed by the descendant-count drop. |
 | `event:bg-shells-adopted` | Resume reconciliation adopted living descendants as anonymous shells. |
 | `event:bg-shell-service:mcp` | The agent marked background shells as services through `kangentic_mark_background_service`, moving them from the holding set to `exemptBackgroundShellIds` (see [Opting a background shell out of the hold](background-shells.md#opting-a-background-shell-out-of-the-hold)). |

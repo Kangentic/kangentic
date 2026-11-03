@@ -154,6 +154,21 @@ export interface BgShellWatcherCallbacks {
    */
   reportTerminatedShellsFromTranscript(sessionId: string, shellIds: string[]): string[];
   /**
+   * Shell ids the session's open-work ledger still holds that the engine no
+   * longer tracks: drained by an engine-only guess (a quiet output file, the
+   * escape hatch), so only their real end may close them. Asked about in the
+   * transcript beside the PID-less named shells, in the same read. Optional:
+   * a watcher built without a ledger asks nothing more.
+   */
+  getLedgerOnlyShellIds?(sessionId: string): string[];
+  /** The transcript reported a ledger-only shell's end (`getLedgerOnlyShellIds`). */
+  onLedgerShellTerminated?(sessionId: string, shellId: string): void;
+  /**
+   * Once a cycle, enumerating or not: end the holders whose own time limit
+   * ran out (a Monitor's `timeoutMs`). Optional.
+   */
+  endExpiredHolders?(sessionId: string): void;
+  /**
    * Read accessors for the watcher to introspect engine state. The
    * watcher does not own counters - it observes them.
    */
@@ -802,6 +817,46 @@ export class BgShellWatcher {
     if (!this.probe.isAlive(state.rootPid)) {
       this.callbacks.onRootProcessDied(sessionId);
       this.unregisterSession(sessionId);
+      return;
+    }
+    // A shell the engine already drained has no tree work left, so a skipped
+    // cycle is where its real end reaches the ledger.
+    this.drainFromTranscript(sessionId, state);
+  }
+
+  /**
+   * Definitive drain (task #386): a NAMED shell whose OS PID was never
+   * captured is invisible to Tier A (which only drains shells with a known
+   * PID). Ask the adapter whether that shell's terminal <task-notification>
+   * has appeared in the durable transcript - a signal a hook can never
+   * deliver for it (Claude sends the notification as a queued_command
+   * attachment, not a hooked user turn), but which IS definitive proof of
+   * completion once observed. It needs neither the descendant walk nor a
+   * healthy process snapshot. A live shell has emitted no such notification,
+   * so this path can never drain one early.
+   *
+   * The same read asks about shells the ledger still holds after the engine
+   * drained them on a guess, whose notice used to reach nobody: one task's
+   * step check read its expired Monitors as running work for hours. One read,
+   * because the transcript is tailed from a cursor a second read would find
+   * already past the notice.
+   */
+  private drainFromTranscript(sessionId: string, state: SessionWatchState): void {
+    this.callbacks.endExpiredHolders?.(sessionId);
+    const pidlessNamedIds = this.callbacks
+      .getNamedShellIds(sessionId)
+      .filter((shellId) => !state.trackedShellPids.has(shellId));
+    const ledgerOnlyIds = this.callbacks.getLedgerOnlyShellIds?.(sessionId) ?? [];
+    if (pidlessNamedIds.length === 0 && ledgerOnlyIds.length === 0) return;
+    const terminatedIds = this.callbacks.reportTerminatedShellsFromTranscript(sessionId, [...pidlessNamedIds, ...ledgerOnlyIds]);
+    const ledgerOnly = new Set(ledgerOnlyIds);
+    for (const shellId of terminatedIds) {
+      if (ledgerOnly.has(shellId)) {
+        this.callbacks.onLedgerShellTerminated?.(sessionId, shellId);
+        continue;
+      }
+      state.shellOutputFiles.delete(shellId);
+      this.callbacks.onNamedShellTerminated(sessionId, shellId);
     }
   }
 
@@ -820,31 +875,16 @@ export class BgShellWatcher {
       return;
     }
 
-    // Definitive drain (task #386): a NAMED shell whose OS PID was never
-    // captured is invisible to Tier A (which only drains shells with a known
-    // PID). Ask the adapter whether that shell's terminal <task-notification>
-    // has appeared in the durable transcript - a signal a hook can never
-    // deliver for it (Claude sends the notification as a queued_command
-    // attachment, not a hooked user turn), but which IS definitive proof of
-    // completion once observed. This runs BEFORE the process-tree probe-health
-    // guard below, because it needs neither the descendant walk nor a healthy
-    // process snapshot: gating it on the probe would suppress the drain during
-    // exactly the host-load spells that both time out the probe AND leave a
-    // named shell PID-less (task #386's target scenario). A live shell has
-    // emitted no such notification, so this path can never drain one early.
-    // `trackedShellPids` still holds the previous cycle's captures here (Tier A
-    // prunes below); a shell that just exited is therefore excluded from this
-    // set but is drained by Tier A this same cycle, so nothing is missed.
-    const pidlessNamedIds = this.callbacks
-      .getNamedShellIds(sessionId)
-      .filter((shellId) => !state.trackedShellPids.has(shellId));
-    if (pidlessNamedIds.length > 0) {
-      const terminatedIds = this.callbacks.reportTerminatedShellsFromTranscript(sessionId, pidlessNamedIds);
-      for (const shellId of terminatedIds) {
-        state.shellOutputFiles.delete(shellId);
-        this.callbacks.onNamedShellTerminated(sessionId, shellId);
-      }
-    }
+    // The transcript drain (`drainFromTranscript`) runs BEFORE the
+    // process-tree probe-health guard below, because it needs neither the
+    // descendant walk nor a healthy process snapshot: gating it on the probe
+    // would suppress the drain during exactly the host-load spells that both
+    // time out the probe AND leave a named shell PID-less (task #386's target
+    // scenario). `trackedShellPids` still holds the previous cycle's captures
+    // here (Tier A prunes below); a shell that just exited is therefore
+    // excluded from this set but is drained by Tier A this same cycle, so
+    // nothing is missed.
+    this.drainFromTranscript(sessionId, state);
 
     // Walk the per-session subtree from the shared cycle index. In-memory
     // only; sub-millisecond regardless of process count.

@@ -186,7 +186,8 @@ short lock is what wedges that task's next move. Every row is isolated: a failur
 outcome in `automation_runs` and the next row still runs.
 
 The column's On agent turn end group is not part of a move: `automations/turn-end/turn-end-runner.ts`
-runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`),
+runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`, or
+`'turn-ended-held'` for a running workflow task whose Stop only background shells keep open),
 outside the task lock, one pass per task, and a Move to column row in it moves the task through
 `handleTaskMove` like any other mover. See [Automation triggers](automations/triggers.md#on-agent-turn-end).
 

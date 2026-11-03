@@ -6,6 +6,8 @@ import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { TurnEndedPayload } from '../pty/session-manager';
+import { isTurnSettled } from '../pty/turn-settled';
+import type { OpenBackgroundShell } from '../activity-engine/open-work-ledger';
 import { checkAutomationConditions, type ConditionCheckCall } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput, ConditionPromptRow } from '../automations/condition-check/condition-prompt';
 import { resolveMoveTarget, routeOf } from '../automations/move-target';
@@ -20,6 +22,7 @@ import {
 } from './workflow-step-condition';
 import { workflowOfTask } from './workflow-home';
 import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
+import { finalMatchLine } from '../../shared/final-line-match';
 
 /**
  * A workflow task's own step, at a turn end, after the column's turn-end rows.
@@ -49,6 +52,10 @@ import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
  *   working. It comes from `SessionManager.getOpenWork`, never from the
  *   reply's wording: one gate read as still running at 04:47 and as not done
  *   at 07:33, with nothing changed but the sentence.
+ * - Done, with a background shell the activity engine still holds, holds the
+ *   move (`move-held`, `heldMoveReason`): a move would leave a hung command
+ *   running with no agent. Recovery holds it, and the agent's next turn end
+ *   with no shell open runs it without a second check (`releaseHeldMove`).
  * - Anything else not done is a stall the caller nudges. A second ask names
  *   what the reply says it is stuck on (`workflowBlockerConditions`), so the
  *   nudge can aim at it. The first ask is never changed by it: it is the
@@ -74,6 +81,8 @@ import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
  *   work ends with no turn end and no reply of its own (`abandoned-turns.ts`).
  */
 export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
+/** The step's answer when a move held for background work goes ahead. */
+export const HELD_MOVE_RELEASED_REASON = 'The step was judged done when its move was held, and the background work that held it has ended.';
 /** The second ask's rows, one per blocker it can name (`workflowBlockerConditions`). */
 const WORKFLOW_BLOCKER_ROW_ID_PREFIX = 'workflow-step-blocker:';
 
@@ -90,8 +99,11 @@ const WORKFLOW_BLOCKER_ROW_ID_PREFIX = 'workflow-step-blocker:';
  *   settle it.
  * - `check-failed`: the check could not run this time.
  * - `human-gate`: no Automation agent can judge it, so a person moves the card.
+ * - `move-held`: judged done, but background work the agent left is still
+ *   open, so the move waits for the agent's next turn end with none open
+ *   (`heldMoveReason`). A move suspends the agent and kills nothing.
  */
-export type WorkflowStepVerdict = 'done' | 'move-failed' | 'working' | 'stopped' | 'waiting' | 'check-failed' | 'human-gate';
+export type WorkflowStepVerdict = 'done' | 'move-failed' | 'working' | 'stopped' | 'waiting' | 'check-failed' | 'human-gate' | 'move-held';
 
 export interface WorkflowStepResult {
   verdict: WorkflowStepVerdict;
@@ -103,12 +115,32 @@ export interface WorkflowStepResult {
   firstThisVisit?: boolean;
   /** On `stopped`: what the reply says the agent is stuck on, for the nudge to aim at. */
   blockers?: WorkflowBlocker[];
+  /** On `move-held`: the column the held move goes to. */
+  heldMoveTo?: string;
+  /** On `working`: the reply's final line as a Text match reads it (`finalMatchLine`), or null for none. */
+  finalLine?: string | null;
 }
 
 /** The base branch a task's agent compares against, as the nudge and the blocker row name it. */
 export function taskBaseBranch(task: Pick<Task, 'resolved_base_branch' | 'base_branch'>): string {
   return task.resolved_base_branch ?? task.base_branch ?? 'the base branch';
 }
+
+/**
+ * A command on one line, cut to `maxChars` with a closing ellipsis when longer.
+ * Cut by code point, so a cut never splits a character in two: a lone half of
+ * one, typed into a terminal, arrives as a replacement character.
+ */
+export function shortCommand(command: string, maxChars: number): string {
+  const flat = command.replace(/\s+/g, ' ').trim();
+  const characters = Array.from(flat);
+  return characters.length > maxChars ? `${characters.slice(0, maxChars).join('')}...` : flat;
+}
+
+/** How many background commands the held-move reason names one by one. */
+const HELD_MOVE_SHELLS_NAMED = 3;
+/** How much of a command the run log quotes. */
+const RUN_LOG_COMMAND_CHARS = 80;
 
 /**
  * Work the agent left running that it will come back to, by its hook events:
@@ -119,12 +151,50 @@ function openBackgroundWork(context: IpcContext, sessionId: string): string | nu
   const openWork = context.sessionManager.getOpenWork(sessionId);
   const shell = openWork.backgroundShells[0];
   if (shell) {
-    const command = shell.command ? `: ${shell.command.replace(/\s+/g, ' ').slice(0, 120)}` : '';
+    const command = shell.command ? `: ${shortCommand(shell.command, 120)}` : '';
     return `a background command is still running${command}`;
   }
   const subagent = openWork.backgroundSubagents[0];
   if (subagent) return `a background ${subagent.type ?? 'subagent'} is still running`;
   return null;
+}
+
+/**
+ * Why a running workflow task's move waits, or null when it can go: a
+ * background command the agent left is still open by its hook events. A move
+ * suspends the agent and kills nothing (`task-process-tag.md`), and the Stop
+ * script does not run on one, so a hung command (a `python -` waiting on
+ * stdin) would run on with no agent until the task's Done reap. So the move
+ * waits, and recovery asks the agent at once to stop the command or mark it a
+ * service (owner's decision, 2026-11-02). One line for the run log.
+ *
+ * Only shells the activity engine still holds count, never one the open-work
+ * ledger alone keeps (the engine drained it on a guess). Such a shell may be
+ * dead with its end lost, and a move held on it would never run: it stays on
+ * the working wait's bounded path instead.
+ */
+export function heldMoveReason(context: IpcContext, sessionId: string): string | null {
+  const shells = heldBackgroundShells(context, sessionId);
+  if (shells.length === 0) return null;
+  const named = shells.slice(0, HELD_MOVE_SHELLS_NAMED).map((shell) => {
+    const command = shell.command ? ` (${shortCommand(shell.command, RUN_LOG_COMMAND_CHARS)})` : '';
+    return `${shell.id}${command}`;
+  }).join(', ');
+  const more = shells.length > HELD_MOVE_SHELLS_NAMED ? ` and ${shells.length - HELD_MOVE_SHELLS_NAMED} more` : '';
+  const [noun, verb] = shells.length === 1 ? ['command', 'ends'] : ['commands', 'end'];
+  return `Held: the move waits until the agent's background ${noun} ${named}${more} ${verb}. The task moves on at the agent's next turn end with none left running.`;
+}
+
+/**
+ * The background shells the engine still holds the session for, with the
+ * command and start the ledger recorded for each (a shell the ledger never
+ * saw start reads with no command, from now).
+ */
+export function heldBackgroundShells(context: IpcContext, sessionId: string): OpenBackgroundShell[] {
+  const heldIds = context.sessionManager.getHeldBackgroundShellIds(sessionId);
+  if (heldIds.length === 0) return [];
+  const recorded = new Map(context.sessionManager.getOpenWork(sessionId).backgroundShells.map((shell) => [shell.id, shell]));
+  return heldIds.map((shellId) => recorded.get(shellId) ?? { id: shellId, command: null, since: Date.now() });
 }
 
 /**
@@ -169,6 +239,18 @@ export async function runWorkflowStep(
     signal: AbortSignal;
     /** The agent's final reply: what the turn-end rows already read, or read now. */
     readAgentReply: () => Promise<string | null>;
+    /**
+     * Judge a turn whose end was reported held: only background work it left
+     * keeps the session thinking (`SessionManager.isTurnHeldByBackgroundWork`).
+     */
+    acceptHeld?: boolean;
+    /**
+     * The step's move was held at an earlier turn end of this visit, judged
+     * done then. Move now, with no check: the reply is the agent's answer to
+     * the nudge about its background work, which need not repeat its exit line.
+     * Only a `Needs owner:` line in it still stops the move.
+     */
+    releaseHeldMove?: boolean;
   },
 ): Promise<WorkflowStepResult | 'newer-turn' | undefined> {
   const { payload } = input;
@@ -182,15 +264,15 @@ export async function runWorkflowStep(
   };
 
   /**
-   * Where the turn this step judges stands: still the session's latest with
-   * the agent idle on it, still the latest but not idle, or overtaken by
-   * newer work.
+   * Where the turn this step judges stands: still the session's latest and
+   * over (idle, or held by background work for a held pass), still the latest
+   * but not over, or overtaken by newer work.
    */
-  const turnState = (): 'idle' | 'busy' | 'newer-turn' => {
+  const turnState = (): 'settled' | 'busy' | 'newer-turn' => {
     if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'newer-turn';
-    // activity-state-ok: granular, the step judges a finished turn, never a
-    // running one or a permission prompt.
-    return context.sessionManager.getActivityCache()[payload.sessionId] === 'idle' ? 'idle' : 'busy';
+    // The step judges a finished turn, never a running one or a permission
+    // prompt. A held turn end is finished: its agent's Stop landed.
+    return isTurnSettled(context.sessionManager, payload.sessionId, { acceptHeld: input.acceptHeld }) ? 'settled' : 'busy';
   };
 
   const subject = current();
@@ -214,7 +296,7 @@ export async function runWorkflowStep(
     agentReply,
     rows,
   });
-  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit' | 'blockers'> = {}): WorkflowStepResult => (
+  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit' | 'blockers' | 'heldMoveTo' | 'finalLine'> = {}): WorkflowStepResult => (
     { verdict, reason, workSerial: payload.workSerial, ...extra }
   );
   const record = (row: {
@@ -261,6 +343,13 @@ export async function runWorkflowStep(
     return result('waiting', waitingReason);
   }
 
+  if (input.releaseHeldMove) {
+    const afterRead = settled();
+    if (afterRead === null) return;
+    if (afterRead === 'newer-turn') return afterRead;
+    return moveOn({ met: true, reason: HELD_MOVE_RELEASED_REASON }, null, afterRead.task, repos.swimlanes.list());
+  }
+
   const outcome = await checkAutomationConditions(
     deps,
     ask([{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route) }]),
@@ -299,49 +388,63 @@ export async function runWorkflowStep(
   // The call that gave this answer: a retry's, when the first reply skipped it.
   const answerCallId = answer.callId ?? outcome.callId;
   if (!answer.met) return judgeWhyNotDone();
+  return moveOn(answer, answerCallId ?? null, after.task, columns);
 
-  const next = nextOnRoute(columns, after.task, column.id);
-  if (!next) {
-    record({ met: true, reason: answer.reason, detail: 'Done, with nowhere left to go on this board.', backgroundCallId: answerCallId });
+  /** Done: move the task to the next column on its route, unless background work holds the move. */
+  async function moveOn(
+    answer: { met: boolean; reason: string | null },
+    answerCallId: string | null,
+    afterTask: Task,
+    columns: Swimlane[],
+  ): Promise<WorkflowStepResult | 'newer-turn' | undefined> {
+    const next = nextOnRoute(columns, afterTask, column.id);
+    if (!next) {
+      record({ met: true, reason: answer.reason, detail: 'Done, with nowhere left to go on this board.', backgroundCallId: answerCallId });
+      return result('done', answer.reason);
+    }
+    const held = heldMoveReason(context, payload.sessionId);
+    if (held) {
+      record({ met: true, reason: answer.reason, detail: `Step done. ${held}`, backgroundCallId: answerCallId });
+      return result('move-held', answer.reason, { heldMoveTo: next.name });
+    }
+    const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
+    // Recorded once the move has an outcome, so the log never says a task moved
+    // when the move was refused. Either way the row marks this reply as judged.
+    try {
+      await handleTaskMove(
+        context,
+        { taskId: task.id, targetSwimlaneId: next.id, targetPosition: repos.tasks.list(next.id).length },
+        'workflow',
+        payload.projectId,
+        projectPath,
+        // The step runs inside the turn-end group, which its own move must not stop.
+        { moveReason: 'Step done', fromTurnEndGroup: true },
+      );
+    } catch (error) {
+      // Paused while the move waited for the task lock, which then refused the
+      // workflow's own move: the Pause working, as `settled` reads one pressed
+      // during the check. Nothing is recorded, so the reply is judged again
+      // after Resume.
+      if (!workflowStepApplies(task, payload.projectId)) return;
+      const message = error instanceof Error ? error.message : String(error);
+      record({ met: true, reason: answer.reason, detail: `Step done, but the move to ${next.name} failed: ${message}`, backgroundCallId: answerCallId });
+      // Logged here, not thrown: the caller retries the move on recovery's schedule.
+      console.error(`[WORKFLOW] Task ${task.id.slice(0, 8)}'s step was done, but its move to ${next.name} failed:`, error);
+      return result('move-failed', `the move to ${next.name} failed: ${message}`);
+    }
+    // A move a newer one superseded returns without moving the task.
+    if (repos.tasks.getById(task.id)?.swimlane_id !== next.id) {
+      record({ met: true, reason: answer.reason, detail: `Step done, but the task was moved elsewhere before it reached ${next.name}.`, backgroundCallId: answerCallId });
+      return result('done', answer.reason);
+    }
+    record({
+      met: true,
+      reason: answer.reason,
+      detail: next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`,
+      backgroundCallId: answerCallId,
+    });
     return result('done', answer.reason);
   }
-  const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
-  // Recorded once the move has an outcome, so the log never says a task moved
-  // when the move was refused. Either way the row marks this reply as judged.
-  try {
-    await handleTaskMove(
-      context,
-      { taskId: task.id, targetSwimlaneId: next.id, targetPosition: repos.tasks.list(next.id).length },
-      'workflow',
-      payload.projectId,
-      projectPath,
-      // The step runs inside the turn-end group, which its own move must not stop.
-      { moveReason: 'Step done', fromTurnEndGroup: true },
-    );
-  } catch (error) {
-    // Paused while the move waited for the task lock, which then refused the
-    // workflow's own move: the Pause working, as `settled` reads one pressed
-    // during the check. Nothing is recorded, so the reply is judged again
-    // after Resume.
-    if (!workflowStepApplies(task, payload.projectId)) return;
-    const message = error instanceof Error ? error.message : String(error);
-    record({ met: true, reason: answer.reason, detail: `Step done, but the move to ${next.name} failed: ${message}`, backgroundCallId: answerCallId });
-    // Logged here, not thrown: the caller retries the move on recovery's schedule.
-    console.error(`[WORKFLOW] Task ${task.id.slice(0, 8)}'s step was done, but its move to ${next.name} failed:`, error);
-    return result('move-failed', `the move to ${next.name} failed: ${message}`);
-  }
-  // A move a newer one superseded returns without moving the task.
-  if (repos.tasks.getById(task.id)?.swimlane_id !== next.id) {
-    record({ met: true, reason: answer.reason, detail: `Step done, but the task was moved elsewhere before it reached ${next.name}.`, backgroundCallId: answerCallId });
-    return result('done', answer.reason);
-  }
-  record({
-    met: true,
-    reason: answer.reason,
-    detail: next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`,
-    backgroundCallId: answerCallId,
-  });
-  return result('done', answer.reason);
 
   /**
    * Not done. Work of the agent's own still open by its hook events is still
@@ -355,7 +458,8 @@ export async function runWorkflowStep(
     const stillRunning = openBackgroundWork(context, payload.sessionId);
     if (stillRunning) {
       record({ met: false, reason: answer.reason, detail: `Not done yet, still working: ${stillRunning}.`, backgroundCallId: answerCallId });
-      return result('working', answer.reason);
+      // The line it was judged on, so a wake that only repeats it pays for no second check.
+      return result('working', answer.reason, { finalLine: finalMatchLine(agentReply) });
     }
     if (!agentReply?.trim()) {
       record({ met: false, reason: answer.reason, detail: `Not done yet: ${notDone}`, backgroundCallId: answerCallId });

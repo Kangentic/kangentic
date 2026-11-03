@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { canColumnRun, canTaskRunAutomations } from '../../../shared/automation-manifest';
+import { automationMoveTargetName, canColumnRun, canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { englishText } from '../../../shared/i18n/english';
 import type { ColumnAutomation, Swimlane, Task, TaskMoveRecordOrigin } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
+import { isTurnSettled } from '../../pty/turn-settled';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -14,21 +15,28 @@ import { showAutomationNotification } from '../shared/show-automation-notificati
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { frequencyLimitReason } from '../automation-runner';
-import { hasCondition, needsAgentReply } from '../row-guards';
+import { hasCondition, hasFinalLine, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
-import { runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
+import { resolveMoveTarget, routeOf } from '../move-target';
+import { heldMoveReason, runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
 import {
   afterWorkflowStep,
   armWorkflowRecoveryOnIdle,
+  holdRowMoveForBackgroundWork,
+  noteHeldTurnDrained,
   noteRecoveryAttemptDropped,
   noteRecoveryTurnEnded,
   noteRecoveryTurnFailed,
   noteWorkflowSessionActivity,
+  repeatsWorkingVerdict,
   resumeWorkflowRecovery,
   runRecoveryAttempt,
   setRecoveryAttemptRunner,
   startWorkflowRecoveryOver,
 } from '../../workflows/workflow-recovery';
+import { clearHeldMove, getHeldMove, getRecoveryEntry, setHeldMove, type HeldMove } from '../../workflows/workflow-recovery-state';
+import { needsOwnerQuestion } from '../../../shared/workflow-needs-owner';
+import { finalMatchLine } from '../../../shared/final-line-match';
 import { setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
 import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
@@ -139,6 +147,16 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  * - **The turn that answers an expired conversation's recap runs nothing.**
  *   The recap asks the agent to summarize and wait (`recap-turns.ts`), so its
  *   reply is a report for the user, not the column's work.
+ * - **A running workflow's turn is judged at its Stop, even with background
+ *   work still running.** A turn end waits for the work the turn left to
+ *   drain, and a hung command never drains: one held a finished workflow task
+ *   nearly nine hours, its exit line unread. So a workflow task's held turn
+ *   end (`'turn-ended-held'`) runs the `Needs owner:` read, the step check and
+ *   the rows behind a Text match at once; the rows with no Text match wait for
+ *   the drain, whose pass runs only them (`drainOfHeld`). Off a workflow
+ *   nothing changes. A move either would make waits while that work is open
+ *   (`heldMoveReason`), recovery nudges at once naming it, and the move runs at
+ *   the next turn end with none open (`settleHeldMove`).
  * - **A workflow step that does not move the task on is recovered**
  *   (`workflow-recovery.ts`). Its verdict arms the recovery, and so does a
  *   resume whose reply was already judged (a restart) and a commit to idle
@@ -175,6 +193,13 @@ interface PassRequest {
    * while the task is still there.
    */
   reclaimedForColumnId?: string;
+  /**
+   * A held turn end (`'turn-ended-held'`): the agent's Stop landed and only
+   * background work it left keeps the session thinking. Runs for a running
+   * workflow's task only: the `Needs owner:` read, the step check and the rows
+   * behind a Text match. The rest wait for the drain.
+   */
+  held?: boolean;
 }
 
 interface TaskPassState {
@@ -184,6 +209,24 @@ interface TaskPassState {
 
 const passes = new Map<string, TaskPassState>();
 
+/**
+ * The turn each session's held pass judged (its `workSerial`), so the drain's
+ * turn end of that same turn runs only what the held pass left. Recorded at
+ * the end of a held pass that judged the turn, never at its start: a pass that
+ * found the agent busy, was abandoned or threw judged nothing, and its drain
+ * judges the turn in full. Read by the drain's own pass, which runs after the
+ * held one (`schedulePass` runs a task's passes one at a time).
+ */
+const heldPassesServed = new Map<string, number>();
+
+/** Is this turn end the drain of a turn its held pass judged? Takes the record. */
+function takeHeldPassServed(payload: TurnEndedPayload): boolean {
+  if (payload.heldReported !== true) return false;
+  const served = heldPassesServed.get(payload.sessionId) === payload.workSerial;
+  heldPassesServed.delete(payload.sessionId);
+  return served;
+}
+
 export function registerTurnEndAutomations(context: IpcContext): void {
   context.sessionManager.on('turn-ended', (payload: TurnEndedPayload) => {
     // Synchronous, ahead of the immediate: the engine emits the idle's
@@ -192,8 +235,14 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // A pass for an older turn that resumes before this one is scheduled
     // must find the count moved too.
     noteTurnEnded(payload.sessionId);
-    // A recovery nudge waiting on this turn ran, so it counts.
-    noteRecoveryTurnEnded(payload.sessionId);
+    // A drain of a held turn keeps the held pass's record for its own pass to
+    // read: that pass runs after the held one, which records the turn only once
+    // it has judged it. Any other turn end leaves no held turn to drain.
+    const heldReported = payload.heldReported === true;
+    if (!heldReported) heldPassesServed.delete(payload.sessionId);
+    // A recovery nudge waiting on this turn ran, so it counts. Said once per
+    // turn: the held turn end already said it for this one.
+    if (!heldReported) noteRecoveryTurnEnded(payload.sessionId);
     const marks = {
       userWorkMarkAtTurnEnd: userWorkMark(payload.sessionId),
       turnEndMarkAtTurnEnd: turnEndMark(payload.sessionId),
@@ -202,6 +251,21 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // even a DB read belongs after it has unwound.
     setImmediate(() => {
       void schedulePass(context, { payload, catchUp: false, ...marks });
+    });
+  });
+  // A turn the agent ended, held by background work it left (a hung command
+  // that never drains held one finished workflow task nearly nine hours). A
+  // running workflow's step reads the reply now; everything else waits for
+  // the drain, as before. The turn-end count is the drain's to move, so the
+  // drain's own pass is never taken for older work.
+  context.sessionManager.on('turn-ended-held', (payload: TurnEndedPayload) => {
+    noteRecoveryTurnEnded(payload.sessionId);
+    const marks = {
+      userWorkMarkAtTurnEnd: userWorkMark(payload.sessionId),
+      turnEndMarkAtTurnEnd: turnEndMark(payload.sessionId),
+    };
+    setImmediate(() => {
+      void schedulePass(context, { payload, catchUp: false, held: true, ...marks });
     });
   });
   // Off the spawn's stack too: the resume writes the task's session id after
@@ -270,6 +334,7 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // Gone before its recap turn ended: what waited on it is not sent.
     forgetRecapSession(sessionId, false);
     forgetAbandonedTurnSession(sessionId);
+    heldPassesServed.delete(sessionId);
   });
 }
 
@@ -521,8 +586,14 @@ function resolveSubject(
 
 async function runPass(context: IpcContext, request: PassRequest): Promise<void> {
   const { payload } = request;
-  // Judged before any early return, so the mark ends with the one turn it was for.
+  const held = request.held === true;
+  // The drain of a turn its held pass judged: only the rows with no Text match
+  // run. The step and the Text match rows were the held pass's.
+  const drainOfHeld = !held && takeHeldPassServed(payload);
   const recapTurn = isRecapTurn(payload.sessionId, payload.turnStartedAt);
+  // A held pass never reads a recap turn; the drain's pass does, and ends the
+  // mark with the one turn it was for. Judged before any other early return.
+  if (held && recapTurn) return;
   const recapKind = recapTurn ? recapKindOf(payload.sessionId) : null;
   if (recapTurn) forgetRecapSession(payload.sessionId);
   const subject = resolveSubject(context, payload);
@@ -537,6 +608,19 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   const rows = repos.automations.getForTrigger(column.id, 'turn_end');
   const stepApplies = workflowStepApplies(task, payload.projectId);
   if (rows.length === 0 && !stepApplies) return;
+  // Off a running workflow, a held turn end runs nothing: the column's rows
+  // wait for the background work to drain, as they always have.
+  if (held && !stepApplies) return;
+
+  // A move this visit held on background work goes before anything else. One
+  // held by another session's work is gone with that session: the reply is
+  // judged as any other.
+  const heldMove = stepApplies ? getHeldMove(task.id) : undefined;
+  if (heldMove && heldMove.sessionId !== payload.sessionId) clearHeldMove(task.id);
+  else if (heldMove && heldMove.columnId === column.id) {
+    const released = await settleHeldMove(context, request, subject, heldMove);
+    if (released !== 'judge') return;
+  }
 
   if (recapTurn) {
     // No run record. An expired recap asks the agent to wait for the user, so
@@ -568,6 +652,10 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   // no reason.
   const pending: ColumnAutomation[] = [];
   for (const row of rows) {
+    // A held turn end runs the rows behind a Text match, which read the reply
+    // it ended on. The rest keep waiting for the drain, which runs only them.
+    if (held && !hasFinalLine(row)) continue;
+    if (drainOfHeld && hasFinalLine(row)) continue;
     if (automationRegistry.get(row.type) === undefined
       || !canColumnRun(row.type, facts, 'turn_end').ok
       || runs.hasRunSince(row.id, task.id, visitStartedAt)) continue;
@@ -598,14 +686,22 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     );
     return;
   }
-  if (pending.length === 0 && !stepApplies) return;
+  // The drain of a turn the held pass judged: the step was the held pass's.
+  const stepRuns = stepApplies && !drainOfHeld;
+  if (drainOfHeld && stepApplies && task.workflow_id) {
+    noteHeldTurnDrained(
+      context,
+      { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: task.workflow_id },
+    );
+  }
+  if (pending.length === 0 && !stepRuns) return;
 
   const controller = new AbortController();
   const releaseGroup = trackTurnEndGroup(task.id, controller);
   try {
     // The turn's bytes may still be landing: wait out the CLI's last paint.
-    const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal });
-    const outcome = turnSettled(context, payload, settled, `in ${column.name}`);
+    const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal, acceptHeld: held });
+    const outcome = turnSettled(context, payload, settled, `in ${column.name}`, held);
     if (outcome === 'busy') {
       for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, AGENT_NOT_IDLE_REASON);
       return;
@@ -625,8 +721,12 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     };
 
     const rowsOutcome = pending.length > 0
-      ? await runRows(context, payload, { task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply })
-      : { messagedAgent: false, newerTurn: false };
+      ? await runRows(context, payload, {
+        task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply,
+        acceptHeld: held,
+        holdMovesForBackgroundWork: stepApplies,
+      })
+      : { messagedAgent: false, newerTurn: false, heldMove: false };
     // The workflow's own step comes after the column's rows: a row that moved
     // the task leaves the step nothing to do, and the step reads where the task
     // is now. A row that gave the agent a message started its next turn, so this
@@ -634,12 +734,123 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     // A newer turn abandons the whole pass, the step's paid check included.
     // Rows that ran are not run again if the pass is judged after all: each
     // runs once a visit.
+    // A row whose move was held stands in for the move: the step has nothing
+    // to add, and recovery nudges about the work that holds it.
+    // A held wake that only repeats this visit's `working` verdict (a
+    // background job's event answered with the same last line) pays for no
+    // second check: it could only answer the same.
+    const repeatsWorking = held && stepRuns
+      && repeatsWorkingVerdict(task.id, column.id, finalMatchLine(await readReply()));
+    if (repeatsWorking) {
+      console.log(`[turn-end] Task ${task.id.slice(0, 8)}'s held turn repeats its working verdict in ${column.name}; not judged again.`);
+    }
+    // A held pass that got this far judged the turn, unless the step it owed
+    // went unanswered (the turn busy again, the pass aborted).
+    let judgedHeldTurn = held;
     if (rowsOutcome.newerTurn) {
       abandonForNewerWork(context, request, column.id);
-    } else if (stepApplies && !controller.signal.aborted && !rowsOutcome.messagedAgent) {
-      const step = await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
-      if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
-      else if (step) handOnStepVerdict(context, payload, task, column.id, step);
+    } else if (stepRuns && !repeatsWorking && !rowsOutcome.messagedAgent && !rowsOutcome.heldMove) {
+      judgedHeldTurn = false;
+      if (!controller.signal.aborted) {
+        const step = await runWorkflowStep(context, {
+          payload,
+          columnId: column.id,
+          signal: controller.signal,
+          readAgentReply: readReply,
+          acceptHeld: held,
+        });
+        if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
+        else if (step) {
+          judgedHeldTurn = held;
+          handOnStepVerdict(context, payload, task, column.id, step);
+        }
+      }
+    }
+    if (judgedHeldTurn) heldPassesServed.set(payload.sessionId, payload.workSerial);
+  } finally {
+    releaseGroup();
+    clearSpawnProgress(context.mainWindow, task.id);
+  }
+}
+
+/** Hold a released move again, unless a newer hold or a stopped recovery replaced it. */
+function restoreHeldMove(taskId: string, heldMove: HeldMove): void {
+  if (getHeldMove(taskId) === undefined && getRecoveryEntry(taskId) !== undefined) setHeldMove(taskId, heldMove);
+}
+
+/**
+ * A move this visit held on background work its agent left (`HeldMove`). At a
+ * turn end with that work still open it stays held, and recovery's schedule
+ * nudges again. With none open it runs now, whatever the reply says: the
+ * reply answers the nudge about that work and need not repeat the exit line.
+ * A reply that ends on `Needs owner:` is the one exception: the held move is
+ * dropped and the step judges the reply, which waits on the owner.
+ * `'judge'` hands the turn end to the ordinary pass.
+ */
+async function settleHeldMove(
+  context: IpcContext,
+  request: PassRequest,
+  subject: TurnEndSubject,
+  heldMove: HeldMove,
+): Promise<'judge' | 'handled'> {
+  const { payload } = request;
+  const { task, column, repos } = subject;
+  if (heldMoveReason(context, payload.sessionId) !== null) return 'handled';
+  const acceptHeld = request.held === true;
+  const controller = new AbortController();
+  const releaseGroup = trackTurnEndGroup(task.id, controller);
+  try {
+    const settled = await waitForTurnCompletion(context.sessionManager, payload.sessionId, { signal: controller.signal, acceptHeld });
+    const outcome = turnSettled(context, payload, settled, `in ${column.name}`, acceptHeld);
+    if (outcome === 'newer') abandonForNewerWork(context, request, column.id);
+    if (outcome !== 'go') return 'handled';
+    const sessionRepo = new SessionRepository(getProjectDb(payload.projectId));
+    const reply = await readAgentReply(payload, sessionRepo);
+    if (controller.signal.aborted) return 'handled';
+    clearHeldMove(task.id);
+    if (needsOwnerQuestion(reply) !== null) return 'judge';
+    console.log(`[turn-end] Running task ${task.id.slice(0, 8)}'s held move in ${column.name}: the background work that held it has ended.`);
+    try {
+      if (heldMove.kind === 'step') {
+        const step = await runWorkflowStep(context, {
+          payload,
+          columnId: column.id,
+          signal: controller.signal,
+          readAgentReply: async () => reply,
+          acceptHeld,
+          releaseHeldMove: true,
+        });
+        if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
+        else if (step) handOnStepVerdict(context, payload, task, column.id, step);
+        // A release that did not run the move (the turn busy again, the move
+        // failed) holds it again: judged anew, a reply that answered the nudge
+        // and did not repeat the exit line reads as not done.
+        if (step === undefined || (step !== 'newer-turn' && step.verdict === 'move-failed')) restoreHeldMove(task.id, heldMove);
+        return 'handled';
+      }
+      const row = repos.automations.getForTrigger(column.id, 'turn_end').find((candidate) => candidate.id === heldMove.rowId);
+      // The row was deleted since: the ordinary pass judges the reply.
+      if (!row) return 'judge';
+      const outcomeOfRows = await runRows(context, payload, {
+        task,
+        column,
+        repos,
+        sessionRepo,
+        pending: [row],
+        visitStartedAt: repos.taskMoves.visitStartedAt(task.id, column.id),
+        controller,
+        readReply: async () => reply,
+        acceptHeld,
+        holdMovesForBackgroundWork: true,
+        releaseHeldMoves: new Set([row.id]),
+      });
+      if (outcomeOfRows.newerTurn) abandonForNewerWork(context, request, column.id);
+      // The row did not move the task (skipped, or its move failed): held again.
+      else if (repos.tasks.getById(task.id)?.swimlane_id === column.id) restoreHeldMove(task.id, heldMove);
+      return 'handled';
+    } catch (error) {
+      restoreHeldMove(task.id, heldMove);
+      throw error;
     }
   } finally {
     releaseGroup();
@@ -757,10 +968,16 @@ async function runRows(
     visitStartedAt: string | null;
     controller: AbortController;
     readReply: () => Promise<string | null>;
+    /** A held turn end's rows: the session may still be held by the background work its turn left. */
+    acceptHeld?: boolean;
+    /** A running workflow's task: a move waits while background work its agent left is open. */
+    holdMovesForBackgroundWork?: boolean;
+    /** Held moves of this visit to run now (`RunAutomationsOptions.releaseHeldMoves`). */
+    releaseHeldMoves?: ReadonlySet<string>;
   },
-): Promise<{ messagedAgent: boolean; newerTurn: boolean }> {
+): Promise<{ messagedAgent: boolean; newerTurn: boolean; heldMove: boolean }> {
   const { task, column, repos, sessionRepo, pending, visitStartedAt, controller } = input;
-  const none = { messagedAgent: false, newerTurn: false };
+  const none = { messagedAgent: false, newerTurn: false, heldMove: false };
   const runs = repos.automationRuns;
   const project = context.projectRepo.getById(payload.projectId);
   const projectPath = project?.path ?? null;
@@ -819,16 +1036,19 @@ async function runRows(
   const current = resolveSubject(context, payload);
   if (!current || current.column.id !== column.id) return none;
   if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) {
-    return { messagedAgent: false, newerTurn: true };
+    return { messagedAgent: false, newerTurn: true, heldMove: false };
   }
-  // activity-state-ok: granular, a row must not land on a running turn or a
-  // permission prompt. On the same turn this is the session leaving idle with
-  // no work reported, as a permission prompt with no tool hook before it does,
-  // and no turn end may follow it, so the rows say why they did not run.
-  if (context.sessionManager.getActivityCache()[payload.sessionId] !== 'idle') {
+  // A row must not land on a running turn or a permission prompt. On the same
+  // turn this is the session leaving idle with no work reported, as a
+  // permission prompt with no tool hook before it does, and no turn end may
+  // follow it, so the rows say why they did not run. A held turn end is over:
+  // its agent's Stop landed.
+  if (!isTurnSettled(context.sessionManager, payload.sessionId, { acceptHeld: input.acceptHeld })) {
     for (const row of runnable) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, AGENT_NOT_IDLE_REASON);
     return none;
   }
+  // Read now, next to the rows: a move waits while background work is open.
+  const holdMoves = input.holdMovesForBackgroundWork ? heldMoveReason(context, payload.sessionId) ?? undefined : undefined;
 
   let messagedAgent = false;
   const summary = await engine.executeTransition(current.task, column, 'turn_end', {
@@ -848,6 +1068,7 @@ async function runRows(
         mode,
         verifier: resolveInjectionVerifier(current.task.agent, sessionRepo, task.id),
         signal: runSignal,
+        acceptHeld: input.acceptHeld,
       });
       // Counted once it landed: a delivery that failed starts no turn.
       messagedAgent = true;
@@ -862,9 +1083,20 @@ async function runRows(
     }),
     showNotification: (notification) => showAutomationNotification(context, notification),
     onProgress: createProgressCallback(context.mainWindow, task.id),
+    holdMoves,
+    releaseHeldMoves: input.releaseHeldMoves,
   });
   reportAutomationFailures(context, summary, current.task, payload.projectId);
-  return { messagedAgent, newerTurn: false };
+  const heldRow = summary.heldMoveRowId ? runnable.find((row) => row.id === summary.heldMoveRowId) : undefined;
+  if (heldRow && current.task.workflow_id) {
+    const target = resolveMoveTarget(repos.swimlanes.list(), column.id, automationMoveTargetName(heldRow.type, heldRow.config), routeOf(current.task));
+    holdRowMoveForBackgroundWork(
+      context,
+      { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: current.task.workflow_id },
+      { rowId: heldRow.id, targetName: target.ok ? target.column.name : null, workSerial: payload.workSerial },
+    );
+  }
+  return { messagedAgent, newerTurn: false, heldMove: heldRow !== undefined };
 }
 
 /**
@@ -900,19 +1132,22 @@ function turnSettled(
   payload: TurnEndedPayload,
   settled: TurnCompletionResult,
   where: string,
+  acceptHeld = false,
 ): 'go' | 'stop' | 'newer' | 'busy' {
   if (settled === 'aborted' || settled === 'exited') return 'stop';
   if (!context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)) return 'newer';
   if (settled === 'completed') return 'go';
   const activity = context.sessionManager.getActivityCache()[payload.sessionId] ?? 'unknown';
-  // activity-state-ok: granular, a running turn or a permission prompt must stop the pass.
-  const idle = activity === 'idle';
+  // A running turn or a permission prompt must stop the pass. A held turn end,
+  // for a pass that asked, is over: a CLI painting its background work's status
+  // never goes quiet, as below.
+  const turnOver = isTurnSettled(context.sessionManager, payload.sessionId, { acceptHeld });
   console.warn(
     `[turn-end] Gave up waiting for task ${payload.taskId.slice(0, 8)}'s turn to settle ${where} `
     + `(session ${payload.sessionId.slice(0, 8)}, activity ${activity}), so `
-    + (idle ? 'the pass goes on without a quiet terminal.' : 'nothing ran.'),
+    + (turnOver ? 'the pass goes on without a quiet terminal.' : 'nothing ran.'),
   );
-  return idle ? 'go' : 'busy';
+  return turnOver ? 'go' : 'busy';
 }
 
 /**

@@ -215,9 +215,9 @@ Read the durable activity-disposition history for a task or session: every span 
 
 Response shape:
 
-- `intervals` - raw rows (`id`, `sessionId`, `taskId`, `disposition`, `state`, `previousState`, `enterTrigger`, `exitTrigger`, `startedMs`, `startedAt`, `endedMs`, `endedAt`, `durationMs`, `recordedAt`), oldest first. `startedAt`/`endedAt` are UTC ISO 8601 mirrors of `startedMs`/`endedMs` (stored, not computed on read) - `endedAt` is `null` exactly when `endedMs` is.
+- `intervals` - raw rows (`id`, `sessionId`, `taskId`, `disposition`, `state`, `previousState`, `enterTrigger`, `exitTrigger`, `startedMs`, `startedAt`, `endedMs`, `endedAt`, `durationMs`, `recordedAt`, `reasonKind`), oldest first. `startedAt`/`endedAt` are UTC ISO 8601 mirrors of `startedMs`/`endedMs` (stored, not computed on read) - `endedAt` is `null` exactly when `endedMs` is. `reasonKind` says what kept the session in that state: an `active` row with `background-shell` is time the agent's turn was over and only a command it left running held the session; `null` on rows from before the field.
 - `totals` - `{ activeMs, idleMs }`, summing `durationMs` across CLOSED intervals only.
-- `openIntervals` - intervals still in progress (`durationMs` is `null` until closed), each with `startedAt` and a `liveElapsedMs` computed at read time so a still-parked task is not silently excluded from an elapsed-time answer.
+- `openIntervals` - intervals still in progress (`durationMs` is `null` until closed), each with its `reasonKind`, `startedAt` and a `liveElapsedMs` computed at read time so a still-parked task is not silently excluded from an elapsed-time answer.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

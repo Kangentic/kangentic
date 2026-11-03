@@ -248,6 +248,13 @@ export interface TurnEndedPayload {
    * its transcript with its own clock.
    */
   transcriptAnchor: TranscriptAnchor | null;
+  /**
+   * True on a drain's turn end whose turn was already reported held
+   * (`'turn-ended-held'`, `ActivityEngineCallbacks.onTurnEndedHeld`), so a
+   * consumer that acted then does not act on the same turn again. Absent or
+   * false everywhere else.
+   */
+  heldReported?: boolean;
 }
 
 /**
@@ -716,7 +723,7 @@ export class SessionManager extends EventEmitter {
       // listeners here (column automations, workflow steps) act only on a turn
       // the agent finished. A listener that throws must not unwind the engine's
       // commit, so the emit is guarded.
-      onTurnEnded: (sessionId, turnStartedAt, workSerial) => {
+      onTurnEnded: (sessionId, turnStartedAt, workSerial, heldReported) => {
         const session = this.registry.get(sessionId);
         if (!session || session.transient) return;
         const payload: TurnEndedPayload = {
@@ -728,11 +735,34 @@ export class SessionManager extends EventEmitter {
           turnStartedAt,
           workSerial,
           transcriptAnchor: this.takeTurnAnchor(sessionId, turnStartedAt),
+          ...(heldReported ? { heldReported: true } : {}),
         };
         try {
           this.emit('turn-ended', payload);
         } catch (error) {
           console.error(`[SESSION] turn-ended listener threw for ${sessionId.slice(0, 8)}:`, error);
+        }
+      },
+      // The turn ended and only background work it left holds the session.
+      // The anchor is read, not taken: the drain's own turn end takes it, and a
+      // tool-less wake of the same turn still reads from where the turn began.
+      onTurnEndedHeld: (sessionId, turnStartedAt, workSerial) => {
+        const session = this.registry.get(sessionId);
+        if (!session || session.transient) return;
+        const payload: TurnEndedPayload = {
+          sessionId,
+          taskId: session.taskId,
+          projectId: session.projectId,
+          agentSessionId: session.agentSessionId ?? null,
+          isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
+          turnStartedAt,
+          workSerial,
+          transcriptAnchor: this.peekTurnAnchor(sessionId, turnStartedAt),
+        };
+        try {
+          this.emit('turn-ended-held', payload);
+        } catch (error) {
+          console.error(`[SESSION] turn-ended-held listener threw for ${sessionId.slice(0, 8)}:`, error);
         }
       },
       onTurnStarted: (sessionId, turnStartedAt, cause) => this.noteTurnStarted(sessionId, turnStartedAt, cause),
@@ -1830,6 +1860,12 @@ export class SessionManager extends EventEmitter {
   private takeTurnAnchor(sessionId: string, turnStartedAt: number | null): TranscriptAnchor | null {
     const stored = this.turnTranscriptAnchors.get(sessionId);
     this.turnTranscriptAnchors.delete(sessionId);
+    return stored && stored.turnStartedAt === turnStartedAt ? stored.anchor : null;
+  }
+
+  /** The anchor `takeTurnAnchor` would return, left in place for it. */
+  private peekTurnAnchor(sessionId: string, turnStartedAt: number | null): TranscriptAnchor | null {
+    const stored = this.turnTranscriptAnchors.get(sessionId);
     return stored && stored.turnStartedAt === turnStartedAt ? stored.anchor : null;
   }
 
@@ -4219,6 +4255,44 @@ export class SessionManager extends EventEmitter {
    */
   currentWorkSerial(sessionId: string): number | undefined {
     return this.telemetry.getWorkSerial(sessionId);
+  }
+
+  /**
+   * Is the session's latest turn over, its end reported held: its agent's Stop
+   * landed, and only background work the turn left running keeps it thinking
+   * (`'turn-ended-held'`)? Its agent sits at its prompt and takes input.
+   */
+  isTurnHeldByBackgroundWork(sessionId: string): boolean {
+    return this.telemetry.isTurnHeldByBackgroundWork(sessionId);
+  }
+
+  /**
+   * The named background shells the activity engine still holds the session
+   * for: live by the watcher's last look, never an exempt service. Narrower
+   * than `getOpenWork().backgroundShells`, which also keeps a shell the engine
+   * drained on a guess until its real end arrives.
+   */
+  getHeldBackgroundShellIds(sessionId: string): string[] {
+    return this.telemetry.getHeldBackgroundShellIds(sessionId);
+  }
+
+  /**
+   * How many bytes a background shell's output file holds, or null when the
+   * agent keeps none Kangentic can find. A hint for a person or an agent
+   * reading about the shell, never a hang signal: a gate that redirects to its
+   * own log holds 0 bytes here while it runs fine.
+   */
+  async getBackgroundShellOutputBytes(sessionId: string, shellId: string): Promise<number | null> {
+    const session = this.registry.get(sessionId);
+    if (!session) return null;
+    const outputFile = session.agentParser?.runtime?.backgroundShells
+      ?.resolveOutputFile({ cwd: session.cwd, shellId, cliTarget: session.cliTarget }) ?? null;
+    if (!outputFile) return null;
+    try {
+      return (await fsPromises.stat(outputFile)).size;
+    } catch {
+      return null;
+    }
   }
 
   /**

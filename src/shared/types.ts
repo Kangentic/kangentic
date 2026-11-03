@@ -2365,6 +2365,18 @@ export interface SessionEvent {
    */
   noActivityHold?: boolean;
   /**
+   * On a named `background_shell_start`: the holder ends by itself this many
+   * ms after it started, whatever its end notice says. The open-work ledger
+   * closes it then, and the engine drains it, a minute's grace later
+   * (`SessionTelemetry`), so a reworded end notice cannot keep a dead holder
+   * open: one CLI release renamed Claude's Monitor timeout, and every expired
+   * Monitor read as running work for good. Undefined means no limit reported.
+   *
+   * Source: Claude's Monitor PostToolUse `tool_response.timeoutMs`, for a
+   * Monitor that is not `persistent` (`extractHolderTimeout`).
+   */
+  expiresAfterMs?: number;
+  /**
    * On a `tool_start`: the call starts a subagent (Claude's Agent tool), so a
    * `subagent_start` may be its own approved call running. The engine closes a
    * permission prompt on a `subagent_start` only when the call it awaited

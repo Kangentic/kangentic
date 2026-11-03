@@ -1,0 +1,8 @@
+{"ts":1793613900000,"type":"session_start"}
+{"ts":1793613901000,"type":"prompt","detail":"Run the migration build, then review the domain code."}
+{"ts":1793613902000,"type":"tool_start","tool":"Bash","toolId":"toolu_hung_python","detail":"python - <<'EOF' 2>/dev/null || node -e \"1\""}
+{"ts":1793614206000,"type":"background_shell_start","tool":"Bash","toolId":"toolu_hung_python","detail":"boeb2h7eo"}
+{"ts":1793614210000,"type":"tool_start","tool":"Read","toolId":"toolu_read_plan","detail":"docs/plan.md"}
+{"ts":1793614211000,"type":"tool_end","tool":"Read","toolId":"toolu_read_plan"}
+{"ts":1793614289000,"type":"idle"}
+{"ts":1793614400000,"type":"idle"}
