@@ -15,7 +15,12 @@ sources:
   - resource: src/main/remote/remote-launch.ts
   - resource: src/main/remote/remote-session-relay.ts
   - resource: src/main/remote/helper/helper-server.ts
+  - resource: src/main/remote/helper/host-command.ts
+  - resource: src/main/remote/host-file-sync.ts
+  - resource: src/main/agent/shared/remote-files.ts
   - resource: scripts/build-host.mjs
+  - resource: scripts/lib/deterministic-tar.mjs
+  - resource: scripts/verify-host-manifest.js
   - resource: src/renderer/components/settings/tabs/SshTab.tsx
   - resource: src/renderer/components/dialogs/AddProjectDialogs.tsx
   - resource: .claude/rules/ssh-remote.md
@@ -28,7 +33,9 @@ Kangentic can run an agent on a Linux machine over SSH. The repo, the agent, its
 
 ## Trust
 
-A host is trusted like this computer. Its agents get the same MCP tools as a local agent, across every project, over a relay on this computer: the token never leaves, and nothing about a host is allowlisted. Adding a host is the trust step, and removing it ends its access. A host's agents can reach every project on the board, as a local agent can.
+A host is trusted like this computer. Its agents get the same MCP tools as a local agent, across every project, and nothing about a host is allowlisted. Adding a host is the trust step, and removing it ends its access. A host's agents can reach every project on the board, as a local agent can.
+
+The host never connects to Kangentic's MCP server, which listens on this computer's loopback address only: each MCP message crosses the link as a file and this computer posts it. The MCP token is on the host all the same. The agent's MCP config in the session folder holds it, owner-only, because the agent's bridge sends it with every request, and the relay posts with the token the request names. That gives a host nothing it did not already have, since anything that can write the session's hook folder can ask for the same calls. The token is useless off this computer, because only its loopback server accepts it.
 
 ## The ssh program
 
@@ -58,6 +65,7 @@ Kangentic installs a small program on the host under `~/.kangentic/host/<version
 - The app streams its own copy over the connection (the host needs nothing from the internet), and the host checks the SHA-256 before it unpacks anything. A version already complete there is not sent again.
 - The host must be Linux on x86_64 or arm64 with glibc 2.28 or newer. Alpine and other musl hosts are refused with a sentence saying what the host is.
 - `npm run build:host` builds the program on any OS into `dist/host`: one tarball per CPU and a `manifest.json`. A development build reads it from there. The app refuses a manifest whose version is not its own, whose file names leave the folder, whose checksums are not lowercase SHA-256, or whose download addresses are not https.
+- A tarball is written by Kangentic's own tar writer (`scripts/lib/deterministic-tar.mjs`) so the same files always give the same bytes: sorted entries, one fixed time, owner root, a fixed gzip header. The checksum in an installer therefore matches the archive on the release however many times the release workflow runs.
 
 ## Connection state
 
@@ -81,18 +89,32 @@ Add project asks where first once a host exists: This computer, or a host. A hos
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
 - Removing a host removes its projects from Kangentic, suspends their agents and leaves the folders on the host.
 
+## Files an agent edits on a host
+
+An agent's trust, hook and MCP code was written for files on this computer: it merges Kangentic's entry into the user's `~/.gemini/trustedFolders.json` or `<project>/.cursor/mcp.json` and strips it when the session ends. For a CLI on a host those files are on the host, so an adapter does not rewrite that code. It declares the files (`AgentAdapter.remoteFiles()`: paths relative to the CLI's home, paths relative to the project, and which of them hold a secret), and `HostFileSync` (`src/main/remote/host-file-sync.ts`) does the rest:
+
+1. **Pull.** Before `ensureTrust` runs, each declared file is read from the host into the folder the adapter's code already edits: the CLI's home becomes a local mirror folder, the project becomes its local shell folder. A file the host does not have removes the local copy, so a stale one is never sent back.
+2. **Run.** The adapter's trust and command builder run unchanged, merging into the user's own entries.
+3. **Push.** After the command is built, every file that differs from what the host had is written there (executable for `*.sh`, owner-only for the home and for files an adapter marks private, readable otherwise). A file the host changed in the meantime is not overwritten: the spawn fails and says so.
+4. **Restore.** When the session releases, the adapter strips its entries from the local copy and the strip is pushed, so the host's file goes back to what the user had. A host that cannot be reached keeps the files until the next session there.
+
+A project file Kangentic creates on the host is added to the host's `.git/info/exclude`, so it stays out of `git status` and out of an agent's `git add -A`. A file larger than the helper reads whole (1 MB) is refused rather than edited cut short.
+
+The session's own folder on the host (`<project>/.kangentic/sessions/<id>`) holds the settings, the MCP config and the hook script the relay pushes, plus any extra files an agent names (`remoteSessionFiles()`, such as Copilot's config folder). The relay removes the files it pushed when the session is released.
+
+A probe an agent's CLI answers (its hook trust, a chat id, a model list) runs on the host: the helper starts the program through the user's own shell so its PATH applies, brackets its output so a banner printed by `.bashrc` cannot corrupt a JSON answer, and stops its whole process group at the timeout. A shell that cannot run the script (fish, nushell, csh) is replaced by `sh -lc`, which sees only the login PATH.
+
 ## Agents
 
-| Agent | Runs on a host | Run on a real host |
-| --- | --- | --- |
-| Claude Code | Yes | Not yet |
-| The other 13 that declare `supportsWslCli` | Not yet (Phase 4) | No |
+All 14 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run on a real host with its real CLI**: every one is covered by unit tests against a fake host, and the mock CLIs on a Docker host have exercised the path end to end (see below). Real CLIs are the Beta gate.
+
+What is not available over SSH for any agent yet: the transcript and conversation viewer, token and cost figures read from the CLI's own session files, and the session-id pass that reads those files. They read this computer's disk, which holds nothing of the host's, and they degrade to nothing without errors. A session id still arrives from the agent's hooks or its output where the adapter has one.
 
 An agent that cannot run on a host fails the spawn with a sentence saying so.
 
 ## Known limits
 
-- **No release build is wired to the host program yet.** A development build uses `npm run build:host`. An installed build reads `resources/host/manifest.json` and, for an entry that names an `https://` address, downloads that one archive into `<config folder>/host-assets/<version>/` the first time a host of that CPU needs it, checks it against the manifest's SHA-256 (and size), and only then sends it, so the installer grows by a few hundred bytes instead of about 90 MB. The app side is built and tested. Nothing yet publishes the archives with the release or puts the manifest into the installer: `node scripts/build-host.mjs --url-base https://github.com/<owner>/<repo>/releases/download/v<version> --manifest-out <dir>` produces both, and the release workflow has to run it ahead of the packaging legs, attach the archives, and copy the manifest to `resources/host`. Until then a connect from an installed build ends with "This build of Kangentic does not include the program to install on a host", shown on the host's row.
+- **The release path for the host program has not run yet.** A development build uses `npm run build:host`. An installed build reads `resources/host/manifest.json` and downloads the one archive its host's CPU needs from the release into `<config folder>/host-assets/<version>/` the first time it is needed, checks it against the manifest's SHA-256 and size, and only then sends it, so the installer grows by a few hundred bytes instead of about 90 MB. The release workflow's `build-host` job builds both archives, attaches them to the draft release and hands the manifest to every packaging leg, and each leg fails if its packaged `resources/host/manifest.json` is missing or for another version (`docs/releases/deployment.md`, "The host program"). The archives are byte-stable, so a re-run produces the same checksums. None of that has run in a real release yet: the first tagged build is its test, and the download is reachable only once the release is published. Until a build carries the manifest, a connect ends with "This build of Kangentic does not include the program to install on a host", shown on the host's row.
 - **A host with `KillUserProcesses=yes` ends the daemon with the login session that started it.** Phase 0 measured this (`docs/audits/ssh-remote-phase-0-audit.md`): only linger plus `systemd-run --user` keeps it. Kangentic does not detect the setting or change the host, so on such a host the agents end when the session that installed the program ends, and recovery treats them as lost. Enabling linger is the host owner's call.
 - **`ssh` starts on the pty host's terminal thread** when a link dials or redials, which on Windows holds local terminals for one `CreateProcess`.
 - **A remote session has no process-tree watching.** The background-shell watcher, the transcript readers and the session-id filesystem pass read this computer's disk, so they are off for a remote session until the read mirror lands.

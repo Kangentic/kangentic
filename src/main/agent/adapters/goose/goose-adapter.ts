@@ -98,6 +98,10 @@ export class GooseAdapter implements AgentAdapter {
   // `GOOSE_MODE` (which crosses into the distro with the adapter's other
   // variables) and the answer run's target are all it needs.
   readonly supportsWslCli = true;
+  // On a remote host over SSH (#913) the CLI is `goose` from the host's login PATH. Goose edits no
+  // file here, so nothing is declared in `remoteFiles`; `GOOSE_MODE` reaches the host as the spawn's
+  // environment (`buildEnv`), and its provider settings stay in the host's own Goose config.
+  readonly remoteCliName = 'goose';
   // Goose maps each entry to a `GOOSE_MODE` value in buildEnv (not a CLI flag),
   // via GOOSE_MODE_BY_PERMISSION above. Three entries, one per distinct Goose
   // mode Kangentic can reach: `chat`, `smart_approve`, `auto`. `acceptEdits` is

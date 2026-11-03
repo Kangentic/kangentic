@@ -340,7 +340,10 @@ export class QwenCommandBuilder {
    * `mcpServers` are preserved either way.
    */
   private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery, kangenticServer: KangenticMcpServer | null): void {
-    const projectRoot = options.projectRoot || options.cwd;
+    // On an SSH host only the cwd's settings file is pulled from the host (`remoteFiles`), so the
+    // base is read from there: any other folder here is an empty shell folder, and merging from it
+    // would write over the user's settings on the host.
+    const projectRoot = options.cliTarget?.kind === 'ssh' ? options.cwd : (options.projectRoot || options.cwd);
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;

@@ -7,7 +7,9 @@ import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFil
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
-import { CodexHookTrustCheck } from './hook-trust';
+import { CodexHookTrustCheck, readHostCodexVersion } from './hook-trust';
+import { CODEX_WSL_HOOK_COPY_NAME } from './hook-manager';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
@@ -44,6 +46,8 @@ export class CodexAdapter implements AgentAdapter {
   // run in the distro's shell, its hooks through the WSL transport's script,
   // its trust and rollouts in the distro's CODEX_HOME (cli-target.ts).
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `codex` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'codex';
   // The startup banner in its own output names the session (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // `-c mcp_servers.kangentic.*` overrides, the token in the session's env.
@@ -120,6 +124,21 @@ export class CodexAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
+  /**
+   * What a Codex on an SSH host edits outside the session folder: the user's `~/.codex/config.toml`,
+   * where `ensureTrust` appends the folder's trust table (and `$CODEX_HOME` is not honored on a host),
+   * and the hook script copy that the `-c` hook overrides run, relative to the project folder. Hooks,
+   * the MCP server and the task tag all ride `-c` arguments and the session's environment, so
+   * nothing else is written. The legacy `.codex/hooks.json` is never declared: its cleanup is for
+   * files an old Kangentic wrote on this computer.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.codex/config.toml'],
+      project: [`.kangentic/${CODEX_WSL_HOOK_COPY_NAME}`],
+    };
+  }
+
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // Codex DOES have a directory-trust dialog (this was previously
     // documented here as a no-op because it was believed not to). Because
@@ -128,6 +147,12 @@ export class CodexAdapter implements AgentAdapter {
     // answer that carries forward. See trust-manager.ts. A Codex in a WSL
     // distro keeps its trust in the distro's config.toml.
     await ensureWorktreeTrust(workingDirectory, place ?? null);
+    // A Codex on a host is never detected here, so its hook trust is read now, from the host, once
+    // per host and version. A host without a Codex answers no version, and its session goes without hooks.
+    if (place?.kind === 'ssh') {
+      const version = await readHostCodexVersion(place).catch(() => null);
+      if (version) this.hookTrust.startOnHost(place, version);
+    }
     // Every spawn path awaits this before buildCommand, which reads the
     // result synchronously. A read still running after the bound leaves this
     // session without hooks rather than holding the spawn.
@@ -141,7 +166,10 @@ export class CodexAdapter implements AgentAdapter {
       model,
       effort,
       ...rest,
-      codexHookStateOverride: this.hookTrust.stateOverrideFor(agentPath),
+      // A host's confirmed trust is kept by host, since its binary has no path here to look up by.
+      codexHookStateOverride: options.cliTarget?.kind === 'ssh'
+        ? this.hookTrust.stateOverrideForHost(options.cliTarget.hostId)
+        : this.hookTrust.stateOverrideFor(agentPath),
     });
     // buildCodexCommand sweeps any stale legacy `.codex/hooks.json` in the
     // project root whenever eventsOutputPath is present. Hold that root until

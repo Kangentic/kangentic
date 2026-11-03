@@ -18,6 +18,7 @@ import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { antigravityAnswerEvents, antigravityConversationId, antigravityStreamUsage, removeAntigravityConversation } from './answer-stream';
 import type {
@@ -81,6 +82,8 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly kangenticMcp = 'shared-folder' as const;
   /** An agy installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH the CLI is `agy` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'agy';
   // Mapped onto agy's native autonomy flags in the command builder
   // (--mode plan / --mode accept-edits / --dangerously-skip-permissions;
   // no flag = agy's own "request-review" default).
@@ -99,6 +102,20 @@ export class AntigravityAdapter implements AgentAdapter {
   // sessions in one cwd; removeHooks() only strips them when the folder's
   // last session releases. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /**
+   * What an agy on a remote host has edited on the host (#913): the trust store (ensureTrust), the
+   * workspace hooks file (merged with the user's own) and the Kangentic MCP plugin, wholly ours. The
+   * plugin's `mcp_config.json` holds the session's MCP token in plaintext, so it is written owner-only.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    const mcpConfig = '.agents/plugins/kangentic/mcp_config.json';
+    return {
+      home: ['.gemini/antigravity-cli/settings.json'],
+      project: ['.agents/hooks.json', '.agents/plugins/kangentic/plugin.json', mcpConfig],
+      private: [mcpConfig],
+    };
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -193,6 +210,9 @@ export class AntigravityAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // The transcript of an agy on a remote host is on the host; this computer's mirror of its home
+    // never holds it, so polling would only wait.
+    if (place?.kind === 'ssh') return null;
     // The brain-dir transcript appears when the first turn starts; poll
     // briefly since callers locate right after id capture.
     for (let attempt = 0; attempt < 10; attempt++) {

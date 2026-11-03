@@ -1,5 +1,6 @@
 import { QwenDetector } from './detector';
-import { QwenCommandBuilder } from './command-builder';
+import { QwenCommandBuilder, QWEN_WSL_HOOK_COPY_NAME } from './command-builder';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { removeHooks as removeQwenHooks } from './hook-manager';
 import { QwenSessionHistoryParser } from './session-history-parser';
 import { createQwenCommandInjectionVerifier } from './command-injection-verifier';
@@ -54,6 +55,8 @@ export class QwenAdapter implements AgentAdapter {
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   /** A Qwen installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `qwen` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'qwen';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -77,6 +80,21 @@ export class QwenAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+  }
+
+  /**
+   * What a Qwen on an SSH host edits outside the session folder. `ensureTrust` reads the user's
+   * `~/.qwen/settings.json` to learn whether folder trust is on (an empty mirror would read as off
+   * and skip trust) and writes `~/.qwen/trustedFolders.json`. The project's `.qwen/settings.json`
+   * carries the hooks (and the MCP entry on a Qwen too old for `--mcp-config`). Neither settings file
+   * holds a token here: Kangentic's server reaches Qwen through the session's `mcp.json`, which the
+   * session relay sends. The hook script copy is what the hooks run.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.qwen/settings.json', '.qwen/trustedFolders.json'],
+      project: ['.qwen/settings.json', `.kangentic/${QWEN_WSL_HOOK_COPY_NAME}`],
+    };
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {

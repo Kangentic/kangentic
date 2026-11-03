@@ -39,6 +39,11 @@ export class WarpAdapter implements AgentAdapter {
   // transcript and is handed no MCP server, so its own path and `-C` in the
   // distro's form are all it needs.
   readonly supportsWslCli = true;
+  // On a remote host over SSH (#913) the program is `oz` from the host's login PATH, started in the
+  // project's folder on the host (`-C` gets the host path). `oz` has no `--version`, and a remote
+  // project never detects it on this computer. It edits no file Kangentic manages, so nothing is
+  // declared in `remoteFiles`.
+  readonly remoteCliName = 'oz';
 
   private readonly detector = new WarpDetector();
 

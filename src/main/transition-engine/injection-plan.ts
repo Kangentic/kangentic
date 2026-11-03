@@ -426,6 +426,11 @@ export function buildCommandInjectionVerifier(
   // until the CLI comes alive, and the id is resolved on every poll below, so
   // by the time verification actually runs the id is there.
   if (!record) return null;
+  // A verifier reads the agent's own files for the command (its transcript, its input history). A session
+  // on an SSH host wrote them there (#913), so nothing on this computer can confirm a command, and a
+  // verifier that always answers "not confirmed" makes the submit press Enter again until it gives up and
+  // report a failure for every command that worked. The documented fallback is the time-based settle.
+  if (parseStoredCliTarget(record.cli_target)?.kind === 'ssh') return null;
   const needsAgentSessionId = adapter.requiresAgentSessionIdForVerification?.() !== false;
   const recordId = record.id;
   const capturedAgentSessionId = record.agent_session_id;

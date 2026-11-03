@@ -692,7 +692,7 @@ export interface AgentAdapter {
    * startup recovery, and a Command Terminal call it when
    * `reportsLaunchSessionId` is not true.
    */
-  createSessionId?(cliPath: string, workingDirectory: string): Promise<string | null>;
+  createSessionId?(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
    * True when this launch reports its own conversation id, so a fresh start

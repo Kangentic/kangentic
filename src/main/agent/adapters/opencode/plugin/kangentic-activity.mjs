@@ -10,6 +10,9 @@
 // adapters (see src/main/agent/event-bridge.js). The events file path
 // is supplied via the KANGENTIC_EVENTS_PATH env var, which Kangentic's
 // PTY spawn flow exports whenever a session has an events output path.
+// On a remote host that path would name a file on another computer, so
+// the spawn exports KANGENTIC_WSL_HOOK_DIR instead and the plugin
+// publishes each event as a record into that folder's `inbox/`.
 //
 // The leading sentinel comment ("// kangentic-activity") is required:
 // hook-manager.ts uses it to identify files it authored before
@@ -23,6 +26,7 @@
 // `KangenticActivity.helpers` instead, for the unit tests against OpenCode
 // event fixtures (tests/fixtures/opencode-plugin-events.json).
 import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Extract a Kangentic JSONL event from an OpenCode `event` payload.
@@ -139,9 +143,76 @@ function extractToolEndEvent(input, now = Date.now()) {
 }
 
 const eventsPath = process.env.KANGENTIC_EVENTS_PATH;
+// A session on a remote host has no events file on its own disk (the path would name a file on the
+// computer running Kangentic). It is given the hook folder instead, which Kangentic's helper watches
+// on the host, so the plugin publishes into it as the hook scripts of other agents do. Only when no
+// events path is set: an agent in a WSL distro has both and keeps appending to the events file.
+const hookDirectory = eventsPath ? undefined : (process.env.KANGENTIC_WSL_HOOK_DIR || undefined);
+
+/** A bridge directive on the wire: `<kind>:<base64 of the JSON payload>` (directive-builders.ts). */
+function encodeDirective(kind, payload) {
+  return `${kind}:${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')}`;
+}
+
+/**
+ * One event as the hook transport's record (wsl-hook-transport.ts): a header line, the event type,
+ * the directives on one line, then the hook's stdin. Kangentic reads it back with the event bridge's
+ * own logic, so the line that lands in events.jsonl is the one `appendEvent` would have written.
+ * A session_start carries its hookContext as stdin, which the bridge captures whole.
+ */
+function hookRecordFor(event) {
+  const directives = [];
+  let input = '';
+  if (event.hookContext) {
+    input = event.hookContext;
+  } else {
+    const fields = {};
+    if (event.tool) {
+      fields.tool = event.tool;
+      directives.push(encodeDirective('extractTool', { field: 'tool' }));
+    }
+    if (event.detail) {
+      fields.detail = event.detail;
+      directives.push(encodeDirective('extractDetail', { fields: ['detail'] }));
+    }
+    if (Object.keys(fields).length > 0) input = JSON.stringify(fields);
+  }
+  if (event.waitKind) directives.push(encodeDirective('setWaitKind', { kind: event.waitKind }));
+  return `K1\n${event.type}\n${directives.join(' ')}\n${input}`;
+}
+
+let publishSequence = 0;
+
+/**
+ * Publish one event into `<directory>/inbox`: written under a dot name and renamed into place, named
+ * `<epoch ms><6-digit sequence>-<pid>.rec` like the hook script's files (19 digits, sorting in the
+ * order the events happened), then one byte to `signal`, which the watcher on the host listens to.
+ */
+function publishToHookDirectory(directory, event, now = Date.now()) {
+  publishSequence = (publishSequence + 1) % 1000000;
+  const name = `${String(now).padStart(13, '0')}${String(publishSequence).padStart(6, '0')}-${process.pid}`;
+  const inbox = path.join(directory, 'inbox');
+  const staging = path.join(inbox, `.${name}.tmp`);
+  fs.writeFileSync(staging, hookRecordFor(event));
+  fs.renameSync(staging, path.join(inbox, `${name}.rec`));
+  try {
+    fs.appendFileSync(path.join(directory, 'signal'), 'x');
+  } catch {
+    // The watcher also polls the folder.
+  }
+}
 
 function appendEvent(event) {
-  if (!eventsPath || !event) return;
+  if (!event) return;
+  if (hookDirectory) {
+    try {
+      publishToHookDirectory(hookDirectory, event, event.ts);
+    } catch {
+      // Best effort. The folder may have been removed when the session ended.
+    }
+    return;
+  }
+  if (!eventsPath) return;
   try {
     fs.appendFileSync(eventsPath, JSON.stringify(event) + '\n');
   } catch {
@@ -169,4 +240,6 @@ KangenticActivity.helpers = {
   extractToolDetail,
   extractToolStartEvent,
   extractToolEndEvent,
+  hookRecordFor,
+  publishToHookDirectory,
 };

@@ -63,6 +63,7 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     writeFileRaw: (_hostId, filePath, content, mode) => link.requestHelperRaw('writeFileRaw', { path: filePath, ...(mode === undefined ? {} : { mode }) }, Buffer.from(content, 'utf8')),
     watchHooks: (_hostId, sessionId, directory, statusFile) => link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) }),
     unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
+    removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
   };
   const relay = new RemoteSessionRelay({ files });
   link.setEventListener((event) => {
@@ -239,6 +240,23 @@ describe('releasing a session', () => {
     fs.writeFileSync(path.join(rig.hostSession, 'wsl-hooks', 'inbox', '1700000000000000000-6.rec'), 'K1\nlate\n\n{}');
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(fs.readFileSync(rig.eventsPath, 'utf8')).not.toContain('late');
+  });
+
+  it('takes the files it pushed off the host, the MCP config that holds the token included, and leaves the host\'s own', async () => {
+    const rig = await makeRig({
+      extraFiles: { 'copilot-config/config.json': '{}' },
+      declareExtra: ['copilot-config/config.json'],
+    });
+    const hostOwn = path.join(hostProject, 'package.json');
+    fs.writeFileSync(hostOwn, '{}');
+    expect(fs.existsSync(path.join(rig.hostSession, 'mcp.json'))).toBe(true);
+
+    await rig.relay.release('s1');
+
+    for (const name of ['settings.json', 'mcp.json', path.join('copilot-config', 'config.json'), path.join('wsl-hooks', 'wsl-hook.sh')]) {
+      expect(fs.existsSync(path.join(rig.hostSession, name))).toBe(false);
+    }
+    expect(fs.existsSync(hostOwn)).toBe(true);
   });
 });
 

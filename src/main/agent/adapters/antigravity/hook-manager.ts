@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
-import { toForwardSlash } from '../../../../shared/paths';
-import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
+import { toForwardSlash } from '../../../../shared/paths';import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
 import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
 import {
   appendPermissionWaitForTool,

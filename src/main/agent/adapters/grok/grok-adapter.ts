@@ -4,7 +4,8 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { GrokDetector } from './detector';
 import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
-import { removeHooksFile } from './hook-manager';
+import { removeHooksFile, GROK_WSL_HOOK_COPY_NAME } from './hook-manager';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV, removeMcpConfig, writeMcpConfig } from './mcp-config';
 import { GrokStatusParser } from './status-parser';
 import { GrokSessionHistoryParser, grokModelDisplayName } from './session-history-parser';
@@ -97,6 +98,8 @@ export class GrokAdapter implements AgentAdapter {
   readonly backgroundCommands = { source: 'hooks', launchHint: false } as const;
   /** A Grok installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `grok` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'grok';
   // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
   readonly transcriptHasTimestamps = false;
   /**
@@ -135,6 +138,20 @@ export class GrokAdapter implements AgentAdapter {
   }
 
   /**
+   * What a Grok on an SSH host edits outside the session folder: the trust store `ensureTrust` reads
+   * and appends to, the user's project `config.toml` (a sentinel-delimited block is merged in and
+   * stripped), Kangentic's own hooks file, and the hook script copy those hooks run. None holds a
+   * token: the config block names the MCP URL and token as `${VAR}` references the session's
+   * environment fills.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.grok/trusted_folders.toml'],
+      project: ['.grok/config.toml', '.grok/hooks/kangentic.json', `.kangentic/${GROK_WSL_HOOK_COPY_NAME}`],
+    };
+  }
+
+  /**
    * Pre-approve folder trust for Kangentic worktrees so project hooks and
    * the MCP block load without the user re-answering per task. Grok trust
    * cascades from the project root, so this is a no-op in the common
@@ -151,6 +168,9 @@ export class GrokAdapter implements AgentAdapter {
    * the user has not trusted, the session would start without Kangentic's tools.
    */
   kangenticMcpBlockedReason(workingDirectory: string, place?: CliPlace | null): string | null {
+    // A host's trust file is on the host. This computer holds only a mirror, filled for a spawn and
+    // empty otherwise, so it can never prove the folder untrusted: say nothing rather than guess.
+    if (place?.kind === 'ssh') return null;
     if (isFolderTrusted(workingDirectory, place ?? null)) return null;
     return `${this.displayName} loads Kangentic's tools only in a folder you trusted in it. Trust ${path.resolve(workingDirectory)} in grok, then close Settings to retry.`;
   }

@@ -68,6 +68,14 @@ Kangentic's MCP server stays a static entry in the project's `.cursor/mcp.json`.
 
 A Knowledge Graph answer from a distro starts in a stable folder beside the shared answer home, `<home>-wsl-<distro>` (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads. Beside it rather than inside, in case Cursor looks for a `.cursor` folder above the one it starts in. Its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
 
+## SSH
+
+A Cursor on a remote host over SSH (#913) runs as `cursor-agent`, found by the host's login `PATH` (`remoteCliName`). `agent`, the installer's other name, is shared with Grok's CLI, so it is not used. Cursor must be installed and logged in on the host. It is checked only against a fake host in `tests/unit/cursor-ssh-remote.test.ts`, never against a real Cursor or host.
+
+- **Synced file.** `remoteFiles()` declares only the project's `.cursor/mcp.json`. The static entry is merged beside the user's servers, and a file that is not JSON Kangentic can merge into (comments, say) is left as written and the session starts without Kangentic's tools. Trust is the `--trust` flag, so there is no trust file. The entry is the WSL hook transport's stdio bridge, and its script path, URL and token are `${env:...}` references filled from the spawn environment, so the file holds no secret. The file is restored when the session releases, and removed again if Kangentic created it.
+- **Interactive starts.** `createSessionId(cliPath, workingDirectory, place)` runs `cursor-agent create-chat` on the host in the project's folder there, through the helper, when it is given the host's place. A chat made by a Cursor on this computer would be unknown to the host's Cursor. The spawn paths that call it must pass the place (`resolveFreshAgentSessionId`); until they do, an interactive start on a host runs it on this computer.
+- **Unavailable over SSH.** The transcript under `~/.cursor/projects/<slug>/agent-transcripts/` is on the host. The slug is derived from the folder as the host names it, but the reader looks in this computer's empty mirror, so the viewer shows nothing and does not wait. There are no hooks: activity comes from the PTY and the stream-json parser, as locally.
+
 ## Model override
 
 `--list-models` prints `cursor-grok-4.6-high - Grok 4.6`. The picker shows the display name. A live session's stream-json init event and `agent about --format json` report that display name as `model`, not the id. A column that stored `grok 4.6 high` used to be passed through as `--model "grok 4.6 high"`, which the CLI rejects.

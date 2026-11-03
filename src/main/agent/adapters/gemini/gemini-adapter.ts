@@ -1,5 +1,6 @@
 import { GeminiDetector } from './detector';
-import { GeminiCommandBuilder } from './command-builder';
+import { GeminiCommandBuilder, GEMINI_WSL_HOOK_COPY_NAME } from './command-builder';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { GeminiSessionHistoryParser } from './session-history-parser';
@@ -52,6 +53,8 @@ export class GeminiAdapter implements AgentAdapter {
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   /** A Gemini installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `gemini` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'gemini';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -82,6 +85,20 @@ export class GeminiAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+  }
+
+  /**
+   * What a Gemini on an SSH host edits outside the session folder. The trust file is read and merged
+   * by `ensureTrust` (without it Gemini disables MCP), the project settings carry the hooks and the
+   * `mcpServers.kangentic` reference entry (the user's own file, merged and stripped), and the hook
+   * script copy is what those hooks run. Nothing here holds a token: the settings name the MCP URL
+   * and token as `${VAR}` references the session's environment fills.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.gemini/trustedFolders.json'],
+      project: ['.gemini/settings.json', `.kangentic/${GEMINI_WSL_HOOK_COPY_NAME}`],
+    };
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {

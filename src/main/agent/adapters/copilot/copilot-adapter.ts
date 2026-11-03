@@ -20,6 +20,19 @@ import { copilotHomeDir } from './copilot-home';
 import { cliPathForTarget, placeFromStored, resolveCliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
+
+/**
+ * The session-folder files a Copilot command needs on a remote host, relative to the session folder
+ * (`hook-manager.ts` `writeSessionConfig` writes the first four, `command-builder.ts` the last).
+ */
+export const COPILOT_REMOTE_SESSION_FILES: readonly string[] = [
+  'copilot-config/hooks/kangentic.json',
+  'copilot-config/settings.json',
+  'copilot-config/config.json',
+  'copilot-config/mcp-config.json',
+  'copilot-mcp.json',
+];
 
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
@@ -69,6 +82,33 @@ export class CopilotAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'acceptEdits';
   /** A Copilot installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH (#913) the CLI is `copilot` from the host's own login PATH. */
+  readonly remoteCliName = 'copilot';
+
+  /**
+   * The files of the user's `~/.copilot` that a session's config home is seeded from
+   * (`writeSessionConfig`): the signed-in account and trusted folders, the settings and the MCP
+   * servers. Declared so a host's copies are pulled into the empty local mirror
+   * (`copilotHomeDir(place)`) before the command is built. Nothing is edited in place, so nothing is
+   * pushed back to the host's own `~/.copilot`: the changes land in the session's config home.
+   * A `COPILOT_HOME` set on the host is not read; the default `~/.copilot` is.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.copilot/config.json', '.copilot/settings.json', '.copilot/mcp-config.json'],
+      project: [],
+    };
+  }
+
+  /**
+   * Every file under the session folder that the command names and the host must hold before Copilot
+   * starts, relative to it. The relay pushes these (owner-only) beside the settings, MCP config and
+   * hook script it always sends. `--config-dir` points at `copilot-config` and
+   * `--additional-mcp-config` at `copilot-mcp.json`; a file the command did not write is skipped.
+   */
+  remoteSessionFiles(): readonly string[] {
+    return COPILOT_REMOTE_SESSION_FILES;
+  }
 
   private readonly detector = new CopilotDetector();
   private readonly commandBuilder = new CopilotCommandBuilder();

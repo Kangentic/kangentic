@@ -315,6 +315,7 @@ export async function prepareAgentSpawn(input: {
         cliPath: detectedCliPath,
         workingDirectory: cwd,
         permissionMode,
+        place: cliTarget,
       });
 
   // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head

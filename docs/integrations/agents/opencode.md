@@ -111,6 +111,16 @@ An OpenCode installed in a WSL distro runs there (`supportsWslCli`) when its CLI
 
 The shapes were checked against this machine's OpenCode 1.18.31 and the distro's 1.14.25 `--help`. The distro's OpenCode was not signed in and had no sessions, so no session has been run end to end in a distro.
 
+## SSH
+
+An OpenCode on a remote host over SSH (#913) runs as `opencode`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. This is a different feature from Remote Execution below, which attaches to a server you run yourself. It is checked only against a fake host in `tests/unit/opencode-ssh-remote.test.ts`, never against a real OpenCode or host.
+
+- **Version.** The host's CLI is never detected here, so `ensureTrust` runs `opencode --version` on the host once and the builders pick OpenCode 1 or 2 flags from it. If that fails, the spawn goes on with OpenCode 1's command line.
+- **Synced files.** `remoteFiles()` declares `.opencode/plugins/kangentic-activity.js` (OpenCode 1) and `.opencode/plugins/kangentic-activity/index.js` (OpenCode 2). Only the one for the host's major is written, and it is removed again, or never kept, when the session releases. A remote task has no worktree, so the plugin goes in the working folder.
+- **Activity.** The spawn exports `KANGENTIC_WSL_HOOK_DIR` and not `KANGENTIC_EVENTS_PATH`, since that path would name a file on this computer. With only the hook folder set, both plugins publish each event as a record in the transport's format (`inbox/<19-digit time and sequence>-<pid>.rec`, written under a dot name and renamed, then a byte to `signal`). The host's helper sends the records back and the existing inbox reader turns them into the same `events.jsonl` lines a direct append makes, so turn ends, waits on the user and the session id (`session_start`) arrive as locally. With an events path set (this computer, a WSL distro) the plugins append as before.
+- **MCP** is `OPENCODE_CONFIG_CONTENT` in the spawn environment: the `local` entry for the transport's stdio bridge, named by its path on the host.
+- **Unavailable over SSH.** The session id is not polled from `opencode session list`, because a place read back from a session row has no connection to the host to run it through, and `distro-sessions.ts` has no live place to run `export` against either. So the transcript, the Conversation viewer, the auto_command check (reported as failed, with escalation off) and handoff history show nothing. `probeAuth` and `onProjectRelocated` look at this computer only.
+
 ## Remote Execution
 
 OpenCode is the only adapter that declares `remoteExecution` (see `remoteExecution?` in [Optional properties](optional-properties.md) and [Remote Execution](../../settings/app-config.md#remote-execution) for the config shape). A remote spawn with OpenCode 2 detected locally is blocked with "OpenCode remote mode needs OpenCode 1", because the spawn is OpenCode 1's `attach`. When a project's mode for OpenCode is `remote`:

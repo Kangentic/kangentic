@@ -87,7 +87,7 @@ export async function removeWorktreeTrust(worktreePath: string, place: CliPlace 
 function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
   const tomlPath = configTomlPath(place);
   const windowsPath = path.resolve(worktreePath);
-  const target = normalizeForCompare(place ? cliPathForTarget(windowsPath, place) : windowsPath);
+  const target = normalizeForCompare(place ? cliPathForTarget(windowsPath, place) : windowsPath, place?.kind === 'ssh');
 
   let content: string;
   try {
@@ -103,7 +103,7 @@ function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): 
 
   while (index < lines.length) {
     const header = parseHeaderLine(lines[index]);
-    if (!header || normalizeForCompare(header.innerPath) !== target) {
+    if (!header || normalizeForCompare(header.innerPath, place?.kind === 'ssh') !== target) {
       kept.push(lines[index]);
       index += 1;
       continue;
@@ -163,11 +163,12 @@ function ensureWorktreeTrustSync(workingDirectory: string, place: CliPlace | nul
 
   // Never overwrite a decision Codex or the user already recorded, in
   // either direction.
-  if (readTrustLevel(lines, resolvedPath) !== null) return;
+  const hostPaths = place?.kind === 'ssh';
+  if (readTrustLevel(lines, resolvedPath, hostPaths) !== null) return;
 
   // Respect a project-level deny: if the user marked the repo this worktree
   // came from as untrusted, do not quietly trust its worktrees.
-  if (projectRoot && readTrustLevel(lines, projectRoot) === 'untrusted') return;
+  if (projectRoot && readTrustLevel(lines, projectRoot, hostPaths) === 'untrusted') return;
 
   // Single-quoted TOML literal: paths never contain a single quote on
   // Windows or macOS, and a literal string needs no backslash escaping.

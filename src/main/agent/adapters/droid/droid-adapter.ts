@@ -8,6 +8,7 @@ import { parseDroidHookEvent } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import type {
   AgentAdapter,
@@ -72,6 +73,12 @@ export class DroidAdapter implements AgentAdapter {
   /** A Droid installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
   /**
+   * On a remote host over SSH the CLI is `droid` from the host's own login PATH (#913). Activity there
+   * is PTY-driven only: the hooks settings file (`droid-settings.json`) is written for a local Droid
+   * alone, and no session id is captured, so a session on a host resumes as a fresh start.
+   */
+  readonly remoteCliName = 'droid';
+  /**
    * Droid's interactive TUI handles permission/autonomy decisions
    * in-band: shift+tab cycles low/medium/high autonomy, and `/model`
    * + Ctrl+D pins the default model. Kangentic intentionally does
@@ -92,6 +99,16 @@ export class DroidAdapter implements AgentAdapter {
   // worktrees usually make that impossible, but a project with no worktree
   // configured runs every task in the project root. See SharedFolderHolds.
   private readonly mcpHolds = new SharedFolderHolds();
+
+  /**
+   * The one file a Droid on a remote host has edited on the host (#913): the project's
+   * `.factory/mcp.json`, where Kangentic's entry is merged beside the user's servers. It holds only a
+   * `${KANGENTIC_MCP_TOKEN}` reference (the token travels in the spawn environment), so it needs no
+   * owner-only mode. Droid has no trust store and no home file of ours.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return { home: [], project: ['.factory/mcp.json'] };
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -211,6 +228,9 @@ export class DroidAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // A Droid on a remote host keeps its session files on the host; this computer's mirror of its
+    // home never holds them, so polling would only wait.
+    if (place?.kind === 'ssh') return null;
     return locateSessionFile({ agentSessionId, cwd, place });
   }
 

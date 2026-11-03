@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type { SubmissionVerifier } from '../../../../shared/types';
-import type { CliPlace } from '../../shared/cli-target';
+import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
   createSubmittedTextSubmissionVerifier,
   type UserTurnRecord,
@@ -165,8 +165,15 @@ export function extractCodexUserTurn(line: string): UserTurnRecord | null {
  * non-destructive by design.
  */
 export function createCodexCommandInjectionVerifier(): SubmissionVerifier {
-  return createSubmittedTextSubmissionVerifier({
+  const verifyLocally = createSubmittedTextSubmissionVerifier({
     resolvePath: (agentSessionId, _cwd, place) => resolveCodexRolloutPath(agentSessionId, place),
     extractUserTurn: extractCodexUserTurn,
   });
+  return async (context) => {
+    // A Codex on an SSH host writes its rollout there, where this computer cannot read it. Reading
+    // "no rollout" as "not submitted" would retry and then restart a working session, so the
+    // command is taken as delivered: it is typed and submitted the same way, just unconfirmed.
+    if (context.type === 'command-injection' && placeFromStored(context.cliTarget ?? null)?.kind === 'ssh') return true;
+    return verifyLocally(context);
+  };
 }

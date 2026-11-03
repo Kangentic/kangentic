@@ -106,6 +106,12 @@ export class AiderAdapter implements AgentAdapter {
   // and an answer run takes its history files in the distro's form. Its chat
   // history is a file in the project folder, which Windows reads as before.
   readonly supportsWslCli = true;
+  // On a remote host over SSH (#913) the CLI is `aider` from the host's login PATH. Aider edits no
+  // file outside its session folder, so there is nothing to declare in `remoteFiles`. The idle
+  // notification takes the WSL hook transport's path (a host path for an `ssh` place), and the
+  // chat history Aider keeps in the project folder stays on the host: the readers below look in this
+  // computer's empty shell folder and find nothing, so live cost and tokens are not shown there.
+  readonly remoteCliName = 'aider';
 
   // Aider uses the shared AgentDetector via composition (keeps the
   // single-file layout while deduplicating detection logic across

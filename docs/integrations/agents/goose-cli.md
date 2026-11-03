@@ -64,6 +64,10 @@ Goose has four modes. `approve` (every action needs approval) is stricter than `
 
 A Goose installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with Goose's Linux path, `GOOSE_MODE` crosses into the distro through `WSLENV` with the adapter's other variables, and a Knowledge Graph answer runs through `wsl.exe` too. Goose wires no hooks, no MCP server and no transcript reader, so there is nothing else to route. Built from Goose's published docs; not yet run against a Goose installed in a distro.
 
+## SSH
+
+A Goose on a remote host over SSH (#913) runs as `goose`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. It is checked only against a fake host in `tests/unit/goose-ssh-remote.test.ts`, never against a real Goose or host. Goose wires no hooks and edits no file, so `remoteFiles()` declares none and the session needs nothing beyond the command and its environment. `GOOSE_MODE` travels as the spawn's environment (the host's own variables are kept), and the provider and model stay in the host's Goose config. Activity is the PTY silence timer, and the OSC 7501 waits arrive through the terminal like any output. Goose is handed no MCP server, as locally. `tests/fixtures/mock-goose.js` is a mock that prints the prompt, the OSC 7501 states and the exit behavior the adapter keys on.
+
 ## Activity Detection
 
 Runtime activity is PTY-only. The silence timer drives the idle transition; `detectFirstOutput` returns true on any non-empty data (no alternate screen buffer). There is no hook or status pipeline.

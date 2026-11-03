@@ -978,6 +978,7 @@ export class TransitionEngine {
           permissionMode,
           nonInteractive: config.nonInteractive,
           signal,
+          place: cliTarget,
         });
     // A move that aborted this spawn while the chat was being created stops
     // here, before the session directory and the command exist.

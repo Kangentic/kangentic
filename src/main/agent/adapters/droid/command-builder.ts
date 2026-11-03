@@ -190,7 +190,9 @@ export class DroidCommandBuilder {
    * alone as before, when there is no events path, when Droid runs in a WSL
    * distro (whose hooks would need the WSL hook transport, not wired here),
    * or when the write fails: the hooks only add detail, so a failed write
-   * never blocks the spawn.
+   * never blocks the spawn. A Droid on a remote host over SSH is a place too, so it runs without
+   * hooks: sending `droid-settings.json` would also need `remoteSessionFiles()` and a host `--settings`
+   * path, and the hooks only add tool calls and waits on top of the PTY tracker.
    */
   writeHookSettings(options: DroidCommandOptions): string | null {
     if (!options.eventsOutputPath || options.cliTarget) return null;

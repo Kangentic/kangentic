@@ -62,7 +62,19 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
  * run OpenCode 1 plugins, so a V2 spawn gets its own (`buildHooks`).
  */
 export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget'>): boolean {
+  // A host over SSH installs it too: its events ride the hook folder (see the plugin script).
   return Boolean(options.eventsOutputPath) && !options.executionTarget;
+}
+
+/**
+ * The folder whose `.opencode/plugins/` gets the activity plugin: the project root, else the working
+ * folder. On a host over SSH it is always the working folder, because that is the folder whose files
+ * `HostFileSync` pulls and pushes (`OpenCodeAdapter.remoteFiles`), and a remote task has no
+ * worktree, so the two are the same folder there.
+ */
+export function activityPluginRoot(options: Pick<OpenCodeCommandOptions, 'projectRoot' | 'cwd' | 'cliTarget'>): string {
+  if (options.cliTarget?.kind === 'ssh') return options.cwd;
+  return options.projectRoot || options.cwd;
 }
 
 /**
@@ -140,8 +152,7 @@ export class OpenCodeCommandBuilder {
     // CLI flag or `opencode.json` mutation is required. Mirrors the
     // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
     if (installsActivityPlugin(options)) {
-      const projectRoot = options.projectRoot || options.cwd;
-      buildHooks(projectRoot, openCode2);
+      buildHooks(activityPluginRoot(options), openCode2);
     }
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];

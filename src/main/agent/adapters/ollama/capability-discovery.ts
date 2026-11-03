@@ -10,7 +10,7 @@
  */
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-import { execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -22,8 +22,9 @@ const LIST_TIMEOUT_MS = 5000;
  * Unix, use direct execFile. An Ollama installed in a WSL distro is asked
  * there, so it lists the models of the distro's own daemon.
  */
-async function readModelListOutput(cliPath: string): Promise<string> {
-  const target = await resolveCliTarget(cliPath, true);
+async function readModelListOutput(cliPath: string, knownTarget?: CliTarget | null): Promise<string> {
+  // A target the caller already has (a CLI on an SSH host) is asked there, through the host's helper.
+  const target = knownTarget ?? await resolveCliTarget(cliPath, true);
   if (target) {
     const { stdout } = await execCliForTarget(target, ['list'], { timeout: LIST_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
     return stdout;
@@ -77,10 +78,10 @@ export function parseOllamaModelList(stdout: string): string[] {
  * unparseable output) it returns `{ supportsModelOverride: true }` with no
  * model list, so the renderer falls back to a free-form model text input.
  */
-export async function discoverOllamaCapabilities(cliPath: string): Promise<AgentCapabilities> {
+export async function discoverOllamaCapabilities(cliPath: string, target?: CliTarget | null): Promise<AgentCapabilities> {
   let models: string[] = [];
   try {
-    models = parseOllamaModelList(await readModelListOutput(cliPath));
+    models = parseOllamaModelList(await readModelListOutput(cliPath, target));
   } catch {
     // `ollama list` failed - fall back to free-form model input.
   }

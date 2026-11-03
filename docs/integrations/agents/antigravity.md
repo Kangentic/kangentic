@@ -79,6 +79,14 @@ An agy installed in a WSL distro runs there (`supportsWslCli`) when its CLI path
 
 The data root, the trust store, the transcripts and an answer's conversation cleanup are the distro's `~/.gemini/antigravity-cli`. Trust entries are the `/mnt` path, compared with Linux case, and a removed worktree's entry goes from the distro's settings while the distro runs. The title run's hidden PTY starts `wsl.exe` in place of the CLI, with its scratch folder trusted in the distro. `--help`, `agy models` and a Knowledge Graph answer run through `wsl.exe` too. Not yet run against an agy installed in a distro, and agy's stdio MCP entry shape comes from its config, not from a run.
 
+## SSH
+
+An agy on a remote host over SSH (#913) runs as `agy`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there and signed in beforehand. Sign-in is a browser OAuth that Kangentic cannot complete for a host, so run `agy` once on the host first. It is checked only against a fake host in `tests/unit/antigravity-ssh-remote.test.ts`, never against a real agy or host.
+
+- **Synced files.** `remoteFiles()` declares the host's `~/.gemini/antigravity-cli/settings.json` (the workspace trust entry for the working folder's host path is merged into the user's file), and the project's `.agents/hooks.json` (Kangentic's named hook merged beside the user's), `.agents/plugins/kangentic/plugin.json` and `.agents/plugins/kangentic/mcp_config.json`. The last holds the session's MCP token in plaintext, so it is written owner-only (0600). All of them are put back as the user had them when the session releases, and a file Kangentic created is added to the host's `.git/info/exclude`.
+- **Hooks and MCP** run through the WSL hook transport's script, as for a distro, so the host needs no node. The hook token is the session's script named relative to `.agents/`, the same on the host as here because the shell folder mirrors the project's folder. The MCP plugin names the transport's stdio bridge by its path on the host, never a loopback URL the host cannot reach.
+- **Unavailable over SSH.** The transcript, its tool counts and the command-injection verifier read `brain/<id>/.system_generated/logs/transcript.jsonl` from this computer's empty mirror of the host's home, so they find nothing and do not wait. A trust entry for a removed worktree is not dropped from the host's settings.
+
 ## Limitations
 
 - No token/context/cost telemetry: neither the interactive transcript nor the hook payloads carry usage, so the adapter declares `liveTelemetryUnsupported` ("Telemetry: TUI only" - the agy footer shows the active model and effort). The board model pill is seeded from a `--model` override via `configuredModelFromCommand`.

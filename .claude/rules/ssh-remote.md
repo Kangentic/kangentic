@@ -49,7 +49,19 @@ process, a path tested against the wrong disk, an environment that overwrites th
   passphrase fails with its own words, shown as given. Kangentic never asks for a passphrase. A
   destination that `ssh` would read as an option (a leading `-`) is refused before it reaches `ssh`.
 - **The helper writes and reads only beneath the user's home on the host,** and refuses any other
-  path, a relative one and one that climbs out, before it touches anything.
+  path, a relative one and one that climbs out, before it touches anything. That covers removing a
+  file and the folder a program is run in.
+- **An adapter declares the host files its code edits; it never reaches for the host itself.** A
+  CLI on a host has its trust, hook and MCP files there. An adapter lists them in `remoteFiles()`
+  (home-relative, project-relative, and the ones that hold a secret), and `HostFileSync` pulls them
+  into the folders the unchanged adapter code edits, pushes the change after the command is built,
+  and restores them at release. A new adapter file that reads or writes a CLI's config does it
+  through `cliHomeDir(place)` or the working directory and declares the file; it never opens a path
+  on the host any other way. Nothing is written over a host file that changed meanwhile.
+- **A probe of an agent's CLI on a host runs on the host.** `execCliForTarget` and
+  `place.files.runCommand` run the program through the user's shell on the host, with a timeout
+  that stops its process group. `cliInvocationForTarget` throws for a host: it would start a
+  process on this computer.
 
 ## Enforcement (self-maintaining)
 
@@ -69,6 +81,12 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `tests/unit/remote-host-service.test.ts` pins the ssh options, the destination check, and that a
   failed ask is never an absence. `tests/unit/remote-helper-boundary.test.ts` keeps the helper bundle
   free of electron and the native modules it cannot load.
+- **Tests (host files and probes):** `tests/unit/host-file-sync.test.ts` pins the pull, the push
+  (modes, private files, a conflict refused), the git exclude and the restore against an in-memory
+  host. `tests/unit/remote-host-command.test.ts` runs real programs through the helper's command
+  runner on POSIX (banner stripped, exit code, stdin, timeout) and pins the shell choice.
+  `tests/unit/<adapter>-ssh-remote.test.ts` runs each adapter's real trust and builder over a fake
+  host and asserts what lands there carries host paths and nothing of this computer.
 - **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
   with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
   to prepare (the case a down link reaches) or the spawn throws, and that a local spawn that throws

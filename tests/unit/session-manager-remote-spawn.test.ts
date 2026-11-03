@@ -219,6 +219,7 @@ describe('spawning an agent session on a host', () => {
         writeFileRaw: async () => ({}),
         watchHooks: async () => ({}),
         unwatchHooks: async () => ({}),
+        removeFiles: async () => ({}),
       },
     }));
 

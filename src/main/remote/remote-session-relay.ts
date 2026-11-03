@@ -14,7 +14,11 @@
  *
  * Nothing the host sends picks a path: a record's name must have the exact shape the hook script
  * writes and the folder comes from the registration, so a host cannot write elsewhere on this disk.
- * The MCP token is never sent: the inbox relays each MCP message to the loopback server here.
+ * MCP never crosses the link as a connection: the inbox relays each MCP message to the loopback server
+ * here. The token is not hidden from the host, though. The agent's MCP config (owner-only, in the session
+ * folder) carries it, because the bridge sends it with every request, and the relay posts with the token
+ * the request names. A host is trusted like this computer, and what a host's agents can reach is the same
+ * either way.
  *
  * What the host sends is written synchronously, in the order it arrives (see `deliver`). Everything else
  * here is asynchronous.
@@ -34,6 +38,7 @@ export interface RemoteSessionFiles {
   writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<unknown>;
   watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<unknown>;
   unwatchHooks(hostId: string, sessionId: string): Promise<unknown>;
+  removeFiles(hostId: string, paths: string[]): Promise<unknown>;
 }
 
 export interface RemoteSessionRegistration {
@@ -68,6 +73,8 @@ const RESPONSE_POLL_MS = 100;
 interface Registered extends RemoteSessionRegistration {
   localHooks: ReturnType<typeof wslHookPaths>;
   hostHooksDirectory: string;
+  /** The files pushed to the host's session folder, removed when the session is released. */
+  pushedPaths: string[];
   timer: ReturnType<typeof setInterval>;
   forwarding: boolean;
   /** Responses being sent, so a poll meanwhile never sends one twice. */
@@ -107,6 +114,7 @@ export class RemoteSessionRelay {
     this.registering.set(registration.sessionId, pending);
     let hostHooksDirectory: string;
     let localHooks: ReturnType<typeof wslHookPaths>;
+    const pushedPaths: string[] = [];
     try {
       localHooks = wslHookPaths(registration.localSessionDirectory);
       const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
@@ -128,6 +136,7 @@ export class RemoteSessionRelay {
       }
       const script = await readIfPresent(localHooks.script);
       if (script !== null) files.push({ path: toPosix(toHost(localHooks.script)), content: script, mode: 0o755 });
+      pushedPaths.push(...files.map((file) => file.path));
       await this.options.files.writeFiles(
         registration.hostId,
         files,
@@ -140,6 +149,7 @@ export class RemoteSessionRelay {
     if (pending.released) {
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+      await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths);
       return;
     }
 
@@ -147,6 +157,7 @@ export class RemoteSessionRelay {
       ...registration,
       localHooks,
       hostHooksDirectory,
+      pushedPaths,
       forwarding: false,
       inFlight: new Set(),
       lastFailure: null,
@@ -173,7 +184,19 @@ export class RemoteSessionRelay {
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
+    // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
+    await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
+  }
+
+  /** Best-effort: a host out of reach keeps the files until the next session there, and nothing else depends on them. */
+  private async removePushedFiles(hostId: string, sessionId: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    try {
+      await this.options.files.removeFiles(hostId, paths);
+    } catch (error) {
+      this.options.log?.(`could not remove the session files from the host for ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**

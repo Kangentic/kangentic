@@ -21,10 +21,11 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import { installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
+import { activityPluginRoot, installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
 import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions } from './distro-sessions';
-import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
+import { execCliForTarget, hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace, type SshCliPlace } from '../../shared/cli-target';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
@@ -86,6 +87,11 @@ const LABELED_SESSION_ID_REGEX = new RegExp(
   'i',
 );
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+
+/** One host's OpenCode binary: the key its version is kept under. */
+function hostVersionKey(place: SshCliPlace): string {
+  return `${place.hostId}\u0000${place.linuxCliPath ?? 'opencode'}`;
+}
 
 /**
  * The answer run's arguments. OpenCode 1: `--pure` keeps external plugins out
@@ -196,6 +202,8 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'acceptEdits';
   /** An OpenCode installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH the CLI is `opencode` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'opencode';
   // OpenCode's TUI scans a bracketed paste for image paths and attaches a
   // match as an `[Image N]` chip, quoted or not, spaces in the path included.
   // Verified against 1.18.30 with png, jpg and gif; a bmp arrives as
@@ -238,6 +246,10 @@ export class OpenCodeAdapter implements AgentAdapter {
   // index job (`knownTargets` / `adoptTargets`).
   private readonly remoteTargetsByCwd = new Map<string, ResolvedExecutionTarget>();
 
+  // `opencode --version` on each SSH host, by host and binary, read by `ensureTrust` before a spawn.
+  // A host's CLI is never detected here, so the builders' choice of OpenCode 1 or 2 flags comes from this.
+  private readonly hostVersions = new Map<string, string>();
+
   /** Declares OpenCode's own dialect of the generic remote-execution capability. */
   readonly remoteExecution = {
     info: {
@@ -266,6 +278,20 @@ export class OpenCodeAdapter implements AgentAdapter {
     },
   };
 
+  /**
+   * What an OpenCode on a remote host has edited on the host (#913): the activity plugin, in the
+   * layout of each major (OpenCode 1 reads `.opencode/plugins/*.js`, OpenCode 2 a folder with an
+   * `index.js`). Only the one that matches the host's major is ever written, and the other is read
+   * and left as it was. MCP rides `OPENCODE_CONFIG_CONTENT` in the environment, so no config file is
+   * touched. The plugin holds no secret.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: [],
+      project: ['.opencode/plugins/kangentic-activity.js', '.opencode/plugins/kangentic-activity/index.js'],
+    };
+  }
+
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
   }
@@ -273,6 +299,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
     forgetDistroOpenCodeVersions();
+    this.hostVersions.clear();
   }
 
   /**
@@ -290,10 +317,40 @@ export class OpenCodeAdapter implements AgentAdapter {
     return info?.version ?? null;
   }
 
-  async ensureTrust(_workingDirectory: string): Promise<void> {
+  async ensureTrust(_workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // OpenCode has no trust dialog - no pre-approval needed. See
     // `probeAuth` for the login-state check, which reads
     // ~/.local/share/opencode/auth.json.
+    //
+    // A host over SSH is never detected from this computer, so its CLI's major is asked here, the one
+    // async step that runs before the synchronous `buildCommand` and `buildEnv` pick OpenCode 1 or 2
+    // flags and plugin (#913).
+    if (place?.kind === 'ssh') await this.probeHostVersion(place);
+  }
+
+  /** `opencode --version` on the host, once per host and binary, kept for the builders. A failure is not kept. */
+  private async probeHostVersion(place: SshCliPlace): Promise<void> {
+    const key = hostVersionKey(place);
+    if (this.hostVersions.has(key)) return;
+    try {
+      const { stdout } = await execCliForTarget(
+        { ...place, linuxCliPath: place.linuxCliPath ?? this.remoteCliName },
+        ['--version'],
+        { timeout: 15_000, maxBuffer: 64 * 1024 },
+      );
+      const version = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /\d+\.\d+/.test(line));
+      if (version) this.hostVersions.set(key, version);
+    } catch (error) {
+      // The spawn goes on with OpenCode 1's command line; a host with no `opencode` fails it with its own words.
+      console.warn(`[opencode] Could not read the host's OpenCode version: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The version the builders choose flags by: the cached detection's, or for a host the one `ensureTrust` read. */
+  private cliVersionFor(agentPath: string, place: CliPlace | null | undefined): string | null {
+    return place?.kind === 'ssh'
+      ? this.hostVersions.get(hostVersionKey(place)) ?? null
+      : this.detector.getCachedVersion(agentPath);
   }
 
   async probeAuth(cliPath: string): Promise<boolean | null> {
@@ -344,7 +401,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     const { agentPath, model, effort, ...rest } = options;
     // Every spawn path runs `detect()` with this path just before, so the
     // version is the one of the CLI this command starts.
-    const cliVersion = this.detector.getCachedVersion(agentPath);
+    const cliVersion = this.cliVersionFor(agentPath, options.cliTarget);
     const command = this.commandBuilder.buildOpenCodeCommand({
       opencodePath: agentPath,
       model,
@@ -376,14 +433,14 @@ export class OpenCodeAdapter implements AgentAdapter {
     // sessions serialize their cleanup in `removeHooks`. Local mode only -
     // remote mode never installs the plugin (see command-builder.ts).
     if (installsActivityPlugin(options)) {
-      this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
+      this.hookHolds.retain(options.ptySessionId, activityPluginRoot(options));
     }
     return command;
   }
 
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, cliVersion: this.detector.getCachedVersion(agentPath), ...rest });
+    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, cliVersion: this.cliVersionFor(agentPath, options.cliTarget), ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -472,6 +529,9 @@ export class OpenCodeAdapter implements AgentAdapter {
         // `session list` reads (distro-sessions.ts).
         if (options.cliTarget) {
           const target = targetOfPlace(placeFromStored(options.cliTarget));
+          // A host's place read back from a session row holds no connection to run `session list`
+          // through (`files` is never stored), so there is nothing to ask. Its id arrives by the plugin.
+          if (target?.kind === 'ssh' && !target.files) return Promise.resolve(null);
           return target ? captureDistroOpenCodeSessionId({ spawnedAt: options.spawnedAt, cwd: options.cwd, target }) : Promise.resolve(null);
         }
         return OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
@@ -585,6 +645,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (place) {
       const distroTarget = targetOfPlace(place);
       if (!distroTarget) return { entries: [], sourcePath: null };
+      // A host's place read back from a session row has no connection to run `export` through.
+      if (distroTarget.kind === 'ssh' && !distroTarget.files) return { entries: [], sourcePath: null };
       const messages = await exportDistroOpenCodeSession(distroTarget, agentSessionId, cwd).catch(() => []);
       return {
         entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),

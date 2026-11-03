@@ -9,6 +9,7 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
@@ -195,7 +196,12 @@ export class CursorAdapter implements AgentAdapter {
   /** A Cursor installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
   /**
-   * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
+   * On a remote host over SSH the CLI is `cursor-agent` from the host's own login PATH (#913). The
+   * installer's other name, `agent`, is shared with Grok's CLI, so the unambiguous one is declared.
+   */
+  readonly remoteCliName = 'cursor-agent';
+  /**
+   * `agent-transcripts`lines have no timestamp field. Entries use `ts: 0`,
    * so the viewer shows no clock and orders the conversation by file order.
    */
   readonly transcriptHasTimestamps = false;
@@ -246,6 +252,15 @@ export class CursorAdapter implements AgentAdapter {
     },
     supportsWslCli: true,
   });
+
+  /**
+   * The one file a Cursor on a remote host has edited on the host (#913): the project's
+   * `.cursor/mcp.json`, where Kangentic's static entry (`${env:...}` references only, so no secret
+   * on disk) is merged beside the user's servers. Trust is the `--trust` flag, not a file.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return { home: [], project: ['.cursor/mcp.json'] };
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -373,10 +388,14 @@ export class CursorAdapter implements AgentAdapter {
    * with `--resume=<id>`. Run in the session's own folder, in case Cursor
    * files chats by workspace as the editor does.
    */
-  async createSessionId(cliPath: string, workingDirectory: string): Promise<string | null> {
+  async createSessionId(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null> {
     try {
-      // A Cursor in a WSL distro makes the chat there, so the session opens it.
-      const target = await resolveCliTarget(cliPath, true);
+      // A Cursor in a WSL distro makes the chat there, so the session opens it. One on a remote host
+      // (#913) makes it there too, run by the host's helper in the project's folder on the host: a chat
+      // made by a Cursor on this computer would be unknown to the host's, and `--resume=<id>` would fail.
+      const target: CliTarget | null = place?.kind === 'ssh'
+        ? { ...place, linuxCliPath: place.linuxCliPath ?? cliPath }
+        : await resolveCliTarget(cliPath, true);
       const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory, target });
       const match = stdout.match(CHAT_ID_LINE);
       if (match) return match[0].toLowerCase();

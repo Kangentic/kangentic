@@ -75,6 +75,9 @@ export class GeminiSessionHistoryParser {
     cliTarget?: StoredCliTarget | null;
     maxAttempts?: number;
   }): Promise<string | null> {
+    // A Gemini on an SSH host writes its chats there, and this computer's mirror of the host's
+    // home is empty, so nothing can appear: answer at once instead of polling for 30 s.
+    if (options.cliTarget?.kind === 'ssh') return null;
     const spawnedAtMs = options.spawnedAt.getTime();
     const mtimeFloorMs = spawnedAtMs - 30_000;
     const startTimeFloorMs = spawnedAtMs - 30_000;
@@ -131,6 +134,8 @@ export class GeminiSessionHistoryParser {
     cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
+    // As in captureSessionIdFromFilesystem: a host's chats are not on this computer.
+    if (options.cliTarget?.kind === 'ssh') return null;
 
     const directory = geminiChatsDir(cwd, placeFromStored(options.cliTarget ?? null));
 

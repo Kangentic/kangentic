@@ -7,7 +7,8 @@
  * its own disk. So the helper watches that folder here and sends each file across the link, and
  * Kangentic writes it into the same place on its side. After that nothing downstream knows the CLI was
  * remote: the inbox turns records into events, answers plan approvals, and relays MCP to the loopback
- * server, so the MCP token never leaves the app.
+ * server. The host never dials that server, which only this computer can reach; the token still sits
+ * on the host in the agent's MCP config, because the agent's bridge sends it with each request.
  *
  * - A file is sent once and removed from the host once it is sent. The link retains and replays what
  *   an interrupted connection lost, so a drop loses nothing already handed over.

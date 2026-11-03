@@ -84,6 +84,14 @@ Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, 
 
 A Droid installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Droid's Linux path in a `wsl -d <distro>` shell, with `--cwd` in the distro's form (`/mnt/c/...`). Its session files are in the distro's `~/.factory/sessions/`, under the slug of that cwd (`-mnt-c-...`), and Kangentic reads them over the distro's share for the session id, the transcript and the Conversation viewer. On mirrored networking the distro reaches this machine's loopback and the entry above is unchanged. On NAT networking it is the WSL hook transport's stdio bridge, `{"type": "stdio", "command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": "${KANGENTIC_MCP_TOKEN}"}}`, where Factory's MCP docs say Droid expands `${VAR}` in `env` as in `headers`. A title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Droid installed in a distro.
 
+## SSH
+
+A Droid on a remote host over SSH (#913) runs as `droid`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. It is checked only against a fake host in `tests/unit/droid-ssh-remote.test.ts`, never against a real Droid or host.
+
+- **Synced file.** `remoteFiles()` declares only the project's `.factory/mcp.json`. Kangentic's entry is merged beside the user's servers on the host, is the WSL hook transport's stdio bridge named by its path on the host, and holds the token only as the `${KANGENTIC_MCP_TOKEN}` reference (the token rides the spawn environment). The file is restored when the session releases, and removed again if Kangentic created it.
+- **Activity is PTY-only.** The hooks settings file (`droid-settings.json`, passed with `--settings`) is written only for a Droid on this computer. Sending it would need the session relay to carry one more file and `--settings` to name the host's copy, for hooks that only add tool calls and waits on top of the silence timer. So a session on a host shows the same activity as a Droid with ignored hooks.
+- **No resume over SSH.** The session id comes only from `~/.factory/sessions/<slug>/<uuid>.jsonl`, which is on the host and not in this computer's mirror. No id is captured, so a resume starts a fresh conversation, with no error and no wait. The transcript and the Conversation viewer read the same mirror and show nothing.
+
 ## Limitations
 
 ### No live telemetry (model, cost, tokens, context window)
