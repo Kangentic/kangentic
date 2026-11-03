@@ -86,11 +86,52 @@ export async function probeOpenCodeServer(
     if (!response.ok) {
       return { reachable: false, reason: `Server responded with HTTP ${response.status}` };
     }
-    const body = (await response.json()) as { healthy?: boolean; version?: string };
+    let body: { healthy?: boolean; version?: string };
+    try {
+      body = (await response.json()) as { healthy?: boolean; version?: string };
+    } catch {
+      // An OpenCode 2 server answers this route with its web app's HTML and a
+      // 200. Its own /api/info says which version it runs, which is the
+      // useful answer: the local CLI and the server must be the same major.
+      const openCode2Version = await openCode2ServerVersion(server, fetchImpl);
+      return {
+        reachable: false,
+        reason: openCode2Version
+          ? `The server runs OpenCode ${openCode2Version}, and the local OpenCode is version 1`
+          : 'The server did not answer as an OpenCode server',
+      };
+    }
     if (!body.healthy) return { reachable: false, reason: 'Server reported unhealthy' };
     return { reachable: true, version: body.version ?? null };
   } catch (error) {
     return { reachable: false, reason: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * The version an OpenCode 2 server reports on `GET /api/info`, or null for
+ * anything else. A V2 server's username is always `opencode`, so the request
+ * sends that with the configured password.
+ */
+async function openCode2ServerVersion(server: AgentExecutionServer, fetchImpl: FetchLike): Promise<string | null> {
+  if (!server.url) return null;
+  try {
+    const headers = server.auth.kind === 'basic'
+      ? authHeaders({ kind: 'basic', username: 'opencode', password: server.auth.password })
+      : {};
+    const response = await fetchImpl(`${trimTrailingSlash(server.url)}/api/info`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { version?: unknown } | null;
+    const version = body?.version;
+    if (typeof version !== 'string') return null;
+    const major = /^v?(\d+)\./i.exec(version.trim());
+    return major && Number(major[1]) >= 2 ? version : null;
+  } catch {
+    return null;
   }
 }
 

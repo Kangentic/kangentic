@@ -18,6 +18,7 @@ import {
   type OpenCodeV2Fetch,
   type OpenCodeV2Message,
 } from '../../src/main/agent/adapters/opencode/remote-client-v2';
+import { probeOpenCodeServer } from '../../src/main/agent/adapters/opencode/remote-client';
 import type { AgentExecutionServer } from '../../src/shared/types';
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures', 'opencode-v2');
@@ -147,6 +148,41 @@ describe('probeOpenCodeV2Server', () => {
       reachable: false,
       reason: 'No server URL configured',
     });
+  });
+});
+
+// The OpenCode 1 client's probe pointed at an OpenCode 2 server, which answers
+// V1's /global/health with its web app's HTML and a 200.
+describe('probeOpenCodeServer (OpenCode 1 client) against an OpenCode 2 server', () => {
+  const htmlPage = (): ReturnType<OpenCodeV2Fetch> => Promise.resolve({
+    ok: true,
+    status: 200,
+    json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+  });
+
+  it('names the OpenCode 2 server from its /api/info, asking as opencode', async () => {
+    const { fetchImpl, calls } = fakeFetch((call) => (call.url.endsWith('/api/info')
+      ? jsonResponse(200, fixture('server-info.json'))
+      : htmlPage()));
+    expect(await probeOpenCodeServer(SERVER, fetchImpl)).toEqual({
+      reachable: false,
+      reason: 'The server runs OpenCode 2.2.5, and the local OpenCode is version 1',
+    });
+    expect(calls[0].url).toBe('http://10.0.0.5:4096/global/health');
+    expect(calls[1].headers).toEqual({ Authorization: EXPECTED_AUTH });
+  });
+
+  it('gives a plain reason instead of a parse error for any other web page', async () => {
+    const { fetchImpl } = fakeFetch(() => htmlPage());
+    expect(await probeOpenCodeServer(SERVER, fetchImpl)).toEqual({
+      reachable: false,
+      reason: 'The server did not answer as an OpenCode server',
+    });
+  });
+
+  it('still reports a healthy OpenCode 1 server', async () => {
+    const { fetchImpl } = fakeFetch(() => jsonResponse(200, fixture('opencode1-global-health.json')));
+    expect(await probeOpenCodeServer(SERVER, fetchImpl)).toEqual({ reachable: true, version: '1.18.31' });
   });
 });
 
