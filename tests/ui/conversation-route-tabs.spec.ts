@@ -206,19 +206,11 @@ test.describe('Conversation window Route tabs', () => {
     }
   });
 
-  test('All draws the column name where each stay begins and folds the new session at a move', async () => {
-    const { browser, page } = await launch();
-    try {
-      await openConversation(page);
-      await expect(dividers(page)).toHaveText(['Executing', 'Code Review', 'Executing']);
-      await expect(page.getByText('BEFORE_THE_LOG')).toBeVisible();
-      // The session that began with the move to Code Review adds no line of its own.
-      await expect(page.getByTestId('conversation-row-system')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
+  // Trimmed (test-suite audit): "All draws the column name where each stay
+  // begins and folds the new session at a move" is route-slice's
+  // tests/unit/conversation-route-slice.test.ts (All keeps every turn...;
+  // folds a new session that starts at a move), and the drawn dividers are
+  // asserted in 'Copy on All' below.
   test('a column tab keeps only that column\'s stays, each opened by its date, and search names the column', async () => {
     const { browser, page } = await launch();
     try {

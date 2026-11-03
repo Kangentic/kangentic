@@ -143,8 +143,8 @@ function readBlockListItems(lines: string[], keyLineIndex: number, keyIndent: nu
 /**
  * Every literal runner label a workflow names, in each place one can sit:
  *  - `runs-on: <label>` (and `runs-on: [<label>, ...]`)
- *  - a matrix list leg, `- os: <label>` (release.yml, package-smoke.yml)
- *  - a matrix inline array, `os: [<label>, ...]` (task-reap-real-processes.yml)
+ *  - a matrix list leg, `- os: <label>` (release.yml)
+ *  - a matrix inline array, `os: [<label>, ...]` (task-reap-real-processes.yml, package-smoke.yml)
  *  - a matrix block list under `os:`, and a bare `os: <label>` that is not a list leg's first key
  * Values holding `${{ ... }}` are skipped, since `runs-on: ${{ matrix.os }}` is covered by the
  * matrix entries it reads. Those expressions are recorded in `matrixKeyReads` so a matrix key other
@@ -233,7 +233,7 @@ describe('GitHub Actions Linux runner pin', () => {
     const expectedFormsByFile: [RunnerForm, string][] = [
       ['runs-on', 'ci.yml'],
       ['matrix-leg', 'release.yml'],
-      ['matrix-leg', 'package-smoke.yml'],
+      ['matrix-inline', 'package-smoke.yml'],
       ['matrix-inline', 'task-reap-real-processes.yml'],
     ];
     for (const [form, file] of expectedFormsByFile) {

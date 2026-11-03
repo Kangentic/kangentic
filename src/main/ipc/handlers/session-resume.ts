@@ -36,6 +36,7 @@ import { claimHeldMessages, composeOpeningMessage, deliverOpeningRemainder } fro
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reconcileTaskSessionRef } from './session-reconcile';
@@ -261,8 +262,7 @@ export function resumeTaskSession(
           } catch (worktreeError) {
             if (isAbortError(worktreeError)) throw worktreeError;
             reportFailure('worktree', worktreeError, planTask);
-            const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-            throw new Error(`Worktree setup failed: ${message}`, { cause: worktreeError });
+            throw wrapWorktreeSetupError(worktreeError);
           }
 
           // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY

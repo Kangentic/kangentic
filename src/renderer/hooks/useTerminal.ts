@@ -7,6 +7,7 @@ import { countHiddenFrames, isTerminalLayoutLandingFor, nextFrame, noteTerminalF
 import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
+import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-apply';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
@@ -2442,17 +2443,14 @@ export function useTerminal(options: UseTerminalOptions) {
     // conformed size where it was changes nothing here. That distinction is
     // load-bearing for the atlas clear below - see applyOptions.
     const appliedFontSize = conformedFontRef.current ?? fontSize;
-    const fontChanged =
-      !lastAppliedFontRef.current ||
-      lastAppliedFontRef.current.family !== fontFamily ||
-      lastAppliedFontRef.current.size !== appliedFontSize;
-    let cancelled = false;
+    const fontChanged = terminalFontMoved(lastAppliedFontRef.current, fontFamily, appliedFontSize);
 
     const applyOptions = () => {
-      // Dropped if a newer font change superseded this one while the load
-      // below was in flight (see the cleanup below), or if the terminal was
-      // torn down in the meantime.
-      if (cancelled || !xtermRef.current) return;
+      // Not run at all if a newer font change superseded this one while the
+      // load below was in flight (scheduleFontApply's cancel, returned from
+      // this effect); dropped here if the terminal was torn down in the
+      // meantime.
+      if (!xtermRef.current) return;
       // Read fresh rather than from the effect's capture: a conform can land in
       // the document.fonts.load gap, and what is recorded below has to be what
       // was actually assigned here.
@@ -2481,7 +2479,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // exactly where that can happen: a global size change from 12 to 13
       // leaves its conformed 9 px alone, and a sibling window conformed to the
       // same 9 px is on the same atlas.
-      if (!previousFont || previousFont.family !== fontFamily || previousFont.size !== applied) {
+      if (terminalFontMoved(previousFont, fontFamily, applied)) {
         lastAppliedFontRef.current = { family: fontFamily, size: applied };
         // xterm re-measures character size as soon as `options.fontFamily` is
         // assigned above. Force the WebGL renderer to re-rasterize every glyph
@@ -2492,26 +2490,21 @@ export function useTerminal(options: UseTerminalOptions) {
       }
     };
 
-    if (fontChanged) {
-      // Make sure the browser has actually resolved/loaded this font BEFORE
-      // letting xterm measure character size against it, so the measurement
-      // is of the new font rather than its fallback. This is not what keeps a
-      // 0-width cell out of the WebGL atlas: xterm keeps its previous size when
-      // a measurement reads 0, and the real 0-width path was a sub-pixel font
-      // size flooring to 0 device pixels (DESKTOP-1J/1K), which the floor in
-      // resolveTerminalFontSize closes. document.fonts.load() can reject (a
-      // font that fails to resolve entirely); the options are applied either
-      // way rather than left stale.
-      document.fonts.load(`${fontSize}px ${fontFamily}`).then(applyOptions, applyOptions);
-    } else {
-      // No font change: apply synchronously, exactly as before this effect
-      // grew its font-load path.
-      applyOptions();
-    }
-
-    return () => {
-      cancelled = true;
-    };
+    // On a font change, make sure the browser has actually resolved/loaded this
+    // font BEFORE letting xterm measure character size against it, so the
+    // measurement is of the new font rather than its fallback. This is not what
+    // keeps a 0-width cell out of the WebGL atlas: xterm keeps its previous size
+    // when a measurement reads 0, and the real 0-width path was a sub-pixel font
+    // size flooring to 0 device pixels (DESKTOP-1J/1K), which the floor in
+    // resolveTerminalFontSize closes. document.fonts.load() can reject (a font
+    // that fails to resolve entirely); the options are applied either way rather
+    // than left stale. With no font change, apply synchronously, exactly as
+    // before this effect grew its font-load path.
+    return scheduleFontApply(
+      fontChanged,
+      () => document.fonts.load(`${fontSize}px ${fontFamily}`),
+      applyOptions,
+    );
   }, [configuredFontFamily, configuredFontSize, configuredCursorStyle, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out

@@ -207,29 +207,8 @@ test.describe('Changes pop-out close does not reclaim the inline panel', () => {
     }
   });
 
-  /**
-   * A per-file diff window is ADDITIVE: it is opened FROM the inline panel, which
-   * stays mounted behind it. Closing one must leave that panel exactly as it was.
-   */
-  test('closing a per-file "changes-file" pop-out leaves the inline panel open', async () => {
-    const { browser, page } = await launchWithState();
-    try {
-      await openTaskDetail(page);
-      const changesPill = page.locator('[data-testid="changes-toggle"]');
-      const changesPanel = page.locator('[data-testid="changes-expand"]');
-
-      await changesPill.click();
-      await expect(changesPanel).toBeVisible({ timeout: 10000 });
-
-      const fileKey = `changes-file:${PROJECT_ID}:${TASK_ID}:src/a b/c.ts`;
-      await firePopOutChanged(page, [fileKey]);
-      await firePopOutChanged(page, []);
-
-      await expect(changesPanel).toBeVisible();
-      await expect(changesPill).toHaveAccessibleDescription(/^Hide changes/);
-      expect(await changesOpenEntityIds(page)).toContain(TASK_ID);
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): a closing per-file "changes-file" pop-out leaving
+  // the inline panel open is tests/unit/pop-out-changed.test.ts 'a closing
+  // "changes-file" window leaves the inline Changes panel open'. The panel and
+  // pill follow changesOpenTasks, as the two tests above show.
 });

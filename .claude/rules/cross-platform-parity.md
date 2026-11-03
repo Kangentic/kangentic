@@ -90,8 +90,8 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
 ## Enforcement (self-maintaining)
 
 - **CI is the mechanical backstop for tests (primary):** the `unit`, `ui`, and `e2e-shards` jobs run
-  the unit, UI, and E2E (electron, under xvfb at workers=4) tiers on `ubuntu-24.04` on every push
-  (`.github/workflows/ci.yml`), so a Windows-only-green test now fails CI at every tier - including
+  the unit, UI, and E2E (electron, under xvfb at workers=8) tiers on `ubuntu-24.04` on every pull
+  request (`.github/workflows/ci.yml`), so a Windows-only-green test now fails CI at every tier - including
   E2E, which previously ran only on local Windows. This is the load-bearing guarantee; keep the UI
   and E2E gates in the required checks.
 - **Test for the runner pin:** `tests/unit/ci-workflow-hygiene.test.ts` fails when any Linux

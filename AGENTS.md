@@ -287,6 +287,7 @@ indexes it and Cursor gets no copy.
 - `task-process-tag.md` - task PTYs carry `KANGENTIC_TASK_ID`; a terminal transition kills only tagged processes in the task's directories, never shared, visible or tmux ones; env text never leaves a reader.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
 - `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.
+- `test-value.md` - what earns a test, which tier it belongs to, and what earns a CI job, against the 20-job and 5-macOS caps.
 - `i18n.md` - UI text goes through Lingui: `.tsx` macros, `msg` plus `i18n._` in `.ts`, translated where it renders, agent text English, one PO file per area.
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instructions in your

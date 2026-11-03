@@ -362,6 +362,9 @@ test('the window draws the overlay while the spawn is in flight, then the pane t
     await expect(windowOverlay).toContainText(LAUNCH_LABEL);
     await expect(windowOverlay).toHaveCount(1);
     await expect(pane).toHaveCount(0);
+    // Painted with the resolved default terminal background (#0c0c0c), not the
+    // theme-tracking bg-surface color.
+    expect(await windowOverlay.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(12, 12, 12)');
 
     await watchPaneOverlays(page);
     await releaseSpawn(page);
@@ -373,6 +376,9 @@ test('the window draws the overlay while the spawn is in flight, then the pane t
     await expect(paneOverlay).toBeVisible();
     await expect(paneOverlay).toContainText(LAUNCH_LABEL);
     await expect(paneOverlay).toHaveCount(1);
+    // The pane's overlay is a separate call site from the window's, so it carries
+    // the same resolved background on its own.
+    expect(await paneOverlay.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(12, 12, 12)');
     await expect(commandWindow.locator(OVERLAY_SELECTOR)).toHaveCount(1);
 
     // The positive control for test 3: the watcher does see an overlay drawn in

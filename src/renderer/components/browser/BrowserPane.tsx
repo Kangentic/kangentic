@@ -8,6 +8,7 @@ import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
 import { useBrowserUrl } from './useBrowserUrl';
+import { notePlaceholderKind } from './browser-url-resolution';
 import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
 import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
@@ -1387,9 +1388,11 @@ function BrowserPaneActive({
  * concrete example of a useful note.
  */
 function notePlaceholder(strokeCount: number, pickedCount: number): string {
-  if (pickedCount > 0 && strokeCount > 0) return i18n._(msg`e.g. "Explain what I marked"`);
-  if (pickedCount > 0) return i18n._(msg`e.g. "Why is this misaligned?"`);
-  if (strokeCount > 0) return i18n._(msg`e.g. "Match the circled spacing"`);
-  return i18n._(msg`What should the agent do with this?`);
+  switch (notePlaceholderKind(strokeCount, pickedCount)) {
+    case 'marked': return i18n._(msg`e.g. "Explain what I marked"`);
+    case 'picked': return i18n._(msg`e.g. "Why is this misaligned?"`);
+    case 'strokes': return i18n._(msg`e.g. "Match the circled spacing"`);
+    case 'none': return i18n._(msg`What should the agent do with this?`);
+  }
 }
 

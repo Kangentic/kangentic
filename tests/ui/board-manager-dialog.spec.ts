@@ -178,24 +178,15 @@ test.describe('BoardManagerDialog', () => {
     await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 2000 });
   });
 
-  test('After Plan Mode row only renders when permission_mode is plan', async () => {
-    await openManagerByHeader('Code Review');
-
-    // Code Review has no permission override so plan-exit-target should be hidden
-    // (the Agent section renders inline in the one-scroll form).
-    await expect(page.locator('[data-testid="plan-exit-target"]')).toBeHidden();
-
-    // Switch to Planning column where permission_mode = 'plan'.
-    await page.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]').click();
-    await expect(page.locator('[data-testid="plan-exit-target"]')).toBeVisible();
-  });
-
   // Plan approval comes first, then where the task goes; both only on a plan
   // column, and both explained by an info tip rather than a description line.
   test('a plan column shows Plan approval then After Plan Mode, starting on Manual, and saves Automatic', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
     await expect(dialog.locator('[data-testid="column-plan-approval"]')).toHaveCount(0);
+    // Code Review has no permission override, so After Plan Mode is hidden too
+    // (the Agent section renders inline in the one-scroll form).
+    await expect(dialog.locator('[data-testid="plan-exit-target"]')).toBeHidden();
 
     await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]').click();
     const planApproval = dialog.locator('[data-testid="column-plan-approval"]');

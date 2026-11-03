@@ -8,6 +8,12 @@
  * the store rebuilds on every write, the window layout save half a second after
  * each maximize included (243 components, 16 ms). These pin both out of
  * AppLayout's own body.
+ *
+ * Kept as a source pin on purpose. The claim is about which store writes
+ * RE-render AppLayout, which needs a client renderer that applies a store update
+ * and counts renders. The unit tier has react-dom/server, which renders once and
+ * never updates, and no jsdom, happy-dom or react-test-renderer to mount a tree
+ * with. A UI-tier render count would test it for real.
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';

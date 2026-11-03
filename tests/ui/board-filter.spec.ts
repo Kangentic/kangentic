@@ -80,10 +80,8 @@ test.afterAll(async () => {
 });
 
 test.describe('Board Filters', () => {
-  test('filter button is visible at top of board', async () => {
-    await expect(page.locator('[data-testid="board-filter-btn"]')).toBeVisible();
-  });
-
+  // The filter button being visible is implied by the next test clicking it.
+  // Keep the next test: those after it use the popover it leaves open.
   test('filter popover opens on click', async () => {
     const filterButton = page.locator('[data-testid="board-filter-btn"]');
     await filterButton.click();
@@ -217,10 +215,8 @@ test.describe('Board Filters', () => {
 });
 
 test.describe('Board Search', () => {
-  test('search input is visible on the board view', async () => {
-    await expect(page.locator('[data-testid="board-search"]')).toBeVisible();
-  });
-
+  // Trimmed (test-suite audit): 'search input is visible on the board view' is
+  // implied by every test below filling it.
   test('title match filters to matching task only', async () => {
     await page.locator('[data-testid="board-search"]').fill('auth');
     // "Auth bug fix" title contains "auth"; the other three do not

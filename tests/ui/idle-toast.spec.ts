@@ -455,29 +455,24 @@ test.describe('Agent Idle toast', () => {
     }
   });
 
-  // #452: a wait names what it waits for, in the desktop notification's words.
-  const waits: Array<{ label: string; waitKind?: 'question' | 'approval'; title: string; body: string }> = [
-    { label: 'a question', waitKind: 'question', title: 'Agent has a question', body: `"${TASK_TITLE}" is asking you a question.` },
-    { label: 'an approval', waitKind: 'approval', title: 'Agent needs your approval', body: `"${TASK_TITLE}" is waiting for your approval.` },
-    { label: 'a wait of unknown kind', title: 'Agent needs your input', body: `"${TASK_TITLE}" is waiting on you.` },
-  ];
-  for (const wait of waits) {
-    test(`a session waiting on ${wait.label} says so instead`, async () => {
-      const { browser, page } = await launchWithState();
-      try {
-        await fireActivity(page, 'thinking');
-        await fireActivity(page, 'permission', wait.waitKind);
+  // #452: a wait names what it waits for, in the desktop notification's words. One
+  // kind proves the activity push reaches the toast with its wait kind; the copy for
+  // an approval and for a wait of unknown kind is asserted in tests/unit/idle-toast.test.ts.
+  test('a session waiting on a question says so instead', async () => {
+    const { browser, page } = await launchWithState();
+    try {
+      await fireActivity(page, 'thinking');
+      await fireActivity(page, 'permission', 'question');
 
-        const toast = page.getByTestId('toast');
-        await expect(toast.first()).toBeVisible();
-        await expect(toast.first().getByTestId('toast-title')).toHaveText(wait.title);
-        await expect(toast.first().getByTestId('toast-body')).toHaveText(wait.body);
-        expect(await toastCountRightNow(page)).toBe(1);
-      } finally {
-        await browser.close();
-      }
-    });
-  }
+      const toast = page.getByTestId('toast');
+      await expect(toast.first()).toBeVisible();
+      await expect(toast.first().getByTestId('toast-title')).toHaveText('Agent has a question');
+      await expect(toast.first().getByTestId('toast-body')).toHaveText(`"${TASK_TITLE}" is asking you a question.`);
+      expect(await toastCountRightNow(page)).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
 
   test('no toast when the setting is off', async () => {
     const { browser, page } = await launchWithState();

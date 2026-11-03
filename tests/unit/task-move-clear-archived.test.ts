@@ -3,17 +3,12 @@
  * (src/main/ipc/handlers/task-move.ts), the inverse of the auto-archive-into-Done
  * bookkeeping.
  *
- * tests/unit/done-move-bookkeeping.test.ts already pins this wiring with a
- * STATIC source-text scan (the call site exists, the conditional expression's
- * literal text is `Boolean(task.archived_at) && toLane?.role !== 'done'`, and
- * the repository's SQL string is correct). That is airtight for "the call site
- * exists with this exact text" but cannot catch an INTEGRATION bug: the
- * conditional reachable but never actually invoked (an earlier return sits
- * above it), `toLane` resolved from the wrong swimlane, or the condition
- * silently inverted while still matching some other regex. This file drives
- * the REAL handler (mirrors task-move-complete-analytics.test.ts's harness)
- * with a mocked TaskRepository exposing `clearArchived: vi.fn()`, so it
- * observes what the handler actually DOES, not what its source text says.
+ * This file drives the REAL handler (mirrors task-move-complete-analytics.test.ts's
+ * harness) with a mocked TaskRepository exposing `clearArchived: vi.fn()`, so it
+ * observes what the handler actually DOES: the conditional reachable and
+ * invoked, `toLane` resolved from the right swimlane, the condition not
+ * inverted. The repository method itself runs against a real SQLite in
+ * tests/unit/done-move-bookkeeping.test.ts.
  *
  * Every scenario targets a lane with `auto_spawn: false` (Priority 2.5 in
  * task-move.ts) or a same-lane reorder, both of which return early with no
@@ -284,6 +279,19 @@ describe('handleTaskMove clears archived_at on a move out of Done', () => {
     const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done' });
     const noSpawnLane = makeSwimlane(AUTO_SPAWN_OFF_LANE_ID, { role: null, auto_spawn: false });
     const task = makeTask({ swimlane_id: DONE_LANE_ID, archived_at: null });
+
+    const { taskRepo } = await move(task, AUTO_SPAWN_OFF_LANE_ID, [doneLane, noSpawnLane]);
+
+    expect(taskRepo.clearArchived).not.toHaveBeenCalled();
+  });
+
+  it('does NOT clear anything for a task assembled without the archived_at column', async () => {
+    // A Task built without the column carries `undefined`, which a `!== null`
+    // test reads as archived. That slip made the handler try to unarchive on
+    // ordinary moves and shipped as a unit-tier failure across split-lock-cas.
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done' });
+    const noSpawnLane = makeSwimlane(AUTO_SPAWN_OFF_LANE_ID, { role: null, auto_spawn: false });
+    const task = makeTask({ swimlane_id: DONE_LANE_ID, archived_at: undefined as unknown as null });
 
     const { taskRepo } = await move(task, AUTO_SPAWN_OFF_LANE_ID, [doneLane, noSpawnLane]);
 

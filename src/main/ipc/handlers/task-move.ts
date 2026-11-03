@@ -28,6 +28,7 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { announceTaskBoardChange, announceTaskWrite, announceToMainWindow } from '../helpers/task-write-announce';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
@@ -1703,8 +1704,7 @@ export async function handleTaskMove(
         // or spawn). Wrap the error with a context message so the toast
         // surfaced to the renderer distinguishes worktree failures from
         // later spawn failures.
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Worktree setup failed: ${message}`, { cause: error });
+        throw wrapWorktreeSetupError(error);
       }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).

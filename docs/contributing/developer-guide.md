@@ -381,7 +381,9 @@ In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite con
 
 ## Testing
 
-Three tiers. Use the right one for the job.
+Four tiers. Pick the lowest one that can fail for the reason the bug would. What earns a test and
+what earns a CI job are in `.claude/rules/test-value.md`, and the evidence behind it is in the
+[test suite audit](../audits/test-suite-audit.md).
 
 ### Unit Tests (`tests/unit/`)
 
@@ -410,7 +412,7 @@ npx playwright test --project=ui
 ```
 
 - **Runner:** Playwright with headless Chromium
-- **Speed:** ~13s for 72 tests
+- **Speed:** about 4s per test on CI, so a test here must need a browser
 - **What to test here:** React components, forms, dialogs, drag-and-drop, board interactions
 - **No build needed** -- runs against Vite dev server (auto-started by Playwright)
 - **Vite's log:** the webServer pipes Vite's stdout, so its "page reload", "new dependencies
@@ -466,9 +468,10 @@ npm run build:demo
 npm run test:demo
 ```
 
-- **Runner:** Playwright with headless Chromium, one worker, against `dist/demo/` served by
-  `demo/static-server.mjs` from `beforeAll` (deliberately not a `webServer` entry, which would
-  start for every project filter and break the UI tier whenever the build is absent)
+- **Runner:** Playwright with headless Chromium, one worker locally and three on CI (the project is
+  `fullyParallel`), against `dist/demo/` served by `demo/static-server.mjs` from `beforeAll`
+  (deliberately not a `webServer` entry, which would start for every project filter and break the
+  UI tier whenever the build is absent)
 - **What it asserts:** every scene in the registry reaches its `ready` element (the loop
   iterates `SCENES`, so a new entry is covered with no test change), a held gesture through the
   pose its still plays, and, where it names a `focus`, that element is a real region rather than
@@ -500,9 +503,9 @@ npm run test:demo
 
 | What you're testing | Tier |
 |---------------------|------|
-| Pure function, parser, utility | Unit |
-| Component rendering, user interaction, form validation | UI |
-| Real IPC, PTY spawning, terminal output, file I/O | E2E |
+| Logic, parser, store, state machine, repo convention | Unit |
+| Layout, focus, keyboard, drag, a visible state | UI |
+| Real PTY, file watcher, restart, kill, worktree | E2E |
 | The web build boots and stays embeddable | Demo smoke |
 
 Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](../releases/release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
@@ -513,7 +516,9 @@ The `/test` command is the full local gate: typecheck, build, then unit + UI + E
 no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
 manual local runs - the automated gate now runs on CI as PR checks (the **Testing** column runs
 `/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
-the i18n catalog gate (`npm run i18n:check`), unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). CI retries a failed
+the i18n catalog gate (`npm run i18n:check`), unit, build, the web demo, the UI shards, and the Linux Electron E2E shards under xvfb). A push to
+`main` passes without running them when its tree already passed on the PR's head
+(`scripts/tested-tree.mjs`); a direct push runs everything. CI retries a failed
 Playwright test once and still fails the check when the retry passes (`--fail-on-flaky-tests` in
 `.github/workflows/ci.yml`), so a green check means no test was flaky. To run tiers directly:
 

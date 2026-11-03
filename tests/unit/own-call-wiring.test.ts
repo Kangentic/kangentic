@@ -10,9 +10,10 @@
  *      notifier. The notifier calls it as an OPTIONAL option (`?.`), so dropping
  *      the line, or passing a stub, silently turns the guard off and every
  *      own-call idle raises a desktop notification for a session that is about
- *      to end. `registerAllIpc` needs a live Electron main process, so this is a
- *      source-parity check on the real file's syntax tree.
- *   2. `buildConfiguredMcpServer` hands the request's caller session to
+ *      to end. That link is checked in register-all-idempotency.test.ts, which
+ *      runs `registerAllIpc` under a mocked electron and reads the option the
+ *      notifier was built with.
+ *   2.`buildConfiguredMcpServer` hands the request's caller session to
  *      `registerTaskTools` (the sixth argument) and to `registerWorkflowTools`
  *      (`{ taskId, sessionId }`). A request from a caller with a session must
  *      reach the `move_task` and `pause_workflow` handlers with
@@ -28,9 +29,6 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import * as ts from 'typescript';
 
 vi.mock('electron', () => ({
   webContents: { fromId: () => null },
@@ -67,86 +65,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { buildConfiguredMcpServer } from '../../src/main/agent/mcp-http-server';
-import { isSessionInOwnCall, markOwnCallSession } from '../../src/main/ipc/handlers/own-call-turn-wait';
 import type { TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { BrowserToolDependencies } from '../../src/main/agent/mcp-http/browser-tools';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
-
-describe('register-all.ts hands the real isSessionInOwnCall to the desktop notifier', () => {
-  const REGISTER_ALL_PATH = path.resolve(__dirname, '../../src/main/ipc/register-all.ts');
-  const OWN_CALL_MODULE = './handlers/own-call-turn-wait';
-  const sourceFile = ts.createSourceFile(
-    REGISTER_ALL_PATH,
-    fs.readFileSync(REGISTER_ALL_PATH, 'utf-8'),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-
-  function collect<T extends ts.Node>(is: (node: ts.Node) => node is T): T[] {
-    const found: T[] = [];
-    const visit = (node: ts.Node): void => {
-      if (is(node)) found.push(node);
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
-    return found;
-  }
-
-  /** The local name `isSessionInOwnCall` is imported under, from the own-call module, or null. */
-  function localNameOfOwnCallImport(): string | null {
-    for (const declaration of collect(ts.isImportDeclaration)) {
-      if (!ts.isStringLiteral(declaration.moduleSpecifier) || declaration.moduleSpecifier.text !== OWN_CALL_MODULE) continue;
-      const bindings = declaration.importClause?.namedBindings;
-      if (!bindings || !ts.isNamedImports(bindings)) continue;
-      for (const specifier of bindings.elements) {
-        if ((specifier.propertyName ?? specifier.name).text === 'isSessionInOwnCall') return specifier.name.text;
-      }
-    }
-    return null;
-  }
-
-  it('imports isSessionInOwnCall from the own-call module', () => {
-    expect(localNameOfOwnCallImport()).not.toBeNull();
-  });
-
-  it('passes exactly that import as the notifier\'s isSessionInOwnCall option, not a stub', () => {
-    const constructions = collect(
-      (node): node is ts.NewExpression =>
-        ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'DesktopNotifier',
-    );
-    // Exactly one, so a rename of the class cannot leave this scan empty.
-    expect(constructions).toHaveLength(1);
-
-    const options = constructions[0].arguments?.[0];
-    expect(options && ts.isObjectLiteralExpression(options)).toBe(true);
-    const properties = (options as ts.ObjectLiteralExpression).properties;
-    const option = properties.find(
-      (property): property is ts.PropertyAssignment | ts.ShorthandPropertyAssignment =>
-        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property))
-        && property.name.getText(sourceFile) === 'isSessionInOwnCall',
-    );
-    expect(option, 'the DesktopNotifier options carry no isSessionInOwnCall').toBeDefined();
-
-    const importedAs = localNameOfOwnCallImport();
-    const handedOver = ts.isShorthandPropertyAssignment(option!)
-      ? option.name.text
-      : ts.isIdentifier(option!.initializer) ? option!.initializer.text : null;
-    expect(handedOver).toBe(importedAs);
-  });
-
-  it('the function it hands over reads the mark an own call sets, and drops it on release', () => {
-    const sessionId = 'session-own-call-wiring';
-    expect(isSessionInOwnCall(sessionId)).toBe(false);
-
-    const release = markOwnCallSession(sessionId);
-    expect(isSessionInOwnCall(sessionId)).toBe(true);
-
-    release();
-    expect(isSessionInOwnCall(sessionId)).toBe(false);
-  });
-});
 
 describe('buildConfiguredMcpServer carries the request\'s caller session to the move and pause tools', () => {
   const CALLER_SESSION_ID = 'session-caller';

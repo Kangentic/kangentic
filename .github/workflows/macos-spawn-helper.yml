@@ -14,9 +14,8 @@ name: macOS spawn-helper
 # unsigned app, build/afterSign.js on the signed one), but a failure at that
 # point costs a release.
 #
-# Path-filtered, and deliberately NOT a required check: ci.yml runs at its
-# 21-job concurrency ceiling (see the note at the top of that file), and this
-# only has something to say when the helper, its gates, or node-pty change.
+# Path-filtered, and deliberately NOT a required check: ci.yml runs at the job
+# cap (see the note at the top of that file), and this only has something to say when the helper, its gates, or node-pty change.
 # package-lock.json is in the filter because a node-pty bump is the change most
 # likely to break the helper's contract.
 
@@ -49,8 +48,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Skips the run below on a push whose tree its PR already tested. See the note at the top of ci.yml.
+  tested-tree:
+    name: Tree already tested
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check the pushed tree against its PR
+        id: tree
+        uses: ./.github/actions/tested-tree
+
   self-test:
     name: macOS spawn-helper self-test
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: macos-latest
     timeout-minutes: 20
     steps:

@@ -39,11 +39,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
 /** Past this, a replay counts as failed and its CLI is stopped. */
 const RUN_TIMEOUT_MS = 5 * 60_000;
-/**
- * Lower effort first: on an exact tie between passing levels, the lower one is recommended. Kept
- * apart from the copy in `review-eval/decide.mjs` on purpose: each belongs to its own pre-registered
- * rule, and a shared list would let an edit for one rule change the other.
- */
+/** Lower effort first: on an exact tie between passing levels, the lower one is recommended. */
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /**

@@ -6,8 +6,9 @@
  * stage 3 iterates well-known fallback paths, calls existsSync on each,
  * then attempts probeVersion. The first path that returns a version wins.
  *
- * Separate from claude-detector.test.ts (which covers the happy PATH
- * path and caching/dedup) to keep concern separation clear.
+ * Separate from the happy-path, caching and dedup cases in the other
+ * agent-detector-*.test.ts files, and from adapter-detectors.test.ts (each
+ * adapter's binary name and version parser), to keep concern separation clear.
  *
  * Also includes Gap 3: smoke test that ~/.claude/local/claude is the
  * first fallback entry in ClaudeDetector, guarding against accidental

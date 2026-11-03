@@ -10,9 +10,9 @@
  * Qwen 0.15.3 install.
  *
  * Run:
- *   $env:KANGENTIC_LIVE_QWEN="1"; npx vitest run tests/unit/qwen-live-smoke.test.ts   # PowerShell
- *   set KANGENTIC_LIVE_QWEN=1 && npx vitest run tests/unit/qwen-live-smoke.test.ts    # cmd
- *   KANGENTIC_LIVE_QWEN=1 npx vitest run tests/unit/qwen-live-smoke.test.ts           # bash
+ *   $env:KANGENTIC_LIVE_QWEN="1"; npx vitest run tests/integration/qwen-live-smoke.test.ts   # PowerShell
+ *   set KANGENTIC_LIVE_QWEN=1 && npx vitest run tests/integration/qwen-live-smoke.test.ts    # cmd
+ *   KANGENTIC_LIVE_QWEN=1 npx vitest run tests/integration/qwen-live-smoke.test.ts           # bash
  *
  * What it proves end-to-end:
  *   1. The real qwen binary is on PATH and reports a version (detector).

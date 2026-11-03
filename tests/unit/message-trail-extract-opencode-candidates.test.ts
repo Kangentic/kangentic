@@ -56,7 +56,7 @@ describe('extractMessageTrail - OpenCode candidate selection', () => {
     // Deliberately matched in EXACT case. openCodeCandidates lowercases
     // unconditionally, while the sibling normalizeCwdForCompare in
     // session-history-parser.ts lowercases only on win32, and
-    // opencode-session-history-parser.live.test.ts asserts that path stays
+    // tests/integration/opencode-session-history-parser.live.test.ts asserts that path stays
     // case-sensitive on POSIX. Pinning the case-folding here would make this test
     // defend that divergence: gating the lowercase on win32 would then fail on Linux
     // while passing on Windows. The trailing separator and the time_created scale are

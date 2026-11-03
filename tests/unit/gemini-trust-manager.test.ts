@@ -33,7 +33,6 @@ vi.mock('node:os', async () => {
 
 import {
   ensureGeminiWorktreeTrust,
-  removeGeminiWorktreeTrust,
   GeminiAdapter,
 } from '../../src/main/agent/adapters/gemini';
 
@@ -184,52 +183,10 @@ describe('GeminiAdapter.ensureTrust', () => {
 });
 
 describe('removeGeminiWorktreeTrust', () => {
-  // When no ancestor is already trusted, ensureTrust writes one key per task
-  // worktree. Without removal on cleanup the file grows by a dead entry per
-  // task forever - the same accumulation that reached 473 entries in Codex's
-  // config.toml before its equivalent cleanup existed.
+  // The remove contract (drops the entry, no growth over cycles, other
+  // projects untouched, user decisions kept, quiet no-op) is the shared table
+  // in adapter-trust-removal.test.ts. What stays here is this adapter's wiring.
   const WORKTREE = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', '3');
-
-  it('drops the entry for a removed worktree', async () => {
-    await ensureGeminiWorktreeTrust(WORKTREE);
-    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
-
-    await removeGeminiWorktreeTrust(WORKTREE);
-    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
-  });
-
-  it('does not grow the file across repeated create/remove cycles', async () => {
-    for (let taskIndex = 0; taskIndex < 25; taskIndex += 1) {
-      const worktree = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', String(taskIndex));
-      await ensureGeminiWorktreeTrust(worktree);
-      await removeGeminiWorktreeTrust(worktree);
-    }
-    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
-  });
-
-  it('leaves other projects untouched', async () => {
-    writeTrustedFolders({ '/other/project': 'TRUST_FOLDER' });
-    await ensureGeminiWorktreeTrust(WORKTREE);
-    await removeGeminiWorktreeTrust(WORKTREE);
-    expect(readTrustedFolders()['/other/project']).toBe('TRUST_FOLDER');
-  });
-
-  it('never removes a user decision', async () => {
-    // TRUST_PARENT / DO_NOT_TRUST are the user's, not ours: a later worktree
-    // at the same path must still honor them.
-    for (const level of ['TRUST_PARENT', 'DO_NOT_TRUST']) {
-      writeTrustedFolders({ [WORKTREE]: level });
-      await removeGeminiWorktreeTrust(WORKTREE);
-      expect(readTrustedFolders()[WORKTREE]).toBe(level);
-    }
-  });
-
-  it('is a no-op when there is no file or no matching entry', async () => {
-    await expect(removeGeminiWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
-    writeTrustedFolders({ '/other/project': 'TRUST_FOLDER' });
-    await removeGeminiWorktreeTrust(WORKTREE);
-    expect(readTrustedFolders()['/other/project']).toBe('TRUST_FOLDER');
-  });
 
   it('is wired to the adapter via onWorktreeRemoved', async () => {
     const adapter = new GeminiAdapter();

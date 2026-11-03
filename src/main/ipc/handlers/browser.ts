@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
+import { translatePasteSubmitError } from '../helpers/paste-error-message';
 import { browserUrlStore } from '../../browser/browser-url-store';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/browser-pane-opener';
@@ -199,14 +200,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
       });
     } catch (caught) {
       if (caught instanceof PasteSubmitError) {
-        const userMessage = caught.code === 'timeout'
-          ? 'Paste timed out - the agent may be busy. Try again.'
-          : caught.code === 'no-submission-evidence'
-            ? caught.message.includes('bracketed-paste mode')
-              ? 'Agent has a permission prompt or modal open. Resolve it in the terminal, then send again.'
-              : 'Paste landed but Enter did not submit. Press Enter in the terminal to submit.'
-            : 'Paste was cancelled.';
-        const error = new Error(userMessage);
+        const error = new Error(translatePasteSubmitError(caught));
         (error as Error & { cause?: unknown }).cause = caught;
         throw error;
       }

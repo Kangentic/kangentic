@@ -143,11 +143,22 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    the last push never triggered CI and there is nothing here to trust, so say that rather than
    reading a stale run as a pass.
 
-   This is the authoritative gate, and it is strictly broader than Step 1's local run. CI runs
-   lint, typecheck, build, 3 unit shards, 11 UI shards, and 5 Linux Electron E2E shards on this
-   exact commit. Step 1 runs typecheck and the UI tier, and nothing else: a lint error, a unit
-   regression, a broken build, or an E2E failure would all sail past it. One `gh` call covers
-   every one of those in about a second.
+   This is the authoritative gate, and it is strictly broader than Step 1's local run. CI covers
+   lint, typecheck, build, 2 unit shards, 11 UI shards, 5 Linux Electron E2E shards, and the web
+   demo for this exact tree. On a merged PR's push the run's `Tree already tested` job passes it
+   without running them again, because the PR's head passed all of them on the same tree
+   (`scripts/tested-tree.mjs`); read that job's log if you want to see which head. Step 1 runs
+   typecheck and the UI tier, and nothing else: a lint error, a unit regression, a broken build, or
+   an E2E failure would all sail past it. One `gh` call covers every one of those in about a second.
+
+   Then check the two package legs a pull request no longer runs: `gh run list --repo
+   Kangentic/kangentic --workflow=package-smoke.yml --event schedule --limit 1 --json
+   headSha,conclusion,createdAt`. Require `conclusion: success` and a `createdAt` within the last 48
+   hours. A newer main than that run's `headSha` is fine, since it runs nightly. On any other
+   conclusion, an older run, or an empty list, stop: Linux arm64 or Intel macOS may not package, the
+   nightly itself may have stopped running, and the release matrix would find out after the tag
+   exists. `gh workflow run package-smoke.yml --ref main` gets a fresh answer, but it reports under
+   `--event workflow_dispatch`, so read that run instead.
 
    A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
    `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its

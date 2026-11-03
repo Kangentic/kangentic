@@ -134,7 +134,14 @@ test.describe('Workflows canvas', () => {
       await expect(page.locator('[data-testid="workflows-empty-line"]')).toHaveText('Linked tasks that run through your board on their own.');
       await expect(page.locator('[data-testid="workflows-create-first"]')).toHaveText('Create your first workflow');
       await expect(page.locator('[data-testid="workflows-empty-hint"]')).toHaveText('Or right-click a task and choose New workflow.');
-      // The Workflows segment carries no mark with nothing running.
+      // The Workflows segment carries neither a count nor a mark with no workflows.
+      // The empty view also paints before the list loads, so wait for the list
+      // itself: otherwise "no pill" would hold for a list that never arrived.
+      await expect.poll(() => page.evaluate(() => (window as unknown as {
+        __zustandStores: { workflow: { getState: () => { projectId: string | null } } };
+      }).__zustandStores.workflow.getState().projectId)).toBe(PROJECT_ID);
+      await expect(page.locator('[data-testid="view-toggle-workflows-count"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="view-toggle-workflows-running"]')).toHaveCount(0);
       await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows');
 
       // The drawing (Final 7): four linked cards, the first done, two running,

@@ -207,41 +207,10 @@ test.describe('AgentTab - re-detect button wires forceRefresh=true', () => {
     await closeSettings(page);
   });
 
-  test('updateConfig with a cliPaths change refreshes the agent inventory', async () => {
-    // config-store's updateConfig() calls get().loadAgentList() (a plain,
-    // non-forced reload) whenever partial.agent is present, so a CLI-path
-    // save picks up the new binary immediately instead of requiring a
-    // restart. Drive updateConfig directly against the store (no Settings UI
-    // involved) so this test pins the store-level wiring in isolation from
-    // the AgentTab input form.
-    ({ browser, page } = await launchFreshPage());
-    await createProjectAndWaitForBoard(page, 'agent-tab-cli-path-refresh');
-
-    await waitForBootstrapComplete(page);
-
-    // Install the call interceptor AFTER bootstrap so bootstrap's own
-    // agents.list() call does not contaminate the recorded state.
-    await instrumentAgentListCalls(page);
-
-    await page.evaluate(async () => {
-      const configStore = (window as unknown as {
-        __zustandStores?: {
-          config?: { getState: () => { updateConfig: (partial: unknown) => Promise<void> } };
-        };
-      }).__zustandStores?.config;
-      await configStore?.getState().updateConfig({ agent: { cliPaths: { claude: '/mock/bin/claude' } } });
-    });
-
-    // A cliPaths change must trigger at least one agents.list() call so the
-    // UI reflects the new path without a restart.
-    await expect.poll(
-      async () => {
-        const calls = await readAgentListCalls(page);
-        return calls.callCount;
-      },
-      { timeout: 3000, intervals: [200, 200, 300, 300] },
-    ).toBeGreaterThanOrEqual(1);
-  });
+  // Trimmed (test-suite audit): 'updateConfig with a cliPaths change refreshes the
+  // agent inventory' is tests/unit/config-store-rescan-models.test.ts 'reloads the
+  // list, unforced, after a CLI path write'. The test below drives the same reload
+  // through the Settings field.
 
   test('the CLI path field saves to this project, never to the global config, and refreshes the list', async () => {
     // agent.cliPaths is project scoped (#286): there is no scope switch, so the
