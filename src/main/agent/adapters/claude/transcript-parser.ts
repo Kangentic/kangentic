@@ -21,7 +21,7 @@ import {
 } from '../../shared/transcript-truncation';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
-import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { cliHomeDir, cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /** Claude's entries carry their own uuids, so nothing counts lines. */
 const UUIDS_NUMBER_LINES = false;
@@ -1148,7 +1148,7 @@ function isCompleteJsonLine(text: string): boolean {
  */
 export function locateClaudeTranscriptFile(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
   return path.join(
-    place ? place.facts.homeUnc : os.homedir(),
+    cliHomeDir(place),
     '.claude',
     'projects',
     claudeProjectSlug(place ? cliPathForTarget(cwd, place) : cwd),

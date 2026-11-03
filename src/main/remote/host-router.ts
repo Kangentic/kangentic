@@ -122,7 +122,10 @@ export class HostRouter {
       case 'helper': {
         const link = this.hub.linkOf(request.hostId);
         if (!link) throw new HostUnreachableError(request.hostId, `Kangentic has no connection set up for host ${request.hostId}`);
-        return link.requestHelper(request.method as HelperMethod, request.params as RemoteRequestParams<HelperMethod>);
+        const params = request.params as RemoteRequestParams<HelperMethod>;
+        return request.raw
+          ? link.requestHelperRaw(request.method as HelperMethod, params, Buffer.from(request.raw))
+          : link.requestHelper(request.method as HelperMethod, params);
       }
       default: {
         const unknownOperation: never = request;

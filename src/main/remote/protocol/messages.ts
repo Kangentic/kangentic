@@ -60,6 +60,32 @@ export interface SuspendAllParams {
  */
 export const HOST_LOGIN_SHELL = '$LOGIN_SHELL';
 
+/** A path into a JSON object: each segment is an object key. */
+export type JsonPointer = string[];
+
+/** One declarative edit of a JSON file the helper applies under a lock (`helper/json-patch.ts`). */
+export type JsonPatchOp =
+  /** Set the value, replacing any other. */
+  | { op: 'set'; at: JsonPointer; value: unknown }
+  /** Set the value only where nothing is. */
+  | { op: 'setDefault'; at: JsonPointer; value: unknown }
+  /** Add the value to the array there, making it, unless it is already in it. */
+  | { op: 'addToArray'; at: JsonPointer; value: unknown }
+  /** Where nothing is, copy the array at `from`, or `fallback` when `from` holds none. */
+  | { op: 'copyIfAbsent'; from: JsonPointer; at: JsonPointer; fallback: unknown };
+
+export interface JsonPatchRequest {
+  /** Absolute, beneath the user's home (the helper checks). */
+  path: string;
+  ops: JsonPatchOp[];
+  /** A directory taken with `mkdir` for the edit's length, as the CLI takes its own lock. */
+  lockDirectory?: string;
+}
+
+export type JsonPatchResult =
+  | { applied: true; changed: boolean }
+  | { applied: false; changed: false; reason: 'locked' | 'not-an-object' | 'unreadable' | 'bad-patch' };
+
 export interface HostFileWrite {
   /** An absolute path on the host, under the user's home. */
   path: string;
@@ -94,8 +120,22 @@ export interface HelperRequestMap {
    * `ignored`, when the epoch is not the helper's current one.
    */
   suspendAll: { params: SuspendAllParams; result: { suspended: number; ignored: boolean } };
-  /** Write files the agent's command needs (its settings, its hook scripts), making their folders. */
-  writeFiles: { params: { files: HostFileWrite[] }; result: { written: number } };
+  /**
+   * Write files the agent's command needs (its settings, its hook scripts), making their folders, and
+   * make `directories` that hold no file of their own (a hook folder the script publishes into).
+   */
+  writeFiles: { params: { files: HostFileWrite[]; directories?: string[] }; result: { written: number } };
+  /** Write one file whose bytes ride the frame's raw part (up to 1 MiB), for content too large for the JSON body. */
+  writeFileRaw: { params: { path: string; mode?: number }; result: { written: number } };
+  /** Edit a JSON file a CLI shares with Kangentic, under the CLI's own lock (`json-patch.ts`). */
+  jsonPatch: { params: JsonPatchRequest; result: JsonPatchResult };
+  /**
+   * Start sending a session's hook files (`hook-watcher.ts`) as `hookFile` events. `directory` is the
+   * folder holding `inbox/` and `requests/`, and `statusFile` the status line's JSON.
+   */
+  watchHooks: { params: { sessionId: string; directory: string; statusFile?: string }; result: { watching: true } };
+  /** Stop, after sending what is already published. */
+  unwatchHooks: { params: { sessionId: string }; result: { watching: false } };
   /** Read one text file, for the files the app must see before it writes its own beside them. */
   readFile: { params: { path: string; maxBytes?: number }; result: { exists: boolean; content: string | null } };
   /** Whether each path is there. Only the helper may say a path is absent: this computer's copy proves nothing. */
@@ -120,7 +160,7 @@ export interface RemoteHostConnection {
 export type RemoteHostRequest =
   | { op: 'addHost'; hostId: string; connection: RemoteHostConnection }
   | { op: 'removeHost'; hostId: string }
-  | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown };
+  | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown; raw?: Uint8Array };
 
 export type HelperMethod = keyof HelperRequestMap;
 export type RemoteMethod = PtyHostMethod | HelperMethod;

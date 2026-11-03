@@ -428,7 +428,11 @@ export type PtyHostEvent =
    *  alive that the host no longer has; `adoptable` are live ones the app holds no row for. A
    *  `lost` session is over, so it ends as an exit does; an `adoptable` one is reconciled by the
    *  startup recovery path, never adopted blindly. */
-  | { type: 'remoteSessions'; hostId: string; lost: string[]; adoptable: HelperSessionRecord[] };
+  | { type: 'remoteSessions'; hostId: string; lost: string[]; adoptable: HelperSessionRecord[] }
+  /** A hook file a remote agent published on its host, sent once (#913). Kangentic writes it into the
+   *  same folder on its own disk, where the WSL hook transport's inbox reads it. `status` is the
+   *  status line's JSON, which replaces the last. */
+  | { type: 'hookFile'; sessionId: string; folder: 'inbox' | 'requests' | 'status'; name: string; content: string };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

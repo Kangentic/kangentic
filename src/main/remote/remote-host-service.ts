@@ -133,8 +133,33 @@ export class RemoteHostService {
     return { hostId, cwd: hostPath, shellName: info.shellName };
   }
 
-  writeFiles(hostId: string, files: HostFileWrite[]): Promise<HelperRequestMap['writeFiles']['result']> {
-    return this.helper(hostId, 'writeFiles', { files });
+  writeFiles(hostId: string, files: HostFileWrite[], directories?: string[]): Promise<HelperRequestMap['writeFiles']['result']> {
+    return this.helper(hostId, 'writeFiles', { files, ...(directories ? { directories } : {}) });
+  }
+
+  /** One file whose bytes are too large for the JSON body of a request (an MCP answer), up to 1 MiB. */
+  async writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<HelperRequestMap['writeFileRaw']['result']> {
+    return await this.deps.send({
+      op: 'helper',
+      hostId,
+      method: 'writeFileRaw',
+      params: { path: filePath, ...(mode === undefined ? {} : { mode }) },
+      raw: Buffer.from(content, 'utf8'),
+    }) as HelperRequestMap['writeFileRaw']['result'];
+  }
+
+  /** Edit a JSON file the host's CLI shares with Kangentic, under the CLI's own lock. */
+  jsonPatch(hostId: string, request: HelperRequestMap['jsonPatch']['params']): Promise<HelperRequestMap['jsonPatch']['result']> {
+    return this.helper(hostId, 'jsonPatch', request);
+  }
+
+  /** Start sending a session's hook files across the link as `hookFile` events. */
+  watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<HelperRequestMap['watchHooks']['result']> {
+    return this.helper(hostId, 'watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) });
+  }
+
+  unwatchHooks(hostId: string, sessionId: string): Promise<HelperRequestMap['unwatchHooks']['result']> {
+    return this.helper(hostId, 'unwatchHooks', { sessionId });
   }
 
   readFile(hostId: string, filePath: string, maxBytes?: number): Promise<HelperRequestMap['readFile']['result']> {

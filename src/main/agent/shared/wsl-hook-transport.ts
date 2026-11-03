@@ -269,6 +269,9 @@ export function wslHookReplyCommand(paths: WslHookPaths, place: CliPlace, kind: 
  * the stdio bridge (`wslMcpServerLaunch`) instead.
  */
 export function wslReachesLoopback(place: CliPlace): boolean {
+  // A host over SSH never reaches this computer's loopback: its CLI gets the stdio bridge, and the
+  // helper carries the bridge's files back (see `remote-hook-relay.ts`).
+  if (place.kind === 'ssh') return false;
   return place.facts.networkingMode === 'mirrored';
 }
 

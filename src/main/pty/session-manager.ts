@@ -1124,6 +1124,11 @@ export class SessionManager extends EventEmitter {
         // sessions on the host are neither marked exited nor respawned because of it.
         this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
         return;
+      case 'hookFile':
+        // A remote agent's hook file, sent across the link (#913). The relay that registered the
+        // session writes it into the hook folder the inbox reads (`remote-session-relay.ts`).
+        this.emit('remote-hook-file', event);
+        return;
       case 'remoteSessions':
         // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable
         // ones are live agents on a host that this app holds no row for; whoever reconciles hears them.

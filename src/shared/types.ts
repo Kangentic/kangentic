@@ -219,7 +219,27 @@ export interface AgentCallUsage {
  * `\\wsl.localhost\<distro>\...` path. The main process resolves the full
  * target (`src/main/agent/shared/cli-target.ts`) from this.
  */
-export interface StoredCliTarget {
+export type StoredCliTarget = StoredWslCliTarget | StoredSshCliTarget;
+
+/**
+ * A session that ran on a remote host over SSH (#913), as its row keeps it: enough to tell which host
+ * ran it (a conversation lives in that host's home, so only that host can resume it) and to map paths
+ * back to this computer afterwards.
+ */
+export interface StoredSshCliTarget {
+  kind: 'ssh';
+  hostId: string;
+  /** The user's home on the host. */
+  home: string;
+  shellName: string;
+  /** This computer's folder standing in for the host's home, for readers; empty until a mirror exists. */
+  localHome: string;
+  /** Local folder to host folder pairs, the shell folder first. */
+  roots: Array<{ local: string; host: string }>;
+  linuxCliPath?: string;
+}
+
+export interface StoredWslCliTarget {
   kind: 'wsl';
   distro: string;
   /**

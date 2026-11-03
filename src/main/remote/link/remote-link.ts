@@ -29,6 +29,7 @@ import {
 } from '../../pty/host/protocol';
 import type { PtyHostRequestOptions, PtyHostTransport } from '../../pty/host/pty-host-client';
 import type { FromPtyHostPortMessage, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
+import { MAX_FRAME_JSON_BYTES, MAX_FRAME_RAW_BYTES } from '../protocol/frame-codec';
 import { ResumeEndpoint, type GapInfo, type ResumeEndpointOptions } from '../protocol/resume-endpoint';
 import {
   joinPortMessage,
@@ -239,6 +240,11 @@ export class RemoteLink implements PtyHostTransport {
     return this.requestRemote(method, params, timeoutMs) as Promise<RemoteRequestResult<M>>;
   }
 
+  /** A helper request that carries bytes in the frame's raw part, for a payload too large for the JSON body. */
+  requestHelperRaw<M extends HelperMethod>(method: M, params: RemoteRequestParams<M>, raw: Buffer, timeoutMs?: number): Promise<RemoteRequestResult<M>> {
+    return this.requestRemote(method, params, timeoutMs, raw) as Promise<RemoteRequestResult<M>>;
+  }
+
   // Connection
 
   private setState(state: RemoteLinkState, detail: string | null): void {
@@ -337,15 +343,26 @@ export class RemoteLink implements PtyHostTransport {
     this.endpoint.send({ t: 'command', command } satisfies LinkToHelperMessage);
   }
 
-  private requestRemote(method: RemoteMethod, params: unknown, timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private requestRemote(method: RemoteMethod, params: unknown, timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS, raw?: Buffer): Promise<unknown> {
     return new Promise((resolve, reject) => {
+      // A frame over its cap ends the connection, so a request too big for one is refused here, with a
+      // sentence, instead of dropping the link and being replayed into the same failure.
+      const bodyBytes = Buffer.byteLength(JSON.stringify({ t: 'request', id: 0, method, params }));
+      if (bodyBytes > MAX_FRAME_JSON_BYTES - 1024) {
+        reject(new Error(`The ${method} request is too large to send to the host (${bodyBytes} bytes).`));
+        return;
+      }
+      if (raw && raw.length > MAX_FRAME_RAW_BYTES) {
+        reject(new Error(`The ${method} request carries too much data to send to the host (${raw.length} bytes).`));
+        return;
+      }
       const id = this.nextRequestId++;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`the host did not answer ${method} within ${Math.round(timeoutMs / 1000)} s`));
       }, timeoutMs);
       this.pending.set(id, { method, resolve, reject, timer });
-      this.endpoint.send({ t: 'request', id, method, params } satisfies LinkToHelperMessage);
+      this.endpoint.send({ t: 'request', id, method, params } satisfies LinkToHelperMessage, raw);
     });
   }
 

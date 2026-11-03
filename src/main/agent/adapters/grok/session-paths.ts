@@ -32,6 +32,7 @@ import type { StoredCliTarget } from '../../../../shared/types';
 
 /** Grok's config/data root: `$GROK_HOME` when set, else `~/.grok`. Read per-call so tests can redirect it. */
 export function grokHomeDir(place: CliPlace | null = null): string {
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.grok');
   if (place) {
     const distroOverride = place.facts.env.GROK_HOME?.trim();
     return distroOverride?.startsWith('/') ? hostPathForTarget(distroOverride, place) : path.join(place.facts.homeUnc, '.grok');

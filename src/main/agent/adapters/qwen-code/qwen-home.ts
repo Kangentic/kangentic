@@ -24,6 +24,7 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  * that changes the variable is not shadowed by a value captured at import.
  */
 export function qwenHomeDir(place: CliPlace | null = null): string {
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.qwen');
   if (place) {
     const override = place.facts.env.QWEN_HOME?.trim();
     const linuxPath = override === '~' || override?.startsWith('~/') ? `${place.facts.homeLinux}${override.slice(1)}` : override;

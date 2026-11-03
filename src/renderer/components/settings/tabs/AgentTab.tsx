@@ -227,7 +227,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5" data-testid={`agent-cli-status-${agent.name}`}>
-                  {agent.cliTarget && (
+                  {agent.cliTarget?.kind === 'wsl' && (
                     <span className="flex-shrink-0 rounded border border-edge px-1.5 text-[11px] leading-[18px] text-fg-muted">
                       <Trans>WSL: {agent.cliTarget.distro}</Trans>
                     </span>

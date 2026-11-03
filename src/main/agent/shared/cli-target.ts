@@ -30,12 +30,70 @@ export interface WslCliPlace {
    */
   linuxCliPath?: string;
 }
-export type CliPlace = WslCliPlace;
+/**
+ * A Linux machine reached over SSH (#913). The CLI, its files and the project all live there, and this
+ * computer keeps a mirror folder per project (the "shell folder") whose layout matches the host's, so a
+ * path this computer builds under the shell folder names the same file on the host once `roots` maps it.
+ */
+export interface SshCliPlace {
+  kind: 'ssh';
+  hostId: string;
+  /** The user's home on the host. */
+  home: string;
+  /** The host's login shell by program name, which decides how a typed command is quoted. */
+  shellName: string;
+  /** This computer's folder standing in for the host's home, where readers look. Empty until a mirror exists (Phase 4). */
+  localHome: string;
+  /** Local folder to host folder: the shell folder maps to the project's folder on the host. */
+  roots: ReadonlyArray<{ local: string; host: string }>;
+  /** The CLI's path on the host, when known (a bare name is resolved by the host's own PATH). */
+  linuxCliPath?: string;
+}
+
+/** Narrowing for the many readers that only mean a WSL distro. */
+export function isWslPlace(place: CliPlace | null | undefined): place is WslCliPlace {
+  return place?.kind === 'wsl';
+}
+
+export function isSshPlace(place: CliPlace | null | undefined): place is SshCliPlace {
+  return place?.kind === 'ssh';
+}
+
+/** A local path as the host names it, by the longest matching root; a path under no root is left as given. */
+export function localPathToHost(localPath: string, roots: SshCliPlace['roots']): string {
+  const normalized = toForwardSlash(localPath);
+  let best: { local: string; host: string } | null = null;
+  for (const root of roots) {
+    const localRoot = toForwardSlash(root.local).replace(/\/+$/, '');
+    const inside = normalized === localRoot || normalized.startsWith(`${localRoot}/`);
+    if (inside && (!best || localRoot.length > toForwardSlash(best.local).replace(/\/+$/, '').length)) best = root;
+  }
+  if (!best) return normalized;
+  const localRoot = toForwardSlash(best.local).replace(/\/+$/, '');
+  const hostRoot = best.host.replace(/\/+$/, '');
+  return `${hostRoot}${normalized.slice(localRoot.length)}`;
+}
+
+/** A host path as this computer's mirror folder names it, or the path unchanged when it is under no root. */
+export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): string {
+  let best: { local: string; host: string } | null = null;
+  for (const root of roots) {
+    const hostRoot = root.host.replace(/\/+$/, '');
+    const inside = hostPath === hostRoot || hostPath.startsWith(`${hostRoot}/`);
+    if (inside && (!best || hostRoot.length > best.host.replace(/\/+$/, '').length)) best = root;
+  }
+  if (!best) return hostPath;
+  return path.join(best.local, ...hostPath.slice(best.host.replace(/\/+$/, '').length).split('/').filter(Boolean));
+}
+export type CliPlace = WslCliPlace | SshCliPlace;
 
 export type CliTarget = CliPlace & {
   /** The CLI's path as the distro sees it: `/home/dev/.local/bin/claude`. */
   linuxCliPath: string;
 };
+
+/** What detecting a CLI path can produce: only a WSL path names a place by itself. */
+export type WslCliTarget = WslCliPlace & { linuxCliPath: string };
 
 /**
  * Whether a distro name fits the session shell `wsl -d <name>`, which the PTY
@@ -77,7 +135,7 @@ export async function resolveCliTarget(
   cliPath: string | null | undefined,
   adapterSupportsWsl: boolean,
   options: ResolveCliTargetOptions = {},
-): Promise<CliTarget | null> {
+): Promise<WslCliTarget | null> {
   if (!adapterSupportsWsl) return null;
   const parsed = parseWslCliPath(cliPath, options.platform);
   if (!parsed) return null;
@@ -94,7 +152,7 @@ export function peekCliTarget(
   cliPath: string | null | undefined,
   adapterSupportsWsl: boolean,
   platform: NodeJS.Platform = process.platform,
-): CliTarget | null {
+): WslCliTarget | null {
   if (!adapterSupportsWsl) return null;
   const parsed = parseWslCliPath(cliPath, platform);
   if (!parsed) return null;
@@ -109,6 +167,17 @@ export function peekCliTarget(
  */
 export function toStoredCliTarget(place: CliPlace | StoredCliTarget | null): StoredCliTarget | null {
   if (!place) return null;
+  if (place.kind === 'ssh') {
+    return {
+      kind: 'ssh',
+      hostId: place.hostId,
+      home: place.home,
+      shellName: place.shellName,
+      localHome: place.localHome,
+      roots: place.roots.map((root) => ({ local: root.local, host: root.host })),
+      ...(isLinuxPath(place.linuxCliPath) ? { linuxCliPath: place.linuxCliPath } : {}),
+    };
+  }
   if ('facts' in place) {
     return {
       kind: place.kind,
@@ -165,6 +234,24 @@ export function parseStoredCliTarget(raw: string | null | undefined): StoredCliT
     const parsed: unknown = JSON.parse(raw);
     if (parsed !== null && typeof parsed === 'object') {
       const record = parsed as Record<string, unknown>;
+      if (record.kind === 'ssh' && typeof record.hostId === 'string' && record.hostId.length > 0) {
+        const roots = Array.isArray(record.roots)
+          ? record.roots.filter((root): root is { local: string; host: string } => (
+            root !== null && typeof root === 'object'
+            && typeof (root as Record<string, unknown>).local === 'string'
+            && typeof (root as Record<string, unknown>).host === 'string'
+          ))
+          : [];
+        return toStoredCliTarget({
+          kind: 'ssh',
+          hostId: record.hostId,
+          home: optionalString(record.home) ?? '',
+          shellName: optionalString(record.shellName) ?? 'sh',
+          localHome: optionalString(record.localHome) ?? '',
+          roots,
+          linuxCliPath: optionalString(record.linuxCliPath),
+        });
+      }
       if (record.kind === 'wsl' && typeof record.distro === 'string' && isUsableDistroName(record.distro)) {
         return toStoredCliTarget({
           kind: 'wsl',
@@ -191,6 +278,17 @@ export function parseStoredCliTarget(raw: string | null | undefined): StoredCliT
  * this machine.
  */
 export function placeFromStored(stored: StoredCliTarget | null | undefined): CliPlace | null {
+  if (stored?.kind === 'ssh') {
+    return {
+      kind: 'ssh',
+      hostId: stored.hostId,
+      home: stored.home,
+      shellName: stored.shellName,
+      localHome: stored.localHome,
+      roots: stored.roots,
+      ...(isLinuxPath(stored.linuxCliPath) ? { linuxCliPath: stored.linuxCliPath } : {}),
+    };
+  }
   if (!stored || !stored.homeUnc || !stored.uncRoot) return null;
   return {
     kind: 'wsl',
@@ -223,7 +321,8 @@ export function targetOfPlace(place: CliPlace | null): CliTarget | null {
  * share would start it (`isWslDistroRunning`).
  */
 export async function mayReadPlaceUnattended(place: CliPlace | null): Promise<boolean> {
-  return !place || isWslDistroRunning(place.distro);
+  // A host's readers look at this computer's mirror folder, which reading cannot start.
+  return !place || place.kind !== 'wsl' || isWslDistroRunning(place.distro);
 }
 
 /** `placeFromStored` for a session row's `cli_target` column. */
@@ -238,8 +337,13 @@ export function placeOfRecord(record: { cli_target?: string | null } | null | un
  * in, so only a CLI in that place can resume it.
  */
 export function isSameCliPlace(storedCliTarget: string | null | undefined, place: CliPlace | null): boolean {
-  const storedDistro = parseStoredCliTarget(storedCliTarget)?.distro.toLowerCase() ?? null;
-  return storedDistro === (place?.distro.toLowerCase() ?? null);
+  return placeIdentity(parseStoredCliTarget(storedCliTarget)) === placeIdentity(place);
+}
+
+/** What makes two places the same: a distro by name without case, a host by id, this machine as null. */
+function placeIdentity(place: CliPlace | StoredCliTarget | null): string | null {
+  if (!place) return null;
+  return place.kind === 'ssh' ? `ssh:${place.hostId}` : `wsl:${place.distro.toLowerCase()}`;
 }
 
 /**
@@ -249,6 +353,8 @@ export function isSameCliPlace(storedCliTarget: string | null | undefined, place
  */
 export function cliPathForTarget(windowsPath: string, place: CliPlace | null): string {
   if (!place) return toForwardSlash(windowsPath);
+  // A host sees the same folder tree under its own roots (the shell folder is the project's folder there).
+  if (place.kind === 'ssh') return localPathToHost(windowsPath, place.roots);
   // A path into another distro has no path from inside this one, and its
   // Linux path could name a different file here, so it is left as it is.
   const intoDistro = parseWslUncPath(windowsPath);
@@ -267,6 +373,7 @@ export function cliPathForTarget(windowsPath: string, place: CliPlace | null): s
  */
 export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): string {
   if (!place || !cliSidePath.startsWith('/')) return cliSidePath;
+  if (place.kind === 'ssh') return hostPathToLocal(cliSidePath, place.roots);
   const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(cliSidePath);
   if (driveMount) {
     const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');
@@ -278,7 +385,9 @@ export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): 
 
 /** The home the CLI keeps its files under: the distro's, reached through its share, or this machine's. */
 export function cliHomeDir(place: CliPlace | null): string {
-  return place ? place.facts.homeUnc : os.homedir();
+  if (!place) return os.homedir();
+  // A host's home is not here; readers find this computer's mirror of it, which is empty until it exists.
+  return place.kind === 'ssh' ? place.localHome : place.facts.homeUnc;
 }
 
 /**
@@ -291,7 +400,9 @@ export function cliPlatformForTarget(place: CliPlace | null, platform: NodeJS.Pl
 
 /** The session shell a target needs, or null to keep the configured one. */
 export function shellForTarget(place: CliPlace | null): string | null {
-  return place ? `wsl -d ${place.distro}` : null;
+  if (!place) return null;
+  // A host's session is typed into its own login shell, which only its program name describes.
+  return place.kind === 'ssh' ? place.shellName : `wsl -d ${place.distro}`;
 }
 
 /**
@@ -331,6 +442,9 @@ export function cliInvocationForTarget(
   cliArgs: readonly string[],
   env: Record<string, string | undefined> = {},
 ): CliInvocation {
+  // A CLI on a host is run by the host's helper, not by a program started here; until that exists a
+  // probe or headless run for a host's CLI fails with this sentence rather than running something local.
+  if (target.kind === 'ssh') throw new Error('Running a command on a remote host this way is not available yet.');
   const assigned: Record<string, string> = {};
   const unsetArguments: string[] = [];
   for (const [name, value] of Object.entries(env)) {

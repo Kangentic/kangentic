@@ -23,6 +23,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
+import { HookWatcher } from './hook-watcher';
+import { patchJsonFile, type JsonPatchRequest, type JsonPatchResult } from './json-patch';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
 import {
   toPtyHostError,
@@ -151,6 +153,10 @@ export class HelperServer {
   private ownerLabel = 'unknown';
   private ownerEpoch = 0;
   private port: FramedPort | null = null;
+  /** Sends each session's hook files across the link (`hook-watcher.ts`). */
+  private readonly hookWatcher = new HookWatcher({
+    emit: (event) => this.endpoint.send({ t: 'event', event: { type: 'hookFile', ...event } } satisfies HelperToLinkMessage),
+  });
 
   constructor(private readonly options: HelperServerOptions) {
     this.core = new PtyHostCore({ ...options.coreDeps, emit: (event) => this.onCoreEvent(event) });
@@ -197,6 +203,7 @@ export class HelperServer {
 
   /** Drop the connection and let go of the core's port. PTYs keep running. */
   dispose(): void {
+    this.hookWatcher.dispose();
     this.endpoint.detach('the helper is shutting down');
   }
 
@@ -258,7 +265,17 @@ export class HelperServer {
         entry.alive = false;
         entry.exitCode = hostEvent.exitCode;
       }
+      // The agent's last hook records (a SessionEnd published as it exited) go first: the app flushes
+      // the session's events file on the exit, so they must have reached it by then.
+      if (this.hookWatcher.isWatching(hostEvent.sessionId)) {
+        void this.hookWatcher.unwatch(hostEvent.sessionId).finally(() => this.deliverCoreEvent(hostEvent));
+        return;
+      }
     }
+    this.deliverCoreEvent(hostEvent);
+  }
+
+  private deliverCoreEvent(hostEvent: PtyHostEvent): void {
     if ('ptyId' in hostEvent) {
       const wirePtyId = this.coreToWire.get(hostEvent.ptyId);
       if (wirePtyId === undefined) return;
@@ -274,7 +291,7 @@ export class HelperServer {
     if (message.t === 'command') {
       this.handleCommand(message.command);
     } else if (message.t === 'request') {
-      void this.answerRequest(message.id, message.method, message.params);
+      void this.answerRequest(message.id, message.method, message.params, raw);
     } else if (message.t === 'port') {
       this.port?.deliver(joinPortMessage<ToPtyHostPortMessage>(message.message as PortBody, raw));
     }
@@ -291,21 +308,34 @@ export class HelperServer {
     this.core.handleCommand(command);
   }
 
-  private async answerRequest(id: number, method: string, params: unknown): Promise<void> {
+  private async answerRequest(id: number, method: string, params: unknown, raw: Buffer): Promise<void> {
     try {
-      const result = await this.runRequest(method, params);
+      const result = await this.runRequest(method, params, raw);
       this.endpoint.send({ t: 'reply', id, ok: true, result } satisfies HelperToLinkMessage);
     } catch (error) {
       this.endpoint.send({ t: 'reply', id, ok: false, error: toPtyHostError(error) } satisfies HelperToLinkMessage);
     }
   }
 
-  private runRequest(method: string, params: unknown): Promise<unknown> | unknown {
+  private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
+    if (method === 'writeFileRaw') {
+      const request = params as { path: string; mode?: number };
+      return this.writeFiles({ files: [{ path: request.path, content: raw.toString('utf8'), ...(request.mode === undefined ? {} : { mode: request.mode }) }] });
+    }
     if (method === 'snapshot') return this.snapshot();
     if (method === 'suspendAll') return this.suspendAll(params as SuspendAllParams);
     if (method === 'hostInfo') return this.hostInfo();
-    if (method === 'writeFiles') return this.writeFiles((params as { files: HostFileWrite[] }).files);
+    if (method === 'writeFiles') return this.writeFiles(params as { files: HostFileWrite[]; directories?: string[] });
+    if (method === 'jsonPatch') return this.jsonPatch(params as JsonPatchRequest);
+    if (method === 'watchHooks') {
+      const request = params as { sessionId: string; directory: string; statusFile?: string };
+      this.hookWatcher.watch(request.sessionId, this.homePath(request.directory), request.statusFile ? this.homePath(request.statusFile) : null);
+      return { watching: true };
+    }
+    if (method === 'unwatchHooks') {
+      return this.hookWatcher.unwatch((params as { sessionId: string }).sessionId).then(() => ({ watching: false }));
+    }
     if (method === 'readFile') return this.readFile(params as { path: string; maxBytes?: number });
     if (method === 'pathPresence') return this.pathPresence((params as { paths: string[] }).paths);
     if (method === 'rebind') {
@@ -424,9 +454,22 @@ export class HelperServer {
     return resolved;
   }
 
-  private async writeFiles(files: HostFileWrite[]): Promise<{ written: number }> {
-    for (const file of files) {
-      const target = this.homePath(file.path);
+  private async jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult> {
+    return patchJsonFile({
+      path: this.homePath(request.path),
+      ops: request.ops,
+      ...(request.lockDirectory ? { lockDirectory: this.homePath(request.lockDirectory) } : {}),
+    });
+  }
+
+  private async writeFiles(request: { files: HostFileWrite[]; directories?: string[] }): Promise<{ written: number }> {
+    const { files } = request;
+    // Checked before anything is made, so a refused path touches nothing.
+    const targets = files.map((file) => this.homePath(file.path));
+    const directories = (request.directories ?? []).map((directory) => this.homePath(directory));
+    for (const directory of directories) await fs.mkdir(directory, { recursive: true });
+    for (const [index, file] of files.entries()) {
+      const target = targets[index];
       await fs.mkdir(path.dirname(target), { recursive: true });
       // Beside the file, then renamed in: a reader never sees half a settings file.
       const staging = `${target}.${process.pid}.${this.nextStagingSuffix++}.tmp`;

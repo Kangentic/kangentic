@@ -500,7 +500,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       const messages = await exportDistroOpenCodeSession(distroTarget, agentSessionId, cwd).catch(() => []);
       return {
         entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),
-        sourcePath: `${distroTarget.linuxCliPath} export ${agentSessionId} (WSL: ${place.distro})`,
+        sourcePath: `${distroTarget.linuxCliPath} export ${agentSessionId} (${place.kind === 'ssh' ? `host: ${place.hostId}` : `WSL: ${place.distro}`})`,
       };
     }
     const { entries, totalPosition } = await parseOpenCodeTranscript(agentSessionId);

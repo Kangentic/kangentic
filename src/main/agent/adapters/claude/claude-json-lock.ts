@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createSerialLock } from '../../shared/relocation-utils';
-import type { CliPlace } from '../../shared/cli-target';
+import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
 
 /**
  * The lock every Kangentic read-modify-write of `~/.claude.json` runs under.
@@ -60,7 +60,9 @@ export function isClaudeJsonLockError(error: unknown): error is ClaudeJsonLockEr
  * is one in the distro, so the lock below holds across the two.
  */
 export function claudeJsonPath(place: CliPlace | null = null): string {
-  return path.join(place ? place.facts.homeUnc : os.homedir(), '.claude.json');
+  // For a host this is this computer's mirror of it, never the host's own file: the host's is edited
+  // through its helper (`ensureRemoteClaudeTrust`), so no writer here may treat this path as it.
+  return path.join(cliHomeDir(place), '.claude.json');
 }
 
 export function claudeJsonLockPath(place: CliPlace | null = null): string {
