@@ -233,7 +233,9 @@ Ollama and Warp, have none): no
 `parseTranscriptWindow` and no locator change was needed, since a page reads the file the adapter's
 own parse reads. Qwen, Droid, Codex, Kimi and Grok carry a line count in the cursor. OpenCode's
 cursor names a message, and its unit is the characters of stored data. A legacy single-document
-Gemini file does not page. Where a page edge cuts state that crosses lines, the result is what the
+Gemini file does not page. Goose gained a pager after this audit, over the messages of its session
+database, with a cursor that names a message and positions in bytes of stored content
+(`docs/integrations/agents/goose-cli.md`). Where a page edge cuts state that crosses lines, the result is what the
 tail's own start already did:
 
 - A Codex page's replies before its own first `turn_context` have no model.

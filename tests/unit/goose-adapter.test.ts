@@ -114,6 +114,38 @@ describe('GooseAdapter', () => {
     expect(adapter.supportsCallerSessionId).toBe(true);
   });
 
+  it('declares Goose\'s write and edit tools as the file-changing tools, keyed on their path field', () => {
+    expect(adapter.fileChangeTools).toEqual([
+      { tool: 'write', pathField: 'path' },
+      { tool: 'edit', pathField: 'path' },
+    ]);
+  });
+
+  it('names a pasted image in an instruction Goose\'s read_image tool can follow', () => {
+    expect(adapter.pastedImageReferenceTemplate).toBe('Read this image: {path} ');
+  });
+
+  it('scopes its transcript reads by time', () => {
+    expect(adapter.scopesTranscriptReadsByTime).toBe(true);
+  });
+
+  describe('transcript reads for a Goose in a WSL distro, or with no session id', () => {
+    const place = { distro: 'Ubuntu', linuxCliPath: '/usr/bin/goose' } as Parameters<typeof adapter.parseTranscript>[2];
+
+    it('does not page a distro Goose\'s history', async () => {
+      await expect(adapter.readTranscriptPage(
+        'name-1', '/projects/my-app', { direction: 'before', maxBytes: 200 }, place,
+      )).resolves.toEqual({ status: 'unavailable', reason: 'unsupported_agent' });
+    });
+
+    it('reads no tool counts or result tokens for a distro Goose, or without a session id', async () => {
+      await expect(adapter.transcriptToolCounts({ agentSessionId: 'name-1', place })).resolves.toBeNull();
+      await expect(adapter.transcriptToolResultTokens({ agentSessionId: 'name-1', place })).resolves.toBeNull();
+      await expect(adapter.transcriptToolCounts({ agentSessionId: null })).resolves.toBeNull();
+      await expect(adapter.transcriptToolResultTokens({})).resolves.toBeNull();
+    });
+  });
+
   it('has default permission mode "default"', () => {
     expect(adapter.defaultPermission).toBe('default');
   });
@@ -513,6 +545,12 @@ describe('GooseAdapter', () => {
           KANGENTIC_GOOSE_EVENTS_PATH: 'C:\\sessions\\s1\\events.jsonl',
           Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\bin',
         });
+      });
+
+      it('sets only GOOSE_MODE with no events file, even where Git\'s sh would be found', () => {
+        const env = adapter.buildEnv(makeOptions());
+        expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+        expect(Object.keys(env ?? {})).toEqual(['GOOSE_MODE']);
       });
 
       it('sets neither the events path nor PATH for a Goose in a WSL distro', () => {
