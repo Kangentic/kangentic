@@ -29,10 +29,10 @@ import { qwenFunctionResponseText, qwenTurnUsage } from './transcript-parser';
  * Every record carries `uuid` and an ISO `timestamp`. A `--resume` appends to
  * the same file, so a read is scoped to one run by time.
  *
- * Built from Qwen's source and the 0.15.3 fixture. The `tool_result` record
- * and the `functionCall { id }` / `functionResponse { id }` parts match a real
- * capture with tool calls, but no real tool-call sample is replayed in the
- * tests yet (`qwen-real-session-tools.jsonl` is hand-built).
+ * Built from Qwen's source and the 0.15.3 fixture. The tests replay
+ * `tests/fixtures/qwen-0.25.2-session/`, hand-written in the structure of a
+ * real session with invented content, and `qwen-real-session-tools.jsonl`, which
+ * is hand-built too. No real capture with tool calls is committed.
  */
 
 /**
@@ -121,12 +121,12 @@ function applyToolCallLine(cursor: ToolCallCursor<ToolCallEntry>, line: string):
 
   if (raw.type === 'assistant') {
     if (!mayHoldCall) return;
-    const ts = toolCallTimestampMs(raw.timestamp);
+    const timestampMs = toolCallTimestampMs(raw.timestamp);
     for (const part of message.parts) {
       if (!isRecord(part) || !isRecord(part.functionCall)) continue;
       const call = part.functionCall;
       addToolCall(cursor, typeof call.id === 'string' ? call.id : '', {
-        ts,
+        timestampMs,
         toolName: typeof call.name === 'string' && call.name.length > 0 ? call.name : 'tool',
         resultTokens: undefined,
       });

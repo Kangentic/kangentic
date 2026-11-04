@@ -34,9 +34,9 @@ import { QWEN_SUBAGENT_LAUNCH_TOOLS } from './hook-manager';
  *
  * In the parent's chat, the `agent` tool's result has its tool calls stripped,
  * so these files are the only record of a subagent's spend. Built from Qwen's
- * source. The sidecar keys read here and the transcript's `usageMetadata` and
- * `functionCall { id }` fields match a real capture, but no real sample is
- * replayed in the tests yet.
+ * source. The tests replay `tests/fixtures/qwen-0.25.2-session/`, hand-written
+ * in the structure of a real session with invented content. No real capture is
+ * committed.
  */
 
 /** The tools that start a subagent (`QWEN_SUBAGENT_LAUNCH_TOOLS`). */

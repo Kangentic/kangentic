@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { QwenDetector } from './detector';
 import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
@@ -17,7 +15,8 @@ import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { hostPathForTarget, resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -43,16 +42,8 @@ import type {
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
-/** Where a run's transcript is, as the session-metrics readers pass it. */
-interface TranscriptReadInput {
-  transcriptPath?: string | null;
-  agentSessionId?: string | null;
-  cwd?: string | null;
-  place?: CliPlace | null;
-}
-
 /** A run's transcript and the time window of the run the tool reads count. */
-type TranscriptWindowReadInput = TranscriptReadInput & { sinceMs?: number | null; untilMs?: number | null };
+type TranscriptWindowReadInput = RunTranscriptInput & { sinceMs?: number | null; untilMs?: number | null };
 
 /**
  * Qwen Code CLI adapter - wraps QwenDetector, QwenCommandBuilder,
@@ -329,33 +320,19 @@ export class QwenAdapter implements AgentAdapter {
    * chat (transcript-metrics.ts). A `--resume` appends to the same file, so
    * the tool reads are scoped to one run by time.
    */
-  async transcriptUsage(input: TranscriptReadInput): Promise<TranscriptUsage | null> {
-    const filePath = await this.runTranscriptPath(input);
+  async transcriptUsage(input: RunTranscriptInput): Promise<TranscriptUsage | null> {
+    const filePath = await resolveRunTranscriptPath(input, locateQwenTranscriptFile);
     return filePath ? parseQwenTranscriptUsage(filePath) : null;
   }
 
   async transcriptToolCounts(input: TranscriptWindowReadInput): Promise<TranscriptToolCounts | null> {
-    const filePath = await this.runTranscriptPath(input);
+    const filePath = await resolveRunTranscriptPath(input, locateQwenTranscriptFile);
     return filePath ? parseQwenTranscriptToolCounts(filePath, input.sinceMs, input.untilMs) : null;
   }
 
   async transcriptToolResultTokens(input: TranscriptWindowReadInput): Promise<Record<string, number> | null> {
-    const filePath = await this.runTranscriptPath(input);
+    const filePath = await resolveRunTranscriptPath(input, locateQwenTranscriptFile);
     return filePath ? parseQwenTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs) : null;
-  }
-
-  /**
-   * The path Qwen reported (a hook's `transcript_path`) when its file is
-   * there, else the chat the session id and cwd name. Null with neither.
-   */
-  private async runTranscriptPath(input: TranscriptReadInput): Promise<string | null> {
-    const place = input.place ?? null;
-    const reported = input.transcriptPath ? hostPathForTarget(input.transcriptPath, place) : null;
-    if (reported && path.isAbsolute(reported) && await fs.promises.stat(reported).then(() => true, () => false)) {
-      return reported;
-    }
-    if (input.agentSessionId && input.cwd) return locateQwenTranscriptFile(input.agentSessionId, input.cwd, place);
-    return reported;
   }
 
   /**

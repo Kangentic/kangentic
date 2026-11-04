@@ -148,6 +148,34 @@ describe('resolveQwenSessionPath memo', () => {
     expect(path.basename(first)).toBe(`${SESSION_ID}.jsonl`);
     expect(path.basename(other)).toBe('11111111-2222-3333-4444-555555555555.jsonl');
   });
+
+  // The memo is bounded at 32 entries. Past that the oldest is dropped, so a
+  // long-lived app does not grow it per session; the newest stays served from it.
+  it('evicts the oldest memoized path past the limit and keeps the newest', () => {
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+    const sessionIds = Array.from({ length: 33 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`);
+    for (const sessionId of sessionIds) resolveQwenSessionPath(sessionId, cwd);
+
+    const readsAfterFill = settingsReads(readSpy);
+    resolveQwenSessionPath(sessionIds[32], cwd);
+    expect(settingsReads(readSpy)).toBe(readsAfterFill);
+
+    resolveQwenSessionPath(sessionIds[0], cwd);
+    expect(settingsReads(readSpy)).toBeGreaterThan(readsAfterFill);
+  });
+
+  it('resolves the same session id under another cwd to its own path inside the TTL', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+    const otherCwd = path.join(tmpDir, 'other-workspace');
+    fs.mkdirSync(otherCwd, { recursive: true });
+
+    const first = resolveQwenSessionPath(SESSION_ID, cwd);
+    const second = resolveQwenSessionPath(SESSION_ID, otherCwd);
+
+    expect(second).not.toBe(first);
+    expect(path.basename(second)).toBe(`${SESSION_ID}.jsonl`);
+  });
 });
 
 describe('extractQwenUserTurn', () => {

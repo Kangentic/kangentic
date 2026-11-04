@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'node:fs';
+import fs, { promises as fsPromises } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -29,10 +29,11 @@ function makeHook(locate: () => Promise<string | null>): { hook: HistoryHook; lo
   return { hook, locate: locateSpy };
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
-  return { promise, resolve };
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
 }
 
 describe('SessionHistoryReader detach and re-attach', () => {
@@ -62,6 +63,7 @@ describe('SessionHistoryReader detach and re-attach', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     reader.disposeAll();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -109,7 +111,7 @@ describe('SessionHistoryReader detach and re-attach', () => {
       return calls >= 3 ? historyFile : null;
     });
 
-    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: true }));
+    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: () => true }));
     await vi.advanceTimersByTimeAsync(0);
     expect(hookHandle.locate).toHaveBeenCalledTimes(1);
     expect(reader.isAttached('session-reattach')).toBe(false);
@@ -139,7 +141,7 @@ describe('SessionHistoryReader detach and re-attach', () => {
     vi.useFakeTimers();
     const hookHandle = makeHook(async () => null);
 
-    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: true }));
+    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: () => true }));
     await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 2);
     const callsBeforeDetach = hookHandle.locate.mock.calls.length;
     expect(callsBeforeDetach).toBeGreaterThanOrEqual(2);
@@ -154,5 +156,95 @@ describe('SessionHistoryReader detach and re-attach', () => {
     await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 5);
     expect(hookHandle.locate.mock.calls.length).toBe(callsAfterSettle);
     expect(reader.isAttached('session-reattach')).toBe(false);
+  });
+
+  it('a waitForFile check that turns false ends the wait, so an exited session stops polling for ever', async () => {
+    vi.useFakeTimers();
+    let sessionRuns = true;
+    const hookHandle = makeHook(async () => null);
+
+    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: () => sessionRuns }));
+    await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 3);
+    expect(hookHandle.locate.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+    sessionRuns = false;
+    await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 2);
+    await attachPromise;
+    const callsAtEnd = hookHandle.locate.mock.calls.length;
+    expect(reader.isAttached('session-reattach')).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 5);
+    expect(hookHandle.locate.mock.calls.length).toBe(callsAtEnd);
+  });
+
+  it('a detach during the retry pause stops the loop before another locate', async () => {
+    vi.useFakeTimers();
+    const hookHandle = makeHook(async () => null);
+
+    const attachPromise = reader.attach(attachOptions(hookHandle.hook, { waitForFile: () => true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hookHandle.locate).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS / 2);
+    reader.detach('session-reattach');
+    await vi.advanceTimersByTimeAsync(RETRY_PAUSE_MS * 5);
+    await attachPromise;
+
+    expect(hookHandle.locate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled attach finishing late leaves a newer pending attach blocking a third', async () => {
+    const firstLocate = deferred<string | null>();
+    const secondLocate = deferred<string | null>();
+    const first = makeHook(() => firstLocate.promise);
+    const second = makeHook(() => secondLocate.promise);
+    const third = makeHook(async () => historyFile);
+
+    const firstAttach = reader.attach(attachOptions(first.hook));
+    reader.detach('session-reattach');
+    const secondAttach = reader.attach(attachOptions(second.hook));
+    expect(second.locate).toHaveBeenCalledTimes(1);
+
+    firstLocate.resolve(historyFile);
+    await firstAttach;
+
+    await reader.attach(attachOptions(third.hook));
+    expect(third.locate).not.toHaveBeenCalled();
+
+    secondLocate.resolve(historyFile);
+    await secondAttach;
+    expect(reader.isAttached('session-reattach')).toBe(true);
+  });
+
+  it('a detached tail whose queued read finds the file gone leaves the replacing attach in place', async () => {
+    const oldHandle = makeHook(async () => historyFile);
+    await reader.attach(attachOptions(oldHandle.hook));
+    expect(reader.isAttached('session-reattach')).toBe(true);
+
+    const internals = reader as unknown as {
+      states: Map<string, object>;
+      scheduleChange(sessionId: string, state: object, label: string): void;
+    };
+    const oldState = internals.states.get('session-reattach') as { chain: Promise<void> };
+
+    // The old tail's next read parks at its stat, then fails after the replacement attached.
+    const pendingStat = deferred<fs.Stats>();
+    const realStat = fsPromises.stat.bind(fsPromises);
+    const statSpy = vi.spyOn(fsPromises, 'stat');
+    statSpy.mockImplementationOnce(() => pendingStat.promise);
+    statSpy.mockImplementation(realStat as typeof fsPromises.stat);
+    internals.scheduleChange('session-reattach', oldState, 'history:change');
+    await vi.waitFor(() => expect(statSpy).toHaveBeenCalledTimes(1));
+
+    reader.detach('session-reattach');
+    const newHandle = makeHook(async () => historyFile);
+    await reader.attach(attachOptions(newHandle.hook));
+    expect(reader.isAttached('session-reattach')).toBe(true);
+
+    const vanished = Object.assign(new Error('gone'), { code: 'ENOENT' });
+    pendingStat.reject(vanished);
+    await oldState.chain;
+
+    expect(reader.isAttached('session-reattach')).toBe(true);
   });
 });

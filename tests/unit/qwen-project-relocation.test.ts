@@ -160,6 +160,21 @@ describe('migrateQwenProjectData - QWEN_RUNTIME_DIR', () => {
     expect(fs.readFileSync(path.join(projectsDir(OLD_PATH), 'home.jsonl'), 'utf-8')).toBe('home-history');
   });
 
+  // The old folder's settings travel with the move, so the relocated project's
+  // own `.qwen/settings.json` is where the runtime directory is read from.
+  it('follows advanced.runtimeOutputDir from the relocated folder\'s own settings', async () => {
+    const runtimeDir = path.join(tmpBase, 'settings-runtime');
+    writeDir(path.join(NEW_PATH, '.qwen'), { 'settings.json': JSON.stringify({ advanced: { runtimeOutputDir: runtimeDir } }) });
+    const runtimeProject = (projectPath: string): string =>
+      path.join(runtimeDir, 'projects', qwenProjectSlug(path.resolve(projectPath)));
+    writeDir(runtimeProject(OLD_PATH), { 'chats.jsonl': 'settings-history' });
+
+    await migrateQwenProjectData(OLD_PATH, NEW_PATH);
+
+    expect(fs.existsSync(runtimeProject(OLD_PATH))).toBe(false);
+    expect(fs.readFileSync(path.join(runtimeProject(NEW_PATH), 'chats.jsonl'), 'utf-8')).toBe('settings-history');
+  });
+
   it('moves the tmp hash directory under the runtime dir as well', async () => {
     const runtimeDir = path.join(tmpBase, 'runtime');
     process.env.QWEN_RUNTIME_DIR = runtimeDir;
