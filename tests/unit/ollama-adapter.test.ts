@@ -34,6 +34,15 @@ let mockHelpShouldFail = false;
 /**
  * `ollama run --help` at v0.40.14, the flag block of
  * https://github.com/ollama/ollama/blob/v0.40.14/cmd/cmd.go as cobra prints it.
+ *
+ * Reconstructed, not captured: the binary was never run. The flag usage
+ * strings were checked byte for byte against the signed v0.40.14
+ * `ollama.exe` (from the release's ollama-windows-amd64.zip, signer Ollama
+ * Inc.), which carries "Enable thinking mode: true/false or high/medium/low
+ * for supported models", "Hide thinking output (if provided)" and "Show
+ * timings for response". The column layout and the stream the help goes to
+ * (stdout, which readCliOutput reads) are cobra's and are still unconfirmed
+ * until a real `ollama run --help` is captured into tests/fixtures/.
  */
 const RUN_HELP_V0_40_14 = [
   'Run a model',
