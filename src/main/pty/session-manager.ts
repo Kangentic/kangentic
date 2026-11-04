@@ -3601,8 +3601,12 @@ export class SessionManager extends EventEmitter {
    *
    * The candidate guard is re-checked here: the watcher decides asynchronously,
    * and the session may have been suspended or killed during that gap.
+   *
+   * Public for the `agent-never-started` listener, which calls it a second time
+   * when the pause it tried did not land. The sweep cannot: the watcher lets a
+   * session go once it reports it absent, so it never judges this row again.
    */
-  private retireAgentlessSession(sessionId: string): void {
+  retireAgentlessSession(sessionId: string): void {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
@@ -3612,12 +3616,9 @@ export class SessionManager extends EventEmitter {
       // A task keeps its way back: it pauses rather than exits, so its Resume
       // stands, and the conversation does not read as one the user ended. A
       // Command Terminal ends below, and a workflow's agent keeps the exited row
-      // its pane restarts from. If this pause never lands, the row is still
-      // running at the next sweep, which retires it as below.
-      if (!session.transient && this.listenerCount('agent-never-started') > 0) {
-        this.emit('agent-never-started', sessionId, toSession(session));
-        return;
-      }
+      // its pane restarts from. `emit` is false with no listener and for a session
+      // hidden until adopted, which no listener may learn of: both retire below.
+      if (!session.transient && this.emit('agent-never-started', sessionId, toSession(session))) return;
     }
     // A Command Terminal ENDS when its agent exits (desktop and phone alike):
     // its window closes as it does on Stop, and no shell is left for a phone's

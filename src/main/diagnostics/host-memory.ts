@@ -58,7 +58,7 @@ export type { HostMemorySample };
 const BYTES_PER_KB = 1024;
 
 export interface SampleHostMemoryOptions {
-  /** The cached macOS pressure level (see `createPressureLevelReader`). */
+  /** The cached macOS pressure level (see `createMacSysctlReader`). */
   memoryPressureLevel?: number | null;
   /** The cached macOS free percentage, read the same way. */
   memoryFreePercent?: number | null;
@@ -129,8 +129,9 @@ export function recoveryLine(limitBytes: number): number {
 
 /**
  * How much room the machine has, in the form its platform can measure. Bytes
- * on Windows (commit) and Linux (RAM plus swap), judged against
- * `pressureThreshold` and `recoveryLine`; a kernel verdict on macOS.
+ * on Windows (commit), Linux (RAM plus swap) and macOS at the warn level (RAM
+ * from the kernel's free percentage), judged against `pressureThreshold` and
+ * `recoveryLine`; a kernel verdict on macOS at normal and critical.
  */
 export type MemoryHeadroom =
   | { kind: 'bytes'; remainingBytes: number; limitBytes: number }
@@ -178,8 +179,8 @@ export function memoryHeadroom(sample: HostMemorySample): MemoryHeadroom | null 
   return null;
 }
 
-/** `sysctl -n` prints the level and a newline. Anything else is unknown. */
-export function parseMacPressureLevel(stdout: string): number | null {
+/** `sysctl -n` prints the value and a newline. Anything else is unknown. */
+export function parseMacSysctlInteger(stdout: string): number | null {
   const trimmed = stdout.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   return Number(trimmed);
@@ -187,7 +188,7 @@ export function parseMacPressureLevel(stdout: string): number | null {
 
 /** `kern.memorystatus_level` prints a percentage. Anything else is unknown. */
 export function parseMacFreePercent(stdout: string): number | null {
-  const percent = parseMacPressureLevel(stdout);
+  const percent = parseMacSysctlInteger(stdout);
   return percent !== null && percent <= 100 ? percent : null;
 }
 
@@ -201,11 +202,11 @@ async function readMacSysctl(name: string, parse: (stdout: string) => number | n
   }
 }
 
-const readMacPressureLevel = (): Promise<number | null> => readMacSysctl('kern.memorystatus_vm_pressure_level', parseMacPressureLevel);
+const readMacPressureLevel = (): Promise<number | null> => readMacSysctl('kern.memorystatus_vm_pressure_level', parseMacSysctlInteger);
 const readMacFreePercent = (): Promise<number | null> => readMacSysctl('kern.memorystatus_level', parseMacFreePercent);
 
-export interface PressureLevelReader {
-  /** The cached level, or null when there is none or it is older than `maxAgeMs`. */
+export interface MacSysctlReader {
+  /** The cached value, or null when there is none or it is older than `maxAgeMs`. */
   current(now: number, maxAgeMs: number): number | null;
   /** Start one read unless one is already running. Its result is cached for the next `current`. */
   refresh(): void;
@@ -214,29 +215,29 @@ export interface PressureLevelReader {
 }
 
 /**
- * The cache behind the macOS level. The sampler's tick is synchronous, and a
+ * The cache behind one macOS sysctl. The sampler's tick is synchronous, and a
  * `sysctl` run is not, so each tick reads what the previous tick's run cached
- * and starts the next run. `read` and `clock` are injectable for tests.
+ * and starts the next run. `clock` is injectable for tests.
  */
-export function createPressureLevelReader(
-  read: () => Promise<number | null> = readMacPressureLevel,
+export function createMacSysctlReader(
+  read: () => Promise<number | null>,
   clock: () => number = Date.now,
-): PressureLevelReader {
-  let cached: { level: number; readAt: number } | null = null;
+): MacSysctlReader {
+  let cached: { value: number; readAt: number } | null = null;
   let reading = false;
   let disposed = false;
   return {
     current(now, maxAgeMs) {
       if (!cached || now - cached.readAt > maxAgeMs) return null;
-      return cached.level;
+      return cached.value;
     },
     refresh() {
       if (reading || disposed) return;
       reading = true;
       void read()
-        .then((level) => {
+        .then((value) => {
           if (disposed) return;
-          cached = level === null ? null : { level, readAt: clock() };
+          cached = value === null ? null : { value, readAt: clock() };
         })
         .catch(() => {
           if (!disposed) cached = null;
@@ -345,10 +346,10 @@ const DEFAULT_INTERVAL_MS = 60_000;
 export function startHostMemorySampler(options: HostMemorySamplerOptions): () => void {
   const state = createHostMemoryPressureState();
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const pressureLevel = process.platform === 'darwin' ? createPressureLevelReader() : null;
+  const pressureLevel = process.platform === 'darwin' ? createMacSysctlReader(readMacPressureLevel) : null;
   // Its own read: an unknown name fails a whole sysctl run, and the level must
   // survive a macOS that lacks this one.
-  const freePercent = process.platform === 'darwin' ? createPressureLevelReader(readMacFreePercent) : null;
+  const freePercent = process.platform === 'darwin' ? createMacSysctlReader(readMacFreePercent) : null;
   const tick = (): void => {
     // A diagnostics sampler must never be the thing that crashes the app it
     // is trying to protect - an uncaught throw here would surface every 60s

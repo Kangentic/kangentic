@@ -82,20 +82,25 @@ const PROBE_SHELLS: readonly ProbeShell[] = [
 
 const requiredShells = (process.env.KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS ?? '').split(',').filter(Boolean);
 
+/** The shell that shows the limit on this platform, for the control. */
+const CONTROL_PROGRAM = process.platform === 'darwin' ? 'zsh' : 'bash';
+
 function isInstalled(program: string): boolean {
   if (process.platform === 'win32') return false;
   return spawnSync(program, ['--version'], { timeout: 15_000 }).status === 0;
 }
 
-const installedShells = PROBE_SHELLS.filter((shell) => isInstalled(shell.program));
+/** Only the shells this run uses, since a probe runs at import. */
+const installedShells = PROBE_SHELLS.filter((shell) => (
+  (shell.program === CONTROL_PROGRAM || requiredShells.includes(shell.program)) && isInstalled(shell.program)
+));
 for (const program of requiredShells) {
   if (!installedShells.some((shell) => shell.program === program)) {
     throw new Error(`${program} is not on PATH, and KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS requires it`);
   }
 }
 
-/** The shell that shows the limit on this platform, for the control. */
-const controlShell = installedShells.find((shell) => shell.program === (process.platform === 'darwin' ? 'zsh' : 'bash'));
+const controlShell = installedShells.find((shell) => shell.program === CONTROL_PROGRAM);
 
 /** The workflows name their shells. Anywhere else, the unit tier included, the control shell alone. */
 const shellsUnderTest = requiredShells.length > 0
@@ -332,8 +337,9 @@ describe.skipIf(!controlShell)('the same long line typed whole (the control)', (
 
   // A measurement, not a pin: a reporter found no key had any effect after a cut
   // line, and why is not established. It logs and never fails, since the launcher
-  // stops the line from being cut either way. The job log carries the answer.
-  it('measures whether keys still reach the shell after a cut line', async () => {
+  // stops the line from being cut either way. Only the jobs that name their shells
+  // run it: the unit tier hides the log, so there it would be seven idle seconds.
+  it.runIf(requiredShells.length > 0)('measures whether keys still reach the shell after a cut line', async () => {
     const rig = makeRig(shell, STARTUP_DELAY_MS);
     const pty = startShell(shell, rig);
     const keysDuringDelayMs = 700;

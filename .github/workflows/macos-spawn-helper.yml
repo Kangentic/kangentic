@@ -113,8 +113,8 @@ jobs:
         env:
           KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: zsh
         run: npx vitest run tests/unit/typed-launch-round-trip.test.ts --silent=false --reporter=verbose
-      # The low-memory pause reads the first at the warn level. This shows it
-      # against what memory_pressure prints, on a real Mac, every run.
+      # The low-memory pause reads kern.memorystatus_level at the warn level. This
+      # shows it against what memory_pressure prints, on a real Mac, every run.
       - name: Report the kernel's memory figures
         run: |
           sysctl -n kern.memorystatus_level

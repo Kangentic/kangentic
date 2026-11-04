@@ -120,7 +120,7 @@ export interface ManagedSession {
   agentStartObservedAt?: number | null;
   /** The agent reports its own start (`AgentParser.reportsAgentStart`, read at spawn). */
   reportsAgentStart?: boolean;
-  /** This session's launch failure was reported, so a later sweep only retires it. */
+  /** This session's launch failure was reported, so a second retirement only retires it. */
   launchFailureNoted?: boolean;
   /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
   typedLineBytes?: number | null;

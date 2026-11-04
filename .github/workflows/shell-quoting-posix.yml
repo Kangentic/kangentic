@@ -111,8 +111,11 @@ jobs:
       # Says which shell builds this run measured.
       - name: Report the shells under test
         run: |
+          bash --version
+          zsh --version
           fish --version
           nu --version
+          pwsh --version
       - name: Install dependencies (npm ci)
         run: npm ci
       - name: Round-trip the escapes through real shells

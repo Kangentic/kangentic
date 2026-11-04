@@ -10,12 +10,12 @@ vi.mock('../../src/main/utility-process/off-main-exec', () => ({ execFileAsync: 
 
 import {
   createHostMemoryPressureState,
-  createPressureLevelReader,
+  createMacSysctlReader,
   evaluateHostMemoryPressure,
   getLastHostMemorySample,
   memoryHeadroom,
   parseMacFreePercent,
-  parseMacPressureLevel,
+  parseMacSysctlInteger,
   pressureThreshold,
   recoveryLine,
   sampleHostMemory,
@@ -487,16 +487,16 @@ describe('memoryHeadroom', () => {
   });
 });
 
-describe('parseMacPressureLevel', () => {
+describe('parseMacSysctlInteger', () => {
   it('reads the number sysctl prints, ignoring the newline', () => {
-    expect(parseMacPressureLevel('1\n')).toBe(1);
-    expect(parseMacPressureLevel(' 4 ')).toBe(4);
+    expect(parseMacSysctlInteger('1\n')).toBe(1);
+    expect(parseMacSysctlInteger(' 4 ')).toBe(4);
   });
 
   it('reads anything else as unknown', () => {
-    expect(parseMacPressureLevel('')).toBeNull();
-    expect(parseMacPressureLevel('sysctl: unknown oid')).toBeNull();
-    expect(parseMacPressureLevel('-1')).toBeNull();
+    expect(parseMacSysctlInteger('')).toBeNull();
+    expect(parseMacSysctlInteger('sysctl: unknown oid')).toBeNull();
+    expect(parseMacSysctlInteger('-1')).toBeNull();
   });
 });
 
@@ -510,14 +510,14 @@ describe('parseMacFreePercent', () => {
   });
 });
 
-describe('createPressureLevelReader', () => {
+describe('createMacSysctlReader', () => {
   async function settle(): Promise<void> {
     for (let tick = 0; tick < 5; tick++) await Promise.resolve();
   }
 
   it('has nothing until a read lands, then serves it until it is older than the cap', async () => {
     let clock = 1_000;
-    const reader = createPressureLevelReader(async () => 2, () => clock);
+    const reader = createMacSysctlReader(async () => 2, () => clock);
 
     expect(reader.current(clock, 120_000)).toBeNull();
     reader.refresh();
@@ -531,7 +531,7 @@ describe('createPressureLevelReader', () => {
 
   it('forgets the level when a read fails', async () => {
     let level: number | null = 4;
-    const reader = createPressureLevelReader(async () => level, () => 1_000);
+    const reader = createMacSysctlReader(async () => level, () => 1_000);
     reader.refresh();
     await settle();
     expect(reader.current(1_000, 120_000)).toBe(4);
@@ -545,7 +545,7 @@ describe('createPressureLevelReader', () => {
   it('runs one read at a time', async () => {
     let finish: (level: number) => void = () => {};
     const read = vi.fn(() => new Promise<number>((resolve) => { finish = resolve; }));
-    const reader = createPressureLevelReader(read, () => 1_000);
+    const reader = createMacSysctlReader(read, () => 1_000);
 
     reader.refresh();
     reader.refresh();
@@ -559,7 +559,7 @@ describe('createPressureLevelReader', () => {
 
   it('keeps a read that lands after dispose out of the cache', async () => {
     let finish: (level: number) => void = () => {};
-    const reader = createPressureLevelReader(() => new Promise<number>((resolve) => { finish = resolve; }), () => 1_000);
+    const reader = createMacSysctlReader(() => new Promise<number>((resolve) => { finish = resolve; }), () => 1_000);
 
     reader.refresh();
     reader.dispose();
@@ -907,7 +907,7 @@ describe('startHostMemorySampler', () => {
 
     // The reader's own dispose() is not observable through the sampler: the
     // cleared interval is the only caller of its refresh() and current(). The
-    // reader's dispose behavior is pinned in createPressureLevelReader's tests.
+    // reader's dispose behavior is pinned in createMacSysctlReader's tests.
     it('stops reading and sampling once the stop function has run', async () => {
       mocks.execFileAsync.mockResolvedValue({ stdout: '1\n', stderr: '' });
       const onSample = vi.fn();

@@ -20,6 +20,7 @@ sources:
   - resource: src/renderer/monaco-error-funnel.ts
   - resource: src/main/diagnostics/gpu-health.ts
   - resource: src/main/updater.ts
+  - resource: src/main/pty/agent-launch-report.ts
 ---
 # Error reporting (Sentry)
 
@@ -342,7 +343,11 @@ in one Sentry org, one triage surface.
   `reason` tag), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
-  `crashCount` - see the GPU health bullet below), a task leftover reap or a leftover-list Stop that
+  `crashCount` - see the GPU health bullet below), an agent launch that never started
+  (`source: agent_launch`, with `platform`, `shell` from a fixed list, `typed_line_bytes`,
+  `session_age_s` and `launcher`; the message is fixed and no command text or path is sent, see
+  [Agent absence sweep](../architecture/sessions/agent-absence-sweep.md)), a task leftover reap or a
+  leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
   `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_timeout`,
   `host_exited`, `host_error`, `wsl_error`), once per stage and code per launch; the message is
