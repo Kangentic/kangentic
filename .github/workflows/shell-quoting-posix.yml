@@ -123,5 +123,5 @@ jobs:
       # Each shell's launcher form, typed while the shell is in its startup files.
       - name: Run a typed launch through each real shell
         env:
-          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: 'bash,zsh,fish,nu'
+          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: 'bash,zsh,fish,nu,pwsh'
         run: npx vitest run tests/unit/typed-launch-round-trip.test.ts
