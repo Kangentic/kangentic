@@ -25,7 +25,9 @@ TUI). Grok deliberately clones Claude Code's surface - Claude-compatible hooks, 
 makes this the second full-harness adapter after Claude. Every empirical claim below was
 verified against grok 1.0.0 (3cd0d0cbce) on Windows and is re-checkable with
 `node scripts/probe-grok.js` (headless checks spend a few tiny free-tier turns; add
-`--skip-pty` to skip the interactive leg).
+`--skip-pty` to skip the interactive leg). The exception is
+[Built from documentation](#built-from-documentation): those behaviors come from Grok's own
+docs and have not been run against the CLI.
 
 **Sessions (caller-owned ids).** `-s/--session-id <uuid>` names a NEW session only (reusing
 an existing uuid errors with "Session ID ... is already in use"); `--resume <uuid>` resumes.
@@ -73,20 +75,18 @@ The parser emits NO tool events - hooks own those, and a second emitter would do
 ToolStart/ToolEnd pairs - only usage plus idempotent activity hints (`turn_completed` ->
 Idle, chunks -> Thinking, non-terminal `retry_state` -> Thinking) as a hook backstop.
 
-**Questions and approvals: still the envelope (GitHub #452).** Grok's hooks have no
-permission event, and its `Notification` ("the agent sends a notification", 10-hooks.md)
-documents no type field, so the hook entry keeps it as a log line. Grok's own
-`events.jsonl` beside `updates.jsonl` does write `permission_requested` and
-`permission_resolved`, but not as a wait signal. In the stub-API probes on 1.0.0, Grok wrote
-`permission_requested` for every permission check, automatic allows included, each resolved
-in the same millisecond with `decision: "allow"` and `wait_ms: 0`, so the line cannot tell a
-prompt on screen from an automatic allow until it resolves. It also names no question kind,
-and a second file reader cannot be ordered against the hook stream, whose depth-0 tool start
-clears a wait. Grok copies Claude's hook schema, so its `Notification` may carry a
-`notification_type`, but the entry reads only `message`, `notification` and `text`. xAI's API
-refuses 1.0.0 with `426` ("update to version 1.0.13 or later"), so no turn has reached a
-prompt in a capture. The next step is one capture on a current Grok, with
-`captureHookContext()` on the `Notification` entry.
+**Questions and approvals (GitHub #452).** Grok's hooks have no permission event. The waits
+come from three hook entries built from Grok's docs (see
+[Built from documentation](#built-from-documentation)): a `Notification` whose
+`notificationType` is `permission_prompt` is an approval wait, and the starts of
+`ask_user_question` and `exit_plan_mode` are a question wait and an approval wait. Grok's own
+`events.jsonl` beside `updates.jsonl` is not used. In the stub-API probes on 1.0.0, Grok wrote
+`permission_requested` there for every permission check, automatic allows included, each
+resolved in the same millisecond with `decision: "allow"` and `wait_ms: 0`, so the line cannot
+tell a prompt on screen from an automatic allow until it resolves. The docs say
+`permission_prompt` "fires only when a permission UI is actually waiting". xAI's API refuses
+1.0.0 with `426` ("update to version 1.0.13 or later"), so no turn has reached a prompt in a
+capture.
 
 **Kangentic MCP.** Project-scoped `<cwd>/.grok/config.toml` carries a sentinel-delimited
 `[mcp_servers.kangentic]` block whose every value is an env reference
@@ -125,18 +125,23 @@ SUBMIT (measured 313ms and 32ms across two runs, against a ~2s turn), so a
 and wrap the text in `<user_query>` tags, which the extractor strips). But records carry no
 timestamps to bound the match window and the resolver has never been proven in-app, so
 `canEscalateOnVerificationFailure` is false. `canVerifySlashSubmission` is false (slash
-input runs in the TUI palette and never becomes a chat_history turn - the Codex verdict),
-which is also why `getInjectionSequence` returns `[]` despite grok having native `/model`
-and `/effort` commands: an unconfirmable injection could land as literal prompt text, while
-a task session's restart applies `--model` / `--reasoning-effort` deterministically.
+input runs in the TUI palette and never becomes a chat_history turn - the Codex verdict). That
+flag governs a task's auto_commands only. A task session that changes model or effort
+restarts with `--model` / `--reasoning-effort`, and the Command Terminal's live swap types
+Grok's own `/model` and `/effort` unverified (see
+[Built from documentation](#built-from-documentation)).
 
-**Other capabilities.** `parseTranscript` reads `chat_history.jsonl`
-(`system`/`user`/`assistant`/`reasoning`/`tool_result` records; assistant tool calls in
+**Other capabilities.** `parseTranscript`, `parseTranscriptWindow` and `readTranscriptPage` read
+`chat_history.jsonl`, the file `locateSessionHistoryFile` names, so the index, the archive and the
+message trail walk the whole conversation and offset the right file. A window counts the lines
+before it, so its uuids match the tail's. The file holds
+`system`/`user`/`assistant`/`reasoning`/`tool_result` records (assistant tool calls in
 `tool_calls[]` with JSON-string `arguments`; no timestamps, so entries get a parse-time
 stamp and synthesized uuids). `transcriptUsage`/`transcriptToolCounts` read `updates.jsonl`
 (Claude-parity lifetime rollup). `summarize` runs the plain-output print mode
-(`--output-format plain -p`) with the answer run's deny rules (see the [Auto-Name](auto-name.md) table); its session
-stays in `~/.grok/sessions` until a title is measured on the answer run. `probeAuth` runs `grok models` and checks for "not
+(`--output-format plain -p`) with the answer run's deny rules (see the [Auto-Name](auto-name.md) table). It names
+its session with `-s <uuid>` and removes that session's folder from `~/.grok/sessions`
+afterwards (built from documentation). `probeAuth` runs `grok models` and checks for "not
 authenticated" - note grok currently serves a free tier without login, so false means "not
 signed in", not "unusable"; a subscription-less account that hits a limit gets an explicit
 403 rendered as a failed turn in the TUI, not a hang. Auth is browser OAuth through the PTY
@@ -146,6 +151,77 @@ signed in", not "unusable"; a subscription-less account that hits a limit gets a
 a generic `agent` shim that collides with Cursor's (see the collision guard in [Cursor CLI](cursor-cli.md#cli-detection)), and
 `parseVersion` requires the `grok ` banner prefix so a foreign binary answering on a shared
 name is rejected. `tests/unit/cursor-grok-binary-collision.test.ts` pins both directions.
+
+## Built from documentation
+
+The CLI here is 1.0.0, which xAI's API refuses, so these behaviors were built from Grok's docs
+and have not been run against a Grok. Two doc sources: the user guide each install ships in
+`~/.grok/docs/user-guide/` (1.0.0 here), and the same guide on `main` of
+[xai-org/grok-build](https://github.com/xai-org/grok-build/tree/main/crates/codegen/xai-grok-pager/docs/user-guide),
+a mirror with no tags whose newest changelog entry is 1.0.45 (2026-09-29). Their fixtures are
+named `tests/fixtures/grok-hooks/grok-docs-1.0.45-*`, apart from the `grok-1.0.0-*` captures.
+
+| Behavior | Hook or member | Source |
+|---|---|---|
+| A turn that ends without completing (an interrupt, a declined prompt, `--max-turns`) is an `interrupted` event. A subagent's cancel carries `subagentType` and is logged instead. | `StopCancelled` | 10-hooks.md on main; the hook arrived in 1.0.4. An older CLI ignores the key: "Grok skips unrecognized event names" (10-hooks.md, 1.0.0). |
+| A permission UI on screen is an approval wait. | `Notification`, `notificationType: "permission_prompt"` | 10-hooks.md on main: "fires only when a permission UI is actually waiting" |
+| A settled session sends an idle hint. | `Notification`, `notificationType: "idle_prompt"` | 10-hooks.md on main: fires after any turn end, about a minute after the session settles |
+| A question is a question wait, ended by the tool's own end. | `PreToolUse` on `ask_user_question` | 19-plan-mode.md, 1.0.0 |
+| The plan approval view is an approval wait. | `PreToolUse` on `exit_plan_mode` | 19-plan-mode.md, 1.0.0 |
+| Plan mode at each prompt and turn end (`SessionEvent.planMode`). A subagent's payload is skipped. | `UserPromptSubmit` and `Stop`, from `permissionMode` | 10-hooks.md, 1.0.0: every payload carries `permissionMode` (`default`, `auto`, `plan` or `bypassPermissions`) |
+| The Command Terminal's live swap types `/model <id>` then `/effort <level>`. `/model` gets the id alone, since the arguments after it changed by 1.0.45. | `getInjectionSequence` | 04-slash-commands.md, 1.0.0 |
+| A title run names its session and removes its folder afterwards. | `summarize` (`-s <uuid>`) | 17-sessions.md, 1.0.0: headless `-s` creates a new session with that UUID |
+| The subagent tool is `spawn_subagent`. | `subagentSpawnToolName` | 01-getting-started.md and 16-subagents.md, 1.0.0 |
+
+`modelDisplayName` names a learned model id from `~/.grok/models_cache.json`, the cache
+discovery already reads, and answers null for an id the cache does not name.
+
+Still needs a run against a current Grok:
+
+- **Plan exit.** `exit_plan_mode` is not reported as the plan exit that moves a card to its
+  After Plan Mode column. The docs leave its result for an approved, a revised and a quit plan
+  unstated, and quitting also turns plan mode off. 22-permissions-and-safety.md says
+  `--permission-mode plan` is "Accepted for compatibility". Whether it starts plan mode needs
+  the same probe.
+- **Background command hint.** Measured negative on 1.0.0. The changelog adds PostToolUse
+  `additionalContext` in 1.0.13 and 1.0.14.
+- **Resume failure text.** "Session does not exist" appears only in Grok's source, and
+  `describeStartupFailure` needs wording seen on a real card.
+- **Read-only launch.** `--sandbox read-only` with the answer run's deny rules.
+- **Other members.** `hungTurn`, `consoleCloseIsGraceful`, escalation of the command-injection
+  verifier, subagent ids on SubagentStart and SubagentStop (`subagentId`, in source only), the
+  file-changing tools (`search_replace` in the docs, `edit_file` in captures), and subagent
+  usage (`subagents/meta.json`, undocumented).
+
+Not supported by the CLI, so not built:
+
+- **The status line (1.0.6).** It reports a session id, transcript path, effort and context,
+  but only the user's own config can set it, never a repo's `.grok/config.toml`. Writing it
+  would replace the user's own status line.
+- **Rate limits.** No quota telemetry is documented.
+- **Plan and tool approval from a hook.** An `allow` "does not auto-approve a call the user
+  would otherwise be asked about", and there is no PermissionRequest hook.
+- **Readable directories.** There is no `--add-dir`.
+- **Image paste from a path.** Since 1.0.42, a bracketed paste does not attach images.
+- **A warm answer session.** Headless mode reads no stdin turns. The warm mode is ACP JSON-RPC
+  (`grok agent stdio`).
+- **Transcript time scoping.** `chat_history.jsonl` has no timestamps.
+
+Considered and not built:
+
+- **Proving a conversation gone (`proveConversationGone`).** A missing local session is no
+  proof: Grok's `--resume` also restores remote sessions (`--restore-code` in `grok --help`, and
+  "not found locally, restoring conversation from remote" in its source), so a fresh start from
+  a recap could replace a conversation Grok would have restored. The alternative was to read
+  the hook payload's camelCase `transcriptPath` in the resume guard and prove the local folder
+  gone.
+- **Following `/new` mid-session.** The SessionStart `source` a `/new` reports is undocumented,
+  and `/fork` starts a peer session from the same process, so a SessionStart with a new id does
+  not prove the terminal's conversation moved. The alternative was a hook-driven id switch in
+  `SessionTelemetry` for adapters with no status-file id.
+- **A warm answer session over ACP.** Grok's only warm mode is ACP JSON-RPC
+  (`grok agent stdio`, 15-agent-mode.md), and a client for it could not be run here. The
+  alternative was an ACP transport beside `stdin-json-session.ts`.
 
 ## Command Building
 

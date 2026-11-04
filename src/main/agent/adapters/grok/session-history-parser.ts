@@ -292,5 +292,10 @@ function buildUsage(captured: {
  * the raw id.
  */
 export function grokModelDisplayName(modelId: string): string {
-  return loadModelsCacheMemo()?.displayNames.get(modelId) ?? modelId;
+  return grokCachedModelDisplayName(modelId) ?? modelId;
+}
+
+/** The models cache's display name for a grok model id, or null when the cache does not name it. */
+export function grokCachedModelDisplayName(modelId: string): string | null {
+  return loadModelsCacheMemo()?.displayNames.get(modelId) ?? null;
 }

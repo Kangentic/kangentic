@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventType } from '../../../../shared/types';
+import { EventType, IdleReason } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
 import {
   buildBridgeCommand,
@@ -9,8 +9,19 @@ import {
   type HookShell,
 } from '../../shared/hook-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { extractTool, extractToolId, extractDetail } from '../../shared/directive-builders';
-import { setTypeWhenDetailContains } from '../../shared/directive-builders';
+import {
+  appendPermissionWaitForTool,
+  emitOnlyWhenDetailMatches,
+  extractDetail,
+  extractPlanMode,
+  extractTool,
+  extractToolId,
+  setDetail,
+  setTypeWhen,
+  setTypeWhenDetailContains,
+  setTypeWhenDetailMatches,
+  setWaitKind,
+} from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives } from '../../shared/background-command-hooks';
 import type { CliPlace } from '../../shared/cli-target';
 import { copyWslHookScriptInto, prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
@@ -103,9 +114,36 @@ export const GROK_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
  *   `rate_limit`). The transient classes remap to `turn_retrying` so the
  *   engine holds the session thinking through a retry backoff instead of
  *   false-idling it - mirroring Claude's StopFailure remaps.
- * - Tool-scoped directives (`whenTool`, `setTypeWhen`) are deliberately
- *   absent: the bridge's tool guard reads `ctx.tool_name` (Claude's field),
- *   which grok payloads do not carry.
+ * - Directives whose tool guard reads `ctx.tool_name` (Claude's field:
+ *   `setTypeWhen`'s `whenTool`, `markSubagentLaunch`, `extractDetailWhenTool`)
+ *   are never used here, because the 1.0.0 captures carry only `toolName`.
+ *   Every tool-scoped directive below names its field or path explicitly
+ *   (`appendPermissionWaitForTool`'s `toolPath`).
+ *
+ * BUILT FROM DOCUMENTATION, NOT YET RUN AGAINST THE CLI. The installed 1.0.0
+ * is too old for xAI's API (it answers 426, "update to 1.0.13 or later"), so
+ * the entries below were built from Grok's own docs, not from a capture:
+ * - `StopCancelled` -> `interrupted`. "Runs instead of `Stop` when a turn ends
+ *   without completing": a user interrupt, a declined permission prompt, the
+ *   `--max-turns` limit, or a no-progress bail-out. Added in 1.0.4 (CHANGELOG),
+ *   documented in 10-hooks.md on main (1.0.45, 2026-09-29):
+ *   https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/10-hooks.md
+ *   An older CLI ignores the key: "Grok skips unrecognized event names"
+ *   (10-hooks.md shipped with 1.0.0). Inside a subagent the payload carries
+ *   `subagentType`, and that cancel is logged, never the session's interrupt.
+ * - `Notification` with `notificationType: "permission_prompt"` is an approval
+ *   wait ("fires only when a permission UI is actually waiting"), and
+ *   `idle_prompt` an idle hint ("fires on any turn end", about a minute after
+ *   the session settles). Same 10-hooks.md on main; the doc says to match on
+ *   `notificationType`, because `message` is display text that can change.
+ * - `ask_user_question` and `exit_plan_mode` raise their waits from
+ *   PreToolUse, as Codex's question tool does: the tool's start is the wait
+ *   and its own PostToolUse the answer. Both tools are named in 19-plan-mode.md
+ *   shipped with 1.0.0 (the agent "may use `ask_user_question`", and
+ *   `exit_plan_mode` opens the plan approval view).
+ * - Plan mode rides `permissionMode`, which every payload carries with the
+ *   values `default`, `auto`, `plan` or `bypassPermissions` (10-hooks.md,
+ *   1.0.0). A subagent's payload carries `subagentType` and is skipped.
  */
 
 /** The variable `EVENTS_PATH_FROM_ENVIRONMENT` names, which the command builder sets. */
@@ -128,6 +166,7 @@ const GrokHookEvent = {
   SessionEnd: 'SessionEnd',
   Stop: 'Stop',
   StopFailure: 'StopFailure',
+  StopCancelled: 'StopCancelled',
   SubagentStart: 'SubagentStart',
   SubagentStop: 'SubagentStop',
   UserPromptSubmit: 'UserPromptSubmit',
@@ -135,6 +174,29 @@ const GrokHookEvent = {
   Notification: 'Notification',
   PreCompact: 'PreCompact',
 } as const;
+
+/**
+ * Grok's question tool. Its start is a wait on the user, answered by its own
+ * PostToolUse (19-plan-mode.md shipped with 1.0.0; not yet captured).
+ */
+const GROK_QUESTION_TOOL = 'ask_user_question';
+
+/**
+ * Grok's plan exit tool: it reads `plan.md` and opens the plan approval view
+ * (19-plan-mode.md shipped with 1.0.0). Its start is an approval wait. It is
+ * NOT reported as Kangentic's plan exit: what its result says for an approved,
+ * a revised and a quit plan is undocumented, and quitting also ends plan mode.
+ */
+const GROK_PLAN_EXIT_TOOL = 'exit_plan_mode';
+
+/** A detail pattern that matches any non-empty extracted value. */
+const ANY_DETAIL = '.';
+
+/** The `notificationType` Grok sends while a permission UI waits (10-hooks.md on main, 1.0.45). */
+const GROK_PERMISSION_NOTIFICATION = 'permission_prompt';
+
+/** The `notificationType` Grok sends once a session has settled after a turn (10-hooks.md on main, 1.0.45). */
+const GROK_IDLE_NOTIFICATION = 'idle_prompt';
 
 interface GrokHookEntry {
   matcher?: string;
@@ -160,6 +222,9 @@ export function buildGrokHooks(
   const bridge = (eventType: string, ...directives: string[]): string => (eventCommand
     ? eventCommand(eventType, ...directives)
     : buildBridgeCommand(GROK_HOOK_SHELL, eventBridge, EVENTS_PATH_FROM_ENVIRONMENT, eventType, ...directives));
+  // The session's mode at each prompt and turn end (SessionEvent.planMode),
+  // never a subagent's, whose payload carries `subagentType`.
+  const planMode = extractPlanMode('permissionMode', ['plan'], { unlessField: 'subagentType' });
 
   return {
     [H.PreToolUse]: [commandEntry(bridge(E.ToolStart,
@@ -168,7 +233,11 @@ export function buildGrokHooks(
       // Tool-specific context: grok's `toolInput` carries the tool's raw
       // input (observed: `command` for run_terminal_command, `target_file`
       // for read_file). First non-null wins.
-      extractDetail(['command', 'target_file', 'file_path', 'path', 'query', 'pattern', 'url', 'description'], { nested: 'toolInput' })))],
+      extractDetail(['command', 'target_file', 'file_path', 'path', 'query', 'pattern', 'url', 'description'], { nested: 'toolInput' }),
+      // Written after the tool_start, in this one process, so the start cannot
+      // clear the wait it opens.
+      appendPermissionWaitForTool({ toolPath: ['toolName'], tool: GROK_QUESTION_TOOL, waitKind: 'question' }),
+      appendPermissionWaitForTool({ toolPath: ['toolName'], tool: GROK_PLAN_EXIT_TOOL, waitKind: 'approval' })))],
     // A background launch and kill ride this entry: grok runs one event's
     // hooks one after another, so a second entry would cost every tool call.
     [H.PostToolUse]: [commandEntry(bridge(E.ToolEnd,
@@ -180,27 +249,53 @@ export function buildGrokHooks(
       extractTool('toolName'),
       extractToolId(['toolUseId']),
       extractDetail(['error', 'errorDetails'])))],
-    [H.UserPromptSubmit]: [commandEntry(bridge(E.Prompt))],
+    [H.UserPromptSubmit]: [commandEntry(bridge(E.Prompt, planMode))],
     [H.Stop]: [commandEntry(bridge(E.Idle,
       // `end_turn` for genuine completions; `channel_closed` / `shutdown`
       // for the session-end observe fire. Carried for the activity log.
-      extractDetail(['reason'])))],
+      extractDetail(['reason']),
+      planMode))],
     [H.StopFailure]: [commandEntry(bridge(E.TurnFailed,
       extractDetail(['error', 'errorDetails']),
       setTypeWhenDetailContains('rate_limit', E.TurnRetrying),
       setTypeWhenDetailContains('server_error', E.TurnRetrying)))],
+    // A turn that ended without completing (an interrupt, a declined prompt,
+    // max turns): a hard turn end. A subagent's own cancel carries
+    // `subagentType`; it is retyped to a log line, so it cannot end the main
+    // turn. `extractDetail` is first-wins, so the reason fills only a
+    // main-agent event's detail. The order is load-bearing: the
+    // `subagentType` extraction must come first for the retype to see it.
+    [H.StopCancelled]: [commandEntry(bridge(E.Interrupted,
+      extractDetail(['subagentType']),
+      setTypeWhenDetailMatches(ANY_DETAIL, E.Notification),
+      extractDetail(['reason', 'cancelTrigger'])))],
     [H.SessionStart]: [commandEntry(bridge(E.SessionStart))],
     [H.SessionEnd]: [commandEntry(bridge(E.SessionEnd))],
     [H.SubagentStart]: [commandEntry(bridge(E.SubagentStart,
       extractDetail(['subagentType', 'agentType'])))],
     [H.SubagentStop]: [commandEntry(bridge(E.SubagentStop,
       extractDetail(['subagentType', 'agentType'])))],
-    // Observation-only: a denied tool call and agent notifications are
-    // logged for the activity feed; neither changes activity state.
+    // Observation-only: a denied tool call is logged for the activity feed.
     [H.PermissionDenied]: [commandEntry(bridge(E.Notification,
       extractDetail(['toolName', 'message'])))],
-    [H.Notification]: [commandEntry(bridge(E.Notification,
-      extractDetail(['message', 'notification', 'text'])))],
+    // Grok runs one event's entries one after another, so the entry that
+    // changes state runs first: a quick approval's tool end must not land
+    // before the wait it ends.
+    [H.Notification]: [
+      // A permission UI on screen is an approval wait. The event is written
+      // only for that type; the tool's own end clears it.
+      commandEntry(bridge(E.Idle,
+        extractDetail(['notificationType']),
+        emitOnlyWhenDetailMatches(`^${GROK_PERMISSION_NOTIFICATION}$`),
+        setDetail(IdleReason.Permission),
+        setWaitKind('approval'))),
+      // Every notification is logged; `idle_prompt` is also an idle hint, so
+      // a turn whose Stop never arrived still settles. The engine ends a turn
+      // on it only when no tool, subagent, shell or wait still holds one.
+      commandEntry(bridge(E.Notification,
+        extractDetail(['message', 'notification', 'text']),
+        setTypeWhen({ field: 'notificationType', equals: GROK_IDLE_NOTIFICATION, to: E.IdleHint }))),
+    ],
     [H.PreCompact]: [commandEntry(bridge(E.Compact))],
   };
 }
