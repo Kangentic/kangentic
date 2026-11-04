@@ -7,6 +7,7 @@ import { cliPathForTarget, type CliPlace, type CliTarget } from '../../shared/cl
 import { kangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { prepareWslHookTransport, wslHookEventCommand, wslStatusLineCommand } from '../../shared/wsl-hook-transport';
 import { COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, writeSessionConfig, type CopilotSessionHookOptions } from './hook-manager';
+import { SESSION_CONFIG_DIR_NAME, seedResumedSessionState } from './session-state';
 import type { PermissionMode } from '../../../../shared/types';
 
 export interface CopilotCommandOptions {
@@ -27,6 +28,8 @@ export interface CopilotCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /** Report the submitted prompt's text with the Prompt event (a Command Terminal names itself from it). */
+  capturePromptText?: boolean;
   /**
    * A Copilot installed in a WSL distro (`CommandOptions.cliTarget`): named by
    * the path the distro sees, its session config seeded from the distro's
@@ -42,10 +45,27 @@ export interface CopilotCommandOptions {
  *   plan              -> --plan (native plan mode)
  *   dontAsk           -> --plan --no-ask-user (read-only, autonomous)
  *   default           -> (no flags - default confirmation behavior)
- *   acceptEdits/auto  -> --allow-all-tools (auto-approve tool usage)
+ *   acceptEdits       -> --allow-tool=write (file edits only, as Claude's)
+ *   auto              -> assisted permissions: `defaultPermissionMode:
+ *                        "assisted"` in the session's settings.json, and
+ *                        --assisted-approval in a non-interactive run
  *   bypassPermissions -> --yolo (allow all tools, paths, and URLs)
+ *
+ * acceptEdits: GitHub's command reference defines the `write` permission kind
+ * as "file creation or modification", and `--allow-tool='write'` lets Copilot
+ * edit files without asking
+ * (https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools).
+ * A shell command still asks, as it does under Claude's acceptEdits.
+ *
+ * auto: Copilot's assisted permissions review each tool request and ask only
+ * when the review is unsure
+ * (https://docs.github.com/en/copilot/concepts/customizations/allowing-safe-commands).
+ * `--assisted-approval` errors in an interactive session, so only `-p` gets it.
+ *
+ * Both are built from the docs (no CLI version stated) and have not run
+ * against a real Copilot CLI.
  */
-function mapPermissionMode(mode: PermissionMode): string[] {
+function mapPermissionMode(mode: PermissionMode, nonInteractive: boolean): string[] {
   switch (mode) {
     case 'plan':
       return ['--plan'];
@@ -54,11 +74,23 @@ function mapPermissionMode(mode: PermissionMode): string[] {
     case 'default':
       return [];
     case 'acceptEdits':
+      return ['--allow-tool=write'];
     case 'auto':
-      return ['--allow-all-tools'];
+      return nonInteractive ? ['--assisted-approval'] : [];
     case 'bypassPermissions':
       return ['--yolo'];
   }
+}
+
+/**
+ * The server key Kangentic's MCP config names (`mcpServers.kangentic`), and
+ * so the name `--allow-tool` approves, here and in the answer run.
+ */
+export const KANGENTIC_MCP_SERVER_NAME = 'kangentic';
+
+/** Modes whose session gets Kangentic's own tools approved up front. */
+function allowsKangenticTools(mode: PermissionMode): boolean {
+  return mode === 'default' || mode === 'acceptEdits' || mode === 'auto';
 }
 
 /**
@@ -76,6 +108,76 @@ function preparePrompt(prompt: string, shell?: string): string {
     : prompt;
 }
 
+/**
+ * Split a command this builder wrote into its arguments, keeping a quoted
+ * value whole: a single-quoted run (POSIX shells, with `'\''` for a quote
+ * inside), a double-quoted run (PowerShell and cmd), and a backslash escape
+ * outside quotes (the `\'` of a POSIX `'\''`).
+ *
+ * Only for reading `--model` back. Copilot's command has no `--` before its
+ * prompt, so a plain search could take a prompt's `--model` for the flag. It
+ * is not a general shell parser: it holds only because `quoteArg` quotes
+ * every value with a backslash in it, and a double-quoted run never holds a
+ * `"` (`preparePrompt` and `quoteArg` turn them into single quotes for
+ * PowerShell and cmd).
+ */
+function splitCommandArguments(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inToken = false;
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < command.length; index++) {
+    const character = command[index];
+    if (quote) {
+      if (character === quote) quote = null;
+      else current += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      inToken = true;
+      continue;
+    }
+    if (character === '\\' && index + 1 < command.length && command[index + 1] !== ' ') {
+      current += command[index + 1];
+      index++;
+      inToken = true;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (inToken) tokens.push(current);
+      current = '';
+      inToken = false;
+      continue;
+    }
+    current += character;
+    inToken = true;
+  }
+  if (inToken) tokens.push(current);
+  return tokens;
+}
+
+/**
+ * The model a built Copilot command passes with `--model` (or `--model=`),
+ * read argument by argument so a prompt that mentions `--model` is never taken
+ * for the flag. Null when the command names none.
+ */
+export function copilotModelFlagValue(command: string): string | null {
+  const tokens = splitCommandArguments(command);
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (token === '--model') {
+      const value = tokens[index + 1]?.trim();
+      return value ? value : null;
+    }
+    if (token.startsWith('--model=')) {
+      const value = token.slice('--model='.length).trim();
+      return value ? value : null;
+    }
+  }
+  return null;
+}
+
 export class CopilotCommandBuilder {
   buildCopilotCommand(options: CopilotCommandOptions): string {
     const { shell } = options;
@@ -90,19 +192,35 @@ export class CopilotCommandBuilder {
     let sessionConfigDir: string | null = null;
     if (options.eventsOutputPath) {
       // Place copilot config alongside the events file
-      sessionConfigDir = path.join(path.dirname(options.eventsOutputPath), 'copilot-config');
+      const sessionDir = path.dirname(options.eventsOutputPath);
+      sessionConfigDir = path.join(sessionDir, SESSION_CONFIG_DIR_NAME);
+      const sessionSettings: CopilotSessionHookOptions = {
+        capturePromptText: options.capturePromptText === true,
+        assistedApprovals: options.permissionMode === 'auto',
+      };
       writeSessionConfig(
         sessionConfigDir,
         options.eventsOutputPath,
         options.statusOutputPath,
-        place ? this.wslHookOptions(options, options.eventsOutputPath, place) : {
+        place ? { ...this.wslHookOptions(options, options.eventsOutputPath, place), ...sessionSettings } : {
           // Names kangentic_mark_background_service, so only a session
           // offered that tool gets it.
           backgroundShellHintCommand: backgroundShellHintCommandFor(
             options, COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, shippedHintBridgePath(),
           ),
+          ...sessionSettings,
         },
       );
+      // A resume starts in a new config home: bring the session's folder over,
+      // or Copilot starts an empty session under the same id (session-state.ts).
+      if (options.resume && options.sessionId) {
+        seedResumedSessionState({
+          configHome: sessionConfigDir,
+          sessionId: options.sessionId,
+          sessionsDir: path.dirname(sessionDir),
+          place,
+        });
+      }
     }
 
     const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.copilotPath, shell)];
@@ -124,12 +242,23 @@ export class CopilotCommandBuilder {
     }
 
     // Permission mode flags
-    parts.push(...mapPermissionMode(options.permissionMode));
+    parts.push(...mapPermissionMode(options.permissionMode, options.nonInteractive === true));
 
     // MCP server configuration. Emitted BEFORE the non-interactive branch
     // below, which returns early: keeping it further down silently stripped
     // the Kangentic MCP server from every non-interactive Copilot spawn.
-    parts.push(...this.buildMcpConfigArgs(options));
+    const mcpConfigArgs = this.buildMcpConfigArgs(options);
+    parts.push(...mcpConfigArgs);
+    // Kangentic's own tools never wait on an approval, as Claude's
+    // `mcp__kangentic` allow rule and Grok's `MCPTool(kangentic__*)` ensure:
+    // `--allow-tool kangentic` approves every tool of that server (GitHub's
+    // allowing-tools doc; the answer run uses the same flag, measured). Before
+    // acceptEdits narrowed to `write` it rode on `--allow-all-tools`. Not in the
+    // plan modes, where a mutating board tool must keep asking, and not under
+    // --yolo, which already allows everything.
+    if (mcpConfigArgs.length > 0 && allowsKangenticTools(options.permissionMode)) {
+      parts.push('--allow-tool', KANGENTIC_MCP_SERVER_NAME);
+    }
 
     // Non-interactive mode
     if (options.nonInteractive) {
@@ -188,7 +317,7 @@ export class CopilotCommandBuilder {
       : null;
     const mcpConfig = {
       mcpServers: {
-        kangentic: server?.kind === 'stdio'
+        [KANGENTIC_MCP_SERVER_NAME]: server?.kind === 'stdio'
           ? { type: 'stdio' as const, command: server.command, args: server.args, env: { [server.tokenEnv]: server.token }, tools: ['*'] }
           : {
             type: 'http' as const,

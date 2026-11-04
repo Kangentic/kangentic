@@ -12,6 +12,7 @@ import os from 'node:os';
 import { quoteArg } from '../../src/shared/paths';
 import { CopilotCommandBuilder } from '../../src/main/agent/adapters/copilot';
 import type { CopilotCommandOptions } from '../../src/main/agent/adapters/copilot';
+import { copilotModelFlagValue } from '../../src/main/agent/adapters/copilot/command-builder';
 import { COPILOT_BACKGROUND_COMMAND_SPEC, writeSessionConfig } from '../../src/main/agent/adapters/copilot/hook-manager';
 import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 
@@ -43,6 +44,24 @@ function buildCommand(overrides: Partial<CopilotCommandOptions> = {}): string {
   const builder = new CopilotCommandBuilder();
   return builder.buildCopilotCommand(baseOptions(overrides));
 }
+
+describe('copilotModelFlagValue', () => {
+  it('reads the --model=value form', () => {
+    expect(copilotModelFlagValue('copilot --model=gpt-5-mini -p x')).toBe('gpt-5-mini');
+  });
+
+  it('answers null when --model is the final token', () => {
+    expect(copilotModelFlagValue('copilot --model')).toBeNull();
+  });
+
+  it('answers null for an empty quoted value', () => {
+    expect(copilotModelFlagValue('copilot --model ""')).toBeNull();
+  });
+
+  it('does not take a --model inside a POSIX single-quoted prompt for the flag', () => {
+    expect(copilotModelFlagValue("copilot -i 'it'\\''s --model x' --model real")).toBe('real');
+  });
+});
 
 describe('CopilotCommandBuilder', () => {
   // ── Basic command ────────────────────────────────────────────────────────
@@ -81,16 +100,37 @@ describe('CopilotCommandBuilder', () => {
       expect(command).toContain('--no-ask-user');
     });
 
-    it('acceptEdits maps to --allow-all-tools', () => {
+    // GitHub's docs: the `write` kind is "file creation or modification", so a
+    // shell command still asks, as under Claude's acceptEdits.
+    it('acceptEdits allows file writes only (--allow-tool=write)', () => {
       const command = buildCommand({ permissionMode: 'acceptEdits' });
-      expect(command).toContain('--allow-all-tools');
+      expect(command).toContain('--allow-tool=write');
+      expect(command).not.toContain('--allow-all-tools');
       expect(command).not.toContain('--plan');
       expect(command).not.toContain('--yolo');
     });
 
-    it('auto maps to --allow-all-tools', () => {
+    // Assisted permissions: `--assisted-approval` errors in an interactive
+    // session, so an interactive auto session gets the settings.json key
+    // (writeSessionConfig) and no flag.
+    it('auto adds no flag to an interactive session', () => {
       const command = buildCommand({ permissionMode: 'auto' });
-      expect(command).toContain('--allow-all-tools');
+      expect(command).toBe('/usr/local/bin/copilot');
+    });
+
+    it('auto passes --assisted-approval to a non-interactive run', () => {
+      const command = buildCommand({ permissionMode: 'auto', nonInteractive: true, prompt: 'Fix it' });
+      expect(command).toContain('--assisted-approval');
+      expect(command).not.toContain('--allow-all-tools');
+    });
+
+    it('asks the session config for assisted approvals only in auto mode', () => {
+      vi.mocked(writeSessionConfig).mockClear();
+      buildCommand({ permissionMode: 'auto', eventsOutputPath: path.join(os.tmpdir(), 'copilot-auto', 'events.jsonl') });
+      buildCommand({ permissionMode: 'acceptEdits', eventsOutputPath: path.join(os.tmpdir(), 'copilot-edits', 'events.jsonl') });
+      const calls = vi.mocked(writeSessionConfig).mock.calls;
+      expect(calls[0][3]).toMatchObject({ assistedApprovals: true });
+      expect(calls[1][3]).toMatchObject({ assistedApprovals: false });
     });
 
     it('bypassPermissions maps to --yolo', () => {
@@ -120,6 +160,44 @@ describe('CopilotCommandBuilder', () => {
       expect(command).toContain('--session-id');
       expect(command).toContain('abc-123-def');
       expect(command).not.toContain('--resume');
+    });
+
+    // Each spawn gets a new session folder and so a new --config-dir; the
+    // conversation lives in the previous one's session-state/<id>/.
+    it('a resume brings the session folder into its new config home', () => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-resume-'));
+      const sessionsDir = path.join(projectRoot, '.kangentic', 'sessions');
+      try {
+        const previous = path.join(sessionsDir, 'record-1', 'copilot-config', 'session-state', 'abc-123-def');
+        fs.mkdirSync(previous, { recursive: true });
+        fs.writeFileSync(path.join(previous, 'events.jsonl'), '{}\n');
+        const eventsOutputPath = path.join(sessionsDir, 'record-2', 'events.jsonl');
+
+        buildCommand({ sessionId: 'abc-123-def', resume: true, eventsOutputPath });
+        expect(fs.existsSync(path.join(sessionsDir, 'record-2', 'copilot-config', 'session-state', 'abc-123-def', 'events.jsonl'))).toBe(true);
+
+        // A fresh start under a new id brings nothing over.
+        buildCommand({ sessionId: 'new-id', eventsOutputPath: path.join(sessionsDir, 'record-3', 'events.jsonl') });
+        expect(fs.existsSync(path.join(sessionsDir, 'record-3', 'copilot-config', 'session-state'))).toBe(false);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('a resume with no session id copies nothing into the new config home', () => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-resume-noid-'));
+      const sessionsDir = path.join(projectRoot, '.kangentic', 'sessions');
+      try {
+        const previous = path.join(sessionsDir, 'record-1', 'copilot-config', 'session-state', 'abc-123-def');
+        fs.mkdirSync(previous, { recursive: true });
+        fs.writeFileSync(path.join(previous, 'events.jsonl'), '{}\n');
+
+        const eventsOutputPath = path.join(sessionsDir, 'record-2', 'events.jsonl');
+        expect(() => buildCommand({ resume: true, eventsOutputPath })).not.toThrow();
+        expect(fs.existsSync(path.join(sessionsDir, 'record-2', 'copilot-config', 'session-state'))).toBe(false);
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
 
     it('sessionId with resume: true also uses --session-id', () => {
@@ -306,6 +384,26 @@ describe('CopilotCommandBuilder', () => {
       expect(command).toContain('--additional-mcp-config');
       expect(command).toContain('@');
       expect(command).toContain('copilot-mcp.json');
+    });
+
+    // Kangentic's own tools never wait on an approval (Claude's mcp__kangentic
+    // allow rule); they rode on --allow-all-tools before acceptEdits narrowed
+    // to write. A workflow agent that waits on one stalls unattended.
+    it('approves Kangentic\'s own server outside the plan modes and YOLO', () => {
+      const mcp = {
+        eventsOutputPath: path.join(tmpDir, 'events.jsonl'),
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123',
+        mcpServerToken: 'secret-token',
+      };
+      const allowsKangentic = (command: string) => command.includes('--allow-tool kangentic');
+      for (const permissionMode of ['default', 'acceptEdits', 'auto'] as const) {
+        expect(allowsKangentic(buildCommand({ ...mcp, permissionMode }))).toBe(true);
+      }
+      for (const permissionMode of ['plan', 'dontAsk', 'bypassPermissions'] as const) {
+        expect(allowsKangentic(buildCommand({ ...mcp, permissionMode }))).toBe(false);
+      }
+      expect(allowsKangentic(buildCommand({ ...mcp, mcpServerEnabled: false, permissionMode: 'acceptEdits' }))).toBe(false);
     });
 
     it('omits --additional-mcp-config when MCP is disabled', () => {

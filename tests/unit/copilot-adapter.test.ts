@@ -99,6 +99,12 @@ describe('CopilotAdapter - identity', () => {
     expect(modes).toContain('auto');
     expect(modes).toContain('bypassPermissions');
   });
+
+  it('labels acceptEdits and auto by what they pass', () => {
+    const labelOf = (mode: string) => adapter.permissions.find((entry) => entry.mode === mode)?.label;
+    expect(labelOf('acceptEdits')).toBe('Allow File Edits');
+    expect(labelOf('auto')).toBe('Assisted Approvals');
+  });
 });
 
 // ── CopilotAdapter detection ─────────────────────────────────────────────────
@@ -145,9 +151,43 @@ describe('CopilotAdapter - buildCommand', () => {
     expect(command).toContain('copilot');
   });
 
-  it('command contains --allow-all-tools for acceptEdits', () => {
+  it('command allows file writes only for acceptEdits', () => {
     const command = adapter.buildCommand(makeOptions({ permissionMode: 'acceptEdits' }));
-    expect(command).toContain('--allow-all-tools');
+    expect(command).toContain('--allow-tool=write');
+    expect(command).not.toContain('--allow-all-tools');
+  });
+});
+
+// ── CopilotAdapter configured model ─────────────────────────────────────────
+
+describe('CopilotAdapter - configuredModelFromCommand', () => {
+  const adapter = new CopilotAdapter();
+
+  // Read back from the builder's own output, in every shell it quotes for, so
+  // the reader and the builder cannot drift apart.
+  for (const shell of ['bash', 'pwsh', 'cmd', undefined]) {
+    it(`reads the --model the builder wrote (${shell ?? 'platform default'})`, () => {
+      const command = adapter.buildCommand(makeOptions({
+        shell,
+        model: 'claude-sonnet-4.5',
+        prompt: 'Rename the --model gpt-4.1 flag in "docs"',
+      }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'claude-sonnet-4.5', displayName: 'Claude Sonnet 4.5' });
+    });
+  }
+
+  it('never takes a --model inside the prompt for the flag', () => {
+    // In -p mode the builder writes the prompt before --model.
+    const withoutModel = adapter.buildCommand(makeOptions({ shell: 'bash', nonInteractive: true, prompt: 'use --model gpt-4.1 here' }));
+    expect(adapter.configuredModelFromCommand(withoutModel)).toBeNull();
+    const withModel = adapter.buildCommand(makeOptions({ shell: 'bash', nonInteractive: true, prompt: "it's --model x", model: 'gpt-5-mini' }));
+    expect(adapter.configuredModelFromCommand(withModel)?.id).toBe('gpt-5-mini');
+  });
+
+  it('labels an id as the stream parser does, with no table', () => {
+    expect(adapter.modelDisplayName('gpt-5-mini')).toBe('GPT-5 mini');
+    expect(adapter.modelDisplayName('auto')).toBe('auto');
+    expect(adapter.modelDisplayName('  ')).toBeNull();
   });
 });
 

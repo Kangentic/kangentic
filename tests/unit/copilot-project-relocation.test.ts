@@ -128,6 +128,32 @@ describe('migrateCopilotProjectData', () => {
     expect(fs.readFileSync(file, 'utf-8')).toBe(content);
   });
 
+  // Kangentic passes each session its own config home, which holds that
+  // session's state in place of ~/.copilot (GitHub's config dir reference).
+  it('rewrites the sessions in the moved project\'s own Kangentic config homes', async () => {
+    const dir = path.join(NEW_PATH, '.kangentic', 'sessions', 'record-1', 'copilot-config', 'session-state', 'session-k');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'workspace.yaml');
+    fs.writeFileSync(file, [`cwd: ${OLD_PATH}`, ''].join('\n'), 'utf-8');
+
+    await migrateCopilotProjectData(OLD_PATH, NEW_PATH);
+
+    expect(fs.readFileSync(file, 'utf-8')).toBe([`cwd: ${NEW_PATH}`, ''].join('\n'));
+  });
+
+  it('finds the project\'s config homes from a renamed worktree too', async () => {
+    const oldWorktree = path.join(NEW_PATH, '.kangentic', 'worktrees', 'old-slug');
+    const newWorktree = path.join(NEW_PATH, '.kangentic', 'worktrees', 'new-slug');
+    const dir = path.join(NEW_PATH, '.kangentic', 'sessions', 'record-1', 'copilot-config', 'session-state', 'session-w');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'workspace.yaml');
+    fs.writeFileSync(file, [`cwd: ${oldWorktree}`, ''].join('\n'), 'utf-8');
+
+    await migrateCopilotProjectData(oldWorktree, newWorktree);
+
+    expect(fs.readFileSync(file, 'utf-8')).toBe([`cwd: ${newWorktree}`, ''].join('\n'));
+  });
+
   it('does not throw when the session-state directory is absent', async () => {
     await expect(migrateCopilotProjectData(OLD_PATH, NEW_PATH)).resolves.toBeUndefined();
   });

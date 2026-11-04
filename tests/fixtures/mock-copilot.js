@@ -63,12 +63,14 @@ for (let i = 0; i < args.length; i++) {
     i++; // skip value
   }
   // Skip known flag/value pairs
-  else if (argument === '--model' || argument === '--additional-mcp-config' || argument === '--mode') {
+  else if (argument === '--model' || argument === '--additional-mcp-config' || argument === '--mode' ||
+           argument === '--allow-tool' || argument === '--reasoning-effort') {
     i++; // skip value
   }
-  // Skip known boolean flags
+  // Skip known boolean flags (`--allow-tool=write` carries its value inline)
   else if (argument === '--plan' || argument === '--yolo' || argument === '--allow-all' ||
-           argument === '--allow-all-tools' || argument === '--no-ask-user' ||
+           argument === '--allow-all-tools' || argument.startsWith('--allow-tool=') ||
+           argument === '--assisted-approval' || argument === '--no-ask-user' ||
            argument === '--autopilot' || argument === '--experimental' ||
            argument === '-s' || argument === '--silent') {
     // flag without value, skip

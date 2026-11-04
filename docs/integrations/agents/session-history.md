@@ -334,10 +334,10 @@ readonly runtime: AdapterRuntimeStrategy = {
 The sections above describe the **history file** each adapter reads for live telemetry and for
 the `get_transcript` MCP feature, located by `adapter.locateSessionHistoryFile(agentSessionId,
 cwd)`. That is a separate question from **what `--resume` actually reads** to restore a
-conversation. The two are usually the same file, but not always: Copilot returns `null` from
-`locateSessionHistoryFile` (no telemetry history file wired), and Cursor's locator returns the
-`agent-transcripts` JSONL its `--resume` never reads, yet both persist resumable session state
-elsewhere on disk. So do not assume "history file" equals "resume file" - this section records the
+conversation. The two are usually the same file, but not always: Copilot's locator returns the
+`events.jsonl` inside the session folder its resume reads, but the resume also needs the rest of
+that folder in its own config home, and Cursor's locator returns the `agent-transcripts` JSONL its
+`--resume` never reads, yet it persists resumable session state elsewhere on disk. So do not assume "history file" equals "resume file" - this section records the
 resume side, audited separately.
 
 **How this was audited:** empirically, from (a) the on-disk session stores that real CLI runs
@@ -360,7 +360,7 @@ behavior below is the resume contract.
 | Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
 | OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
-| Copilot | `copilot --session-id <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) | typed once the TUI is ready |
+| Copilot | `copilot --session-id <id> --config-dir <session home>` | `<config home>/session-state/<id>/` (+ `session-store.db`); each Kangentic session has its own home, so a resume first brings the folder over from the session's earlier home | session id (per config home) | no | yes (its `events.jsonl`) | typed once the TUI is ready |
 | Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (the locator returns the `agent-transcripts` JSONL under `~/.cursor/projects/<slug>/`, which resume itself does not read) | typed once the CLI is ready |
 | Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) | n/a: no id to resume by, so the engine never resumes it |
 | Warp | (no resume) | none | n/a | n/a | n/a | n/a |
