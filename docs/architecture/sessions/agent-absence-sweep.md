@@ -8,6 +8,7 @@ sources:
   - resource: src/main/activity-engine/background-shell/process-tree.ts
   - resource: src/main/pty/session-manager.ts
     title: isAgentAbsenceCandidate and retireAgentlessSession
+  - resource: src/main/pty/agent-launch-report.ts
   - resource: src/main/pty/host/dead-root-orphans.ts
   - resource: scripts/probe-claude-exit-paths.js
   - resource: scripts/probe-claude-exit-paths-linux.py
@@ -332,6 +333,18 @@ exit listener when the exit is not intentional. Most resumes of a deleted conver
 here: `assessResumeConversation` ([Resume](resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead)) starts them fresh before the spawn. This notice covers what
 that check cannot prove (a conversation whose evidence is gone, a WSL path), and it stays a notice
 rather than a restart.
+
+**It reports a launch that never started.** Nothing throws when a typed command never runs, so
+the sweep is the only thing that sees it. `retireAgentlessSession` checks `launchNeverStarted`
+(`src/main/pty/agent-launch-report.ts`): an adapter that declares `reportsAgentStart`, on a session
+with no `agentStartObservedAt`, no `altScreenEnteredAt` and no `agentEndSignaledAt`. It then sends
+one handled report with a fixed message and writes one `[AGENT-LAUNCH]` warning to the local log.
+The report tags are the platform, a shell name from a fixed list, the typed line's bytes, the
+session's age and whether a launcher file was used, never command text or a path. An adapter that
+reports neither signal is left out, because its silence proves nothing. Every session stamps
+`agentStartObservedAt` at its first SessionStart for this; only a Command Terminal's sweep gate reads
+it otherwise, so a task's plain grace does not change. A WSL shell is never judged by the sweep, so
+it never reports.
 
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept

@@ -88,6 +88,7 @@ import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
+import { launchNeverStarted, reportAgentNeverStarted } from './agent-launch-report';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
@@ -770,7 +771,11 @@ export class SessionManager extends EventEmitter {
       onEvent: (sessionId, event) => {
         // The agent's own hook: evidence it runs, for an agent that starts
         // without drawing anything the stream can see.
-        if (event.type === EventType.SessionStart) this.markAgentReady(sessionId);
+        if (event.type === EventType.SessionStart) {
+          this.markAgentReady(sessionId);
+          const startedSession = this.registry.get(sessionId);
+          if (startedSession) startedSession.agentStartObservedAt ??= Date.now();
+        }
         if (event.type === EventType.Prompt) this.tookPrompt.add(sessionId);
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
@@ -3498,7 +3503,7 @@ export class SessionManager extends EventEmitter {
    * still running, and the sweep's process-tree check is what keeps such a
    * terminal alive either way.
    * The first SessionStart is also the evidence the sweep waits for before it
-   * judges the terminal at all (`agentStartObservedAt`).
+   * judges the terminal at all (`agentStartObservedAt`, stamped in `onEvent`).
    *
    * Where the tree cannot judge (`canTreeJudgeAgent`), the SessionEnd is the
    * only signal there is, so it arms the end settle instead: with no
@@ -3516,7 +3521,6 @@ export class SessionManager extends EventEmitter {
     const session = this.registry.get(sessionId);
     if (!session || !isCommandTerminalSession(session)) return;
     if (event.type === EventType.SessionStart) {
-      session.agentStartObservedAt ??= Date.now();
       session.agentEndSignaledAt = null;
       this.telemetry.cancelAgentAbsenceCheck(sessionId);
       this.cancelAgentEndSettle(sessionId);
@@ -3602,6 +3606,7 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
+    if (launchNeverStarted(session)) reportAgentNeverStarted(session);
     // A Command Terminal ENDS when its agent exits (desktop and phone alike):
     // its window closes as it does on Stop, and no shell is left for a phone's
     // `interactive-terminal` to type into. It has no task record to resume or

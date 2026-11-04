@@ -227,6 +227,8 @@ Command Terminal went from spawn to Claude's TUI in 3.0 to 3.1 s under Windows P
 the terminal hidden, the same as with it showing the prompt, so no boot query waits on a reply
 from the hidden terminal.
 
+An adapter whose agent always shows it started, by a SessionStart hook at launch or its first alt-screen entry, declares `reportsAgentStart`. Claude Code and Droid do. A session of such an agent that the sweep retires with neither signal reports a launch that never started ([Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md#cadence-and-what-a-retirement-does)). Leave it unset for an agent that may run without showing either, or a hook that waits for the first prompt: its silence proves nothing.
+
 ## Exit Sequences
 
 Graceful exit sequences written to the PTY before a force-kill, for every agent that is typed into. `SessionManager.suspend()` writes one for each such session; `kill()` writes one for a young one (inside the agent's boot window, see the `kill()` grace in [Shutdown](../../architecture/sessions/shutdown.md)); the quit path's `killAll()` writes one best-effort for each such session; the pty host writes one to an agent whose shell died on its own. An agent whose console close is its graceful exit (see below) gets no sequence on kill, suspend or quit. A step may be a pause (`{ delayMs }`), so keys the TUI must read apart never share a burst.

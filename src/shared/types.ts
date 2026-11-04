@@ -6579,6 +6579,12 @@ export interface AgentParser {
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
   /**
+   * Optional: this agent reports that it started, by its SessionStart hook or
+   * its first alt-screen entry, so a session that shows neither did not start.
+   * Read at spawn onto the session row. See `AgentAdapter.reportsAgentStart`.
+   */
+  readonly reportsAgentStart?: boolean;
+  /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
    * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.
