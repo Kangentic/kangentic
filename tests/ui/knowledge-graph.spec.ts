@@ -1795,6 +1795,51 @@ test.describe('knowledge graph', () => {
     }
   });
 
+  test('offers the chosen model\'s own effort levels for an agent that reports them per model', async () => {
+    // A per-model CLI leaves the agent-wide `effortLevels` empty, so the row
+    // used to offer nothing. It now follows the chosen model.
+    const preConfig = `${snapshotScript({ projection: projectionLiteral(30), answerAgentChosen: false })}
+      window.__mockPreConfigure(function (state) {
+        state.config.knowledgeGraph = Object.assign({}, state.config.knowledgeGraph, { indexingEnabled: true, enabled: true });
+        return {};
+      });
+      window.__mockAgentListOverrides = { grok: { found: true, path: '/usr/bin/grok', version: '1', capabilities: { effortLevels: [], effortLevelsByModel: { 'model-a': ['low', 'high'], 'model-b': ['max'] }, supportsModelOverride: true, models: ['model-a', 'model-b'] } } };`;
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await openKnowledgeGraph(page);
+      const input = page.locator('[data-testid="knowledge-graph-search-input"]');
+      await input.fill('anything');
+      await input.press('Enter');
+      await expect(page.locator('[data-testid="settings-panel"]')).toBeVisible();
+
+      await page.locator('[data-testid="knowledge-graph-answer-agent"]').click();
+      await page.locator('[data-testid="knowledge-graph-answer-agent-option-grok"]').click();
+
+      const effort = page.locator('[data-testid="knowledge-graph-answer-effort"]');
+      const chooseModel = async (modelId: string): Promise<void> => {
+        await page.locator('[data-testid="knowledge-graph-answer-model"]').click();
+        await page.locator(`[data-testid="knowledge-graph-answer-model-menu"] [data-model-id="${modelId}"]`).click();
+      };
+      const optionIn = (level: string) => page.locator(`[data-testid="knowledge-graph-answer-effort-option-${level}"]`);
+
+      await chooseModel('model-a');
+      await expect(effort).toBeVisible();
+      await effort.click();
+      await expect(optionIn('low')).toBeVisible();
+      await expect(optionIn('high')).toBeVisible();
+      await expect(optionIn('max')).toHaveCount(0);
+      await optionIn('low').click();
+
+      await chooseModel('model-b');
+      await effort.click();
+      await expect(optionIn('max')).toBeVisible();
+      await expect(optionIn('low')).toHaveCount(0);
+      await expect(optionIn('high')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   // The Knowledge Graph tab polls the index status every 1500 ms, one read at a
   // time: main reads every indexed project, which can outlast the interval on a
   // busy worker, and a second read only adds to its load. Here every read waits

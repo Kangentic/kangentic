@@ -102,7 +102,7 @@ type MockAdapter = {
   displayName: string;
   detect: (override?: string | null) => Promise<{ found: boolean; path: string | null; version: string | null }>;
   answerCapabilities?: { streaming: boolean; search: boolean; model: boolean; effort?: boolean; defaultEffort?: string };
-  discoverCapabilities?: (cliPath: string) => Promise<{ effortLevels?: string[] }>;
+  discoverCapabilities?: (cliPath: string) => Promise<{ effortLevels?: string[]; effortLevelsByModel?: Record<string, string[]> }>;
   answerFromContext?: (
     prompt: string,
     cliPath: string,
@@ -1026,6 +1026,32 @@ describe('the Ask handler', () => {
     registerSearchHandlers(makeContext() as any);
     expect((await ask('anything')).ok).toBe(true);
     expect(effortOf(claudeSpy)).toBeNull();
+  });
+
+  it('checks the answering effort against the chosen model\'s own levels when the CLI reports them per model', async () => {
+    const effortFor = async (model: string, effort: string | null): Promise<string | null | undefined> => {
+      const spy = vi.fn(async () => 'answered');
+      mockAdapters = [{
+        name: 'grok',
+        displayName: 'Grok',
+        detect: async () => ({ found: true, path: '/usr/bin/grok', version: '1' }),
+        answerCapabilities: { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' },
+        discoverCapabilities: async () => ({ effortLevels: [], effortLevelsByModel: { 'model-a': ['high', 'max'] } }),
+        answerFromContext: spy,
+      }];
+      knowledgeGraphConfig = { agent: 'grok', model, effort };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+      expect((await ask('anything')).ok).toBe(true);
+      return (spy.mock.calls[0] as unknown as AnswerCall)[4]?.effort;
+    };
+
+    // A level the chosen model lists is passed.
+    expect(await effortFor('model-a', 'max')).toBe('max');
+    // A model the map does not name falls back to the agent-wide list, which is empty.
+    expect(await effortFor('model-b', 'max')).toBeNull();
+    // The recommended level is passed only when the chosen model lists it.
+    expect(await effortFor('model-a', null)).toBeNull();
   });
 
   it('reports a missing CLI rather than searching into a failure', async () => {
