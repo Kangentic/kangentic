@@ -124,7 +124,8 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 - **Gemini** maps `AfterAgent` to the `idle` stop-equivalent and `Notification` to `notification` (one whose `notification_type` is `ToolPermission` also to the permission `idle`), so it could be susceptible. But it wires no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm its notification text. Wire only after capturing evidence.
 - **Qwen Code** does not share Gemini's hook shape: its events use Claude's names (`Stop` -> `idle`). Its "Qwen Code is waiting for your input" notification (`notification_type: idle_prompt`) cannot be an idle hint. A live 0.25.2 session sends it mid-turn, right after almost every `PreToolUse`, so it says nothing about the turn ending. It stays a log-only `notification`, pinned by `tests/unit/qwen-hook-bridge.test.ts`.
 - **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
-- **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
+- **Codex / OpenCode** wire no Notification hook, so the pattern cannot apply.
+- **Copilot** wires a `notification` hook, but it maps only `elicitation_dialog` and `permission_prompt` to a question or approval wait ([Questions and approvals](../../integrations/agents/copilot-cli.md#questions-and-approvals)), never to the idle hint.
 - **Grok Build** is wired, unlike Qwen's mid-turn `idle_prompt`: Grok's docs say `idle_prompt` "fires on any turn end" and about a minute after the session settles, and the engine ends a turn on it only when no tool, subagent, shell or wait still holds one. No Grok session has been captured, so the timing is the docs' claim.
 
 ## Turn ends (`onTurnEnded`)
