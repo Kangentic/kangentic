@@ -177,7 +177,7 @@ follows it.
 
 ## Claude's JSONL-polling implementation
 
-Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Nine adapters provide a `'command-injection'` verifier today (see the [matrix](command-injection-support-matrix.md#per-adapter-support-matrix)). Of the eight besides Claude, five (Codex, Qwen, Kimi, Grok, Antigravity) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
+Claude's is the richest verifier, and the only one that matches on a structured slash-invocation record rather than on the submitted text. Eight adapters provide a `'command-injection'` verifier today (see the [matrix](command-injection-support-matrix.md#per-adapter-support-matrix)). Of the seven besides Claude, four (Codex, Qwen, Grok, Antigravity) reuse the shared submitted-text scan; Copilot, OpenCode, and Aider each ship a bespoke verifier, because their history formats cannot support that scan safely.
 
 Claude Code writes every successful slash invocation to its session JSONL transcript as a `local_command` system entry whose `<command-name>` matches the slash and whose `<command-args>` matches exactly what was sent. The verifier (`src/main/agent/adapters/claude/slash-command-verifier.ts`) tail-scans this file for an entry matching both fields exactly:
 
@@ -370,8 +370,8 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `tests/unit/codex-command-injection-verifier.test.ts` - Codex record shape, exact-match, and read cost.
 - `tests/unit/qwen-command-injection-verifier.test.ts` - Qwen record shape, exact-match, and the missing-file case.
 - `tests/unit/copilot-command-injection-verifier.test.ts` - Copilot's newest-first global history, the partial-write case, and the exactness property.
-- `tests/unit/command-injection-real-capture-extractors.test.ts` - every extractor run over a REAL captured history file, asserting it recovers the user's text exactly. Covers Codex, Qwen, Kimi, and Aider; Copilot, OpenCode, Grok, and Antigravity have no committed capture, which is part of why they stay confirm-only.
-- `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Kimi / Aider / OpenCode record shapes and the guards standing in for their missing measurements.
+- `tests/unit/command-injection-real-capture-extractors.test.ts` - every extractor run over a REAL captured history file, asserting it recovers the user's text exactly. Covers Codex, Qwen, and Aider; Copilot, OpenCode, Grok, and Antigravity have no committed capture, which is part of why they stay confirm-only.
+- `tests/unit/confirm-only-command-injection-verifiers.test.ts` - the Aider / OpenCode record shapes and the guards standing in for their missing measurements.
 - `tests/unit/opencode-command-injection-query-bound.test.ts` - that OpenCode's `part` query stays bounded to the message ids already fetched, and is skipped entirely when there are none. Unbounded, it scanned and JSON-parsed every part row in the session on every 25ms poll, synchronously, on the thread that services IPC.
 - `tests/unit/cursor-grok-binary-collision.test.ts` - that `cursor-agent` is preferred over the `agent` shim Grok also publishes.
 - `tests/unit/auto-command-escalation-gate.test.ts` and `tests/unit/auto-command-escalation.test.ts` - when escalation may fire at all, and that the rung 3 restart holds its `resending-command` label across the suspend and clears it on every exit.
@@ -390,11 +390,10 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` - Claude's JSONL-polling implementation, including the `submitted` exact-content scan.
-- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by seven of the nine verifiers: Claude and Aider import it directly, Codex/Qwen/Kimi/Grok/Antigravity reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
+- `src/main/agent/shared/transcript-tail-cache.ts` - the bounded 256KB tail read and its LRU content-identity cache. Used by six of the eight verifiers: Claude and Aider import it directly, Codex/Qwen/Grok/Antigravity reach it through the shared scan. Copilot and OpenCode do not read an appendable text file at all (a global JSON blob and a SQL query), so they bypass it. Must stay ONE module-global instance.
 - `src/main/agent/shared/submitted-text-verifier.ts` - the shared backwards tail walk, `sentAt` watermark, and exact trim-equality. Adapters supply only a synchronous path resolver and a record-shape extractor.
 - `src/main/agent/adapters/codex/command-injection-verifier.ts` - Codex resolver (memoised readdir scan) and rollout record shape.
 - `src/main/agent/adapters/qwen-code/command-injection-verifier.ts` - Qwen resolver (direct path construction) and chats record shape.
-- `src/main/agent/adapters/kimi/command-injection-verifier.ts` - CONFIRM-ONLY. `wire.jsonl` resolver plus the unix-SECONDS timestamp conversion.
 - `src/main/agent/adapters/grok/command-injection-verifier.ts` - CONFIRM-ONLY. `chat_history.jsonl` resolver (deterministic path from the caller-owned session UUID) and the `<user_query>`-unwrapping extractor; records carry no timestamps, so `timestampMs` is null and the scan matches on text alone within the bounded tail.
 - `src/main/agent/adapters/aider/command-injection-verifier.ts` - CONFIRM-ONLY. One of the three bespoke verifiers that cannot use the shared scan (with OpenCode and Copilot): no per-entry timestamps, so it guards on file mtime and matches the LAST user block only.
 - `src/main/agent/adapters/opencode/command-injection-verifier.ts` - CONFIRM-ONLY, and the only SQL-backed verifier; a remote session has no local row and is reported `failed`.

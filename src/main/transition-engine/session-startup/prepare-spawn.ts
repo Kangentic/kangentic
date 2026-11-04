@@ -285,16 +285,20 @@ export async function prepareAgentSpawn(input: {
       );
       // Startup carries no column message and no task template on any
       // session, main or isolated, so the recap is the whole prompt for both:
-      // there is nothing else for the agent to act on.
-      prompt = await buildExpiredConversationRecap({
-        task,
-        agentDisplayName: adapter.displayName,
-        previousAgentSessionId: resumedAgentSessionId,
-        lastActiveAt: expiredLastActiveAt,
-        cwd,
-        baseBranch: task.base_branch || input.boardDefaultBaseBranch || config.git?.defaultBaseBranch || 'main',
-        mode: 'whole-prompt',
-      }, input.recapSources);
+      // there is nothing else for the agent to act on. A CLI that takes no
+      // starting prompt gets none: this path types nothing, and a prompt here
+      // would seed a turn that never starts. It opens idle for the user.
+      if (adapter.freshPromptDelivery !== 'typed') {
+        prompt = await buildExpiredConversationRecap({
+          task,
+          agentDisplayName: adapter.displayName,
+          previousAgentSessionId: resumedAgentSessionId,
+          lastActiveAt: expiredLastActiveAt,
+          cwd,
+          baseBranch: task.base_branch || input.boardDefaultBaseBranch || config.git?.defaultBaseBranch || 'main',
+          mode: 'whole-prompt',
+        }, input.recapSources);
+      }
     }
   }
   // Same id rule as the board spawn. This path's command carries no

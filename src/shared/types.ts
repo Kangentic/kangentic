@@ -1409,9 +1409,9 @@ export interface Session {
   isolatedSwimlaneId?: string | null;
   /**
    * Agent-reported session ID (the value passed to `--resume`). Known at spawn
-   * for caller-owned-ID adapters (Claude, Kimi, Qwen); set by the capture
-   * pipeline once the agent emits it over the PTY or via hooks (OpenCode,
-   * Codex, Gemini, Droid). Null until captured. Mirrors the persisted
+   * for caller-owned-ID adapters (Claude, Qwen); set by the capture pipeline
+   * once the agent emits it over the PTY or via hooks (OpenCode, Codex,
+   * Gemini, Droid). Null until captured. Mirrors the persisted
    * SessionRecord.agent_session_id for the live session.
    */
   agentSessionId: string | null;
@@ -2172,7 +2172,7 @@ export const EventType = {
    * (a named shell), or the command text before that (anonymous). Emitted only
    * for an adapter that declares `AgentAdapter.backgroundCommands`: Claude's
    * own hook remaps, the event bridge's `appendBackgroundLaunch` directive for
-   * the others, and the Codex rollout and Kimi wire parsers. See
+   * the others, and the Codex rollout parser. See
    * `docs/architecture/activity/background-shells.md` for the hold and every way it releases.
    */
   BackgroundShellStart: 'background_shell_start',
@@ -6763,6 +6763,13 @@ export interface AdapterRuntimeStrategy {
     parse(content: string, mode: 'full' | 'append'): SessionHistoryParseResult;
 
     /**
+     * Make a `parse` for one session, called once per watched file, for a
+     * format that needs memory across chunks (Kimi: a `tool.result` names only
+     * its call id). Omitted, the watcher uses `parse`, and each chunk stands alone.
+     */
+    createParse?(): (content: string, mode: 'full' | 'append') => SessionHistoryParseResult;
+
+    /**
      * True for whole-file-rewrite agents (Gemini rewrites session.json
      * on every message). False for append-only JSONL (Codex appends).
      * Tells the watcher whether to track a byte cursor or always
@@ -7383,7 +7390,7 @@ export interface SpawnSessionInput {
    * Caller-owned agent session UUID. Set when the adapter declares
    * `supportsCallerSessionId = true` and the spawn pipeline pre-generates
    * a UUID before invoking the CLI (e.g. Claude `--session-id`, Qwen
-   * `--session-id`, Kimi `--session`). Lets the spawn flow trigger
+   * `--session-id`). Lets the spawn flow trigger
    * `notifyAgentSessionId` immediately so `sessionHistoryReader.attach`
    * fires without waiting for capture pathways to round-trip. Null/undefined
    * for adapters that auto-generate IDs (Codex, Gemini, Droid).

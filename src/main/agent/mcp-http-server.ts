@@ -17,7 +17,8 @@
  *       per-project `.kangentic/mcp-config.json`, or a Command Terminal
  *       session; steering then degrades to an unattributed caller rather than
  *       refusing.
- * Auth: random per-launch token, validated via `X-Kangentic-Token` header
+ * Auth: random per-launch token, validated via the `X-Kangentic-Token` header
+ *       or `Authorization: Bearer`
  * Bind: 127.0.0.1 by default -- loopback skips Windows Defender Firewall
  *       prompts and is unreachable from other machines. A user can widen
  *       this by hand-editing `mcpServer.bindAddress` in the global
@@ -39,7 +40,7 @@
  * primitives, and `session-send.ts` the delivery coordinator behind
  * `steering-tools.ts`.
  */
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingHttpHeaders, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -529,6 +530,17 @@ export function buildWorkflowAgentMcpServer(
   return mcpServer;
 }
 
+/**
+ * The token a request presents: `X-Kangentic-Token`, or `Authorization: Bearer`
+ * for a CLI that can read a token from its environment only as a bearer token
+ * (Kimi Code's `bearerTokenEnvVar`). The same per-launch token either way.
+ */
+function presentedToken(headers: IncomingHttpHeaders): string | null {
+  const header = headers['x-kangentic-token'];
+  if (typeof header === 'string') return header;
+  return headers.authorization?.match(/^Bearer\s+(\S+)\s*$/i)?.[1] ?? null;
+}
+
 /** Validates the URL path and token, then dispatches to a per-request McpServer. */
 async function handleHttpRequest(
   req: IncomingMessage,
@@ -547,8 +559,8 @@ async function handleHttpRequest(
   // loopback only (the default), this is pure belt-and-suspenders since the
   // attacker would need same-machine code execution to even try; it becomes
   // the primary defense once a user opts into a wider `bindAddress`.
-  const headerToken = req.headers['x-kangentic-token'];
-  if (typeof headerToken !== 'string') {
+  const headerToken = presentedToken(req.headers);
+  if (headerToken === null) {
     res.statusCode = 401;
     res.end();
     return;

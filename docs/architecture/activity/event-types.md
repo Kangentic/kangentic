@@ -125,7 +125,7 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 
 - **Gemini** maps `AfterAgent` to the `idle` stop-equivalent and `Notification` to `notification` (one whose `notification_type` is `ToolPermission` also to the permission `idle`), so it could be susceptible. But it wires no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm its notification text. Wire only after capturing evidence.
 - **Qwen Code** does not share Gemini's hook shape: its events use Claude's names (`Stop` -> `idle`). Its "Qwen Code is waiting for your input" notification (`notification_type: idle_prompt`) cannot be an idle hint. A live 0.25.2 session sends it mid-turn, right after almost every `PreToolUse`, so it says nothing about the turn ending. It stays a log-only `notification`, pinned by `tests/unit/qwen-hook-bridge.test.ts`.
-- **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
+- **Kimi** does not need this: its wire protocol emits an explicit `turn.ended -> Idle`, and none of its `Notification`-mapped records mean "waiting for input."
 - **Codex / OpenCode** wire no Notification hook, so the pattern cannot apply.
 - **Copilot** wires a `notification` hook, but it maps only `elicitation_dialog` and `permission_prompt` to a question or approval wait ([Questions and approvals](../../integrations/agents/copilot-cli.md#questions-and-approvals)), never to the idle hint.
 - **Grok Build** is wired, unlike Qwen's mid-turn `idle_prompt`: Grok's docs say `idle_prompt` "fires on any turn end" and about a minute after the session settles, and the engine ends a turn on it only when no tool, subagent, shell or wait still holds one. No Grok session has been captured, so the timing is the docs' claim.
@@ -197,8 +197,7 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   work since. The turn-end runner and the workflow step ask it before acting on a check's answer, so
   a turn the user began meanwhile stops them even after it failed or was interrupted back to idle
   with no turn end of its own. It is not `turnStartedAt` because `forceThinking` re-stamps that: a
-  PTY-tracked agent's trailing paint after its turn end (Kimi's tracker is never suppressed) would
-  read as a new turn every time. Only an agent's own hook or wire events move the serial.
+  PTY-tracked agent's trailing paint after its turn end would read as a new turn every time. Only an agent's own hook or wire events move the serial.
 - **`onTurnStarted(sessionId, turnStartedAt, cause)`** fires at each of the three stamps, with its
   `TurnStartCause` (`'seed'`, `'idle'` or `'plan-approval'`). `SessionManager` uses it to key the turn's
   `transcriptAnchor`, the transcript byte offset the turn end's reply is read from. The anchor is
@@ -211,7 +210,7 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   [Automation triggers](../automations/triggers.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
   Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode, Goose (its Stop
-  hook), Kimi (whose wire protocol emits `TurnEnd`) and Cursor (its `stop` hook on a session screen,
+  hook), Kimi (whose wire protocol emits `turn.ended`) and Cursor (its `stop` hook on a session screen,
   its stream-json `result` event on a print run); false for agents whose only signal is
   terminal silence, where a quiet compile and a finished turn look the same.
 - Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and two replay fixtures:

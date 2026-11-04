@@ -135,7 +135,9 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
 4. **Type the opening.** `deliverOpeningPromptAndWait` waits for the agent to be on screen and
    its screen to be quiet, then sends the prompt the way every delivery decides (`shouldPaste`): a
    bracketed paste for the task template, keystrokes for one line or a slash command. It is
-   awaited, so the column's later messages and held messages go after it.
+   awaited, so the column's later messages and held messages go after it. A CLI whose interactive
+   session takes no starting prompt (`freshPromptDelivery: 'typed'`) takes this step on every fresh
+   spawn, with no early agent: the engine hands its prompt back as `typedOpening` too.
 5. **Discard.** Every path that does not adopt it discards it: a spawn whose launch changed, an
    agent that exited, a Phase 3 re-check that skips the spawn, `spawnAgent`'s own `finally`, the
    move's catch, and a failed or cancelled script inside the creation's hold. A discard is a kill,

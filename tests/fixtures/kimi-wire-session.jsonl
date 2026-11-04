@@ -1,7 +1,0 @@
-{"type":"metadata","protocol_version":"1.9"}
-{"timestamp":1780430656.876,"message":{"type":"TurnBegin","payload":{"user_input":"List the files in this directory."}}}
-{"timestamp":1780430656.9,"message":{"type":"ContentPart","payload":{"text":"Here are "}}}
-{"timestamp":1780430656.95,"message":{"type":"ContentPart","payload":{"text":"the files."}}}
-{"timestamp":1780430656.97,"message":{"type":"ToolCall","payload":{"type":"function","id":"tc-1","function":{"name":"Shell","arguments":"{\"command\": \"ls\"}"}}}}
-{"timestamp":1780430657.02,"message":{"type":"ToolResult","payload":{"tool_call_id":"tc-1","return_value":{"is_error":false,"output":"file1.txt\nfile2.txt\n","message":"ok","display":[]}}}}
-{"timestamp":1780430657.1,"message":{"type":"TurnEnd","payload":{}}}

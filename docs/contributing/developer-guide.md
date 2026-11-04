@@ -532,10 +532,6 @@ npm run i18n:check                # The catalog gate CI and the release build ru
 npm run i18n:compile              # Compile the catalogs main reads into .vite/build/locales
 ```
 
-`npm run validate:kimi-mcp` is a Windows-only manual check, not part of any tier. It builds Kimi's
-`--mcp-config` argument with the real command builder and runs it through `powershell.exe
--Command` to confirm PowerShell's parser accepts the JSON (`scripts/kimi-validate-mcp.mjs`).
-
 ## Adding Features
 
 ### New IPC Channel

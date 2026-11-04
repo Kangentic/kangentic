@@ -28,7 +28,6 @@ import {
   createTask,
   createTempProject,
   cleanupTempProject,
-  cleanupKimiSessionsForCwd,
   getTestDataDir,
   cleanupTestDataDir,
   mockAgentPath,
@@ -82,7 +81,7 @@ const CASES: ResumeCase[] = [
     agent: 'kimi',
     spawnMarker: 'MOCK_KIMI_SESSION:',
     resumeMarker: 'MOCK_KIMI_RESUMED:',
-    uuidPattern: /MOCK_KIMI_(SESSION|RESUMED):([a-f0-9-]+)/,
+    uuidPattern: /MOCK_KIMI_(SESSION|RESUMED):(session_[a-f0-9-]+)/,
   },
   {
     agent: 'qwen',
@@ -147,7 +146,6 @@ test.describe('Agent suspend/resume pipeline', () => {
 
   test.afterAll(async () => {
     await closeApp(app);
-    cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });

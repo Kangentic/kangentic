@@ -1,11 +1,11 @@
 /**
- * Tests the record parsing behind three CONFIRM-ONLY `command-injection`
- * verifiers: Kimi, Aider, and OpenCode.
+ * Tests the record parsing behind two CONFIRM-ONLY `command-injection`
+ * verifiers: Aider and OpenCode.
  *
  * Confirm-only means the verifier may confirm a delivery and may drive
  * retry-on-Enter, both pure upside, but is barred from authorizing the restart
- * that escalation performs. These three land there for two different reasons -
- * Kimi and Aider are UNMEASURED (neither could be driven live on the
+ * that escalation performs. These two land there for different reasons -
+ * Aider is UNMEASURED (it could not be driven live on the
  * development machine), while OpenCode is measured but has a known wrong answer
  * for remote sessions. Both reasons and the bar itself are asserted in
  * `agent-submission-verifier-shape.test.ts`; this file covers the parsing each
@@ -15,7 +15,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractKimiUserTurn } from '../../src/main/agent/adapters/kimi/command-injection-verifier';
 import {
   extractLastAiderUserPrompt,
   createAiderCommandInjectionVerifier,
@@ -33,68 +32,6 @@ beforeEach(() => {
 
 afterEach(() => {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* noop */ }
-});
-
-describe('Kimi wire.jsonl', () => {
-  /** Real shape: timestamp is unix SECONDS as a float. */
-  function turnBegin(text: string, timestampSeconds: number): string {
-    return JSON.stringify({
-      timestamp: timestampSeconds,
-      message: { type: 'TurnBegin', payload: { user_input: text } },
-    });
-  }
-
-  it('converts the unix-SECONDS timestamp to milliseconds', () => {
-    // The trap: Kimi records seconds, the shared scan compares against an
-    // epoch-ms `sentAt`. Passing it through unscaled puts every record ~56
-    // years in the past, so the watermark rejects them all and the verifier can
-    // never confirm anything.
-    const record = extractKimiUserTurn(turnBegin('run it', 1777232808.515));
-    expect(record?.timestampMs).toBe(1777232809000 - 485);
-    expect(record?.text).toBe('run it');
-  });
-
-  it('accepts SteerInput, which is how input during a live turn is recorded', () => {
-    // That is exactly the `immediate` auto_command delivery mode.
-    const line = JSON.stringify({
-      timestamp: 1777232808.5,
-      message: { type: 'SteerInput', payload: { user_input: 'stop and refactor' } },
-    });
-    expect(extractKimiUserTurn(line)?.text).toBe('stop and refactor');
-  });
-
-  it('joins array-form user_input', () => {
-    const line = JSON.stringify({
-      timestamp: 1777232808.5,
-      message: { type: 'TurnBegin', payload: { user_input: [{ text: 'run ' }, { text: 'it' }] } },
-    });
-    expect(extractKimiUserTurn(line)?.text).toBe('run it');
-  });
-
-  it('ignores metadata, status, and tool records', () => {
-    expect(extractKimiUserTurn('{"type":"metadata","protocol_version":"1.9"}')).toBeNull();
-    expect(extractKimiUserTurn(JSON.stringify({
-      timestamp: 1777232808.5,
-      message: { type: 'StatusUpdate', payload: { context_usage: 0.12 } },
-    }))).toBeNull();
-  });
-
-  it('confirms an exact submission and rejects a containing one', async () => {
-    const filePath = path.join(tmpDir, 'wire.jsonl');
-    const sentAt = Date.now();
-    fs.writeFileSync(filePath, [
-      '{"type":"metadata","protocol_version":"1.9"}',
-      turnBegin('/pull-request', (sentAt + 20) / 1000),
-    ].join('\n') + '\n');
-
-    expect(await scanForSubmittedText(filePath, '/pull-request', sentAt, extractKimiUserTurn))
-      .toBe(true);
-
-    const containing = path.join(tmpDir, 'wire2.jsonl');
-    fs.writeFileSync(containing, turnBegin('instead can we/pull-request', (sentAt + 20) / 1000) + '\n');
-    expect(await scanForSubmittedText(containing, '/pull-request', sentAt, extractKimiUserTurn))
-      .toBe(false);
-  });
 });
 
 describe('Aider chat history markdown', () => {

@@ -302,9 +302,10 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toEqual(['--output-format', 'text', '--approval-mode', 'plan', '--chat-recording=false', '--model', 'some-model']);
   });
 
-  it('Kimi uses its own plan flag, not Claude\'s', async () => {
-    const options = await optionsFor(new KimiAdapter());
-    expect(options.args).toEqual(['--quiet', '--plan', '--model', 'some-model']);
+  it('Kimi Code has no answer run: -p reads its prompt only from argv, and an answer prompt runs past a Windows command line', () => {
+    const adapter = new KimiAdapter();
+    expect(adapter.answerFromContext).toBeUndefined();
+    expect(adapter.answerCapabilities).toBeUndefined();
   });
 
   it('Antigravity sends one stream-json message on stdin in plan mode', async () => {

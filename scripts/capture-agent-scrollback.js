@@ -229,7 +229,9 @@ function buildCommand(agent, cwd, prompt, mode, model, resume, mcp) {
     case 'opencode':
       return { exe: 'opencode', args: withPrompt(['--agent', mode || 'build'], ['--prompt', prompt]), exit: ['\x03'] };
     case 'kimi':
-      return { exe: 'kimi', args: withPrompt(['-w', cwd], ['--prompt', prompt]), exit: ['\x03', '/exit\r'] };
+      // Kimi Code 2.x runs in its cwd and takes no prompt on its command line, so a
+      // recording of it needs the prompt typed in. The Esc and /exit are the adapter's.
+      return { exe: 'kimi', args: [], exit: ['\x1b', '/exit\r'] };
     case 'droid':
       return { exe: 'droid', args: withPrompt(['--cwd', cwd], [prompt]), exit: ['\x03', '/quit\r'] };
     case 'copilot':
@@ -404,6 +406,17 @@ const { peekFromTerminal, computeReplayTimelines, createReplayTerminal } = requi
 const { serializePhysicalRows } = require('./lib/demo-frame-serializer');
 
 // ---------------------------------------------------------------- main
+/**
+ * This script starts `kimi` with no arguments, and on the archived kimi-cli 1.52 that downloads
+ * and runs the Kimi Code installer. So only a CLI that prints a bare version gets that far.
+ */
+function refuseArchivedKimi() {
+  const { execFileSync } = require('node:child_process');
+  const probe = toSpawnable('kimi', ['--version']);
+  const version = execFileSync(probe.file, probe.args, { encoding: 'utf-8', env: buildEnv(), timeout: 20000 }).trim();
+  if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`kimi on PATH is not Kimi Code: ${version.split('\n')[0]}`);
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   let pty;
@@ -414,6 +427,7 @@ async function main() {
     throw error;
   }
   const command = buildCommand(options.agent, options.cwd, options.prompt, options.mode, options.model, options.resume, { mcpConfig: options.mcpConfig, settings: options.settings, readOnly: options.readOnly });
+  if (options.agent === 'kimi') refuseArchivedKimi();
   if (options.trust) await seedTrust(options.agent, options.cwd);
   // A worktree run rewrites the clone it sits in, so the worktree keeps its own path under the
   // project's home (C:\Users\dev\work\contoso-web\.kangentic\worktrees\<folder>).

@@ -440,17 +440,25 @@ resume, so each adapter declares `AgentAdapter.resumePromptDelivery`:
 
 - `command-line`: the resume command carries the prompt (`claude --resume <id> -- "..."`,
   `codex resume <id> "..."`) and nothing is typed. Claude, Codex, Gemini, Qwen Code, Antigravity,
-  Kimi, Droid, Goose and Aider. Aider's resume restores the session's own history file
+  Droid, Goose and Aider. Aider's resume restores the session's own history file
   (`--restore-chat-history`) and carries the message on `--message`, which replies once and exits,
   as a fresh Aider start does.
 - `typed`: the CLI takes no prompt with a resume, or does not document that it does. Copilot,
   Grok, OpenCode and Cursor each take a prompt on a new session, but nothing they document says it
-  runs on a resumed one.
+  runs on a resumed one. Kimi Code's interactive session takes no prompt on any launch.
 - `no-resume`: the adapter has no session id to resume by, so every start is fresh. Ollama and
   Warp's oz.
 
 `tests/unit/resume-prompt-delivery-parity.test.ts` builds each real adapter's resume command with
 a marked prompt and holds the declaration to what the builder does.
+
+A fresh session has the same question, answered by the optional
+`AgentAdapter.freshPromptDelivery`. Omitted or `command-line`, the launch carries its prompt. Set
+to `typed` (Kimi Code), the engine keeps the whole prompt off the command line and returns it as
+`SpawnOutcome.typedOpening`, the field an adopted early agent uses, and the caller types it in
+before it sends the agent anything else. That spawn opens idle (`markIdleAuthoritative`), since no
+turn runs until the prompt lands. Startup recovery types nothing, so it opens such an agent with
+no recap. A workflow's agent cannot be one (`canBeWorkflowAgent`).
 
 The engine decides per spawn with `resumePromptRidesCommandLine`
 (`src/main/transition-engine/resume-prompt-delivery.ts`). The prompt rides only when all four hold:

@@ -1,19 +1,17 @@
 /**
- * Unit tests for KimiAdapter - detection, command building, runtime
- * strategy, and registry integration.
+ * Unit tests for KimiAdapter against Kimi Code CLI 2.x: detection, the command,
+ * the session environment, id capture, and registry integration.
  *
- * Flag set was captured empirically from `kimi --help` (v1.37.0). Wire
- * protocol details and session-id banner come from running the real
- * CLI on this machine plus the upstream `docs/en/customization/wire-mode.md`
- * schema. These tests are the regression net against future Kimi
- * releases that change either surface.
+ * Every flag and format comes from the CLI's docs and source at 2.4.1 (see the
+ * adapter's header). None has been checked against a real run, so these pin our
+ * reading of them, and a change of the CLI's shape needs a real probe first.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { quoteArg } from '../../src/shared/paths';
-import { KimiCommandBuilder } from '../../src/main/agent/adapters/kimi/command-builder';
+import { KimiCommandBuilder, kimiPermissionFlags } from '../../src/main/agent/adapters/kimi/command-builder';
+import { lastAssistantText, parseKimiVersion } from '../../src/main/agent/adapters/kimi/kimi-adapter';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 import {
@@ -22,12 +20,9 @@ import {
   agentInstallUrl,
 } from '../../src/renderer/utils/agent-display-name';
 
-// Mock which, fs, and exec-version before importing adapter
 let mockWhichResult: string | Error = '/usr/bin/kimi';
-let mockExecVersionStdout = 'kimi, version 1.37.0\n';
+let mockExecVersionStdout = '2.4.1\n';
 let mockExecVersionShouldFail = false;
-let mockExistsSync: (filePath: string) => boolean = () => true;
-let mockReaddirSync: (filePath: string) => string[] = () => [];
 let execVersionCallCount = 0;
 
 vi.mock('which', () => ({
@@ -37,29 +32,17 @@ vi.mock('which', () => ({
   },
 }));
 
-vi.mock('node:fs', async (importOriginal) => {
-  const original = await importOriginal<typeof import('node:fs')>();
-  return {
-    ...original,
-    default: {
-      ...original,
-      existsSync: (filePath: string) => mockExistsSync(filePath),
-      readdirSync: (filePath: string) => mockReaddirSync(filePath),
-    },
-  };
-});
-
 vi.mock('../../src/main/agent/shared/exec-version', () => ({
   execVersion: async () => {
     execVersionCallCount++;
-    if (mockExecVersionShouldFail) {
-      throw new Error('command not found');
-    }
+    if (mockExecVersionShouldFail) throw new Error('command not found');
     return { stdout: mockExecVersionStdout, stderr: '' };
   },
 }));
 
 const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi');
+
+const SESSION_ID = 'session_73013240-b192-422f-99a3-7cf37eac045a';
 
 function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
   return {
@@ -67,707 +50,440 @@ function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommand
     taskId: 'task-1',
     cwd: '/projects/my-app',
     permissionMode: 'default',
+    shell: 'bash',
+    mcpServerEnabled: false,
     ...overrides,
   };
 }
 
 describe('KimiAdapter', () => {
   let adapter: InstanceType<typeof KimiAdapter>;
+  let home: string;
+  let savedHome: string | undefined;
 
   beforeEach(() => {
     adapter = new KimiAdapter();
     mockWhichResult = '/usr/bin/kimi';
-    mockExecVersionStdout = 'kimi, version 1.37.0\n';
+    mockExecVersionStdout = '2.4.1\n';
     mockExecVersionShouldFail = false;
-    mockExistsSync = () => true;
-    mockReaddirSync = () => [];
     execVersionCallCount = 0;
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-kimi-adapter-'));
+    savedHome = process.env.KIMI_CODE_HOME;
+    process.env.KIMI_CODE_HOME = home;
   });
 
-  // ── Identity ─────────────────────────────────────────────────────────────
+  afterEach(() => {
+    if (savedHome === undefined) delete process.env.KIMI_CODE_HOME;
+    else process.env.KIMI_CODE_HOME = savedHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
 
-  describe('identity', () => {
-    it('has name "kimi"', () => {
-      expect(adapter.name).toBe('kimi');
+  describe('declarations', () => {
+    it('owns no session id, and captures the CLI\'s own', () => {
+      expect(adapter.supportsCallerSessionId).toBe(false);
+      expect(adapter.capturesInteractiveSessionId).toBe(true);
     });
 
-    it('has displayName "Kimi Code"', () => {
-      expect(adapter.displayName).toBe('Kimi Code');
+    it('types every prompt in: its interactive session takes none on the command line', () => {
+      expect(adapter.freshPromptDelivery).toBe('typed');
+      expect(adapter.resumePromptDelivery).toBe('typed');
     });
 
-    it('has sessionType "kimi_agent"', () => {
-      expect(adapter.sessionType).toBe('kimi_agent');
-    });
-
-    it('supports caller-supplied session IDs (Kimi accepts UUID via --session)', () => {
-      expect(adapter.supportsCallerSessionId).toBe(true);
-    });
-
-    it('exposes plan / default / bypass permission modes', () => {
-      const modes = adapter.permissions.map((entry) => entry.mode);
-      expect(modes).toContain('plan');
-      expect(modes).toContain('default');
-      expect(modes).toContain('bypassPermissions');
-    });
-
-    it('defaults to "default" permission (interactive confirms)', () => {
+    it('offers each of the CLI\'s modes, and the ones it lacks not at all', () => {
+      expect(adapter.permissions.map((entry) => entry.mode)).toEqual(['plan', 'default', 'auto', 'bypassPermissions']);
       expect(adapter.defaultPermission).toBe('default');
     });
+
+    it('names the tools its transcripts are read by', () => {
+      expect(adapter.subagentSpawnToolName).toBe('Agent');
+      expect(adapter.fileChangeTools).toEqual([{ tool: 'Write', pathField: 'path' }, { tool: 'Edit', pathField: 'path' }]);
+    });
+
+    it('cannot be the Workflow agent', async () => {
+      const { canBeWorkflowAgent } = await import('../../src/main/agent/shared/workflow-agent-capability');
+      expect(canBeWorkflowAgent(adapter)).toBe(false);
+      // Each reason stands on its own.
+      expect(canBeWorkflowAgent({ kangenticMcp: 'per-session', supportsCallerSessionId: true, freshPromptDelivery: 'typed' })).toBe(false);
+      expect(canBeWorkflowAgent({ kangenticMcp: 'per-session', supportsCallerSessionId: true })).toBe(true);
+      // The folder-shared server alone rules it out: the id and prompt delivery would pass.
+      expect(canBeWorkflowAgent({ kangenticMcp: 'shared-folder', supportsCallerSessionId: true })).toBe(false);
+    });
+
+    it('reads turn ends from the wire, keeps a parser per session, and scopes transcript reads by time', () => {
+      expect(adapter.runtime.reportsTurnEnd).toBe(true);
+      expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
+      expect(typeof adapter.runtime.sessionHistory?.createParse).toBe('function');
+      expect(adapter.scopesTranscriptReadsByTime).toBe(true);
+    });
   });
 
-  // ── Detection ────────────────────────────────────────────────────────────
+  describe('prompt and first-output detection', () => {
+    const detectIdle = (data: string): boolean => {
+      const activity = adapter.runtime.activity;
+      return activity.kind === 'hooks_and_pty' ? activity.detectIdle?.(data) ?? false : false;
+    };
+
+    it.each(['x\n> ', 'x\n❯ ', '\x1b[?25l> '])('sees an input prompt glyph alone on the cursor row in %j', (data) => {
+      expect(detectIdle(data)).toBe(true);
+    });
+
+    it('does not take working output for a prompt', () => {
+      expect(detectIdle('Doing work...')).toBe(false);
+      expect(detectIdle('a > b')).toBe(false);
+    });
+
+    it('takes the cursor hiding as the first drawn frame, and nothing else', () => {
+      expect(adapter.detectFirstOutput('\x1b[?25l')).toBe(true);
+      expect(adapter.detectFirstOutput('plain shell banner')).toBe(false);
+    });
+  });
 
   describe('detect', () => {
-    it('returns found:true with override path', async () => {
-      const result = await adapter.detect('/custom/kimi');
-      expect(result.found).toBe(true);
-      expect(result.path).toBe('/custom/kimi');
-      expect(result.version).toBe('1.37.0');
+    /** The detector stats what it probes, so the path has to exist. */
+    function installedCli(): string {
+      const cliPath = path.join(home, 'kimi');
+      fs.writeFileSync(cliPath, '');
+      return cliPath;
+    }
+
+    it('reads the bare version 2.x prints', async () => {
+      const cliPath = installedCli();
+      expect(await adapter.detect(cliPath)).toMatchObject({ found: true, path: cliPath, version: '2.4.1' });
     });
 
     it('falls back to which when no override path', async () => {
-      const result = await adapter.detect();
-      expect(result.found).toBe(true);
-      expect(result.path).toBe('/usr/bin/kimi');
+      mockWhichResult = installedCli();
+      expect(await adapter.detect()).toMatchObject({ found: true, path: mockWhichResult });
     });
 
-    it('parses the empirical "kimi, version X" output format', async () => {
-      mockExecVersionStdout = 'kimi, version 2.0.1\n';
-      const result = await adapter.detect();
-      expect(result.version).toBe('2.0.1');
+    it('does not take the archived 1.x CLI for Kimi Code, which runs no agent from 1.52', async () => {
+      mockExecVersionStdout = 'kimi, version 1.52.0\nkimi-cli is no longer maintained.\n';
+      expect((await adapter.detect(installedCli())).found).toBe(false);
     });
 
-    it('parses "kimi-cli, version X" alias output', async () => {
-      mockExecVersionStdout = 'kimi-cli, version 1.0.0\n';
-      const result = await adapter.detect();
-      expect(result.version).toBe('1.0.0');
-    });
-
-    it('falls back to permissive prefix strip for unfamiliar output', async () => {
-      mockExecVersionStdout = 'kimi v0.5.0\n';
-      const result = await adapter.detect();
-      expect(result.version).toBe('0.5.0');
-    });
-
-    it('returns found:false when which fails and no fallback paths exist', async () => {
-      mockWhichResult = new Error('not found');
-      mockExistsSync = () => false;
-      const result = await adapter.detect();
-      expect(result.found).toBe(false);
-      expect(result.path).toBeNull();
-      expect(result.version).toBeNull();
-    });
-
-    it('falls back to a uv-tool install path when which fails', async () => {
-      mockWhichResult = new Error('not found');
-      const result = await adapter.detect();
-      expect(result.found).toBe(true);
-      expect(result.path).not.toBeNull();
-      expect(result.version).toBe('1.37.0');
-    });
-
-    it('returns found:false with the configured path when --version fails on an override', async () => {
-      mockExecVersionShouldFail = true;
-      const result = await adapter.detect('/custom/kimi');
-      expect(result.found).toBe(false);
-      expect(result.path).toBe('/custom/kimi');
-      expect(result.version).toBeNull();
-    });
-
-    it('caches detection result', async () => {
-      const first = await adapter.detect('/custom/kimi');
-      const second = await adapter.detect('/custom/kimi');
-      expect(first).toBe(second);
+    it('caches detection until invalidated', async () => {
+      const cliPath = installedCli();
+      await adapter.detect(cliPath);
+      await adapter.detect(cliPath);
       expect(execVersionCallCount).toBe(1);
-    });
-
-    it('invalidateDetectionCache clears cache', async () => {
-      await adapter.detect('/custom/kimi');
       adapter.invalidateDetectionCache();
-      await adapter.detect('/custom/kimi');
+      await adapter.detect(cliPath);
       expect(execVersionCallCount).toBe(2);
     });
   });
 
-  // ── buildCommand ─────────────────────────────────────────────────────────
+  describe('parseKimiVersion', () => {
+    it.each([
+      ['2.4.1', '2.4.1'],
+      ['v2.5.0-canary.20261102033430-40590f6', '2.5.0-canary.20261102033430-40590f6'],
+      ['kimi 3.0.0', '3.0.0'],
+      // Kimi Code's own releases before 2.0.0, which print the same bare version.
+      ['0.43.1', '0.43.1'],
+    ])('reads %s', (raw, version) => {
+      expect(parseKimiVersion(raw)).toBe(version);
+    });
+
+    it.each(['kimi, version 1.37.0', 'kimi-cli, version 1.0.0', 'not a version', ''])('refuses %s', (raw) => {
+      expect(parseKimiVersion(raw)).toBeNull();
+    });
+  });
 
   describe('buildCommand', () => {
-    it('starts with quoted agent path followed by -w <cwd>', () => {
-      const command = adapter.buildCommand(makeOptions({
-        agentPath: '/usr/local/bin/kimi',
-        cwd: '/projects/foo',
-        shell: 'bash',
-      }));
-      expect(command.startsWith(quoteArg('/usr/local/bin/kimi', 'bash'))).toBe(true);
-      expect(command).toContain('-w');
-      expect(command).toContain('/projects/foo');
-    });
-
-    it('forward-slashes the cwd path on all shells', () => {
-      const command = adapter.buildCommand(makeOptions({ cwd: 'C:\\projects\\foo', shell: 'powershell' }));
-      expect(command).toContain('C:/projects/foo');
-      expect(command).not.toContain('C:\\projects\\foo');
-    });
-
-    it('passes --prompt with the user prompt', () => {
-      const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }));
-      expect(command).toContain('--prompt');
-      expect(command).toContain('Fix the bug');
-    });
-
-    it('omits --prompt when no prompt is provided', () => {
+    it('starts the CLI bare, with no working-directory flag', () => {
       const command = adapter.buildCommand(makeOptions());
-      expect(command).not.toContain('--prompt');
+      expect(command).toContain('/usr/bin/kimi');
+      expect(command).not.toContain('-w');
+      expect(command).not.toContain('--work-dir');
     });
 
-    it('passes --session <uuid> when sessionId is provided (caller-owned ID)', () => {
-      const command = adapter.buildCommand(makeOptions({
-        sessionId: '73013240-b192-422f-99a3-7cf37eac045a',
-      }));
-      expect(command).toContain('--session');
-      expect(command).toContain('73013240-b192-422f-99a3-7cf37eac045a');
+    it('never carries a prompt, fresh or resumed', () => {
+      expect(adapter.buildCommand(makeOptions({ prompt: 'do the thing' }))).not.toContain('do the thing');
+      expect(adapter.buildCommand(makeOptions({ prompt: 'do the thing', sessionId: SESSION_ID, resume: true }))).not.toContain('do the thing');
     });
 
-    it('passes --session <uuid> for resume too (Kimi uses the same flag)', () => {
-      const command = adapter.buildCommand(makeOptions({
-        sessionId: '73013240-b192-422f-99a3-7cf37eac045a',
-        resume: true,
-      }));
-      expect(command).toContain('--session');
-      expect(command).toContain('73013240-b192-422f-99a3-7cf37eac045a');
+    it('resumes by --session, and continues only when asked', () => {
+      expect(adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: true }))).toContain(`--session ${SESSION_ID}`);
+      const builder = new KimiCommandBuilder();
+      const base = { kimiPath: '/usr/bin/kimi', taskId: 't', cwd: '/w', permissionMode: 'default' as const, shell: 'bash' };
+      expect(builder.buildKimiCommand({ ...base, useContinueFallback: true })).toContain('--continue');
+      // The two conflict in the CLI, and the explicit id wins.
+      const both = builder.buildKimiCommand({ ...base, sessionId: SESSION_ID, useContinueFallback: true });
+      expect(both).toContain('--session');
+      expect(both).not.toContain('--continue');
     });
 
-    describe('permission mode mapping', () => {
-      const planModes: PermissionMode[] = ['plan'];
-      const yoloModes: PermissionMode[] = ['bypassPermissions'];
-      const noFlagModes: PermissionMode[] = ['default', 'dontAsk', 'acceptEdits', 'auto'];
-
-      for (const mode of planModes) {
-        it(`adds --plan for ${mode}`, () => {
-          const command = adapter.buildCommand(makeOptions({ permissionMode: mode }));
-          expect(command).toContain('--plan');
-          expect(command).not.toContain('--yolo');
-        });
-      }
-
-      for (const mode of yoloModes) {
-        it(`adds --yolo for ${mode}`, () => {
-          const command = adapter.buildCommand(makeOptions({ permissionMode: mode }));
-          expect(command).toContain('--yolo');
-          expect(command).not.toContain('--plan');
-        });
-      }
-
-      for (const mode of noFlagModes) {
-        it(`omits --yolo and --plan for ${mode}`, () => {
-          const command = adapter.buildCommand(makeOptions({ permissionMode: mode }));
-          expect(command).not.toContain('--yolo');
-          expect(command).not.toContain('--plan');
-        });
-      }
+    it('passes a model alias, and none when blank', () => {
+      expect(adapter.buildCommand(makeOptions({ model: 'kimi-code/k3' }))).toContain('--model');
+      expect(adapter.buildCommand(makeOptions({ model: '  ' }))).not.toContain('--model');
     });
 
-    describe('non-interactive mode', () => {
-      it('adds --print --output-format stream-json when nonInteractive is true', () => {
-        const command = adapter.buildCommand(makeOptions({ nonInteractive: true }));
-        expect(command).toContain('--print');
-        expect(command).toContain('--output-format');
-        expect(command).toContain('stream-json');
-      });
-
-      it('omits --print when nonInteractive is false', () => {
-        const command = adapter.buildCommand(makeOptions());
-        expect(command).not.toContain('--print');
-      });
+    it('maps every permission mode to the CLI\'s flag', () => {
+      const expected: Array<[PermissionMode, string[]]> = [
+        ['plan', ['--plan']],
+        ['default', []],
+        ['auto', ['--yolo']],
+        ['bypassPermissions', ['--auto']],
+        ['acceptEdits', []],
+        ['dontAsk', []],
+      ];
+      for (const [mode, flags] of expected) expect(kimiPermissionFlags(mode)).toEqual(flags);
     });
 
-    describe('MCP config injection', () => {
-      // Each test gets a fresh temp directory that mimics the per-session
-      // directory created by sessionOutputPaths(). The command builder
-      // writes mcp.json into path.dirname(statusOutputPath), so we point
-      // statusOutputPath at <tempDir>/status.json and expect mcp.json
-      // alongside it.
-      let testSessionDir: string;
-      let testStatusOutputPath: string;
-
-      beforeEach(() => {
-        testSessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-kimi-mcp-'));
-        testStatusOutputPath = path.join(testSessionDir, 'status.json');
+    it('writes Kangentic\'s server into the folder, and strips it with the last session', () => {
+      const cwd = path.join(home, 'project');
+      fs.mkdirSync(cwd);
+      const session = path.join(home, 'session');
+      const configPath = path.join(cwd, '.kimi-code', 'mcp.json');
+      const options = (ptySessionId: string) => makeOptions({
+        cwd,
+        ptySessionId,
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:9000/mcp/p',
+        mcpServerToken: 'secret-token',
+        statusOutputPath: path.join(session, 'status.json'),
       });
 
-      afterEach(() => {
-        fs.rmSync(testSessionDir, { recursive: true, force: true });
+      const command = adapter.buildCommand(options('session-1'));
+      adapter.buildCommand(options('session-2'));
+      expect(command).not.toContain('secret-token');
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).mcpServers.kangentic).toEqual({
+        url: 'http://127.0.0.1:9000/mcp/p',
+        bearerTokenEnvVar: 'KANGENTIC_MCP_TOKEN',
       });
 
-      it('emits --mcp-config-file pointing at <sessionDir>/mcp.json', () => {
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          mcpServerToken: 'secret-token',
-          statusOutputPath: testStatusOutputPath,
-          shell: 'bash',
-        }));
-        expect(command).toContain('--mcp-config-file');
-        // Path is forward-slashed before being placed in the command
-        // string so PowerShell and bash both parse it identically.
-        const expectedPath = path.join(testSessionDir, 'mcp.json').replace(/\\/g, '/');
-        expect(command).toContain(expectedPath);
-      });
-
-      it('writes a parseable JSON file with the kangentic MCP server entry', () => {
-        adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          mcpServerToken: 'secret-token',
-          statusOutputPath: testStatusOutputPath,
-          shell: 'bash',
-        }));
-        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
-        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
-        expect(parsed).toEqual({
-          mcpServers: {
-            kangentic: {
-              url: 'http://127.0.0.1:54321',
-              headers: { 'X-Kangentic-Token': 'secret-token' },
-            },
-          },
-        });
-      });
-
-      // The server refuses every request without the token (401), so a config
-      // with no header would point Kimi at a server it can never use. Skip the
-      // wiring instead, as Codex does without its token.
-      it('writes no config and passes no flag when no token is provided', () => {
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          statusOutputPath: testStatusOutputPath,
-          shell: 'bash',
-        }));
-        expect(command).not.toContain('--mcp-config-file');
-        // `existsSync` is mocked in this file; reading the file is not.
-        expect(() => fs.readFileSync(path.join(testSessionDir, 'mcp.json'), 'utf-8')).toThrow();
-      });
-
-      it('produces valid JSON on PowerShell (regression: previously contained single quotes)', () => {
-        // Regression test for the original bug: an earlier implementation
-        // replaced every " with ' in the JSON payload on PowerShell to
-        // dodge shell quote-stripping, producing invalid JSON that
-        // kimi's CLI rejected. The new path writes the file to disk so
-        // PowerShell only sees a path argument; the JSON on disk must
-        // parse cleanly regardless of shell.
-        adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          mcpServerToken: 'tok-abc',
-          statusOutputPath: testStatusOutputPath,
-          shell: 'powershell',
-        }));
-        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
-        const raw = fs.readFileSync(mcpConfigPath, 'utf-8');
-        // The original bug would have written content with single quotes
-        // around property names. Valid JSON requires double quotes.
-        expect(raw).toContain('"mcpServers"');
-        expect(raw).toContain('"kangentic"');
-        const parsed = JSON.parse(raw);
-        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
-      });
-
-      it('omits MCP config entirely when disabled', () => {
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: false,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          statusOutputPath: testStatusOutputPath,
-        }));
-        expect(command).not.toContain('--mcp-config-file');
-      });
-
-      it('omits MCP config when enabled but URL is missing', () => {
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          statusOutputPath: testStatusOutputPath,
-        }));
-        expect(command).not.toContain('--mcp-config-file');
-      });
-
-      it('skips MCP wiring with a warning when statusOutputPath is missing', () => {
-        // Defensive guard: every production spawn path populates
-        // statusOutputPath, but if a caller forgets it we warn rather
-        // than silently lose MCP.
-        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        try {
-          const command = adapter.buildCommand(makeOptions({
-            mcpServerEnabled: true,
-            mcpServerUrl: 'http://127.0.0.1:54321',
-            mcpServerToken: 'tok-abc',
-            // statusOutputPath intentionally omitted
-          }));
-          expect(command).not.toContain('--mcp-config-file');
-          expect(warnSpy).toHaveBeenCalledWith(
-            expect.stringContaining('statusOutputPath is missing'),
-          );
-        } finally {
-          warnSpy.mockRestore();
-        }
-      });
-
-      it('emits --mcp-config-file when shell is undefined (platform quoting fallback)', () => {
-        // Transient-session code paths call buildCommand without a shell value,
-        // which makes quoteArg(path, undefined) fall back to
-        // process.platform === 'win32' for the quoting decision. The important
-        // contract is that --mcp-config-file is still emitted and the path
-        // appears in the command regardless of which quoting branch is taken.
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          mcpServerToken: 'tok-xyz',
-          statusOutputPath: testStatusOutputPath,
-          // shell intentionally omitted - exercises the platform-fallback branch
-        }));
-        expect(command).toContain('--mcp-config-file');
-        const expectedPath = path.join(testSessionDir, 'mcp.json').replace(/\\/g, '/');
-        expect(command).toContain(expectedPath);
-        // The JSON file must be written and be valid regardless of quoting branch.
-        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
-        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
-        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
-      });
-
-      it('re-throws with a contextualised message when session directory creation fails', () => {
-        // The command builder wraps fs.mkdirSync in a try/catch and re-throws
-        // with a human-readable message that includes the path and the
-        // underlying OS reason. This test verifies the re-throw shape so that
-        // callers (prepareAgentSpawn) surface a useful error rather than the
-        // raw EACCES/ENOENT from Node.
-        const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementationOnce(() => {
-          throw new Error('EACCES: permission denied');
-        });
-        try {
-          expect(() => {
-            adapter.buildCommand(makeOptions({
-              mcpServerEnabled: true,
-              mcpServerUrl: 'http://127.0.0.1:54321',
-              mcpServerToken: 'secret-token',
-              statusOutputPath: testStatusOutputPath,
-              shell: 'bash',
-            }));
-          }).toThrow(/Cannot create session directory at .+: EACCES: permission denied/);
-        } finally {
-          mkdirSpy.mockRestore();
-        }
-      });
+      adapter.removeHooks(cwd, 'session-1');
+      expect(fs.existsSync(configPath)).toBe(true);
+      adapter.removeHooks(cwd, 'session-2');
+      expect(fs.existsSync(configPath)).toBe(false);
     });
 
-    describe('shell quoting', () => {
-      it('replaces double quotes with single quotes for non-unix shells', () => {
-        const command = adapter.buildCommand(makeOptions({
-          prompt: 'Fix the "broken" test',
-          shell: 'powershell',
-        }));
-        expect(command).not.toContain('"broken"');
-        expect(command).toContain("'broken'");
-      });
-
-      it('preserves double quotes for unix-like shells', () => {
-        const command = adapter.buildCommand(makeOptions({
-          prompt: 'Fix the "broken" test',
-          shell: 'bash',
-        }));
-        expect(command).toContain('"broken"');
-      });
-    });
-
-    it('does not emit --continue when only SpawnCommandOptions fields are passed (firewall against accidental future spread)', () => {
-      // KimiAdapter.buildCommand accepts SpawnCommandOptions, which does NOT
-      // include useContinueFallback. This test pins the firewall contract: even
-      // with no sessionId, the adapter must never emit --continue for a fresh
-      // spawn. If a future refactor adds useContinueFallback to
-      // SpawnCommandOptions and accidentally enables --continue for every
-      // new Kimi session, this test will catch it.
-      const command = adapter.buildCommand(makeOptions());
-      expect(command).not.toContain('--continue');
+    it('writes nothing with no token, which the server would refuse', () => {
+      const cwd = path.join(home, 'project');
+      fs.mkdirSync(cwd);
+      adapter.buildCommand(makeOptions({ cwd, mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:9000/mcp/p', statusOutputPath: path.join(home, 'status.json') }));
+      expect(fs.existsSync(path.join(cwd, '.kimi-code'))).toBe(false);
     });
   });
 
-  // ── KimiCommandBuilder.useContinueFallback ───────────────────────────────
-  //
-  // The `useContinueFallback` option lives on `KimiCommandOptions` (not on
-  // the shared `SpawnCommandOptions`), so we exercise the builder directly.
-  // It surfaces the `--continue` resume mode for cases where Kangentic does
-  // not own a session UUID (lost DB record, manual `kimi` session in the
-  // same work_dir, command-terminal "resume latest" affordance).
-
-  describe('KimiCommandBuilder.useContinueFallback', () => {
-    const builder = new KimiCommandBuilder();
-
-    it('emits --continue when useContinueFallback is true and no sessionId', () => {
-      const command = builder.buildKimiCommand({
-        kimiPath: '/usr/bin/kimi',
-        taskId: 'task-1',
-        cwd: '/projects/foo',
-        permissionMode: 'default',
-        useContinueFallback: true,
-        shell: 'bash',
-      });
-      expect(command).toContain('--continue');
-      expect(command).not.toContain('--session');
+  describe('buildEnv', () => {
+    it('answers the folder trust prompt and the update preflight for the process', () => {
+      const env = adapter.buildEnv(makeOptions());
+      expect(env?.KIMI_CODE_TRUST_WORKSPACE).toBe('1');
+      expect(env?.KIMI_CODE_NO_AUTO_UPDATE).toBe('1');
     });
 
-    it('prefers --session <uuid> over --continue when both sessionId and useContinueFallback are set', () => {
-      const command = builder.buildKimiCommand({
-        kimiPath: '/usr/bin/kimi',
-        taskId: 'task-1',
-        cwd: '/projects/foo',
-        permissionMode: 'default',
-        sessionId: '73013240-b192-422f-99a3-7cf37eac045a',
-        useContinueFallback: true,
-        shell: 'bash',
-      });
-      expect(command).toContain('--session');
-      expect(command).toContain('73013240-b192-422f-99a3-7cf37eac045a');
-      expect(command).not.toContain('--continue');
+    // The folder's mcp.json only names this variable, so without it every
+    // Kangentic tool call fails with the server unauthenticated.
+    it('carries the MCP token, only for a session whose MCP is wired', () => {
+      const wired = makeOptions({ mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:9000/mcp/p', mcpServerToken: 'token-1' });
+      expect(adapter.buildEnv(wired)?.KANGENTIC_MCP_TOKEN).toBe('token-1');
+      expect(adapter.buildEnv(makeOptions())?.KANGENTIC_MCP_TOKEN).toBeUndefined();
+      expect(adapter.buildEnv({ ...wired, mcpServerEnabled: false })?.KANGENTIC_MCP_TOKEN).toBeUndefined();
     });
 
-    it('omits --continue when useContinueFallback is false and no sessionId', () => {
-      const command = builder.buildKimiCommand({
-        kimiPath: '/usr/bin/kimi',
-        taskId: 'task-1',
-        cwd: '/projects/foo',
-        permissionMode: 'default',
-        useContinueFallback: false,
-        shell: 'bash',
-      });
-      expect(command).not.toContain('--continue');
-      expect(command).not.toContain('--session');
+    // The screen's default is "Migrate now", so the typed first prompt's Enter
+    // would pick it. A relative name needs no translation for a WSL distro.
+    it('points the legacy data folder at a relative path, which turns the migration screen off', () => {
+      const shareDir = adapter.buildEnv(makeOptions())?.KIMI_SHARE_DIR ?? '';
+      expect(shareDir).not.toBe('');
+      expect(path.isAbsolute(shareDir)).toBe(false);
     });
 
-    it('omits --continue when useContinueFallback is undefined (default)', () => {
-      const command = builder.buildKimiCommand({
-        kimiPath: '/usr/bin/kimi',
-        taskId: 'task-1',
-        cwd: '/projects/foo',
-        permissionMode: 'default',
-        shell: 'bash',
-      });
-      expect(command).not.toContain('--continue');
-      expect(command).not.toContain('--session');
+    it('carries a column\'s effort, which has no flag', () => {
+      expect(adapter.buildEnv(makeOptions({ effort: 'high' }))?.KIMI_MODEL_THINKING_EFFORT).toBe('high');
     });
   });
-
-  // ── Runtime strategy ─────────────────────────────────────────────────────
 
   describe('runtime.sessionId.fromOutput', () => {
-    const fromOutput = (data: string): string | null => {
-      const fn = adapter.runtime.sessionId?.fromOutput;
-      if (!fn) throw new Error('fromOutput is not configured');
-      return fn(data);
-    };
+    const fromOutput = (data: string) => adapter.runtime.sessionId?.fromOutput?.(data) ?? null;
 
-    it('extracts the UUID from the welcome banner "Session: <uuid>" line', () => {
-      const banner = 'Welcome to Kimi Code CLI!\n'
-        + 'Send /help for help information.\n'
-        + 'Directory: ~\\Documents\\GitHub\\kangentic\n'
-        + 'Session: 73013240-b192-422f-99a3-7cf37eac045a\n'
-        + 'Model: not set, send /login to login\n';
-      expect(fromOutput(banner)).toBe('73013240-b192-422f-99a3-7cf37eac045a');
+    it('reads the welcome box on a resume', () => {
+      expect(fromOutput(`│ Directory: /w │\n│ Session:   ${SESSION_ID} │`)).toBe(SESSION_ID);
     });
 
-    it('extracts the UUID from the print-mode "kimi -r <uuid>" exit message', () => {
-      const exitLine = 'To resume this session: kimi -r bf6b28d4-58d1-4bd5-a892-7733ad7d054c\n';
-      expect(fromOutput(exitLine)).toBe('bf6b28d4-58d1-4bd5-a892-7733ad7d054c');
+    it('reads the exit hint', () => {
+      expect(fromOutput(`To resume this session: kimi -r ${SESSION_ID}`)).toBe(SESSION_ID);
     });
 
-    it('returns null when neither anchor is present', () => {
-      expect(fromOutput('some random TUI output without a session anchor')).toBeNull();
+    it('reads the ULID form the docs show', () => {
+      expect(fromOutput('Session:   01HZ5K3M9QXV7T2B4N8R6WYCDE')).toBe('01HZ5K3M9QXV7T2B4N8R6WYCDE');
     });
 
-    it('is case-insensitive on the "Session:" prefix (defensive)', () => {
-      expect(fromOutput('SESSION: 73013240-b192-422f-99a3-7cf37eac045a')).toBe(
-        '73013240-b192-422f-99a3-7cf37eac045a',
-      );
+    it('takes a ULID of exactly 26 characters and nothing longer', () => {
+      const ulid = '01HZ5K3M9QXV7T2B4N8R6WYCDE';
+      expect(ulid).toHaveLength(26);
+      expect(fromOutput(`Session: ${ulid}`)).toBe(ulid);
+      expect(fromOutput(`Session: ${'A'.repeat(30)}`)).toBeNull();
+      expect(fromOutput(`kimi -r ${'A'.repeat(30)}`)).toBeNull();
     });
 
-    it('does not falsely match non-UUID strings after Session:', () => {
-      expect(fromOutput('Session: not-a-uuid-here')).toBeNull();
+    it('reads nothing from a new session\'s empty line or plain text', () => {
+      expect(fromOutput('Session:   \nNo session yet')).toBeNull();
+      expect(fromOutput('the session: it went well')).toBeNull();
     });
   });
-
-  describe('runtime.activity', () => {
-    it('is driven by wire.jsonl, with PTY detection only until the first wire read', () => {
-      // `hooks_and_pty`: the first session history read suppresses the PTY
-      // tracker, so PTY silence cannot end a turn or clear a background
-      // task's hold (task #859).
-      expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
-    });
-
-    it('detects "kimi> " prompt at end of output as idle', () => {
-      const detect = adapter.runtime.activity.detectIdle;
-      expect(detect).toBeDefined();
-      expect(detect!('Some output\nkimi> ')).toBe(true);
-    });
-
-    it('detects bare "> " prompt at end of output as idle', () => {
-      const detect = adapter.runtime.activity.detectIdle;
-      expect(detect!('Some output\n> ')).toBe(true);
-    });
-
-    it('does not flag mid-output text as idle', () => {
-      const detect = adapter.runtime.activity.detectIdle;
-      expect(detect!('Doing some work...')).toBe(false);
-    });
-  });
-
-  describe('runtime.sessionHistory', () => {
-    it('declares append-only mode (resume appends to existing wire.jsonl)', () => {
-      expect(adapter.runtime.sessionHistory?.isFullRewrite).toBe(false);
-    });
-
-    it('exposes both locate and parse functions', () => {
-      expect(typeof adapter.runtime.sessionHistory?.locate).toBe('function');
-      expect(typeof adapter.runtime.sessionHistory?.parse).toBe('function');
-    });
-  });
-
-  // ── Exit / first-output / lifecycle ──────────────────────────────────────
 
   describe('getExitSequence', () => {
-    it('sends Ctrl+C then /exit for graceful shutdown', () => {
-      const sequence = adapter.getExitSequence();
-      expect(sequence).toEqual(['\x03', '/exit\r']);
+    it('stops a running turn, pauses, then quits, with no Ctrl+C an idle prompt only arms', () => {
+      expect(adapter.getExitSequence()).toEqual(['\x1b', { delayMs: 400 }, '/exit\r']);
     });
   });
 
-  describe('detectFirstOutput', () => {
-    it('matches the cursor-hide ANSI sequence (TUI takeover)', () => {
-      expect(adapter.detectFirstOutput('shell prompt\x1b[?25l')).toBe(true);
+  describe('configuredModelFromCommand', () => {
+    it('reads the alias from each shell\'s quoting', () => {
+      expect(adapter.configuredModelFromCommand("'/usr/bin/kimi' --model 'kimi-code/k3'")?.id).toBe('kimi-code/k3');
+      expect(adapter.configuredModelFromCommand('"C:/kimi.exe" --model "kimi-code/k3"')?.id).toBe('kimi-code/k3');
     });
 
-    it('returns false for plain shell output without alt-screen entry', () => {
-      expect(adapter.detectFirstOutput('PS C:\\> ')).toBe(false);
-    });
-  });
-
-  describe('no-op methods', () => {
-    it('ensureTrust resolves without error', async () => {
-      await expect(adapter.ensureTrust('/some/dir')).resolves.toBeUndefined();
+    it('names it from the config, else by the alias', () => {
+      fs.writeFileSync(path.join(home, 'config.toml'), '[models."kimi-code/k3"]\ndisplay_name = "K3"\n');
+      expect(adapter.configuredModelFromCommand('kimi --model kimi-code/k3')?.displayName).toBe('K3');
+      expect(adapter.configuredModelFromCommand('kimi --model other')?.displayName).toBe('other');
+      expect(adapter.modelDisplayName('other')).toBeNull();
     });
 
-    it('removeHooks does not throw', () => {
-      expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
+    it('finds nothing with no flag', () => {
+      expect(adapter.configuredModelFromCommand('kimi --plan')).toBeNull();
     });
   });
-
-  // ── probeAuth ────────────────────────────────────────────────────────────
 
   describe('probeAuth', () => {
-    // probeAuth checks ~/.kimi/credentials/ for OAuth state written by
-    // `kimi login`. The renderer surfaces the false case as an amber
-    // warning so users know to authenticate before spawning a task.
-
-    // The CLI the project detected, which probeAuth is handed; a path on this machine.
-    const LOCAL_CLI_PATH = '/usr/local/bin/kimi';
-
-    it('targets ~/.kimi/credentials/ under the home directory', async () => {
-      let probedPath: string | null = null;
-      mockReaddirSync = (filePath) => {
-        probedPath = filePath;
-        return ['default.json'];
-      };
-      await adapter.probeAuth(LOCAL_CLI_PATH);
-      expect(probedPath).not.toBeNull();
-      expect(probedPath!).toContain(path.join('.kimi', 'credentials'));
-    });
-
-    it('returns true when ~/.kimi/credentials/ contains files', async () => {
-      mockReaddirSync = () => ['default.json', 'session.token'];
-      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
-      expect(result).toBe(true);
-    });
-
-    it('returns false when ~/.kimi/credentials/ is missing (ENOENT)', async () => {
-      mockReaddirSync = () => {
-        const error = new Error('no such file or directory') as NodeJS.ErrnoException;
-        error.code = 'ENOENT';
-        throw error;
-      };
-      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
-      expect(result).toBe(false);
-    });
-
-    it('returns false when ~/.kimi/credentials/ exists but is empty', async () => {
-      mockReaddirSync = () => [];
-      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
-      expect(result).toBe(false);
-    });
-
-    it('returns null when readdirSync throws a non-ENOENT error', async () => {
-      mockReaddirSync = () => {
-        const error = new Error('permission denied') as NodeJS.ErrnoException;
-        error.code = 'EACCES';
-        throw error;
-      };
-      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
-      expect(result).toBeNull();
+    it('is true with a credential, and with a configured model', async () => {
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(false);
+      fs.mkdirSync(path.join(home, 'credentials'));
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(false);
+      fs.writeFileSync(path.join(home, 'credentials', 'kimi-code.json'), '{}');
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(true);
+      fs.rmSync(path.join(home, 'credentials'), { recursive: true, force: true });
+      fs.writeFileSync(path.join(home, 'config.toml'), '[models.mine]\nmodel = "x"\n');
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(true);
     });
   });
 
-  // ── interpolateTemplate ──────────────────────────────────────────────────
-
-  describe('interpolateTemplate', () => {
-    it('replaces {{key}} placeholders', () => {
-      const result = adapter.interpolateTemplate(
-        'Fix {{issue}} in {{file}}',
-        { issue: 'bug-123', file: 'main.ts' },
-      );
-      expect(result).toBe('Fix bug-123 in main.ts');
+  describe('probeAuth: unreadable and empty credential folders', () => {
+    it('cannot tell when credentials is a file, rather than guessing signed out', async () => {
+      fs.writeFileSync(path.join(home, 'credentials'), 'not a folder');
+      fs.writeFileSync(path.join(home, 'config.toml'), '[models.mine]\nmodel = "x"\n');
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBeNull();
     });
 
-    it('leaves unmatched placeholders unchanged', () => {
-      const result = adapter.interpolateTemplate('{{name}} - {{unknown}}', { name: 'test' });
-      expect(result).toBe('test - {{unknown}}');
+    it('falls through to the configured models when the folder holds no credential file', async () => {
+      fs.mkdirSync(path.join(home, 'credentials'));
+      fs.writeFileSync(path.join(home, 'credentials', 'x.txt'), 'note');
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(false);
+      fs.writeFileSync(path.join(home, 'config.toml'), '[models.mine]\nmodel = "x"\n');
+      await expect(adapter.probeAuth('/usr/bin/kimi')).resolves.toBe(true);
+    });
+  });
+
+  describe('transcript reads by session', () => {
+    const stepEnd = (input: number, output: number, time: number) => JSON.stringify({
+      type: 'context.append_loop_event',
+      event: { type: 'step.end', uuid: `s${input}`, usage: { inputOther: input, output } },
+      time,
+    });
+    const toolCall = (toolCallId: string, name: string, time: number) => JSON.stringify({
+      type: 'context.append_loop_event',
+      event: { type: 'tool.call', stepUuid: 's', toolCallId, name, args: {} },
+      time,
+    });
+
+    function indexSession(sessionDir: string): void {
+      fs.appendFileSync(
+        path.join(home, 'session_index.jsonl'),
+        JSON.stringify({ sessionId: SESSION_ID, sessionDir, workDir: '/projects/my-app' }) + '\n',
+      );
+    }
+
+    function writeFile(filePath: string, lines: string[]): string {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, lines.join('\n') + '\n');
+      return filePath;
+    }
+
+    it('reads the wire file the index locates in preference to a stale transcriptPath', async () => {
+      const sessionDir = path.join(home, 'sessions', 'ws', SESSION_ID);
+      writeFile(path.join(sessionDir, 'agents', 'main', 'wire.jsonl'), [stepEnd(100, 7, 1_792_000_000_000), toolCall('c1', 'Read', 1_792_000_000_000)]);
+      const stale = writeFile(path.join(home, 'stale.jsonl'), [stepEnd(1, 1, 1_792_000_000_000), toolCall('c9', 'Bash', 1_792_000_000_000)]);
+      indexSession(sessionDir);
+
+      await expect(adapter.transcriptUsage({ transcriptPath: stale, agentSessionId: SESSION_ID })).resolves.toEqual({ inputTokens: 100, outputTokens: 7 });
+      const counts = await adapter.transcriptToolCounts({ transcriptPath: stale, agentSessionId: SESSION_ID, sinceMs: 0, untilMs: 1_792_000_000_001 });
+      expect(counts?.toolBreakdown.map((stat) => stat.toolName)).toEqual(['Read']);
+    });
+
+    it('falls back to transcriptPath for a session the index does not know, and answers nothing with neither', async () => {
+      const given = writeFile(path.join(home, 'given.jsonl'), [stepEnd(5, 2, 1_792_000_000_000)]);
+      await expect(adapter.transcriptUsage({ transcriptPath: given, agentSessionId: SESSION_ID })).resolves.toEqual({ inputTokens: 5, outputTokens: 2 });
+      await expect(adapter.transcriptUsage({ agentSessionId: SESSION_ID })).resolves.toBeNull();
+      await expect(adapter.transcriptToolCounts({})).resolves.toBeNull();
+    });
+
+    it('signs and reads a session\'s subagent files, and reports an unknown session as having none', async () => {
+      const sessionDir = path.join(home, 'sessions', 'ws', SESSION_ID);
+      writeFile(path.join(sessionDir, 'agents', 'main', 'wire.jsonl'), [
+        JSON.stringify({ type: 'subagent.spawned', subagentId: 'agent-0', subagentName: 'explore', parentToolCallId: 'call-1', time: 1 }),
+      ]);
+      writeFile(path.join(sessionDir, 'agents', 'agent-0', 'wire.jsonl'), [stepEnd(40, 3, 1_792_000_000_000)]);
+      indexSession(sessionDir);
+
+      expect(adapter.statSubagentTranscripts(SESSION_ID, '/projects/my-app')?.fileCount).toBe(1);
+      const parsed = await adapter.parseSubagentUsage(SESSION_ID, '/projects/my-app');
+      expect(parsed).toMatchObject({ directoryPresent: true, complete: true });
+      expect(parsed.turns).toHaveLength(1);
+      expect(parsed.turns[0]).toMatchObject({ subagentId: 'agent-0', agentType: 'explore', parentToolUseId: 'call-1' });
+
+      expect(adapter.statSubagentTranscripts('session_unknown', '/projects/my-app')).toBeNull();
+      await expect(adapter.parseSubagentUsage('session_unknown', '/projects/my-app')).resolves.toMatchObject({ directoryPresent: false, turns: [], spawnLinks: [] });
+    });
+  });
+
+  describe('proveConversationGone', () => {
+    it('proves only what the index records', async () => {
+      await expect(adapter.proveConversationGone({ agentSessionId: SESSION_ID })).resolves.toBe(false);
+      fs.writeFileSync(path.join(home, 'session_index.jsonl'), JSON.stringify({ sessionId: SESSION_ID, deleted: true }) + '\n');
+      await expect(adapter.proveConversationGone({ agentSessionId: SESSION_ID })).resolves.toBe(true);
+    });
+  });
+
+  describe('getInjectionSequence', () => {
+    it('types nothing, since /model opens a picker', () => {
+      expect(adapter.getInjectionSequence({ model: 'a', modelChanged: true, effort: null, effortChanged: false })).toEqual([]);
     });
   });
 });
 
-// ── Registry integration ─────────────────────────────────────────────────────
+describe('lastAssistantText', () => {
+  it('takes the last assistant line of a stream-json run', () => {
+    const stdout = [
+      JSON.stringify({ role: 'meta', type: 'system.version', version: '2.4.1' }),
+      JSON.stringify({ role: 'assistant', content: 'first' }),
+      JSON.stringify({ role: 'tool', tool_call_id: 'c', content: 'output' }),
+      JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'Fix the login flow' }] }),
+      JSON.stringify({ role: 'assistant', tool_calls: [] }),
+      JSON.stringify({ role: 'meta', type: 'session.resume_hint', session_id: 's' }),
+      'not json',
+    ].join('\n');
+    expect(lastAssistantText(stdout)).toBe('Fix the login flow');
+  });
+
+  it('is empty with no assistant line, which fails the run', () => {
+    expect(lastAssistantText('nothing here')).toBe('');
+  });
+});
 
 describe('Agent Registry', () => {
-  it('has kimi adapter registered', async () => {
+  it('registers the adapter by name and session type', async () => {
     const { agentRegistry } = await import('../../src/main/agent/agent-registry');
-    expect(agentRegistry.has('kimi')).toBe(true);
-  });
-
-  it('getOrThrow returns KimiAdapter instance', async () => {
-    const { agentRegistry } = await import('../../src/main/agent/agent-registry');
-    const adapter = agentRegistry.getOrThrow('kimi');
-    expect(adapter.name).toBe('kimi');
-    expect(adapter.sessionType).toBe('kimi_agent');
-  });
-
-  it('lists kimi among registered adapters', async () => {
-    const { agentRegistry } = await import('../../src/main/agent/agent-registry');
-    expect(agentRegistry.list()).toContain('kimi');
-  });
-
-  it('lookup by sessionType returns the kimi adapter', async () => {
-    const { agentRegistry } = await import('../../src/main/agent/agent-registry');
-    const adapter = agentRegistry.getBySessionType('kimi_agent');
-    expect(adapter?.name).toBe('kimi');
+    expect(agentRegistry.getOrThrow('kimi').sessionType).toBe('kimi_agent');
+    expect(agentRegistry.getBySessionType('kimi_agent')?.name).toBe('kimi');
   });
 });
 
-// -- agent-display-name - kimi entry -----------------------------------------
-
 describe('agent-display-name - kimi entry', () => {
-  it('agentDisplayName returns "Kimi Code" for "kimi"', () => {
+  it('names Kimi Code and points at its live repo, not the archived one', () => {
     expect(agentDisplayName('kimi')).toBe('Kimi Code');
-  });
-
-  it('agentShortName returns "Kimi" for "kimi"', () => {
     expect(agentShortName('kimi')).toBe('Kimi');
-  });
-
-  it('agentInstallUrl returns the Kimi CLI repo URL for "kimi"', () => {
-    expect(agentInstallUrl('kimi')).toBe('https://github.com/MoonshotAI/kimi-cli');
+    expect(agentInstallUrl('kimi')).toBe('https://github.com/MoonshotAI/kimi-code');
   });
 });

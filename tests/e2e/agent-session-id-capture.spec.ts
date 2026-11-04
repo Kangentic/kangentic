@@ -11,8 +11,8 @@
  *   - codex:     fromFilesystem (planted rollout JSONL with known UUID)
  *   - droid:     fromFilesystem (mock writes ~/.factory/sessions/<slug>/<uuid>.jsonl)
  *   - gemini:    none needed    (the id chosen at launch via --session-id)
- *   - kimi:      fromOutput     ("Session: <uuid>" banner regex)
- *   - kimi-fs:   fromFilesystem (mtime-windowed scan of ~/.kimi/sessions/<hash>)
+ *   - kimi:      fromFilesystem, created by the typed first prompt
+ *   - kimi-fs:   fromFilesystem (session_index.jsonl, banner and hint suppressed)
  *   - opencode:  fromOutput     ("session id: ses_..." regex)
  *
  * Layout:
@@ -34,7 +34,6 @@ import {
   createTask,
   createTempProject,
   cleanupTempProject,
-  cleanupKimiSessionsForCwd,
   getTestDataDir,
   cleanupTestDataDir,
   mockAgentPath,
@@ -241,7 +240,6 @@ test.describe('Agent session-ID capture pipeline', () => {
 
   test.afterAll(async () => {
     await closeApp(app);
-    cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });
@@ -298,14 +296,14 @@ test.describe('Agent session-ID capture pipeline', () => {
     }, `Gemini Chosen Id ${runId}`);
   });
 
-  test('Kimi: PTY banner UUID flows through to resume', async () => {
+  test('Kimi: the session its typed first prompt created flows through to resume', async () => {
     await runCaptureCase(page, tmpDir, {
       agent: 'kimi',
       spawnMarker: 'MOCK_KIMI_SESSION:',
       resumeMarker: 'MOCK_KIMI_RESUMED:',
-      uuidPattern: /MOCK_KIMI_RESUMED:([a-f0-9-]+)/,
+      uuidPattern: /MOCK_KIMI_RESUMED:(session_[a-f0-9-]+)/,
       resolveExpectedUuid: ({ spawnScrollback }) => {
-        const match = spawnScrollback.match(/MOCK_KIMI_SESSION:([a-f0-9-]+)/);
+        const match = spawnScrollback.match(/MOCK_KIMI_SESSION:(session_[a-f0-9-]+)/);
         if (!match) throw new Error('mock-kimi did not emit a session marker');
         return match[1];
       },
@@ -359,7 +357,6 @@ test.describe('Kimi filesystem fallback session-ID capture', () => {
 
   test.afterAll(async () => {
     await closeApp(app);
-    cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });
@@ -369,9 +366,9 @@ test.describe('Kimi filesystem fallback session-ID capture', () => {
       agent: 'kimi',
       spawnMarker: 'MOCK_KIMI_SESSION:',
       resumeMarker: 'MOCK_KIMI_RESUMED:',
-      uuidPattern: /MOCK_KIMI_RESUMED:([a-f0-9-]+)/,
+      uuidPattern: /MOCK_KIMI_RESUMED:(session_[a-f0-9-]+)/,
       resolveExpectedUuid: ({ spawnScrollback }) => {
-        const match = spawnScrollback.match(/MOCK_KIMI_SESSION:([a-f0-9-]+)/);
+        const match = spawnScrollback.match(/MOCK_KIMI_SESSION:(session_[a-f0-9-]+)/);
         if (!match) throw new Error('mock-kimi did not emit a session marker');
         return match[1];
       },

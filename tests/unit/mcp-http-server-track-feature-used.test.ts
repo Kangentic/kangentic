@@ -95,6 +95,7 @@ function postBody(
   port: number,
   token: string,
   rawBody: string,
+  authHeaders: Record<string, string> = { 'X-Kangentic-Token': token },
 ): Promise<{ statusCode: number }> {
   return new Promise((resolve, reject) => {
     const request = http.request(
@@ -106,7 +107,7 @@ function postBody(
         headers: {
           Accept: 'application/json, text/event-stream',
           'Content-Type': 'application/json',
-          'X-Kangentic-Token': token,
+          ...authHeaders,
         },
       },
       (response) => {
@@ -122,6 +123,56 @@ function postBody(
 function featureUsedCalls(): unknown[][] {
   return mockTrackEvent.mock.calls.filter((call) => call[0] === 'feature_used');
 }
+
+// Kimi Code can read a token from its environment only as a bearer token, so
+// without this its sessions get no Kangentic tools at all.
+describe('mcp-http-server - the token as a bearer token', () => {
+  let handle: McpHttpServerHandle | undefined;
+  const initialize = JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1 });
+
+  beforeEach(async () => {
+    const resolver = makeResolver();
+    handle = await startMcpHttpServer(
+      (projectId) => (projectId === 'proj-1' ? resolver : null),
+      () => ({ enabled: false, allowInteraction: false, allowNavigation: false, allowEval: false, restrictNavigationToLocalhost: false }),
+      { bindAddress: '127.0.0.1' },
+    );
+  });
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+  });
+
+  it('accepts the launch token, and refuses any other, a bare token and no token', async () => {
+    const server = handle as McpHttpServerHandle;
+    const port = Number(new URL(server.baseUrl).port);
+    const post = (authHeaders: Record<string, string>) => postBody(port, server.token, initialize, authHeaders);
+
+    expect((await post({ Authorization: `Bearer ${server.token}` })).statusCode).not.toBe(401);
+    expect((await post({ Authorization: 'Bearer not-the-token' })).statusCode).toBe(401);
+    expect((await post({ Authorization: server.token })).statusCode).toBe(401);
+    expect((await post({})).statusCode).toBe(401);
+  });
+
+  it('accepts a lowercase scheme and extra spaces after it', async () => {
+    const server = handle as McpHttpServerHandle;
+    const port = Number(new URL(server.baseUrl).port);
+    const post = (authHeaders: Record<string, string>) => postBody(port, server.token, initialize, authHeaders);
+
+    expect((await post({ Authorization: `bearer ${server.token}` })).statusCode).not.toBe(401);
+    expect((await post({ Authorization: `Bearer    ${server.token}` })).statusCode).not.toBe(401);
+  });
+
+  it('lets X-Kangentic-Token win over a bearer when both are sent', async () => {
+    const server = handle as McpHttpServerHandle;
+    const port = Number(new URL(server.baseUrl).port);
+    const post = (authHeaders: Record<string, string>) => postBody(port, server.token, initialize, authHeaders);
+
+    expect((await post({ 'X-Kangentic-Token': 'not-the-token', Authorization: `Bearer ${server.token}` })).statusCode).toBe(401);
+    expect((await post({ 'X-Kangentic-Token': server.token, Authorization: 'Bearer not-the-token' })).statusCode).not.toBe(401);
+  });
+});
 
 describe('mcp-http-server - mcp_server adoption tracking on initialize', () => {
   let handle: McpHttpServerHandle | undefined;

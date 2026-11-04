@@ -1,133 +1,171 @@
 ---
 type: Reference
 title: Kimi Code
-description: Kimi Code, installed with uv, with caller-owned --session and --continue, session ids from the welcome banner or a scan of the md5-of-cwd folder, wire.jsonl session history under ~/.kimi/sessions parsed into activity events, --plan and --yolo modes, and an auth probe of ~/.kimi/credentials.
+description: Kimi Code CLI 2.x, built from its docs and source and not yet run live, with no starting prompt so Kangentic types the first prompt in, session ids captured from session_index.jsonl, protocol 1.5 wire.jsonl parsed into activity, usage and transcripts, Always Ask, Ask When Needed, Never Ask and Plan modes, a folder-shared .kimi-code/mcp.json, models from config.toml, and WSL.
 tags: [agents, adapter, kimi]
 sources:
   - resource: src/main/agent/adapters/kimi/kimi-adapter.ts
   - resource: src/main/agent/adapters/kimi/command-builder.ts
   - resource: src/main/agent/adapters/kimi/session-history-parser.ts
+  - resource: src/main/agent/adapters/kimi/session-index.ts
+  - resource: src/main/agent/adapters/kimi/kimi-home.ts
   - resource: src/main/agent/adapters/kimi/wire-parser.ts
-  - resource: src/main/agent/adapters/kimi/work-dir-hash.ts
+  - resource: src/main/agent/adapters/kimi/transcript-parser.ts
+  - resource: src/main/agent/adapters/kimi/transcript-usage.ts
+  - resource: src/main/agent/adapters/kimi/subagent-transcripts.ts
+  - resource: src/main/agent/adapters/kimi/config-toml.ts
+  - resource: src/main/agent/adapters/kimi/mcp-config.ts
+  - resource: src/main/agent/adapters/kimi/cached-file.ts
 ---
 # Kimi Code
 
-## CLI Detection
+The adapter drives Kimi Code CLI 2.x (npm `@moonshot-ai/kimi-code`, binary `kimi`, [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code)), built against 2.4.1, the `latest` release of 2026-10-30.
 
-`src/main/agent/adapters/kimi/kimi-adapter.ts`
+**Built from documentation.** Every flag, path, record and result string below comes from the CLI's docs and source, read on 2026-11-03. No real Kimi session has run against this adapter. The specs drive `tests/fixtures/mock-kimi.js`, which behaves as we read the CLI, and the parser tests also replay the CLI's own sample sessions, copied byte for byte into `tests/fixtures/kimi-upstream-sample-*.jsonl` at tag 2.4.1. Those samples hold no tool call, turn end or interaction record, so those rest on `wire-manifest.d.ts`. [What needs a live probe](#what-needs-a-live-probe) lists what a real run must check.
 
-Kimi is a Python tool installed via `uv tool install kimi-cli` (the upstream installer at `code.kimi.com/install.sh`). Both `kimi` and `kimi-cli` PATH entries map to the same `src/kimi_cli:__main__` entry point. Detection uses `AgentDetector` with a `kimi --version` probe (output format: `kimi, version 1.37.0`). Fallback paths cover the uv-tool prefix on macOS/Linux (`~/.local/share/uv/tools/kimi-cli/bin/kimi`) and Windows (`%APPDATA%\uv\tools\kimi-cli\Scripts\kimi.exe` and `%LOCALAPPDATA%` equivalent).
+Sources, under `github.com/MoonshotAI/kimi-code/blob/main/`:
 
-## Command Building
+- `docs/en/reference/kimi-command.md`, `tools.md` and `slash-commands.md`
+- `docs/en/configuration/config-files.md`, `data-locations.md` and `env-vars.md`
+- `docs/en/customization/mcp.md` and `hooks.md`, `docs/en/guides/interaction.md`
+- `apps/kimi-code/src/cli/commands.ts`, `apps/kimi-code/src/cli/v2/run-v2-print.ts`, `apps/kimi-code/src/tui/components/chrome/welcome.ts`
+- `packages/agent-core-v2/docs/wire-manifest.d.ts`, and under `packages/agent-core-v2/src/`: `agent/contextMemory/loopEventFold.ts`, `features/plan/exitPlanModeReview.ts`, `agent/tools/os/bash/bashTool.ts`, `_base/utils/workdir-slug.ts`
 
-`src/main/agent/adapters/kimi/command-builder.ts`
+## The 1.x CLI
+
+The adapter used to drive the Python `kimi-cli` 1.x (`~/.kimi`, `-w`, `--prompt`, caller-owned `--session <uuid>`, wire protocol 1.9). That repository is archived, and its last release, 1.52.0, runs no agent: any argument prints a deprecation notice and exits 0, and a bare `kimi` downloads and runs the Kimi Code installer with no prompt. So never probe with a bare `kimi`. `--version` and `--help` are safe on either CLI.
+
+Detection reads a 1.x install as not installed (`parseKimiVersion`), because `kimi, version 1.x` is not a CLI this adapter can drive. The output's shape decides that, not the number: Kimi Code's own releases run 0.1 to 0.43, then 2.0.0, with no 1.x on npm, and both print a bare version. So a 0.x install is detected, though the adapter was built against 2.4.1 and an old one may lack a flag it passes. A resume of a 1.x session cannot work either: Kimi Code reads `~/.kimi` only through `kimi migrate`. Run that once from your own shell. Kangentic's sessions turn its first-launch screen off, because that screen's default is "Migrate now" and the typed first prompt's Enter would pick it.
+
+## CLI detection
+
+`AgentDetector` probes `kimi --version`, which prints the bare version. Fallback paths are the install script's `~/.kimi-code/bin/kimi`, or `%USERPROFILE%\.kimi-code\bin\kimi.exe` on Windows. An npm global install is on PATH.
+
+## Command building
 
 ```
-kimi -w <cwd> [--session <uuid> | --continue] [--plan|--yolo] [--print --output-format stream-json] [--mcp-config-file <sessionDir>/mcp.json] [--prompt "<text>"]
+kimi [--session <id>] [--plan | --yolo | --auto] [--model <alias>]
 ```
 
-Flag mapping (verified empirically with kimi v1.37.0):
+The working directory is the PTY's cwd, since the CLI has no `-w`. The command never carries a prompt. A positional argument fails with "unknown command", and `-p` runs one prompt and exits with no TUI. So `freshPromptDelivery` and `resumePromptDelivery` are both `'typed'`: the engine keeps the prompt off the command line and hands it back (`SpawnOutcome.typedOpening` on a fresh session, `unsentPrompt` on a resume), and the caller types it in once the agent is ready.
 
-| PermissionMode | Kimi flag |
-|----------------|-----------|
-| `plan` | `--plan` |
-| `bypassPermissions` | `--yolo` |
-| `default` / `acceptEdits` / `dontAsk` / `auto` | (no flag - interactive confirms) |
+`buildEnv` sets, per process and with nothing persisted:
 
-- `-w <cwd>` always passed; the path is forward-slashed so PowerShell and bash both parse it correctly.
-- `--session <uuid>` is used for both *create* (caller-owned UUID) and *resume*. Kimi's `Session.create(work_dir, session_id="...")` SDK API maps to the same flag, so we set `supportsCallerSessionId = true` and own the ID end-to-end.
-- `--continue` is emitted when the builder's `useContinueFallback` option is set and no `sessionId` is supplied. It tells Kimi to resume the most recent session for `cwd`, covering three cases: recovering after a lost DB record, attaching to a session started by a manual `kimi` invocation in the same `work_dir`, or driving a "Resume last session" UI affordance from the command-terminal overlay. Precedence: when both `sessionId` and `useContinueFallback` are provided, the explicit `--session <uuid>` always wins.
-- `--prompt <text>` carries the prompt on a new session and on a resume (`--session <uuid> --prompt "..."`, `resumePromptDelivery: 'command-line'`). `kimi --help` calls it "User prompt to the agent", and only `--print` is non-interactive, so the session stays interactive. Quoting follows the same shell-safe rules as the other adapters.
-- `--mcp-config-file <sessionDir>/mcp.json` is passed when `mcpServerEnabled` is true; the file is a minimal fastmcp-compatible config naming Kangentic's HTTP MCP server with the `X-Kangentic-Token` header. With no token the wiring is skipped (the server refuses every request without it), as Codex does.
+| Variable | Why |
+|----------|-----|
+| `KIMI_CODE_TRUST_WORKSPACE=1` | Answers the folder trust prompt, which every new worktree would raise and which exits the CLI when declined. It trusts every folder a session runs in, a fresh clone included, and loads that folder's project `mcp.json` |
+| `KIMI_CODE_NO_AUTO_UPDATE=1` | Turns off the update preflight, whose prompt would take the typed first prompt as its answer |
+| `KANGENTIC_MCP_TOKEN` | The token for Kangentic's MCP server, when the session has one. `.kimi-code/mcp.json` names the variable and never holds the value |
+| `KIMI_SHARE_DIR=.kangentic-no-kimi-cli-data` | Names a folder that does not exist, so the CLI finds no 1.x data and skips its migration screen. It overrides a value you exported. Only the migration code reads it (`migration/legacy-source.ts`) |
+| `KIMI_MODEL_THINKING_EFFORT=<level>` | A column's effort. The CLI has no effort flag. The docs say this applies to the `kimi` provider only |
 
-## Session ID Capture
+## Permission modes
 
-Two PTY regex anchors plus a filesystem fallback:
+| Mode | Label | Flag |
+|------|-------|------|
+| `plan` | Plan (Read-Only) | `--plan` |
+| `default` | Always Ask | none (the CLI's `manual` default) |
+| `auto` | Ask When Needed (YOLO) | `--yolo`. It still asks for sensitive files, dangerous commands and a plan exit |
+| `bypassPermissions` | Never Ask (Auto) | `--auto`. Only a plan waits for review |
 
-1. **Welcome banner**: `Session: <uuid>` printed in the cyan startup box (interactive and `--print`).
-2. **Print-mode exit**: `To resume this session: kimi -r <uuid>` written to stderr at session end.
-3. **Filesystem fallback**: `runtime.sessionId.fromFilesystem` scans this spawn's own work_dir directory - `~/.kimi/sessions/<md5(cwd)>/` (and its `<kaos>_<md5(cwd)>` variant) - for UUID directories whose mtime is within ±30s of the spawn time, returning the newest. Scoping to the spawn's own work_dir hash (rather than globbing every hash dir) keeps a concurrent Kimi session in another work_dir, or a `-w`-less probe's stray session, from winning the recency race and poisoning the captured id.
+The CLI has no accept-edits or deny-unless-allowed mode, so neither is offered. A stored one passes no flag. A resume passes the mode again, which overrides the one stored in the session.
 
-## Session History
+## Session id capture
 
-`src/main/agent/adapters/kimi/session-history-parser.ts` + `wire-parser.ts`
+Kangentic cannot choose an id: `--session` only resumes, and an unknown id fails with `Session "<id>" not found.`. A new session has no id and no folder until its first message, so the id is captured after the typed prompt lands:
 
-Kimi writes `wire.jsonl` to `~/.kimi/sessions/<work_dir_hash>/<sessionId>/` on every spawn (interactive or `--print`). The work_dir hash is `md5(absolute work_dir)`. The history locator (`locate()`, given a known session UUID) globs across all hash dirs and matches on the UUID, so it is robust to the same directory opened under different paths. This differs from the capture fallback above, which has no known UUID and so is scoped to the spawn's own work_dir hash to avoid mis-attributing another work_dir's session.
+1. **Session index**: `runtime.sessionId.fromFilesystem` reads `session_index.jsonl` once a second for about 90 s, for the newest live session whose `workDir` is this cwd and whose folder was made since the spawn. The CLI records `process.cwd()`, so a cwd reached through a symlink is compared in both spellings.
+2. **Welcome box**: `Session:   <id>`, printed only on a resume.
+3. **Exit hint**: `To resume this session: kimi -r <id>`, printed on stderr when the session has content.
 
-The file is append-only (resume via `-r <uuid>` appends new `TurnBegin` / `TurnEnd` lines). Format:
+An index match can be another session's, so `SessionIdManager` drops one that a session in the folder already holds, or any match while another Kimi session with no id started there within 60 s. Those sessions get their id from the exit hint, or stay with none. Per-task worktrees keep that rare.
 
-```jsonl
-{"type": "metadata", "protocol_version": "1.9"}
-{"timestamp": <unix_seconds>, "message": {"type": "<EventName>", "payload": {...}}}
-```
+## Session history
 
-Kimi's activity is `hooks_and_pty` with wire.jsonl as the structured source: the first wire read turns the PTY tracker off, and the PTY silence timer and prompt regex cover only the gap before it. Measured in the interactive TUI on 1.37.0, every record reached the file 13 to 40 ms after its own timestamp. A turn end, an interrupt and a permission wait are events, not forced activity ("released" below): a forced idle runs the engine's `forceIdle`, which ends no turn for On agent turn end automations and clears every background task the session holds.
+Data lives under `$KIMI_CODE_HOME`, else `~/.kimi-code`. Each session is `sessions/<workspaceId>/<id>/`, and its main agent writes `agents/main/wire.jsonl`. A session is located through `session_index.jsonl`, which names its folder, so no folder name is computed: `wd_<slug>_<sha256 prefix>` has a managed form (`wm_<uuid>`) and a case rule on Windows that a computed name would miss. The index and `config.toml` are parsed again only when their size or mtime changes (`cached-file.ts`), since the id capture polls one and every transcript window looks a session up in it.
 
-Every documented wire-protocol message type (19 Events + 4 Requests, wire protocol v1.9) is parsed, plus `Notification` for background tasks:
+Line 1 of the file is `{"type":"metadata","protocol_version":"1.5","created_at":...}`. Every other line is `{"type":"<record>", ...payload, "time":...}`, with `time` in milliseconds, as the CLI's own samples show. A `parseWireJsonl` chunk stands alone unless the session's parser passes its memory of open calls, and its `switch` over `KIMI_DISPATCH_TYPES` is exhaustive.
 
-**Events**
+| Record | Activity | SessionEvent |
+|--------|----------|--------------|
+| `turn.prompt`, `turn.steer` | → Thinking | `Prompt` |
+| `turn.ended` | (released) | `Idle` (completed, blocked), `Interrupted` (cancelled), `TurnFailed` (failed) |
+| `turn.step.retrying` | (preserve) | `TurnRetrying` (`errorName`) |
+| `turn.step.interrupted` | (preserve) | `Notification` |
+| `context.append_loop_event` `step.begin` | → Thinking | none |
+| `context.append_loop_event` `step.end` | (preserve) | none; the step's token usage |
+| `context.append_loop_event` `tool.call` | (preserve) | `ToolStart` (`toolId`; detail = the command for `Bash`, else the tool name) |
+| `context.append_loop_event` `tool.result` | (preserve) | `ToolEnd`, tagged `ExitPlanMode` for an approved plan |
+| `interaction.request` | (released) | `Idle` (`IdleReason.Permission`, `waitKind` approval or question). `user_tool` waits on no person and is skipped |
+| `interaction.resolved` | → Thinking | none |
+| `subagent.spawned` | (preserve) | `SubagentStart` (`subagentId`; detail = its name) |
+| `subagent.completed`, `.failed`, `.cancelled` | (preserve) | `SubagentStop` (`subagentId`) |
+| `full_compaction.begin` | → Thinking | `Compact` |
+| `plan_mode.enter`, `.exit` | (preserve) | `Notification` |
+| `token_counting.*`, `llm.request`, `usage.record` | (preserve) | none; context tokens and the live model |
 
-| Wire event | Activity | SessionEvent |
-|------------|----------|--------------|
-| `TurnBegin` | → Thinking | `Prompt` (detail = extracted user_input text) |
-| `TurnEnd` | (released) | `Idle` |
-| `StepBegin` | → Thinking | (none) |
-| `StepInterrupted` | (released) | `Interrupted` |
-| `CompactionBegin` | → Thinking | `Compact` |
-| `CompactionEnd` | (preserve) | (none) |
-| `StatusUpdate` | (preserve) | (none; updates SessionUsage) |
-| `ContentPart` | (preserve) | (none; streaming text fragment) |
-| `ToolCall` | (preserve) | `ToolStart` (`toolId` = the call id; detail = the command for `Shell`, else the tool name) |
-| `ToolCallPart` | (preserve) | (none; argument-streaming fragment) |
-| `ToolResult` | (preserve) | `ToolEnd` (`toolId`; detail = `ok` or `error`). A `Shell` background launch (message "Background task started." with a `background_task` display block) is a `BackgroundShellStart` with the task id instead, which closes its pending tool by `toolId`; a `TaskStop` result ("Task stop requested.") adds a `BackgroundShellEnd` |
-| `Notification` | (preserve) | `BackgroundShellEnd` for a `task.*` notification whose `source_kind` is `background_task` (detail = `source_id`); others emit nothing |
-| `ApprovalResponse` | → Thinking | `Notification` (detail = response) |
-| `SubagentEvent` | (preserve) | `SubagentStart` (inner `TurnBegin`) / `SubagentStop` (inner `TurnEnd`) / `Notification` (other inner types). detail = `subagent_type` \|\| `agent_id` \|\| `subagent` |
-| `BtwBegin` | (preserve) | `SubagentStart` (detail = `btw`) |
-| `BtwEnd` | (preserve) | `SubagentStop` (detail = `btw`) |
-| `SteerInput` | → Thinking | `Prompt` (detail = extracted user_input text) |
-| `PlanDisplay` | (preserve) | `Notification` (detail = file_path) |
-| `HookTriggered` | (preserve) | `Notification` (detail = `<event>:<target>`) |
-| `HookResolved` | (preserve) | `Notification` (detail = `<event>:<action> (<reason>)`) |
+"Released" means the event moves the engine and the chunk forces no activity, so a turn end reaches the On agent turn end automations. A plan review is a tool approval, so it is an `approval` wait. An approved plan's result output starts `Exited plan mode.`, and no rejected, revised or dismissed one does, which is how the parser names the plan exit from the result alone.
 
-**Requests** (Wire protocol uses JSON-RPC 2.0; the parser is a passive observer that surfaces requests as activity-state telemetry):
+A `tool.result` names only its call id, so each session's parser (`sessionHistory.createParse`) remembers an open call's tool and tags its start and its end with it, and the live per-tool breakdown is right as it happens. Two cases stay `AgentTool.Bash`: an end whose start was never read, as after a watcher that began at the end of the file, and `ExitPlanMode`, whose name on an end means an approved plan.
 
-| Wire request | Activity | SessionEvent |
-|--------------|----------|--------------|
-| `ApprovalRequest` | (released) | `Idle` (detail = `IdleReason.Permission`, `waitKind` = `approval`) |
-| `ToolCallRequest` | (preserve) | `ToolStart` (detail = `name`) |
-| `QuestionRequest` | (released) | `Idle` (detail = `IdleReason.Permission`, `waitKind` = `question`) |
-| `HookRequest` | (preserve) | `Notification` (detail = `<event>:<target>[: <summary>]`, summary derived from `input_data` and capped at 200 chars) |
+The context window comes from the alias's `max_context_size` in the host's `config.toml`, never a guess. A WSL install's config is the distro's, so its context bar shows tokens with no percentage.
 
-The parser uses an exhaustive `switch` over a `KIMI_DISPATCH_TYPES` literal union, so a future protocol bump that adds a new type produces a TS exhaustiveness error at compile time. `user_input` (TurnBegin / SteerInput) accepts both `string` and `ContentPart[]`; the parser extracts `TextPart.text` from arrays and ignores think/media parts.
+## Transcripts and usage
 
-## Permission Modes
+- `parseTranscript`, `parseTranscriptWindow` and `readTranscriptPage` read `turn.prompt`, `content.part` runs, `tool.call`, `tool.result` and compaction records. Uuids are `<session>:<physical line>`, so all three mint the same ones.
+- `transcriptUsage` sums every `step.end` usage in the main file. A partial read answers nothing rather than a smaller total.
+- `transcriptToolCounts` counts distinct `toolCallId`s per tool and honours `sinceMs` and `untilMs`, since every resume appends to one file (`scopesTranscriptReadsByTime`).
+- `statSubagentTranscripts` and `parseSubagentUsage` read each `agents/<subagentId>/wire.jsonl`, with the name and parent call from the main file's `subagent.spawned`.
 
-Kimi exposes only two permission flags. The adapter surfaces three modes:
+## Kangentic MCP
 
-| Mode | Kimi behavior |
-|------|---------------|
-| `plan` | Read-only (`--plan`) |
-| `default` | Interactive confirmation per action (no flag) |
-| `bypassPermissions` | Auto-approve all (`--yolo`) |
+The CLI has no MCP flag or environment variable for one session. It reads `$KIMI_CODE_HOME/mcp.json` and the project's `.kimi-code/mcp.json`, and the docs name no `${VAR}` expansion. So `kangenticMcp` is `'shared-folder'`: the session's literal URL goes into `<cwd>/.kimi-code/mcp.json`, merged with the user's servers. Every session in a folder shares the entry, so the last to start decides the URL. A file Kangentic creates is git-excluded, and the entry comes out when the folder's last session releases it (`SharedFolderHolds`). A file Kangentic cannot parse is left alone and is the `kangenticMcpBlockedReason`.
+
+The token never reaches the file. It is `KANGENTIC_MCP_TOKEN` in the session's environment (`buildEnv`). The HTTP entry names that variable in `bearerTokenEnvVar` (`docs/en/customization/mcp.md`), so the CLI sends `Authorization: Bearer <token>`, which our server accepts beside `X-Kangentic-Token`. The WSL bridge's stdio entry has no `env`, because a local stdio server inherits the CLI's environment (`mergeStdioEnv` in `mcpCore/client-stdio.ts`). A `kimi` you start yourself in the folder while a Kangentic session holds the file has no such variable, so that one server does not connect (`client-remote.ts` throws for a missing variable).
+
+A `'shared-folder'` adapter cannot be a Workflow agent, and neither can one whose fresh prompt is typed (`canBeWorkflowAgent`). It cannot declare `backgroundCommands` either, because a mark through a shared URL could land on another session ([Background commands](background-commands.md#background-commands)). So a background `Bash` reads as a plain tool end, its turn ends with no hold, and its task is not offered `kangentic_mark_background_service`.
+
+## Models and effort
+
+`--model` takes an alias, a key in `config.toml`'s `[models]`. No command lists models, so `discoverCapabilities` reads the aliases from the user's config, with `display_name` and the `.overrides` table, after `--help` confirms the flag. Effort levels are the union of every model's `support_efforts`. Kangentic keeps no model list of its own.
+
+A live model swap has nothing to type: `/model <alias>` opens the picker rather than switching.
 
 ## Authentication
 
-`KimiAdapter.probeAuth(cliPath)` ignores the detected path and checks for `~/.kimi/credentials/` (the OAuth state directory written by `kimi login`). The probe is invoked by the `IPC.AGENT_LIST` handler after `detect()` reports `found: true` and surfaces a tristate field `authenticated: true | false | null` on `AgentDetectionInfo`:
+`probeAuth` answers `true` for a `credentials/*.json` from `/login`, or a model configured in `config.toml`, and `false` for neither. It reads a WSL install in its distro's home. A row of its `AGENT_LIST` result drives the amber "Copy `kimi login`" hint in the welcome grid and Settings > Agent.
 
-- `true` - credentials directory exists and is non-empty
-- `false` - directory missing or empty (user has not run `kimi login`)
-- `null` - I/O error or probe not implemented
+## Headless runs
 
-The renderer surfaces the `false` state two ways: an amber `DetectionCard` variant on the welcome-screen agent grid (with a "Copy `kimi login`" clipboard button), and an amber pill plus inline hint in Settings -> Agent. Refreshing the agent list (welcome-screen Refresh, Settings re-detect button, or reopening the settings panel) re-runs the probe and clears the warning once the user has logged in.
+- `summarize` runs `kimi [--model] --output-format stream-json -p <prompt>` in the answer home and reads the last `assistant` line. The prompt can only be an argument, which a title fits, and it goes on one line because an npm install runs through a `.cmd` shim. `-p` forces Never Ask, and rejects `--plan`, so the run stays out of the project, though a task's text, which can come from an imported issue, still reaches a run that asks for no approval. It saves a session in the answer home, and the CLI has no delete command.
+- `answerFromContext` is not implemented. An answer prompt runs to about 50k characters, past a Windows command line, and `-p` reads no stdin and has no read-only mode.
 
-Filesystem check chosen over a `kimi info` subprocess: the probe runs on every `AGENT_LIST` call alongside the existing `--version` probes, and a single sub-millisecond `fs.readdirSync` (with ENOENT mapped to `false`) keeps the refresh latency unchanged. An expired-token false-positive (credentials present but not valid) still falls through to today's behavior - the spawned session prints "LLM not set" and exits.
+## WSL
 
-`probeAuth?()` is an optional method on the `AgentAdapter` interface; Kimi and Grok implement it today (Grok via `grok models` output, see [Grok Build](grok-build.md#grok-build)). Other adapters return `undefined` for the `authenticated` field, which the renderer treats as "not applicable".
+`supportsWslCli` is set: Kimi Code ships Linux glibc builds. The command head is the distro's path, the MCP entry is the WSL bridge on NAT networking, and the home, index and credentials are read through the distro's share. An index `workDir` is compared with the path the distro sees.
 
-## Limitations
+## What needs a live probe
 
-- No hook injection (Kimi reads `~/.kimi/config.toml` `hooks = []` but has no per-project settings file equivalent we can write to)
-- No trust dialog (`ensureTrust` is a no-op)
-- We do not initiate the OAuth flow on the user's behalf - see Authentication above for how the unauthenticated state is detected and surfaced
-- No WSL support. A Kimi path into a WSL distro shows "No WSL support" (#286). This adapter is built and measured on the `kimi-cli` 1.x layout above (`~/.kimi`). Kimi Code CLI, its successor, also installs as `kimi` but is a different CLI: its data root is `$KIMI_CODE_HOME` or `~/.kimi-code`, with sessions under `wd_<slug>_<sha256 prefix>` folders and `agents/main/wire.jsonl`. It has no `-w` flag and no `--mcp-config-file` (MCP comes only from `mcp.json` files). Its `--prompt` runs one prompt without the TUI, and `--session <id>` only resumes, so a caller cannot choose a new session's id. Support for a distro install waits on an adapter for that CLI, and a Kimi Code install on this machine does not work with this adapter either.
+Run these against a real install before trusting the adapter:
+
+- **The typed first prompt**, past the startup screens. A model upgrade prompt (`tui/controllers/model-migration.ts`) opens over an idle, empty editor when the default model has an upgrade, the source shows no variable that turns it off, and a typed Enter would answer it, so check what a first prompt does on such a model. The migration screen, shown when `~/.kimi` holds 1.x data, is off through `KIMI_SHARE_DIR`, a behavior of the source that no doc lists, so check that on a machine with a real `~/.kimi`.
+- Session id capture timing after the first message, and the welcome box and exit hint wording.
+- Whether the wire is append-only across resumes, and whether any session keeps its turns only as `context.append_message` records, as the CLI's compaction sample does. The transcript parsers read `turn.prompt` and loop events, not those.
+- The exit sequence (Esc, a pause, `/exit`). It ends in Enter, which must not answer an open dialog. In the source Esc rejects an approval dialog (`tui/components/dialogs/approval-panel.ts`), so the Enter reaches the editor, but check with `scripts/probe-agent-dialog-exit.js`, including a second approval that opens inside the pause.
+- `detectFirstOutput` and the PTY prompt regex. `transcript-cleanup.ts` has no real capture behind it.
+- Background task ids and payloads, should the MCP wiring ever become per-session, which is what `backgroundCommands` needs first.
+- Whether a relocated project's sessions resume. The folder name hashes the path, a resume from another directory fails, and the workspace registry was not traced, so `onProjectRelocated` is not implemented.
+- A `describeStartupFailure` recognizer for `Session "<id>" not found.`.
+- Probe-gated members the docs may support: `getSubmissionVerifier` (declared, returns null until a run shows when the wire flushes a submitted prompt), `pastedImageNativeExtensions`, `consoleCloseIsGraceful`, `hungTurn`, `supportsPlanAutoApproval`, `supportsReadOnlyLaunch`. `canEscalateOnVerificationFailure` and `answerCapabilities` are left out because they need a verifier and `answerFromContext`, which Kimi does not have.
+
+## Not supported by the CLI
+
+- A prompt on an interactive launch, and a caller-chosen session id.
+- Accept-edits and deny-unless-allowed modes.
+- Per-invocation hooks. Hooks live in the user's `config.toml` or an installed plugin, which Kangentic does not edit, so `removeHooks` only strips the MCP entry. Activity comes from the wire instead.
+- Per-invocation MCP.
+- A live model or effort swap.
+- Cost and rate limits. `/usage` shows quota on screen only.
+- A session delete command, a run that saves no session, and a read-only headless run.
+
+Startup recovery types nothing, so a session whose conversation was deleted opens idle there, with no recap.

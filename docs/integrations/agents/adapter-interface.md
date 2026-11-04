@@ -59,7 +59,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned; a resume brings `session-state/<id>` into its new config home) | `typed` | Partial (events.jsonl; the status line's input is undocumented, so its parser returns null) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | No (no documented pre-trust; `--trust-folder` is prompt-mode only and conflicts with `--session-id`) |
 | Aider | `aider-adapter.ts` | `aider` | `--chat-history-file <cwd>/.aider.chat.history.<id>.md --restore-chat-history` (caller-owned file name) | `command-line` | No (usage from the session's chat history markdown) | No | Not possible (CLI has no MCP client) | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | `--mcp <sessionDir>/mcp.json` | No |
-| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | `command-line` | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
+| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <id>` (captured) | `typed` | Yes (`wire.jsonl`) | No | `<cwd>/.kimi-code/mcp.json` | No (`KIMI_CODE_TRUST_WORKSPACE=1` per process) |
 | Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | Partial (events.jsonl via a per-session `--settings` file; turn ends stay on the PTY tracker) | Per-session `--settings` (hooks only) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
 | OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | `typed` | Yes (plugin JSONL via `tool.execute.before/after`, `chat.message`, `experimental.session.compacting` and `event` `session.*` (child sessions as subagents), `question.asked` and `permission.asked`; the plugin also writes `status.json`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
 | Ollama | `ollama-adapter.ts` | `ollama` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
@@ -73,7 +73,9 @@ A `typed` agent's CLI takes a prompt on a new session, but its help and docs nev
 runs on a resumed one, so Kangentic keeps the message off the command and types it in once the
 agent is ready. A `no-resume` agent has no session id to resume by, so every start is fresh.
 `tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's real resume command with a
-marked prompt and holds the value to what the builder does.
+marked prompt and holds the value to what the builder does. It checks the optional
+`freshPromptDelivery` the same way: every agent takes a fresh prompt on its command line except
+Kimi Code, whose prompt is always typed.
 
 ### First prompt typed (`firstPromptMayBeTyped`)
 
@@ -107,7 +109,8 @@ no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 1
 | Verdict | Agents | Why |
 |---|---|---|
 | Declared | Claude | Seen in a preview on 2.1.316: the promptless launch enters the alternate screen at its input box and the pasted task prompt is the first message. An unapproved project MCP server's approval screen comes first and outside the alternate screen, so the spawn relaunches that agent as before |
-| Not declared | Gemini, Droid, Kimi | The promptless launch never entered the alternate screen, so the spawn could never adopt it. Gemini drew its folder trust and Droid its sign-in on the main screen |
+| Not declared | Gemini, Droid | The promptless launch never entered the alternate screen, so the spawn could never adopt it. Gemini drew its folder trust and Droid its sign-in on the main screen |
+| Not declared yet | Kimi | Its first prompt is typed on every launch (`freshPromptDelivery`), but Kimi Code 2.x has not been run live to see where it draws its input box |
 | Not declared | Codex, OpenCode, Copilot, Grok, Antigravity, Qwen | Each entered the alternate screen within 2.3 s and drew its boot screens inside it: Codex's sign-in, OpenCode's update offer, a selection menu over Copilot's input box, Grok's data-sharing opt-in, Antigravity's sign-in and folder trust. Qwen showed none in the run, but draws nothing before the alternate screen, so its recorded update and MCP approval screens are inside it too. Being in the alternate screen does not mean the input box is up |
 | Not declared yet | Goose | Opens `goose session` with no prompt; not installed where the others were measured |
 | Not declared | Aider | `--message` sends one message and exits; without it Aider is an interactive chat, a different run |
@@ -118,8 +121,8 @@ no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 1
 `tests/unit/first-prompt-typed-parity.test.ts` holds every registered adapter to this table and
 builds each declared adapter's fresh command with no prompt.
 
-The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
-Qwen, Gemini and Oz are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each
+The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, OpenCode, Grok, Cursor,
+Qwen, Gemini and Oz are `'per-session'`; Droid, Antigravity and Kimi are `'shared-folder'`, because each
 writes the session's literal URL into a file in the working directory. Gemini moved to a fixed
 `settings.json` entry whose URL and token are `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}`
 (Grok's and Cursor's pattern) in task #859, measured on 0.64.0: an MCP request arrived on the path
@@ -168,7 +171,7 @@ below for what does.
 | Cursor CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 | Aider | `data.length > 0` | Aider writes output immediately (no TUI alternate screen) |
 | Oz CLI (Warp) | `data.length > 0` | `oz agent run` streams output, no alternate screen |
-| Kimi Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when its alternate-screen buffer takes over (verified empirically with kimi v1.37.0) |
+| Kimi Code | `\x1b[?25l` (cursor hide) | Full-screen TUI hides the cursor when it starts drawing (assumed; not yet checked against a real 2.x run) |
 | Droid | `\x1b[?25l` (cursor hide) | Ink-based TUI, same pattern as Claude (verified empirically) |
 | OpenCode | `\x1b[?25l` (cursor hide) | Full-screen TUI initializes alternate screen buffer with cursor hide on first frame |
 | Ollama | `data.length > 0` | Ollama streams output immediately (no alternate screen buffer) |
@@ -240,7 +243,7 @@ An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed 
 | GitHub Copilot CLI | `Ctrl+C`, `/exit` | Same TUI exit pattern as Claude |
 | Aider | `Ctrl+C`, `/exit` | `/exit` lets Aider flush its chat history file before termination |
 | Oz CLI (Warp) | `Ctrl+C` | No session resume mechanism |
-| Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
+| Kimi Code | `Esc`, 400 ms, `/exit` | Esc stops a running turn, and the docs' `/exit` quits. It skips Ctrl+C, whose first press on an idle prompt only arms a status-bar exit that any other key cancels. Built from the docs, not probed |
 | Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
 | OpenCode | `Ctrl+C` | Verified 2026-04-28: PTY exits in ~1s. `/exit` and `/quit` are not recognized slash commands. |
 | Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
@@ -268,7 +271,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | GitHub Copilot CLI | `<config home>/session-state/<sessionId>/events.jsonl` | The reported path, then the newest log in the project's Kangentic config homes (`.kangentic/sessions/*/copilot-config/`), then the user's Copilot home (`session-state.ts`). From GitHub's config directory reference, not yet run against a real CLI. `locateResumeHistoryFile` answers null, so a renamed worktree's saved cwd is always rewritten |
 | Aider | `<cwd>/.aider.chat.history.<agentSessionId>.md` | Direct path in the working directory, returned only when the file exists. The session's own file, named by the caller-owned id Kangentic hands Aider through `--chat-history-file`; a session with no id (a Command Terminal) keeps Aider's shared `<cwd>/.aider.chat.history.md` |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
-| Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
+| Kimi Code | `~/.kimi-code/sessions/<workspaceId>/<sessionId>/agents/main/wire.jsonl` (or under `$KIMI_CODE_HOME`) | `session_index.jsonl` names each session's folder, so the id finds it and no folder name is computed |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table, or `session_v2` for OpenCode 2) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
 | Droid | `~/.factory/sessions/<cwd-slug>/<sessionId>.jsonl` | Direct path construction, polled up to 10 times at 500 ms because Droid creates the file after the spawn returns |
 | Ollama | N/A | Returns null (no CLI-accessible session history) |

@@ -92,8 +92,7 @@ jobs:
           config: |
             paths-ignore:
               # Test code. Mock session ids and per-run suffixes from
-              # Math.random(), and MD5 in tests/e2e/helpers.ts, which has to
-              # reproduce the real Kimi CLI's session-directory naming.
+              # Math.random().
               - tests
               # Local dev and build scripts. Never packaged, and a flag like
               # measure-injection-flush.mjs's --pattern regex is

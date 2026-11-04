@@ -123,7 +123,7 @@ describe('Adapter summarize() invocation shapes', () => {
   type Summarizer = { summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null }) => Promise<string> };
   const summarizers: Array<[string, () => Promise<Summarizer>, unknown[]]> = [
     ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1', '-c', 'model_reasoning_effort=low']],
-    ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--print', '--quiet', '--model', 'm1']],
+    ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--model', 'm1', '--output-format', 'stream-json', '-p']],
     ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--chat-recording=false', '--model', 'm1']],
     ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1', '-r', 'low']],
     ['cursor', async () => new (await import('../../src/main/agent/adapters/cursor/cursor-adapter')).CursorAdapter(), ['--trust', '--output-format', 'text', '--model', 'm1', '-p']],
@@ -137,13 +137,34 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.cwd).toBe('/answer-home');
   });
 
-  it('Kimi uses --print --quiet via stdin', async () => {
+  it('Kimi Code takes its prompt as the argument of -p, which reads no stdin', async () => {
     const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
     const adapter = new KimiAdapter();
     await adapter.summarize('add docstrings', '/usr/bin/kimi', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--print', '--quiet']);
-    expect(call.promptVia).toBeUndefined();
+    expect(call.args).toEqual(['--output-format', 'stream-json', '-p']);
+    expect(call.promptVia).toBe('arg');
+  });
+
+  // cmd.exe ends a command at the first line break, and the npm shim for the CLI runs through it.
+  it('Kimi Code sends a multi-line description as one line, since its prompt rides the command line', async () => {
+    const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
+    await new KimiAdapter().summarize('first line\nsecond line\r\n   third line', '/usr/bin/kimi', '/cwd');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    expect(call.prompt).not.toMatch(/[\r\n]/);
+    expect(call.prompt).toContain('first line second line third line');
+  });
+
+  it('Kimi Code reads the title from the last assistant line of its stream-json run', async () => {
+    const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
+    await new KimiAdapter().summarize('add docstrings', '/usr/bin/kimi', '/cwd');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    const stdout = [
+      JSON.stringify({ role: 'assistant', content: 'draft title' }),
+      JSON.stringify({ role: 'tool', content: 'tool output' }),
+      JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'Add docstrings' }] }),
+    ].join('\n');
+    expect(call.extractRaw(stdout)).toBe('Add docstrings');
   });
 
   it('Codex uses exec --skip-git-repo-check, read-only and kept out of its sessions, via stdin', async () => {

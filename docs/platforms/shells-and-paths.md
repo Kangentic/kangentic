@@ -242,9 +242,9 @@ adapter that declares `supportsWslCli`; for any other the row shows "No WSL supp
 | [OpenCode](../integrations/agents/opencode.md) | Yes | No |
 | [Oz CLI](../integrations/agents/oz-cli.md) | Yes | No |
 | [Qwen Code](../integrations/agents/qwen-code.md) | Yes | No |
-| [Kimi Code](../integrations/agents/kimi-code.md) | No | No |
+| [Kimi Code](../integrations/agents/kimi-code.md) | Yes | No |
 
-Each "No" in the last column is an adapter built from its CLI's own docs and pinned by unit tests: `tests/unit/wsl-adapter-parity.test.ts` builds every distro-capable adapter's command for a NAT distro and fails on a drive or share path, the token in argv, or a missing transport folder, and `tests/unit/wsl-adapter-headless-runs.test.ts` fails a headless run that starts anything but `wsl.exe` for a distro path. Each agent's doc has a WSL section with what was taken from docs. Kimi Code has no WSL support: the adapter is built on `kimi-cli` 1.x, and its successor, which also installs as `kimi`, is a different CLI (see [Kimi Code](../integrations/agents/kimi-code.md)).
+Each "No" in the last column is an adapter built from its CLI's own docs and pinned by unit tests: `tests/unit/wsl-adapter-parity.test.ts` builds every distro-capable adapter's command for a NAT distro and fails on a drive or share path, the token in argv, or a missing transport folder, and `tests/unit/wsl-adapter-headless-runs.test.ts` fails a headless run that starts anything but `wsl.exe` for a distro path. Each agent's doc has a WSL section with what was taken from docs.
 
 ## Environment Stripping and Defaults
 

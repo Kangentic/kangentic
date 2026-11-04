@@ -17,6 +17,16 @@ import { quoteArgKeepsNewlines } from '../../shared/paths';
 export const RESUME_PROMPT_COMMAND_LINE_CAP = 6_000;
 
 /**
+ * Everything a spawn left for its caller to type in, for a caller that sends it
+ * as one delivery: the opening first, then the message it left out. Null when
+ * the spawn's command carried it all.
+ */
+export function textLeftToType(outcome: { typedOpening?: string | null; unsentPrompt: string | null } | undefined): string | null {
+  const pieces = [outcome?.typedOpening, outcome?.unsentPrompt].filter((piece): piece is string => Boolean(piece?.trim()));
+  return pieces.length > 0 ? pieces.join('\n\n') : null;
+}
+
+/**
  * Whether a resume's prompt can ride its command line, or has to be typed in
  * once the agent is ready.
  *
