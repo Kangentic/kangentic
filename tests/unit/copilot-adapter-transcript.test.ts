@@ -17,7 +17,22 @@ vi.mock('node:os', async () => {
   return { ...actual, default: { ...actual, homedir: () => tmpHome }, homedir: () => tmpHome };
 });
 
+// The parser itself never throws on a bad file (it reads through catch-all
+// helpers), so the adapter's catch is reached only by making it throw here.
+const parserFailure = vi.hoisted(() => ({ error: null as Error | null }));
+vi.mock('../../src/main/agent/adapters/copilot/transcript-parser', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/copilot/transcript-parser')>();
+  return {
+    ...actual,
+    parseCopilotTranscript: (...args: Parameters<typeof actual.parseCopilotTranscript>) => {
+      if (parserFailure.error) return Promise.reject(parserFailure.error);
+      return actual.parseCopilotTranscript(...args);
+    },
+  };
+});
+
 import { CopilotAdapter } from '../../src/main/agent/adapters/copilot';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 
 const SESSION_ID = '11111111-2222-4333-8444-555555555555';
 const TIMESTAMP = '2026-10-30T10:00:00.000Z';
@@ -79,6 +94,78 @@ describe('CopilotAdapter transcript wiring', () => {
     expect(parsed.sourcePath).toBe(eventsPath);
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.entries[0]).toMatchObject({ kind: 'user', uuid: 'u-1', text: 'hello' });
+  });
+
+  it('parseTranscript reads the path the agent reported, over a located log', async () => {
+    kangenticLog([{ type: 'user.message', id: 'u-located', timestamp: TIMESTAMP, data: { content: 'located' } }]);
+    const reportedPath = writeJsonl(path.join(tmpDir, 'reported', 'events.jsonl'), [
+      { type: 'user.message', id: 'u-reported', timestamp: TIMESTAMP, data: { content: 'reported' } },
+    ]);
+
+    const parsed = await adapter.parseTranscript(SESSION_ID, projectRoot, null, reportedPath);
+
+    expect(parsed.sourcePath).toBe(reportedPath);
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0]).toMatchObject({ uuid: 'u-reported', text: 'reported' });
+  });
+
+  it('parseTranscript answers no entries but keeps the source path, and warns, when the parser throws', async () => {
+    const eventsPath = kangenticLog([{ type: 'user.message', id: 'u-1', timestamp: TIMESTAMP, data: { content: 'hello' } }]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    parserFailure.error = new Error('unreadable log');
+    try {
+      expect(await adapter.parseTranscript(SESSION_ID, projectRoot)).toEqual({ entries: [], sourcePath: eventsPath });
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      parserFailure.error = null;
+      warn.mockRestore();
+    }
+  });
+
+  it('readTranscriptPage returns the located log\'s entries', async () => {
+    kangenticLog([
+      { type: 'user.message', id: 'u-1', timestamp: TIMESTAMP, data: { content: 'first' } },
+      { type: 'user.message', id: 'u-2', timestamp: TIMESTAMP, data: { content: 'second' } },
+    ]);
+
+    const result = await adapter.readTranscriptPage(SESSION_ID, projectRoot, { direction: 'after', cursor: 'j:0', maxBytes: 64 * 1024 });
+
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.page.entries.map((entry) => entry.uuid)).toEqual(['u-1', 'u-2']);
+  });
+
+  // The place is where the CLI runs: a log in a WSL distro's Copilot home is
+  // found only when the adapter hands it on, since the host's home holds none.
+  describe('with a Copilot in a WSL distro', () => {
+    function distroPlace(): CliPlace {
+      const distroHome = path.join(tmpDir, 'distro-home');
+      writeJsonl(path.join(distroHome, '.copilot', 'session-state', SESSION_ID, 'events.jsonl'), [
+        { type: 'user.message', id: 'u-distro', timestamp: TIMESTAMP, data: { content: 'in the distro' } },
+      ]);
+      return {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: '/home/dev/.local/bin/copilot',
+        facts: {
+          distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: distroHome, uncRoot: '\\\\wsl.localhost\\Ubuntu',
+          interactivePath: '/usr/bin', env: {}, networkingMode: 'nat',
+        },
+      };
+    }
+
+    it('parseTranscript looks in the distro\'s home', async () => {
+      const parsed = await adapter.parseTranscript(SESSION_ID, projectRoot, distroPlace());
+      expect(parsed.entries.map((entry) => entry.uuid)).toEqual(['u-distro']);
+      expect(await adapter.parseTranscript(SESSION_ID, projectRoot)).toEqual({ entries: [], sourcePath: null });
+    });
+
+    it('readTranscriptPage looks in the distro\'s home', async () => {
+      const request = { direction: 'after' as const, cursor: 'j:0', maxBytes: 64 * 1024 };
+      const result = await adapter.readTranscriptPage(SESSION_ID, projectRoot, request, distroPlace());
+      expect(result.status).toBe('ok');
+      expect(await adapter.readTranscriptPage(SESSION_ID, projectRoot, request)).toEqual({ status: 'unavailable', reason: 'file_missing' });
+    });
   });
 
   it('readTranscriptPage reports the file missing when no log is found', async () => {

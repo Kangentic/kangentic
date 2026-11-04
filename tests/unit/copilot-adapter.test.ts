@@ -165,19 +165,24 @@ describe('CopilotAdapter - configuredModelFromCommand', () => {
 
   // Read back from the builder's own output, in every shell it quotes for, so
   // the reader and the builder cannot drift apart.
-  for (const shell of ['bash', 'pwsh', 'cmd', undefined]) {
-    it(`reads the --model the builder wrote (${shell ?? 'platform default'})`, () => {
-      const command = adapter.buildCommand(makeOptions({
-        shell,
-        model: 'claude-sonnet-4.5',
-        prompt: 'Rename the --model gpt-4.1 flag in "docs"',
-      }));
-      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'claude-sonnet-4.5', displayName: 'Claude Sonnet 4.5' });
-    });
+  // fish escapes a quote inside single quotes as \' and nushell inside double
+  // quotes as \", which a prompt holding both would turn into an open quote
+  // if the reader tokenized the prompt.
+  for (const shell of ['bash', 'pwsh', 'cmd', 'fish', 'nu', undefined]) {
+    for (const nonInteractive of [false, true]) {
+      it(`reads the --model the builder wrote (${shell ?? 'platform default'}, ${nonInteractive ? '-p' : '-i'})`, () => {
+        const command = adapter.buildCommand(makeOptions({
+          shell,
+          nonInteractive,
+          model: 'claude-sonnet-4.5',
+          prompt: 'Rename the --model gpt-4.1 flag in "docs" so it\'s clear',
+        }));
+        expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'claude-sonnet-4.5', displayName: 'Claude Sonnet 4.5' });
+      });
+    }
   }
 
   it('never takes a --model inside the prompt for the flag', () => {
-    // In -p mode the builder writes the prompt before --model.
     const withoutModel = adapter.buildCommand(makeOptions({ shell: 'bash', nonInteractive: true, prompt: 'use --model gpt-4.1 here' }));
     expect(adapter.configuredModelFromCommand(withoutModel)).toBeNull();
     const withModel = adapter.buildCommand(makeOptions({ shell: 'bash', nonInteractive: true, prompt: "it's --model x", model: 'gpt-5-mini' }));

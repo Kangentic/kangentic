@@ -15,6 +15,7 @@ import type { CopilotCommandOptions } from '../../src/main/agent/adapters/copilo
 import { copilotModelFlagValue } from '../../src/main/agent/adapters/copilot/command-builder';
 import { COPILOT_BACKGROUND_COMMAND_SPEC, writeSessionConfig } from '../../src/main/agent/adapters/copilot/hook-manager';
 import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
+import type { CliTarget } from '../../src/main/agent/shared/cli-target';
 
 // Mock hook-manager to prevent real file I/O from writeSessionConfig.
 // Tests that want the --config-dir flag must supply eventsOutputPath,
@@ -58,8 +59,20 @@ describe('copilotModelFlagValue', () => {
     expect(copilotModelFlagValue('copilot --model ""')).toBeNull();
   });
 
-  it('does not take a --model inside a POSIX single-quoted prompt for the flag', () => {
-    expect(copilotModelFlagValue("copilot -i 'it'\\''s --model x' --model real")).toBe('real');
+  it('reads a --model value the POSIX way quotes', () => {
+    expect(copilotModelFlagValue("copilot --model 'it'\\''s-model' -i x")).toBe("it's-model");
+  });
+
+  it('stops at the prompt, so nothing after -p or -i is read as a flag', () => {
+    expect(copilotModelFlagValue("copilot -i 'use --model x' --model late")).toBeNull();
+    expect(copilotModelFlagValue('copilot -p --model late')).toBeNull();
+  });
+
+  it('reads the --model before the prompt in -p mode', () => {
+    const command = buildCommand({ nonInteractive: true, shell: 'bash', model: 'gpt-5-mini', effort: 'high', prompt: 'go' });
+    expect(command.indexOf('--model')).toBeLessThan(command.indexOf(' -p '));
+    expect(command.indexOf('--reasoning-effort')).toBeLessThan(command.indexOf(' -p '));
+    expect(copilotModelFlagValue(command)).toBe('gpt-5-mini');
   });
 });
 
@@ -131,6 +144,47 @@ describe('CopilotCommandBuilder', () => {
       const calls = vi.mocked(writeSessionConfig).mock.calls;
       expect(calls[0][3]).toMatchObject({ assistedApprovals: true });
       expect(calls[1][3]).toMatchObject({ assistedApprovals: false });
+    });
+
+    it('hands capturePromptText to the session config only when asked', () => {
+      vi.mocked(writeSessionConfig).mockClear();
+      buildCommand({ capturePromptText: true, eventsOutputPath: path.join(os.tmpdir(), 'copilot-capture', 'events.jsonl') });
+      buildCommand({ eventsOutputPath: path.join(os.tmpdir(), 'copilot-no-capture', 'events.jsonl') });
+      const calls = vi.mocked(writeSessionConfig).mock.calls;
+      expect(calls[0][3]).toMatchObject({ capturePromptText: true });
+      expect(calls[1][3]).toMatchObject({ capturePromptText: false });
+    });
+
+    // A Copilot in a WSL distro builds its hook options apart from the host's;
+    // the session settings must ride both.
+    it('hands a WSL Copilot\'s session config the same settings beside its event command', () => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-wsl-settings-'));
+      try {
+        const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', 'record-1');
+        const cliTarget: CliTarget = {
+          kind: 'wsl',
+          distro: 'Ubuntu',
+          linuxCliPath: '/home/dev/.local/bin/copilot',
+          facts: {
+            distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: path.join(projectRoot, 'distro-home'), uncRoot: '\\\\wsl.localhost\\Ubuntu',
+            interactivePath: '/usr/bin', env: {}, networkingMode: 'nat',
+          },
+        };
+        vi.mocked(writeSessionConfig).mockClear();
+
+        buildCommand({
+          permissionMode: 'auto',
+          capturePromptText: true,
+          cliTarget,
+          eventsOutputPath: path.join(sessionDirectory, 'events.jsonl'),
+        });
+
+        const sessionOptions = vi.mocked(writeSessionConfig).mock.calls[0][3];
+        expect(sessionOptions).toMatchObject({ assistedApprovals: true, capturePromptText: true, place: cliTarget });
+        expect(typeof sessionOptions?.eventCommand).toBe('function');
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
 
     it('bypassPermissions maps to --yolo', () => {
@@ -387,8 +441,7 @@ describe('CopilotCommandBuilder', () => {
     });
 
     // Kangentic's own tools never wait on an approval (Claude's mcp__kangentic
-    // allow rule); they rode on --allow-all-tools before acceptEdits narrowed
-    // to write. A workflow agent that waits on one stalls unattended.
+    // allow rule). A workflow agent that waits on one stalls unattended.
     it('approves Kangentic\'s own server outside the plan modes and YOLO', () => {
       const mcp = {
         eventsOutputPath: path.join(tmpDir, 'events.jsonl'),

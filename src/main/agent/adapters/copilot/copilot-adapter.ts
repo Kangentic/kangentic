@@ -7,7 +7,7 @@ import { CopilotCommandBuilder, KANGENTIC_MCP_SERVER_NAME, copilotModelFlagValue
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
 import { CopilotStreamParser, prettifyModelId } from './stream-parser';
-import { locateCopilotEventsFile } from './session-state';
+import { SESSION_CONFIG_DIR_NAME, locateCopilotEventsFile } from './session-state';
 import {
   copilotTranscriptToolCounts,
   copilotTranscriptUsage,
@@ -33,6 +33,14 @@ import { copilotHomeDir } from './copilot-home';
 import { cliPathForTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
+
+/** Where the transcript readers find a session's event log: a path, or the session to locate. */
+interface TranscriptSourceInput {
+  transcriptPath?: string | null;
+  agentSessionId?: string | null;
+  cwd?: string | null;
+  place?: CliPlace | null;
+}
 
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
@@ -127,7 +135,7 @@ export class CopilotAdapter implements AgentAdapter {
     // Track the session's config dir for cleanup. The session layer releases
     // with removeHooks(<cwd>, <the session's id>).
     if (options.eventsOutputPath && options.ptySessionId) {
-      const configDir = path.resolve(path.dirname(options.eventsOutputPath), 'copilot-config');
+      const configDir = path.resolve(path.dirname(options.eventsOutputPath), SESSION_CONFIG_DIR_NAME);
       this.sessionConfigDirs.set(options.ptySessionId, { folder: options.cwd, configDir });
     }
     return command;
@@ -290,7 +298,8 @@ export class CopilotAdapter implements AgentAdapter {
     if (!sourcePath) return { entries: [], sourcePath: null };
     try {
       return { entries: await parseCopilotTranscript(agentSessionId, sourcePath), sourcePath };
-    } catch {
+    } catch (error) {
+      console.warn(`[copilot] could not parse the event log of session ${agentSessionId.slice(0, 8)}:`, error);
       return { entries: [], sourcePath };
     }
   }
@@ -308,30 +317,21 @@ export class CopilotAdapter implements AgentAdapter {
   }
 
   /** Tokens from the log's last `session.shutdown` (transcript-parser.ts). */
-  async transcriptUsage(input: {
-    transcriptPath?: string;
-    agentSessionId?: string;
-    cwd?: string;
-    place?: CliPlace | null;
-  }): Promise<TranscriptUsage | null> {
+  async transcriptUsage(input: TranscriptSourceInput): Promise<TranscriptUsage | null> {
     const sourcePath = await this.transcriptSource(input);
     return sourcePath ? copilotTranscriptUsage(sourcePath) : null;
   }
 
   /** Distinct tool calls in the log (transcript-parser.ts). Cannot scope by time. */
-  async transcriptToolCounts(input: {
-    transcriptPath?: string;
-    agentSessionId?: string;
-    cwd?: string;
-    sinceMs?: number;
-    untilMs?: number;
-    place?: CliPlace | null;
+  async transcriptToolCounts(input: TranscriptSourceInput & {
+    sinceMs?: number | null;
+    untilMs?: number | null;
   }): Promise<TranscriptToolCounts | null> {
     const sourcePath = await this.transcriptSource(input);
     return sourcePath ? copilotTranscriptToolCounts(sourcePath) : null;
   }
 
-  private async transcriptSource(input: { transcriptPath?: string; agentSessionId?: string; cwd?: string; place?: CliPlace | null }): Promise<string | null> {
+  private async transcriptSource(input: TranscriptSourceInput): Promise<string | null> {
     if (input.transcriptPath) return input.transcriptPath;
     if (!input.agentSessionId || !input.cwd) return null;
     return locateCopilotEventsFile(input.agentSessionId, input.cwd, input.place);

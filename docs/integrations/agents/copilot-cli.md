@@ -115,7 +115,7 @@ The rows from `postToolUseFailure` through `sessionEnd` (except `agentStop`) and
 - `transcriptToolCounts` counts distinct `tool.execution_start` ids per tool, a subagent's included. It cannot scope by time.
 - `transcriptUsage` sums the last `session.shutdown`'s `modelMetrics` (`usage.inputTokens`, `usage.outputTokens`), so it answers only once a run has ended. `session.usage_checkpoint` exists "to reconstruct accounting when a session is resumed", which reads as the shutdown totals carrying across resumes, but that is not checked.
 
-`configuredModelFromCommand` reads the `--model` argument by argument, so a prompt that mentions `--model` is never taken for it, and labels it with the stream parser's `prettifyModelId`, as `modelDisplayName` does.
+`configuredModelFromCommand` reads the `--model` argument by argument and stops at `-p` or `-i`. The builder writes every flag before the prompt in both modes, so a prompt that mentions `--model`, or holds a quote fish or nushell escapes, is never read. It labels the id with the stream parser's `prettifyModelId`, as `modelDisplayName` does.
 
 ### Questions and approvals
 
@@ -136,7 +136,7 @@ Copilot's tool hooks carry no tool id, so the engine's sibling rule (a parallel 
 These were built from GitHub's published docs and the Copilot SDK's reference, with no Copilot CLI to run them against. Each needs a check on a real session before it is trusted:
 
 - the resume seeding of `session-state/<id>/` ([A resume brings its session over](#a-resume-brings-its-session-over));
-- the transcript, tool counts and usage read from `events.jsonl`, whose test fixture (`tests/fixtures/copilot-events/doc-shaped-events.jsonl`) is shaped from the docs, not captured. The fields it reads match local logs of Copilot 1.0.24 through 1.0.98 (envelope `id`, `timestamp` and `type`; `user.message` and `assistant.message` `content`; `toolRequests[]`; `tool.execution_complete` `result.content` and `error.message`; `session.shutdown` `modelMetrics[*].usage`), but none of those logs held a `session.compaction_complete` or `session.resume`, and none is committed as a fixture yet;
+- the transcript, tool counts and usage read from `events.jsonl`. The fields it reads match local logs of Copilot 1.0.24 through 1.0.98 (envelope `id`, `timestamp` and `type`; `user.message` and `assistant.message` `content`; `toolRequests[]`; `tool.execution_complete` `result.content` and `error.message`; `session.shutdown` `modelMetrics[*].usage`), and two of those 1.0.88 logs are committed, sanitized, as `tests/fixtures/copilot-events/copilot-1.0.88-tool-success-events.jsonl` and `copilot-1.0.88-tool-failure-events.jsonl`. None held a `session.compaction_complete` or `session.resume`, so those two events are pinned only by `doc-shaped-events.jsonl`, which is shaped from the docs;
 - the `postToolUseFailure`, `userPromptSubmitted`, `sessionStart`, `sessionEnd`, `subagentStart` and `subagentStop` hooks and the tool hooks' `agentId`;
 - `acceptEdits` as `--allow-tool=write` and `auto` as assisted permissions;
 - the `workspace.yaml` rewrite in Kangentic's own config homes.
