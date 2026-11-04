@@ -53,8 +53,9 @@ msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, other {도구 #개 실행 중}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
-msgstr ""
+msgstr "{hostName}에 연결할 수 없습니다. 해당 호스트의 에이전트는 계속 실행됩니다."
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -370,8 +371,9 @@ msgid "Paused"
 msgstr "일시 중지됨"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "대기 중 {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -379,16 +381,19 @@ msgid "Queued..."
 msgstr "대기 중..."
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect"
-msgstr ""
+msgstr "다시 연결"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect to {hostName}"
-msgstr ""
+msgstr "{hostName}에 다시 연결"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnecting to {hostName}. Its agents keep running."
-msgstr ""
+msgstr "{hostName}에 다시 연결하는 중입니다. 해당 호스트의 에이전트는 계속 실행됩니다."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy
@@ -569,12 +574,14 @@ msgid "View conversation"
 msgstr "대화 보기"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "사용 가능한 에이전트 슬롯을 기다리는 중입니다."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "{columnName}의 슬롯을 기다리는 중입니다."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

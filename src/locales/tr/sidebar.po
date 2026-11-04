@@ -38,8 +38,9 @@ msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} ot
 msgstr "{groupProjectCount, plural, one {İçindeki # proje gruptan çıkarılacak.} other {İçindeki # proje gruptan çıkarılacak.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "{hostName}: {stateLabel}"
-msgstr ""
+msgstr "{hostName}: {stateLabel}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
@@ -242,8 +243,9 @@ msgid "Show sidebar"
 msgstr "Kenar çubuğunu göster"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "Durduruldu"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

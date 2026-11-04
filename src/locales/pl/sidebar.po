@@ -38,8 +38,9 @@ msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} ot
 msgstr "{groupProjectCount, plural, one {Jej # projekt przestanie należeć do grupy.} few {Jej # projekty przestaną należeć do grupy.} many {Jej # projektów przestanie należeć do grupy.} other {Jej # projektu przestanie należeć do grupy.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "{hostName}: {stateLabel}"
-msgstr ""
+msgstr "{hostName}: {stateLabel}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
@@ -242,8 +243,9 @@ msgid "Show sidebar"
 msgstr "Pokaż pasek boczny"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "Zatrzymany"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

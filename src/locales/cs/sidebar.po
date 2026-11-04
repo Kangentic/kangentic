@@ -38,8 +38,9 @@ msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} ot
 msgstr "{groupProjectCount, plural, one {Její # projekt zůstane bez skupiny.} few {Její # projekty zůstanou bez skupiny.} many {Její # projektu zůstane bez skupiny.} other {Jejích # projektů zůstane bez skupiny.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "{hostName}: {stateLabel}"
-msgstr ""
+msgstr "{hostName}: {stateLabel}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
@@ -242,8 +243,9 @@ msgid "Show sidebar"
 msgstr "Zobrazit postranní panel"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "Zastaveno"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

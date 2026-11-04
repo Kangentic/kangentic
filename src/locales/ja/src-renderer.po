@@ -159,20 +159,24 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "「{taskTitle}」: 「{automationName}」は {columnName} で失敗しました。"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": {detail}"
-msgstr ""
+msgstr "「{taskTitle}」: {detail}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": exited with code {exitCode}."
-msgstr ""
+msgstr "「{taskTitle}」: コード {exitCode} で終了しました。"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{minutes, plural, other {「{taskTitle}」: # 分後にタイムアウトしました。}}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
-msgstr ""
+msgstr "{seconds, plural, other {「{taskTitle}」: # 秒後にタイムアウトしました。}}"
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -1360,8 +1364,9 @@ msgid "Other work uses it too. Stopping it can break that work."
 msgstr "他の作業でも使用されています。停止するとその作業に影響する可能性があります。"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Part of it runs outside this task's folders. Stopping it stops that too."
-msgstr ""
+msgstr "一部がこのタスクのフォルダー外で実行されています。停止するとその部分も停止します。"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1655,8 +1660,9 @@ msgid "Still running: {tasks}."
 msgstr "実行中: {tasks}。"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Stop script failed"
-msgstr ""
+msgstr "停止スクリプトが失敗しました"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

@@ -459,20 +459,24 @@ msgid "Give up after"
 msgstr "Abandonner après"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Accéder au terminal suivant en cours d'exécution (agent ou terminal de commandes) dans ce projet."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Accéder au terminal suivant en cours d'exécution (agent ou terminal de commandes), en changeant de projet s'il se trouve dans un autre."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Accéder au terminal précédent en cours d'exécution (agent ou terminal de commandes) dans ce projet."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Accéder au terminal précédent en cours d'exécution (agent ou terminal de commandes), en changeant de projet s'il se trouve dans un autre."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -687,16 +691,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "Colonne suivante est le premier choix : la colonne suivante sur le parcours de la tâche, ou sur le tableau."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "Projet suivant"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "Terminal suivant dans n'importe quel projet"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "Terminal suivant dans ce projet"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -744,12 +751,14 @@ msgid "Notifies \"{title}\""
 msgstr "Notifie « {title} »"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "Vous notifie sur le bureau et sur votre téléphone."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "Vous avertit sur le bureau et sur votre téléphone. L'ouverture de la notification ouvre la tâche."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -863,12 +872,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Ouvrir la boîte de dialogue Nouvelle tâche sur le tableau."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "Ouvrir le projet suivant dans l'ordre de la barre latérale."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "Ouvrir le projet précédent dans l'ordre de la barre latérale."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -945,16 +956,19 @@ msgid "Previous column"
 msgstr "Colonne précédente"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "Projet précédent"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "Terminal précédent dans n'importe quel projet"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "Terminal précédent dans ce projet"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1145,8 +1159,9 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Affiche ou masque le panneau de description dans la boîte de dialogue des détails de la tâche."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr ""
+msgstr "Afficher ou masquer le volet du navigateur du terminal de commandes actif."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1391,8 +1406,9 @@ msgid "Toggle Command Terminal"
 msgstr "Afficher/masquer le terminal de commandes"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal Browser pane"
-msgstr ""
+msgstr "Afficher/masquer le volet Navigateur du terminal de commandes"
 
 #: src/shared/keybindings.ts
 #, fuzzy

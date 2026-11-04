@@ -53,8 +53,9 @@ msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# araç çalışıyor} other {# araç çalışıyor}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
-msgstr ""
+msgstr "{hostName} ana bilgisayarına erişilemiyor. Aracıları çalışmaya devam ediyor."
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -370,8 +371,9 @@ msgid "Paused"
 msgstr "Duraklatıldı"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "Sırada {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -379,16 +381,19 @@ msgid "Queued..."
 msgstr "Sırada..."
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect"
-msgstr ""
+msgstr "Yeniden bağlan"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect to {hostName}"
-msgstr ""
+msgstr "{hostName} ana bilgisayarına yeniden bağlan"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnecting to {hostName}. Its agents keep running."
-msgstr ""
+msgstr "{hostName} ana bilgisayarına yeniden bağlanılıyor. Aracıları çalışmaya devam ediyor."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy
@@ -569,12 +574,14 @@ msgid "View conversation"
 msgstr "Konuşmayı görüntüle"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "Boş bir aracı yuvası bekleniyor."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "{columnName} içinde bir yuva bekleniyor."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

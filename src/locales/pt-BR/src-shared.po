@@ -459,20 +459,24 @@ msgid "Give up after"
 msgstr "Desistir após"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Ir para o próximo terminal em execução de agente ou do Terminal de Comandos neste projeto."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Ir para o próximo terminal em execução de agente ou do Terminal de Comandos, trocando de projeto se ele estiver em outro."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Ir para o terminal anterior em execução de agente ou do Terminal de Comandos neste projeto."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Ir para o terminal anterior em execução de agente ou do Terminal de Comandos, trocando de projeto se ele estiver em outro."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -687,16 +691,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "Próxima coluna é a primeira opção: a próxima coluna na rota da tarefa ou no quadro."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "Próximo projeto"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "Próximo terminal em qualquer projeto"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "Próximo terminal neste projeto"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -744,12 +751,14 @@ msgid "Notifies \"{title}\""
 msgstr "Notifica \"{title}\""
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "Notifica você na área de trabalho e no celular."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "Envia uma notificação para o desktop e o seu celular. Ao abri-la, a tarefa é aberta."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -863,12 +872,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Abrir a caixa de diálogo Nova tarefa no quadro."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "Abrir o próximo projeto na ordem da barra lateral."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "Abrir o projeto anterior na ordem da barra lateral."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -945,16 +956,19 @@ msgid "Previous column"
 msgstr "Coluna anterior"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "Projeto anterior"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "Terminal anterior em qualquer projeto"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "Terminal anterior neste projeto"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1145,8 +1159,9 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Mostra ou oculta o painel de descrição na caixa de diálogo de detalhes da tarefa."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr ""
+msgstr "Mostrar ou ocultar o painel do navegador do Terminal de Comandos em foco."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1391,8 +1406,9 @@ msgid "Toggle Command Terminal"
 msgstr "Alternar Terminal de Comandos"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal Browser pane"
-msgstr ""
+msgstr "Alternar painel do navegador do Terminal de Comandos"
 
 #: src/shared/keybindings.ts
 #, fuzzy

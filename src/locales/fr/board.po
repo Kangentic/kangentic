@@ -53,8 +53,9 @@ msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# outil en cours d'exécution} many {# d'outils en cours d'exécution} other {# outils en cours d'exécution}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
-msgstr ""
+msgstr "{hostName} est injoignable. Ses agents continuent de s'exécuter."
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -370,8 +371,9 @@ msgid "Paused"
 msgstr "En pause"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "En file d'attente {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -379,16 +381,19 @@ msgid "Queued..."
 msgstr "En file d'attente..."
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect"
-msgstr ""
+msgstr "Reconnecter"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect to {hostName}"
-msgstr ""
+msgstr "Se reconnecter à {hostName}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnecting to {hostName}. Its agents keep running."
-msgstr ""
+msgstr "Reconnexion à {hostName}. Ses agents continuent de s'exécuter."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy
@@ -569,12 +574,14 @@ msgid "View conversation"
 msgstr "Afficher la conversation"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "En attente d'un emplacement d'agent libre."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "En attente d'un emplacement dans {columnName}."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

@@ -50,8 +50,9 @@ msgstr "(nezdařilo se: {deleteFailureCount})"
 #. placeholder {0}: probe.path
 #. placeholder {1}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "{0} does not exist on {1}."
-msgstr ""
+msgstr "{0} na hostiteli {1} neexistuje."
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
@@ -59,8 +60,9 @@ msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents pa
 msgstr "{agentCount, plural, one {Agent pozastaven kvůli uvolnění paměti} few {# agenti pozastaveni kvůli uvolnění paměti} many {# agenta pozastaveno kvůli uvolnění paměti} other {# agentů pozastaveno kvůli uvolnění paměti}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr ""
+msgstr "{agentCount, plural, one {Zůstane pozastaven, dokud ho neobnovíte. Úloha pracovního postupu se vrátí sama, jakmile se paměť uvolní.} few {Zůstanou pozastaveni, dokud je neobnovíte. Úlohy pracovního postupu se vrátí samy, jakmile se paměť uvolní.} many {Zůstane pozastaveno, dokud je neobnovíte. Úlohy pracovního postupu se vrátí samy, jakmile se paměť uvolní.} other {Zůstane pozastaveno, dokud je neobnovíte. Úlohy pracovního postupu se vrátí samy, jakmile se paměť uvolní.}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -223,8 +225,9 @@ msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, např. {sample}</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr ""
+msgstr "{maxConcurrent, plural, one {Běží {runningCount} z # agenta} few {Běží {runningCount} z # agentů} many {Běží {runningCount} z # agenta} other {Běží {runningCount} z # agentů}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -355,8 +358,9 @@ msgstr "Přidat projekt"
 
 #. placeholder {0}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "Add project on {0}"
-msgstr ""
+msgstr "Přidat projekt na hostiteli {0}"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
@@ -457,8 +461,9 @@ msgid "Already used on this column."
 msgstr "V tomto sloupci už použito."
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "An absolute path, or one starting with ~/"
-msgstr ""
+msgstr "Absolutní cesta nebo cesta začínající ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -689,8 +694,9 @@ msgid "Changes are open in their own window"
 msgstr "Změny jsou otevřené ve vlastním okně"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "Choose a folder on this machine"
-msgstr ""
+msgstr "Vybrat složku na tomto počítači"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -840,8 +846,9 @@ msgid "Columns"
 msgstr "Sloupce"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr ""
+msgstr "Sloupce sdílejí hlavní konverzaci úkolu, pokud tomuto nepřidělíte vlastní. Izolovaný sloupec začíná při každém vstupu novou konverzaci, což se hodí pro revizi kódu nebo jakýkoli průchod, který nemá převzít předchozí práci."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Command Terminal"
@@ -1112,8 +1119,9 @@ msgid "Couldn't switch branch"
 msgstr "Větev nelze přepnout"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
-msgstr ""
+msgstr "Započítává úkoly, jejichž agent pracuje nebo čeká na vás. Maximální počet souběžných relací v Nastavení platí i nadále."
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1465,8 +1473,9 @@ msgid "Flat list"
 msgstr "Plochý seznam"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "Folder on the host"
-msgstr ""
+msgstr "Složka na hostiteli"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
@@ -1725,8 +1734,9 @@ msgid "Main"
 msgstr "Hlavní"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
-msgstr ""
+msgstr "Hlavní pokračuje v konverzaci úkolu a Izolovaná při každém vstupu začíná novou."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2110,9 +2120,10 @@ msgid "On turn end"
 msgstr "Na konci tahu"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "One at a time"
-msgstr ""
+msgstr "Po jednom"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -2214,8 +2225,9 @@ msgid "Opens this part of the conversation"
 msgstr "Otevře tuto část konverzace"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Other tasks wait in this column and start in the order they arrived."
-msgstr ""
+msgstr "Ostatní úkoly čekají v tomto sloupci a spouštějí se v pořadí, v jakém dorazily."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2387,8 +2399,9 @@ msgid "Pull Request"
 msgstr "Pull request"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Queued"
-msgstr ""
+msgstr "Ve frontě"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2396,8 +2409,9 @@ msgid "Queued (click to pause)"
 msgstr "Ve frontě (kliknutím pozastavíte)"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Queued {position}/{total}"
-msgstr ""
+msgstr "Ve frontě {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2594,8 +2608,9 @@ msgid "Run in the project folder"
 msgstr "Spustit ve složce projektu"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Run one agent in this column at a time"
-msgstr ""
+msgstr "Spouštět v tomto sloupci vždy jen jednoho agenta"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
@@ -2882,8 +2897,9 @@ msgid "Start"
 msgstr "Spuštění"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start a new conversation on every entry."
-msgstr ""
+msgstr "Při každém vstupu začít novou konverzaci."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2946,8 +2962,9 @@ msgid "Stop {label}"
 msgstr "Zastavit {label}"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "Zastaveno"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
@@ -3035,8 +3052,9 @@ msgid "Task title"
 msgstr "Název úkolu"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr ""
+msgstr "Úlohy pracují přímo v této složce, každá bez vlastního pracovního stromu. Spouštějte v ní vždy jen jednoho agenta."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 #, fuzzy
@@ -3120,8 +3138,9 @@ msgid "This commit changed no files"
 msgstr "Tento commit nezměnil žádné soubory"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
 msgid "This computer"
-msgstr ""
+msgstr "Tento počítač"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
@@ -3403,8 +3422,9 @@ msgid "Whether you approve each plan or Kangentic does. A workflow task can over
 msgstr "Zda každý plán schvalujete vy, nebo Kangentic. Úloha pracovního postupu to může pro sebe přepsat."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Which conversation this column uses"
-msgstr ""
+msgstr "Kterou konverzaci tento sloupec používá"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
@@ -3427,9 +3447,10 @@ msgid "Workflow step"
 msgstr "Krok pracovního postupu"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Working"
-msgstr ""
+msgstr "Pracuje"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

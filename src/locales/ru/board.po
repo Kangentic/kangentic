@@ -53,8 +53,9 @@ msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# инструмент в работе} few {# инструмента в работе} many {# инструментов в работе} other {# инструмента в работе}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
-msgstr ""
+msgstr "Хост {hostName} недоступен. Его агенты продолжают работать."
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -370,8 +371,9 @@ msgid "Paused"
 msgstr "Приостановлен"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "В очереди {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -379,16 +381,19 @@ msgid "Queued..."
 msgstr "В очереди..."
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect"
-msgstr ""
+msgstr "Переподключить"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect to {hostName}"
-msgstr ""
+msgstr "Переподключиться к {hostName}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnecting to {hostName}. Its agents keep running."
-msgstr ""
+msgstr "Переподключение к {hostName}. Его агенты продолжают работать."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy
@@ -569,12 +574,14 @@ msgid "View conversation"
 msgstr "Показать беседу"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "Ожидание свободного слота агента."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "Ожидание слота в колонке {columnName}."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

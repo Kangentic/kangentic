@@ -32,8 +32,9 @@ msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} ot
 msgstr "{groupProjectCount, plural, other {該群組內的 # 個專案將變成未分組。}}"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "{hostName}: {stateLabel}"
-msgstr ""
+msgstr "{hostName}:{stateLabel}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 msgid "{idleCount} idle"
@@ -200,8 +201,9 @@ msgid "Show sidebar"
 msgstr "顯示側邊欄"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "已停止"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "This will remove the project from Kangentic but won't delete any files on disk."

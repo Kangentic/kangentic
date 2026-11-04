@@ -201,8 +201,9 @@ msgid "Show sidebar"
 msgstr "显示侧边栏"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Stopped"
-msgstr ""
+msgstr "已停止"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "This will remove the project from Kangentic but won't delete any files on disk."

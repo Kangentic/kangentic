@@ -459,20 +459,24 @@ msgid "Give up after"
 msgstr "제한 시간"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "이 프로젝트에서 실행 중인 다음 에이전트 또는 명령 터미널로 이동합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "실행 중인 다음 에이전트 또는 명령 터미널로 이동하며, 다른 프로젝트에 있으면 프로젝트를 전환합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "이 프로젝트에서 실행 중인 이전 에이전트 또는 명령 터미널로 이동합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "실행 중인 이전 에이전트 또는 명령 터미널로 이동하며, 다른 프로젝트에 있으면 프로젝트를 전환합니다."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -687,16 +691,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "첫 번째 선택지는 다음 열로, 작업 경로 또는 보드상의 다음 열입니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "다음 프로젝트"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "모든 프로젝트의 다음 터미널"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "이 프로젝트의 다음 터미널"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -744,12 +751,14 @@ msgid "Notifies \"{title}\""
 msgstr "\"{title}\" 알림 표시"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "데스크톱과 휴대폰으로 알림을 보냅니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "데스크톱과 휴대폰으로 알림을 보냅니다. 알림을 열면 작업이 열립니다."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -863,12 +872,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "보드에서 새 작업 대화 상자를 엽니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "사이드바 순서에 따라 다음 프로젝트를 엽니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "사이드바 순서에 따라 이전 프로젝트를 엽니다."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -945,16 +956,19 @@ msgid "Previous column"
 msgstr "이전 열"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "이전 프로젝트"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "모든 프로젝트의 이전 터미널"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "이 프로젝트의 이전 터미널"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1145,8 +1159,9 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "작업 세부 정보 대화 상자에서 설명 패널을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr ""
+msgstr "포커스된 명령 터미널의 브라우저 창을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1391,8 +1406,9 @@ msgid "Toggle Command Terminal"
 msgstr "명령 터미널 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal Browser pane"
-msgstr ""
+msgstr "명령 터미널 브라우저 창 토글"
 
 #: src/shared/keybindings.ts
 #, fuzzy

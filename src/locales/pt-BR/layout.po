@@ -263,8 +263,9 @@ msgid "Refresh"
 msgstr "Atualizar"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Resuming terminals..."
-msgstr ""
+msgstr "Retomando terminais..."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy

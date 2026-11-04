@@ -44,8 +44,9 @@ msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, other {# 个工具运行中}}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "{hostName} is unreachable. Its agents keep running."
-msgstr ""
+msgstr "无法访问 {hostName}。其代理仍在运行。"
 
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -301,24 +302,28 @@ msgid "Paused"
 msgstr "已暂停"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "排队中 {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "排队中..."
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect"
-msgstr ""
+msgstr "重新连接"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnect to {hostName}"
-msgstr ""
+msgstr "重新连接到 {hostName}"
 
 #: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
 msgid "Reconnecting to {hostName}. Its agents keep running."
-msgstr ""
+msgstr "正在重新连接到 {hostName}。其代理仍在运行。"
 
 #: src/renderer/components/board/Swimlane.tsx
 msgid "Removed from team config"
@@ -465,12 +470,14 @@ msgid "View conversation"
 msgstr "查看对话"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "正在等待空闲的代理槽位。"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "正在等待 {columnName} 中的槽位。"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

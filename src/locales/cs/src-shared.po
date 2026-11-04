@@ -459,20 +459,24 @@ msgid "Give up after"
 msgstr "Vzdát se po"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Přejít na další spuštěný terminál agenta nebo příkazový terminál v tomto projektu."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Přejít na další spuštěný terminál agenta nebo příkazový terminál a přepnout projekt, pokud je v jiném."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "Přejít na předchozí spuštěný terminál agenta nebo příkazový terminál v tomto projektu."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "Přejít na předchozí spuštěný terminál agenta nebo příkazový terminál a přepnout projekt, pokud je v jiném."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -687,16 +691,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "Další sloupec je první volba: další sloupec na trase úkolu, nebo na nástěnce."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "Další projekt"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "Další terminál v libovolném projektu"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "Další terminál v tomto projektu"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -744,12 +751,14 @@ msgid "Notifies \"{title}\""
 msgstr "Upozorní „{title}“"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "Upozorní vás na ploše a na telefonu."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "Upozorní vás na ploše i v telefonu. Otevřením upozornění se otevře úkol."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -863,12 +872,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Otevřít na nástěnce dialog Nová úloha."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "Otevřít další projekt v pořadí postranního panelu."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "Otevřít předchozí projekt v pořadí postranního panelu."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -945,16 +956,19 @@ msgid "Previous column"
 msgstr "Předchozí sloupec"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "Předchozí projekt"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "Předchozí terminál v libovolném projektu"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "Předchozí terminál v tomto projektu"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1145,8 +1159,9 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel popisu v dialogu s podrobnostmi úkolu."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr ""
+msgstr "Zobrazit nebo skrýt panel prohlížeče aktivního příkazového terminálu."
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1391,8 +1406,9 @@ msgid "Toggle Command Terminal"
 msgstr "Přepnout příkazový terminál"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal Browser pane"
-msgstr ""
+msgstr "Přepnout panel prohlížeče příkazového terminálu"
 
 #: src/shared/keybindings.ts
 #, fuzzy

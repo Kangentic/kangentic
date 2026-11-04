@@ -212,8 +212,9 @@ msgid "Refresh"
 msgstr "刷新"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Resuming terminals..."
-msgstr ""
+msgstr "正在恢复终端..."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Runs real terminals"
