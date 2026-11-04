@@ -460,6 +460,40 @@ describe('spawnAgent with held messages folded into the typed opening', () => {
     expect(claim.commit).toHaveBeenCalledWith(ADOPTED_SESSION_ID);
     expect(claim.release).not.toHaveBeenCalled();
   });
+
+  it('settles a queued opening\'s held messages only once it is typed, not at the promotion', async () => {
+    const claim = makeHeldClaim(HELD_TEXT);
+    vi.mocked(claimHeldMessages).mockReturnValue(claim);
+    const deps = makeDeps({ columnMessage: null, typedOpening: HELD_TEXT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), SKIP_PROMPT_TEMPLATE, HELD_SPAWN_OPTIONS);
+
+    expect(claim.commit).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'running' });
+    deps.sessionEvents.emit('session-changed', ADOPTED_SESSION_ID, { status: 'running' });
+
+    await vi.waitFor(() => expect(claim.commit).toHaveBeenCalledWith(ADOPTED_SESSION_ID));
+    expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, HELD_TEXT, expect.anything());
+    expect(claim.release).not.toHaveBeenCalled();
+  });
+
+  it('puts a queued opening\'s held messages back on hold when the session ends in the queue', async () => {
+    const claim = makeHeldClaim(HELD_TEXT);
+    vi.mocked(claimHeldMessages).mockReturnValue(claim);
+    const deps = makeDeps({ columnMessage: null, typedOpening: HELD_TEXT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), SKIP_PROMPT_TEMPLATE, HELD_SPAWN_OPTIONS);
+    deps.sessionEvents.emit('exit', ADOPTED_SESSION_ID, 0);
+
+    // Committing would mark messages no agent ever saw as delivered.
+    await vi.waitFor(() => expect(claim.release).toHaveBeenCalledWith({ flush: true }));
+    expect(claim.commit).not.toHaveBeenCalled();
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
 });
 
 describe('spawnAgent with the setup script still running', () => {
