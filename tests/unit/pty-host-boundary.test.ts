@@ -150,6 +150,7 @@ describe('pty host out-of-process boundary', () => {
     const classified: Record<string, string> = {
       'src/main/utility-process/off-main-exec.ts': 'bundled with the agent registry the host reads parsers from; runs only in main',
       'src/main/agent/shared/cli-print.ts': 'bundled with the agent registry the host reads parsers from; runs only in main',
+      'src/main/agent/shared/git-exclude.ts': 'bundled with the agent registry the host reads parsers from; its git check runs in a command build, only in main',
       'src/main/pty/host/host-exec.ts': 'LocalSpawnService (the in-process core) and the spawn worker',
       'src/main/pty/host/host-cli-processes.ts': 'LocalSpawnService (the in-process core) and the spawn worker',
       'src/main/activity-engine/background-shell/process-tree.ts': 'LocalSpawnService\'s probe; the utility host lists through the worker',

@@ -120,19 +120,24 @@ When a run fails with that refusal and inherited `ANTHROPIC_API_KEY`, it runs on
 
 For every session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` (Kangentic's own session record id, not Claude's session id) and passed via `--settings`. Both project files are read from disk on every spawn, never cached, so a commit, a pull or an edit reaches the next session with no restart:
 
-1. Read `.claude/settings.json` from project root (committed, shared)
+1. Read the session's `.claude/settings.json` (committed, shared). A worktree reads its own copy. A main-repo session, and a worktree with no such file, reads the project root's
+   - Claude reads the file from the session's working directory, and `--settings` ranks above it while permission lists merge and deny wins, so the root's copy here would keep a rule the branch removed
+   - A worktree file that does not parse gives no settings and does not fall back, since Claude skips it too and the root's rules are what the branch may have taken out
+   - Keys are not filtered at this step. `autoMode`, which Claude reads only from user or managed settings, reaches a session this way on purpose, and a branch's hooks already run natively
+   - `fullscreenByDefault` reads the same file for `tui`
 2. Lay `.claude/settings.local.json` from project root (gitignored, personal) over it, the way Claude Code combines its own settings files ("lists merge instead of overriding" in Claude's settings docs)
    - Hooks: concatenated per event type (local hooks appended after project hooks)
    - A list key on both sides, at the top level (`enabledMcpjsonServers`) or under `permissions` (`allow`, `deny`, `ask`, `additionalDirectories`), keeps both lists' entries, deduplicated
-   - Every other key takes the local value, and every `permissions` key is kept (`defaultMode` included). Nested objects such as `env` are replaced, not merged
+   - Every other key takes the local value, and every `permissions` key is kept. Nested objects such as `env` are replaced, not merged
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json`
-   - Only permissions are merged (captures "always allow" grants from user)
-   - Hooks from the worktree are skipped (may be stale leftovers)
-4. Inject `statusLine` config pointing to the status bridge script
-5. Inject event-bridge hooks into all registered hook points, plus the plan approval hook (and its tool approval entry, matcher `mcp__.*|Artifact`, which answers an allowed MCP tool and a built-in Artifact read, list or publish that plan mode asks about, unless a deny or ask rule names the tool) and, for a task session whose MCP URL names it, the background shell hint hook (see [`plan-approval-bridge.js`](bridge-scripts.md#plan-approval-bridgejs) and [`background-shell-hint-bridge.js`](bridge-scripts.md#background-shell-hint-bridgejs))
-6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode. `--permission-mode auto` runs a SEPARATE natural-language classifier that does not honor `permissions.allow`, so a plain-language allow rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) is also appended to `autoMode.allow` (seeded with `$defaults` when the array is absent, preserving the classifier's built-in rules) so a board-driven auto-mode session does not soft-deny Kangentic's own board/session tools
-7. Write merged file to session directory
-8. Pass `--settings <mergedSettingsPath>` to the CLI
+   - Only permissions are merged (captures "always allow" grants from user). Since 2.1.211 Claude keeps a worktree's grants at the main checkout's root, except on Windows, where they stay in the worktree. Steps 2 and 3 cover both
+   - Hooks from this file are skipped (may be stale leftovers)
+4. Drop `permissions.defaultMode` when it is `auto` or `bypassPermissions`, in a main-repo session and a worktree alike. Claude refuses those two from project and local settings, and `--settings` would let them through. Other `defaultMode` values stay. A column's permission mode reaches these two through launch flags (`--permission-mode auto`, `--dangerously-skip-permissions`), and a user's own default through `~/.claude/settings.json`
+5. Inject `statusLine` config pointing to the status bridge script
+6. Inject event-bridge hooks into all registered hook points, plus the plan approval hook (and its tool approval entry, matcher `mcp__.*|Artifact`, which answers an allowed MCP tool and a built-in Artifact read, list or publish that plan mode asks about, unless a deny or ask rule names the tool) and, for a task session whose MCP URL names it, the background shell hint hook (see [`plan-approval-bridge.js`](bridge-scripts.md#plan-approval-bridgejs) and [`background-shell-hint-bridge.js`](bridge-scripts.md#background-shell-hint-bridgejs))
+7. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode. `--permission-mode auto` runs a SEPARATE natural-language classifier that does not honor `permissions.allow`, so a plain-language allow rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) is also appended to `autoMode.allow` (seeded with `$defaults` when the array is absent, preserving the classifier's built-in rules) so a board-driven auto-mode session does not soft-deny Kangentic's own board/session tools
+8. Write merged file to session directory
+9. Pass `--settings <mergedSettingsPath>` to the CLI
 
 All Kangentic artifacts stay in `.kangentic/` - nothing is written to `.claude/settings.local.json`.
 

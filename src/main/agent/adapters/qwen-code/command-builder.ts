@@ -5,7 +5,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import { ensureLocalGitExcludes, settingsBaseDirectory } from '../../shared/git-exclude';
 import {
   backgroundShellHintCommandFor,
   offersMarkBackgroundService,
@@ -235,17 +235,17 @@ export class QwenCommandBuilder {
   }
 
   /**
-   * The project's `.qwen/settings.json` with Kangentic's own hooks and
-   * `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), read from
-   * disk on every spawn so an edit or a pull reaches the next session with no
-   * restart. In the main repo (`cwd` is the project root) this is the file the
-   * previous spawn wrote, and the strip keeps that spawn's entries, and an
-   * entry a crash left behind with a dead token, out of the user's baseline.
-   * Each spawn then merges fresh entries on top.
+   * The `.qwen/settings.json` in `directory` (`settingsBaseDirectory` picks it)
+   * with Kangentic's own hooks and `mcpServers.kangentic` entry stripped
+   * (`stripKangenticEntries`), read from disk on every spawn so an edit or a
+   * pull reaches the next session with no restart. When `directory` is the
+   * spawn's `cwd` this is the file the previous spawn wrote, and the strip keeps
+   * that spawn's entries, and an entry a crash left behind with a dead token,
+   * out of the user's baseline. Each spawn then merges fresh entries on top.
    */
-  private readBaseSettings(projectRoot: string): QwenSettings {
+  private readBaseSettings(directory: string): QwenSettings {
     let baseSettings: QwenSettings = {};
-    const projectSettingsPath = path.join(projectRoot, '.qwen', 'settings.json');
+    const projectSettingsPath = path.join(directory, '.qwen', 'settings.json');
     try {
       const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
       // Only a plain object can be spread into the merged settings.
@@ -378,7 +378,7 @@ export class QwenCommandBuilder {
    */
   private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery, kangenticServer: KangenticMcpServer | null): void {
     const projectRoot = options.projectRoot || options.cwd;
-    const baseSettings = this.readBaseSettings(projectRoot);
+    const baseSettings = this.readBaseSettings(settingsBaseDirectory(options.cwd, projectRoot, '.qwen'));
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     const merged: QwenSettings = { ...baseSettings };
