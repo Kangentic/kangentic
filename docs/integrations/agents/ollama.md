@@ -38,7 +38,7 @@ Effort is Ollama's thinking level, passed as `--think=<level>` after the model a
 
 ## Model pill
 
-`configuredModelFromCommand` seeds the board card's model pill from the command: the token right after `run`, past the quoted or bare executable, so a prompt that mentions `run something` never seeds it. The id is shown as is (`qwen3:8b`). Ollama reports no model of its own, so this is the pill's only source.
+`configuredModelFromCommand` seeds the board card's model pill from the command: the token right after `run`, past the executable read as one shell word (quoted, escaped or bare, so a path with a space or an apostrophe still counts as one), so a prompt that mentions `run something` never seeds it. The id is shown as is (`qwen3:8b`). Ollama reports no model of its own, so this is the pill's only source.
 
 ## Live telemetry
 

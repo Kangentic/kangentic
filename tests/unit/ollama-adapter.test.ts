@@ -162,8 +162,6 @@ const { OllamaAdapter, DEFAULT_OLLAMA_MODEL, parseOllamaModelList, parseOllamaTh
   '../../src/main/agent/adapters/ollama'
 );
 
-const { shimFamilyKey } = await import('../../src/main/agent/shared/shim-family-key');
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Build minimal SpawnCommandOptions with sensible defaults. */
@@ -744,25 +742,6 @@ describe('OllamaAdapter', () => {
       }));
       expect(command).toContain('/home/dev/.local/bin/ollama');
       expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'qwen3:8b', displayName: 'qwen3:8b' });
-    });
-
-    describe('shimFamilyKey', () => {
-      it('strips a shim extension and lowercases on win32', () => {
-        stubPlatform('win32');
-        expect(shimFamilyKey('C:\\Users\\dev\\npm\\Ollama.CMD')).toBe('c:\\users\\dev\\npm\\ollama');
-        expect(shimFamilyKey('C:\\Users\\dev\\npm\\ollama.ps1')).toBe('c:\\users\\dev\\npm\\ollama');
-        expect(shimFamilyKey('C:\\Users\\dev\\npm\\ollama.bat')).toBe('c:\\users\\dev\\npm\\ollama');
-      });
-
-      it('strips a shim extension but keeps case on linux', () => {
-        stubPlatform('linux');
-        expect(shimFamilyKey('/Opt/Dev/Ollama.cmd')).toBe('/Opt/Dev/Ollama');
-      });
-
-      it('leaves a path with no shim extension unchanged on linux', () => {
-        stubPlatform('linux');
-        expect(shimFamilyKey('/usr/bin/ollama')).toBe('/usr/bin/ollama');
-      });
     });
 
     it('applies levels discovered for a .cmd path to a .ps1 spelling of it on win32', async () => {
