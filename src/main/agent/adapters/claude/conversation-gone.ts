@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { listClaudeProjectFolders, PROJECT_SCAN_BATCH, resolveClaudeTranscriptFile } from './transcript-locator';
+import { resolveClaudeTranscriptFile } from './transcript-locator';
 import { isConfirmedMissing } from '../../shared/confirmed-missing';
+import { listProjectFolders, noFolderHolds } from '../../shared/project-folders';
 import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /**
@@ -60,14 +61,7 @@ export async function proveClaudeConversationGone(params: {
   // A link whose target is a file is left out: looking inside it would fail
   // ENOTDIR, which is not proof, and would keep every conversation of the
   // profile from ever counting as gone.
-  const folders = await listClaudeProjectFolders(projectsRoot);
+  const folders = await listProjectFolders(projectsRoot);
   if (!folders) return false;
-
-  const candidates = folders.map((folderPath) => path.join(folderPath, fileName));
-  for (let start = 0; start < candidates.length; start += PROJECT_SCAN_BATCH) {
-    const batch = candidates.slice(start, start + PROJECT_SCAN_BATCH);
-    const missing = await Promise.all(batch.map(isConfirmedMissing));
-    if (missing.includes(false)) return false;
-  }
-  return true;
+  return noFolderHolds(folders, fileName);
 }

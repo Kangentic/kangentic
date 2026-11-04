@@ -34,18 +34,39 @@ import type { CliPlace } from '../../shared/cli-target';
  * `VERIFY_WINDOW_MS` is understood to put Qwen at risk first.
  */
 
+/** How long a resolved chats path is reused: longer than one command's ~4s of polls. */
+const RESOLVED_PATH_TTL_MS = 5_000;
+/** Resolved paths kept at once; one per session verifying a command. */
+const RESOLVED_PATH_LIMIT = 32;
+const resolvedPathByKey = new Map<string, { filePath: string; resolvedAtMs: number }>();
+
 /**
  * Resolve the chats JSONL for a session.
  *
- * Pure path construction - Qwen names the file exactly `<sessionId>.jsonl`
- * because the adapter passes `--session-id <uuid>`, so unlike Codex there is
- * no directory scan and nothing to memoise. Existence is deliberately NOT
- * checked here: the shared tail reader returns null for a missing file, which
- * the caller treats as "keep polling", and skipping the extra `existsSync`
- * saves a syscall on every 25ms poll.
+ * Qwen names the file exactly `<sessionId>.jsonl` because the adapter passes
+ * `--session-id <uuid>`, so unlike Codex there is no directory scan. The
+ * directory is `qwenRuntimeDir`, which reads up to two settings files, and
+ * the verifier calls this on every 25ms poll, so a resolved path is reused
+ * for `RESOLVED_PATH_TTL_MS`. Qwen fixes its runtime directory when it starts,
+ * so a running session's path does not change under the memo. Existence is
+ * deliberately NOT checked here: the shared tail reader returns null for a
+ * missing file, which the caller treats as "keep polling".
  */
 export function resolveQwenSessionPath(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
-  return path.join(qwenChatsDir(cwd, place), `${agentSessionId}.jsonl`);
+  const key = `${place?.distro ?? ''}\0${cwd}\0${agentSessionId}`;
+  const nowMs = Date.now();
+  const cached = resolvedPathByKey.get(key);
+  if (cached && nowMs - cached.resolvedAtMs < RESOLVED_PATH_TTL_MS) return cached.filePath;
+  const filePath = path.join(qwenChatsDir(cwd, place), `${agentSessionId}.jsonl`);
+  resolvedPathByKey.delete(key);
+  resolvedPathByKey.set(key, { filePath, resolvedAtMs: nowMs });
+  // Insertion order is age order: drop the oldest past the limit.
+  while (resolvedPathByKey.size > RESOLVED_PATH_LIMIT) {
+    const oldestKey = resolvedPathByKey.keys().next().value;
+    if (oldestKey === undefined) break;
+    resolvedPathByKey.delete(oldestKey);
+  }
+  return filePath;
 }
 
 /**

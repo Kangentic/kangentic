@@ -33,6 +33,9 @@ let OLD_PATH: string;
 let NEW_PATH: string;
 
 beforeEach(() => {
+  // A developer's own shell may export either; the cases below assume ~/.qwen.
+  delete process.env.QWEN_HOME;
+  delete process.env.QWEN_RUNTIME_DIR;
   tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-relocate-'));
   tmpHome = path.join(tmpBase, 'home');
   fs.mkdirSync(tmpHome, { recursive: true });
@@ -120,6 +123,53 @@ describe('migrateQwenProjectData - directories', () => {
   it('does not throw and creates no target when the source dir is missing', async () => {
     await expect(migrateQwenProjectData(OLD_PATH, NEW_PATH)).resolves.toBeUndefined();
     expect(fs.existsSync(projectsDir(NEW_PATH))).toBe(false);
+  });
+});
+
+describe('migrateQwenProjectData - QWEN_RUNTIME_DIR', () => {
+  let savedRuntimeDir: string | undefined;
+  let savedQwenHome: string | undefined;
+
+  beforeEach(() => {
+    savedRuntimeDir = process.env.QWEN_RUNTIME_DIR;
+    savedQwenHome = process.env.QWEN_HOME;
+    delete process.env.QWEN_HOME;
+  });
+
+  afterEach(() => {
+    if (savedRuntimeDir === undefined) delete process.env.QWEN_RUNTIME_DIR;
+    else process.env.QWEN_RUNTIME_DIR = savedRuntimeDir;
+    if (savedQwenHome === undefined) delete process.env.QWEN_HOME;
+    else process.env.QWEN_HOME = savedQwenHome;
+  });
+
+  it('moves projects/<old slug> to projects/<new slug> under the runtime dir, not QWEN_HOME', async () => {
+    const runtimeDir = path.join(tmpBase, 'runtime');
+    process.env.QWEN_RUNTIME_DIR = runtimeDir;
+    const runtimeProject = (projectPath: string): string =>
+      path.join(runtimeDir, 'projects', qwenProjectSlug(path.resolve(projectPath)));
+    writeDir(runtimeProject(OLD_PATH), { 'chats.jsonl': 'runtime-history' });
+    // Chats of the same project under the home directory must stay where they are.
+    writeDir(projectsDir(OLD_PATH), { 'home.jsonl': 'home-history' });
+
+    await migrateQwenProjectData(OLD_PATH, NEW_PATH);
+
+    expect(fs.existsSync(runtimeProject(OLD_PATH))).toBe(false);
+    expect(fs.readFileSync(path.join(runtimeProject(NEW_PATH), 'chats.jsonl'), 'utf-8')).toBe('runtime-history');
+    expect(fs.existsSync(projectsDir(NEW_PATH))).toBe(false);
+    expect(fs.readFileSync(path.join(projectsDir(OLD_PATH), 'home.jsonl'), 'utf-8')).toBe('home-history');
+  });
+
+  it('moves the tmp hash directory under the runtime dir as well', async () => {
+    const runtimeDir = path.join(tmpBase, 'runtime');
+    process.env.QWEN_RUNTIME_DIR = runtimeDir;
+    const runtimeTmp = (projectPath: string): string => path.join(runtimeDir, 'tmp', qwenTmpHash(projectPath));
+    writeDir(runtimeTmp(OLD_PATH), { shell_history: 'cmd' });
+
+    await migrateQwenProjectData(OLD_PATH, NEW_PATH);
+
+    expect(fs.existsSync(runtimeTmp(OLD_PATH))).toBe(false);
+    expect(fs.readFileSync(path.join(runtimeTmp(NEW_PATH), 'shell_history'), 'utf-8')).toBe('cmd');
   });
 });
 

@@ -11,7 +11,7 @@
  * reaches `~/.qwen/tmp/<hash>/logs.json` first. Measuring the wrong file would
  * have credited the verifier with a latency ~3.5x better than the truth.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -56,9 +56,97 @@ describe('resolveQwenSessionPath', () => {
   it('builds the chats path directly from the session id', () => {
     const resolved = resolveQwenSessionPath('cf6d72d5-6d5a-42dd-a00e-2aeca30ad7b5', tmpDir);
     // Qwen names the file exactly `<sessionId>.jsonl` because the adapter
-    // passes `--session-id`, so there is no scan and nothing to memoise.
+    // passes `--session-id`, so there is no directory scan.
     expect(path.basename(resolved)).toBe('cf6d72d5-6d5a-42dd-a00e-2aeca30ad7b5.jsonl');
     expect(resolved).toContain(`chats${path.sep}`);
+  });
+});
+
+describe('resolveQwenSessionPath memo', () => {
+  const SESSION_ID = 'cf6d72d5-6d5a-42dd-a00e-2aeca30ad7b5';
+  const TTL_MS = 5_000;
+  let savedQwenHome: string | undefined;
+  let savedRuntimeDir: string | undefined;
+  let cwd: string;
+
+  /** Settings reads `qwenRuntimeDir` makes: the workspace's and the user's `settings.json`. */
+  function settingsReads(readSpy: { mock: { calls: unknown[][] } }): number {
+    return readSpy.mock.calls.filter((call) => String(call[0]).endsWith('settings.json')).length;
+  }
+
+  beforeEach(() => {
+    savedQwenHome = process.env.QWEN_HOME;
+    savedRuntimeDir = process.env.QWEN_RUNTIME_DIR;
+    process.env.QWEN_HOME = path.join(tmpDir, 'qwen-home');
+    delete process.env.QWEN_RUNTIME_DIR;
+    // A fresh cwd per test, so the memo key is new.
+    cwd = path.join(tmpDir, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (savedQwenHome === undefined) delete process.env.QWEN_HOME;
+    else process.env.QWEN_HOME = savedQwenHome;
+    if (savedRuntimeDir === undefined) delete process.env.QWEN_RUNTIME_DIR;
+    else process.env.QWEN_RUNTIME_DIR = savedRuntimeDir;
+  });
+
+  it('reads the settings files once for two calls inside the TTL', () => {
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    const startMs = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(startMs);
+
+    const first = resolveQwenSessionPath(SESSION_ID, cwd);
+    const readsAfterFirst = settingsReads(readSpy);
+    // The resolver does look at settings files at all, so the next assertion can fail.
+    expect(readsAfterFirst).toBeGreaterThan(0);
+
+    vi.spyOn(Date, 'now').mockReturnValue(startMs + TTL_MS - 1);
+    const second = resolveQwenSessionPath(SESSION_ID, cwd);
+
+    expect(second).toBe(first);
+    expect(settingsReads(readSpy)).toBe(readsAfterFirst);
+  });
+
+  it('resolves again once the TTL has passed, and follows a changed runtime directory', () => {
+    const startMs = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(startMs);
+
+    const first = resolveQwenSessionPath(SESSION_ID, cwd);
+
+    process.env.QWEN_RUNTIME_DIR = path.join(tmpDir, 'moved-runtime');
+    nowSpy.mockReturnValue(startMs + TTL_MS - 1);
+    expect(resolveQwenSessionPath(SESSION_ID, cwd)).toBe(first);
+
+    nowSpy.mockReturnValue(startMs + TTL_MS + 1);
+    const third = resolveQwenSessionPath(SESSION_ID, cwd);
+
+    expect(third).not.toBe(first);
+    expect(third.startsWith(path.join(tmpDir, 'moved-runtime'))).toBe(true);
+  });
+
+  it('reads the settings files again after the TTL', () => {
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    const startMs = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(startMs);
+
+    resolveQwenSessionPath(SESSION_ID, cwd);
+    const readsAfterFirst = settingsReads(readSpy);
+    nowSpy.mockReturnValue(startMs + TTL_MS + 1);
+    resolveQwenSessionPath(SESSION_ID, cwd);
+
+    expect(settingsReads(readSpy)).toBeGreaterThan(readsAfterFirst);
+  });
+
+  it('keys the memo by session id, so another session resolves on its own', () => {
+    const startMs = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(startMs);
+    const first = resolveQwenSessionPath(SESSION_ID, cwd);
+    const other = resolveQwenSessionPath('11111111-2222-3333-4444-555555555555', cwd);
+
+    expect(path.basename(first)).toBe(`${SESSION_ID}.jsonl`);
+    expect(path.basename(other)).toBe('11111111-2222-3333-4444-555555555555.jsonl');
   });
 });
 
