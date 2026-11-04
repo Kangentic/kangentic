@@ -3,7 +3,13 @@ import type { ParsedTranscript } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { aiderHistoryPath } from './history-paths';
-import { AIDER_SESSION_HEADER, isBareCostLine, parseTokensReport, stripBlockquote, summarizeAiderHistory } from './chat-history-markdown';
+import {
+  AIDER_SESSION_HEADER,
+  isBareCostLine,
+  isSplitTokensReport,
+  stripBlockquote,
+  summarizeAiderHistory,
+} from './chat-history-markdown';
 
 /**
  * Aider's chat history markdown as a structured conversation.
@@ -20,7 +26,8 @@ import { AIDER_SESSION_HEADER, isBareCostLine, parseTokensReport, stripBlockquot
  * - Everything between a run's `# aider chat started at` header and its first
  *   `####` line is skipped. That is the logged command line, whose multi-line
  *   `--message` spills bare lines Aider's reader would take for a reply, and the
- *   model announcements.
+ *   model announcements. A cut read starts after a header, so its leading lines
+ *   are read as the end of a turn.
  * - A user message that starts with `/` is a command (`system`/`command`), and
  *   the tool output after it is its output (`command_output`). `/ask`, `/code`,
  *   `/architect` and `/context` with text are messages sent in that mode
@@ -60,7 +67,9 @@ export function parseAiderHistoryMarkdown(text: string, conversationId: string, 
   // Typed by assertion so the flushes the closures make are not narrowed away.
   let buffer = null as PendingLines | null;
   // Before a run's first `####` line, which is its command line and announcements.
-  let inPreamble = true;
+  // A cut read starts past its run's header, so it starts outside the preamble:
+  // its first lines are the end of a turn, not a command line.
+  let inPreamble = firstLineIndex === 0;
   let runsSeen = 0;
   let lastFlushedWasCommand = false;
   let previousWasTokensReport = false;
@@ -138,7 +147,7 @@ export function parseAiderHistoryMarkdown(text: string, conversationId: string, 
     const quoted = stripBlockquote(line);
     if (quoted !== null) {
       append('tool', lineIndex, quoted.trimEnd());
-      previousWasTokensReport = parseTokensReport(quoted) !== null;
+      previousWasTokensReport = isSplitTokensReport(quoted);
       continue;
     }
     // The `Cost:` half of a `Tokens:` report with both cache fields arrives on

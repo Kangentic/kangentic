@@ -30,6 +30,30 @@ const { AiderSessionHistoryParser } = await import(
   '../../src/main/agent/adapters/aider/session-history-parser'
 );
 
+const { isBareCostLine, isSplitTokensReport } = await import(
+  '../../src/main/agent/adapters/aider/chat-history-markdown'
+);
+
+describe('Aider cost line helpers', () => {
+  it('isBareCostLine accepts the whole Cost line, with or without the dot and padding', () => {
+    expect(isBareCostLine('Cost: $0.02 message, $0.05 session.')).toBe(true);
+    expect(isBareCostLine('Cost: $0.02 message, $0.05 session')).toBe(true);
+    expect(isBareCostLine('  Cost: $0.02 message, $0.05 session.  ')).toBe(true);
+  });
+
+  it('isBareCostLine rejects other text after Cost:', () => {
+    expect(isBareCostLine('Cost: roughly five dollars')).toBe(false);
+    expect(isBareCostLine('Cost: $0.02 message, $0.05 session. and more')).toBe(false);
+  });
+
+  it('isSplitTokensReport is true only for a Tokens report with no Cost on the line', () => {
+    expect(isSplitTokensReport('Tokens: 1.8k sent, 500 cache write, 1.1k cache hit, 234 received.')).toBe(true);
+    expect(isSplitTokensReport('Tokens: 1 sent, 2 received. Cost: $0.01 message, $0.02 session.')).toBe(false);
+    expect(isSplitTokensReport('Cost: $0.01 message, $0.02 session.')).toBe(false);
+    expect(isSplitTokensReport('not a report')).toBe(false);
+  });
+});
+
 describe('AiderSessionHistoryParser', () => {
   beforeEach(() => {
     mockExistsSync = true;
@@ -298,6 +322,17 @@ describe('AiderSessionHistoryParser', () => {
       const result = AiderSessionHistoryParser.parse(content, 'full');
       expect(result.usage!.contextWindow.totalInputTokens).toBe(500);
       expect(result.usage!.cost.totalCostUsd).toBe(0);
+    });
+
+    it('ignores a bare Cost line after a complete one-line report', () => {
+      const content = [
+        '# aider chat started at 2026-11-03 10:15:02',
+        '> Tokens: 500 sent, 200 received. Cost: $0.01 message, $0.02 session.',
+        'Cost: $5.00 message, $9.00 session.',
+      ].join('\n');
+
+      const result = AiderSessionHistoryParser.parse(content, 'full');
+      expect(result.usage!.cost.totalCostUsd).toBe(0.02);
     });
 
     it('handles split-line Tokens/Cost format with cache tokens', () => {
