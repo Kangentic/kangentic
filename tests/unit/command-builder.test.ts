@@ -2379,7 +2379,12 @@ describe('Merged Settings: project settings read on every spawn', () => {
   }
 
   /** Build one session with the given builder and return the settings file it wrote. */
-  function buildSession(builder: CommandBuilder, sessionId: string, worktreeDir?: string): Record<string, unknown> {
+  function buildSession(
+    builder: CommandBuilder,
+    sessionId: string,
+    worktreeDir?: string,
+    extraOptions: { resume?: boolean } = {},
+  ): Record<string, unknown> {
     const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', sessionId);
     builder.buildClaudeCommand({
       cliPath: '/usr/bin/claude',
@@ -2390,6 +2395,7 @@ describe('Merged Settings: project settings read on every spawn', () => {
       sessionId,
       statusOutputPath: path.join(sessionDir, 'status.json'),
       eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+      ...extraOptions,
     });
     return JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8'));
   }
@@ -2489,6 +2495,25 @@ describe('Merged Settings: project settings read on every spawn', () => {
     expect(merged.env).toEqual({ SHARED: 'local' });
   });
 
+  it.each(['auto', 'bypassPermissions'])('a main-repo session drops %s from settings.json', (mode) => {
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { defaultMode: mode, allow: ['Read'] } });
+
+    const permissions = buildSession(new CommandBuilder(), `main-mode-${mode}`).permissions as Record<string, unknown>;
+
+    expect(permissions.defaultMode).toBeUndefined();
+    expect(permissions.allow).toContain('Read');
+  });
+
+  it.each(['auto', 'bypassPermissions'])('a main-repo session drops %s from settings.local.json', (mode) => {
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'] } });
+    writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { defaultMode: mode, allow: ['Bash(local:*)'] } });
+
+    const permissions = buildSession(new CommandBuilder(), `main-local-mode-${mode}`).permissions as Record<string, unknown>;
+
+    expect(permissions.defaultMode).toBeUndefined();
+    expect(permissions.allow).toEqual(expect.arrayContaining(['Read', 'Bash(local:*)']));
+  });
+
   it('a worktree\'s granted permissions keep the root\'s other permissions keys', () => {
     writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'] } });
     writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { additionalDirectories: ['../shared-library'] } });
@@ -2499,6 +2524,132 @@ describe('Merged Settings: project settings read on every spawn', () => {
 
     expect(permissions.allow).toEqual(expect.arrayContaining(['Read', 'Bash(npm test:*)']));
     expect(permissions.additionalDirectories).toEqual(['../shared-library']);
+  });
+
+  describe('a worktree session', () => {
+    const permissionsOf = (settings: Record<string, unknown>) => settings.permissions as { allow: string[]; deny: string[] };
+    let worktreeDir: string;
+
+    beforeEach(() => {
+      worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'own-settings');
+      fs.mkdirSync(worktreeDir, { recursive: true });
+    });
+
+    it('takes its permissions from its own settings.json, so a branch can lift a root deny rule', () => {
+      writeClaudeFile(tmpDir, 'settings.json', {
+        permissions: { allow: ['Read'], deny: ['Bash(gh pr merge *--admin*)', 'Bash(git rebase:*)'] },
+      });
+      writeClaudeFile(worktreeDir, 'settings.json', {
+        permissions: { allow: ['Read', 'Bash(git rebase:*)'], deny: [] },
+      });
+
+      const permissions = permissionsOf(buildSession(new CommandBuilder(), 'own-1', worktreeDir));
+
+      expect(permissions.deny).toEqual([]);
+      expect(permissions.allow).toEqual(expect.arrayContaining(['Read', 'Bash(git rebase:*)']));
+    });
+
+    it('takes its hooks and other keys from its own settings.json', () => {
+      writeClaudeFile(tmpDir, 'settings.json', {
+        hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'echo root-guard' }] }] },
+        env: { FROM_ROOT: '1' },
+      });
+      writeClaudeFile(worktreeDir, 'settings.json', {
+        hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'echo branch-guard' }] }] },
+        env: { FROM_BRANCH: '1' },
+      });
+
+      const merged = buildSession(new CommandBuilder(), 'own-2', worktreeDir);
+
+      const commands = hookCommands(merged, 'PreToolUse');
+      expect(commands).toContain('echo branch-guard');
+      expect(commands).not.toContain('echo root-guard');
+      expect(merged.env).toEqual({ FROM_BRANCH: '1' });
+    });
+
+    it('uses the root\'s settings.json, deny rules included, when it has none of its own', () => {
+      // A root file git does not track never reaches a worktree's checkout.
+      writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'], deny: ['Bash(rm:*)'] } });
+
+      const permissions = permissionsOf(buildSession(new CommandBuilder(), 'own-3', worktreeDir));
+
+      expect(permissions.allow).toContain('Read');
+      expect(permissions.deny).toContain('Bash(rm:*)');
+    });
+
+    it('does not fall back to the root when its own settings.json is broken', () => {
+      // A conflicted merge leaves such a file. Claude skips it, and the root's deny rules are
+      // what the branch may have removed, so they do not come back.
+      writeClaudeFile(tmpDir, 'settings.json', { permissions: { deny: ['Bash(rm:*)'] } });
+      fs.mkdirSync(path.join(worktreeDir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(worktreeDir, '.claude', 'settings.json'), '<<<<<<< HEAD\n{}\n');
+
+      const merged = buildSession(new CommandBuilder(), 'own-4', worktreeDir);
+
+      expect(merged.permissions).toBeUndefined();
+    });
+
+    it('keeps the root\'s and its own settings.local.json over its own settings.json', () => {
+      writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Bash(root-only:*)'] } });
+      writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { allow: ['Bash(root-local:*)'] } });
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { allow: ['Bash(branch:*)'] } });
+      writeClaudeFile(worktreeDir, 'settings.local.json', { permissions: { allow: ['Bash(worktree-local:*)'] } });
+
+      const { allow } = permissionsOf(buildSession(new CommandBuilder(), 'own-5', worktreeDir));
+
+      expect(allow).toEqual(expect.arrayContaining(['Bash(branch:*)', 'Bash(root-local:*)', 'Bash(worktree-local:*)']));
+      expect(allow).not.toContain('Bash(root-only:*)');
+    });
+
+    it.each(['auto', 'bypassPermissions'])('does not let its own settings.json reach %s through --settings', (mode) => {
+      // Claude refuses these two from a project file, and --settings ranks above that, so a
+      // branch must not get through the session file what it cannot get from its own.
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { defaultMode: mode, allow: ['Read'] } });
+
+      const permissions = buildSession(new CommandBuilder(), `mode-${mode}`, worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toBeUndefined();
+      expect(permissions.allow).toContain('Read');
+    });
+
+    it.each(['auto', 'bypassPermissions'])('does not let the root\'s settings.json reach %s when it has none of its own', (mode) => {
+      writeClaudeFile(tmpDir, 'settings.json', { permissions: { defaultMode: mode, allow: ['Read'] } });
+
+      const permissions = buildSession(new CommandBuilder(), `root-mode-${mode}`, worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toBeUndefined();
+      expect(permissions.allow).toContain('Read');
+    });
+
+    it.each(['auto', 'bypassPermissions'])('does not let its own settings.local.json reach %s', (mode) => {
+      writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'] } });
+      writeClaudeFile(worktreeDir, 'settings.local.json', { permissions: { defaultMode: mode, allow: ['Bash(worktree-local:*)'] } });
+
+      const permissions = buildSession(new CommandBuilder(), `local-mode-${mode}`, worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toBeUndefined();
+      expect(permissions.allow).toContain('Bash(worktree-local:*)');
+    });
+
+    it('keeps a defaultMode a project file may set', () => {
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { defaultMode: 'acceptEdits' } });
+
+      const permissions = buildSession(new CommandBuilder(), 'mode-allowed', worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toBe('acceptEdits');
+    });
+
+    it('a change to its own settings.json reaches a resume of the same session', () => {
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { deny: ['Bash(git rebase:*)'] } });
+      const builder = new CommandBuilder();
+      buildSession(builder, 'own-6', worktreeDir);
+
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { allow: ['Bash(git rebase:*)'] } });
+
+      const permissions = permissionsOf(buildSession(builder, 'own-6', worktreeDir, { resume: true }));
+      expect(permissions.allow).toContain('Bash(git rebase:*)');
+      expect(permissions.deny ?? []).not.toContain('Bash(git rebase:*)');
+    });
   });
 });
 
@@ -2702,8 +2853,8 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
   });
 
   it('M: a worktree spawn reads the project root\'s choice, the root the build reads', () => {
-    // The build reads the project root's settings, so the renderer gate must read the same root.
-    // Read from the worktree's own cwd it would find no settings and fall to the global choice.
+    // This worktree has no settings.json of its own, so the build reads the project root's, and
+    // the renderer gate must read the same file or it falls to the global choice.
     vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     const worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'tui-worktree');
     fs.mkdirSync(worktreeDir, { recursive: true });
@@ -2724,6 +2875,33 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
 
     expect(builder.fullscreenByDefault(options)).toBe(false);
     expect(builder.rendererEnvironment(options, {})).toBeNull();
+  });
+
+  it('M2: a worktree\'s own tui decides over the project root\'s, as it does in --settings', () => {
+    // The variable outranks `tui`, so a gate left on the root would draw fullscreen over a
+    // branch's `tui: "default"`.
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    const worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'tui-own');
+    fs.mkdirSync(path.join(worktreeDir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeDir, '.claude', 'settings.json'), JSON.stringify({ tui: 'default' }));
+    writeProjectSettings({ tui: 'fullscreen' });
+    const options = {
+      cliPath: '/usr/bin/claude',
+      taskId: 'tui-task',
+      cwd: worktreeDir,
+      projectRoot: tmpDir,
+      permissionMode: 'default' as const,
+      sessionId: 'tui-own-session',
+      statusOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 'tui-own-session', 'status.json'),
+    };
+
+    const builder = new CommandBuilder();
+    builder.buildClaudeCommand(options);
+
+    expect(builder.fullscreenByDefault(options)).toBe(false);
+    expect(builder.rendererEnvironment(options, {})).toBeNull();
+    const merged = JSON.parse(fs.readFileSync(path.join(path.dirname(options.statusOutputPath), 'settings.json'), 'utf-8'));
+    expect(merged.tui).toBe('default');
   });
 
   it('N: a project tui changed after a build reaches the next spawn of the same builder', () => {
@@ -2856,10 +3034,14 @@ describe('ClaudeAdapter.buildEnv renderer environment', () => {
 });
 
 describe('Shell Detection', () => {
+  // Real detection starts one process per candidate shell, which can pass vitest's 5 s default
+  // beside other test files.
+  const REAL_DETECTION_TIMEOUT_MS = 30_000;
+
   it('at least one shell is available', () => {
     const shells = detectAvailableShells();
     expect(shells.length).toBeGreaterThan(0);
-  });
+  }, REAL_DETECTION_TIMEOUT_MS);
 
   it('all detected shells have valid paths or commands', () => {
     const shells = detectAvailableShells();
@@ -2894,7 +3076,7 @@ describe('Shell Detection', () => {
         expect(pathExists(shell.path)).toBeTruthy();
       }
     }
-  });
+  }, REAL_DETECTION_TIMEOUT_MS);
 });
 
 describe('Merged Settings -- MCP Server via --mcp-config', () => {

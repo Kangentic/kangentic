@@ -366,15 +366,16 @@ Activity state (thinking/idle) is derived from event types in the events pipelin
 
 All sessions (main repo and worktree) use a unified approach. For each session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` and passed via `--settings`:
 
-1. Read `.claude/settings.json` from project root (committed, shared), fresh on every spawn so a commit or pull reaches the next session
+1. Read the session's `.claude/settings.json` (committed, shared), fresh on every spawn so a commit or pull reaches the next session. A worktree reads its own copy, and falls back to the project root's when it has none
 2. Merge `.claude/settings.local.json` from project root (gitignored, personal) over it: list keys combined, other keys from the local file (see [Settings Merge](../../integrations/agents/claude-code.md#settings-merge))
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants -- hooks are skipped since they may be stale leftovers from before the unified approach)
-4. Inject bridge commands into appropriate hook points
-5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
-6. Write merged file to session directory
-7. Pass `--settings <mergedSettingsPath>` to the CLI
+4. Drop `permissions.defaultMode` when it is `auto` or `bypassPermissions`, which Claude refuses from project and local settings and `--settings` would let through
+5. Inject bridge commands into appropriate hook points
+6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
+7. Write merged file to session directory
+8. Pass `--settings <mergedSettingsPath>` to the CLI
 
-All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/settings.local.json`. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` in the CWD (worktree or project root). These grants are read back on session resume (step 3) so they persist across restarts.
+All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/settings.local.json`. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` at the main checkout's root, or in the worktree on Windows. These grants are read back on session resume (steps 2 and 3) so they persist across restarts.
 
 ### Hook Identification
 
