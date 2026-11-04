@@ -9,6 +9,7 @@ sources:
   - resource: src/main/transition-engine/expired-recap-sources.ts
   - resource: src/main/agent/shared/expired-conversation-recap.ts
   - resource: src/main/agent/adapters/claude/conversation-gone.ts
+  - resource: src/main/agent/shared/project-folders.ts
   - resource: src/main/ipc/helpers/pending-conversation-expired.ts
   - resource: src/main/ipc/handlers/session-resume.ts
   - resource: src/shared/session-resume-eligibility.ts
@@ -136,7 +137,8 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
   a permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
   two levels above the reported path readable (a WSL session's Linux path stops here); and no
   project folder under it, a symlinked or junctioned one included, holding `<id>.jsonl` (measured at
-  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes.
+  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes. The folder
+  listing and that scan are `agent/shared/project-folders.ts`, which Qwen's proof uses too.
   Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is background
   housekeeping, first run 5 s after launch and at most once a day, while `--resume` resolves its
   file at launch.

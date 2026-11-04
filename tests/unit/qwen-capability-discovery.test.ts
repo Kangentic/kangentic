@@ -116,6 +116,9 @@ function setSessionStore(store: SessionTree | null): void {
 }
 
 beforeEach(() => {
+  // A developer's own shell may export either; the scan cases assume ~/.qwen.
+  delete process.env.QWEN_HOME;
+  delete process.env.QWEN_RUNTIME_DIR;
   execMock.mockReset();
   execFileMock.mockReset();
   setSessionStore(null);
