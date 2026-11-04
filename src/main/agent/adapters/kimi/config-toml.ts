@@ -6,7 +6,7 @@ import { kimiConfigPath } from './kimi-home';
  * The parts of Kimi Code CLI's `config.toml` Kangentic reads: the default
  * model and each configured model alias.
  *
- * Source: `docs/en/configuration/config-files.md` (Kimi Code CLI 2.4.1, read
+ * Source: `en/configuration/config-files.md` (Kimi Code CLI 2.4.1, read
  * 2026-11-03). `default_model` is "Default model alias; must be defined in
  * `models`", each `[models."<alias>"]` entry may set `display_name`,
  * `max_context_size`, `support_efforts` and `default_effort`, and

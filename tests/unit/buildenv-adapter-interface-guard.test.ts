@@ -25,6 +25,12 @@
  * Claude is the other: its MCP config stays a flag, and buildEnv carries only
  * CLAUDE_CODE_NO_FLICKER, the fullscreen renderer without the boot health
  * check that a `tui` setting arms (task #854).
+ * Kimi Code has no MCP flag and no hooks, so its per-process switches ride the
+ * environment: KIMI_CODE_TRUST_WORKSPACE (the folder trust prompt),
+ * KIMI_CODE_NO_AUTO_UPDATE, KIMI_SHARE_DIR (its first-launch migration screen),
+ * KIMI_MODEL_THINKING_EFFORT, and the MCP token in KANGENTIC_MCP_TOKEN, which
+ * its folder-shared `.kimi-code/mcp.json` names through `bearerTokenEnvVar`
+ * instead of holding it.
  * Every other adapter passes its MCP config by flag or settings file, and
  * adding buildEnv to one of those by mistake would silently double-inject.
  * This test catches that regression by iterating all registered adapters.
@@ -40,7 +46,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
  * Exhaustive list of adapter names that are EXPECTED to implement buildEnv.
  * See the file docstring for why each one is here.
  */
-const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor', 'claude', 'gemini']);
+const ADAPTERS_WITH_BUILDENV: ReadonlySet<string> = new Set(['opencode', 'codex', 'droid', 'grok', 'goose', 'cursor', 'claude', 'gemini', 'kimi']);
 
 describe('AgentAdapter.buildEnv interface guard', () => {
   it('exactly the adapters in ADAPTERS_WITH_BUILDENV implement buildEnv', () => {

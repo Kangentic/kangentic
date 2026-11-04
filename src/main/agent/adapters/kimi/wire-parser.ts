@@ -68,7 +68,7 @@ import { HOOK_DETAIL_CAP } from '../../../git/push-command';
  */
 
 /**
- * The CLI's shell tool (`docs/en/reference/tools.md`), whose command is the
+ * The CLI's shell tool (`en/reference/tools.md`), whose command is the
  * ToolStart's detail. The CLI's own name, which happens to equal `AgentTool.Bash`,
  * the engine's tag.
  */

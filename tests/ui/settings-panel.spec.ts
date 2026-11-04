@@ -1250,15 +1250,16 @@ test.describe('Settings Panel', () => {
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan (Read-Only)',
-        'Default (Confirm Actions)',
-        'YOLO (Skip Confirmations)',
+        'Always Ask',
+        'Ask When Needed (YOLO)',
+        'Never Ask (Auto)',
       ]);
 
       // The Kimi adapter declares "default" as its defaultPermission. After
       // switching the agent, the permission mode should be set to "default"
       // - shown here as its label, since the Combobox displays the resolved
       // option's label, not its raw value.
-      await expect(permInput).toHaveValue('Default (Confirm Actions)');
+      await expect(permInput).toHaveValue('Always Ask');
     } finally {
       // Restore to Claude so later tests are unaffected.
       await agentInput.click();

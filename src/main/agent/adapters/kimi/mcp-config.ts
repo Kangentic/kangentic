@@ -11,7 +11,7 @@ import type { CliPlace } from '../../shared/cli-target';
  * Kimi Code CLI has no MCP flag or env var for one session. It reads
  * `~/.kimi-code/mcp.json` and the project's `<cwd>/.kimi-code/mcp.json`, and
  * loads a project file's servers once the folder is trusted
- * (`docs/en/customization/mcp.md`, Kimi Code CLI 2.4.1, read 2026-11-03).
+ * (`en/customization/mcp.md`, Kimi Code CLI 2.4.1, read 2026-11-03).
  * "Entries with a `url` field and no `transport` are HTTP servers", with
  * `headers` sent on every request; "entries with a `command` field are stdio
  * servers", with `env` for the child. `bearerTokenEnvVar` names an environment

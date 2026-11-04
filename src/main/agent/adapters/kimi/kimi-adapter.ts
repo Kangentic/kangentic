@@ -96,7 +96,7 @@ export class KimiAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /**
    * Kimi Code's three permission modes plus Plan mode
-   * (`docs/en/guides/interaction.md`): Always Ask (`manual`, the default),
+   * (`en/guides/interaction.md`): Always Ask (`manual`, the default),
    * Ask When Needed (`--yolo`), Never Ask (`--auto`). It has no accept-edits or
    * deny-unless-allowed mode.
    */
@@ -109,9 +109,9 @@ export class KimiAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'default';
   /** Every resume appends to one `wire.jsonl`, and each record has its time. */
   readonly scopesTranscriptReadsByTime = true;
-  /** The `Agent` tool starts a subagent (`docs/en/reference/tools.md`). */
+  /** The `Agent` tool starts a subagent (`en/reference/tools.md`). */
   readonly subagentSpawnToolName = KIMI_SUBAGENT_TOOL;
-  /** `Write` and `Edit` name their file by `path` (`docs/en/reference/tools.md`). */
+  /** `Write` and `Edit` name their file by `path` (`en/reference/tools.md`). */
   readonly fileChangeTools = [
     { tool: 'Write', pathField: 'path' },
     { tool: 'Edit', pathField: 'path' },
@@ -140,13 +140,13 @@ export class KimiAdapter implements AgentAdapter {
     // Kimi Code asks whether to trust every untrusted folder, and a declined
     // prompt exits. `KIMI_CODE_TRUST_WORKSPACE=1` in the session's environment
     // answers it for that process alone and writes no trust record
-    // (`docs/en/configuration/env-vars.md`), so nothing is written here.
+    // (`en/configuration/env-vars.md`), so nothing is written here.
   }
 
   /**
    * Whether Kimi Code can reach a model: a `/login` credential in
    * `credentials/<name>.json`, or a model the user configured in
-   * `config.toml` (`docs/en/configuration/data-locations.md`,
+   * `config.toml` (`en/configuration/data-locations.md`,
    * `config-files.md`). A WSL install is read in its distro's home.
    */
   async probeAuth(cliPath: string): Promise<boolean | null> {
@@ -176,7 +176,7 @@ export class KimiAdapter implements AgentAdapter {
   }
 
   /**
-   * The session's environment (`docs/en/configuration/env-vars.md`):
+   * The session's environment (`en/configuration/env-vars.md`):
    * - `KIMI_CODE_TRUST_WORKSPACE=1` answers the folder trust prompt for this
    *   process, and loads the project `.kimi-code/mcp.json` Kangentic writes.
    * - `KIMI_CODE_NO_AUTO_UPDATE=1` turns off the update preflight, whose
@@ -260,8 +260,8 @@ export class KimiAdapter implements AgentAdapter {
   }
 
   /**
-   * Esc, a pause, then `/exit` (`docs/en/reference/slash-commands.md`). Esc
-   * interrupts a streaming turn (`docs/en/guides/interaction.md`), and avoids
+   * Esc, a pause, then `/exit` (`en/reference/slash-commands.md`). Esc
+   * interrupts a streaming turn (`en/guides/interaction.md`), and avoids
    * Ctrl+C, whose first press on an idle prompt only arms a status-bar exit
    * that any other key cancels. Not probed against a live session.
    */
@@ -457,7 +457,7 @@ export function parseKimiVersion(raw: string): string | null {
 
 /**
  * Where the install script puts the binary when it is not on PATH
- * (`docs/en/guides/getting-started.md`): `~/.kimi-code/bin/kimi`, or
+ * (`en/guides/getting-started.md`): `~/.kimi-code/bin/kimi`, or
  * `%USERPROFILE%\.kimi-code\bin\kimi.exe`. An npm global install is on PATH.
  */
 function kimiFallbackPaths(): string[] {

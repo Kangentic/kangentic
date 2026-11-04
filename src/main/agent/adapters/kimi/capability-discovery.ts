@@ -3,12 +3,12 @@
  * the user's CLI has configured, and the thinking efforts those models take.
  *
  * Sources (Kimi Code CLI 2.4.1, read 2026-11-03):
- * - `docs/en/reference/kimi-command.md`: `-m, --model <model>` takes a model
+ * - `en/reference/kimi-command.md`: `-m, --model <model>` takes a model
  *   alias, a key in `config.toml`'s `[models]`. There is no command that lists
  *   models, so the aliases come from the config file (`config-toml.ts`).
- * - `docs/en/configuration/config-files.md`: a model's `support_efforts` lists
+ * - `en/configuration/config-files.md`: a model's `support_efforts` lists
  *   the thinking efforts it accepts.
- * - `docs/en/configuration/env-vars.md`: `KIMI_MODEL_THINKING_EFFORT` sets a
+ * - `en/configuration/env-vars.md`: `KIMI_MODEL_THINKING_EFFORT` sets a
  *   session's effort (the adapter's `buildEnv`); there is no effort flag.
  *
  * `--help` is safe to run on any install (a bare `kimi` on the archived 1.52

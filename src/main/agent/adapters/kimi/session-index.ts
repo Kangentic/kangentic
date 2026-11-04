@@ -7,7 +7,7 @@ import { kimiCodeHome, kimiSessionIndexPath, kimiWorkDirCompareKey } from './kim
 /**
  * Kimi Code CLI's session index, `<home>/session_index.jsonl`.
  *
- * Source: `docs/en/configuration/data-locations.md` (Kimi Code CLI 2.4.1, read
+ * Source: `en/configuration/data-locations.md` (Kimi Code CLI 2.4.1, read
  * 2026-11-03): "a top-level `session_index.jsonl` index is maintained (one
  * record per line, each containing `sessionId`, `sessionDir`, and
  * `workDir`)". A deleted session appends `{sessionId, deleted: true}`

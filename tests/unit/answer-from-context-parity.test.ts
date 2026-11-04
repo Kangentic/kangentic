@@ -65,6 +65,13 @@ const CANNOT_ANSWER: Record<string, string> = {
   // answering read-only, and Warp's docs retire `oz` in favour of the `warp`
   // binary, which documents no one-shot run at all.
   warp: 'no documented read-only headless run (oz agent run acts; warp has no one-shot mode)',
+  // Kimi Code's `-p` takes its prompt only as an argument (no stdin, no prompt
+  // file), and an answer prompt runs to about 50k characters, past a Windows
+  // command line. It also has no read-only mode: `-p` forces Never Ask, which
+  // runs tools instead of withholding them. Documented in
+  // docs/integrations/agents/kimi-code.md, read from the CLI's docs and source
+  // and not yet run against a real install.
+  kimi: 'prompt only as an argument (past the Windows command line) and no read-only mode',
 };
 
 describe('answerFromContext parity', () => {
