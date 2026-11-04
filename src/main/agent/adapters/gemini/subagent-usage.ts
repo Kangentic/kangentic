@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { streamJsonlRecords } from '../../shared/history-scan';
-import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
+import type { CliPlace } from '../../shared/cli-target';
 import type { ParsedSubagentUsage, SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent-adapter';
-import { geminiChatFilePattern, geminiChatsDir } from './session-history-parser';
-import { locateGeminiTranscriptFile, turnUsageFromTokens } from './transcript-parser';
+import { geminiChatsDir } from './session-history-parser';
+import { locateGeminiTranscriptFile, reportedGeminiChatFile, turnUsageFromTokens } from './transcript-parser';
 
 /**
  * Gemini CLI's subagent chats, for the turn-usage ledger.
@@ -43,12 +43,8 @@ export function geminiSubagentDirectory(
   reportedPath?: string | null,
 ): string {
   const folderName = sanitizeFilenamePart(agentSessionId);
-  if (reportedPath) {
-    const onHost = hostPathForTarget(reportedPath, place);
-    if (path.isAbsolute(onHost) && geminiChatFilePattern(agentSessionId).test(path.basename(onHost))) {
-      return path.join(path.dirname(onHost), folderName);
-    }
-  }
+  const reported = reportedGeminiChatFile(agentSessionId, reportedPath, place);
+  if (reported) return path.join(path.dirname(reported), folderName);
   const mainFile = locateGeminiTranscriptFile(agentSessionId, cwd, place);
   return path.join(mainFile ? path.dirname(mainFile) : geminiChatsDir(cwd, place), folderName);
 }
@@ -96,6 +92,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Only the fields the ledger reads, so a reply's content and tool results are
+ * not held for the whole file.
+ */
+interface SubagentReply {
+  tokens: unknown;
+  timestamp: unknown;
+  model: unknown;
+}
+
+/**
  * Each subagent reply's tokens as a ledger turn. A reply appended again under
  * its id counts once, its last tokens winning. A reply whose counts are all
  * zero adds no row. `$rewindTo` and `$patch` records are not applied: a
@@ -116,9 +122,7 @@ export async function parseGeminiSubagentUsage(
   let complete = true;
   for (const file of files) {
     let subagentId = path.basename(file, '.jsonl');
-    // Only the fields the ledger reads, so a reply's content and tool results
-    // are not held for the whole file.
-    const replies = new Map<string, Pick<Record<string, unknown>, 'tokens' | 'timestamp' | 'model'>>();
+    const replies = new Map<string, SubagentReply>();
     const take = (message: unknown, fallbackKey: string): void => {
       if (!isRecord(message) || message.type !== 'gemini') return;
       const key = typeof message.id === 'string' && message.id.length > 0 ? message.id : fallbackKey;

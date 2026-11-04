@@ -46,18 +46,17 @@ export async function proveGeminiConversationGone(params: {
 }): Promise<boolean> {
   const place = params.place ?? null;
   const fileName = geminiChatFilePattern(params.agentSessionId);
-  const reportedPath = params.reportedPaths
+  const reported = params.reportedPaths
     .map((candidate) => hostPathForTarget(candidate, place))
-    .find((candidate) => path.isAbsolute(candidate)
-      && fileName.test(path.basename(candidate))
-      && tmpRootOfChatFile(candidate) !== null);
-  if (!reportedPath) return false;
+    .filter((candidate) => path.isAbsolute(candidate) && fileName.test(path.basename(candidate)))
+    .map((chatFile) => ({ chatFile, tmpRoot: tmpRootOfChatFile(chatFile) }))
+    .find((candidate) => candidate.tmpRoot !== null);
+  if (!reported?.tmpRoot) return false;
+  const { chatFile, tmpRoot } = reported;
 
-  if (!(await isConfirmedMissing(reportedPath))) return false;
+  if (!(await isConfirmedMissing(chatFile))) return false;
   if (locateGeminiTranscriptFile(params.agentSessionId, params.cwd, place)) return false;
 
-  const tmpRoot = tmpRootOfChatFile(reportedPath);
-  if (tmpRoot === null) return false;
   let projectFolders: fs.Dirent[];
   try {
     projectFolders = await fs.promises.readdir(tmpRoot, { withFileTypes: true });
