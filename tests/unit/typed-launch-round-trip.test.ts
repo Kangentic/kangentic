@@ -406,30 +406,4 @@ describe.skipIf(!controlShell)('the same long line typed whole (the control)', (
 
     expect(report?.argv).toEqual(args);
   }, 30_000);
-
-  // A measurement, not a pin: a reporter found no key had any effect after a cut
-  // line, and why is not established. It logs and never fails, since the launcher
-  // stops the line from being cut either way. Only the jobs that name their shells
-  // run it: the unit tier hides the log, so there it would be seven idle seconds.
-  it.runIf(requiredShells.length > 0)('measures whether keys still reach the shell after a cut line', async () => {
-    const rig = makeRig(shell, STARTUP_DELAY_MS);
-    const pty = startShell(shell, rig);
-    const keysDuringDelayMs = 700;
-    const keysAfterDelayMs = STARTUP_DELAY_MS + 1_500;
-    setTimeout(() => pty.write(`${fullLine(shell, commandFor(shell, rig, args))}\r`), TYPED_AT_MS);
-    // A key while the shell is still in its startup files: the queue is full.
-    setTimeout(() => pty.write('\r'), keysDuringDelayMs);
-    // At the prompt: Ctrl+C clears the cut line, then a short line runs the stub.
-    // Two writes: an interrupt flushes the tty's input queue, and whatever shared
-    // its write would go with it.
-    const probeArgs = ['--keys-reached-the-shell'];
-    setTimeout(() => pty.write('\x03'), keysAfterDelayMs);
-    setTimeout(() => pty.write(`${commandFor(shell, rig, probeArgs)}\r`), keysAfterDelayMs + 700);
-
-    const report = await waitForReport(rig, keysAfterDelayMs + 700 + CONTROL_SETTLE_MS);
-
-    console.log(`[typed-launch measurement] ${process.platform} ${shell.program}: keys after the startup delay ${
-      report ? `reached the shell, stub argv ${JSON.stringify(report.argv.slice(0, 1))}` : 'did NOT reach the shell'
-    }`);
-  }, 30_000);
 });
