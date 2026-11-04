@@ -18,8 +18,11 @@ burden.
   alternative).
 - Do not pin `model` via per-spawn settings if the CLI has its own model picker with
   default-pinning. Tell the user to set the default in the CLI once.
-- For permissions, when an agent manages autonomy in its TUI, expose at most a single "Default"
-  entry and document that the user controls it via the agent's own controls.
+- For permissions, map a column's permission mode only onto launch flags the CLI itself documents
+  (Gemini's `--approval-mode`, Droid's `--use-spec` and `--auto <level>`), and offer only the
+  modes those flags reach. Never reach a mode through a settings file Kangentic writes for it. An
+  agent with no such flag gets a single "Default" entry, and the docs say the user controls
+  autonomy through the agent's own controls.
 - For BYOK or env config, rely on the CLI's documented config file rather than duplicating it
   through Kangentic-managed overrides.
 - **Never keep a list of model names or ids.** We do not track model releases, and a stale list

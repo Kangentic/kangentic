@@ -87,6 +87,17 @@ export interface AgentCapabilities {
   /** Effort/reasoning levels accepted by the CLI's `--effort` (or equivalent) flag. */
   effortLevels?: string[];
   /**
+   * Effort levels per model id, for a CLI whose levels depend on the model
+   * (Droid: `droid exec --help` lists each model's own). A model listed here
+   * takes its own levels in place of `effortLevels`. A path that passes a
+   * level for a known model (the headless answer, summary and automation
+   * runs, and the settings rows that choose for them) reads it through
+   * `effortLevelsForModel` (`src/shared/effort-levels.ts`). The agent-wide
+   * pickers and checks read `effortLevels`, which such a CLI leaves empty: its
+   * interactive session takes no effort flag.
+   */
+  effortLevelsByModel?: Record<string, string[]>;
+  /**
    * True when the CLI accepts a model override flag (e.g. Claude `--model <alias>`).
    * Set independently of `models`: when true and `models` has entries, the
    * renderer shows a dropdown; when true and `models` is empty/undefined, the

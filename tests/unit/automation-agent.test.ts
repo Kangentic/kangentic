@@ -28,7 +28,7 @@ const START = new Date('2026-10-13T12:00:00.000Z');
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 
-type Discover = () => Promise<{ effortLevels: string[] }>;
+type Discover = () => Promise<{ effortLevels: string[]; effortLevelsByModel?: Record<string, string[]> }>;
 
 /** An Automation agent that takes a model and an effort, with a CLI probe and a discovery the test controls. */
 function createFixture(discoverCapabilities: Discover): {
@@ -118,6 +118,44 @@ describe('resolveAutomationAgent detection cache', () => {
     await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: 'low' });
     expect(discover).toHaveBeenCalledTimes(2);
     expect(detect).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * A CLI whose effort levels differ by model (Droid) reports them per model. The
+ * run passes a level only when the CHOSEN model lists it, so a level another
+ * model takes never reaches a model that refuses it.
+ */
+describe('resolveAutomationAgent effort per model', () => {
+  beforeEach(() => resetAutomationAgentCacheForTests());
+
+  it('takes the chosen model\'s own levels over the agent-wide list', async () => {
+    // `fake-model` lists no `low`, so the recommended default is not passed.
+    const { deps } = createFixture(async () => ({ effortLevels: ['low'], effortLevelsByModel: { 'fake-model': ['high', 'max'] } }));
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: null });
+  });
+
+  it('passes a configured effort the chosen model lists', async () => {
+    const { deps } = createFixture(async () => ({ effortLevels: ['low'], effortLevelsByModel: { 'fake-model': ['high', 'max'] } }));
+    const configured = deps.loadConfig();
+    deps.loadConfig = () => ({ ...configured, automation: { ...configured.automation, effort: 'max' } }) as AppConfig;
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: 'max' });
+  });
+
+  it('still applies the per-model list when the CLI detection is served from the cache', async () => {
+    const discover = vi.fn<Discover>().mockResolvedValue({ effortLevels: ['low'], effortLevelsByModel: { 'fake-model': ['high', 'max'] } });
+    const { deps } = createFixture(discover);
+    const configured = deps.loadConfig();
+    deps.loadConfig = () => ({ ...configured, automation: { ...configured.automation, effort: 'max' } }) as AppConfig;
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: 'max' });
+    // The second resolve reads the cached entry, and the model's own list still decides.
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: 'max' });
+    expect(discover).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the agent-wide list for a model the map does not name', async () => {
+    const { deps } = createFixture(async () => ({ effortLevels: ['low'], effortLevelsByModel: { 'other-model': ['high'] } }));
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toMatchObject({ ok: true, effort: 'low' });
   });
 });
 

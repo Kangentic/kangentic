@@ -1,4 +1,5 @@
 import { answerSetupGap, automationAgentChoice, resolveAnswerAgent } from '../../shared/answer-agent';
+import { effortLevelsForModel } from '../../shared/effort-levels';
 import { agentCliNotFoundMessage } from '../agent/shared/agent-cli-not-found';
 import { ensureAnswerHomeDirectory, withAnswerRunDirectory } from '../agent/shared/answer-run-directory';
 import { startRecordedCall, type BackgroundCallSink } from '../background-calls/record-background-call';
@@ -48,6 +49,8 @@ const FAILED_DISCOVERY_TTL_MS = 30_000;
 interface CachedCli {
   path: string;
   effortLevels: string[];
+  /** Levels per model, for a CLI that reports them that way (`effortLevelsForModel`). */
+  effortLevelsByModel?: Record<string, string[]>;
   at: number;
   ttlMs: number;
 }
@@ -118,6 +121,7 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
     const info = await adapter.detect(override);
     if (!info.found || !info.path) return { ok: false, reason: reasons.notFound(adapter.displayName), cause: 'unavailable' };
     let effortLevels: string[] = [];
+    let effortLevelsByModel: Record<string, string[]> | undefined;
     let discoveryFailed = false;
     if (adapter.answerCapabilities?.effort && adapter.discoverCapabilities) {
       const discovered = await adapter.discoverCapabilities(info.path).catch(() => {
@@ -125,19 +129,21 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
         return undefined;
       });
       effortLevels = discovered?.effortLevels ?? [];
+      effortLevelsByModel = discovered?.effortLevelsByModel;
     }
-    cached = { path: info.path, effortLevels, at: Date.now(), ttlMs: discoveryFailed ? FAILED_DISCOVERY_TTL_MS : DETECTION_TTL_MS };
+    cached = { path: info.path, effortLevels, effortLevelsByModel, at: Date.now(), ttlMs: discoveryFailed ? FAILED_DISCOVERY_TTL_MS : DETECTION_TTL_MS };
     cliCache.set(cacheKey, cached);
   }
 
-  // Effort only when the CLI reports it right now: the chosen level, else the
-  // adapter's recommended one. A stale level fails every run on the CLIs that
-  // exit on an unknown one (Grok, Copilot, Antigravity).
+  // Effort only when the CLI reports it right now, for the chosen model: the
+  // chosen level, else the adapter's recommended one. A stale level fails every
+  // run on the CLIs that exit on an unknown one (Grok, Copilot, Antigravity).
   let effort: string | null = null;
   const capabilities = adapter.answerCapabilities;
   if (capabilities?.effort) {
-    if (choice.effort && cached.effortLevels.includes(choice.effort)) effort = choice.effort;
-    else if (capabilities.defaultEffort && cached.effortLevels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
+    const levels = effortLevelsForModel(cached, choice.model);
+    if (choice.effort && levels.includes(choice.effort)) effort = choice.effort;
+    else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
   }
   return { ok: true, adapter, agentName, cliPath: cached.path, model: choice.model, effort };
 }

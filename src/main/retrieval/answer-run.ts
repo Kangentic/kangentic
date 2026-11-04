@@ -2,6 +2,7 @@ import type { AgentAdapter } from '../agent/agent-adapter';
 import { ensureAnswerHomeDirectory } from '../agent/shared/answer-run-directory';
 import { appendAnswerCaller } from '../agent/mcp-http/caller-url';
 import { agentJobChoice, answerSetupGap, resolveAnswerAgent, type AgentJob } from '../../shared/answer-agent';
+import { effortLevelsForModel } from '../../shared/effort-levels';
 import type { IpcContext } from '../ipc/ipc-context';
 
 /** How a question, or a batch of task summaries, is answered: which agent, CLI,
@@ -92,7 +93,7 @@ export async function resolveAnswerRun(
   let effort: string | null = null;
   if (capabilities?.effort && adapter.discoverCapabilities) {
     const discovered = await adapter.discoverCapabilities(info.path).catch(() => undefined);
-    const levels = discovered?.effortLevels ?? [];
+    const levels = effortLevelsForModel(discovered, configuredModel);
     const configuredEffort = choice.effort;
     if (configuredEffort && levels.includes(configuredEffort)) effort = configuredEffort;
     else if (capabilities.defaultEffort && levels.includes(capabilities.defaultEffort)) effort = capabilities.defaultEffort;
