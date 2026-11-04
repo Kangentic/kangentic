@@ -314,14 +314,22 @@ const BYPASS_COUNTS_AS_READY: PRResolveOptions = { bypassCountsAsReady: true };
  * probe failed or the option never opened it); a non-bypassing viewer is not a
  * separate row, because the connector treats it exactly as `null`, and the
  * on/off/false/null and required-context semantics live in
- * branch-pr-resolver.test.ts. The probe is stubbed on EVERY row, including the
- * ones whose option never reaches it, for the reason the suite comment gives.
+ * branch-pr-resolver.test.ts. `rulesetBypass` is the mode the ruleset reads give
+ * a viewer the probe refused, so one row reaches that path too. The probe and
+ * both ruleset reads are stubbed on EVERY row, including the ones whose option
+ * never reaches them, for the reason the suite comment gives.
  */
-type GhBypassAnswer = { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null;
-const GH_OPTION_ROWS: Array<{ options: PRResolveOptions | undefined; bypassAnswer: GhBypassAnswer }> = [
+type GhBypassAnswer = {
+  viewerCanMergeAsAdmin: boolean;
+  requiredStatusCheckContexts: string[] | null;
+  branchHasNoClassicRule: boolean;
+} | null;
+const GH_OPTION_ROWS: Array<{ options: PRResolveOptions | undefined; bypassAnswer: GhBypassAnswer; rulesetBypass?: 'pull_requests_only' }> = [
   { options: undefined, bypassAnswer: null },
-  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: null } },
-  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: ['ci'] } },
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: null, branchHasNoClassicRule: true } },
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: true, requiredStatusCheckContexts: ['ci'], branchHasNoClassicRule: false } },
+  // GitHub answered `branchProtectionRule: null`, so the ruleset reads run.
+  { options: BYPASS_COUNTS_AS_READY, bypassAnswer: { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null, branchHasNoClassicRule: true }, rulesetBypass: 'pull_requests_only' },
   { options: BYPASS_COUNTS_AS_READY, bypassAnswer: null },
 ];
 
@@ -361,7 +369,7 @@ function gitHubRows(): ReadinessRow[] {
       ...(statusCheckRollup === undefined ? {} : { statusCheckRollup }),
     }),
   );
-  return items.flatMap((item) => GH_OPTION_ROWS.map(({ options, bypassAnswer }) => ({
+  return items.flatMap((item) => GH_OPTION_ROWS.map(({ options, bypassAnswer, rulesetBypass }) => ({
     item,
     options,
     stub: () => {
@@ -369,6 +377,12 @@ function gitHubRows(): ReadinessRow[] {
       // Stubbed on every row, including the ones whose gate never reaches
       // it (see the suite comment): the real method would spawn `gh`.
       vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(bypassAnswer);
+      vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules').mockResolvedValue(
+        { pullRequestRulesetIds: [1], mergeBlockingRulesetIds: [1], requiredStatusCheckContexts: [] },
+      );
+      vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass').mockResolvedValue(
+        { currentUserCanBypass: rulesetBypass ?? 'never' },
+      );
     },
   })));
 }

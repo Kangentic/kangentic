@@ -97,7 +97,7 @@ const INIT_SCRIPT_PROGRESS_HEARTBEAT_MS = 30_000;
 /**
  * Wall-clock ceiling for git ops in the worktree-removal path. Small repos
  * complete in <500ms, but `git worktree remove --force` on heavy node_modules
- * (observed 5-12s on real TroyWeb repos during batch retry-cleanup) needs
+ * (observed 5-12s on real repos during batch retry-cleanup) needs
  * headroom. On timeout we abort the child so the per-project git queue keeps
  * moving instead of cascading.
  */

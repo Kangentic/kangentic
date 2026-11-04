@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { GhPrListItem } from '../../src/main/boards/adapters/github-common/gh-client';
+import type { GhPrListItem, GhRulesetBypassMode } from '../../src/main/boards/adapters/github-common/gh-client';
 
 /**
  * Unit tests for the authoritative branch->PR resolver.
@@ -104,7 +106,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { GitHubImporter, GhUnavailableError, GhTransientError } from '../../src/main/boards/adapters/github-common/gh-client';
-import { gitHubPRConnector, resetRequiredChecksCacheForTests } from '../../src/main/pr/adapters/github/github-connector';
+import { gitHubPRConnector, resetBaseRuleCachesForTests } from '../../src/main/pr/adapters/github/github-connector';
 import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 import type { PRResolveOptions } from '../../src/main/pr/pr-registry';
 
@@ -424,6 +426,7 @@ describe('GitHubImporter.resolveMergeBypass', () => {
     await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
       viewerCanMergeAsAdmin: true,
       requiredStatusCheckContexts: ['cla'],
+      branchHasNoClassicRule: false,
     });
     // `{owner}` / `{repo}` are gh's own placeholders, filled from the remote of
     // the repo at `cwd`: no owner/name parsing anywhere in this code. `-F` (not
@@ -460,6 +463,7 @@ describe('GitHubImporter.resolveMergeBypass', () => {
     await expect(importer.resolveMergeBypass('/repo', 393)).resolves.toEqual({
       viewerCanMergeAsAdmin: true,
       requiredStatusCheckContexts: ['cla', 'Lint, Typecheck, Build', 'Unit tests (Vitest)', 'UI tests (Playwright)', 'E2E tests (Electron)'],
+      branchHasNoClassicRule: false,
     });
   });
 
@@ -468,6 +472,7 @@ describe('GitHubImporter.resolveMergeBypass', () => {
     await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
       viewerCanMergeAsAdmin: false,
       requiredStatusCheckContexts: ['cla'],
+      branchHasNoClassicRule: false,
     });
   });
 
@@ -476,23 +481,29 @@ describe('GitHubImporter.resolveMergeBypass', () => {
     await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
       viewerCanMergeAsAdmin: true,
       requiredStatusCheckContexts: [],
+      branchHasNoClassicRule: false,
     });
   });
 
+  // `branchHasNoClassicRule` is true ONLY for GitHub's own `branchProtectionRule:
+  // null`. Every other unreadable shape leaves it false, because the connector
+  // asks about rulesets on that flag alone and an unreadable payload must not
+  // read as "no classic rule".
   it.each([
     // A branch with no classic protection; a repo on rulesets answers this too.
-    ['a null branch protection rule', answer(true, null)],
-    ['a null baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true, baseRef: null } } } })],
-    ['an absent baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true } } } })],
-    ['a non-array context list', answer(true, 'cla')],
+    ['a null branch protection rule', answer(true, null), true],
+    ['a null baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true, baseRef: null } } } }), false],
+    ['an absent baseRef', JSON.stringify({ data: { repository: { pullRequest: { viewerCanMergeAsAdmin: true } } } }), false],
+    ['a non-array context list', answer(true, 'cla'), false],
     // Fails the WHOLE list closed: a partially-read list looks complete and
     // would under-require.
-    ['a list carrying a non-string', answer(true, ['cla', 7])],
-  ])('answers requiredStatusCheckContexts null for %s, keeping the bypass', async (_label, stdout) => {
+    ['a list carrying a non-string', answer(true, ['cla', 7]), false],
+  ] as Array<[string, string, boolean]>)('answers requiredStatusCheckContexts null for %s, keeping the bypass', async (_label, stdout, branchHasNoClassicRule) => {
     state.ghStdout = stdout;
     await expect(new GitHubImporter().resolveMergeBypass('/repo', 7)).resolves.toEqual({
       viewerCanMergeAsAdmin: true,
       requiredStatusCheckContexts: null,
+      branchHasNoClassicRule,
     });
   });
 
@@ -676,6 +687,218 @@ describe('GitHubImporter.resolveRequiredStatusChecks', () => {
   });
 });
 
+/**
+ * The two REST reads behind the ruleset bypass. Real-shape replay, per the
+ * external-input-parser convention (the `codex-rollout-event-msg.jsonl` pattern):
+ * `tests/fixtures/github-branch-rules.json` is a sanitized `gh api
+ * repos/{owner}/{repo}/rules/branches/<branch>` answer (an organization
+ * ruleset's Copilot and license rows beside a repository ruleset), and
+ * `tests/fixtures/github-ruleset-organization.json` is a sanitized `gh api
+ * repos/{owner}/{repo}/rulesets/<id>` answer for an organization ruleset. Their
+ * text is replayed through the `execFile` mock. The inline rows elsewhere in
+ * the block are hand-built variations, and a classic repo printed `[]`.
+ */
+describe('GitHubImporter.resolveBranchRules', () => {
+  const pullRequestRule = (rulesetId: unknown) => ({ type: 'pull_request', parameters: { required_approving_review_count: 1 }, ruleset_id: rulesetId });
+  const requiredChecksRule = (contexts: unknown[], rulesetId = 101) => ({
+    type: 'required_status_checks',
+    parameters: { required_status_checks: contexts.map((context) => ({ context })) },
+    ruleset_id: rulesetId,
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it('reads the review rulesets and required contexts, from the repo cwd', async () => {
+    state.ghStdout = JSON.stringify([
+      { type: 'deletion', ruleset_id: 101 },
+      { type: 'non_fast_forward', ruleset_id: 101 },
+      pullRequestRule(101),
+      requiredChecksRule(['lint', 'unit']),
+    ]);
+    await expect(new GitHubImporter().resolveBranchRules('/repo', 'develop')).resolves.toEqual({
+      pullRequestRulesetIds: [101],
+      mergeBlockingRulesetIds: [101],
+      requiredStatusCheckContexts: ['lint', 'unit'],
+    });
+    expect(state.lastArgs).toEqual(['api', 'repos/{owner}/{repo}/rules/branches/develop?per_page=100']);
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  it('encodes a slash in the branch name, so it stays one path segment', async () => {
+    state.ghStdout = '[]';
+    await new GitHubImporter().resolveBranchRules('/repo', 'release/1.0');
+    expect(state.lastArgs[1]).toBe('repos/{owner}/{repo}/rules/branches/release%2F1.0?per_page=100');
+  });
+
+  it('merges several rulesets into distinct ids and distinct contexts', async () => {
+    state.ghStdout = JSON.stringify([
+      pullRequestRule(101),
+      pullRequestRule(101),
+      pullRequestRule(202),
+      requiredChecksRule(['lint', 'unit'], 101),
+      requiredChecksRule(['unit', 'e2e'], 202),
+    ]);
+    await expect(new GitHubImporter().resolveBranchRules('/repo', 'develop')).resolves.toEqual({
+      pullRequestRulesetIds: [101, 202],
+      mergeBlockingRulesetIds: [101, 202],
+      requiredStatusCheckContexts: ['lint', 'unit', 'e2e'],
+    });
+  });
+
+  it('reads a branch no ruleset covers as empty, which is what a classic repo answers', async () => {
+    state.ghStdout = '[]';
+    await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.toEqual({
+      pullRequestRulesetIds: [],
+      mergeBlockingRulesetIds: [],
+      requiredStatusCheckContexts: [],
+    });
+  });
+
+  it('replays a real branch-rules answer: a license row blocks, Copilot and a bare deletion row do not', async () => {
+    state.ghStdout = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'github-branch-rules.json'), 'utf-8');
+    await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.toEqual({
+      pullRequestRulesetIds: [303],
+      mergeBlockingRulesetIds: [302, 303],
+      requiredStatusCheckContexts: ['lint', 'unit', 'playwright-tests (playwright-a11y)'],
+    });
+  });
+
+  describe('which rules can stop a merge', () => {
+    it('counts a row of an unknown future type that carries an integer id as blocking', async () => {
+      state.ghStdout = JSON.stringify([{ type: 'some_future_rule', ruleset_id: 404 }]);
+      await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.toEqual({
+        pullRequestRulesetIds: [],
+        mergeBlockingRulesetIds: [404],
+        requiredStatusCheckContexts: [],
+      });
+    });
+
+    it.each(['creation', 'deletion', 'non_fast_forward', 'required_status_checks', 'copilot_code_review'])(
+      'leaves a %s row out of the blocking rulesets',
+      async (type) => {
+        const row = type === 'required_status_checks'
+          ? requiredChecksRule(['lint'], 505)
+          : { type, ruleset_id: 505 };
+        state.ghStdout = JSON.stringify([row]);
+        const rules = await new GitHubImporter().resolveBranchRules('/repo', 'main');
+        expect(rules?.mergeBlockingRulesetIds).toEqual([]);
+        expect(rules?.pullRequestRulesetIds).toEqual([]);
+      },
+    );
+
+    it.each([
+      ['a null row', JSON.stringify([null])],
+      ['a row of a blocking type with no ruleset id', JSON.stringify([{ type: 'merge_queue' }])],
+      ['a row of a blocking type with a non-integer ruleset id', JSON.stringify([{ type: 'merge_queue', ruleset_id: 1.5 }])],
+      ['a row with neither a type nor a ruleset id', JSON.stringify([{}])],
+    ])('fails the whole read closed for %s', async (_label, stdout) => {
+      state.ghStdout = stdout;
+      await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.toBeNull();
+    });
+  });
+
+  // A full page may have more rows behind it, so it is unknown, not complete.
+  describe('the page guard', () => {
+    const rows = (count: number) => Array.from({ length: count }, () => ({ type: 'deletion', ruleset_id: 9 }));
+
+    it('reads a 100-row answer as null', async () => {
+      state.ghStdout = JSON.stringify(rows(100));
+      await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.toBeNull();
+    });
+
+    it('reads a 99-row answer', async () => {
+      state.ghStdout = JSON.stringify(rows(99));
+      await expect(new GitHubImporter().resolveBranchRules('/repo', 'main')).resolves.not.toBeNull();
+    });
+  });
+
+  // A partly read answer looks complete and would under-require.
+  it.each([
+    ['a payload that is not a list', '{"message":"Not Found"}'],
+    ['a review rule with no ruleset id', JSON.stringify([pullRequestRule(undefined)])],
+    ['a review rule with a non-integer ruleset id', JSON.stringify([pullRequestRule('101')])],
+    ['a checks rule with no list', JSON.stringify([{ type: 'required_status_checks', ruleset_id: 101 }])],
+    ['a checks rule with a non-string context', JSON.stringify([requiredChecksRule(['lint', 7])])],
+    ['an empty stdout', ''],
+  ])('fails the whole read for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveBranchRules('/repo', 'develop')).resolves.toBeNull();
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    state.ghError = Object.assign(new Error('Command failed: gh api repos/o/r/rules/branches/develop'), {
+      stderr: 'gh: BRANCH-RULES-TEST-CAUSE (HTTP 502)\n',
+    });
+    const importer = new GitHubImporter();
+    await expect(importer.resolveBranchRules('/repo', 'develop')).resolves.toBeNull();
+    await expect(importer.resolveBranchRules('/repo', 'main')).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('BRANCH-RULES-TEST-CAUSE');
+  });
+
+  it.each(['', '-oops'])('rejects base name %j before spawning anything', async (baseRefName) => {
+    await expect(new GitHubImporter().resolveBranchRules('/repo', baseRefName)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+});
+
+describe('GitHubImporter.resolveRulesetBypass', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    state.whichResult = '/usr/bin/gh';
+    state.ghError = null;
+    state.lastArgs = [];
+    state.lastCwd = undefined;
+  });
+
+  it.each(['always', 'pull_requests_only', 'exempt', 'never'])('reads %s off the single-ruleset endpoint', async (mode) => {
+    state.ghStdout = JSON.stringify({ id: 101, current_user_can_bypass: mode });
+    await expect(new GitHubImporter().resolveRulesetBypass('/repo', 101)).resolves.toEqual({ currentUserCanBypass: mode });
+    expect(state.lastArgs).toEqual(['api', 'repos/{owner}/{repo}/rulesets/101']);
+    expect(state.lastCwd).toBe('/repo');
+  });
+
+  it.each([
+    ['null', '{"id":101,"current_user_can_bypass":null}'],
+    ['an absent field, which is how the list endpoint answers', '{"id":101}'],
+    ['a value this code does not know', '{"id":101,"current_user_can_bypass":"sometimes"}'],
+  ])('answers no mode for %s', async (_label, stdout) => {
+    state.ghStdout = stdout;
+    await expect(new GitHubImporter().resolveRulesetBypass('/repo', 101)).resolves.toEqual({ currentUserCanBypass: null });
+  });
+
+  it('returns null and never throws when gh fails, warning once per cause', async () => {
+    const warn = vi.mocked(console.warn);
+    state.ghError = Object.assign(new Error('Command failed: gh api repos/o/r/rulesets/101'), {
+      stderr: 'gh: RULESET-BYPASS-TEST-CAUSE (HTTP 404)\n',
+    });
+    const importer = new GitHubImporter();
+    await expect(importer.resolveRulesetBypass('/repo', 101)).resolves.toBeNull();
+    await expect(importer.resolveRulesetBypass('/repo', 202)).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('RULESET-BYPASS-TEST-CAUSE');
+  });
+
+  it('replays a real organization ruleset answer: the viewer cannot bypass', async () => {
+    state.ghStdout = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'github-ruleset-organization.json'), 'utf-8');
+    await expect(new GitHubImporter().resolveRulesetBypass('/repo', 301)).resolves.toEqual({ currentUserCanBypass: 'never' });
+  });
+
+  it.each([0, -1, 1.5])('rejects ruleset id %s before spawning anything', async (rulesetId) => {
+    await expect(new GitHubImporter().resolveRulesetBypass('/repo', rulesetId)).resolves.toBeNull();
+    expect(state.lastArgs).toEqual([]);
+  });
+});
+
 describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
   beforeEach(() => {
     state.whichResult = '/usr/bin/gh';
@@ -743,13 +966,17 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     gitRefs.containment.clear();
     gitRefs.isShaContainedInRef.mockClear();
     // Module-level and keyed by repo + base, which every `pr()` shares.
-    resetRequiredChecksCacheForTests();
+    resetBaseRuleCachesForTests();
     // Default: the required-checks read fails, so it never parses whatever
     // `state.ghStdout` an earlier test left behind. Under this default the
     // older rows here that name "a required context missing from the rollup"
     // and expect `blocked` describe a list that could not be read. With a
     // readable list the same PRs read `queued` (see the rows that stub it).
     vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
+    // Default: the ruleset reads fail, for the same reason. A viewer the probe
+    // says cannot bypass reaches them on a branch with no classic rule.
+    vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules').mockResolvedValue(null);
+    vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass').mockResolvedValue(null);
   });
 
   it('resolveByNumber maps the gh item to a ResolvedPR', async () => {
@@ -1039,8 +1266,12 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
    * fold.
    */
   const canBypass = (requiredStatusCheckContexts: string[] | null = null) =>
-    ({ viewerCanMergeAsAdmin: true, requiredStatusCheckContexts });
-  const cannotBypass = { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null };
+    ({ viewerCanMergeAsAdmin: true, requiredStatusCheckContexts, branchHasNoClassicRule: false });
+  // A viewer who cannot bypass and whose branch is under classic protection or
+  // an unreadable payload, so the ruleset reads never run. `noClassicRule` is
+  // the same viewer on a branch GitHub says has no classic rule.
+  const cannotBypass = { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null, branchHasNoClassicRule: false };
+  const noClassicRule = { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null, branchHasNoClassicRule: true };
 
   it.each([
     // [label, mergeStateStatus, reviewDecision, rollup, bypass answer, options, expected]
@@ -1100,7 +1331,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     ['BLOCKED with a protected branch that requires no checks', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass([]), BYPASS_ON, 'ready'],
     ['BLOCKED with no readable rule (rulesets or no protection)', 'BLOCKED', 'REVIEW_REQUIRED', green, canBypass(null), BYPASS_ON, 'ready'],
     ['CLEAN with a required context missing from the rollup', 'CLEAN', 'REVIEW_REQUIRED', green, canBypass(['cla']), BYPASS_ON, 'blocked'],
-  ] as Array<[string, string, string, unknown[] | undefined, { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null } | null, PRResolveOptions | undefined, string]>)(
+  ] as Array<[string, string, string, unknown[] | undefined, { viewerCanMergeAsAdmin: boolean; requiredStatusCheckContexts: string[] | null; branchHasNoClassicRule: boolean } | null, PRResolveOptions | undefined, string]>)(
     'resolveByNumber folds %s into %s',
     async (_label, mergeStateStatus, reviewDecision, statusCheckRollup, bypassAnswer, options, expected) => {
       vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
@@ -1156,6 +1387,405 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue(null);
     const result = await gitHubPRConnector.resolveByNumber!('/r', 395, BYPASS_ON);
     expect(result?.mergeReadiness).toBe('blocked');
+  });
+
+  /**
+   * A ruleset whose bypass actors are named users answers
+   * `viewerCanMergeAsAdmin` false while GitHub's own page offers them the bypass
+   * merge, measured on a BLOCKED + REVIEW_REQUIRED PR with every check green.
+   * The viewer here is always that one: the probe says no and the branch has no
+   * classic rule, so only the ruleset reads can clear the block.
+   */
+  describe('the ruleset bypass', () => {
+    const REVIEW_RULESET = 101;
+    const OTHER_REVIEW_RULESET = 202;
+    const blockedByReview = (overrides: Record<string, unknown> = {}) => pr({
+      number: 900,
+      mergeStateStatus: 'BLOCKED',
+      mergeable: 'MERGEABLE',
+      reviewDecision: 'REVIEW_REQUIRED',
+      statusCheckRollup: green,
+      ...overrides,
+    });
+    const stubResolve = (item: GhPrListItem) => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(item);
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+    };
+    // `mergeBlockingRulesetIds` is a superset of the review rulesets, so it
+    // defaults to them and a test names a wider set when it needs one.
+    const stubRules = (
+      pullRequestRulesetIds: number[] = [REVIEW_RULESET],
+      requiredStatusCheckContexts: string[] = [],
+      mergeBlockingRulesetIds: number[] = pullRequestRulesetIds,
+    ) => vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules')
+      .mockResolvedValue({ pullRequestRulesetIds, mergeBlockingRulesetIds, requiredStatusCheckContexts });
+    const stubBypassModes = (modes: Record<number, GhRulesetBypassMode | null>) =>
+      vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass')
+        .mockImplementation(async (_cwd, rulesetId) => ({ currentUserCanBypass: modes[rulesetId] ?? null }));
+
+    it.each<GhRulesetBypassMode>(['always', 'pull_requests_only', 'exempt'])(
+      'folds a review-blocked green PR to ready when the ruleset answers %s',
+      async (mode) => {
+        stubResolve(blockedByReview());
+        stubRules();
+        stubBypassModes({ [REVIEW_RULESET]: mode });
+        const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(result?.mergeReadiness).toBe('ready');
+      },
+    );
+
+    it('folds BEHIND the same way, as a sibling landing must not flip the chip', async () => {
+      stubResolve(blockedByReview({ mergeStateStatus: 'BEHIND' }));
+      stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'pull_requests_only' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('ready');
+    });
+
+    it.each<[string, GhRulesetBypassMode | null]>([
+      ['never', 'never'],
+      ['null', null],
+    ])('keeps blocked when the ruleset answers %s', async (_label, mode) => {
+      stubResolve(blockedByReview());
+      stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: mode });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+    });
+
+    it('keeps blocked when one of two review rulesets cannot be bypassed', async () => {
+      stubResolve(blockedByReview());
+      stubRules([REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+      stubBypassModes({ [REVIEW_RULESET]: 'always', [OTHER_REVIEW_RULESET]: 'never' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+    });
+
+    it('keeps blocked with no review ruleset on the branch, spending no ruleset call', async () => {
+      stubResolve(blockedByReview());
+      stubRules([]);
+      const rulesetRead = stubBypassModes({});
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(rulesetRead).not.toHaveBeenCalled();
+    });
+
+    it('keeps blocked when a ruleset read fails', async () => {
+      stubResolve(blockedByReview());
+      stubRules();
+      vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass').mockResolvedValue(null);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+    });
+
+    it('keeps blocked when the branch rules cannot be read', async () => {
+      stubResolve(blockedByReview());
+      vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules').mockResolvedValue(null);
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(rulesetRead).not.toHaveBeenCalled();
+    });
+
+    // A bypassable ruleset does not lift a review classic protection also
+    // requires, and the classic rule is the only thing that says so here.
+    it('keeps blocked beside a classic rule, spending no ruleset call', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(blockedByReview());
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+        { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: [], branchHasNoClassicRule: false },
+      );
+      const rulesRead = stubRules();
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(rulesRead).not.toHaveBeenCalled();
+      expect(rulesetRead).not.toHaveBeenCalled();
+    });
+
+    it('spends no ruleset call when viewerCanMergeAsAdmin already says yes', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(blockedByReview());
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(canBypass());
+      const rulesRead = stubRules();
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('ready');
+      expect(rulesRead).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The reason the fold reads the rulesets' own required list. A ruleset repo
+     * has no classic list, so the rollup alone would call this `passing` while
+     * a slower workflow has not created its runs. Red if the fold falls back to
+     * the rollup alone.
+     */
+    it('keeps blocked while a context a ruleset requires is missing from the rollup', async () => {
+      stubResolve(blockedByReview());
+      stubRules([REVIEW_RULESET], ['CI', 'a-slower-workflow']);
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+    });
+
+    it('folds once every context the rulesets require has reported green', async () => {
+      stubResolve(blockedByReview());
+      stubRules([REVIEW_RULESET], ['CI', 'ci/legacy']);
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('ready');
+    });
+
+    it('never folds past a failed check, and spends no probe on it', async () => {
+      stubResolve(blockedByReview({ statusCheckRollup: [checkRun('COMPLETED', 'FAILURE')] }));
+      const probe = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass');
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(probe).not.toHaveBeenCalled();
+      expect(rulesRead).not.toHaveBeenCalled();
+    });
+
+    it('never folds past a changes-requested review, and spends no probe on it', async () => {
+      stubResolve(blockedByReview({ reviewDecision: 'CHANGES_REQUESTED' }));
+      const probe = vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass');
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(probe).not.toHaveBeenCalled();
+      expect(rulesRead).not.toHaveBeenCalled();
+    });
+
+    it('with the option off keeps blocked and spends no ruleset call', async () => {
+      stubResolve(blockedByReview());
+      const rulesRead = stubRules();
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, { bypassCountsAsReady: false });
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(rulesRead).not.toHaveBeenCalled();
+      expect(rulesetRead).not.toHaveBeenCalled();
+    });
+
+    it('asks once per base while the answer is fresh', async () => {
+      stubResolve(blockedByReview());
+      const rulesRead = stubRules();
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      const second = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(second?.mergeReadiness).toBe('ready');
+      expect(rulesRead).toHaveBeenCalledTimes(1);
+      expect(rulesetRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('remembers a no as well, on an answer that read cleanly', async () => {
+      stubResolve(blockedByReview());
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'never' });
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(rulesRead).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed read is shared for two minutes (one sweep), so every PR on the
+    // base reuses it instead of each spending its own read; then it asks again.
+    it('shares a failed read while it is fresh, then asks again once two minutes have passed', async () => {
+      vi.useFakeTimers();
+      try {
+        stubResolve(blockedByReview());
+        const rulesRead = stubRules();
+        const rulesetRead = vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass').mockResolvedValueOnce(null);
+        rulesetRead.mockResolvedValue({ currentUserCanBypass: 'always' });
+        const first = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(first?.mergeReadiness).toBe('blocked');
+
+        vi.advanceTimersByTime(2 * 60_000 - 1);
+        const second = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(second?.mergeReadiness).toBe('blocked');
+        expect(rulesRead).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(1);
+        const third = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(third?.mergeReadiness).toBe('ready');
+        expect(rulesRead).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('remembers an unreadable branch-rules answer for the same two minutes', async () => {
+      vi.useFakeTimers();
+      try {
+        stubResolve(blockedByReview());
+        const rulesRead = vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules').mockResolvedValue(null);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(rulesRead).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(2 * 60_000);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(rulesRead).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // The first ruleset says yes and the second read fails: the answer must be
+    // blocked (canBypass not left true by the first), and remembered as a failure.
+    it('keeps blocked when a later ruleset read fails after an earlier one said yes, and remembers it', async () => {
+      vi.useFakeTimers();
+      try {
+        stubResolve(blockedByReview());
+        const rulesRead = stubRules([REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+        const rulesetRead = vi.spyOn(GitHubImporter.prototype, 'resolveRulesetBypass')
+          .mockImplementation(async (_cwd, rulesetId) =>
+            (rulesetId === REVIEW_RULESET ? { currentUserCanBypass: 'always' } : null));
+        const first = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(first?.mergeReadiness).toBe('blocked');
+        expect(rulesetRead.mock.calls.map(([, rulesetId]) => rulesetId)).toEqual([REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+
+        const second = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(second?.mergeReadiness).toBe('blocked');
+        expect(rulesRead).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(2 * 60_000);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(rulesRead).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // A clean answer, bypassable or not, is the long-lived one.
+    it('reuses a clean answer until it is ten minutes old, then reads again', async () => {
+      vi.useFakeTimers();
+      try {
+        stubResolve(blockedByReview());
+        const rulesRead = stubRules();
+        stubBypassModes({ [REVIEW_RULESET]: 'always' });
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        vi.advanceTimersByTime(10 * 60_000 - 1);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(rulesRead).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1);
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(rulesRead).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // Bounded at 32 entries, oldest inserted evicted first.
+    it('evicts the oldest-inserted base once 33 distinct bases have been read', async () => {
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const totalDistinctBases = 33;
+      for (let baseIndex = 0; baseIndex < totalDistinctBases; baseIndex += 1) {
+        byNumber.mockResolvedValue(blockedByReview({ baseRefName: `base-${baseIndex}` }));
+        await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      }
+      expect(rulesRead).toHaveBeenCalledTimes(totalDistinctBases);
+
+      byNumber.mockResolvedValue(blockedByReview({ baseRefName: `base-${totalDistinctBases - 1}` }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(rulesRead).toHaveBeenCalledTimes(totalDistinctBases);
+
+      byNumber.mockResolvedValue(blockedByReview({ baseRefName: 'base-0' }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(rulesRead).toHaveBeenCalledTimes(totalDistinctBases + 1);
+    });
+
+    it('shares one read between a repo checkout and a task worktree of the same repo and base', async () => {
+      stubResolve(blockedByReview());
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      await gitHubPRConnector.resolveByNumber!('/r/.kangentic/worktrees/x', 900, BYPASS_ON);
+      expect(rulesRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads again for a different repo with the same base branch', async () => {
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      byNumber.mockResolvedValue(blockedByReview({ url: 'https://github.com/acme/widgets/pull/900' }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      byNumber.mockResolvedValue(blockedByReview({ url: 'https://github.com/acme/gadgets/pull/900' }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(rulesRead).toHaveBeenCalledTimes(2);
+    });
+
+    describe('rulesets that block a merge without a review rule', () => {
+      it('keeps blocked when another blocking ruleset cannot be bypassed', async () => {
+        stubResolve(blockedByReview());
+        stubRules([REVIEW_RULESET], [], [REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+        const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always', [OTHER_REVIEW_RULESET]: 'never' });
+        const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(result?.mergeReadiness).toBe('blocked');
+        expect(rulesetRead.mock.calls.map(([, rulesetId]) => rulesetId)).toEqual([REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+      });
+
+      it('folds to ready when every blocking ruleset can be bypassed', async () => {
+        stubResolve(blockedByReview());
+        stubRules([REVIEW_RULESET], [], [REVIEW_RULESET, OTHER_REVIEW_RULESET]);
+        stubBypassModes({ [REVIEW_RULESET]: 'always', [OTHER_REVIEW_RULESET]: 'always' });
+        const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(result?.mergeReadiness).toBe('ready');
+      });
+
+      it('keeps blocked with no pull_request ruleset, spending no ruleset call', async () => {
+        stubResolve(blockedByReview());
+        stubRules([], [], [OTHER_REVIEW_RULESET]);
+        const rulesetRead = stubBypassModes({ [OTHER_REVIEW_RULESET]: 'always' });
+        const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        expect(result?.mergeReadiness).toBe('blocked');
+        expect(rulesetRead).not.toHaveBeenCalled();
+      });
+    });
+
+    // The probe could not read the rule at all (requiredStatusCheckContexts
+    // null) but GitHub did not say the branch has none. That must not read as
+    // "no classic rule", or a classic review would be waved through.
+    it('keeps blocked on an unreadable classic payload, spending no ruleset read', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(blockedByReview());
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(
+        { viewerCanMergeAsAdmin: false, requiredStatusCheckContexts: null, branchHasNoClassicRule: false },
+      );
+      const rulesRead = stubRules();
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(rulesRead).not.toHaveBeenCalled();
+      expect(rulesetRead).not.toHaveBeenCalled();
+    });
+
+    // Reached through the real client guard: only the probe and the PR are
+    // stubbed, and the rules answer would fold to ready if the client ever
+    // spawned `gh` for an empty branch name.
+    it('keeps blocked for an empty base branch name without running gh for the rules', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(blockedByReview({ baseRefName: '' }));
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+      vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules').mockRestore();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      state.whichResult = '/usr/bin/gh';
+      state.ghError = null;
+      state.lastArgs = [];
+      state.ghStdout = JSON.stringify([{ type: 'pull_request', ruleset_id: REVIEW_RULESET }]);
+      const result = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(result?.mergeReadiness).toBe('blocked');
+      expect(state.lastArgs).toEqual([]);
+    });
+
+    it('keeps one answer per base branch', async () => {
+      const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+      const rulesRead = stubRules();
+      stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      byNumber.mockResolvedValue(blockedByReview({ baseRefName: 'develop' }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      byNumber.mockResolvedValue(blockedByReview({ baseRefName: 'release/1.0' }));
+      await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(rulesRead.mock.calls.map(([, baseRefName]) => baseRefName)).toEqual(['develop', 'release/1.0']);
+    });
   });
 
   it.each([
@@ -1280,7 +1910,7 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
      * newest base still hits. An unbounded cache fails the final assertion.
      */
     it('evicts the oldest-inserted base once 33 distinct bases have been read', async () => {
-      resetRequiredChecksCacheForTests();
+      resetBaseRuleCachesForTests();
       const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
       const read = vi.spyOn(GitHubImporter.prototype, 'resolveRequiredStatusChecks').mockResolvedValue({ contexts: REQUIRED });
       const totalDistinctBases = 33;

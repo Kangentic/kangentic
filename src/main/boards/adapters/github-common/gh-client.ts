@@ -160,7 +160,9 @@ export interface GhMergeBypass {
   /**
    * GraphQL `PullRequest.viewerCanMergeAsAdmin`: "can the viewer bypass branch
    * protections and merge the pull request immediately". A CAPABILITY, not a
-   * state - observed `true` on a PR with a failed check run.
+   * state - observed `true` on a PR with a failed check run. It misses a
+   * ruleset's named bypass actors: observed `false` for a user a ruleset lets
+   * bypass, whose GitHub page offers the bypass merge (`resolveRulesetBypass`).
    */
   viewerCanMergeAsAdmin: boolean;
   /**
@@ -171,6 +173,13 @@ export interface GhMergeBypass {
    * branch is protected but requires no status checks.
    */
   requiredStatusCheckContexts: string[] | null;
+  /**
+   * True only when GitHub itself answered `branchProtectionRule: null`. That is
+   * what `requiredStatusCheckContexts` null cannot say, since it also covers an
+   * unreadable payload, and the connector asks about rulesets only on this
+   * answer because the ruleset reads cannot see classic protection.
+   */
+  branchHasNoClassicRule: boolean;
 }
 
 /**
@@ -191,6 +200,100 @@ interface GhRequiredStatusChecksRaw {
       ref?: { branchProtectionRule?: { requiredStatusCheckContexts?: unknown } | null } | null;
     } | null;
   } | null;
+}
+
+/**
+ * What the active rulesets impose on one branch, from
+ * `repos/{owner}/{repo}/rules/branches/<branch>`, which flattens every ruleset
+ * that applies into one rule per row. A branch no ruleset covers answers `[]`,
+ * so every field is empty on a classic-protection repo. Only ACTIVE rules are
+ * listed, so a ruleset in evaluate mode never appears.
+ */
+export interface GhBranchRules {
+  /** The distinct rulesets on this branch that carry a `pull_request` rule. */
+  pullRequestRulesetIds: number[];
+  /**
+   * The distinct rulesets that carry any rule that can stop a merge: every
+   * `pullRequestRulesetIds` entry, plus each ruleset with a rule outside
+   * `GH_RULE_TYPES_THAT_NEVER_BLOCK_A_BYPASS`.
+   */
+  mergeBlockingRulesetIds: number[];
+  /** Every context a `required_status_checks` rule names, across all rulesets. */
+  requiredStatusCheckContexts: string[];
+}
+
+/**
+ * The rule types that cannot stop a viewer who bypasses the required review.
+ * `required_status_checks` is here because the connector checks those contexts
+ * itself. `copilot_code_review` only requests a review, and GitHub's docs say
+ * Copilot's reviews do not count toward required approvals by default. The other
+ * three only touch creating, deleting or force-pushing a ref. It is an allowlist
+ * so that a type GitHub adds later counts as blocking, and the chip stays
+ * `blocked` rather than reading a false `ready`. GitHub's docs say `merge_queue`,
+ * deployments, signatures and code scanning can all stop a merge.
+ */
+const GH_RULE_TYPES_THAT_NEVER_BLOCK_A_BYPASS: ReadonlySet<unknown> = new Set([
+  'creation', 'deletion', 'non_fast_forward', 'required_status_checks', 'copilot_code_review',
+]);
+
+/** Sent as `per_page`. A full page may have more rows behind it, so it reads as unknown. */
+const BRANCH_RULES_PAGE_SIZE = 100;
+
+/**
+ * REST `current_user_can_bypass` on a single ruleset. Viewer-relative, and only
+ * the single-ruleset endpoint carries it: the `rulesets` list omits the field.
+ */
+export type GhRulesetBypassMode = 'always' | 'pull_requests_only' | 'exempt' | 'never';
+
+const GH_RULESET_BYPASS_MODES: ReadonlySet<unknown> = new Set<GhRulesetBypassMode>([
+  'always', 'pull_requests_only', 'exempt', 'never',
+]);
+
+function isRulesetBypassMode(value: unknown): value is GhRulesetBypassMode {
+  return GH_RULESET_BYPASS_MODES.has(value);
+}
+
+/**
+ * One row of the branch-rules answer, as much of it as `resolveBranchRules`
+ * reads. A row carries `parameters` only for rule types that have any: a
+ * `deletion` row has none. Replayed from `tests/fixtures/github-branch-rules.json`.
+ */
+interface GhBranchRuleRaw {
+  type?: unknown;
+  ruleset_id?: unknown;
+  parameters?: { required_status_checks?: unknown } | null;
+}
+
+/**
+ * Read the branch-rules rows into `GhBranchRules`, or null when any row this
+ * code needs cannot be read. Fails the WHOLE answer closed, for the reason
+ * `readRequiredContexts` gives: a partially-read list looks complete.
+ */
+function readBranchRules(rows: unknown): GhBranchRules | null {
+  if (!Array.isArray(rows) || rows.length >= BRANCH_RULES_PAGE_SIZE) return null;
+  const pullRequestRulesetIds = new Set<number>();
+  const mergeBlockingRulesetIds = new Set<number>();
+  const requiredStatusCheckContexts = new Set<string>();
+  for (const row of rows as Array<GhBranchRuleRaw | null>) {
+    if (row?.type === 'required_status_checks') {
+      const checks = row.parameters?.required_status_checks;
+      if (!Array.isArray(checks)) return null;
+      for (const check of checks as Array<{ context?: unknown } | null>) {
+        if (typeof check?.context !== 'string') return null;
+        requiredStatusCheckContexts.add(check.context);
+      }
+    }
+    if (GH_RULE_TYPES_THAT_NEVER_BLOCK_A_BYPASS.has(row?.type)) continue;
+    const rulesetId = row?.ruleset_id;
+    if (typeof rulesetId !== 'number' || !Number.isInteger(rulesetId)) return null;
+    mergeBlockingRulesetIds.add(rulesetId);
+    if (row?.type === 'pull_request') pullRequestRulesetIds.add(rulesetId);
+  }
+  return {
+    pullRequestRulesetIds: [...pullRequestRulesetIds],
+    mergeBlockingRulesetIds: [...mergeBlockingRulesetIds],
+    requiredStatusCheckContexts: [...requiredStatusCheckContexts],
+  };
 }
 
 /** The GraphQL envelope `resolveMergeBypass` reads; every level may be absent or null. */
@@ -269,6 +372,17 @@ function warnRequiredChecksOnce(baseRefName: string, message: string): void {
     requiredChecksWarningsShown,
     message,
     `[github] required status checks read failed for base "${baseRefName}", merge readiness keeps GitHub's own verdict: ${message}`,
+  );
+}
+
+/** Once-per-cause warning for the two ruleset reads, bounded like the bypass one. */
+const rulesetWarningsShown = new Set<string>();
+
+function warnRulesetReadOnce(subject: string, message: string): void {
+  warnOncePerCause(
+    rulesetWarningsShown,
+    message,
+    `[github] ruleset read failed for ${subject}, merge readiness stays blocked: ${message}`,
   );
 }
 
@@ -546,11 +660,11 @@ export class GitHubImporter {
       const parsed = JSON.parse(stdout) as GhMergeBypassRaw | null;
       const pullRequest = parsed?.data?.repository?.pullRequest;
       if (typeof pullRequest?.viewerCanMergeAsAdmin !== 'boolean') return null;
+      const classicRule = pullRequest.baseRef?.branchProtectionRule;
       return {
         viewerCanMergeAsAdmin: pullRequest.viewerCanMergeAsAdmin,
-        requiredStatusCheckContexts: readRequiredContexts(
-          pullRequest.baseRef?.branchProtectionRule?.requiredStatusCheckContexts,
-        ),
+        requiredStatusCheckContexts: readRequiredContexts(classicRule?.requiredStatusCheckContexts),
+        branchHasNoClassicRule: classicRule === null,
       };
     } catch (error: unknown) {
       warnBypassProbeOnce(prNumber, describeGhFailure(error));
@@ -593,6 +707,62 @@ export class GitHubImporter {
       return { contexts: readRequiredContexts(repository.ref?.branchProtectionRule?.requiredStatusCheckContexts) };
     } catch (error: unknown) {
       warnRequiredChecksOnce(baseRefName, describeGhFailure(error));
+      return null;
+    }
+  }
+
+  /**
+   * What the active rulesets impose on `baseRefName`, from the repo at `cwd`.
+   * See `GhBranchRules`. `null` for any failure, including a payload this code
+   * cannot read. Never throws, for the reason `resolveMergeBypass` gives. The
+   * name is URL-encoded because a branch such as `release/1.0` is one path
+   * segment here (measured: the encoded form matches a `release/*` ruleset).
+   */
+  async resolveBranchRules(cwd: string, baseRefName: string): Promise<GhBranchRules | null> {
+    // Embedded in the endpoint argument; an empty or option-shaped name is
+    // never a real branch.
+    if (!baseRefName || baseRefName.startsWith('-')) return null;
+    const ghPath = await this.detect();
+    if (!ghPath) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        ['api', `repos/{owner}/{repo}/rules/branches/${encodeURIComponent(baseRefName)}?per_page=${BRANCH_RULES_PAGE_SIZE}`],
+        { cwd, timeout: COMMAND_TIMEOUT },
+      );
+      return readBranchRules(JSON.parse(stdout));
+    } catch (error: unknown) {
+      warnRulesetReadOnce(`base "${baseRefName}"`, describeGhFailure(error));
+      return null;
+    }
+  }
+
+  /**
+   * The viewer's `current_user_can_bypass` on one ruleset, from the repo at
+   * `cwd`. `{ currentUserCanBypass: null }` is a real answer (GitHub reports
+   * null, or a value this code does not know); `null` is a failure. The repo
+   * endpoint serves an organization's ruleset too (measured). Never throws, for
+   * the reason `resolveMergeBypass` gives.
+   */
+  async resolveRulesetBypass(
+    cwd: string,
+    rulesetId: number,
+  ): Promise<{ currentUserCanBypass: GhRulesetBypassMode | null } | null> {
+    // Embedded verbatim in the endpoint argument.
+    if (!Number.isInteger(rulesetId) || rulesetId <= 0) return null;
+    const ghPath = await this.detect();
+    if (!ghPath) return null;
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        ['api', `repos/{owner}/{repo}/rulesets/${rulesetId}`],
+        { cwd, timeout: COMMAND_TIMEOUT },
+      );
+      const parsed = JSON.parse(stdout) as { current_user_can_bypass?: unknown } | null;
+      const mode = parsed?.current_user_can_bypass;
+      return { currentUserCanBypass: isRulesetBypassMode(mode) ? mode : null };
+    } catch (error: unknown) {
+      warnRulesetReadOnce(`ruleset ${rulesetId}`, describeGhFailure(error));
       return null;
     }
   }

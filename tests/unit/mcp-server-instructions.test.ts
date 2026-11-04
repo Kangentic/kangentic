@@ -61,14 +61,14 @@ describe('buildServerInstructions', () => {
       makeResolver([
         makeProject({ id: 'a', name: 'ActiveOne', isActive: true }),
         makeProject({ id: 'b', name: 'Kangentic' }),
-        makeProject({ id: 'c', name: 'OCC-RBDMS-OKIES' }),
+        makeProject({ id: 'c', name: 'ACME-WEB-PORTAL' }),
       ]),
     );
 
     expect(instructions).toContain('Registered projects');
     expect(instructions).toContain('ActiveOne [active]');
     expect(instructions).toContain('Kangentic');
-    expect(instructions).toContain('OCC-RBDMS-OKIES');
+    expect(instructions).toContain('ACME-WEB-PORTAL');
     // Only the active project should carry the [active] tag.
     const activeTagMatches = instructions.match(/\[active\]/g) ?? [];
     expect(activeTagMatches).toHaveLength(1);

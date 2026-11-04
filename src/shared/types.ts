@@ -4391,10 +4391,12 @@ export interface AppConfig {
      * Count the viewer's own merge bypass as `ready`. On GitHub a PR still
      * waiting on a required review reads `BLOCKED`, or `BEHIND` once somebody
      * else's PR lands and leaves it behind the base, yet a viewer who can
-     * bypass branch protection (`viewerCanMergeAsAdmin`) merges it at once, and
+     * bypass branch protection (`viewerCanMergeAsAdmin`) or every ruleset that
+     * can stop the merge (`current_user_can_bypass`) merges it at once, and
      * the board's Merge column does exactly that with `gh pr merge --admin`
      * once every check is green. On, the GitHub connector spends one
-     * `gh api graphql` probe per such green PR per sweep and
+     * `gh api graphql` probe per such green PR per sweep, plus the ruleset
+     * reads for a viewer it refuses on a branch with no classic rule, and
      * folds the answer to `ready`. Never past a check that has not passed: the
      * bypass is a capability (it reads true on a red PR too), so the same probe
      * reads the branch's required checks and every one of them must have

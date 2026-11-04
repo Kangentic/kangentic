@@ -709,8 +709,9 @@ msgid "Couldn't save shortcuts"
 msgstr "无法保存快捷方式"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save Stop script"
-msgstr ""
+msgstr "无法保存停止脚本"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Count merge bypass as ready"
@@ -1085,8 +1086,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "推理强度越高回答越慢，有助于跨任务计数；摘要始终使用智能体的默认值。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold prompt for script"
-msgstr ""
+msgstr "脚本完成前暂缓提示词"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
@@ -1167,8 +1169,9 @@ msgid "How the relay works"
 msgstr "中继的工作原理"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr ""
+msgstr "此项目如何停止任务遗留运行的内容。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
@@ -1512,9 +1515,10 @@ msgid "Not found"
 msgstr "未找到"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
+#, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr ""
+msgstr "未设置"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not signed in"
@@ -2083,8 +2087,9 @@ msgid "Show the terminal panel below the board"
 msgstr "在看板下方显示终端面板"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "管理员绕过可跳过必需审查合并 PR 时标为就绪，检查失败时不会。"
+#, fuzzy
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "可绕过必需审查合并 PR 时标为就绪，检查失败时不会。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
@@ -2144,16 +2149,18 @@ msgstr "停止残留进程"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Stop script"
-msgstr ""
+msgstr "停止脚本"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "任务完成、退回待办或被删除，或命令终端结束时，停止该智能体在其文件夹中遗留的进程。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr ""
+msgstr "在任务空闲或内存不足暂停后或完成前，停止其遗留的运行内容，保存在 kangentic.json 中。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"
@@ -2239,8 +2246,9 @@ msgid "Test connection"
 msgstr "测试连接"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr ""
+msgstr "脚本成功后智能体才收到首个提示词，而不是在脚本运行期间立即收到。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "The agent, model and permissions new sessions start with."

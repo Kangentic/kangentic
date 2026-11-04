@@ -157,7 +157,7 @@ describe('AsanaAdapter.fetch - file attachments and externalRef passthrough', ()
     const tasks = [
       {
         gid: '42',
-        name: 'GWPC photo',
+        name: 'Site photo',
         notes: 'See the pasted image.',
         html_notes: '<body>See <img data-asana-gid="999" src="..."/></body>',
         permalink_url: 'https://app.asana.com/0/1/42',

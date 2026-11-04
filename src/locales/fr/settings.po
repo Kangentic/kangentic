@@ -878,8 +878,9 @@ msgid "Couldn't save shortcuts"
 msgstr "Impossible d'enregistrer les raccourcis"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save Stop script"
-msgstr ""
+msgstr "Impossible d'enregistrer le script d'arrêt"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1342,8 +1343,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Un effort plus élevé répond plus lentement et peut fiabiliser les décomptes sur de nombreuses tâches ; les résumés utilisent toujours le niveau par défaut de l'agent."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold prompt for script"
-msgstr ""
+msgstr "Retenir le prompt pendant le script"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1443,8 +1445,9 @@ msgid "How the relay works"
 msgstr "Fonctionnement du relais"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr ""
+msgstr "Mode d'arrêt par ce projet de ce qu'une tâche laisse actif."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1868,9 +1871,10 @@ msgid "Not found"
 msgstr "Introuvable"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
+#, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr ""
+msgstr "Non défini"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2575,8 +2579,8 @@ msgstr "Afficher le panneau du terminal sous le tableau"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Affiche une PR comme prête si votre contournement administrateur peut la fusionner malgré une revue requise, jamais malgré une vérification en échec."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Affiche une PR comme prête si vous pouvez contourner sa revue requise, jamais malgré une vérification en échec."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2649,8 +2653,9 @@ msgstr "Arrêter les processus résiduels"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Stop script"
-msgstr ""
+msgstr "Script d'arrêt"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2658,8 +2663,9 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "Arrêter ce qu'un agent a laissé en cours d'exécution dans son dossier lorsque sa tâche est terminée, renvoyée dans To Do ou supprimée, ou que son Command Terminal se ferme."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr ""
+msgstr "Arrête ce qu'une tâche a laissé en cours d'exécution après une pause pour inactivité ou mémoire faible, ou avant sa fin. Enregistré dans kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2764,8 +2770,9 @@ msgid "Test connection"
 msgstr "Tester la connexion"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr ""
+msgstr "L'agent reçoit son premier prompt une fois le script réussi, et non aussitôt pendant son exécution."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

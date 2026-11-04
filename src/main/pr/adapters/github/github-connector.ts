@@ -34,7 +34,7 @@ import {
   type GhCheckRunConclusion,
   type GhStatusState,
   type GhStatusCheckRollupItem,
-  type GhMergeBypass,
+  type GhRulesetBypassMode,
 } from '../../../boards/adapters/github-common/gh-client';
 import { isShaContainedInRef } from '../../../git/worktree-head';
 import { firstGitHubRemote, buildGitHubCommitWebUrl } from './github-remote';
@@ -103,10 +103,11 @@ function mapState(item: GhPrListItem): PRState {
  * of BLOCKED once the base moves, so reading the rollup for one and not the
  * other would make the chip flip on a merge somebody else did.
  *
- * `bypass` is what the viewer's own merge-bypass probe answered (see
- * `bypassFor`), and the verdict is read for the VIEWER: the board's Merge
- * column merges a green PR past its missing review with `gh pr merge --admin`,
- * so for a viewer who can do that the literal promise is `ready`. It folds at
+ * `bypass` is what the viewer's own merge bypass came to (see `bypassFor`, for
+ * the two signals it reads), and the verdict is read for the VIEWER: the board's
+ * Merge column merges a green PR past its missing review with
+ * `gh pr merge --admin`, so for a viewer who can do that the literal promise is
+ * `ready`. It folds at
  * BOTH sites where branch protection alone would block (the
  * `isBypassClearableMergeState` branch and the `ready` downgrade) and only
  * there, under the conditions `bypassClearsTheBlock` names. DRAFT and DIRTY
@@ -115,7 +116,7 @@ function mapState(item: GhPrListItem): PRState {
  */
 function mapMergeReadiness(
   item: GhPrListItem,
-  bypass: GhMergeBypass | null,
+  bypass: ViewerBypass | null,
   requiredContexts: string[] | null,
 ): PRMergeReadiness | undefined {
   if (item.mergeStateStatus === undefined && item.mergeable === undefined) return undefined;
@@ -141,10 +142,10 @@ function mapMergeReadiness(
  * reported green (`requiredChecksReported`). All three, because the bypass is
  * a capability rather than a state - it reads `true` on a red PR too.
  */
-function bypassClearsTheBlock(item: GhPrListItem, bypass: GhMergeBypass | null): boolean {
-  if (bypass?.viewerCanMergeAsAdmin !== true) return false;
+function bypassClearsTheBlock(item: GhPrListItem, bypass: ViewerBypass | null): boolean {
+  if (bypass?.canBypass !== true) return false;
   if (!isBlockedOnlyByProtection(item)) return false;
-  return requiredChecksReported(item.statusCheckRollup, bypass.requiredStatusCheckContexts);
+  return requiredChecksReported(item.statusCheckRollup, bypass.requiredContexts);
 }
 
 /**
@@ -202,10 +203,11 @@ function isBypassClearableMergeState(mergeStateStatus: GhMergeStateStatus | unde
  * started. Without this the fold would read `ready` there. The required list
  * costs nothing extra - it rides the bypass probe's own call.
  *
- * `null` means there is no readable rule (a branch with no classic protection;
- * a repo on rulesets answers `branchProtectionRule: null`). Fall back to the
- * rollup alone rather than refusing every fold on such a repo: that is the
- * behaviour without this check, not a new hazard.
+ * `null` means no list could be read, which on a fold happens only for an admin
+ * viewer on a branch with no classic rule. Fall back to the rollup alone rather
+ * than refusing every fold on such a repo: that is the behaviour without this
+ * check, not a new hazard. The ruleset path always passes a list, because it
+ * reads the contexts its rulesets require (`rulesetBypassFor`).
  *
  * The join is by NAME, and its failure direction is deliberate. A required
  * context for an Actions check is the job name, which is the rollup's
@@ -378,7 +380,8 @@ function classifyRollup(rollup: GhStatusCheckRollupItem[] | undefined): RollupVe
  * shorter than that interval, so it does not lower the rate). If that rate
  * ever matters, the mitigation is a per-base-ref memo of
  * `requiredStatusCheckContexts`; `viewerCanMergeAsAdmin` is per-PR and would
- * still cost a call.
+ * still cost a call. The ruleset reads a non-admin viewer falls through to are
+ * already memoized per base (`rulesetBypassFor`).
  */
 function needsBypassProbe(item: GhPrListItem, options: PRResolveOptions | undefined): boolean {
   return options?.bypassCountsAsReady === true
@@ -388,6 +391,19 @@ function needsBypassProbe(item: GhPrListItem, options: PRResolveOptions | undefi
 }
 
 /**
+ * What the viewer's merge bypass comes to for one item: whether they can bypass
+ * at all, and the checks that must still have reported green before it counts.
+ * `requiredContexts` null means no list could be read, which
+ * `requiredChecksReported` answers with the rollup alone.
+ */
+interface ViewerBypass {
+  canBypass: boolean;
+  requiredContexts: string[] | null;
+}
+
+const CANNOT_BYPASS: ViewerBypass = { canBypass: false, requiredContexts: null };
+
+/**
  * The viewer's merge bypass for one chosen item, or null when the probe is not
  * warranted (see `needsBypassProbe`) or gave no answer. Called INSIDE the
  * caller's `viaGh` slot, never through a `viaGh` of its own: `ghQueue` allows
@@ -395,14 +411,28 @@ function needsBypassProbe(item: GhPrListItem, options: PRResolveOptions | undefi
  * slot would let three overlapping resolves hold every slot while each waits
  * on a queued child that can never start. A `null` answer (any probe failure)
  * is "no bypass known", so the verdict stays GitHub's own `blocked`.
+ *
+ * Two signals, because neither covers both kinds of protection.
+ * `viewerCanMergeAsAdmin` is right for classic protection and answers `false`
+ * for a ruleset's named bypass actors (measured: GitHub's own page offers such a
+ * user the bypass merge while the field reads `false`). The ruleset signal
+ * cannot see classic protection at all, so it only runs where the branch has no
+ * classic rule. A branch under both keeps `blocked` for a non-admin: a bypassable
+ * ruleset does not lift a review that classic protection also requires.
  */
 async function bypassFor(
   item: GhPrListItem,
   repoCwd: string,
   options: PRResolveOptions | undefined,
-): Promise<GhMergeBypass | null> {
+): Promise<ViewerBypass | null> {
   if (!needsBypassProbe(item, options)) return null;
-  return ghImporter.resolveMergeBypass(repoCwd, item.number);
+  const probe = await ghImporter.resolveMergeBypass(repoCwd, item.number);
+  if (probe === null) return null;
+  if (probe.viewerCanMergeAsAdmin) {
+    return { canBypass: true, requiredContexts: probe.requiredStatusCheckContexts };
+  }
+  if (!probe.branchHasNoClassicRule) return CANNOT_BYPASS;
+  return rulesetBypassFor(item, repoCwd);
 }
 
 /**
@@ -414,13 +444,52 @@ async function bypassFor(
  * checkout share an entry. A failed read is not cached, so the next resolve
  * asks again. Bounded, evicting the oldest entry.
  */
-const REQUIRED_CHECKS_TTL_MS = 10 * 60_000;
-const MAX_REQUIRED_CHECKS_ENTRIES = 32;
+const BASE_RULE_CACHE_TTL_MS = 10 * 60_000;
+const MAX_BASE_RULE_CACHE_ENTRIES = 32;
 const requiredChecksByBase = new Map<string, { contexts: string[] | null; fetchedAt: number }>();
 
-/** Drop every cached required-context list. Tests only: the cache is module-level. */
-export function resetRequiredChecksCacheForTests(): void {
+/**
+ * How long a failed ruleset read is remembered: about one refresh interval, so
+ * every PR on a base shares one failed read per sweep instead of each spending
+ * its own. A transient failure holds `blocked` that long, which is GitHub's own
+ * verdict.
+ */
+const RULESET_FAILED_READ_TTL_MS = 2 * 60_000;
+
+/**
+ * `rulesetBypassFor`'s answer per repo and base branch, with the bound of
+ * `requiredChecksByBase`. The answer is the viewer's, so a revoked bypass or a
+ * `gh auth switch` can read stale until the entry expires. That only touches the
+ * chip: the merge itself still has to succeed.
+ */
+const rulesetBypassByBase = new Map<string, { bypass: ViewerBypass; expiresAt: number }>();
+
+/** Drop every per-base cached answer. Tests only: the caches are module-level. */
+export function resetBaseRuleCachesForTests(): void {
   requiredChecksByBase.clear();
+  rulesetBypassByBase.clear();
+}
+
+/**
+ * The per-base cache key: the PR's repo URL, so a task's worktree and the main
+ * checkout share an entry, then the base branch.
+ */
+function baseCacheKey(item: GhPrListItem, repoCwd: string): string {
+  const repoKey = item.url.replace(/\/pull\/\d+$/, '') || repoCwd;
+  return `${repoKey}\n${item.baseRefName}`;
+}
+
+/**
+ * Store `entry`, dropping this key's expired entry first, so it does not count
+ * against the bound and evict an unrelated base, and so the refresh lands newest.
+ */
+function rememberForBase<T>(cache: Map<string, T>, cacheKey: string, entry: T): void {
+  cache.delete(cacheKey);
+  if (cache.size >= MAX_BASE_RULE_CACHE_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  cache.set(cacheKey, entry);
 }
 
 /**
@@ -444,22 +513,75 @@ function needsRequiredChecks(item: GhPrListItem): boolean {
  */
 async function requiredChecksFor(item: GhPrListItem, repoCwd: string): Promise<string[] | null> {
   if (!needsRequiredChecks(item)) return null;
-  const repoKey = item.url.replace(/\/pull\/\d+$/, '') || repoCwd;
-  const cacheKey = `${repoKey}\n${item.baseRefName}`;
+  const cacheKey = baseCacheKey(item, repoCwd);
   const now = Date.now();
   const cached = requiredChecksByBase.get(cacheKey);
-  if (cached && now - cached.fetchedAt < REQUIRED_CHECKS_TTL_MS) return cached.contexts;
+  if (cached && now - cached.fetchedAt < BASE_RULE_CACHE_TTL_MS) return cached.contexts;
   const answer = await ghImporter.resolveRequiredStatusChecks(repoCwd, item.baseRefName);
   if (answer === null) return null;
-  // Drop this key's expired entry first, so it does not count against the
-  // bound and evict an unrelated base, and so the refresh lands newest.
-  requiredChecksByBase.delete(cacheKey);
-  if (requiredChecksByBase.size >= MAX_REQUIRED_CHECKS_ENTRIES) {
-    const oldest = requiredChecksByBase.keys().next();
-    if (!oldest.done) requiredChecksByBase.delete(oldest.value);
-  }
-  requiredChecksByBase.set(cacheKey, { contexts: answer.contexts, fetchedAt: now });
+  rememberForBase(requiredChecksByBase, cacheKey, { contexts: answer.contexts, fetchedAt: now });
   return answer.contexts;
+}
+
+/**
+ * The `current_user_can_bypass` values that mean the viewer may bypass. `never`
+ * and null do not, and neither does a value GitHub adds later.
+ */
+const BYPASSING_MODES: ReadonlySet<GhRulesetBypassMode | null> = new Set<GhRulesetBypassMode>([
+  'always', 'pull_requests_only', 'exempt',
+]);
+
+/**
+ * Whether the viewer can bypass all of `rulesetIds`, or null when a read failed.
+ * One at a time inside the caller's slot: running them together would spawn more
+ * `gh` children than `ghQueue` allows, and the first refusal settles the answer.
+ */
+async function canBypassEveryRuleset(rulesetIds: number[], repoCwd: string): Promise<boolean | null> {
+  for (const rulesetId of rulesetIds) {
+    const answer = await ghImporter.resolveRulesetBypass(repoCwd, rulesetId);
+    if (answer === null) return null;
+    if (!BYPASSING_MODES.has(answer.currentUserCanBypass)) return false;
+  }
+  return true;
+}
+
+/**
+ * The viewer's bypass of the rulesets on `item`'s base branch, for a branch with
+ * no classic rule. `canBypass` needs at least one ruleset carrying a
+ * `pull_request` rule, since that is the block being cleared, and EVERY ruleset
+ * that can stop a merge bypassable, because each one blocks it on its own. That
+ * covers a `merge_queue` or `required_deployments` rule in a ruleset the viewer
+ * cannot bypass, beside a review ruleset they can (`mergeBlockingRulesetIds`).
+ *
+ * `requiredContexts` is what the rulesets require, which is what keeps the fold
+ * honest. A ruleset repo has no classic list, so without it the fold would trust
+ * the rollup alone, and a fast check going green before a slower workflow has
+ * created its runs would read a false `ready`.
+ *
+ * Runs inside the caller's `viaGh` slot, for the deadlock reason `bypassFor`
+ * gives. Any failed read is `CANNOT_BYPASS`, so the verdict stays GitHub's
+ * `blocked`, and is remembered for `RULESET_FAILED_READ_TTL_MS`.
+ */
+async function rulesetBypassFor(item: GhPrListItem, repoCwd: string): Promise<ViewerBypass> {
+  const cacheKey = baseCacheKey(item, repoCwd);
+  const now = Date.now();
+  const cached = rulesetBypassByBase.get(cacheKey);
+  if (cached && now < cached.expiresAt) return cached.bypass;
+  const answer = await readRulesetBypass(item.baseRefName, repoCwd);
+  const bypass = answer ?? CANNOT_BYPASS;
+  const lifetime = answer === null ? RULESET_FAILED_READ_TTL_MS : BASE_RULE_CACHE_TTL_MS;
+  rememberForBase(rulesetBypassByBase, cacheKey, { bypass, expiresAt: now + lifetime });
+  return bypass;
+}
+
+/** What the rulesets on `baseRefName` come to for the viewer, or null when a read failed. */
+async function readRulesetBypass(baseRefName: string, repoCwd: string): Promise<ViewerBypass | null> {
+  const rules = await ghImporter.resolveBranchRules(repoCwd, baseRefName);
+  if (rules === null) return null;
+  const requiredContexts = rules.requiredStatusCheckContexts;
+  if (rules.pullRequestRulesetIds.length === 0) return { canBypass: false, requiredContexts };
+  const canBypass = await canBypassEveryRuleset(rules.mergeBlockingRulesetIds, repoCwd);
+  return canBypass === null ? null : { canBypass, requiredContexts };
 }
 
 /**
@@ -502,7 +624,7 @@ function mapMergeable(mergeable: GhMergeable | undefined): PRMergeReadiness {
  * answered for THIS item; the commit tier passes null for both, since its
  * items carry no mergeability at all.
  */
-function toResolvedPR(item: GhPrListItem, bypass: GhMergeBypass | null, requiredContexts: string[] | null): ResolvedPR {
+function toResolvedPR(item: GhPrListItem, bypass: ViewerBypass | null, requiredContexts: string[] | null): ResolvedPR {
   const mergeReadiness = mapMergeReadiness(item, bypass, requiredContexts);
   return {
     url: item.url,
