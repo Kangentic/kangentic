@@ -34,11 +34,26 @@ vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
   };
 });
 
+// Target resolution and the target-side help run are stubbed so a WSL target can be fed in;
+// each defaults to the real function, so every other test sees this machine.
+vi.mock('../../src/main/agent/shared/cli-target', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...actual,
+    resolveCliTarget: vi.fn(actual.resolveCliTarget),
+    execCliForTarget: vi.fn(actual.execCliForTarget),
+  };
+});
+
 import { execFile, exec } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCodexCapabilities } from '../../src/main/agent/adapters/codex/capability-discovery';
 import { listMostRecentDirs, listMostRecentFiles, readHeadBytes } from '../../src/main/agent/shared/history-scan';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
+
+const resolveCliTargetMock = resolveCliTarget as unknown as ReturnType<typeof vi.fn>;
+const execCliForTargetMock = execCliForTarget as unknown as ReturnType<typeof vi.fn>;
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -177,6 +192,16 @@ describe('discoverCodexCapabilities', () => {
         expect(capabilities.modelDisplayNames).toBeUndefined();
         expect(capabilities.effortLevels).toEqual([]);
       }
+    });
+
+    it('reads the model list for the target it resolved, not for this machine', async () => {
+      const wslTarget = { kind: 'wsl', distro: 'Ubuntu', facts: {}, linuxCliPath: '/usr/bin/codex' } as unknown as CliTarget;
+      resolveCliTargetMock.mockResolvedValueOnce(wslTarget);
+      execCliForTargetMock.mockResolvedValueOnce({ stdout: 'Usage: codex [options]\n' });
+      const targetsRead: Array<CliTarget | null> = [];
+      await discoverCodexCapabilities('/usr/bin/codex', async (target) => { targetsRead.push(target); return CATALOG; });
+      expect(targetsRead).toHaveLength(1);
+      expect(targetsRead[0]).toBe(wslTarget);
     });
 
     it('offers no models without the --model flag, but still reports the efforts', async () => {

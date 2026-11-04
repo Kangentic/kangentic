@@ -15,10 +15,9 @@ import { converseWithAppServer, type AppServerConversation } from './app-server-
  * captured in `tests/fixtures/codex-app-server-model-list.json`; a signed-in
  * one has not been read yet. https://learn.chatgpt.com/docs/app-server says
  * "Available models, reasoning efforts, and defaults depend on the client and
- * account". So the
- * read runs on the user's real `CODEX_HOME` (never a scratch one, unlike the
- * hook trust read), and it may reach the network. A Codex in a WSL distro is
- * asked there, on the distro's own home.
+ * account". The read therefore runs on the user's real `CODEX_HOME` (never a
+ * scratch one, unlike the hook trust read), and it may reach the network. A
+ * Codex in a WSL distro is asked there, on the distro's own home.
  *
  * It is the source for three things the CLI cannot otherwise be asked for: the
  * model ids its picker offers, their display names, and the reasoning efforts
@@ -85,9 +84,11 @@ const MAX_PAGES = 5;
  */
 export function modelCatalogOf(results: readonly unknown[]): CodexModelCatalog | null {
   const models: string[] = [];
-  const displayNames: Record<string, string> = {};
+  // Maps, turned into objects at the end: an id is Codex's text, and assigning
+  // `__proto__` on a plain object would replace its prototype, not add a key.
+  const displayNames = new Map<string, string>();
   const effortLevels: string[] = [];
-  const effortsByModel: Record<string, string[]> = {};
+  const effortsByModel = new Map<string, string[]>();
   let sawPage = false;
   for (const result of results) {
     if (!isRecord(result) || !Array.isArray(result.data)) return null;
@@ -100,10 +101,10 @@ export function modelCatalogOf(results: readonly unknown[]): CodexModelCatalog |
       if (!model || models.includes(model)) continue;
       models.push(model);
       if (typeof entry.displayName === 'string' && entry.displayName.trim().length > 0) {
-        displayNames[model] = entry.displayName.trim();
+        displayNames.set(model, entry.displayName.trim());
       }
       const modelLevels: string[] = [];
-      effortsByModel[model] = modelLevels;
+      effortsByModel.set(model, modelLevels);
       if (!Array.isArray(entry.supportedReasoningEfforts)) continue;
       for (const option of entry.supportedReasoningEfforts) {
         const level = isRecord(option) ? option.reasoningEffort : option;
@@ -113,7 +114,9 @@ export function modelCatalogOf(results: readonly unknown[]): CodexModelCatalog |
       }
     }
   }
-  return sawPage ? { models, displayNames, effortLevels, effortsByModel } : null;
+  if (!sawPage) return null;
+  // `Object.fromEntries` defines each key as an own property, `__proto__` included.
+  return { models, displayNames: Object.fromEntries(displayNames), effortLevels, effortsByModel: Object.fromEntries(effortsByModel) };
 }
 
 /** The `nextCursor` a page names, or null at the end. */

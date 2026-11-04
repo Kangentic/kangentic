@@ -15,6 +15,7 @@ vi.mock('../../src/main/agent/adapters/codex/capability-discovery', () => ({
 
 import { CodexAdapter } from '../../src/main/agent/adapters/codex/codex-adapter';
 import { CodexModelCatalogCache, type CodexModelCatalog } from '../../src/main/agent/adapters/codex/model-catalog';
+import type { CliTarget } from '../../src/main/agent/shared/cli-target';
 
 const CATALOG: CodexModelCatalog = { models: ['model-a'], displayNames: {}, effortLevels: ['low'], effortsByModel: { 'model-a': ['low'] } };
 
@@ -22,9 +23,10 @@ const CATALOG: CodexModelCatalog = { models: ['model-a'], displayNames: {}, effo
  * An adapter whose model list read answers `catalog` (or fails), with no
  * app-server run: its cache is built on the cache's own reader parameter.
  */
-function adapterReading(read: () => Promise<CodexModelCatalog | null>): CodexAdapter {
+function adapterReading(read: (cliPath: string, target: CliTarget | null) => Promise<CodexModelCatalog | null>): CodexAdapter {
   const adapter = new CodexAdapter();
-  Object.assign(adapter, { modelCatalog: new CodexModelCatalogCache(read) });
+  // The clock looks Date.now up on each call, so a test that mocks it moves the cache's clock too.
+  Object.assign(adapter, { modelCatalog: new CodexModelCatalogCache(read, () => Date.now()) });
   return adapter;
 }
 
@@ -109,6 +111,43 @@ describe('CodexAdapter.discoverCapabilities cache', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('hands a forced refresh to the model list cache, which reads again only once the last read is a minute old', async () => {
+    let reads = 0;
+    const adapter = adapterReading(async () => { reads += 1; return CATALOG; });
+    const startMs = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(startMs);
+    try {
+      await adapter.discoverCapabilities('/usr/bin/codex');
+      expect(reads).toBe(1);
+      // Inside the minute a forced ask runs discovery again but spawns no second app-server.
+      nowSpy.mockReturnValue(startMs + 59_999);
+      await adapter.discoverCapabilities('/usr/bin/codex', true);
+      expect(discoverMock).toHaveBeenCalledTimes(2);
+      expect(reads).toBe(1);
+      // A plain ask never reads again, however late within the time to live.
+      nowSpy.mockReturnValue(startMs + 60_000);
+      await adapter.discoverCapabilities('/usr/bin/codex');
+      expect(reads).toBe(1);
+      await adapter.discoverCapabilities('/usr/bin/codex', true);
+      expect(reads).toBe(2);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('reads the model list for the target discovery resolved', async () => {
+    const wslTarget = { kind: 'wsl', distro: 'Ubuntu', facts: {}, linuxCliPath: '/usr/bin/codex' } as unknown as CliTarget;
+    const targetsRead: Array<CliTarget | null> = [];
+    const adapter = adapterReading(async (_cliPath, target) => { targetsRead.push(target); return CATALOG; });
+    discoverMock.mockImplementationOnce(async (_cliPath: string, readCatalog?: (target: CliTarget | null) => Promise<unknown>) => {
+      const catalog = readCatalog ? await readCatalog(wslTarget) : null;
+      return { supportsModelOverride: true, effortLevels: (catalog as CodexModelCatalog | null)?.effortLevels ?? [] };
+    });
+    await adapter.discoverCapabilities('/usr/bin/codex');
+    expect(targetsRead).toHaveLength(1);
+    expect(targetsRead[0]).toBe(wslTarget);
   });
 
   it('asks again on a forced refresh and after the detection cache is reset', async () => {

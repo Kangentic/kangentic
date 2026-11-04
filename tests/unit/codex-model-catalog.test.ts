@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { CodexModelCatalogCache, catalogAcceptsEffort, modelCatalogOf, readCodexModelCatalog, type CodexModelCatalog } from '../../src/main/agent/adapters/codex/model-catalog';
+import { CATALOG_TTL_MS, CodexModelCatalogCache, FAILED_READ_RETRY_MS, catalogAcceptsEffort, modelCatalogOf, readCodexModelCatalog, type CodexModelCatalog } from '../../src/main/agent/adapters/codex/model-catalog';
 import type { CliChildProcess } from '../../src/main/utility-process/off-main-cli';
 
 /** One `Model` entry as 0.163.0 serializes it. */
@@ -86,6 +86,27 @@ describe('modelCatalogOf', () => {
     expect(modelCatalogOf([])).toBeNull();
     expect(modelCatalogOf([{ items: [] }])).toBeNull();
     expect(modelCatalogOf([null])).toBeNull();
+  });
+
+  it('keeps a model id named __proto__ as an own key of the names and effort tables, leaving their prototypes alone', () => {
+    const catalog = modelCatalogOf([{
+      data: [
+        modelEntry('__proto__', { displayName: 'Proto Model', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] }),
+        modelEntry('model-b', { supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }),
+      ],
+    }]);
+    expect(catalog).not.toBeNull();
+    const parsed = catalog!;
+    expect(parsed.models).toEqual(['__proto__', 'model-b']);
+    expect(Object.hasOwn(parsed.effortsByModel, '__proto__')).toBe(true);
+    expect(Object.hasOwn(parsed.displayNames, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(parsed.effortsByModel)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(parsed.displayNames)).toBe(Object.prototype);
+    expect(Object.keys(parsed.effortsByModel)).toEqual(['__proto__', 'model-b']);
+    // The model's own levels answer, not the any-listed-model fallback ('high' is only model-b's).
+    expect(catalogAcceptsEffort(parsed, 'low', '__proto__')).toBe(true);
+    expect(catalogAcceptsEffort(parsed, 'high', '__proto__')).toBe(false);
+    expect(catalogAcceptsEffort(parsed, 'high', 'model-b')).toBe(true);
   });
 
   describe('the model/list answer captured from codex-cli 0.163.0', () => {
@@ -342,6 +363,33 @@ describe('CodexModelCatalogCache', () => {
     cache.start('/bin/codex');
     expect(reads).toBe(2);
     now += 2 * 60_000;
+    cache.start('/bin/codex');
+    await cache.wait('/bin/codex', 1000);
+    expect(reads).toBe(3);
+  });
+
+  it('keeps the good list through a read that resolves null, and waits the full time to live before reading again', async () => {
+    let now = 0;
+    let reads = 0;
+    let answer: CodexModelCatalog | null = CATALOG;
+    const cache = new CodexModelCatalogCache(async () => { reads += 1; return answer; }, () => now);
+    cache.start('/bin/codex');
+    await cache.wait('/bin/codex', 1000);
+    // Codex answers with something that is not a list (a null, not a failure).
+    answer = null;
+    now += 60_000;
+    cache.start('/bin/codex', null, true);
+    await expect(cache.wait('/bin/codex', 1000)).resolves.toEqual(CATALOG);
+    expect(reads).toBe(2);
+    expect(cache.catalogFor('/bin/codex')).toEqual(CATALOG);
+    // Not a failed read: the five minute retry does not apply.
+    now += FAILED_READ_RETRY_MS;
+    cache.start('/bin/codex');
+    expect(reads).toBe(2);
+    now += CATALOG_TTL_MS - FAILED_READ_RETRY_MS - 1;
+    cache.start('/bin/codex');
+    expect(reads).toBe(2);
+    now += 1;
     cache.start('/bin/codex');
     await cache.wait('/bin/codex', 1000);
     expect(reads).toBe(3);
