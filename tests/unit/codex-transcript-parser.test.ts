@@ -301,11 +301,15 @@ describe('parseCodexTranscript', () => {
     expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:3`]);
   });
 
-  it('parses a rollout in the 0.163.0 record shape: the patch, the command, their results and the model', async () => {
-    // Keys from local 0.163.0 rollouts, every value invented, so not a capture of a real turn.
+  it('parses a rollout in the 0.163.0 record shape: the patch, the command, the web search, their results and the model', async () => {
+    // Every value is invented, so not a capture of a real turn. The note in
+    // docs/integrations/agents/codex-cli.md says where each record's keys came from.
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl');
     const entries = await parseCodexTranscript(SESSION_ID, fixturePath);
-    expect(entries.map((entry) => entry.kind)).toEqual(['assistant', 'tool_result', 'assistant', 'tool_result']);
+    expect(entries.map((entry) => entry.kind)).toEqual(['assistant', 'tool_result', 'assistant', 'tool_result', 'assistant']);
+    expect(entries[4]).toMatchObject({
+      blocks: [{ type: 'tool_use', id: '', name: 'web_search', input: { type: 'search', query: 'stub query' } }],
+    });
     expect(entries[0]).toMatchObject({
       model: 'stub-model',
       blocks: [{ type: 'tool_use', id: 'call_shape_patch', name: 'apply_patch', input: { file_path: 'src/example.ts' } }],

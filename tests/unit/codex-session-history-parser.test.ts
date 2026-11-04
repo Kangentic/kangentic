@@ -368,7 +368,8 @@ describe('CodexSessionHistoryParser', () => {
   describe('0.163 usage records, live effort and the agent-reported model', () => {
     const SESSION = '00000000-0000-4000-8000-000000000001';
 
-    // Keys from local 0.163.0 rollouts, every value invented, so not a capture of a real turn.
+    // Every value is invented, so not a capture of a real turn. The note in
+    // docs/integrations/agents/codex-cli.md says where each record's keys came from.
     const shapeRollout = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl'), 'utf-8');
 
     it('replays a rollout in the 0.163.0 record shape: model, effort and the last response', () => {
@@ -382,8 +383,8 @@ describe('CodexSessionHistoryParser', () => {
 
     it('keeps the context of the session own record when a nested thread record follows it', () => {
       // Up to and including the nested record, with no token_count yet to repair it.
-      const throughNestedRecord = `${shapeRollout.split('\n').slice(0, 8).join('\n')}\n`;
-      expect(throughNestedRecord).toContain('resp_shape_nested');
+      const lines = shapeRollout.split('\n');
+      const throughNestedRecord = `${lines.slice(0, lines.findIndex((line) => line.includes('resp_shape_nested')) + 1).join('\n')}\n`;
       expect(CodexSessionHistoryParser.parse(throughNestedRecord, 'append').usage?.contextWindow).toMatchObject({ usedTokens: 1_200, totalOutputTokens: 40 });
     });
 
