@@ -99,8 +99,16 @@ jobs:
       # executable, and a real PTY spawns through it.
       - name: Make node-pty's spawn-helper executable
         run: chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+      # Verbose and not silent, so the job log carries the keystroke measurement.
       - name: Run a typed launch through real zsh
         # A missing zsh fails the run instead of skipping it.
         env:
           KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: zsh
-        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts
+        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts --silent=false --reporter=verbose
+      # The low-memory pause reads the first at the warn level. This shows it
+      # against what memory_pressure prints, on a real Mac, every run.
+      - name: Report the kernel's memory figures
+        run: |
+          sysctl -n kern.memorystatus_level
+          sysctl -n kern.memorystatus_vm_pressure_level
+          memory_pressure -Q

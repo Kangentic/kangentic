@@ -258,4 +258,26 @@ describe.skipIf(!controlShell)('the same long line typed whole (the control)', (
 
     expect(report?.argv).toEqual(args);
   }, 30_000);
+
+  // A measurement, not a pin: a reporter found no key had any effect after a cut
+  // line, and why is not established. It logs and never fails, since the launcher
+  // stops the line from being cut either way. The job log carries the answer.
+  it('measures whether keys still reach the shell after a cut line', async () => {
+    const rig = makeRig(shell, STARTUP_DELAY_MS);
+    const pty = startShell(shell, rig);
+    const keysDuringDelayMs = 700;
+    const keysAfterDelayMs = STARTUP_DELAY_MS + 1_500;
+    setTimeout(() => pty.write(`${fullLine(shell, commandFor(shell, rig, args))}\r`), TYPED_AT_MS);
+    // A key while the shell is still in its startup files: the queue is full.
+    setTimeout(() => pty.write('\r'), keysDuringDelayMs);
+    // At the prompt: Ctrl+C clears the cut line, then a short line runs the stub.
+    const probeArgs = ['--keys-reached-the-shell'];
+    setTimeout(() => pty.write(`\x03${commandFor(shell, rig, probeArgs)}\r`), keysAfterDelayMs);
+
+    const report = await waitForReport(rig, keysAfterDelayMs + CONTROL_SETTLE_MS);
+
+    console.log(`[typed-launch measurement] ${process.platform} ${shell.program}: keys after the startup delay ${
+      report ? `reached the shell, stub argv ${JSON.stringify(report.argv.slice(0, 1))}` : 'did NOT reach the shell'
+    }`);
+  }, 30_000);
 });

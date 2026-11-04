@@ -5313,6 +5313,9 @@ export interface HostMemorySample {
    *  1 normal, 2 warn, 4 critical. Read off the main thread and reported a tick
    *  late. Null when unknown and on every other platform. */
   memoryPressureLevel?: number | null;
+  /** macOS kernel free memory percentage (`kern.memorystatus_level`), read the
+   *  same way. It judges the warn level. Null when unknown and off macOS. */
+  memoryFreePercent?: number | null;
 }
 
 /** Pushed when host commit headroom crosses below the warning threshold (an
