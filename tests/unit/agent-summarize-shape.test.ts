@@ -191,10 +191,15 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.promptVia).toBe('arg');
   });
 
-  it('Grok removes the session its title run named, and only that one', async () => {
-    // A headless run keeps its session in ~/.grok/sessions like any other.
-    // The run names it with -s, so the folder to remove is known before the
-    // run starts, and a sibling session in the same folder is left alone.
+  // A headless run keeps its session in ~/.grok/sessions like any other. The
+  // run names it with -s, so the folder to remove is known before the run
+  // starts, and a sibling session in the same folder is left alone. A timed-out
+  // or crashed run leaves its folder too, so the cleanup runs on that path as
+  // well, and the run's error still reaches the caller.
+  it.each([
+    ['returns', false],
+    ['fails', true],
+  ])('Grok removes the session its title run named when the run %s, and only that one', async (_outcome, runFails) => {
     const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-summarize-home-'));
     const originalGrokHome = process.env.GROK_HOME;
     process.env.GROK_HOME = grokHome;
@@ -209,44 +214,17 @@ describe('Adapter summarize() invocation shapes', () => {
         titleSession = grokSessionDir(answerHome, input.args[input.args.indexOf('-s') + 1], null);
         fs.mkdirSync(titleSession, { recursive: true });
         fs.writeFileSync(path.join(titleSession, 'updates.jsonl'), '{}\n');
+        if (runFails) throw new Error('timed out');
         return 'Mocked Title';
       });
 
-      await new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome);
+      const summarized = new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome);
+      if (runFails) await expect(summarized).rejects.toThrow('timed out');
+      else await expect(summarized).resolves.toBe('Mocked Title');
 
       expect(titleSession).not.toBe('');
       expect(fs.existsSync(titleSession)).toBe(false);
       expect(fs.existsSync(siblingSession)).toBe(true);
-    } finally {
-      if (originalGrokHome === undefined) delete process.env.GROK_HOME;
-      else process.env.GROK_HOME = originalGrokHome;
-      fs.rmSync(grokHome, { recursive: true, force: true });
-    }
-  });
-
-  it('Grok removes the session its title run named even when the run fails, and the error still propagates', async () => {
-    // A timed-out or crashed run still leaves its session folder behind, so the
-    // cleanup must run on the failure path too, not only after a clean return.
-    const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-summarize-fail-home-'));
-    const originalGrokHome = process.env.GROK_HOME;
-    process.env.GROK_HOME = grokHome;
-    try {
-      const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
-      const { grokSessionDir } = await import('../../src/main/agent/adapters/grok/session-paths');
-      const answerHome = path.join(grokHome, 'answer-home');
-      let titleSession = '';
-      runCliPrintSummarizeMock.mockImplementationOnce(async (input: { args: string[] }) => {
-        titleSession = grokSessionDir(answerHome, input.args[input.args.indexOf('-s') + 1], null);
-        fs.mkdirSync(titleSession, { recursive: true });
-        fs.writeFileSync(path.join(titleSession, 'updates.jsonl'), '{}\n');
-        throw new Error('timed out');
-      });
-
-      await expect(new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome))
-        .rejects.toThrow('timed out');
-
-      expect(titleSession).not.toBe('');
-      expect(fs.existsSync(titleSession)).toBe(false);
     } finally {
       if (originalGrokHome === undefined) delete process.env.GROK_HOME;
       else process.env.GROK_HOME = originalGrokHome;

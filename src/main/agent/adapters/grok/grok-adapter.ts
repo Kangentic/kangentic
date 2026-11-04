@@ -72,7 +72,8 @@ export function grokInitSessionId(line: string): string | null {
  */
 async function removeGrokSession(cwd: string, sessionId: string | null, place: CliPlace | null): Promise<void> {
   if (!sessionId || !/^[\w-]+$/.test(sessionId)) return;
-  await fs.promises.rm(grokSessionDir(cwd, sessionId, place), { recursive: true, force: true }).catch(() => undefined);
+  // The retries ride out a Windows handle the exited run's files still hold.
+  await fs.promises.rm(grokSessionDir(cwd, sessionId, place), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined);
 }
 
 /**
@@ -95,6 +96,8 @@ const GROK_SLASH_ARGUMENT = /^[\w.:/@+-]+$/;
  * vocabulary - which is what makes full parity reachable. The one
  * structural divergence: no statusline, so usage telemetry tails the
  * native `updates.jsonl` (Codex pattern) instead of a status bridge.
+ * Members marked "Built from the docs" are not measurements; the "Built from
+ * documentation" section of grok-build.md lists them and their doc sources.
  */
 export class GrokAdapter implements AgentAdapter {
   readonly name = 'grok';

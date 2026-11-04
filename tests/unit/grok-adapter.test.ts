@@ -21,7 +21,9 @@ import type { GrokCommandOptions } from '../../src/main/agent/adapters/grok/comm
 import { parseGrokVersion, GrokDetector } from '../../src/main/agent/adapters/grok/detector';
 import { buildGrokHooks, writeHooksFile, removeHooksFile } from '../../src/main/agent/adapters/grok/hook-manager';
 import { writeMcpConfig, removeMcpConfig } from '../../src/main/agent/adapters/grok/mcp-config';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import {
+  grokChatHistoryPath,
   grokSessionDir,
   grokUpdatesJsonlPath,
   cwdToSessionsDirName,
@@ -175,6 +177,14 @@ describe('GrokAdapter identity', () => {
     // A valid effort beside an invalid model still goes through alone.
     expect(adapter.getInjectionSequence({ model: 'grok 4', modelChanged: true, effort: 'high', effortChanged: true }))
       .toEqual(['/effort high']);
+    // Shell and TUI metacharacters are not part of a plain token either.
+    for (const badModel of ['grok;rm', '$(x)', 'grok`x`', 'grok|x']) {
+      expect(adapter.getInjectionSequence({ model: badModel, modelChanged: true, effort: null, effortChanged: false }))
+        .toEqual([]);
+    }
+    // Every character class the guard allows, in one id.
+    expect(adapter.getInjectionSequence({ model: 'org/model_1:tag@2+x.y-z', modelChanged: true, effort: null, effortChanged: false }))
+      .toEqual(['/model org/model_1:tag@2+x.y-z']);
   });
 
   it('names a learned model id from the models cache, and leaves an unknown one to the raw id', () => {
@@ -183,7 +193,7 @@ describe('GrokAdapter identity', () => {
       models: { 'grok-4.6-hidden': { info: { id: 'grok-4.6-hidden', name: 'Grok 4.6 Preview', hidden: true } } },
     }));
     expect(adapter.modelDisplayName('grok-4.6-hidden')).toBe('Grok 4.6 Preview');
-    // Null, never the id echoed back: the list keeps a raw id for a miss.
+    // Null, never the id echoed back. The list keeps a raw id for a miss.
     expect(adapter.modelDisplayName('grok-unknown')).toBeNull();
   });
 
@@ -707,7 +717,9 @@ describe('grok hooks built from the docs, through the real event bridge', () => 
     expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'plan' })[0]).toMatchObject({ type: EventType.Idle, planMode: true });
     expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'default' })[0]).toMatchObject({ planMode: false });
     expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'plan' })[0]).toMatchObject({ type: EventType.Prompt, planMode: true });
+    expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'default' })[0]).toMatchObject({ type: EventType.Prompt, planMode: false });
     expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'plan', subagentType: 'plan' })[0]).not.toHaveProperty('planMode');
+    expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'plan', subagentType: 'explore' })[0]).not.toHaveProperty('planMode');
   });
 });
 
@@ -1483,17 +1495,56 @@ describe('parseGrokTranscript', () => {
       const whole = (await parseGrokTranscript(SESSION_ID, cwd)).entries;
       const walked: typeof whole = [];
       let offset = 0;
+      // The windows tile the file: each starts where the last one's lines ended.
+      let previousEndByte = 0;
+      let totalBytes = -1;
       for (let windowIndex = 0; windowIndex < 200; windowIndex += 1) {
         const window = await adapter.parseTranscriptWindow(SESSION_ID, cwd, offset, 300);
         expect(window.sourcePath).toBe(await adapter.locateSessionHistoryFile(SESSION_ID, cwd));
+        expect(window.firstByteOffset).toBe(previousEndByte);
+        previousEndByte = window.endByte;
+        totalBytes = window.totalBytes;
         walked.push(...window.entries);
         if (window.nextByteOffset <= offset || window.nextByteOffset >= window.totalBytes) break;
         offset = window.nextByteOffset;
       }
       expect(whole.length).toBeGreaterThan(20);
       expect(walked).toEqual(whole);
+      expect(previousEndByte).toBe(totalBytes);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // A Grok installed in a WSL distro keeps its sessions under the distro's home.
+  it('reads the window from the session folder of the place the CLI runs in', async () => {
+    useTempGrokHome();
+    const distroShare = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-wsl-share-'));
+    try {
+      const place: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: {
+          distro: 'Ubuntu',
+          homeLinux: '/home/dev',
+          homeUnc: path.join(distroShare, 'home', 'dev'),
+          uncRoot: distroShare,
+          interactivePath: '',
+          env: {},
+          networkingMode: 'unknown',
+        },
+      };
+      const cwd = '/home/dev/wsl-project';
+      const chatHistoryPath = grokChatHistoryPath(cwd, SESSION_ID, place);
+      expect(chatHistoryPath.startsWith(distroShare)).toBe(true);
+      fs.mkdirSync(path.dirname(chatHistoryPath), { recursive: true });
+      fs.writeFileSync(chatHistoryPath, `${JSON.stringify({ type: 'assistant', content: 'from the distro', model_id: 'grok-4.6' })}\n`);
+
+      const window = await new GrokAdapter().parseTranscriptWindow(SESSION_ID, cwd, 0, 4096, undefined, place);
+      expect(window.sourcePath).toBe(chatHistoryPath);
+      expect(window.entries).toHaveLength(1);
+    } finally {
+      fs.rmSync(distroShare, { recursive: true, force: true });
     }
   });
 });
@@ -2417,6 +2468,19 @@ describe('GrokAdapter.locateSessionHistoryFile (strict cwd-scoped probe)', () =>
 
     const located = await adapter.locateSessionHistoryFile(SESSION_ID, '/home/dev/probe-project');
     expect(located).toBeNull();
+  });
+
+  it('returns null for a session folder that holds updates.jsonl but no chat_history.jsonl yet', async () => {
+    // Before a session's first turn only updates.jsonl exists. The window
+    // walkers read chat_history.jsonl, so there is nothing to locate yet.
+    useTempGrokHome();
+    const adapter = new GrokAdapter();
+    const cwd = '/home/dev/probe-project';
+    const updatesPath = grokUpdatesJsonlPath(cwd, SESSION_ID);
+    fs.mkdirSync(path.dirname(updatesPath), { recursive: true });
+    fs.writeFileSync(updatesPath, '');
+
+    expect(await adapter.locateSessionHistoryFile(SESSION_ID, cwd)).toBeNull();
   });
 });
 
