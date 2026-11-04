@@ -8,6 +8,7 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { SshCliPlace } from '../../../src/main/agent/shared/cli-target';
+import { resetHostFileSyncState } from '../../../src/main/remote/host-file-sync';
 import type { HostCommandRequest, HostCommandResult, HostFileWrite } from '../../../src/main/remote/protocol/messages';
 
 export class FakeSshHost {
@@ -23,12 +24,20 @@ export class FakeSshHost {
   readonly api: NonNullable<SshCliPlace['files']> = {
     readFile: async (hostPath) => (this.files.has(hostPath) ? { exists: true, content: this.files.get(hostPath) ?? null } : { exists: false, content: null }),
     writeFiles: async (files: HostFileWrite[]) => {
+      const conflicts: string[] = [];
+      let written = 0;
       for (const file of files) {
+        // The helper's last look before it swaps a file in.
+        if (file.expect !== undefined && (this.files.get(file.path) ?? null) !== file.expect) {
+          conflicts.push(file.path);
+          continue;
+        }
         this.files.set(file.path, file.content);
         if (file.mode !== undefined) this.modes.set(file.path, file.mode);
         this.writes.push(file.path);
+        written += 1;
       }
-      return { written: files.length };
+      return conflicts.length > 0 ? { written, conflicts } : { written };
     },
     removeFiles: async (paths) => {
       for (const target of paths) {
@@ -64,6 +73,9 @@ export interface FakeSshWorkspace {
 
 /** A host with home `/home/dev` and a project at `/home/dev/app`, mirrored under a temp folder. */
 export async function makeFakeSshWorkspace(options: { hostHome?: string; hostProject?: string } = {}): Promise<FakeSshWorkspace> {
+  // The sync remembers what it last saw on a host, by host id and path, across the whole process.
+  // Each workspace is a new host, so a test never inherits another's.
+  resetHostFileSyncState();
   const hostHome = options.hostHome ?? '/home/dev';
   const hostProject = options.hostProject ?? `${hostHome}/app`;
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kangentic-fake-host-'));
