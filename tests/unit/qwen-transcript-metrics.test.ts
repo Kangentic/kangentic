@@ -119,7 +119,7 @@ describe('parseQwenTranscriptToolCounts and parseQwenTranscriptToolResultTokens'
     expect((await parseQwenTranscriptToolCounts(filePath))?.toolCallCount).toBe(2);
 
     // Rewritten in place to a different session of the same length or longer.
-    fs.writeFileSync(filePath, assistant('b1', '2026-11-01T10:00:00.000Z', [{ id: 'z9', name: 'write_file' }]).padEnd(first.length + 10, ' '));
+    fs.writeFileSync(filePath, assistant('b1', '2026-11-01T10:00:00.000Z', [{ id: 'z9', name: 'write_file' }]).padEnd(fs.statSync(filePath).size + 10, ' '));
     const rewritten = await parseQwenTranscriptToolCounts(filePath);
     expect(rewritten?.toolBreakdown.map((stat) => stat.toolName)).toEqual(['write_file']);
   });
@@ -174,5 +174,36 @@ describe('the real Qwen session fixtures', () => {
     // and the result sizes are an empty record.
     expect(await parseQwenTranscriptToolCounts(filePath)).toBeNull();
     expect(await parseQwenTranscriptToolResultTokens(filePath)).toEqual({});
+  });
+});
+
+/**
+ * `tests/fixtures/qwen-0.25.2-session/` is written by hand in the exact record
+ * structure of a real 0.25.2 session with a subagent: the field set, where
+ * `usageMetadata` sits (on the thought record before a tool call, never on
+ * the tool-call record), `tool_result` records with `toolCallResult`, and the
+ * `ui_telemetry` lines between them. Its content is invented. A sanitized copy
+ * of the real capture was not committed, because it would carry a developer's
+ * local Qwen data into a public repository.
+ */
+describe('the 0.25.2-shaped session with a subagent', () => {
+  const chatPath = path.join(__dirname, '..', 'fixtures', 'qwen-0.25.2-session', 'chats', '00000000-0000-4000-8000-000000000001.jsonl');
+
+  it('sums the two API responses, cache reads in the input, and never the telemetry lines', async () => {
+    // 18000 + 19000 input (15000 of the second cached), 120 + 200 output.
+    expect(await parseQwenTranscriptUsage(chatPath)).toEqual({ inputTokens: 37000, outputTokens: 320 });
+  });
+
+  it('counts the agent launch and the glob, each sized from its tool_result record', async () => {
+    // "The directory holds 3 items: README.md, package.json, src." is 58
+    // characters (15 tokens); "Found 3 file(s): README.md package.json src" is 43 (11).
+    const counts = await parseQwenTranscriptToolCounts(chatPath);
+    expect(counts?.toolCallCount).toBe(2);
+    expect(counts?.toolBreakdown).toEqual(expect.arrayContaining([
+      { toolName: 'agent', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 15 },
+      { toolName: 'glob', callCount: 1, totalDurationMs: 0, interruptedCount: 0, resultTokens: 11 },
+    ]));
+    // Scoped to the run that started after the subagent returned.
+    expect(await parseQwenTranscriptToolResultTokens(chatPath, Date.parse('2026-10-19T05:15:49.000Z'))).toEqual({ glob: 11 });
   });
 });
