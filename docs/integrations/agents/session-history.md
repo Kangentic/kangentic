@@ -304,7 +304,7 @@ The `<projectSlug>` is computed by `claudeProjectSlug()` (exported from `transcr
 
 ## Claude status-file pipeline (`runtime.statusFile`)
 
-The hook-based telemetry source is declared on the adapter as Claude's only live telemetry pipeline:
+The hook-based telemetry source is declared on the adapter. Claude's is shown here; Antigravity declares the same pipeline, fed by a per-session status line (see [Antigravity](antigravity.md#live-telemetry)):
 
 ```ts
 readonly runtime: AdapterRuntimeStrategy = {
@@ -330,6 +330,9 @@ readonly runtime: AdapterRuntimeStrategy = {
 | `parseStatus(raw)` | Decode the rewritten contents of `status.json` into a `SessionUsage`. Returns null for partial or malformed content. |
 | `parseEvent(line)` | Decode a single appended line from `events.jsonl` into a `SessionEvent`. Returns null for blank/invalid lines. |
 | `isFullRewrite` | True for `status.json` (whole-file rewrite on every update). The events file is always append-only, tracked by a separate byte cursor regardless of this flag. |
+| `parseStatusEvents?(raw, previousRaw, now)` | Optional. Activity events a status write reports that no hook does, read against the session's previous readable write. Returns null for an unreadable write, so the reader keeps its last readable baseline. Antigravity's approval wait and plan mode. |
+| `parseSessionStart?(hookContext)` | Optional. Reads a SessionStart hook's payload: the id it names and whether it moved the conversation (see [Mid-session fork reconcile](#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)). |
+| `confirmsBackgroundMove?(options)` | Optional. Whether a SessionStart into the CLI's own background session moved the terminal's conversation there (Claude's `/bg`). |
 
 **File paths** (`status.json`, `events.jsonl` under `.kangentic/sessions/<sessionId>/`) are caller-supplied at spawn time on `SpawnSessionInput.statusOutputPath` / `eventsOutputPath`. They are runtime values, not static adapter metadata.
 
@@ -547,9 +550,10 @@ never touched again. The facts this design rests on:
   from stored id" means a move, never routine resume noise.
 
 Kangentic tracks the move at two layers. Neither branches on an agent name. Both ride the
-generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which only
-Claude's does today (Copilot's and Grok's `statusFile` declarations carry only the events
-channel), and `parseSessionStart`, which reads the hook. An adapter without `parseSessionStart`
+generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which
+Claude's and Antigravity's do today (Copilot's and Grok's `statusFile` declarations carry only the
+events channel, since their `parseStatus` returns null), and `parseSessionStart`, which reads the
+hook. Antigravity's parser reports no session id, so it declares no `parseSessionStart`. An adapter without `parseSessionStart`
 follows every status id change, as before.
 
 1. **Live reconcile.** `SessionTelemetry.processStatusUpdate`'s agent-session-id capture is

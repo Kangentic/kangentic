@@ -44,7 +44,8 @@ This subsystem aims to be near-100% accurate: notification fires within seconds 
    └─────────────────────────────────┬────────────────────────────────┘
                                      │
                 ┌────────────────────▼─────────────────────┐
-                │  StatusFileReader (watches events.jsonl) │
+                │  StatusFileReader (events.jsonl; status  │
+                │  .json via parseStatusEvents)            │
                 │  → SessionTelemetry.ingestEvents(events) │
                 └────────────────────┬─────────────────────┘
                                      │
@@ -222,7 +223,7 @@ had the same gap before the kind existed. The rules in `updatePermissionFlag` cl
 
 - The awaited tool (`permissionAwaitedToolId`) is the newest pending entry the event's `tool`
   names, and the stack top only when the event names none or names no pending call. Claude, Qwen
-  and the appended Codex, Antigravity and Grok waits carry `tool`; Grok's `permission_prompt`
+  and the appended Codex, Antigravity and Grok hook waits carry `tool`, except Antigravity's status-derived approval wait, which names none and so awaits the newest call in flight; Grok's `permission_prompt`
   wait, which comes from a notification and not from a tool start, does not. The usage
   accumulator credits the waited call by the same rule.
 - The other pending ids at that moment are the wait's siblings (`permissionSiblingToolIds`,
