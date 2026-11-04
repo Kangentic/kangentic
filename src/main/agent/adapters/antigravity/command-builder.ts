@@ -17,6 +17,8 @@ import { prepareWslHookTransport, wslStatusLineCommand, type WslHookPaths } from
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { quoteBridgePath, type HookShell } from '../../shared/hook-utils';
 import { antigravityHelpFeatures } from './capability-discovery';
+import { antigravitySettingsPath } from './data-paths';
+import { readSettings } from './trust-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -94,8 +96,8 @@ export class AntigravityCommandBuilder {
     // An agy in a WSL distro publishes its hooks and status line through the
     // session's WSL hook transport, prepared once for both. A failed write
     // throws to the spawn's caller, as the other files do.
-    const statusLinePath = this.sessionSettingsEnabled(options) ? options.statusOutputPath : undefined;
-    const sessionFilePath = options.eventsOutputPath ?? statusLinePath;
+    const statusLineOutputPath = this.sessionSettingsEnabled(options) ? options.statusOutputPath : undefined;
+    const sessionFilePath = options.eventsOutputPath ?? statusLineOutputPath;
     const wslHooks = place && sessionFilePath ? prepareWslHookTransport(path.dirname(sessionFilePath)) : null;
     if (options.eventsOutputPath) {
       this.writeMergedHooks(options.cwd, options.eventsOutputPath, wslHooks);
@@ -138,7 +140,7 @@ export class AntigravityCommandBuilder {
     }
 
     // Live telemetry: a per-session status line through `--settings`.
-    const settingsPath = statusLinePath ? this.writeSessionSettings(statusLinePath, place, wslHooks) : null;
+    const settingsPath = statusLineOutputPath ? this.writeSessionSettings(statusLineOutputPath, place, wslHooks) : null;
     if (settingsPath) {
       parts.push('--settings', quoteArg(place ? cliPathForTarget(settingsPath, place) : settingsPath, shell));
     }
@@ -271,6 +273,15 @@ export class AntigravityCommandBuilder {
    * `? for shortcuts` hint `detectIdle` reads; the bridge prints nothing below
    * it. Built from the documentation; not yet run against a real agy.
    *
+   * The help does not say whether the file is merged over the saved
+   * settings.json or replaces it for the session. Replaced, the session would
+   * lose the saved trust (and stop at agy's folder trust prompt) and the
+   * user's permission rules. So the file also carries the saved values of the
+   * keys that keep a session unblocked and as guarded as the user set it
+   * (`savedSessionGuards`): either way, the session sees them. Every spawn
+   * path awaits `ensureTrust` before it builds the command, so the copied
+   * trust list already names this folder.
+   *
    * Never throws: a path a bare token cannot carry or a failed write leaves
    * the session without live telemetry, as an older agy is.
    */
@@ -291,6 +302,7 @@ export class AntigravityCommandBuilder {
         statusLineCommand = `node ${quoteBridgePath(statusBridge, AGY_STATUS_LINE_SHELL)} ${quoteBridgePath(toForwardSlash(statusOutputPath), AGY_STATUS_LINE_SHELL)}`;
       }
       const settings = {
+        ...savedSessionGuards(place),
         statusLine: {
           type: 'command',
           command: statusLineCommand,
@@ -406,6 +418,28 @@ export class AntigravityCommandBuilder {
       return null;
     }
   }
+}
+
+/**
+ * The saved settings keys a `--settings` file repeats, so a session keeps them
+ * even if agy replaces the saved settings with the file rather than merging
+ * it: the folder trust that keeps a spawn from blocking, and the user's own
+ * guards (permission rules, the tool permission level, the terminal sandbox)
+ * and saved mode, which the Default permission entry leaves to agy. Key names
+ * from https://antigravity.google/docs/cli/reference. Nothing else is copied:
+ * the file sits in the project's `.kangentic/`, and settings.json can hold a
+ * custom model provider's credentials.
+ */
+export const AGY_SESSION_GUARD_KEYS = ['trustedWorkspaces', 'permissions', 'toolPermission', 'enableTerminalSandbox', 'agentMode'] as const;
+
+/** The saved values of `AGY_SESSION_GUARD_KEYS`, from the settings of the agy at `place` (the distro's for a WSL agy). */
+function savedSessionGuards(place: CliPlace | null): Record<string, unknown> {
+  const saved = readSettings(antigravitySettingsPath(place));
+  const guards: Record<string, unknown> = {};
+  for (const key of AGY_SESSION_GUARD_KEYS) {
+    if (saved[key] !== undefined) guards[key] = saved[key];
+  }
+  return guards;
 }
 
 /**

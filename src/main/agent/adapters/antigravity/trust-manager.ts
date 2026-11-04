@@ -100,7 +100,12 @@ function removeWorkspaceTrustSync(workspacePath: string, place: CliPlace | null)
   }
 }
 
-function readSettings(settingsPath: string): Record<string, unknown> {
+/**
+ * agy's saved `settings.json` as an object, or an empty one when it is missing
+ * or unreadable. Also read by the command builder, which repeats a few of its
+ * keys in the session's `--settings` file (`AGY_SESSION_GUARD_KEYS`).
+ */
+export function readSettings(settingsPath: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
