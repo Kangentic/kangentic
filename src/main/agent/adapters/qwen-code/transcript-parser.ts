@@ -139,10 +139,9 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
   // `tool_result` is its own record type in current Qwen (`ChatRecord.type`
   // is `user | assistant | tool_result | system`, and `recordToolResult`
   // writes `functionResponse` parts:
-  // https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts,
-  // not yet seen in a real Qwen transcript). Older writers put the same parts in a
-  // `user` record, which is still read. `system` (ui_telemetry and the rest)
-  // is skipped.
+  // https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts).
+  // Older writers put the same parts in a `user` record, which is still read.
+  // `system` (ui_telemetry and the rest) is skipped.
   if (type !== 'user' && type !== 'assistant' && type !== 'tool_result') return;
   const message = raw.message;
   if (!isRecord(message)) return;
@@ -227,8 +226,9 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
  *   `totalTokenCount - promptTokenCount` decides when it falls between the
  *   two conventions; otherwise the candidates count stands, which never
  *   counts reasoning twice.
- * Qwen reports no cache writes. Built from Qwen's source, not yet checked
- * against a real Qwen transcript beyond the 0.15.3 fixture.
+ * Qwen reports no cache writes. Built from Qwen's source. No real record held
+ * a nonzero `thoughtsTokenCount` (qwen-code.md), so the reasoning branch has
+ * not met real data.
  */
 export function qwenTurnUsage(value: unknown): TranscriptTurnUsage | undefined {
   if (!isRecord(value)) return undefined;
