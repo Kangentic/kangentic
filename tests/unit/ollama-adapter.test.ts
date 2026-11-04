@@ -752,6 +752,35 @@ describe('OllamaAdapter', () => {
       expect(adapter.buildCommand(makeOptions({ agentPath: ps1Path, effort: 'high', shell: 'bash' }))).toContain('--think=high');
     });
 
+    it('judges a WSL spawn by the levels discovered for its Windows-side path, not the distro path it executes', async () => {
+      const uncPath = '\\\\wsl.localhost\\Ubuntu\\usr\\bin\\ollama';
+      const cliTarget = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: WSL_LINUX_CLI_PATH,
+        facts: {},
+      } as unknown as SpawnCommandOptions['cliTarget'];
+      await adapter.discoverCapabilities(uncPath);
+      const dropped = adapter.buildCommand(makeOptions({ agentPath: uncPath, cliTarget, effort: 'xhigh', shell: 'bash' }));
+      expect(dropped).toContain(WSL_LINUX_CLI_PATH);
+      expect(dropped).not.toContain('--think');
+      expect(adapter.buildCommand(makeOptions({ agentPath: uncPath, cliTarget, effort: 'high', shell: 'bash' })))
+        .toContain(quoteArg('--think=high', 'bash'));
+    });
+
+    it('trims a padded effort before judging it against the reported levels', async () => {
+      expect(adapter.buildCommand(makeOptions({ effort: ' high ', shell: 'bash' }))).toContain(quoteArg('--think=high', 'bash'));
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(adapter.buildCommand(makeOptions({ effort: ' high ', shell: 'bash' }))).toContain(quoteArg('--think=high', 'bash'));
+    });
+
+    it('does not lend one CLI path\'s levels to another whose help read failed', async () => {
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      mockHelpShouldFail = true;
+      const capabilities = await adapter.discoverCapabilities('/opt/other/ollama');
+      expect(capabilities.effortLevels).toEqual([]);
+    });
+
     describe('a failed help read versus an answered one', () => {
       const cliPath = '/usr/bin/ollama';
 
