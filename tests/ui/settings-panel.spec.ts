@@ -1285,8 +1285,8 @@ test.describe('Settings Panel', () => {
       const permRow = page.locator('div:has(> input[data-testid="agent-permission-mode"])');
       const permInput = page.locator('input[data-testid="agent-permission-mode"]');
 
-      // OpenCode exposes exactly 2 modes: Plan and Build (trimmed from the
-      // original 4-entry Claude-shaped list). Verify exact order and no extras.
+      // OpenCode exposes its own modes: Plan, its default agent, Build, and
+      // Build with `--auto`. Verify exact order and no extras.
       await expect.poll(async () => {
         await permInput.click();
         const texts = await page.locator('[data-combobox-option]').allTextContents();
@@ -1295,7 +1295,9 @@ test.describe('Settings Panel', () => {
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan',
+        'Default Agent',
         'Build',
+        'Build (Auto-approve)',
       ]);
 
       // The OpenCode adapter declares "acceptEdits" as its defaultPermission.

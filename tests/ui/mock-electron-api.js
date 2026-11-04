@@ -4016,7 +4016,9 @@
             // KEEP IN SYNC with OpenCodeAdapter.permissions in src/main/agent/adapters/opencode/opencode-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan' },
+              { mode: 'default', label: 'Default Agent' },
               { mode: 'acceptEdits', label: 'Build' },
+              { mode: 'bypassPermissions', label: 'Build (Auto-approve)' },
             ],
             defaultPermission: 'acceptEdits',
             // KEEP IN SYNC with OpenCodeAdapter.liveTelemetryUnsupported
