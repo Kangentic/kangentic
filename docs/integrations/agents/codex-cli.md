@@ -195,6 +195,8 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 - `fileChangeTools` for `apply_patch`.
 - The `codex exec` non-interactive form.
 
+`tests/fixtures/codex-0.163.0-rollout-shape.jsonl` is replayed through the usage, tool count, transcript and live readers. Its keys were copied from local 0.163.0 rollouts and every value is invented, so it pins the record shape, not what a real turn writes. `local_shell_call` and `web_search_call` are not in it: no local rollout holds one, so they stay shaped from `models.rs` alone. A capture from a signed-in turn can replace it.
+
 **Supported by the docs, waiting on a live probe:**
 
 - **`proveConversationGone`.** `codex resume` of a missing id exits with "No saved session found with ID" (`tui/src/lib.rs`), so a deleted rollout could start fresh from a recap as Claude's does. But Codex documents no retention sweep, and the part the 0.158+ SQLite thread index (`thread_history_1.sqlite`) plays in a resume is not settled.

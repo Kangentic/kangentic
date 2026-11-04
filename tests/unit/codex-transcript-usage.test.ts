@@ -125,6 +125,31 @@ describe('codexTranscriptUsage', () => {
   });
 });
 
+describe('a rollout in the 0.163.0 record shape', () => {
+  // Keys from local 0.163.0 rollouts, every value invented, so this is not a
+  // capture of a real turn. See the note in docs/integrations/agents/codex-cli.md.
+  const shapeRollout = path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl');
+
+  it('sums the two responses of the rollout own thread, past the nested thread record', async () => {
+    await expect(codexTranscriptUsage(shapeRollout)).resolves.toEqual({ inputTokens: 2_500, outputTokens: 100 });
+  });
+
+  it('counts the apply_patch and the exec_command, each under its hook name', async () => {
+    await expect(codexTranscriptToolCounts(shapeRollout)).resolves.toEqual({
+      toolCallCount: 2,
+      toolBreakdown: [
+        { toolName: 'apply_patch', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+      ],
+    });
+  });
+
+  it('estimates both outputs under those same names', async () => {
+    // 54 characters for the patch result, 38 for the command's.
+    await expect(codexTranscriptToolResultTokens(shapeRollout)).resolves.toEqual({ apply_patch: 14, Bash: 10 });
+  });
+});
+
 describe('real captured rollouts', () => {
   const realRollout = path.join(__dirname, '..', 'fixtures', 'codex-real-rollout.jsonl');
   const backgroundRollout = path.join(__dirname, '..', 'fixtures', 'codex-rollout-background-session.jsonl');
