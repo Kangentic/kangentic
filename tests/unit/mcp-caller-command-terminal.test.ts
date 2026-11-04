@@ -72,6 +72,15 @@ describe('the Command Terminal owner key', () => {
     expect(parseCommandTerminalBrowserOwner(TASK)).toBeNull();
   });
 
+  it.each([
+    ['an empty rest', 'command-terminal::'],
+    ['a one-character rest', 'command-terminal::a'],
+    ['an empty project', 'command-terminal::::slot-1'],
+    ['an empty slot', 'command-terminal::project-id::'],
+  ])('parses %s to null', (_description, ownerKey) => {
+    expect(parseCommandTerminalBrowserOwner(ownerKey)).toBeNull();
+  });
+
   it('names the project, so slot-1 of two projects are two owners', () => {
     expect(commandTerminalBrowserOwner(PROJECT, 'slot-1')).not.toBe(commandTerminalBrowserOwner(TASK, 'slot-1'));
   });
