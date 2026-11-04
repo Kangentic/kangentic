@@ -138,7 +138,7 @@ function makeContext() {
  * applySuspendDbWrites, re-read after the suspend, the post-respawn read
  * (`resumedSessionId`), and every read after that (the verifier's agent lookup).
  */
-async function runRestart(outcome: { unsentPrompt: string | null } | undefined, resumedSessionId: string | null) {
+async function runRestart(outcome: { unsentPrompt: string | null; typedOpening?: string | null } | undefined, resumedSessionId: string | null) {
   const liveTask = makeTask(SESSION_ID);
   const updatedTask = makeTask(null);
   const resumedTask = makeTask(resumedSessionId);
@@ -193,6 +193,25 @@ describe('restartSessionForSettingsChange: a resume prompt the CLI did not take'
       verifier: hoisted.verifier,
     }));
     expect(hoisted.resolveInjectionVerifier).toHaveBeenCalledWith('claude', expect.anything(), TASK_ID);
+  });
+
+  it('types the engine\'s typed opening ahead of the unsent prompt, as one message', async () => {
+    // A CLI that takes no starting prompt hands the opening back separately.
+    const { result } = await runRestart({ unsentPrompt: UNSENT_PROMPT, typedOpening: 'Fix the bug' }, RESUMED_SESSION_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(hoisted.deliverAgentMessageInBackground).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      sessionId: RESUMED_SESSION_ID,
+      message: `Fix the bug\n\n${UNSENT_PROMPT}`,
+    }));
+  });
+
+  it('types a typed opening alone when nothing else is unsent', async () => {
+    await runRestart({ unsentPrompt: null, typedOpening: 'Fix the bug' }, RESUMED_SESSION_ID);
+
+    expect(hoisted.deliverAgentMessageInBackground).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      message: 'Fix the bug',
+    }));
   });
 
   it('delivers nothing when the resume carried the whole prompt itself', async () => {

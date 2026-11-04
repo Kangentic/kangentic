@@ -14,9 +14,8 @@
  *   onFirstTelemetry: suppressPty(id) only for hooks_and_pty AND flag !== false
  *
  * session-telemetry-activity-decisions.test.ts pins what the telemetry does
- * with the option, and kimi-wire-telemetry.test.ts re-implements the
- * `onFirstTelemetry` gate by hand. Nothing else crosses SessionManager's own
- * lines, so a flipped condition there would pass both.
+ * with the option. Nothing else crosses SessionManager's own lines, so a
+ * flipped condition there would pass it.
  *
  * Structure: build the real SessionManager (real SessionTelemetry), wrap
  * `SessionHistoryReader` only to capture the callbacks object SessionManager

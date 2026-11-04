@@ -70,9 +70,14 @@ vi.mock('../../src/main/db/repositories/handoff-repository', () => ({
   },
 }));
 // Delivery is observed, never run: the real one schedules keystrokes and timers.
-vi.mock('../../src/main/automations/turn-end/agent-message-delivery', () => ({
-  deliverAgentMessageInBackground: mockDeliverAgentMessageInBackground,
-}));
+// The pure slash-command check stays real: the handoff reads it to place the typed opening.
+vi.mock('../../src/main/automations/turn-end/agent-message-delivery', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/automations/turn-end/agent-message-delivery')>();
+  return {
+    isSlashCommand: original.isSlashCommand,
+    deliverAgentMessageInBackground: mockDeliverAgentMessageInBackground,
+  };
+});
 // Resolving the template variables for a delivered message reads a dev-port lease, which needs a database.
 vi.mock('../../src/main/dev-ports/dev-port-allocator', () => ({
   getDevPortForTask: vi.fn(() => null),
@@ -249,11 +254,15 @@ describe('spawnAgent: a cross-agent handoff for a task with its automations disa
     argumentAutomationsDisabled?: boolean;
     columnMessageMode?: AutoCommandMode;
     taskAutoCommand?: string | null;
+    /** What the engine reports for the resume. Defaults to an ordinary outcome. */
+    outcome?: SpawnOutcome;
+    /** Leave the column with no Send message row. Defaults to a column that has one. */
+    withoutColumnMessage?: boolean;
   }): Promise<void> {
     const { automationsDisabled, columnMessageMode = 'immediate', taskAutoCommand = null } = scenario;
     const argumentAutomationsDisabled = scenario.argumentAutomationsDisabled ?? automationsDisabled;
-    mockResumeSuspendedSession.mockResolvedValue(ORDINARY_OUTCOME);
-    mockListForColumn.mockReturnValue([columnMessageRow(columnMessageMode)]);
+    mockResumeSuspendedSession.mockResolvedValue(scenario.outcome ?? ORDINARY_OUTCOME);
+    mockListForColumn.mockReturnValue(scenario.withoutColumnMessage ? [] : [columnMessageRow(columnMessageMode)]);
     // The gate reads this row, not the `task` argument below.
     mockTaskGetById.mockImplementation(() => makeTask({
       agent: 'codex',
@@ -330,6 +339,28 @@ describe('spawnAgent: a cross-agent handoff for a task with its automations disa
       }),
     );
     expect(deliveredMessages()).not.toContain(COLUMN_TEXT);
+  });
+
+  // A CLI that takes no starting prompt hands the task's opening back as
+  // `typedOpening`. The handoff must type it, ahead of the column's message
+  // (textLeftToType), or the new agent sits idle with no first prompt.
+  it('types the engine\'s typed opening ahead of the column\'s message in one delivery', async () => {
+    await runHandoff({
+      automationsDisabled: false,
+      outcome: { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: 'Fix the bug' },
+    });
+
+    expect(deliveredMessages()).toEqual([`Fix the bug\n\n${COLUMN_TEXT}`]);
+  });
+
+  it('types the typed opening alone when the column sends no message', async () => {
+    await runHandoff({
+      automationsDisabled: false,
+      withoutColumnMessage: true,
+      outcome: { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: 'Fix the bug' },
+    });
+
+    expect(deliveredMessages()).toEqual(['Fix the bug']);
   });
 
   // The gate reads the row the handoff re-reads AFTER the new session exists

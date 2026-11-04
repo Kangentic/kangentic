@@ -86,6 +86,12 @@ vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => 
   };
 });
 
+const mockForgetRecapSession = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/automations/turn-end/recap-turns', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/automations/turn-end/recap-turns')>();
+  return { ...original, forgetRecapSession: mockForgetRecapSession };
+});
+
 import { resumeTaskSession } from '../../src/main/ipc/handlers/session-resume';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
@@ -116,6 +122,7 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
     mockDeliverOpeningRemainder.mockReset();
     mockClaimHeldMessages.mockReset();
     mockClaimHeldMessages.mockReturnValue(null);
+    mockForgetRecapSession.mockClear();
     storedTask = { id: TASK_ID, title: 'Retry the sync', swimlane_id: LANE.id, session_id: null, archived_at: null } as Task;
     outcome = { startOver: null, recapOnly: false, unsentPrompt: null };
   });
@@ -173,6 +180,67 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
 
     expect(mockDeliverOpeningRemainder).not.toHaveBeenCalled();
     expect(claim.release).toHaveBeenCalledWith();
+  });
+
+  describe('an expired conversation resumed on a CLI that takes no starting prompt', () => {
+    // The recap is that start's whole opening and rides typedOpening. A guard
+    // once skipped delivery on recapOnly, so the resumed session sat idle with
+    // nothing typed.
+    const RECAP = 'Your previous conversation was deleted. Summarize where the work stands.';
+
+    it('types the recap alone, with the held messages kept out of it and released', async () => {
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+      outcome = { startOver: 'expired', recapOnly: true, unsentPrompt: null, typedOpening: RECAP };
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(mockDeliverOpeningRemainder).toHaveBeenCalledTimes(1);
+      expect(mockDeliverOpeningRemainder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        taskId: TASK_ID,
+        sessionId: 'sess-resumed',
+        unsentPrompt: RECAP,
+        held: null,
+        heldInPrompt: false,
+        heldAfterTurn: false,
+      }));
+      expect(claim.release).toHaveBeenCalledWith();
+    });
+
+    it('stops treating the session as a recap turn when the recap failed or was cancelled', async () => {
+      outcome = { startOver: 'expired', recapOnly: true, unsentPrompt: null, typedOpening: RECAP };
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+      const delivery = mockDeliverOpeningRemainder.mock.calls[0][1] as { onReport: (report: { outcome: string }) => void };
+
+      delivery.onReport({ outcome: 'confirmed' });
+      delivery.onReport({ outcome: 'unconfirmed' });
+      expect(mockForgetRecapSession).not.toHaveBeenCalled();
+
+      delivery.onReport({ outcome: 'failed' });
+      expect(mockForgetRecapSession).toHaveBeenLastCalledWith('sess-resumed', true);
+      delivery.onReport({ outcome: 'cancelled' });
+      expect(mockForgetRecapSession).toHaveBeenCalledTimes(2);
+      expect(mockForgetRecapSession).toHaveBeenLastCalledWith('sess-resumed', true);
+    });
+
+    it('types nothing when the recap-only start has no typed opening (the recap rode the command line)', async () => {
+      outcome = { startOver: 'expired', recapOnly: true, unsentPrompt: null, typedOpening: null };
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(mockDeliverOpeningRemainder).not.toHaveBeenCalled();
+    });
+  });
+
+  it('hands the resume\'s typed opening ahead of its unsent prompt to the delivery', async () => {
+    // A non-recap start can return both: the opening comes first (textLeftToType).
+    outcome = { startOver: null, recapOnly: false, unsentPrompt: '/code-review', typedOpening: 'Fix the bug' };
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, resumePrompt: '/code-review' });
+
+    expect(mockDeliverOpeningRemainder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      unsentPrompt: 'Fix the bug\n\n/code-review',
+    }));
   });
 
   it('keeps them held when the resume fails', async () => {

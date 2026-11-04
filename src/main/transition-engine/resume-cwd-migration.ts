@@ -6,7 +6,7 @@ import type { CliPlace } from '../agent/shared/cli-target';
  * Migrate an agent's per-cwd session history when a task's worktree was renamed
  * out from under a resumable session.
  *
- * cwd-keyed agents (Claude, Gemini, Qwen, Kimi, Droid) store conversation
+ * cwd-keyed agents (Claude, Gemini, Qwen, Droid) store conversation
  * history in a directory derived from the cwd - Claude at
  * `~/.claude/projects/<slug(cwd)>/<agentSessionId>.jsonl`. On a worktree made
  * before numeric folders, renaming a task's branch later recreated its worktree

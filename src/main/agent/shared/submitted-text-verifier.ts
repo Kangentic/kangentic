@@ -42,7 +42,7 @@ const SENT_AT_TOLERANCE_MS = 50;
  * One parsed history line.
  *
  * `timestampMs` is epoch MILLISECONDS. Adapters normalise their own units here
- * (Kimi's wire format uses unix seconds, OpenCode uses epoch ms integers), so
+ * (ISO strings, unix seconds, OpenCode's epoch ms integers), so
  * the shared scan never needs to know which agent it is reading. Return `null`
  * when the timestamp is absent; the scan then accepts the record on text alone
  * rather than discarding it.
