@@ -289,6 +289,92 @@ describe('the project hooks file', () => {
       warn.mockRestore();
     }
   });
+
+  // The write and the removal both run in a session's spawn and teardown path,
+  // so a file shape they do not expect must refuse and report, never throw.
+  // `null` and an array have no `hooks` key to read, so a missing shape check
+  // would surface as a TypeError here, or as the user's list being overwritten.
+  it.each([
+    ['the top level is null', 'null'],
+    ['the top level is an array', JSON.stringify([{ command: './mine.sh' }])],
+    // Empty, so the per-event list check cannot be what refuses them.
+    ['hooks is an empty array', JSON.stringify({ version: 1, hooks: [] })],
+    ['hooks is an empty string', JSON.stringify({ version: 1, hooks: '' })],
+  ])('refuses and removes nothing when %s', (_shape, text) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      writeHooks(text);
+      expect(writeCursorProjectHooks(folder, { eventBridge: '/bridge/event-bridge.js' })).toBe(false);
+      expect(fs.readFileSync(hooksPath(), 'utf-8')).toBe(text);
+
+      expect(() => removeCursorProjectHooks(folder)).not.toThrow();
+      expect(fs.readFileSync(hooksPath(), 'utf-8')).toBe(text);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('removal leaves a file that is not JSON byte for byte, even when it names a Kangentic command', () => {
+    const text = `{ // mine\n "hooks": { "stop": [{ "command": ${JSON.stringify(buildCursorHookCommands('/bridge/event-bridge.js').stop)} }] } }`;
+    writeHooks(text);
+
+    removeCursorProjectHooks(folder);
+
+    expect(fs.readFileSync(hooksPath(), 'utf-8')).toBe(text);
+  });
+
+  // "Never throws. A failed write leaves the session on terminal activity."
+  it('reports false instead of throwing when the file cannot be written, and keeps it out of the git exclude', () => {
+    fs.mkdirSync(path.join(folder, '.git', 'info'), { recursive: true });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    });
+    try {
+      expect(writeCursorProjectHooks(folder, { eventBridge: '/bridge/event-bridge.js' })).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      writeSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+    expect(fs.existsSync(hooksPath())).toBe(false);
+    const excludePath = path.join(folder, '.git', 'info', 'exclude');
+    expect(fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf-8') : '').not.toContain('.cursor/hooks.json');
+  });
+
+  it('removal does not throw when the file cannot be deleted or rewritten, and leaves the hooks where they were', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      // A file of only Kangentic's hooks is deleted.
+      writeCursorProjectHooks(folder, { eventBridge: '/bridge/event-bridge.js' });
+      const rmSpy = vi.spyOn(fs, 'rmSync').mockImplementation(() => {
+        throw Object.assign(new Error('locked'), { code: 'EBUSY' });
+      });
+      try {
+        expect(() => removeCursorProjectHooks(folder)).not.toThrow();
+      } finally {
+        rmSpy.mockRestore();
+      }
+      expect(readHooks().hooks.stop).toHaveLength(1);
+
+      // A file that also holds the user's is rewritten.
+      removeCursorProjectHooks(folder);
+      writeHooks({ version: 1, hooks: { stop: [{ command: './my-stop.sh' }] } });
+      writeCursorProjectHooks(folder, { eventBridge: '/bridge/event-bridge.js' });
+      const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+        throw Object.assign(new Error('read-only'), { code: 'EROFS' });
+      });
+      try {
+        expect(() => removeCursorProjectHooks(folder)).not.toThrow();
+      } finally {
+        writeSpy.mockRestore();
+      }
+      expect(readHooks().hooks.stop).toHaveLength(2);
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 const wslPlace: CliPlace = {
