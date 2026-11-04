@@ -1,9 +1,18 @@
 import { WarpDetector } from './version-detector';
+import { writeWarpMcpConfig } from './mcp-config';
 import { cliPathForTarget } from '../../shared/cli-target';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
+import type {
+  AgentCapabilities,
+  AgentLiveTelemetryUnsupported,
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  SubmissionContextType,
+  SubmissionVerifier,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
 /**
@@ -14,7 +23,8 @@ import { ActivityDetection } from '../../../../shared/types';
  * Warp is simpler than Claude Code: no session resume, no structured
  * status/event output, no trust mechanism, no hooks, and no settings
  * merging. Permissions are managed via Warp agent profiles (--profile),
- * not individual CLI flags. Command building is inlined.
+ * not individual CLI flags. Beyond the prompt, a launch passes the working
+ * directory, the task id as `--name`, and when set, `--model` and `--mcp`.
  *
  * `oz` does not support `--version`, so its detector (`WarpDetector`) is the
  * shared one with `dump-debug-info` as the version command.
@@ -26,19 +36,37 @@ export class WarpAdapter implements AgentAdapter {
   readonly supportsCallerSessionId = false;
   /** Warp's oz keeps no session id Kangentic can resume, so every start is fresh. */
   readonly resumePromptDelivery = 'no-resume' as const;
-  // Warp manages permissions via agent profiles (--profile <ID>), not
-  // individual CLI flags. These labels are informational only - no
-  // permission-mode-to-flag mapping exists in buildCommand().
+  // Warp keeps autonomy in agent profiles (`--profile <ID>`, an id from the
+  // user's own Warp account; https://docs.warp.dev/reference/cli/cli), not in
+  // per-mode flags. So Oz exposes the one entry its profile decides, as the
+  // cli-features-over-custom-layers rule asks. The three labels it showed
+  // before mapped to no flag, and "Plan Only (Read-Only)" was not read-only.
   readonly permissions: AgentPermissionEntry[] = [
-    { mode: 'plan', label: 'Plan Only (Read-Only)' },
-    { mode: 'default', label: 'Default' },
-    { mode: 'bypassPermissions', label: 'Auto (Skip Confirmations)' },
+    { mode: 'default', label: 'Default (set by your Warp agent profile)' },
   ];
   readonly defaultPermission: PermissionMode = 'default';
-  // An oz installed in a WSL distro runs there. Oz wires no hooks, reads no
-  // transcript and is handed no MCP server, so its own path and `-C` in the
-  // distro's form are all it needs.
+  // An oz installed in a WSL distro runs there. Its own path, `-C` and the
+  // `--mcp` file path reach it in the distro's form, and Kangentic's MCP
+  // server reaches a distro on NAT networking through the hook transport's
+  // bridge (`kangenticMcpServer`). Oz wires no hooks and reads no transcript.
   readonly supportsWslCli = true;
+  /**
+   * Each run gets its own `mcp.json` in its session directory, named by
+   * `--mcp` (`writeWarpMcpConfig`). Built from Warp's docs, not yet run
+   * against a real oz.
+   */
+  readonly kangenticMcp = 'per-session' as const;
+  /**
+   * `oz agent run` reports no model, context, tokens or cost to Kangentic: no
+   * status file, hook or stream format is documented
+   * (https://docs.warp.dev/reference/cli/cli).
+   */
+  readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
+    unavailableLabel: 'Telemetry: none',
+    unavailableTitle:
+      'Oz CLI does not report live telemetry to Kangentic.\n'
+      + 'Its own output in the terminal shows what the run did.',
+  };
 
   private readonly detector = new WarpDetector();
 
@@ -52,6 +80,17 @@ export class WarpAdapter implements AgentAdapter {
 
   // Warp has no trust mechanism - no-op
   async ensureTrust(_workingDirectory: string): Promise<void> {}
+
+  /**
+   * `oz agent run --model <MODEL_ID>` overrides the run's model
+   * (https://docs.warp.dev/reference/cli/cli; `oz agent run --help` on
+   * v0.2026.04.08.08.36.stable_02). Declared without running the CLI: the ids
+   * come from `oz model list`, whose output format Warp does not document, so
+   * the model field stays free-form.
+   */
+  async discoverCapabilities(_cliPath: string): Promise<AgentCapabilities> {
+    return { supportsModelOverride: true };
+  }
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;
@@ -68,8 +107,19 @@ export class WarpAdapter implements AgentAdapter {
       parts.push('--name', quoteArg(options.taskId, shell));
     }
 
-    // Warp permissions are managed via agent profiles, not individual
-    // CLI flags. No permission-mode-to-flag mapping needed.
+    // Per-column model override (see discoverCapabilities for the source).
+    const model = options.model?.trim();
+    if (model) {
+      parts.push('--model', quoteArg(model, shell));
+    }
+
+    // Kangentic's MCP server, from a file in the session directory.
+    const mcpConfigPath = writeWarpMcpConfig(options);
+    if (mcpConfigPath) {
+      parts.push('--mcp', quoteArg(mcpConfigPath, shell));
+    }
+
+    // The permission mode adds no flag: the Warp agent profile decides (see `permissions`).
 
     // --prompt with shell-safe quoting (only when prompt is provided).
     // Placed after all flags with -- end-of-options guard so prompt
@@ -87,6 +137,23 @@ export class WarpAdapter implements AgentAdapter {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * The model `buildCommand` passed with `--model`, read only from the flags
+   * ahead of the end-of-options guard (bare, or quoted as PowerShell and cmd
+   * need it), so a prompt that mentions `--model` seeds nothing. The guard is
+   * found by the `--prompt` that follows it, so a quoted folder or task name
+   * holding ` -- ` does not end the flags early. The label is the id itself:
+   * Warp documents no naming scheme to derive one from.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const endOfOptions = command.search(/\s(?:--|'--'|"--")\s+--prompt(?:\s|$)/);
+    const flagRegion = endOfOptions === -1 ? command : command.slice(0, endOfOptions);
+    const match = flagRegion.match(/\s--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const id = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+    if (!id) return null;
+    return { id, displayName: id };
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -114,7 +181,8 @@ export class WarpAdapter implements AgentAdapter {
     activity: ActivityDetection.pty(),
   };
 
-  // Warp does not use hooks - no-op
+  // No hooks to remove, and the mcp.json lives in the session directory,
+  // never in the working folder.
   removeHooks(_directory: string): void {}
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {

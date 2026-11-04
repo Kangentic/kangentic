@@ -58,7 +58,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | `typed` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | `typed` | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
 | Aider | `aider-adapter.ts` | `aider` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
-| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | Not wired | No |
+| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | `--mcp <sessionDir>/mcp.json` | No |
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | `command-line` | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
 | Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
 | OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | `typed` | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`, `question.asked` and `permission.asked`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
@@ -119,7 +119,7 @@ no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 1
 builds each declared adapter's fresh command with no prompt.
 
 The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
-Qwen and Gemini are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each
+Qwen, Gemini and Oz are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each
 writes the session's literal URL into a file in the working directory. Gemini moved to a fixed
 `settings.json` entry whose URL and token are `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}`
 (Grok's and Cursor's pattern) in task #859, measured on 0.64.0: an MCP request arrived on the path
