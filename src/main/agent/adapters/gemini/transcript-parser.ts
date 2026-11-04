@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
-import type { CliPlace } from '../../shared/cli-target';
+import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
@@ -524,6 +524,33 @@ export function locateGeminiTranscriptFile(agentSessionId: string, cwd: string, 
   }
   const match = names.find((name) => pattern.test(name));
   return match ? path.join(directory, match) : null;
+}
+
+/**
+ * The path the CLI reported for this session, as this machine reads it, when
+ * it is absolute and named for this session. A path that names another id says
+ * nothing about this one.
+ */
+export function reportedGeminiChatFile(agentSessionId: string, reportedPath: string | null | undefined, place: CliPlace | null): string | null {
+  if (!reportedPath) return null;
+  const onHost = hostPathForTarget(reportedPath, place);
+  return path.isAbsolute(onHost) && geminiChatFilePattern(agentSessionId).test(path.basename(onHost)) ? onHost : null;
+}
+
+/**
+ * The file a transcript read opens. The CLI's own report wins while the file is
+ * there: the folder under `tmp` is the CLI's choice, and the cwd only predicts
+ * it. Else the file `locateGeminiTranscriptFile` finds.
+ */
+export function resolveGeminiTranscriptFile(
+  agentSessionId: string,
+  cwd: string,
+  place: CliPlace | null,
+  reportedPath?: string | null,
+): string | null {
+  const reported = reportedGeminiChatFile(agentSessionId, reportedPath, place);
+  if (reported && fs.existsSync(reported)) return reported;
+  return locateGeminiTranscriptFile(agentSessionId, cwd, place);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

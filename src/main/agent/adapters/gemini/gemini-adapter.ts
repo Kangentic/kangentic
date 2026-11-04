@@ -3,7 +3,7 @@ import { GeminiCommandBuilder } from './command-builder';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { GeminiSessionHistoryParser } from './session-history-parser';
-import { parseGeminiTranscript, parseGeminiTranscriptWindow, locateGeminiTranscriptFile, readGeminiTranscriptPage } from './transcript-parser';
+import { parseGeminiTranscript, parseGeminiTranscriptWindow, locateGeminiTranscriptFile, readGeminiTranscriptPage, resolveGeminiTranscriptFile } from './transcript-parser';
 import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
@@ -289,8 +289,8 @@ export class GeminiAdapter implements AgentAdapter {
     return GeminiSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
-    const filePath = locateGeminiTranscriptFile(agentSessionId, cwd, place ?? null);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null, reportedPath?: string | null): Promise<ParsedTranscript> {
+    const filePath = resolveGeminiTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseGeminiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
@@ -309,8 +309,9 @@ export class GeminiAdapter implements AgentAdapter {
     maxBytes: number,
     _attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<ParsedTranscriptWindow> {
-    const filePath = locateGeminiTranscriptFile(agentSessionId, cwd, place ?? null);
+    const filePath = resolveGeminiTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
     if (!filePath) return { entries: [], sourcePath: null, nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };
     const window = await parseGeminiTranscriptWindow(agentSessionId, filePath, startByte, maxBytes);
     return { ...window, sourcePath: filePath };
@@ -322,8 +323,9 @@ export class GeminiAdapter implements AgentAdapter {
     cwd: string,
     request: TranscriptPageReadRequest,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<TranscriptPageReadResult> {
-    return readGeminiTranscriptPage(agentSessionId, locateGeminiTranscriptFile(agentSessionId, cwd, place ?? null), request);
+    return readGeminiTranscriptPage(agentSessionId, resolveGeminiTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath), request);
   }
 
   /**

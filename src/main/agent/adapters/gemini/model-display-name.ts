@@ -38,8 +38,11 @@ const BUILDER_VALUE_FLAGS = new Set(['--approval-mode', '--resume', '--session-i
  *     model (`modelFromGeminiCommand`);
  *   - a backslash escape outside quotes (POSIX writes an apostrophe as `'\''`);
  *   - a bare run.
+ *
+ * The two patterns differ only in the single-quoted alternative: change the
+ * rest in both.
  */
-const WORD_PIECE_FISH = /"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'(?:[^'\\]|\\[\s\S])*'|\\[\s\S]|[^\s"'\\]+/y;
+const WORD_PIECE_FISH =/"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'(?:[^'\\]|\\[\s\S])*'|\\[\s\S]|[^\s"'\\]+/y;
 const WORD_PIECE_POSIX = /"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'[^']*'|\\[\s\S]|[^\s"'\\]+/y;
 
 /** The text a piece stands for, its quotes and escapes removed. */
@@ -54,14 +57,14 @@ function unquotePiece(piece: string, singleQuoteEscapes: boolean): string {
 }
 
 /**
- * Split a built command into shell words. A word is a run of adjacent pieces
+ * Split a built command into shell words, one at a time, so a caller that stops
+ * at the prompt never splits the rest of it. A word is a run of adjacent pieces
  * with no whitespace between them, so `'o'\''brien'` is one word. Enough for
  * the builder's own output, not for shell syntax in general: a word that does
  * not parse ends the split, and the caller then finds no flag.
  */
-function shellWords(command: string, singleQuoteEscapes: boolean): string[] {
+function* shellWords(command: string, singleQuoteEscapes: boolean): Generator<string> {
   const piecePattern = singleQuoteEscapes ? WORD_PIECE_FISH : WORD_PIECE_POSIX;
-  const words: string[] = [];
   let index = 0;
   while (index < command.length) {
     if (/\s/.test(command[index])) {
@@ -72,13 +75,12 @@ function shellWords(command: string, singleQuoteEscapes: boolean): string[] {
     while (index < command.length && !/\s/.test(command[index])) {
       piecePattern.lastIndex = index;
       const match = piecePattern.exec(command);
-      if (!match) return words;
+      if (!match) return;
       word += unquotePiece(match[0], singleQuoteEscapes);
       index = piecePattern.lastIndex;
     }
-    words.push(word);
+    yield word;
   }
-  return words;
 }
 
 /**
@@ -92,20 +94,19 @@ export function modelFromGeminiCommand(command: string): string | null {
   return modelFromWords(shellWords(command, true)) ?? modelFromWords(shellWords(command, false));
 }
 
-function modelFromWords(words: ReadonlyArray<string>): string | null {
-  let index = 0;
-  if (words[index] === '&') index++;
-  index++; // the executable
-  while (index < words.length) {
-    const flag = words[index];
-    if (!BUILDER_VALUE_FLAGS.has(flag)) return null;
-    const value = words[index + 1];
-    if (value === undefined) return null;
-    if (flag === '--model') {
-      const trimmed = value.trim();
+/** The walk `modelFromGeminiCommand` describes, over one reading of the command's words. */
+function modelFromWords(words: Generator<string>): string | null {
+  let first = words.next();
+  if (first.value === '&') first = words.next();
+  if (first.done) return null; // no executable
+  for (let flag = words.next(); !flag.done; flag = words.next()) {
+    if (!BUILDER_VALUE_FLAGS.has(flag.value)) return null;
+    const value = words.next();
+    if (value.done) return null;
+    if (flag.value === '--model') {
+      const trimmed = value.value.trim();
       return trimmed.length > 0 ? trimmed : null;
     }
-    index += 2;
   }
   return null;
 }
