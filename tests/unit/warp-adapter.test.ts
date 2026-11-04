@@ -405,6 +405,16 @@ describe('WarpAdapter', () => {
         expect(command).toContain(`--mcp ${quoteArg(configPath, 'bash')}`);
       });
 
+      // Red-green for the `?? options.eventsOutputPath` fallback: with only the
+      // events file known, mcp.json still lands beside it.
+      it('writes mcp.json beside the events file when no status file path is set', () => {
+        const command = adapter.buildCommand(mcpOptions({ statusOutputPath: undefined }));
+        expect(readMcpConfig()).toEqual({
+          kangentic: { url: mcpUrl, headers: { 'X-Kangentic-Token': mcpToken } },
+        });
+        expect(command).toContain(`--mcp ${quoteArg(path.join(sessionFolder, 'mcp.json'), 'bash')}`);
+      });
+
       const wslTarget = (networkingMode: 'nat' | 'mirrored'): NonNullable<SpawnCommandOptions['cliTarget']> => ({
         kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/oz',
         facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode },
