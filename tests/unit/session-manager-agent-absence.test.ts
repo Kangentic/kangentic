@@ -235,7 +235,7 @@ describe('SessionManager agent-absence wiring', () => {
       expect(killedPtys).toEqual([]);
     });
 
-    it('retires the row at the next sweep if the pause never landed, reporting once', () => {
+    it('retires the row when the listener calls it again after a pause that did not land, reporting once', () => {
       const neverStarted = vi.fn();
       manager.on('agent-never-started', neverStarted);
       const session = seedSession({ reportsAgentStart: true });
@@ -245,6 +245,22 @@ describe('SessionManager agent-absence wiring', () => {
 
       expect(neverStarted).toHaveBeenCalledTimes(1);
       expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(session.status).toBe('exited');
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('retires a session hidden until adopted instead of announcing it to a pause nobody may learn of', () => {
+      // `emit` returns false for a hidden session, so the listener never hears
+      // of it and the retire must fall through to the kill, or it stays a
+      // running phantom.
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1');
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
       expect(session.status).toBe('exited');
       expect(killedPtys).toEqual([4242]);
     });

@@ -32,7 +32,7 @@ function shellLabelOf(shell: string): string {
 export function launchNeverStarted(session: ManagedSession): boolean {
   if (session.reportsAgentStart !== true) return false;
   if (typeof session.agentStartObservedAt === 'number') return false;
-  if (session.altScreenEnteredAt !== undefined) return false;
+  if (typeof session.altScreenEnteredAt === 'number') return false;
   return typeof session.agentEndSignaledAt !== 'number';
 }
 

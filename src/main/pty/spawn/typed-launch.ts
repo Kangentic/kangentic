@@ -5,10 +5,12 @@ import {
   isFishShell,
   isNushellShell,
   isPowerShellShell,
+  isUncPath,
+  parseWslUncPath,
   quoteArg,
   toWslPath,
 } from '../../../shared/paths';
-import { parseWslShellSpec } from '../process-tag/task-process-tag';
+import { parseWslShellSpec, type WslShellSpec } from '../process-tag/task-process-tag';
 
 /**
  * The longest line, in bytes with its Enter, that a spawn types into a shell.
@@ -50,8 +52,24 @@ export interface TypedLaunch {
  * has no such line limit, and a sourced `.ps1` would meet the execution policy
  * there. A WSL shell reads a Linux tty in the distro.
  */
-function readsPosixTty(shell: string, platform: NodeJS.Platform): boolean {
-  return platform !== 'win32' || parseWslShellSpec(shell) !== null;
+function readsPosixTty(wslShell: WslShellSpec | null, platform: NodeJS.Platform): boolean {
+  return platform !== 'win32' || wslShell !== null;
+}
+
+/**
+ * The launcher's path as the shell reads it, or null when it has none: a WSL
+ * shell cannot reach a Windows share, or another distro's files. A sourced path
+ * that does not resolve fails every launch, where a typed line fails only while
+ * the shell is slow, so those type the whole command.
+ */
+function launcherPathForShell(filePath: string, wslShell: WslShellSpec | null): string | null {
+  if (wslShell === null) return filePath;
+  const distroPath = parseWslUncPath(filePath);
+  if (distroPath) {
+    const sameDistro = wslShell.distro === null || wslShell.distro.toLowerCase() === distroPath.distro.toLowerCase();
+    return sameDistro ? distroPath.linuxPath : null;
+  }
+  return isUncPath(filePath) ? null : toWslPath(filePath);
 }
 
 /**
@@ -88,11 +106,13 @@ export function buildTypedLaunch(input: TypedLaunchInput): TypedLaunch {
   const adapted = adaptCommandForShell(input.command, shellName, input.platform);
   const fullLaunch = typedLaunchOf(prelude + adapted, null);
   if (fullLaunch.typedLineBytes <= TYPED_LINE_BYTE_BUDGET) return fullLaunch;
-  if (input.sessionDirectory === null || !readsPosixTty(input.shell, input.platform)) return fullLaunch;
+  const wslShell = parseWslShellSpec(input.shell);
+  if (input.sessionDirectory === null || !readsPosixTty(wslShell, input.platform)) return fullLaunch;
 
   const { fileName, sourceStatement } = launcherFormFor(shellName);
   const filePath = path.join(input.sessionDirectory, fileName);
-  const shellPath = parseWslShellSpec(input.shell) !== null ? toWslPath(filePath) : filePath;
+  const shellPath = launcherPathForShell(filePath, wslShell);
+  if (shellPath === null) return fullLaunch;
   // `multiline` only to keep the path exact: the default form collapses a run of
   // spaces, which a folder name may hold.
   const typedLine = `${prelude}${sourceStatement} ${quoteArg(shellPath, shellName, { multiline: true })}`;

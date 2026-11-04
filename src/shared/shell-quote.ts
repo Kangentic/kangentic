@@ -34,11 +34,13 @@ export function isCmdShell(shellName: string): boolean {
  *
  * nushell and fish are decided by program name first, in both predicates, so
  * a nu under a directory named pwsh-tools is never PowerShell. Without that,
- * `buildSpawnClearPrelude` typed `Clear-Host;` into nushell.
+ * `buildSpawnClearPrelude` typed `Clear-Host;` into nushell. A WSL spec is its
+ * distro's shell, so a distro named `my-pwsh` is never PowerShell either.
  */
 export function isPowerShellShell(shellName: string): boolean {
   if (isNushellShell(shellName) || isFishShell(shellName)) return false;
   const lower = shellName.toLowerCase();
+  if (lower.startsWith('wsl')) return false;
   return lower.includes('powershell') || lower.includes('pwsh');
 }
 

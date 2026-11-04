@@ -107,11 +107,13 @@ would have, so a shell's own functions, aliases and environment apply as before.
 | nushell | `source <path>`, a literal, because `source` is a parser keyword that reads the file while the line parses | `launch.nu` |
 | pwsh on macOS or Linux | `. <path>` | `launch.ps1` |
 
-A WSL shell gets the path through `toWslPath`. Native Windows shells and Git Bash on Windows type
-the whole command: a console has no such limit, and a sourced `.ps1` would meet the execution
-policy. A session with no output paths (a raw `SESSION_SPAWN`) has no folder to use and types the
-whole command, as does a spawn whose launcher write failed, which still works once the shell has
-reached its prompt.
+A WSL shell gets the path through `toWslPath`, except a session folder on a Windows share or in
+another distro. WSL cannot read those, so that shell types the whole command: a sourced path that
+does not resolve fails every launch, where a typed line fails only while the shell is slow. Native
+Windows shells and Git Bash on Windows type the whole command: a console has no such limit, and a
+sourced `.ps1` would meet the execution policy. A session with no output paths (a raw
+`SESSION_SPAWN`) has no folder to use and types the whole command, as does a spawn whose launcher
+write failed, which still works once the shell has reached its prompt.
 
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of

@@ -304,6 +304,80 @@ describe('performSpawn - a command too long to type', () => {
     expect(session?.typedLineBytes).toBe(Buffer.byteLength(line));
   });
 
+  it.skipIf(process.platform === 'win32')('writes the launcher readable by its owner alone', async () => {
+    const sessionDirectory = path.join(root, 'sessions', 'session-mode');
+
+    await performSpawn(
+      makeInput({ command: LONG_COMMAND, statusOutputPath: path.join(sessionDirectory, 'status.json') }),
+      makeContext(),
+    );
+
+    expect(fs.statSync(path.join(sessionDirectory, 'launch.sh')).mode & 0o777).toBe(0o600);
+  });
+
+  it('starts no PTY when a teardown lands while the launcher is written', async () => {
+    const context = makeContext();
+    const sessionDirectory = path.join(root, 'sessions', 'session-cancel');
+    const launcherPath = path.join(sessionDirectory, 'launch.sh');
+    // Clear until the launcher exists, cancelled from then on: the only check
+    // that can see the cancel is the one right after the write.
+    context.isSpawnCancelled = vi.fn(() => fs.existsSync(launcherPath));
+
+    await expect(
+      performSpawn(
+        makeInput({ command: LONG_COMMAND, statusOutputPath: path.join(sessionDirectory, 'status.json') }),
+        context,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(context.host.spawn).not.toHaveBeenCalled();
+    expect(context.registry.get(makeInput().id!)).toBeUndefined();
+  });
+
+  it('records no typed line and no launcher for a spawn with no command', async () => {
+    const context = makeContext();
+
+    await performSpawn(makeInput({ command: '' }), context);
+
+    const session = context.registry.get('input-session-id-0000-000000000000');
+    expect(session?.typedLineBytes).toBeNull();
+    expect(session?.launcherUsed).toBe(false);
+  });
+
+  it('records whether the adapter reports its agent starting', async () => {
+    const reporting = makeContext();
+    await performSpawn(
+      makeInput({ id: 'reporting-session', agentParser: { ...makeAdapter({}), reportsAgentStart: true } as AgentParser }),
+      reporting,
+    );
+    const silent = makeContext();
+    await performSpawn(makeInput({ id: 'silent-session', agentParser: makeAdapter({}) }), silent);
+
+    expect(reporting.registry.get('reporting-session')?.reportsAgentStart).toBe(true);
+    expect(silent.registry.get('silent-session')?.reportsAgentStart).toBe(false);
+  });
+
+  it('types the cwd fixup first and then the line that sources the launcher, not the whole command', async () => {
+    const fixup = "Set-Location -LiteralPath '/home/dev/[foo]/bar'";
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({ effectiveCwd: '/home/dev/[foo]/bar', cwdFixupCommand: fixup });
+    const sessionDirectory = path.join(root, 'sessions', 'session-fixup');
+
+    await performSpawn(
+      makeInput({ command: LONG_COMMAND, statusOutputPath: path.join(sessionDirectory, 'status.json') }),
+      makeContext(),
+    );
+
+    // The fixup goes at 100 ms and the command 200 ms after it.
+    await vi.waitFor(() => {
+      const write = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+      expect(write).toHaveBeenCalledTimes(2);
+    });
+    const writes = (ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as string);
+    expect(writes[0]).toBe(`${fixup}\r`);
+    expect(writes[1].endsWith('launch.sh\r') || writes[1].endsWith("launch.sh'\r")).toBe(true);
+    expect(writes[1]).not.toContain('--append-system-prompt');
+  });
+
   it('types the whole command when the launcher cannot be written', async () => {
     // A file where the session's folder should be fails mkdir.
     const blocked = path.join(root, 'not-a-folder');

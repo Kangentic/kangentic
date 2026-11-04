@@ -766,16 +766,29 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // screen to act on: the shell holds a command that never ran. Pause it, so the
   // Resume every paused task has is there, rather than retire it to an exited row
   // that offers none. 'system' is not a held pause, so a restart resumes it too.
+  // The notice waits for the pause: a pause declined for a newer session of the
+  // task has no failure to report. The sweep has let this session go, so a pause
+  // that does not land retires the row here, or it stays a running phantom.
   context.sessionManager.on('agent-never-started', (sessionId: string, session: Session) => {
+    const retire = (): void => context.sessionManager.retireAgentlessSession(sessionId);
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    if (!projectId) return;
-    notifyStartupFailureIfNamed(session, 0, projectId, 'The launch command never ran.');
+    if (!projectId) {
+      retire();
+      return;
+    }
     void pauseTaskSession(context, session.taskId, {
       projectId,
       suspendedBy: 'system',
       stillEligible: (liveSession) => liveSession.id === sessionId,
+    }).then((outcome) => {
+      if (outcome === 'paused') {
+        notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
+      } else {
+        retire();
+      }
     }).catch((error: unknown) => {
       console.warn('[AGENT-LAUNCH] Pause after a failed launch failed:', error);
+      retire();
     });
   });
 

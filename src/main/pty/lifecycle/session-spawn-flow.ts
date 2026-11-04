@@ -198,6 +198,34 @@ function adapterNameOf(parser: AgentParser): string | null {
 }
 
 /**
+ * What `buildTypedLaunch` needs for this spawn. The session's folder comes from
+ * its output paths; a session with neither (a raw `SESSION_SPAWN`) has none.
+ */
+function typedLaunchInput(input: SpawnSessionInput, command: string, shell: string): TypedLaunchInput {
+  const outputPath = input.statusOutputPath || input.eventsOutputPath;
+  return {
+    command,
+    shell,
+    platform: process.platform,
+    sessionDirectory: outputPath ? path.dirname(outputPath) : null,
+  };
+}
+
+/** Write the launcher file a typed line sources. False when it could not be written. */
+async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, sessionId: string): Promise<boolean> {
+  try {
+    await mkdir(path.dirname(launcher.filePath), { recursive: true });
+    // Owner-only: the file holds the task's prompt.
+    await writeFile(launcher.filePath, launcher.contents, { encoding: 'utf8', mode: 0o600 });
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    console.warn(`[SPAWN] Launcher file write failed (${code}) for session=${sessionId.slice(0, 8)}, typing the command`);
+    return false;
+  }
+}
+
+/**
  * Execute a PTY spawn for a SpawnSessionInput.
  *
  * Orchestrates the full lifecycle of turning a spawn request into a
@@ -223,45 +251,6 @@ function adapterNameOf(parser: AgentParser): string | null {
  * All state lives in the SpawnFlowContext; this function is stateless
  * and can be unit-tested with mocks.
  */
-/**
- * What `buildTypedLaunch` needs for this spawn. The session's folder comes from
- * its output paths; a session with neither (a raw `SESSION_SPAWN`) has none.
- */
-function typedLaunchInput(input: SpawnSessionInput, command: string, shell: string): TypedLaunchInput {
-  const outputPath = input.statusOutputPath || input.eventsOutputPath;
-  return {
-    command,
-    shell,
-    platform: process.platform,
-    sessionDirectory: outputPath ? path.dirname(outputPath) : null,
-  };
-}
-
-/**
- * Write the launcher file `typedLaunch` sources. One that cannot be written falls
- * back to typing the whole command, which still works once the shell has reached
- * its prompt.
- */
-async function writeLauncher(
-  typedLaunch: TypedLaunch,
-  launcher: NonNullable<TypedLaunch['launcher']>,
-  input: SpawnSessionInput,
-  command: string,
-  shell: string,
-  sessionId: string,
-): Promise<TypedLaunch> {
-  try {
-    await mkdir(path.dirname(launcher.filePath), { recursive: true });
-    // Owner-only: the file holds the task's prompt.
-    await writeFile(launcher.filePath, launcher.contents, { encoding: 'utf8', mode: 0o600 });
-    return typedLaunch;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
-    console.warn(`[SPAWN] Launcher file write failed (${code}) for session=${sessionId.slice(0, 8)}, typing the command`);
-    return buildTypedLaunch({ ...typedLaunchInput(input, command, shell), sessionDirectory: null });
-  }
-}
-
 export async function performSpawn(
   input: SpawnSessionInput,
   context: SpawnFlowContext,
@@ -436,10 +425,14 @@ export async function performSpawn(
   }
 
   // What the shell gets typed. A launcher file that line sources has to exist
-  // before it is typed, so it is written here; a short command never waits.
-  let typedLaunch = input.command ? buildTypedLaunch(typedLaunchInput(input, input.command, shell)) : null;
-  if (input.command && typedLaunch?.launcher) {
-    typedLaunch = await writeLauncher(typedLaunch, typedLaunch.launcher, input, input.command, shell, id);
+  // before it is typed, so it is written here; a short command never waits. One
+  // that cannot be written falls back to typing the whole command, which still
+  // works once the shell has reached its prompt.
+  const launchInput = input.command ? typedLaunchInput(input, input.command, shell) : null;
+  let typedLaunch = launchInput ? buildTypedLaunch(launchInput) : null;
+  if (launchInput && typedLaunch?.launcher) {
+    const written = await writeLauncher(typedLaunch.launcher, id);
+    if (!written) typedLaunch = buildTypedLaunch({ ...launchInput, sessionDirectory: null });
     if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
   }
 
