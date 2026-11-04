@@ -5436,6 +5436,12 @@ test.describe('Command Terminal', () => {
       }); } },
     ]) {
       test(`when main ${refusal.outcome} the window, the panel comes back with its terminal, and a toast says so`, async () => {
+        // Launches a fresh browser and starts a terminal, whose own waits (the page, the lane)
+        // allow 15 s each. On CI's loaded UI shard 4 these two were its first tests, and the
+        // 15 s default ended both at 15.3 to 16.4 s, on the first run and the retry, on two
+        // separate CI runs, while they pass in 5.3 s locally. The Expand tests above take 45 s
+        // for the same reason.
+        test.setTimeout(45000);
         const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: false }));
         try {
           await openPanelWithOneTerminal(page);
