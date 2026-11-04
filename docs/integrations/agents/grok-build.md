@@ -172,7 +172,7 @@ for these behaviors are named `tests/fixtures/grok-hooks/grok-docs-1.0.45-*`, ap
 | A question is a question wait, ended by the tool's own end. | `PreToolUse` on `ask_user_question` | 19-plan-mode.md, 1.0.0 |
 | The plan approval view is an approval wait. | `PreToolUse` on `exit_plan_mode` | 19-plan-mode.md, 1.0.0 |
 | Plan mode at each prompt and turn end (`SessionEvent.planMode`). A subagent's payload is skipped. | `UserPromptSubmit` and `Stop`, from `permissionMode` | 10-hooks.md, 1.0.0: every payload carries `permissionMode` (`default`, `auto`, `plan` or `bypassPermissions`) |
-| The Command Terminal's live swap types `/model <id>` then `/effort <level>`. `/model` gets the id alone, since the arguments after it changed by 1.0.45. | `getInjectionSequence` | 04-slash-commands.md, 1.0.0 |
+| The Command Terminal's live swap types `/model <id>` then `/effort <level>`. `/model` gets the id alone, since the arguments after it changed by 1.0.45, and a value is typed only when it is one plain token, so a space or line break can never become extra arguments or a second command. | `getInjectionSequence` | 04-slash-commands.md, 1.0.0 |
 | A title run names its session and removes its folder afterwards. | `summarize` (`-s <uuid>`) | 17-sessions.md, 1.0.0: headless `-s` creates a new session with that UUID |
 | The subagent tool is `spawn_subagent`. | `subagentSpawnToolName` | 01-getting-started.md and 16-subagents.md, 1.0.0 |
 
