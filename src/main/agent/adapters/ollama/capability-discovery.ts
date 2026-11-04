@@ -99,6 +99,16 @@ export function parseOllamaModelList(stdout: string): string[] {
   return Array.from(models).sort();
 }
 
+export interface OllamaDiscovery {
+  capabilities: AgentCapabilities;
+  /**
+   * The `--think` levels `ollama run --help` named, or null when that read
+   * failed. An empty list is an answer (this CLI has no `--think` flag); null
+   * is not, so the adapter keeps whatever an earlier read reported.
+   */
+  thinkLevels: string[] | null;
+}
+
 /**
  * Discover Ollama capabilities: model override is always supported, the
  * model list comes from `ollama list`, and the effort levels are the
@@ -109,15 +119,18 @@ export function parseOllamaModelList(stdout: string): string[] {
  * model list, so the renderer falls back to a free-form model text input,
  * and no effort levels, so the Effort row stays hidden.
  */
-export async function discoverOllamaCapabilities(cliPath: string): Promise<AgentCapabilities> {
-  const [models, effortLevels] = await Promise.all([
+export async function discoverOllama(cliPath: string): Promise<OllamaDiscovery> {
+  const [models, thinkLevels] = await Promise.all([
     readCliOutput(cliPath, ['list'], LIST_TIMEOUT_MS).then(parseOllamaModelList, () => [] as string[]),
     // `run --help` is answered by the CLI itself, so it works with the daemon down.
-    readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS).then(parseOllamaThinkLevels, () => [] as string[]),
+    readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS).then(parseOllamaThinkLevels, () => null),
   ]);
   return {
-    supportsModelOverride: true,
-    models: models.length > 0 ? models : undefined,
-    effortLevels,
+    capabilities: {
+      supportsModelOverride: true,
+      models: models.length > 0 ? models : undefined,
+      effortLevels: thinkLevels ?? [],
+    },
+    thinkLevels,
   };
 }

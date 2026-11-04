@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { shimFamilyKey } from '../../shared/shim-family-key';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition, type CodexHookTrustEntry } from './hook-manager';
 
@@ -196,16 +197,6 @@ function binaryStampOf(filePath: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * A binary and its npm shim siblings under one key: same folder and base name,
- * without the `.cmd`, `.bat` or `.ps1` extension. A spawn may launch the
- * sibling `resolveShimLaunch` chose rather than the `.cmd` that `detect` found.
- */
-export function shimFamilyKey(filePath: string): string {
-  const withoutShimExtension = filePath.replace(/\.(cmd|bat|ps1)$/i, '');
-  return process.platform === 'win32' ? withoutShimExtension.toLowerCase() : withoutShimExtension;
 }
 
 interface TrustRead {
