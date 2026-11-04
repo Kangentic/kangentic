@@ -4025,8 +4025,8 @@
             liveTelemetryUnsupported: {
               unavailableLabel: 'Telemetry: TUI only',
               unavailableTitle:
-                'OpenCode does not stream live telemetry to Kangentic.\n' +
-                'Its TUI shows the model, context and cost.',
+                'A local OpenCode session reports telemetry once its first turn starts. A remote one never does.\n' +
+                'The TUI shows the model, context and cost.',
             },
             supportsSummarize: true,
             kangenticMcp: 'per-session',
