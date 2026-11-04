@@ -69,7 +69,7 @@ Structured-format support by agent:
 | Agent | Structured | Raw |
 |-------|------------|-----|
 | Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity, Cursor, Copilot, Goose | native parser (Copilot's built from the Copilot SDK's event reference, not yet run against a real log; Goose's from its documented session database, not yet run against a real Goose) | yes |
-| Aider | no (no per-session native history) | yes |
+| Aider | the session's own chat history markdown; none for a session with no id (a Command Terminal) | yes |
 | Warp | no (history location unknown) | yes |
 | Ollama | no (no per-session history for `ollama run`) | yes |
 

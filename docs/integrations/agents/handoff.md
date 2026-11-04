@@ -50,7 +50,7 @@ Locate source agent's native session file:
     |--- Claude: ~/.claude/projects/<slug>/<sessionId>.jsonl
     |--- Codex:  ~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl
     |--- Gemini: ~/.gemini/tmp/<projectDir>/chats/session-<time>-<first 8 of id>.jsonl (legacy .json)
-    |--- Aider:  null (no session history files)
+    |--- Aider:  <cwd>/.aider.chat.history.<sessionId>.md
     |
     v
 buildSessionHistoryReference() creates prompt with file path
@@ -80,7 +80,7 @@ Read this file for context on what was done, decisions made, and current state.
 
 For a target agent that Kangentic's MCP server is wired into (any adapter that declares `kangenticMcp`, not only Claude), it also appends: "You can also use the `kangentic_get_session_history` MCP tool to read the prior session content directly."
 
-When the source agent has no session file to point at (Cursor, Oz, Ollama and Goose return none, and Aider has none until it writes `.aider.chat.history.md`), the prompt falls back to: "No session history file is available. Check `git log` for prior changes on this branch."
+When the source agent has no session file to point at (Cursor, Oz, Ollama and Goose return none, and Aider has none until it writes the session's `.aider.chat.history.<id>.md`), the prompt falls back to: "No session history file is available. Check `git log` for prior changes on this branch."
 
 The prompt is built entirely by `buildSessionHistoryReference()` with no per-adapter customization needed.
 

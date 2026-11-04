@@ -57,7 +57,7 @@ same caveat the Claude adapter documents).
 | Codex | `[projects.'<path>']` trust headers in `~/.codex/config.toml` (line-based, preserving quote / `\\?\` prefix / separator style). | Rollout JSONLs under `~/.codex/sessions/` are intentionally NOT touched: `codex resume <id>` resolves by session id, so resume already survives a move. Only the cwd-filtered resume picker shows residue (it has an `--all` escape hatch). |
 | Kimi | `~/.kimi/sessions/<md5(work_dir)>/` dirs (and `<kaos>_<md5>` variants) and `~/.kimi/kimi.json` `work_dirs[].path`. | md5 is computed over the resolved native-separator path (Kangentic spawns Kimi with a forward-slashed `-w`, but Kimi normalizes to native before hashing). |
 | Copilot | `cwd` / `git_root` lines in `session-state/<uuid>/workspace.yaml`, in `~/.copilot` and in every Kangentic session's own config home (`<project>/.kangentic/sessions/*/copilot-config/`), where Kangentic's sessions live. | Best-effort and version-fragile (v1.0.52+ resumes in the saved cwd). The `~/.copilot/session-store.db` cache is left untouched, so picker/search residue is accepted. |
-| Aider | None. | History (`.aider.chat.history.md`) lives inside the project folder and moves with it. |
+| Aider | None. | History (each session's `.aider.chat.history.<id>.md`, and Aider's shared `.aider.chat.history.md`) lives inside the project folder and moves with it. |
 | Cursor | None. | No cwd-keyed external session store Kangentic depends on. |
 | Oz (Warp) | None. | No resumable on-disk session state. |
 | Ollama | None. | No resumable external session state; `onProjectRelocated` omitted. |

@@ -73,7 +73,7 @@ const ADAPTER_CLASSES = [
     name: 'aider', importPath: '../../src/main/agent/adapters/aider/aider-adapter', className: 'AiderAdapter',
     commandInjection: 'verifier', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: false,
-    reason: 'markdown format known from a real fixture; not installed here, so unmeasured',
+    reason: 'markdown format known from a real fixture; the per-session file (--chat-history-file) is built from docs; not installed here, so unmeasured',
   },
   {
     name: 'cursor', importPath: '../../src/main/agent/adapters/cursor/cursor-adapter', className: 'CursorAdapter',
@@ -276,12 +276,12 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       //
       // Losing the `false` declaration (Aider or Copilot regressing back to
       // the default) makes the shared wrapper short-circuit before their
-      // verifier ever runs, because neither has a captured agent_session_id
-      // to gate on (Aider keeps one history file per project directory;
-      // Copilot's history is a single global file with no session id in it
-      // at all). A short-circuited verifier is worse than no verifier: the
-      // burst still retries and then reports `failed` instead of staying
-      // silently `unconfirmed`.
+      // verifier ever runs whenever no agent_session_id is at hand (an Aider
+      // session with no id writes Aider's shared per-directory history file,
+      // which `cwd` alone identifies; Copilot's history is a single global
+      // file with no session id in it at all). A short-circuited verifier is
+      // worse than no verifier: the burst still retries and then reports
+      // `failed` instead of staying silently `unconfirmed`.
       //
       // Gaining an unwarranted `false` on any other adapter lets its verifier
       // run before a session id is resolved, scanning without one and reading

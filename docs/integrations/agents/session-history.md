@@ -374,7 +374,7 @@ behavior below is the resume contract.
 | OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
 | Copilot | `copilot --session-id <id> --config-dir <session home>` | `<config home>/session-state/<id>/` (+ `session-store.db`); each Kangentic session has its own home, so a resume first brings the folder over from the session's earlier home | session id (per config home) | no | yes (its `events.jsonl`) | typed once the TUI is ready |
 | Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (the locator returns the `agent-transcripts` JSONL under `~/.cursor/projects/<slug>/`, which resume itself does not read) | typed once the CLI is ready |
-| Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) | n/a: no id to resume by, so the engine never resumes it |
+| Aider | `aider --chat-history-file <file> --restore-chat-history` | `<cwd>/.aider.chat.history.<id>.md`, a file Kangentic names per session | caller-owned file name in the cwd | yes | yes | on the command line, `--message` (one reply, then Aider exits) |
 | Warp | (no resume) | none | n/a | n/a | n/a | n/a |
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes | typed once the TUI is ready |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a | n/a |
@@ -407,9 +407,11 @@ Reading the table by class:
   caller-supplied `--name` against Goose's own session store, so resume is cwd-independent.
   Kangentic reads that store's SQLite database by the same name for the transcript and usage, and
   `locateSessionHistoryFile` returns null because the database is shared by every session.
-- **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
-  `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
-  downgrade.
+- **caller-named file in the cwd, no CLI session id:** Aider. Kangentic names each session's
+  history `.aider.chat.history.<id>.md` with `--chat-history-file`, and `--restore-chat-history`
+  reloads it. The file sits in the working directory, so it moves with the project, and a deleted
+  worktree takes it along. Built from Aider's options reference and not yet run against a real
+  Aider (see [Aider](aider.md#chat-history-and-resume)).
 - **no resume at all:** Warp and Ollama. The `oz` one-shot runner streams and exits, and
   `ollama run` has no CLI-level session ids.
 

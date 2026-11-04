@@ -97,7 +97,7 @@ describe('Kimi wire.jsonl', () => {
   });
 });
 
-describe('Aider .aider.chat.history.md', () => {
+describe('Aider chat history markdown', () => {
   function writeHistory(contents: string, mtimeMs: number): string {
     const filePath = path.join(tmpDir, '.aider.chat.history.md');
     fs.writeFileSync(filePath, contents);
@@ -187,6 +187,25 @@ describe('Aider .aider.chat.history.md', () => {
     expect(await verifier({
       type: 'command-injection', text: '/review', cwd: tmpDir, sentAt: Date.now(), mode: 'submitted',
     })).toBe(false);
+  });
+
+  it("reads a task session's own history file, named by its id, not the shared default", async () => {
+    // A task session writes `.aider.chat.history.<id>.md` (--chat-history-file).
+    // The shared default file ending on the same text must not confirm it.
+    const sentAt = Date.now();
+    const agentSessionId = '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00';
+    writeHistory('#### /review  \n', sentAt + 10);
+    const verifier = createAiderCommandInjectionVerifier();
+    expect(await verifier({
+      type: 'command-injection', text: '/review', cwd: tmpDir, agentSessionId, sentAt, mode: 'submitted',
+    })).toBe(false);
+
+    const sessionFile = path.join(tmpDir, `.aider.chat.history.${agentSessionId}.md`);
+    fs.writeFileSync(sessionFile, '#### earlier  \n\nDone.\n\n#### /review  \n');
+    fs.utimesSync(sessionFile, (sentAt + 10) / 1000, (sentAt + 10) / 1000);
+    expect(await verifier({
+      type: 'command-injection', text: '/review', cwd: tmpDir, agentSessionId, sentAt, mode: 'submitted',
+    })).toBe(true);
   });
 });
 
