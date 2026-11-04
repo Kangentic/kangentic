@@ -183,8 +183,9 @@ that wait once.
   re-stamps the turn's start when thinking resumes. A turn the user starts with a prompt after an
   interrupted recap runs its rows, unless the prompt lands inside the engine's interrupt settle
   (about 3 s after a Ctrl+C between tool calls, which fires no hook), where it still counts as the
-  recap's turn. Startup recovery's recap is the whole prompt on every session,
-  so its first turn is skipped the same way. That pass therefore starts each expired task working:
+  recap's turn. Startup recovery's recap is the whole prompt on every session whose CLI takes a
+  starting prompt, so its first turn is skipped the same way. An agent with
+  `freshPromptDelivery: 'typed'` (Kimi Code) opens with no recap. That pass therefore starts each expired task working:
   one summary turn per task, paid in model tokens with nobody watching, which is the price of the
   task saying where it stands when the user next opens it.
 - **On an isolated column set to keep its own conversation** (isolated plus `create_or_resume`,
