@@ -188,9 +188,11 @@ function matchModelLabel(text: string): { id: string; displayName: string } | nu
 /**
  * Convert a Copilot model id like `gpt-5-mini` into a friendlier display
  * form like `GPT-5 mini`. Unknown ids pass through untouched so we never
- * render an empty model pill.
+ * render an empty model pill. Also labels a `--model` id before the stream
+ * reports one (`CopilotAdapter.configuredModelFromCommand`), so the two read
+ * alike.
  */
-function prettifyModelId(id: string): string {
+export function prettifyModelId(id: string): string {
   const lowered = id.toLowerCase();
   if (lowered.startsWith('gpt-')) {
     const rest = id.slice(4);

@@ -84,8 +84,11 @@ function writeUserFile(fileName: string, content: string): string {
 
 describe('copilot-hook-manager', () => {
   describe('COPILOT_HOOK_EVENTS', () => {
-    it('defines 5 hook events', () => {
-      expect(COPILOT_HOOK_EVENTS).toHaveLength(5);
+    it('registers the hooks reference events Kangentic reads', () => {
+      expect(COPILOT_HOOK_EVENTS.map((entry) => entry.event).sort()).toEqual([
+        'agentStop', 'notification', 'postToolUse', 'postToolUseFailure', 'preCompact', 'preToolUse',
+        'sessionEnd', 'sessionStart', 'subagentStart', 'subagentStop', 'userPromptSubmitted',
+      ]);
     });
 
     it('maps preToolUse to tool_start', () => {
@@ -120,9 +123,9 @@ describe('copilot-hook-manager', () => {
   });
 
   describe('buildHooks', () => {
-    it('returns an object with 5 keys (one per event)', () => {
+    it('returns one key per registered event', () => {
       const hooks = buildHooks(EVENTS_PATH);
-      expect(Object.keys(hooks)).toHaveLength(5);
+      expect(Object.keys(hooks)).toHaveLength(COPILOT_HOOK_EVENTS.length);
     });
 
     it('each hook value is an array (not a single object)', () => {
@@ -227,6 +230,29 @@ describe('copilot-hook-manager', () => {
       expect(statusLine.type).toBe('command');
       expect(statusLine.command).toContain('status-bridge');
       expect(statusLine.command).toContain(STATUS_PATH);
+    });
+
+    // Assisted permissions (GitHub's allowing-safe-commands doc): the setting is
+    // the only interactive route, and every other mode keeps the user's own.
+    it('starts an auto session on assisted permissions, over the user\'s own mode', () => {
+      writeUserFile('settings.json', JSON.stringify({ defaultPermissionMode: 'manual' }));
+      writeSessionConfig(configDir, EVENTS_PATH, undefined, { assistedApprovals: true });
+      expect(readJson(path.join(configDir, 'settings.json')).defaultPermissionMode).toBe('assisted');
+    });
+
+    it('writes assisted permissions to config.json too, for versions before 1.0.93', () => {
+      writeUserFile('config.json', JSON.stringify({ defaultPermissionMode: 'manual' }));
+      writeSessionConfig(configDir, EVENTS_PATH, undefined, { assistedApprovals: true });
+      expect(readJson(path.join(configDir, 'config.json')).defaultPermissionMode).toBe('assisted');
+    });
+
+    it('keeps the user\'s own permission mode in any other session', () => {
+      writeUserFile('settings.json', JSON.stringify({ defaultPermissionMode: 'assisted' }));
+      writeSessionConfig(configDir, EVENTS_PATH);
+      expect(readJson(path.join(configDir, 'settings.json')).defaultPermissionMode).toBe('assisted');
+      fs.rmSync(path.join(tmpHome, '.copilot', 'settings.json'), { force: true });
+      writeSessionConfig(configDir, EVENTS_PATH);
+      expect(readJson(path.join(configDir, 'settings.json')).defaultPermissionMode).toBeUndefined();
     });
 
     it('omits statusLine when statusOutputPath is not provided', () => {

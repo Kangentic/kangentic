@@ -5,7 +5,7 @@ import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath, type HookShell } from '../../shared/hook-utils';
 import {
-  emitOnlyWhenDetailMatches, extractTool, extractDetail, setDetail, setToolWhen, setWaitKind, setWaitKindWhen,
+  emitOnlyWhenDetailMatches, extractSubagentId, extractTool, extractDetail, setDetail, setToolWhen, setWaitKind, setWaitKindWhen,
 } from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives, backgroundToolMatcher } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
@@ -118,6 +118,17 @@ const COPILOT_QUESTION_NOTIFICATION = 'elicitation_dialog';
 const COPILOT_APPROVAL_NOTIFICATION = 'permission_prompt';
 
 /**
+ * A tool hook that fires inside a subagent carries the subagent's `agentId`
+ * (hooks reference: "Hooks that fire inside a subagent also receive agentId,
+ * agentType, and parentAgentId"; they fire for sub-agent tool calls since
+ * CLI 1.0.49), so the engine tells a subagent's tool from the main agent's.
+ */
+const SUBAGENT_ID = extractSubagentId(['agentId']);
+
+/** The hooks reference names the subagent in `agentName` on both subagent events. */
+const SUBAGENT_NAME = extractDetail(['agentName']);
+
+/**
  * Copilot hook events mapped to event-bridge event types with extraction
  * directives. Directives tell event-bridge how to extract fields from
  * Copilot's hook stdin JSON.
@@ -135,6 +146,24 @@ const COPILOT_APPROVAL_NOTIFICATION = 'permission_prompt';
  * Note: Copilot uses camelCase `toolName` (not snake_case `tool_name`). Only a
  * hook registered under a PascalCase event name gets snake_case fields
  * (CLI 1.0.21), and these are registered camelCase.
+ *
+ * `postToolUseFailure`, `userPromptSubmitted`, `sessionStart`, `sessionEnd`,
+ * `subagentStart` and `subagentStop` come from GitHub's hooks reference
+ * (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference,
+ * no CLI version stated; changelog 1.0.105 current) and have not run against a
+ * real Copilot CLI:
+ *
+ * postToolUseFailure:  { ..., toolName, toolArgs, error }  ("after a tool fails";
+ *                      postToolUse fires only on success)
+ * userPromptSubmitted: { ..., prompt }
+ * sessionStart:        { ..., source: "startup" | "resume" | "new", initialPrompt? }
+ * sessionEnd:          { ..., reason: "complete" | "error" | "abort" | "timeout" | "user_exit" }
+ * subagentStart:       { ..., transcriptPath, agentName, agentDisplayName?, agentDescription? }
+ * subagentStop:        { ..., transcriptPath, agentId, agentType, agentName, agentDisplayName?, response, stopReason }
+ *
+ * subagentStart carries no `agentId`, so its start is id-less and its stop is
+ * named, which the engine already counts (`event-handlers.ts`, an id-less start
+ * holding a slot).
  */
 export const COPILOT_HOOK_EVENTS: Array<{
   event: string;
@@ -144,7 +173,7 @@ export const COPILOT_HOOK_EVENTS: Array<{
   {
     event: 'preToolUse',
     bridgeEventType: EventType.ToolStart,
-    directives: [extractTool('toolName')],
+    directives: [extractTool('toolName'), SUBAGENT_ID],
   },
   {
     event: 'postToolUse',
@@ -154,10 +183,47 @@ export const COPILOT_HOOK_EVENTS: Array<{
     // entry would cost every tool call.
     directives: [
       extractTool('toolName'),
+      SUBAGENT_ID,
       APPROVED_PLAN_EXIT,
       backgroundLaunchDirective(COPILOT_BACKGROUND_COMMAND_SPEC),
       ...backgroundStopDirectives(COPILOT_BACKGROUND_COMMAND_SPEC),
     ],
+  },
+  {
+    // A failed tool ends its call too. Without it a failed call left its
+    // ToolStart open until the turn's agentStop. The reference does not give
+    // `error`'s shape, and an object would print as "[object Object]", so it
+    // is not copied into the event.
+    event: 'postToolUseFailure',
+    bridgeEventType: EventType.ToolEnd,
+    directives: [extractTool('toolName'), SUBAGENT_ID],
+  },
+  {
+    // The turn starts when the prompt is submitted, not at its first tool.
+    // The prompt's text joins it only when the session asks for it
+    // (`capturePromptText`, `buildHooks`).
+    event: 'userPromptSubmitted',
+    bridgeEventType: EventType.Prompt,
+  },
+  {
+    event: 'sessionStart',
+    bridgeEventType: EventType.SessionStart,
+    directives: [extractDetail(['source'])],
+  },
+  {
+    event: 'sessionEnd',
+    bridgeEventType: EventType.SessionEnd,
+    directives: [extractDetail(['reason'])],
+  },
+  {
+    event: 'subagentStart',
+    bridgeEventType: EventType.SubagentStart,
+    directives: [SUBAGENT_NAME],
+  },
+  {
+    event: 'subagentStop',
+    bridgeEventType: EventType.SubagentStop,
+    directives: [SUBAGENT_NAME, SUBAGENT_ID],
   },
   {
     event: 'agentStop',
@@ -205,11 +271,16 @@ export function buildHooks(
   const eventsPath = toForwardSlash(eventsOutputPath);
 
   const hooks: Record<string, CopilotHookEntry[]> = {};
-  for (const { event, bridgeEventType, directives } of COPILOT_HOOK_EVENTS) {
+  for (const { event, bridgeEventType, directives: eventDirectives } of COPILOT_HOOK_EVENTS) {
+    // Task sessions keep prompt text out of their events file; a session that
+    // names itself from its first prompt asks for it.
+    const directives = bridgeEventType === EventType.Prompt && options.capturePromptText
+      ? [...(eventDirectives || []), extractDetail(['prompt'])]
+      : (eventDirectives || []);
     hooks[event] = [{
       command: options.eventCommand
-        ? options.eventCommand(bridgeEventType, ...(directives || []))
-        : buildBridgeCommand(COPILOT_HOOK_SHELL, eventBridge, eventsPath, bridgeEventType, ...(directives || [])),
+        ? options.eventCommand(bridgeEventType, ...directives)
+        : buildBridgeCommand(COPILOT_HOOK_SHELL, eventBridge, eventsPath, bridgeEventType, ...directives),
       timeout: 10,
     }];
   }
@@ -242,7 +313,27 @@ export interface CopilotSessionHookOptions {
   statusLineCommand?: string;
   /** Where the CLI runs when it is a WSL distro: the session is seeded from that distro's Copilot home. */
   place?: CliPlace | null;
+  /** Report the submitted prompt's text with the Prompt event (`CommandOptions.capturePromptText`). */
+  capturePromptText?: boolean;
+  /**
+   * Start the session on assisted permissions (Kangentic's `auto` mode):
+   * `defaultPermissionMode: "assisted"` in the session's settings.json.
+   */
+  assistedApprovals?: boolean;
 }
+
+/**
+ * Copilot's assisted permissions, the CLI's own review of each tool request
+ * (https://docs.github.com/en/copilot/concepts/customizations/allowing-safe-commands):
+ * `defaultPermissionMode` in settings.json takes `"assisted"` or `"manual"` and
+ * "applies to new interactive sessions"; a resumed session keeps its saved mode,
+ * and an administrator's `permissions.defaultMode` wins. `--assisted-approval`
+ * exits with an error in an interactive session, so the setting is the only
+ * interactive route. config.json gets it too, as it gets the status line, for
+ * a version before 1.0.93 that reads user settings there. Built from the docs,
+ * not yet run against a real CLI.
+ */
+const ASSISTED_PERMISSION_MODE = 'assisted';
 
 /**
  * Resolve the user's Copilot config directory (default: `~/.copilot`).
@@ -330,13 +421,19 @@ function withoutKangenticHooks(config: Record<string, unknown>): Record<string, 
   return next;
 }
 
-/** Kangentic's user-setting overrides: the status line bridge and no banner. */
+/**
+ * Kangentic's user-setting overrides: the status line bridge, no banner, and
+ * assisted permissions for a session started in `auto` mode. Any other mode
+ * keeps the user's own `defaultPermissionMode`.
+ */
 function withSessionSettings(
   config: Record<string, unknown>,
   statusOutputPath: string | undefined,
   statusLineCommand: string | undefined,
+  assistedApprovals: boolean,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...config, banner: 'never' };
+  if (assistedApprovals) next.defaultPermissionMode = ASSISTED_PERMISSION_MODE;
   if (statusLineCommand) {
     next.statusLine = { type: 'command', command: statusLineCommand };
   } else if (statusOutputPath) {
@@ -393,6 +490,7 @@ export function writeSessionConfig(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'settings.json'))),
     statusOutputPath,
     hookOptions.statusLineCommand,
+    hookOptions.assistedApprovals === true,
   );
   // sync-write-ok: same reason as the mkdir above - carries the statusLine
   // wiring and the user's own settings for the session.
@@ -402,6 +500,7 @@ export function writeSessionConfig(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'config.json'))),
     statusOutputPath,
     hookOptions.statusLineCommand,
+    hookOptions.assistedApprovals === true,
   );
   // sync-write-ok: same reason as the mkdir above - carries the signed-in
   // account the session runs as.
@@ -433,9 +532,11 @@ function removeFileQuietly(filePath: string): void {
  * Remove Kangentic's files from a per-session Copilot config directory.
  *
  * Called on session exit/suspend. Removes file by file, never recursively:
- * Copilot keeps the session's `session-state/` in this same config home, and
- * the next `--session-id <uuid>` resume needs it. Covers the hooks file and the
- * config.json that carried the hooks up to Copilot 1.0.92.
+ * Copilot keeps the session's `session-state/` in this same config home. The
+ * next resume runs in a new config home and brings that folder over first
+ * (`seedResumedSessionState`), and the transcript readers find it here until
+ * then. Covers the hooks file and the config.json that carried the hooks up to
+ * Copilot 1.0.92.
  */
 export function removeSessionConfig(sessionConfigDir: string): void {
   const hooksDir = path.join(sessionConfigDir, SESSION_HOOKS_DIR);
