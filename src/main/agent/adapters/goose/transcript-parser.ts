@@ -17,7 +17,9 @@ import { findGooseSession, withGooseDatabase } from './session-store';
  *   which Goose's own reader turns into `thinking`
  * - `toolRequest` {id, toolCall: {status: "success", value: {name, arguments}}}
  * - `toolResponse` {id, toolResult: {status: "success", value: {content: [{type: "text", text}], isError}}}
- *   or `{status: "error", error}` when the call failed outright
+ *   or `{status: "error", error}` when the call failed outright. A row an older
+ *   Goose wrote has the content array itself as `value`, which Goose still reads
+ *   (`tool_result_serde.rs`, `SuccessWithContentVec`).
  * and others (`image`, `redactedThinking`, `toolConfirmationRequest`,
  * `systemNotification`, ...) that the viewer has no row for. A tool's response
  * arrives in the next user-role message, as the model APIs Goose speaks expect.
@@ -91,7 +93,8 @@ function toolResultOf(block: Record<string, unknown>): { content: string; isErro
   if (toolResult.status === 'error') {
     return { content: typeof toolResult.error === 'string' ? toolResult.error : 'Tool call failed', isError: true };
   }
-  const value = isRecord(toolResult.value) ? toolResult.value : {};
+  const storedValue = toolResult.value;
+  const value = Array.isArray(storedValue) ? { content: storedValue } : isRecord(storedValue) ? storedValue : {};
   const parts = Array.isArray(value.content) ? value.content.filter(isRecord) : [];
   const content = parts
     .filter((part) => part.type === 'text' && typeof part.text === 'string')
