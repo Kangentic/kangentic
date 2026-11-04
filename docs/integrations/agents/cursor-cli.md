@@ -122,7 +122,9 @@ real Cursor.
 The CLI takes no flag naming a hooks file, so Kangentic merges its entries into the project's
 `<cwd>/.cursor/hooks.json` (`{ "version": 1, "hooks": { "<event>": [{ "command", "timeout" }] } }`)
 beside the user's own, as with `.cursor/mcp.json`. A file Kangentic creates is git-excluded and gets
-the `version`. A user's file keeps its own top-level keys, so the strip hands it back as it was. A
+the `version`. A user's file keeps its own top-level keys and hook entries through the strip, which
+rewrites it as 2-space JSON and drops a `hooks` object left empty. A file left with no hooks and at
+most a `version` is deleted, which also takes a user's file that held nothing else. A
 file it cannot parse is left alone (that start runs on terminal activity), and the entries are
 stripped when the folder's last session holding them exits.
 

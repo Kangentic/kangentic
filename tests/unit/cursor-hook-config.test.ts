@@ -26,7 +26,7 @@ import { isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 import { copyWslHookScriptInto, prepareWslHookTransport } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import { toForwardSlash } from '../../src/shared/paths';
-import { gitBashPath, HOOK_PROBE_SEGMENT, installedShOrPowerShellHosts, runAsHookShell, type HookShellHost } from './helpers/shell-argv-probe';
+import { gitBashPath, HOOK_PROBE_SEGMENT, installedShOrPowerShellHosts, runAsHookShell } from './helpers/shell-argv-probe';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -50,25 +50,6 @@ const posixShells = posixShellPaths();
 function posixShellPath(filePath: string): string {
   if (process.platform !== 'win32') return filePath;
   return toForwardSlash(filePath).replace(/^([A-Za-z]):/, (_match, drive: string) => `/${drive.toLowerCase()}`);
-}
-
-/** Run a whole hook command through one host the way Cursor does, and return what it printed. */
-function runCommandInHost(host: HookShellHost, command: string, input: string, env: Record<string, string>): { status: number | null; stdout: string } {
-  const options = { input, env: { ...process.env, ...env }, encoding: 'utf-8' as const, windowsHide: true, timeout: 25_000 };
-  let program: string;
-  let args: string[];
-  if (host === 'git-bash') {
-    program = gitBashPath() ?? 'bash';
-    args = ['-c', command];
-  } else if (host === 'sh' || host === 'bash') {
-    program = host;
-    args = ['-c', command];
-  } else {
-    program = host;
-    args = ['-NoProfile', '-NonInteractive', '-Command', command];
-  }
-  const result = spawnSync(program, args, options);
-  return { status: result.status, stdout: result.stdout ?? '' };
 }
 
 let folder: string;
@@ -131,8 +112,12 @@ describe('buildCursorHookCommands', () => {
     const eventsOutput = path.join(folder, 'prompt-events.jsonl');
     for (const host of installedShOrPowerShellHosts()) {
       fs.rmSync(eventsOutput, { force: true });
-      const result = runCommandInHost(host, command, JSON.stringify({ hook_event_name: 'beforeSubmitPrompt', prompt: 'go' }), { [CURSOR_HOOK_EVENTS_ENV]: eventsOutput });
-      expect(result.stdout, host).toContain('{"continue":true}');
+      const result = runAsHookShell(host, command, {
+        input: JSON.stringify({ hook_event_name: 'beforeSubmitPrompt', prompt: 'go' }),
+        env: { [CURSOR_HOOK_EVENTS_ENV]: eventsOutput },
+      });
+      // The reply is no argv, so the probe reads it as a stray line.
+      expect(result.strayLines, host).toContain('{"continue":true}');
       expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"prompt"');
     }
   }, 60_000);

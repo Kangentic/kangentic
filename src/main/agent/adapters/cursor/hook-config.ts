@@ -335,7 +335,9 @@ export function removeCursorProjectHooks(directory: string): void {
   if (Object.keys(remainingHooks).length > 0) remaining.hooks = remainingHooks;
   else delete remaining.hooks;
   try {
-    // A `version` alone is what Kangentic's own write added: nothing of the user's.
+    // A file left with no hooks and at most a `version` is deleted, as the one
+    // Kangentic's own write created would be. A user's file that held only a
+    // `version` and no hooks looks the same here, so it goes too.
     const userKeys = Object.keys(remaining).filter((key) => key !== 'version');
     if (userKeys.length === 0) {
       fs.rmSync(configPath, { force: true });
