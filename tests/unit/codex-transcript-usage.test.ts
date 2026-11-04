@@ -87,9 +87,23 @@ describe('codexTranscriptUsage', () => {
     await expect(codexTranscriptUsage(filePath)).resolves.toEqual({ inputTokens: 3_000, outputTokens: 30 });
   });
 
-  it('takes the last running total from a rollout written before 0.163', async () => {
+  it('takes the last running total from a rollout with no usage records', async () => {
     const filePath = writeRollout([sessionMeta(), tokenCount(1_000, 10), tokenCount(2_500, 40)]);
     await expect(codexTranscriptUsage(filePath)).resolves.toEqual({ inputTokens: 2_500, outputTokens: 40 });
+  });
+
+  it('adds the records of a resumed rollout to the total an older Codex wrote before them', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      tokenCount(4_000, 40),
+      tokenCount(5_000, 50),
+      // Resumed on a Codex that writes records. Each comes before its token_count.
+      usageRecord(SESSION, 'resp-1', 1_000, 10),
+      tokenCount(6_000, 60),
+      usageRecord(SESSION, 'resp-2', 2_000, 20),
+      tokenCount(8_000, 80),
+    ]);
+    await expect(codexTranscriptUsage(filePath)).resolves.toEqual({ inputTokens: 8_000, outputTokens: 80 });
   });
 
   it('is null for a rollout with no usage, and for a missing file', async () => {
@@ -119,15 +133,15 @@ describe('codexTranscriptUsage', () => {
     await expect(codexTranscriptUsage(filePath)).resolves.toEqual({ inputTokens: 700, outputTokens: 7 });
   });
 
-  it('reads the pre-0.163 token_count capture: the last info.total_token_usage', async () => {
+  it('reads the older token_count capture: the last info.total_token_usage', async () => {
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-rollout-event-msg.jsonl');
     await expect(codexTranscriptUsage(fixturePath)).resolves.toEqual({ inputTokens: 21_122, outputTokens: 334 });
   });
 });
 
 describe('a rollout in the 0.163.0 record shape', () => {
-  // Keys from local 0.163.0 rollouts, every value invented, so this is not a
-  // capture of a real turn. See the note in docs/integrations/agents/codex-cli.md.
+  // Every value is invented, so not a capture of a real turn. The note in
+  // docs/integrations/agents/codex-cli.md says where each record's keys came from.
   const shapeRollout = path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl');
 
   it('sums the two responses of the rollout own thread, past the nested thread record', async () => {
