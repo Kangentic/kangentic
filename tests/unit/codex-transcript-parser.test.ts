@@ -301,6 +301,20 @@ describe('parseCodexTranscript', () => {
     expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:3`]);
   });
 
+  it('parses a rollout in the 0.163.0 record shape: the patch, the command, their results and the model', async () => {
+    // Keys from local 0.163.0 rollouts, every value invented, so not a capture of a real turn.
+    const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl');
+    const entries = await parseCodexTranscript(SESSION_ID, fixturePath);
+    expect(entries.map((entry) => entry.kind)).toEqual(['assistant', 'tool_result', 'assistant', 'tool_result']);
+    expect(entries[0]).toMatchObject({
+      model: 'stub-model',
+      blocks: [{ type: 'tool_use', id: 'call_shape_patch', name: 'apply_patch', input: { file_path: 'src/example.ts' } }],
+    });
+    expect(entries[1]).toMatchObject({ toolUseId: 'call_shape_patch', content: 'Success. Updated the following files:\nM src/example.ts' });
+    expect(entries[2]).toMatchObject({ blocks: [{ type: 'tool_use', id: 'call_shape_exec', name: 'exec_command', input: { cmd: 'node --version' } }] });
+    expect(entries[3]).toMatchObject({ toolUseId: 'call_shape_exec', content: 'Process exited with code 0\nOutput:\nok\n' });
+  });
+
   it('parses the pinned rollout fixture, ignoring duplicate event_msg entries', async () => {
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-real-rollout.jsonl');
     const entries = await parseCodexTranscript(SESSION_ID, fixturePath);

@@ -368,6 +368,25 @@ describe('CodexSessionHistoryParser', () => {
   describe('0.163 usage records, live effort and the agent-reported model', () => {
     const SESSION = '00000000-0000-4000-8000-000000000001';
 
+    // Keys from local 0.163.0 rollouts, every value invented, so not a capture of a real turn.
+    const shapeRollout = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-0.163.0-rollout-shape.jsonl'), 'utf-8');
+
+    it('replays a rollout in the 0.163.0 record shape: model, effort and the last response', () => {
+      const result = CodexSessionHistoryParser.parse(shapeRollout, 'append');
+      expect(result.usage?.model).toEqual({ id: 'stub-model', displayName: 'stub-model', reportedByAgent: true, effort: 'high' });
+      expect(result.usage?.contextWindow).toMatchObject({
+        usedTokens: 1_300, totalInputTokens: 1_300, totalOutputTokens: 60, cacheTokens: 1_000, contextWindowSize: 258_400,
+      });
+      expect(result.events).toEqual([]);
+    });
+
+    it('keeps the context of the session own record when a nested thread record follows it', () => {
+      // Up to and including the nested record, with no token_count yet to repair it.
+      const throughNestedRecord = `${shapeRollout.split('\n').slice(0, 8).join('\n')}\n`;
+      expect(throughNestedRecord).toContain('resp_shape_nested');
+      expect(CodexSessionHistoryParser.parse(throughNestedRecord, 'append').usage?.contextWindow).toMatchObject({ usedTokens: 1_200, totalOutputTokens: 40 });
+    });
+
     /** A `token_usage_record` shaped like codex-cli 0.163.0's (history/src/rollout_payload.rs). */
     function usageRecord(threadId: string, responseId: string, input: number, output: number, cached = 0): string {
       const usage = { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output };
