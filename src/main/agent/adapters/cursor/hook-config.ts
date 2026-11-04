@@ -6,7 +6,8 @@
  *   project file is `<project>/.cursor/hooks.json`, shaped
  *   `{ "version": 1, "hooks": { "<event>": [{ "command", "timeout" }] } }`,
  *   each command gets the hook's JSON on stdin, `timeout` is in seconds, and
- *   on Windows a command runs through PowerShell.
+ *   on Windows "the desktop app runs hook commands through PowerShell". It
+ *   names no rule for the CLI, so a command works in PowerShell and in `sh`.
  * - CLI changelog, https://cursor.com/docs/cli/changelog: the CLI runs hooks
  *   since January 2026 (session start and end, stop, pre-compaction,
  *   subagent lifecycle), "Hooks fire reliably" in April 2026, and post-tool
@@ -36,9 +37,13 @@
  *
  * No hook answers for the user. Cursor reads a `permission` from
  * `preToolUse` and `subagentStart`, and an answer there would decide what
- * confirm-changes leaves to the person, so those hooks print nothing. The one
- * reply is `beforeSubmitPrompt`'s `{ "continue": true }`, so a prompt is never
- * held on a field Kangentic left out.
+ * confirm-changes leaves to the person, so those hooks print nothing. The
+ * reference blocks a permission hook on invalid JSON, but not on silence: its
+ * `audit.sh` prints nothing from `beforeShellExecution`, and `failClosed` lists
+ * "no output" as a failure that blocks only when set. `{}` would be riskier,
+ * since `permission` is not marked optional. The one reply is
+ * `beforeSubmitPrompt`'s `{ "continue": true }`, so a prompt is never held on
+ * a field Kangentic left out.
  */
 
 import fs from 'node:fs';
@@ -117,15 +122,19 @@ function nodeBridgeCommandBuilder(eventBridge: string): CursorHookCommandBuilder
  * The command for a Cursor in a WSL distro: the folder's copy of the WSL hook
  * transport's script (`sh '<copy>' event <type> <directives>`), which a distro
  * with no node can run, inside a POSIX `if` on the gating variable so a print
- * run and the user's own Cursor publish nothing. The `if` ends with status 0
- * either way, so Cursor never reports the hook as failed. A reply is printed
- * after it, as the node bridge prints its reply whatever the events path.
- * Cursor's hooks reference says a hook command may be a shell string.
+ * run and the user's own Cursor publish nothing. A reply is printed after it,
+ * as the node bridge prints its reply whatever the events path. Cursor's hooks
+ * reference says a hook command may be a shell string.
+ *
+ * `|| true` is load-bearing. An `if` returns its last command's status, and a
+ * distro's `sh` (dash) exits 2 on a script it cannot open. The reference says
+ * exit code 2 blocks the action, so a missing folder copy would deny every
+ * tool call in the session instead of only losing its activity.
  */
 function wslTransportCommandBuilder(folderHooks: WslFolderHooks, place: CliPlace): CursorHookCommandBuilder {
   return (eventType, directives, reply) => {
     const publish = wslHookEventCommand(folderHooks, place, eventType, ...directives);
-    const gated = `if [ -n "$${CURSOR_HOOK_EVENTS_ENV}" ]; then ${publish}; fi`;
+    const gated = `if [ -n "$${CURSOR_HOOK_EVENTS_ENV}" ]; then ${publish} || true; fi`;
     if (!reply) return gated;
     // A single quote in the reply closes the quoted word; `'\''` puts it back.
     const quotedReply = JSON.stringify(reply).replace(/'/g, `'\\''`);

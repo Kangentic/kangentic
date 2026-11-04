@@ -116,8 +116,8 @@ flag from is seeded by `about`, as a start with no model is.
 
 `hook-config.ts`. Built from Cursor's [hooks reference](https://cursor.com/docs/hooks) and the
 [CLI changelog](https://cursor.com/docs/cli/changelog) (hooks in the CLI since January 2026, "Hooks
-fire reliably" in April 2026, post-tool hooks for subagents in v2026.10.17), not yet run against a
-real Cursor.
+fire reliably" in April 2026, post-tool hooks for subagents in v2026.10.17). It has not run against
+a real Cursor, and no run is planned.
 
 The CLI takes no flag naming a hooks file, so Kangentic merges its entries into the project's
 `<cwd>/.cursor/hooks.json` (`{ "version": 1, "hooks": { "<event>": [{ "command", "timeout" }] } }`)
@@ -126,10 +126,13 @@ the `version`. A user's file keeps its own top-level keys and hook entries throu
 rewrites it as 2-space JSON and drops a `hooks` object left empty. A file left with no hooks and at
 most a `version` is deleted, which also takes a user's file that held nothing else. A
 file it cannot parse is left alone (that start runs on terminal activity), and the entries are
-stripped when the folder's last session holding them exits.
+stripped when the folder's last session holding them exits. The reference says project hooks run
+in a trusted workspace, so a confirm-changes session gets none until its workspace prompt is
+answered.
 
 Every command is `node "<event-bridge.js>" "env:KANGENTIC_EVENTS_PATH_INTERACTIVE" <event-type>
-<directives>`, run through PowerShell on Windows and a POSIX shell elsewhere (the hooks reference).
+<directives>`. The reference says the desktop app runs hook commands through PowerShell on Windows
+and names no rule for the CLI, so each command works in PowerShell, Git Bash and a POSIX shell.
 `KANGENTIC_EVENTS_PATH_INTERACTIVE` is set by `buildEnv` only for a session-screen start:
 confirm-changes, skip-approvals, plan, and every resume, which returns before `-p` is added and so
 opens the session screen whatever its mode. A print run reports on stream-json instead,
@@ -152,18 +155,23 @@ an earlier install wrote from another bridge path.
 | `stop` | `idle`; `interrupted` for `status: aborted`; `turn_failed` for `status: error` | `status` |
 
 No hook answers for the user. `preToolUse` and `subagentStart` print nothing, because a `permission`
-there would decide what confirm-changes leaves to the person. That a hook printing nothing makes no
-decision is read from the docs' "exit code 0 uses the JSON output" and has not been run.
+there would decide what confirm-changes leaves to the person. The reference blocks a permission hook
+on invalid JSON, on a response that fails the hook's schema, and on exit code 2. It does not block on
+silence: its `audit.sh` prints nothing from `beforeShellExecution`, also a permission hook, and
+`failClosed` lists "no output" as a failure that blocks only when set. Printing `{}` would be
+riskier, since `permission` is not marked optional. This has not been run.
 
 A Cursor installed in a WSL distro may have no node, so its hooks run the WSL hook transport
 instead: `if [ -n "$KANGENTIC_EVENTS_PATH_INTERACTIVE" ]; then sh '<cwd>/.kangentic/cursor-wsl-hook.sh'
-event <type> <directives>; fi`, with the paths as the distro sees them. The folder copy of the script
-finds each session's own transport folder through `KANGENTIC_WSL_HOOK_DIR`, which the spawn sets for
-every distro session, print runs included, so the shell test of the gating variable is what keeps a
-print run silent. There the variable is the flag `1`, since no path needs to cross. The `if` ends
-with status 0 either way, so Cursor never reports the hook as failed, and `beforeSubmitPrompt` prints
-its `{ "continue": true }` after it. That Cursor runs a hook command through a shell on Linux comes
-from the hooks reference ("a shell string") and has not been run in a distro.
+event <type> <directives> || true; fi`, with the paths as the distro sees them. The folder copy of
+the script finds each session's own transport folder through `KANGENTIC_WSL_HOOK_DIR`, which the
+spawn sets for every distro session, print runs included, so the shell test of the gating variable
+is what keeps a print run silent. There the variable is the flag `1`, since no path needs to cross.
+The `|| true` keeps the hook at exit code 0. A distro's `sh` (dash) exits 2 on a script it cannot
+open (measured), and an `if` returns that status, so without it a lost folder copy would deny every
+tool call in the session. `beforeSubmitPrompt` prints its `{ "continue": true }` after the `if`. That
+Cursor runs a hook command through a shell on Linux comes from the hooks reference ("a shell string")
+and has not been run in a distro.
 
 ## Turn end
 
@@ -232,14 +240,14 @@ missed `stop` leaves the card thinking until the stale-thinking reclaim.
   `command-injection` verifier: the records have no timestamp field, so a confirm cannot bound
   itself to "written after send", and the stored text is not the raw submitted text. See
   [Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified).
-  The `beforeSubmitPrompt` hook now writes a `prompt` event for a session screen, a candidate
-  source for one once a live run shows it fires on a typed command.
+  The `beforeSubmitPrompt` hook writes a `prompt` event for a session screen, a candidate source
+  for one if a live run ever shows it fires on a typed command.
 
 ## Built from documentation, not run against Cursor
 
-Cursor was not signed in where these were built (a capture run on 2026-11-03 stopped at
-"Authentication required"), so each one comes from Cursor's docs as fetched on 2026-11-03, with the
-changelog at v2026.10.22:
+This project has no Cursor plan, so Cursor is built from its official docs alone and no capture is
+planned. Each item below comes from Cursor's docs as fetched on 2026-11-03, with the changelog at
+v2026.10.22:
 
 - The hooks file, its gating variable and the event map (`hook-config.ts`):
   [hooks reference](https://cursor.com/docs/hooks), [changelog](https://cursor.com/docs/cli/changelog)
@@ -259,35 +267,49 @@ changelog at v2026.10.22:
   [Modes](https://cursor.com/docs/cli/overview), changelog January 2026 and v2026.07.20.
 - The model seed from `--model`: CLI parameters.
 
-## What a live run should check next
+`tests/fixtures/cursor-docs/` holds Cursor's published examples, copied verbatim on 2026-11-03: the
+hooks reference's input blocks and the output format's example sequence. They are not captures.
+`cursor-hook-config.test.ts` replays every hook Kangentic registers through the real event bridge,
+and `cursor-stream-parser.test.ts` replays the sequence. That proves the code reads the fields
+Cursor publishes. It does not prove that a given Cursor build fires a hook or sends those fields.
+The hook examples are schemas with placeholders, so the docs print no real `session_id`, and its
+UUID shape comes from the output format's sequence.
 
-First, the hooks themselves, which every turn end on a session screen rests on. On a machine with
-Cursor signed in (`cursor-agent login`, not `agent`, which can be Grok's CLI, see
-[CLI Detection](#cli-detection)), run one session-screen turn and one print turn that call a shell
-tool, in a scratch folder whose `.cursor/hooks.json` dumps each hook's stdin to a file.
-- Confirm that the hooks fire on the session screen at all, and that Cursor loads a hooks file
-  with no `version` key (a user's file keeps its own keys as they are).
+`reportsTurnEnd` stays true on the docs' word, because this project builds what the docs support.
+The terminal carries activity until the first hook arrives, and the stale-thinking reclaim returns
+the card to idle after a `stop` that never comes. That reclaim is a watchdog guess, not a turn end
+(`turn-end-runner.ts`), so on a build where hooks do not fire, a Cursor column's On agent turn end
+rows never run and its workflow tasks wait. The alternative was to keep it false until a capture,
+which would leave every Cursor column with no On agent turn end automations and its workflow tasks
+advancing only by hand.
+
+## What a capture would check
+
+No capture is planned. If one ever runs, these are its steps. The hooks come first, because every
+turn end on a session screen rests on them. On a machine with Cursor signed in (`cursor-agent
+login`, not `agent`, which can be Grok's CLI, see [CLI Detection](#cli-detection)), run one
+session-screen turn and one print turn that call a shell tool, in a scratch folder whose
+`.cursor/hooks.json` dumps each hook's stdin to a file.
+
+- Confirm that the hooks fire on the session screen at all, and that a hook command inherits the
+  session's environment. The reference lists the variables Cursor adds and does not say the rest
+  pass through, and the gating variable rests on that.
+- Confirm that Cursor loads a hooks file with no `version` key. The reference marks `version`
+  required, and a user's file keeps its own keys as they are, so a session in a folder whose file
+  has none may get no hooks.
 - Confirm `sessionStart.session_id`, `tool_name` and `tool_use_id`, and `stop.status`
   (`completed`, `aborted`, `error`).
-- Pin the sanitized payloads and the print run's `init` and `result` lines under `tests/fixtures/`,
-  and replay them in `cursor-hook-config.test.ts` and `cursor-stream-parser.test.ts`.
+- Pin the sanitized payloads and the print run's `init` and `result` lines under `tests/fixtures/`
+  beside the published examples, and replay them in `cursor-hook-config.test.ts` and
+  `cursor-stream-parser.test.ts`.
 - Fix `buildCursorHookCommands` if a field differs. If no hook fires on the session screen, set
   `reportsTurnEnd` back to false.
 
 A CLI that is not signed in cannot stand in. On v2026.09.26 a print run with no login exits on
 "Authentication required" before any hook fires, `sessionStart` included. `cursor-agent status` is
 no proof of a login. It has reported one while a `-p` run in a scratch folder still stopped at
-"Authentication required". Sign in again (`cursor-agent logout`, then
-`cursor-agent login`, or set `CURSOR_API_KEY`) and confirm with a `-p` run before the capture.
-Once the fixtures replay, rewrite "Built from documentation, not run against Cursor" and this section
-to say what the run confirmed.
-
-Until then `reportsTurnEnd` stays true on the docs' word. The terminal carries activity until the
-first hook arrives, and the stale-thinking reclaim returns the card to idle after a `stop` that
-never comes. That reclaim is a watchdog guess, not a turn end (`turn-end-runner.ts`), so if the
-hooks do not fire, a Cursor column's On agent turn end rows never run and its workflow tasks wait.
-The alternative was to keep it false until the capture, which would leave Cursor's columns with no
-On agent turn end automations and its workflow tasks advancing only by hand.
+"Authentication required", so a capture would confirm its login with a `-p` run first. A capture
+would then replace the sections above with what it confirmed.
 
 These members are measured before an adapter declares them, so the docs alone do not build them:
 `supportsReadOnlyLaunch` (`--mode ask`, "read-only exploration without making changes"),

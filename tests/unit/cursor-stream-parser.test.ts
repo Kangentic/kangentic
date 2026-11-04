@@ -3,58 +3,49 @@
  * `--output-format stream-json` NDJSON over the PTY into model + events.
  *
  * Pure logic; no Electron and no IPC. One case reads a committed recording.
+ * The lines below are Cursor's own published example, not a capture
+ * (tests/fixtures/cursor-docs/README.md).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { CursorAdapter } from '../../src/main/agent/adapters/cursor/cursor-adapter';
 import { CursorStreamParser } from '../../src/main/agent/adapters/cursor/stream-parser';
 import { resetCursorCapabilityCacheForTests } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import { EventType } from '../../src/shared/types';
 
-// Documented example sequence from
-// https://cursor.com/docs/cli/reference/output-format
-const initLine = JSON.stringify({
-  type: 'system',
-  subtype: 'init',
-  apiKeySource: 'login',
-  cwd: '/Users/user/project',
-  session_id: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
-  model: 'Claude 4 Sonnet',
-  permissionMode: 'default',
-});
-const toolStartLine = JSON.stringify({
-  type: 'tool_call',
-  subtype: 'started',
-  call_id: 'toolu_vrtx_01NnjaR886UcE8whekg2MGJd',
-  tool_call: { readToolCall: { args: { path: 'README.md' } } },
-  session_id: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
-});
-const toolEndLine = JSON.stringify({
-  type: 'tool_call',
-  subtype: 'completed',
-  call_id: 'toolu_vrtx_01NnjaR886UcE8whekg2MGJd',
-  tool_call: {
-    readToolCall: {
-      args: { path: 'README.md' },
-      result: { success: { content: '# Project', isEmpty: false, totalLines: 1, totalChars: 9 } },
-    },
-  },
-  session_id: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
-});
-const resultLine = JSON.stringify({
-  type: 'result',
-  subtype: 'success',
-  duration_ms: 5234,
-  duration_api_ms: 5234,
-  is_error: false,
-  result: 'Done!',
-  session_id: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
-  request_id: '10e11780-df2f-45dc-a1ff-4540af32e9c0',
-});
+// The Example sequence at https://cursor.com/docs/cli/reference/output-format,
+// copied verbatim on 2026-11-03.
+const publishedSequence = fs
+  .readFileSync(path.resolve(__dirname, '../fixtures/cursor-docs/output-format-example-sequence.jsonl'), 'utf-8')
+  .split(/\r?\n/)
+  .filter(Boolean);
+const initLine = publishedSequence[0];
+const toolStartLine = publishedSequence[3];
+const toolEndLine = publishedSequence[4];
+const resultLine = publishedSequence[publishedSequence.length - 1];
 
 describe('CursorStreamParser', () => {
   beforeEach(() => {
     resetCursorCapabilityCacheForTests();
+  });
+
+  it('replays the published example sequence: the model, each tool, the duration and one turn end', () => {
+    const parser = new CursorStreamParser();
+    const result = parser.parseTelemetry(`${publishedSequence.join('\n')}\n`);
+    expect(result?.usage?.model?.displayName).toBe('Claude 4 Sonnet');
+    expect(result?.usage?.cost?.totalDurationMs).toBe(5234);
+    expect(result?.events?.map((event) => [event.type, event.tool])).toEqual([
+      [EventType.ToolStart, 'read'],
+      [EventType.ToolEnd, 'read'],
+      [EventType.ToolStart, 'write'],
+      [EventType.ToolEnd, 'write'],
+      [EventType.Idle, undefined],
+    ]);
+  });
+
+  it('reads the session id from the published init line', () => {
+    expect(new CursorAdapter().runtime.sessionId?.fromOutput?.(initLine)).toBe('c6b62c6f-7ead-4fd6-9922-e952131177ff');
   });
 
   it('extracts model from the init event', () => {
