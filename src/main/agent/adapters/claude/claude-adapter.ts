@@ -570,8 +570,9 @@ export class ClaudeAdapter implements AgentAdapter {
   /**
    * The conversation's transcript on a host over SSH (#913): the one file Claude appends to under
    * `~/.claude/projects/<slug>/`, in this computer's mirror of the host's home, where every Claude reader
-   * already looks for it. A remote task has no worktree, so the folder Claude started in is the folder it
-   * resumes in, and the slug is the same file's. Subagent transcripts are not carried.
+   * already looks for it. A remote task works in one folder for its whole life (its worktree on the host, or
+   * the project's folder when it has none), so the folder Claude started in is the folder it resumes in, and
+   * the slug is the same file's. Subagent transcripts are not carried.
    */
   remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
     const place = placeFromStored(options.cliTarget);

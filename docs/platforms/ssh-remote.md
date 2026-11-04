@@ -22,6 +22,8 @@ sources:
   - resource: src/main/remote/helper/listening-ports.ts
   - resource: src/main/remote/helper/program-versions.ts
   - resource: src/main/remote/helper/file-tail.ts
+  - resource: src/main/remote/remote-worktrees.ts
+  - resource: src/main/git/remote-worktree.ts
   - resource: src/main/agent/shared/remote-files.ts
   - resource: scripts/build-host.mjs
   - resource: scripts/lib/deterministic-tar.mjs
@@ -92,9 +94,21 @@ A remote project shows its host as a 20 by 20 square after its name in the proje
 Add project asks where first once a host exists: This computer, or a host. A host opens a form for the folder on it, which Kangentic checks on the host. The project is a local shell folder (under Kangentic's config folder) plus a host and a folder.
 
 - The board, tasks, history and settings are the local database as ever.
-- A remote project runs **without git worktrees** for now: the shell folder is not a repository, so each task works in the host folder directly. The Changes panel, PR linking and branch features are off for it.
+- **A task gets its own git worktree on the host** when the project's folder there is the top of a git repository with a commit, and worktrees are on for the project and the task (the same switches as a local project). See [Worktrees on a host](#worktrees-on-a-host). Any other folder is shared by every task, so run one agent in it at a time. The Changes panel, PR linking and the branch features are still off for a remote project.
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
 - Removing a host removes its projects from Kangentic, suspends their agents and leaves the folders on the host.
+
+## Worktrees on a host
+
+A task in a remote project works in its own git worktree on the host, as a local task does, so two agents never edit the same files. The host's git makes it, through one `sh` script the helper runs (`remote-worktrees.ts`). Nothing about it uses this computer's git.
+
+- **Where.** `<project folder on the host>/.kangentic/worktrees/<n>`, on a branch named from the task's title. This computer keeps an empty stand-in folder at the same path under the project's shell folder, and the task row records that path. The roots map turns it into the host's path when the agent starts, and a check that the folder exists finds it, so nothing that handles a task's folder needs to know it is remote. The stand-in is deleted with the worktree.
+- **What it does, in order.** It checks the folder is the top of a plain repository (not a subfolder, not itself a linked worktree) with a commit, fetches the base branch (best effort, never asking for a password), picks the start point (`origin/<base>` when the fetch landed it, else the local branch, else the remote one), clears a husk at the path, and runs `git worktree add`. A branch the task already has is attached, not recreated. The base is the task's own, else the project's default, else `main`, else `master`, else the host's current branch. A base the task names that the host does not have is an error with that sentence.
+- **Skipped, with the reason a local task gives.** `not-a-repo`, `nested-worktree`, `no-commits`, and `disabled`. The task then works in the shared folder.
+- **Removal.** Done, delete and a project's removal run `git worktree remove --force` and `git worktree prune` on the host, and delete the stand-in. The branch is kept, as for a local task. The path must be exactly one folder below `.kangentic/worktrees/`, checked before the script runs, because the script deletes it. A host that cannot be reached leaves the worktree and the task's path in place, and the task retries later.
+- **The Done drop asks the host first.** The pending-changes check counts the worktree's uncommitted files with the host's git, so the confirm dialog names them before the forced removal. A host that cannot answer is read as "there are changes", never as clean.
+- **Not done on a host.** The Post-Worktree Script (it is shell text for this computer, so it never runs here), the files copied from the project root, the node_modules link, the sparse checkout that leaves out `.claude/commands/`, and spare worktrees. An agent installs its own dependencies in the worktree.
+- **Still local-only.** The Changes panel, the branch summary, PR linking and the branch switcher read git on this computer, where the stand-in is an empty folder, so they find no repository for a remote task, as they did for the shell folder. A worktree the user deletes on the host leaves the task pointing at a folder the agent cannot start in.
 
 ## Dev servers on a host
 
@@ -157,7 +171,7 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **A crash of the process holding the links can leave a forward's `ssh` running,** holding its local port. The next forward of that port then shows as blocked, with the port named as in use on this computer. End the stray `ssh`, or restart the computer.
 - **A host whose `sshd` sets `AllowTcpForwarding no` cannot forward.** The port shows as blocked with `ssh`'s own refusal.
 - **A remote project's folder must be inside the user's home on the host.** The helper reads and writes only beneath the home, so a folder such as `/srv/app` is refused when it is added, with the home it must be in. Link or move the project under the home to use it.
-- **Tasks in a remote project share one folder.** There are no worktrees, so two agents edit the same files. The Add project form says so.
+- **A remote project whose folder is not a git repository shares one folder.** Every task works in it, so two agents edit the same files. The Add project form says so.
 - **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session. Transcripts are copied for Claude Code only (see Transcripts).
 - **A macOS client is unmeasured** for how an agent exits, as it is for local sessions.
 - **System32 `ssh.exe` on Windows can lose bytes mid-stream.** Every frame is checksummed and a framing error ends the connection and resumes from the last acknowledged offset, so the loss costs a reconnect, not data.

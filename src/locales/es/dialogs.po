@@ -1619,6 +1619,10 @@ msgstr "Vista previa de imagen"
 msgid "Image sent at lower quality"
 msgstr "Imagen enviada con menor calidad"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -3049,11 +3053,6 @@ msgstr "Resumen de la tarea"
 #, fuzzy
 msgid "Task title"
 msgstr "Título de la tarea"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr "Las tareas trabajan directamente en esta carpeta, sin un árbol de trabajo propio. Ejecuta un solo agente a la vez."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 #, fuzzy

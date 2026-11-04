@@ -21,6 +21,8 @@ import { defaultSshClientPaths } from './ssh-client';
 import type { SshHostAdmin } from './ssh-host-admin';
 import { PortForwardPlan, setPortForwardPlan } from './port-forward-plan';
 import { createRemoteLaunchResolver, setRemoteLaunchResolver } from './remote-launch';
+import { setRemoteWorktreeResolver } from '../git/remote-worktree';
+import { createRemoteWorktreeResolver } from './remote-worktrees';
 import { RemoteHostService } from './remote-host-service';
 import { RemoteSessionRelay } from './remote-session-relay';
 
@@ -98,8 +100,17 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     }
   });
 
+  const remoteOfProjectPath = (projectPath: string): { hostId: string; path: string } | null =>
+    deps.projects().list().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null;
+  // A remote project's worktrees are made and removed on its host, by the git there.
+  setRemoteWorktreeResolver(createRemoteWorktreeResolver({
+    remoteOfProjectPath,
+    runCommand: (hostId, request) => hostService.runCommand(hostId, request),
+    pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
+    log,
+  }));
   setRemoteLaunchResolver(createRemoteLaunchResolver({
-    remoteOfProjectPath: (projectPath) => deps.projects().list().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null,
+    remoteOfProjectPath,
     hostInfo: (hostId) => hostService.hostInfo(hostId),
     readFile: (hostId, hostPath) => hostService.readFile(hostId, hostPath),
     jsonPatch: (hostId, request) => hostService.jsonPatch(hostId, request),

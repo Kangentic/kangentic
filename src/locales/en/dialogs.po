@@ -1316,6 +1316,10 @@ msgstr "Image preview"
 msgid "Image sent at lower quality"
 msgstr "Image sent at lower quality"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
 msgstr "Indexing is off, so no commits are linked"
@@ -2475,10 +2479,6 @@ msgstr "Task summary"
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Task title"
 msgstr "Task title"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 msgctxt "file type"

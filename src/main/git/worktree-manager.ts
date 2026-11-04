@@ -20,6 +20,7 @@ import {
 } from './rm-with-retry';
 import { runGitWithTimeout as runGitWithTimeoutShared } from './git-spawn';
 import { gitAt, type GitClient } from './git-client';
+import { remoteWorktreeBackendFor, type RemoteWorktreeBackend } from './remote-worktree';
 import { runInitScript, INIT_SCRIPT_TIMEOUT_MS } from './run-init-script';
 import {
   reapProcessesForWorktree,
@@ -614,9 +615,14 @@ interface GitLockOptions {
 
 export class WorktreeManager {
   private git: GitClient;
+  /** Set for a project on an SSH host: its repository is on the host, so its worktrees are made and removed there. */
+  private readonly remote: RemoteWorktreeBackend | null;
 
   /** `git` is for tests; the default runs each git command in the pty host (`git-client.ts`). */
   constructor(private projectPath: string, git?: GitClient) {
+    this.remote = git ? null : remoteWorktreeBackendFor(projectPath);
+    // For a remote project this is a client on the empty shell folder: the operations that matter are
+    // delegated to the host below, and the rest find no repository here, as they did before.
     this.git = git ?? gitAt(projectPath);
   }
 
@@ -820,6 +826,8 @@ export class WorktreeManager {
     gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string },
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
   ): Promise<EnsureWorktreeResult> {
+    // A project on a host: its repository, its base branch and its worktrees are on the host.
+    if (this.remote) return this.remote.ensureWorktree(task, gitConfig, options);
     const skipReason = worktreeSkipBeforeBase(task, this.projectPath, gitConfig.worktreesEnabled);
     if (skipReason) return { skipped: true, reason: skipReason };
 
@@ -1290,6 +1298,9 @@ export class WorktreeManager {
     setup: WorktreeSetup,
     options?: { signal?: AbortSignal },
   ): Promise<void> {
+    // Nothing here applies to a worktree on a host: the files to copy and the node_modules to link are on
+    // this computer's side of the project, which is an empty folder for a remote one.
+    if (this.remote) return;
     await this.copyWorktreeFiles(worktreePath, setup, options);
 
     // Link node_modules from root so worktree agents can run typecheck/test
@@ -1354,6 +1365,10 @@ export class WorktreeManager {
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
   ): Promise<void> {
     options?.signal?.throwIfAborted();
+
+    // The script is the user's own shell text for THIS computer, and its folder is a stand-in here for a
+    // worktree on a host. Running it would install dependencies in an empty folder on the wrong machine.
+    if (this.remote) return;
 
     // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
     // copied files and the linked (or deliberately absent) node_modules. A
@@ -1484,6 +1499,7 @@ export class WorktreeManager {
      */
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
   ): Promise<boolean> {
+    if (this.remote) return this.removeRemoteWorktree(worktreePath, options);
     const { removed } = await this.removeWorktreeInternal(worktreePath, options);
     // One of the two notification points for the whole app, with
     // `moveWorktreeAside` (a Done move's rename). There are seven call sites
@@ -1492,6 +1508,26 @@ export class WorktreeManager {
     // hand-copied rather than routed through one helper - notifying at each
     // one is how a leak gets shipped, which is exactly what happened to the
     // MCP delete path. Notifying HERE is unmissable by construction.
+    if (removed) await notifyWorktreeRemoved(worktreePath);
+    return removed;
+  }
+
+  /**
+   * Remove a worktree on a host, with the same checks and notifications as a local removal: a path that is
+   * not a direct child of the project's worktrees folder is refused, a creation still setting one up is
+   * left alone, and the listener that clears an agent's per-directory state hears of it once it is gone.
+   */
+  private async removeRemoteWorktree(
+    worktreePath: string,
+    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
+  ): Promise<boolean> {
+    assertRemovableWorktreePath(this.projectPath, worktreePath);
+    if (!options?.ownCreation && isWorktreeCreationInFlight(worktreePath)) {
+      console.warn(`[WORKTREE] remove skipped: ${worktreePath} (a creation is still setting it up)`);
+      return false;
+    }
+    await notifyWorktreeRemoving(worktreePath);
+    const removed = await this.remote!.removeWorktree(worktreePath, options);
     if (removed) await notifyWorktreeRemoved(worktreePath);
     return removed;
   }
@@ -1522,6 +1558,10 @@ export class WorktreeManager {
    * before this existed.
    */
   async moveWorktreeAside(worktreePath: string, options?: { timeoutMs?: number; ownCreation?: boolean }): Promise<boolean> {
+    // A worktree on a host is removed there. Its files are not here to hand to the batched deleter, so the
+    // caller schedules no deletion for it (it reads the true this returns as a copy awaiting the deleter,
+    // which finds nothing in `removed-worktrees/` for a remote project and has nothing to do).
+    if (this.remote) return this.removeRemoteWorktree(worktreePath, options);
     assertRemovableWorktreePath(this.projectPath, worktreePath);
     // `ownCreation`: as for `removeWorktree`, the caller holds the path and is
     // discarding what it made (a spare worktree).

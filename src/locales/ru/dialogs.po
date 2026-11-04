@@ -1619,6 +1619,10 @@ msgstr "Предпросмотр изображения"
 msgid "Image sent at lower quality"
 msgstr "Изображение отправлено в сниженном качестве"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -3049,11 +3053,6 @@ msgstr "Сводка задачи"
 #, fuzzy
 msgid "Task title"
 msgstr "Название задачи"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr "Задачи работают прямо в этой папке, без отдельного рабочего дерева. Запускайте в ней по одному агенту."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 #, fuzzy

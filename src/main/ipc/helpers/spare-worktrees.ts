@@ -1,5 +1,6 @@
 import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { worktreeSkipBeforeBase } from '../../git/worktree-manager';
+import { remoteWorktreeBackendFor } from '../../git/remote-worktree';
 import type { SpareInputs, SpareProjectHooks } from '../../git/spare-worktree';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { Task } from '../../../shared/types';
@@ -18,6 +19,9 @@ import type { IpcContext } from '../ipc-context';
  * no Post-Worktree Script, or worktrees off. There is no setting of its own.
  */
 export function spareInputsFor(context: IpcContext, projectPath: string): SpareInputs | null {
+  // A project on a host has no spares: its Post-Worktree Script does not run there (it is shell text for
+  // this computer), so a pre-installed worktree has nothing to pre-install.
+  if (remoteWorktreeBackendFor(projectPath)) return null;
   const git = context.configManager.getEffectiveConfig(projectPath).git;
   const initScript = git.initScript?.trim();
   if (!initScript || !git.worktreesEnabled) return null;

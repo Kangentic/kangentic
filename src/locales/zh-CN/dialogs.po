@@ -1327,6 +1327,10 @@ msgstr "图像预览"
 msgid "Image sent at lower quality"
 msgstr "图片已按较低质量发送"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
 msgstr "索引已关闭，因此不会关联任何提交。"
@@ -2495,11 +2499,6 @@ msgstr "任务摘要"
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
 msgid "Task title"
 msgstr "任务标题"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr "任务直接在此文件夹中运行,不单独创建工作树。一次只能运行一个智能体。"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 msgctxt "file type"

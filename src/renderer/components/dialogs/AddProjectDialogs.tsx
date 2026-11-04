@@ -203,9 +203,9 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
             }}
           />
         </Field>
-        {/* A remote project has no worktree per task, so every task works in this one folder. */}
+        {/* A git repository on the host gives each task a worktree there; any other folder is shared. */}
         <p className="text-xs text-fg-faint" data-testid="add-remote-project-note">
-          <Trans>Tasks work in this folder directly, with no worktree each. Run one agent in it at a time.</Trans>
+          <Trans>In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder.</Trans>
         </p>
         {error ? <ReportedError error={error} testId="add-remote-project-error" /> : null}
       </div>

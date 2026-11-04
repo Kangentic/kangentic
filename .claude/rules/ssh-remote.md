@@ -44,6 +44,17 @@ process, a path tested against the wrong disk, an environment that overwrites th
   computer's mirror of the host's home (`PATHS.remoteHomeMirror`). The relay writes only to a path it
   registered, so a host names a key and never a path. A reader treats that copy as what has arrived so
   far: empty at first, stale while the link is down, and never proof that a conversation is gone.
+- **A worktree on a host is made by the host's git, and the folder here is a stand-in.** A task's
+  worktree is `<project folder on the host>/.kangentic/worktrees/<n>`, made, counted and removed by
+  one `sh` script the helper runs (`remote-worktrees.ts`), reached through `WorktreeManager`'s
+  delegate (`git/remote-worktree.ts`) so every caller that builds a manager works for a remote
+  project. This computer holds an empty folder at the same path under the shell folder, which the
+  task row records, so the roots map turns it into the agent's directory and a check that it exists
+  finds it. Nothing runs this computer's git or its Post-Worktree Script for it. The removal script
+  deletes a path, so the path is checked to be exactly one folder below `.kangentic/worktrees/`
+  before it is sent, and a task title never reaches the shell as code (every value is an argument).
+  A removal is forced only because the Done move asks the host for the uncommitted count first
+  (`probePendingChanges`), and a host that cannot answer reads as "there are changes".
 - **A drop is a state, never an exit.** The link reports `remoteLink`, and agents on the host keep
   running. A session ends only when the host reports its exit, or reports it gone after a restart
   (`remoteSessions`, `lost`), which resumes it through the recovery path.
@@ -102,6 +113,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   runner on POSIX (banner stripped, exit code, stdin, timeout) and pins the shell choice.
   `tests/unit/<adapter>-ssh-remote.test.ts` runs each adapter's real trust and builder over a fake
   host and asserts what lands there carries host paths and nothing of this computer.
+- **Tests (worktrees):** `tests/unit/remote-worktrees.test.ts` pins the script's arguments and the answer's
+  reading (a refusal, a timeout, a shell with no marker, a count it cannot read as zero), the path check,
+  the stand-in, `WorktreeManager`'s delegation (no local script, copy or link), and, with a POSIX shell and
+  git, the real script on real repositories: two tasks with two checkouts, the base fallbacks, a husk, a
+  nested worktree, a branch kept after removal, and a hostile title.
 - **Tests (transcripts):** `tests/unit/remote-transcript-tail.test.ts` pins the file tail on real files (the
   backfill, the pace, a chunk edge inside a multi-byte character, a replaced or emptied file, the unpaced
   last pass) and Claude's declared file, and `tests/unit/remote-session-relay.test.ts` runs the whole path
@@ -120,8 +136,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
   still retires its record. A PTY spawn that reaches the host and fails resolves as an exited session
   for local and remote alike, and is not covered.
   **Gap:** the other board operations (prune, stale-resource cleanup, auto-spawn) have no remote
-  test yet. A remote task has no worktree path for them to find absent, which is what keeps them
-  from demoting it, and `pathPresence` over `existsSync` is otherwise held by review.
+  test yet. A remote task's worktree path is an empty stand-in folder here, which exists, and that is
+  what keeps them from demoting it: nothing proves the host's worktree absent, and `pathPresence`
+  over `existsSync` is otherwise held by review. Do not delete the stand-in without the host's
+  worktree.
 - **Review:** `/code-review` flags a new `existsSync`, `fs` read or pid use on a path or session that
   may belong to a remote project, and a new spawn path that reads `process.env` or `process.platform`
   for a host.
