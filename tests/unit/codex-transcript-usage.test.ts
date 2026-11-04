@@ -7,7 +7,8 @@
  * (codex-rs/history/src/rollout_payload.rs, codex-rs/protocol/src/models.rs at
  * rust-v0.163.0), sanitized: zeroed ids, no real paths.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { JSONL_READ_CHUNK_BYTES } from '../../src/main/agent/shared/jsonl-complete-lines';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -68,6 +69,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
@@ -193,6 +195,19 @@ describe('codexTranscriptToolCounts', () => {
     expect(laterRun?.toolCallCount).toBe(3);
   });
 
+  it('includes a call made exactly at sinceMs and leaves out one made exactly at untilMs', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      functionCall('call-1', 'exec_command', '2026-10-20T10:00:10.000Z'),
+      customCall('call-2', 'apply_patch', '2026-10-20T10:00:20.000Z'),
+    ]);
+    const counts = await codexTranscriptToolCounts(filePath, Date.parse('2026-10-20T10:00:10.000Z'), Date.parse('2026-10-20T10:00:20.000Z'));
+    expect(counts).toEqual({
+      toolCallCount: 1,
+      toolBreakdown: [{ toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0 }],
+    });
+  });
+
   it('is null for a rollout with no tool call', async () => {
     await expect(codexTranscriptToolCounts(writeRollout([sessionMeta()]))).resolves.toBeNull();
   });
@@ -229,6 +244,98 @@ describe('codexTranscriptToolResultTokens', () => {
 
   it('is null for a missing file', async () => {
     await expect(codexTranscriptToolResultTokens(path.join(directory, 'missing.jsonl'))).resolves.toBeNull();
+  });
+
+  it('includes an output written exactly at sinceMs and leaves out one written exactly at untilMs', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      functionCall('call-1', 'exec_command', '2026-10-20T10:00:09.000Z'),
+      output('call-1', 'x'.repeat(40), '2026-10-20T10:00:10.000Z'),
+      customCall('call-2', 'apply_patch', '2026-10-20T10:00:19.000Z'),
+      output('call-2', 'y'.repeat(40), '2026-10-20T10:00:20.000Z', 'custom_tool_call_output'),
+    ]);
+    const sinceMs = Date.parse('2026-10-20T10:00:10.000Z');
+    const untilMs = Date.parse('2026-10-20T10:00:20.000Z');
+    await expect(codexTranscriptToolResultTokens(filePath, sinceMs, untilMs)).resolves.toEqual({ Bash: 10 });
+  });
+
+  it('keeps a tool named like an inherited key as its own number, not a string built from Object.prototype', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      functionCall('call-1', 'constructor', '2026-10-20T10:00:10.000Z'),
+      output('call-1', 'x'.repeat(20), '2026-10-20T10:00:11.000Z'),
+      functionCall('call-2', '__proto__', '2026-10-20T10:00:12.000Z'),
+      output('call-2', 'y'.repeat(8), '2026-10-20T10:00:13.000Z'),
+    ]);
+    const tokens = await codexTranscriptToolResultTokens(filePath);
+    expect(tokens).not.toBeNull();
+    expect(Object.hasOwn(tokens!, 'constructor')).toBe(true);
+    expect(tokens!.constructor).toBe(5);
+    expect(Object.hasOwn(tokens!, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(tokens)).toBe(Object.prototype);
+    expect(Object.entries(tokens!)).toEqual([['constructor', 5], ['__proto__', 2]]);
+  });
+
+  /**
+   * The next `fs.promises.open` answers a real handle, with `adjust` applied to it,
+   * so a read error is made at a chosen point instead of by racing the file system.
+   */
+  function openNextWith(adjust: (handle: fs.promises.FileHandle) => void): void {
+    const realOpen = fs.promises.open.bind(fs.promises);
+    vi.spyOn(fs.promises, 'open').mockImplementationOnce(async (...openArguments: Parameters<typeof fs.promises.open>) => {
+      const handle = await realOpen(...openArguments);
+      adjust(handle);
+      return handle;
+    });
+  }
+
+  it('resolves null when a read fails mid-way, and the next call reads the file whole instead of from the half-applied cursor', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      functionCall('call-1', 'exec_command', '2026-10-20T10:00:10.000Z'),
+      output('call-1', 'x'.repeat(40), '2026-10-20T10:00:11.000Z'),
+    ]);
+    await expect(codexTranscriptToolResultTokens(filePath)).resolves.toEqual({ Bash: 10 });
+    // More than one read chunk is appended, so the first chunk's lines are applied before the second read fails.
+    const filler = JSON.stringify({ timestamp: '2026-10-20T10:00:14.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'p'.repeat(1000) } });
+    const fillerLines = Array.from({ length: Math.ceil((JSONL_READ_CHUNK_BYTES * 1.5) / (filler.length + 1)) }, () => filler);
+    fs.appendFileSync(filePath, `${[
+      functionCall('call-2', 'exec_command', '2026-10-20T10:00:12.000Z'),
+      output('call-2', 'y'.repeat(8), '2026-10-20T10:00:13.000Z'),
+      ...fillerLines,
+    ].join('\n')}\n`);
+    openNextWith((handle) => {
+      const realRead = handle.read.bind(handle) as (...readArguments: unknown[]) => Promise<unknown>;
+      let readCount = 0;
+      vi.spyOn(handle, 'read').mockImplementation((async (...readArguments: unknown[]) => {
+        readCount += 1;
+        // The file looks cut short from the second chunk on.
+        return readCount >= 2 ? { bytesRead: 0, buffer: readArguments[0] } : realRead(...readArguments);
+      }) as unknown as typeof handle.read);
+    });
+    await expect(codexTranscriptToolResultTokens(filePath)).resolves.toBeNull();
+    // A kept cursor would push call-2's output a second time (14).
+    await expect(codexTranscriptToolResultTokens(filePath)).resolves.toEqual({ Bash: 12 });
+  });
+
+  it('does not let a read that failed fail the read queued behind it on the same path', async () => {
+    const filePath = writeRollout([
+      sessionMeta(),
+      functionCall('call-1', 'exec_command', '2026-10-20T10:00:10.000Z'),
+      output('call-1', 'x'.repeat(40), '2026-10-20T10:00:11.000Z'),
+    ]);
+    // Closing the handle fails after the cursor advanced, which rejects the step itself.
+    openNextWith((handle) => {
+      const realClose = handle.close.bind(handle);
+      vi.spyOn(handle, 'close').mockImplementation(async () => {
+        await realClose();
+        throw new Error('close failed');
+      });
+    });
+    const failed = codexTranscriptToolResultTokens(filePath);
+    const queued = codexTranscriptToolResultTokens(filePath);
+    await expect(failed).rejects.toThrow('close failed');
+    await expect(queued).resolves.toEqual({ Bash: 10 });
   });
 
   it('counts an output once when two reads of one rollout overlap, and the next read sees what was appended', async () => {

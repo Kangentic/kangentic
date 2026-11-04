@@ -187,6 +187,27 @@ describe('parseCodexTranscript', () => {
     expect(entries[0]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_4', content: 'first\nsecond' });
   });
 
+  it('records a freeform call whose input is not text as its JSON, so the tool_use input stays a string', async () => {
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-10-01T10:00:00Z', payload: { type: 'custom_tool_call', status: 'completed', call_id: 'call_5', name: 'other_tool', input: { target: 'a.ts', lines: [1, 2] } } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({
+      blocks: [{ type: 'tool_use', id: 'call_5', name: 'other_tool', input: JSON.stringify({ target: 'a.ts', lines: [1, 2] }, null, 2) }],
+    });
+  });
+
+  it('falls back to the output as JSON when a content-item output holds no text item', async () => {
+    const imageOnly = [{ type: 'input_image', image_url: 'data:image/png;base64,AAAA' }];
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-10-01T10:00:00Z', payload: { type: 'function_call_output', call_id: 'call_6', output: imageOnly } },
+      { type: 'response_item', timestamp: '2026-10-01T10:00:01Z', payload: { type: 'custom_tool_call_output', call_id: 'call_7', output: [] } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_6', content: JSON.stringify(imageOnly, null, 2) });
+    expect(entries[1]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_7', content: '[]' });
+  });
+
   it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {
     const cap = 2 * 1024;
     setParseWindowBytesForTests(cap);

@@ -30,17 +30,11 @@ import { resetCodexResultCursorsForTests } from '../../src/main/agent/adapters/c
 import { CodexModelCatalogCache, type CodexModelCatalog } from '../../src/main/agent/adapters/codex/model-catalog';
 import type { AgentInfo, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import { cliPathForTarget, type CliPlace } from '../../src/main/agent/shared/cli-target';
-import type { PermissionMode } from '../../src/shared/types';
 import {
   agentDisplayName,
   agentShortName,
   agentInstallUrl,
 } from '../../src/renderer/utils/agent-display-name';
-
-// Use a platform-aware quote helper for assertions. quoteArg uses
-// single quotes on Unix-like shells and double quotes on Windows/PowerShell.
-const isWindows = process.platform === 'win32';
-const q = (str: string) => (isWindows ? `"${str}"` : `'${str}'`);
 
 function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
   return {
@@ -135,6 +129,29 @@ describe('Codex Adapter', () => {
       expect(command).not.toContain(' -C ');
       expect(command).not.toContain('--sandbox');
       expect(command).not.toContain('--ask-for-approval');
+    });
+
+    it('runs dontAsk read-only on both non-interactive forms, as plan does', () => {
+      const exec = adapter.buildCommand(makeOptions({ nonInteractive: true, permissionMode: 'dontAsk', shell: 'bash', prompt: 'go' }));
+      expect(exec).toContain('--sandbox read-only');
+      expect(exec).not.toContain('workspace-write');
+      expect(exec).not.toContain('--ask-for-approval');
+      const resume = adapter.buildCommand(makeOptions({
+        nonInteractive: true, resume: true, sessionId: 'sess-1', permissionMode: 'dontAsk', shell: 'bash',
+      }));
+      expect(resume).toContain("-c 'sandbox_mode=read-only'");
+      expect(resume).not.toContain('workspace-write');
+      expect(resume).not.toContain('--sandbox');
+    });
+
+    it('quotes the resume sandbox override for the session shell, bare inside one pair of quotes', () => {
+      for (const shell of ['powershell', 'cmd.exe']) {
+        const command = adapter.buildCommand(makeOptions({
+          nonInteractive: true, resume: true, sessionId: 'sess-1', permissionMode: 'default', shell,
+        }));
+        expect(command, `resume override under ${shell}`).toContain('-c "sandbox_mode=workspace-write"');
+        expect(command).not.toContain('\\"');
+      }
     });
 
     it('keeps the bypass flag on both non-interactive forms', () => {
@@ -925,6 +942,18 @@ describe('Codex Adapter', () => {
         expect(catalogStart).toHaveBeenCalledTimes(1);
         expect(catalogStart).toHaveBeenCalledWith(WSL_PATH, resolvedTarget);
         expect(start).toHaveBeenCalledWith(WSL_PATH, { target: resolvedTarget, version: '0.163.0' });
+      });
+
+      it('still reads the model list, but not the trust, when the version is unknown', async () => {
+        const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
+        vi.spyOn(detector, 'detect').mockResolvedValue({ ...found, version: null });
+        const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+        const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
+        cliTargetOverride.resolve = async () => resolvedTarget;
+        await adapter.detect();
+        expect(catalogStart).toHaveBeenCalledTimes(1);
+        expect(catalogStart).toHaveBeenCalledWith(WSL_PATH, resolvedTarget);
+        expect(start).not.toHaveBeenCalled();
       });
 
       it('starts no read, here or there, when the distro cannot be resolved', async () => {

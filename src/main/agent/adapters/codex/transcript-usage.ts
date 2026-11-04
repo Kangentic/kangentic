@@ -190,9 +190,12 @@ export async function codexTranscriptToolCounts(
 // ---------- Result tokens ----------
 
 /**
- * The chars/4 estimate the retrieval chunker uses. An output's image items are
- * not estimated: a rollout records them as data URLs, and their bytes say
- * nothing about the tokens the model was billed for.
+ * The chars/4 estimate, the same rule as `retrieval/token-estimate.ts`. Kept
+ * here rather than imported: this module is reached from the agent registry,
+ * which the pty host bundles, and the host's graph may not reach
+ * `src/main/retrieval/` (`tests/unit/pty-host-boundary.test.ts`). An output's
+ * image items are not estimated: a rollout records them as data URLs, and
+ * their bytes say nothing about the tokens the model was billed for.
  */
 function estimateOutputTokens(output: unknown): number {
   if (typeof output === 'string') return Math.ceil(output.length / 4);
@@ -351,12 +354,14 @@ export function codexTranscriptToolResultTokens(
   untilMs?: number | null,
 ): Promise<Record<string, number> | null> {
   return withResultCursor(filePath, (cursor) => {
-    const tokensByTool: Record<string, number> = {};
+    // A Map, not a plain object: a tool name is rollout text, and `constructor`
+    // or `__proto__` would read or write Object.prototype's member.
+    const tokensByTool = new Map<string, number>();
     for (const result of cursor.results) {
       if (!inWindow(result.timeMs, sinceMs, untilMs)) continue;
-      tokensByTool[result.toolName] = (tokensByTool[result.toolName] ?? 0) + result.tokens;
+      tokensByTool.set(result.toolName, (tokensByTool.get(result.toolName) ?? 0) + result.tokens);
     }
-    return tokensByTool;
+    return Object.fromEntries(tokensByTool);
   });
 }
 

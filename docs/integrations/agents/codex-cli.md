@@ -180,7 +180,7 @@ Codex's home for a distro is the `CODEX_HOME` its interactive shell sets, mapped
 
 The session id comes from the SessionStart hook, the startup banner, or a scan of the distro's `sessions/<YYYY>/<MM>/<DD>/` folders for today and yesterday (UTC), which matches a rollout's `session_meta.cwd` against the `/mnt` form of the cwd. The rollout is found by id in the same folders and tailed over the share. The transcript, the auto_command check and the model scan read the same home. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Codex installed in a distro.
 
-## Claude Code parity (task #980)
+## Claude Code parity
 
 Each gap against the Claude adapter was checked against Codex's own documentation and source for codex-cli 0.163.0 (the release the installed binary reports, tag `rust-v0.163.0`). Codex could not be run signed in, so nothing here was checked against a live session.
 
@@ -219,7 +219,7 @@ Each gap against the Claude adapter was checked against Codex's own documentatio
 
 **Supported, not built, by decision:**
 
-- **Rate-limit windows.** `token_count.rate_limits` carries them. But the renderer keeps one rate-limit snapshot for every agent (`latestRateLimits` in `session-store.ts`), so Codex windows would also show on Claude's pill. Parsing them in the adapter alone would do exactly that, so nothing reads them. Showing them needs a per-agent snapshot in shared renderer code, which this adapter's task left alone while sibling adapters were changing in parallel.
+- **Rate-limit windows.** `token_count.rate_limits` carries them. But the renderer keeps one rate-limit snapshot for every agent (`latestRateLimits` in `session-store.ts`), so Codex windows would also show on Claude's pill. Parsing them in the adapter alone would do exactly that, so nothing reads them. Showing them needs a per-agent snapshot in shared renderer code.
 - **`parseTranscriptWindow`.** The format supports it, but the measured rollouts are at most 0.3 MB against the 16 MB tail cap, so the tail already indexes whole conversations.
 
 `fileChangeTools` is built inside the adapter, with no contract change. `apply_patch` input is patch text with no path field, so the transcript parser records each call's input as `{ file_path, patch }`. Its `file_path` is the first file the patch's `*** Add File:`, `*** Update File:`, `*** Delete File:` or `*** Move to:` headers name (`codex-rs/core/assets/tools/apply_patch.lark` at rust-v0.163.0). It leads the JSON, because the chunker cuts each tool input at 200 characters. A patch touching several files is recorded under its first, and the Conversation viewer shows the patch inside that object.
