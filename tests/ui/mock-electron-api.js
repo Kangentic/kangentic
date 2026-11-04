@@ -4060,11 +4060,16 @@
           },
           {
             name: 'ollama', displayName: 'Ollama', found: false, path: null, version: null,
-            // KEEP IN SYNC with OllamaAdapter.permissions in src/main/agent/adapters/ollama/ollama-adapter.ts
+            // KEEP IN SYNC with OllamaAdapter.permissions and OllamaAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/ollama/ollama-adapter.ts
             permissions: [
               { mode: 'default', label: 'Chat' },
             ],
             defaultPermission: 'default',
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: none',
+              unavailableTitle: 'Ollama does not report live telemetry to Kangentic.',
+            },
           },
           {
             name: 'grok', displayName: 'Grok Build', found: false, path: null, version: null,
