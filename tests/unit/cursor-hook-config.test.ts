@@ -347,6 +347,25 @@ describe('the hooks file for a Cursor in a WSL distro', () => {
     expect(fs.readdirSync(path.join(sessionDirectory, 'wsl-hooks', 'inbox'))).toEqual([]);
   }, 60_000);
 
+  // The hooks reference: "Exit code `2` - Block the action". A distro's `sh` is
+  // dash, which exits 2 on a script it cannot open (127 under bash and Git Bash),
+  // and an `if` returns that status. Without `|| true` in the command, a lost
+  // folder copy would deny every tool call in the session.
+  it.skipIf(posixShells.length === 0)('a transport script that cannot be opened still exits 0, so no tool call is denied', () => {
+    const transportPaths = prepareWslHookTransport(path.join(folder, 'session'));
+    const commands = buildCursorHookCommands('/unused/event-bridge.js', {
+      folderHooks: { ...transportPaths, script: '/no/such/folder/cursor-wsl-hook.sh' },
+      place: wslPlace,
+    });
+    const env = { ...process.env, [CURSOR_HOOK_EVENTS_ENV]: CURSOR_WSL_HOOK_FLAG };
+    for (const shellPath of posixShells) {
+      for (const eventName of ['preToolUse', 'beforeSubmitPrompt']) {
+        const result = spawnSync(shellPath, ['-c', commands[eventName]], { input: '{}', env, encoding: 'utf-8', windowsHide: true, timeout: 30_000 });
+        expect(result.status, `${shellPath} ${eventName}`).toBe(0);
+      }
+    }
+  }, 60_000);
+
   // With the flag set, each command runs the transport, whose published files
   // the real inbox turns into events. The script path is given in the form the
   // shell here reads (`/c/...` under Git Bash), since the `/mnt/c/...` form of a
@@ -446,7 +465,7 @@ describe('the hooks file for a Cursor in a WSL distro', () => {
  * the first two tokens, so `slice(2)` is the bridge's own arguments. It runs
  * node directly, never through a shell; the shell round trips are above.
  */
-function runHook(eventName: string, payload: Record<string, unknown>, eventsPath: string | null): { events: Array<Record<string, unknown>>; stdout: string } {
+function runHook(eventName: string, payload: Record<string, unknown>, eventsPath: string | null): { events: Array<Record<string, unknown>>; stdout: string; status: number | null } {
   const command = buildCursorHookCommands(toForwardSlash(BRIDGE))[eventName];
   const tokens = command.match(/"[^"]*"|\S+/g) ?? [];
   const args = tokens.slice(2).map((token) => token.replace(/^"|"$/g, ''));
@@ -455,8 +474,133 @@ function runHook(eventName: string, payload: Record<string, unknown>, eventsPath
   if (eventsPath) env[CURSOR_HOOK_EVENTS_ENV] = eventsPath;
   const result = spawnSync(process.execPath, [BRIDGE, ...args], { input: JSON.stringify(payload), env, encoding: 'utf-8' });
   const lines = eventsPath && fs.existsSync(eventsPath) ? fs.readFileSync(eventsPath, 'utf-8').trim().split('\n') : [];
-  return { events: lines.filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>), stdout: result.stdout };
+  return { events: lines.filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>), stdout: result.stdout, status: result.status };
 }
+
+/** Cursor's own examples, copied verbatim (tests/fixtures/cursor-docs/README.md). Not captures. */
+const publishedHooksPage = fs
+  .readFileSync(path.resolve(__dirname, '../fixtures/cursor-docs/hooks-reference-examples.md'), 'utf-8')
+  .split(/\r?\n/);
+
+/** The code block under a heading of the published page, without its fences. */
+function publishedBlock(heading: string): string {
+  const start = publishedHooksPage.indexOf(heading);
+  if (start < 0) throw new Error(`the published page has no heading ${heading}`);
+  const body = publishedHooksPage.slice(start + 1);
+  const open = body.findIndex((line) => line.startsWith('```'));
+  const close = body.findIndex((line, index) => index > open && line === '```');
+  return body.slice(open + 1, close).join('\n');
+}
+
+/** A value the docs print as a union of literals, such as `"status": "completed" | "aborted" | "error"`. */
+const PUBLISHED_UNION = /: ((?:"[^"]*"|true|false)(?: \| (?:"[^"]*"|true|false))+)/;
+
+/** One JSON text per combination of the union values in a published block. */
+function expandUnions(text: string): string[] {
+  const union = text.match(PUBLISHED_UNION)?.[1];
+  if (!union) return [text];
+  return union.split(' | ').flatMap((alternative) => expandUnions(text.replace(union, () => alternative)));
+}
+
+/**
+ * What a hook's published input expands to. The examples are schemas, not JSON,
+ * so this takes the part before `// Output` and expands each union. Each one
+ * is laid over the published common fields, as "All hooks receive a base set
+ * of fields in addition to their hook-specific fields" says.
+ */
+function publishedInputs(hookName: string): Array<Record<string, unknown>> {
+  const common = JSON.parse(publishedBlock('#### Input (all hooks)')) as Record<string, unknown>;
+  const input = publishedBlock(`#### ${hookName}`).split('// Output')[0].replace('// Input', '');
+  return expandUnions(input).map((text) => ({ ...common, hook_event_name: hookName, ...(JSON.parse(text) as Record<string, unknown>) }));
+}
+
+describe('Cursor\'s published hook examples, through the real bridge', () => {
+  const eventsPath = () => path.join(folder, 'published-events.jsonl');
+
+  it('prints an input example for every hook Kangentic registers', () => {
+    for (const eventName of Object.values(CURSOR_HOOK_EVENTS)) {
+      expect(publishedInputs(eventName).length, eventName).toBeGreaterThan(0);
+    }
+  });
+
+  it('a tool call reads tool_name and tool_use_id, and every kind of failure ends the tool', () => {
+    runHook('preToolUse', publishedInputs('preToolUse')[0], eventsPath());
+    runHook('postToolUse', publishedInputs('postToolUse')[0], eventsPath());
+    const failures = publishedInputs('postToolUseFailure');
+    expect(failures.map((failure) => failure.failure_type)).toEqual(['timeout', 'error', 'permission_denied']);
+    let events: Array<Record<string, unknown>> = [];
+    for (const failure of failures) events = runHook('postToolUseFailure', failure, eventsPath()).events;
+    expect(events.map((event) => [event.type, event.tool, event.toolId])).toEqual([
+      ['tool_start', 'Shell', 'abc123'],
+      ['tool_end', 'Shell', 'abc123'],
+      ['tool_end', 'Shell', 'abc123'],
+      ['tool_end', 'Shell', 'abc123'],
+      ['tool_end', 'Shell', 'abc123'],
+    ]);
+  });
+
+  it('a subagent opens with subagent_id and closes on subagent_type, whatever its status', () => {
+    runHook('subagentStart', publishedInputs('subagentStart')[0], eventsPath());
+    const stops = publishedInputs('subagentStop');
+    expect(stops.map((stop) => stop.status)).toEqual(['completed', 'error', 'aborted']);
+    let events: Array<Record<string, unknown>> = [];
+    for (const stop of stops) events = runHook('subagentStop', stop, eventsPath()).events;
+    expect(events[0]).toMatchObject({ type: 'subagent_start', subagentId: 'abc-123', detail: 'generalPurpose' });
+    expect(events.slice(1).map((event) => [event.type, event.detail])).toEqual([
+      ['subagent_stop', 'generalPurpose'],
+      ['subagent_stop', 'generalPurpose'],
+      ['subagent_stop', 'generalPurpose'],
+    ]);
+  });
+
+  it('each published stop status ends the turn as the engine reads it', () => {
+    const stops = publishedInputs('stop');
+    const endings = stops.map((stop) => {
+      const events = runHook('stop', stop, eventsPath()).events;
+      return [stop.status, events.at(-1)?.type];
+    });
+    expect(endings).toEqual([
+      ['completed', 'idle'],
+      ['aborted', 'interrupted'],
+      ['error', 'turn_failed'],
+    ]);
+  });
+
+  // The docs print a placeholder for `session_id`, not an id, so this pins only
+  // that the payload is kept. The id itself stays pinned on a UUID in
+  // cursor-adapter.test.ts, whose shape comes from the output-format sequence.
+  it('a session start keeps its payload, and the prompt, the compaction and the session end are reported', () => {
+    runHook('sessionStart', publishedInputs('sessionStart')[0], eventsPath());
+    const prompt = runHook('beforeSubmitPrompt', publishedInputs('beforeSubmitPrompt')[0], eventsPath());
+    expect(JSON.parse(prompt.stdout)).toEqual({ continue: true });
+    runHook('preCompact', publishedInputs('preCompact')[0], eventsPath());
+    const { events } = runHook('sessionEnd', publishedInputs('sessionEnd')[0], eventsPath());
+    expect(events.map((event) => event.type)).toEqual(['session_start', 'prompt', 'compact', 'session_end']);
+    expect(String(events[0].hookContext)).toContain('composer_mode');
+  });
+
+  // "Exit code `0` - Hook succeeded, use the JSON output", and a permission hook
+  // blocks on invalid JSON, so these two matter most. Their silence follows the
+  // reference's `audit.sh`, which prints nothing from `beforeShellExecution`.
+  it.each(['preToolUse', 'subagentStart'])('the permission hook %s exits 0 and prints nothing', (hookName) => {
+    const run = runHook(hookName, publishedInputs(hookName)[0], eventsPath());
+    expect(run.status).toBe(0);
+    expect(run.stdout).toBe('');
+  });
+
+  it('keeps every entry of the published hooks file through a write and a strip', () => {
+    const published = JSON.parse(publishedBlock('### Configuration file')) as Record<string, unknown>;
+    writeHooks(published);
+    expect(writeCursorProjectHooks(folder, { eventBridge: '/bridge/event-bridge.js' })).toBe(true);
+    const written = readHooks();
+    expect(written.hooks.stop).toContainEqual({ command: './audit.sh', loop_limit: 10 });
+    expect(written.hooks.preToolUse).toContainEqual({ command: './hooks/validate-tool.sh', matcher: 'Shell|Read|Write' });
+    expect(written.hooks.workspaceOpen).toEqual([{ command: './register-workspace-plugins.sh' }]);
+
+    removeCursorProjectHooks(folder);
+    expect(readJson()).toEqual(published);
+  });
+});
 
 describe('what the bridge writes for each hook', () => {
   const common = {
