@@ -18,7 +18,7 @@
  * Imports nothing of electron or better-sqlite3 (`tests/unit/remote-helper-boundary.test.ts`).
  */
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
@@ -53,6 +53,7 @@ import {
   type HostCommandResult,
   type HostFileWrite,
   type HostInfo,
+  type HostWriteResult,
   type HelperSnapshot,
   type HelperToLinkMessage,
   type PortBody,
@@ -68,6 +69,16 @@ export const HELPER_PROTOCOL = { min: 1, max: 1 } as const;
 const SESSION_ENV_PREFIXES = ['SSH_'] as const;
 const SESSION_ENV_NAMES = new Set(['NODE_OPTIONS', 'NODE_PATH', '_']);
 const MAX_READ_BYTES = 1_000_000;
+
+/** What a file holds right now, or null when it is not there. Synchronous so a check and the call after it share one turn. */
+function readCurrentText(target: string): string | null {
+  try {
+    return readFileSync(target, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
 
 /**
  * How each shell is asked to be a login shell, as `resolveShellArgs` asks it on this computer:
@@ -516,28 +527,64 @@ export class HelperServer {
     });
   }
 
-  private async writeFiles(request: { files: HostFileWrite[]; directories?: string[] }): Promise<{ written: number }> {
+  private async writeFiles(request: { files: HostFileWrite[]; directories?: string[] }): Promise<HostWriteResult> {
     const { files } = request;
     // Checked before anything is made, so a refused path touches nothing.
-    const targets = files.map((file) => this.homePath(file.path));
+    const requestedTargets = files.map((file) => this.homePath(file.path));
     const directories = (request.directories ?? []).map((directory) => this.homePath(directory));
     for (const directory of directories) await fs.mkdir(directory, { recursive: true });
+    const conflicts: string[] = [];
+    let written = 0;
     for (const [index, file] of files.entries()) {
-      const target = targets[index];
+      // A symlink to a file in a dotfiles repo stays a symlink: the new text goes to the file it points at,
+      // when that is still beneath the home, so the link is never replaced by a plain copy.
+      const target = await this.followLinkWithinHome(requestedTargets[index]);
       await fs.mkdir(path.dirname(target), { recursive: true });
+      const mode = await this.modeToWrite(target, file);
       // Beside the file, then renamed in: a reader never sees half a settings file.
       const staging = `${target}.${process.pid}.${this.nextStagingSuffix++}.tmp`;
       try {
-        await fs.writeFile(staging, file.content, { encoding: 'utf8', mode: file.mode ?? 0o600 });
-        await fs.chmod(staging, file.mode ?? 0o600);
+        await fs.writeFile(staging, file.content, { encoding: 'utf8', mode });
+        await fs.chmod(staging, mode);
+        // The last look before the swap, with nothing awaited between it and the rename call, so a write
+        // from another session or the user can only land in the gap of a few microseconds.
+        if (file.expect !== undefined && readCurrentText(target) !== file.expect) {
+          conflicts.push(file.path);
+          await fs.rm(staging, { force: true }).catch(() => undefined);
+          continue;
+        }
         await fs.rename(staging, target);
+        written += 1;
       } catch (error) {
         // A failed rename (the target is a folder, the disk is full) leaves no copy of a settings file behind.
         await fs.rm(staging, { force: true }).catch(() => undefined);
         throw error;
       }
     }
-    return { written: files.length };
+    return conflicts.length > 0 ? { written, conflicts } : { written };
+  }
+
+  /** The file a symlink at `target` points at when that lies beneath the home; otherwise `target` itself. */
+  private async followLinkWithinHome(target: string): Promise<string> {
+    try {
+      const stat = await fs.lstat(target);
+      if (!stat.isSymbolicLink()) return target;
+      const real = await fs.realpath(target);
+      return this.homePath(real);
+    } catch {
+      // Not there, a dangling link, or a link that leaves the home: the path as named.
+      return target;
+    }
+  }
+
+  private async modeToWrite(target: string, file: HostFileWrite): Promise<number> {
+    const requested = file.mode ?? 0o600;
+    if (!file.keepExistingMode) return requested;
+    try {
+      return (await fs.stat(target)).mode & 0o777;
+    } catch {
+      return requested;
+    }
   }
 
   private async readFile(request: { path: string; maxBytes?: number }): Promise<{ exists: boolean; content: string | null }> {

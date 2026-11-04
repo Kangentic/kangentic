@@ -21,6 +21,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import * as path from 'node:path';
 import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
 import type { HostCommandRequest, HostCommandResult } from '../protocol/messages';
@@ -29,6 +30,8 @@ const BEGIN_MARKER = '__KANGENTIC_BEGIN__';
 const END_MARKER = '__KANGENTIC_END__';
 /** What a run may print before it is stopped. A probe's answer is a few KB; a runaway is not an answer. */
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+/** After the shell exits, how long the output pipes get to drain before a process still holding them is let go. */
+const PIPE_DRAIN_GRACE_MS = 2000;
 
 /**
  * The script the shell runs: print the opening marker, run the program (`$0` and the arguments after it, so
@@ -65,7 +68,8 @@ export function readBracketedOutput(raw: string): { output: string; status: numb
   const afterBegin = begin + BEGIN_MARKER.length + 1;
   const end = raw.lastIndexOf(`\n${END_MARKER} `);
   if (end === -1 || end < afterBegin - 1) return { output: raw.slice(afterBegin), status: null };
-  const statusText = raw.slice(end + END_MARKER.length + 2).trim();
+  // Only the closing line: a logout script can print after it, and that is not part of the status.
+  const statusText = raw.slice(end + END_MARKER.length + 2).split('\n')[0].trim();
   const status = /^-?\d+$/.test(statusText) ? Number(statusText) : null;
   return { output: raw.slice(afterBegin, end), status };
 }
@@ -98,6 +102,13 @@ export function runHostCommand(request: HostCommandRequest, options: RunHostComm
       clearTimeout(timer);
       resolve(result);
     };
+
+    // A folder that is not there fails the spawn with ENOENT, which a caller reads as "the program is not
+    // installed". Say what is missing instead.
+    if (!existsSync(options.cwd)) {
+      resolve({ code: null, stdout: '', stderr: '', timedOut: false, error: `The folder ${options.cwd} does not exist on this host, so ${request.file} was not run.` });
+      return;
+    }
 
     let child: ReturnType<typeof spawn>;
     try {
@@ -140,7 +151,19 @@ export function runHostCommand(request: HostCommandRequest, options: RunHostComm
     child.on('error', (error) => {
       finish({ code: null, stdout: '', stderr, timedOut: false, error: error.message });
     });
-    child.on('close', (exitCode) => {
+    // A program or a startup file can leave a background process holding the output pipes, and 'close'
+    // then never comes. Once the shell itself has exited, what it printed is all there will be.
+    child.on('exit', (exitCode) => {
+      const fallback = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        complete(exitCode);
+      }, PIPE_DRAIN_GRACE_MS);
+      fallback.unref?.();
+    });
+    child.on('close', (exitCode) => complete(exitCode));
+
+    function complete(exitCode: number | null): void {
       const { output, status } = readBracketedOutput(stdout);
       if (timedOut) {
         finish({ code: null, stdout: output, stderr, timedOut: true });
@@ -162,7 +185,7 @@ export function runHostCommand(request: HostCommandRequest, options: RunHostComm
         return;
       }
       finish({ code: status, stdout: output, stderr, timedOut: false });
-    });
+    }
 
     if (request.stdin !== undefined) child.stdin?.end(request.stdin);
     else child.stdin?.end();

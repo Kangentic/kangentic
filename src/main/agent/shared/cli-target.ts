@@ -61,7 +61,7 @@ export interface SshPlaceFiles {
   readFile(hostPath: string): Promise<{ exists: boolean; content: string | null }>;
   jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult>;
   /** Write files on the host, making their folders. Each path is beneath the host's home. */
-  writeFiles(files: HostFileWrite[]): Promise<unknown>;
+  writeFiles(files: HostFileWrite[]): Promise<{ written: number; conflicts?: string[] }>;
   /** Remove files on the host. A file that is not there is not an error. */
   removeFiles(paths: string[]): Promise<unknown>;
   /** Whether each path is there. Only this answer may call a path absent; a failed ask is an error. */

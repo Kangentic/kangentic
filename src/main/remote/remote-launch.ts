@@ -109,7 +109,7 @@ export interface RemoteLaunchResolverDeps {
   hostInfo(hostId: string): Promise<HelperRequestMap['hostInfo']['result']>;
   readFile(hostId: string, hostPath: string): Promise<HelperRequestMap['readFile']['result']>;
   jsonPatch(hostId: string, request: HelperRequestMap['jsonPatch']['params']): Promise<HelperRequestMap['jsonPatch']['result']>;
-  writeFiles(hostId: string, files: HostFileWrite[]): Promise<unknown>;
+  writeFiles(hostId: string, files: HostFileWrite[]): Promise<{ written: number; conflicts?: string[] }>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
   pathPresence(hostId: string, paths: string[]): Promise<Array<'present' | 'absent'>>;
   runCommand(hostId: string, request: HostCommandRequest): Promise<HostCommandResult>;

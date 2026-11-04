@@ -401,6 +401,8 @@ export async function prepareAgentSpawn(input: {
     throw error;
   }
   if (hostFiles) {
+    // Remembered before the push, so a push that fails partway is stripped on the host by the release.
+    rememberHostFileSync(sessionRecordId, hostFiles);
     try {
       await hostFiles.push();
     } catch (error) {
@@ -408,7 +410,6 @@ export async function prepareAgentSpawn(input: {
       releaseCommandHold(adapter, cwd, sessionRecordId);
       throw error;
     }
-    rememberHostFileSync(sessionRecordId, hostFiles);
   }
 
   return {

@@ -282,9 +282,12 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
 
+      # An exact version, unlike the other jobs: the archives' bytes include gzip output from this Node's
+      # zlib, and a re-run compares them to the copies a first run attached. A floating 22 could move
+      # between runs and fail a legitimate re-run on a checksum that differs only in compression.
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 22.14.0
 
       - run: npm ci
 
@@ -320,9 +323,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p existing
+          # Read the asset list once, into a variable: `gh ... | grep -q` under pipefail can read as
+          # "absent" when grep exits early and gh dies on the broken pipe, and a failed view then fails here.
+          attached_names=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
           for archive in host-out/*.tar.gz; do
             name=$(basename "$archive")
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$name"; then
+            if printf '%s\n' "$attached_names" | grep -qxF "$name"; then
               gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir existing --clobber
               built=$(sha256sum "$archive" | cut -d' ' -f1)
               attached=$(sha256sum "existing/$name" | cut -d' ' -f1)
@@ -344,6 +350,9 @@ jobs:
           name: host-manifest
           path: dist/host-manifest/manifest.json
           if-no-files-found: error
+          # A re-run of the whole workflow is the documented recovery, and artifacts belong to the run, so
+          # the first attempt's copy is still there. The bytes are the same checked manifest.
+          overwrite: true
 
   release:
     needs: [create-tag, create-draft-release, build-host]

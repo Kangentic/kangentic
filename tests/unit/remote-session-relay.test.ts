@@ -48,7 +48,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean } = {}): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -61,7 +61,9 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
   const files: RemoteSessionFiles = {
     writeFiles: (_hostId, fileList, directories) => link.requestHelper('writeFiles', { files: fileList, ...(directories ? { directories } : {}) }),
     writeFileRaw: (_hostId, filePath, content, mode) => link.requestHelperRaw('writeFileRaw', { path: filePath, ...(mode === undefined ? {} : { mode }) }, Buffer.from(content, 'utf8')),
-    watchHooks: (_hostId, sessionId, directory, statusFile) => link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) }),
+    watchHooks: (_hostId, sessionId, directory, statusFile) => (options.failWatch
+      ? Promise.reject(new Error('the host could not watch the folder'))
+      : link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) })),
     unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
     removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
     removeEmptyDirectories: (_hostId, paths) => link.requestHelper('removeEmptyDirectories', { paths }),
@@ -165,6 +167,14 @@ describe('registering a session', () => {
   it.each(['../escape.json', '/etc/passwd', 'a\\b', 'a//b', ''])('refuses an extra file named %j, so an agent cannot reach outside the session folder', async (name) => {
     await expect(makeRig({ declareExtra: [name] })).rejects.toThrow(/not a plain path/);
     expect(fs.existsSync(path.join(hostProject, '..', 'escape.json'))).toBe(false);
+  });
+
+  it('takes back what it pushed when the host cannot start watching, so the MCP config with the token is not left behind', async () => {
+    await expect(makeRig({ failWatch: true })).rejects.toThrow(/could not watch/);
+
+    const hostSession = path.join(hostProject, '.kangentic', 'sessions', 's1');
+    expect(fs.existsSync(path.join(hostSession, 'mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(hostSession, 'settings.json'))).toBe(false);
   });
 
   it('writes nothing outside the host project\'s folder and the home', async () => {

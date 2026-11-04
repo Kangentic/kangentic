@@ -57,7 +57,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
   into the folders the unchanged adapter code edits, pushes the change after the command is built,
   and restores them at release. A new adapter file that reads or writes a CLI's config does it
   through `cliHomeDir(place)` or the working directory and declares the file; it never opens a path
-  on the host any other way. Nothing is written over a host file that changed meanwhile.
+  on the host any other way. Nothing is written over a host file that changed meanwhile, the helper
+  re-checks it as it swaps the file in, and a push is compared with what Kangentic last knew the host
+  to hold (shared by every session on the host), never with one session's own pull, which another
+  session's push makes stale. A file that is not plain JSON is never rewritten.
 - **A probe of an agent's CLI on a host runs on the host.** `execCliForTarget` and
   `place.files.runCommand` run the program through the user's shell on the host, with a timeout
   that stops its process group. `cliInvocationForTarget` throws for a host: it would start a

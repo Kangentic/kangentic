@@ -13,7 +13,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SshCliPlace } from '../../src/main/agent/shared/cli-target';
-import { HostFileChangedError, HostFileSync, HostFileTooLargeError, pullHostFilesFor, rememberHostFileSync, settleHostFiles } from '../../src/main/remote/host-file-sync';
+import { HostFileChangedError, HostFileSync, HostFileTooLargeError, HostFileUnreadableError, pullHostFilesFor, rememberHostFileSync, resetHostFileSyncState, settleHostFiles } from '../../src/main/remote/host-file-sync';
 import type { HostFileWrite } from '../../src/main/remote/protocol/messages';
 
 /** A host's files in memory, answering the way the helper does. */
@@ -27,13 +27,22 @@ class FakeHost {
   readonly api: NonNullable<SshCliPlace['files']> = {
     readFile: async (hostPath) => (this.files.has(hostPath) ? { exists: true, content: this.files.get(hostPath) ?? null } : { exists: false, content: null }),
     writeFiles: async (files: HostFileWrite[]) => {
+      const conflicts: string[] = [];
+      let written = 0;
       for (const file of files) {
+        // The helper's last look before the swap.
+        if (file.expect !== undefined && (this.files.get(file.path) ?? null) !== file.expect) {
+          conflicts.push(file.path);
+          continue;
+        }
         this.files.set(file.path, file.content);
         if (file.mode !== undefined) this.modes.set(file.path, file.mode);
         this.writes.push(file.path);
+        written += 1;
       }
-      return { written: files.length };
+      return conflicts.length > 0 ? { written, conflicts } : { written };
     },
+
     removeFiles: async (paths) => {
       for (const target of paths) {
         this.files.delete(target);
@@ -54,6 +63,7 @@ let host: FakeHost;
 let place: SshCliPlace;
 
 beforeEach(async () => {
+  resetHostFileSyncState();
   workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'kangentic-host-sync-'));
   projectFolder = path.join(workspace, 'shell');
   mirrorHome = path.join(workspace, 'mirror');
@@ -208,6 +218,88 @@ describe('pushing what the adapter changed', () => {
   });
 });
 
+describe('two spawns on one host at once', () => {
+  it('does not delete or rewrite the folder copy another spawn is still editing', async () => {
+    // The host has no such file yet. The first spawn pulls, then its adapter writes the file.
+    const first = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"first":1}');
+
+    // The second spawn pulls before the first has pushed. It must not remove the first's file.
+    const second = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    expect(await localProjectFile(CURSOR_MCP)).toBe('{"first":1}');
+
+    await first.push();
+    await second.push();
+
+    // The first's entry reached the host, and the second, which changed nothing, did not undo it.
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"first":1}');
+  });
+
+  it('refreshes the folder from the host again once the first spawn has pushed', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const first = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await first.push();
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":2}');
+
+    await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+
+    expect(await localProjectFile(CURSOR_MCP)).toBe('{"v":2}');
+  });
+});
+
+describe('a host JSON file that is not plain JSON', () => {
+  const SETTINGS = '.gemini/settings.json';
+  const WITH_COMMENT = '{\n  // my own notes\n  "theme": "dark"\n}\n';
+
+  it('is never replaced by the fresh file an adapter built from an empty one', async () => {
+    host.files.set('/home/dev/app/.gemini/settings.json', WITH_COMMENT);
+    const sync = await HostFileSync.pull({ home: [], project: [SETTINGS] }, projectFolder, place);
+    // The adapter could not parse it, started from nothing, and wrote only its own entries.
+    await fs.writeFile(path.join(projectFolder, '.gemini', 'settings.json'), '{"hooks":{}}');
+
+    await expect(sync.push()).rejects.toBeInstanceOf(HostFileUnreadableError);
+    expect(host.files.get('/home/dev/app/.gemini/settings.json')).toBe(WITH_COMMENT);
+  });
+
+  it('is left alone by a release, which never throws', async () => {
+    host.files.set('/home/dev/app/.gemini/settings.json', WITH_COMMENT);
+    const sync = await HostFileSync.pull({ home: [], project: [SETTINGS] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.gemini', 'settings.json'), '{"hooks":{}}');
+
+    await expect(sync.settle()).resolves.toBeUndefined();
+    expect(host.files.get('/home/dev/app/.gemini/settings.json')).toBe(WITH_COMMENT);
+  });
+
+  it('does not stop a file with a byte order mark, or an empty one', async () => {
+    host.files.set('/home/dev/app/.gemini/settings.json', `${String.fromCharCode(0xfeff)}{"a":1}`);
+    const sync = await HostFileSync.pull({ home: [], project: [SETTINGS] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.gemini', 'settings.json'), '{"a":1,"hooks":{}}');
+
+    await sync.push();
+
+    expect(host.files.get('/home/dev/app/.gemini/settings.json')).toBe('{"a":1,"hooks":{}}');
+  });
+});
+
+describe('a change that lands in the instant before the write', () => {
+  it('is refused by the host and left as it is', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"ours":1}');
+    // The user saves the file after the push's own read and before the host swaps ours in.
+    const realRead = host.api.readFile;
+    host.api.readFile = async (hostPath) => {
+      const answer = await realRead(hostPath);
+      host.files.set(hostPath, '{"user":"edit"}');
+      return answer;
+    };
+
+    await expect(sync.push()).rejects.toBeInstanceOf(HostFileChangedError);
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"user":"edit"}');
+  });
+});
+
 describe('restoring the host\'s files when the session ends', () => {
   it('removes a file the adapter removed and rewrites one it stripped, putting the host back as the user had it', async () => {
     host.directories.add('/home/dev/app/.git/info');
@@ -255,6 +347,27 @@ describe('restoring the host\'s files when the session ends', () => {
 
     await expect(settleHostFiles('s')).resolves.toBeUndefined();
     expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"user":"edit"}');
+  });
+
+  it('strips the entries of every session on the host when the last one ends, not only its own', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"theirs":1}');
+    const first = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"theirs":1,"a":1}');
+    await first.push();
+    const second = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"theirs":1,"a":1,"b":1}');
+    await second.push();
+    rememberHostFileSync('first', first);
+    rememberHostFileSync('second', second);
+
+    // The second ends while the first still holds the file: nothing changes locally, so nothing is sent.
+    await settleHostFiles('second');
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"theirs":1,"a":1,"b":1}');
+    // The first ends last and strips everything Kangentic put there. Its own pull never saw "b".
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"theirs":1}');
+    await settleHostFiles('first');
+
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"theirs":1}');
   });
 
   it('forgets the session after one release, so a second is a no-op', async () => {

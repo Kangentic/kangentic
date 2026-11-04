@@ -48,6 +48,27 @@ export class HostFileTooLargeError extends Error {
   }
 }
 
+/** A declared JSON file the host holds that is not plain JSON, which an adapter would replace rather than merge into. */
+export class HostFileUnreadableError extends Error {
+  constructor(readonly hostPath: string) {
+    super(`${hostPath} is not plain JSON (it may hold comments), so Kangentic did not rewrite it. Remove the comments, or move the file aside, and start the session again.`);
+    this.name = 'HostFileUnreadableError';
+  }
+}
+
+/** Whether a `.json` file has text in it that JSON.parse rejects. A byte order mark is not held against it. */
+function isUnreadableJson(relative: string, content: string): boolean {
+  if (!relative.endsWith('.json')) return false;
+  const text = content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+  if (text.trim().length === 0) return false;
+  try {
+    JSON.parse(text);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 interface TrackedFile {
   kind: 'home' | 'project';
   relative: string;
@@ -94,14 +115,30 @@ export class HostFileSync {
       }),
     ];
     // Each read is its own round trip and none depends on another, so they run together.
-    await Promise.all(tracked.map(async (file) => {
-      const answer = await files.readFile(file.hostPath);
-      if (answer.exists && answer.content !== null && Buffer.byteLength(answer.content, 'utf8') >= HELPER_READ_LIMIT) {
-        throw new HostFileTooLargeError(file.hostPath);
-      }
-      file.hostContent = answer.exists ? answer.content : null;
-      await writeLocal(file.localPath, file.hostContent);
-    }));
+    try {
+      await Promise.all(tracked.map(async (file) => {
+        const key = hostFileKey(place.hostId, file.hostPath);
+        const answer = await files.readFile(file.hostPath);
+        if (answer.exists && answer.content !== null && Buffer.byteLength(answer.content, 'utf8') >= HELPER_READ_LIMIT) {
+          throw new HostFileTooLargeError(file.hostPath);
+        }
+        const onHost = answer.exists ? answer.content : null;
+        knownHostContent.set(key, onHost);
+        if (isBeingEdited(key)) {
+          // Another spawn on this host pulled this file and has not pushed it yet. The folder holds its
+          // edits, and writing the host's copy over them would lose them. This spawn edits on top of what
+          // is there, and its push checks the host against what Kangentic last knew it to hold.
+          file.hostContent = await readLocal(file.localPath);
+        } else {
+          file.hostContent = onHost;
+          await writeLocal(file.localPath, onHost, file.kind === 'home' || file.secret);
+        }
+        markBeingEdited(key, file);
+      }));
+    } catch (error) {
+      for (const file of tracked) clearBeingEdited(hostFileKey(place.hostId, file.hostPath), file);
+      throw error;
+    }
     return new HostFileSync(place, resolvedDirectory, tracked);
   }
 
@@ -109,10 +146,22 @@ export class HostFileSync {
   async push(options: PushOptions = { onConflict: 'throw' }): Promise<void> {
     const files = this.place.files;
     if (!files) return;
+    try {
+      await this.pushFiles(files, options);
+    } finally {
+      // The adapter's edits are on the host (or the push failed and the spawn ends), so a later pull
+      // may refresh the folder from the host again.
+      for (const file of this.tracked) clearBeingEdited(hostFileKey(this.place.hostId, file.hostPath), file);
+    }
+  }
+
+  private async pushFiles(files: NonNullable<SshCliPlace['files']>, options: PushOptions): Promise<void> {
     const writes: HostFileWrite[] = [];
-    const removals: string[] = [];
+    const removals: Array<{ file: TrackedFile; expected: string | null }> = [];
     const created: TrackedFile[] = [];
+    const written: Array<{ file: TrackedFile; content: string }> = [];
     for (const file of this.tracked) {
+      const key = hostFileKey(this.place.hostId, file.hostPath);
       const local = await readLocal(file.localPath);
       if (local === file.hostContent) continue;
       const current = await files.readFile(file.hostPath);
@@ -120,24 +169,61 @@ export class HostFileSync {
       if (hostNow === local) {
         // The host already holds what we would write (another session got there first).
         file.hostContent = local;
+        knownHostContent.set(key, local);
         continue;
       }
-      if (hostNow !== file.hostContent) {
+      // What Kangentic last knew the host to hold, which other sessions on the host move too. Comparing
+      // with this session's own pull would call every other session's change a conflict.
+      const expected = knownHostContent.has(key) ? (knownHostContent.get(key) ?? null) : file.hostContent;
+      if (file.hostContent !== null && isUnreadableJson(file.relative, file.hostContent)) {
+        // An adapter that could not parse the user's file started from an empty one, so pushing its result
+        // would replace everything the user had in it (comments make a settings file unparseable).
+        if (options.onConflict === 'throw') throw new HostFileUnreadableError(file.hostPath);
+        console.warn(`${LOG_TAG} ${file.hostPath} is not plain JSON, so it was left as it is.`);
+        continue;
+      }
+      if (hostNow !== expected) {
         if (options.onConflict === 'throw') throw new HostFileChangedError(file.hostPath);
         console.warn(`${LOG_TAG} ${file.hostPath} changed on the host since it was read, so it was left as it is.`);
         continue;
       }
       if (local === null) {
-        removals.push(file.hostPath);
+        removals.push({ file, expected: hostNow });
       } else {
-        writes.push({ path: file.hostPath, content: local, mode: modeFor(file) });
+        writes.push({
+          path: file.hostPath,
+          content: local,
+          mode: modeFor(file),
+          expect: hostNow,
+          // A file the user had keeps the permissions they gave it, unless it holds a secret.
+          ...(hostNow !== null && !file.secret ? { keepExistingMode: true } : {}),
+        });
+        written.push({ file, content: local });
         if (file.kind === 'project' && file.hostContent === null) created.push(file);
       }
-      file.hostContent = local;
     }
-    if (writes.length > 0) await files.writeFiles(writes);
-    if (removals.length > 0) await files.removeFiles(removals);
-    if (created.length > 0) await this.excludeFromGit(created);
+    if (writes.length > 0) {
+      const answer = await files.writeFiles(writes);
+      const refused = new Set(answer.conflicts ?? []);
+      if (refused.size > 0) {
+        // Changed in the instant after the check. Nothing of it was overwritten.
+        if (options.onConflict === 'throw') throw new HostFileChangedError([...refused][0]);
+        console.warn(`${LOG_TAG} ${[...refused].join(', ')} changed on the host as it was written, so it was left as it is.`);
+      }
+      for (const { file, content } of written) {
+        if (refused.has(file.hostPath)) continue;
+        file.hostContent = content;
+        knownHostContent.set(hostFileKey(this.place.hostId, file.hostPath), content);
+      }
+    }
+    if (removals.length > 0) {
+      await files.removeFiles(removals.map((removal) => removal.file.hostPath));
+      for (const { file } of removals) {
+        file.hostContent = null;
+        knownHostContent.set(hostFileKey(this.place.hostId, file.hostPath), null);
+      }
+    }
+    if (created.length > 0) await this.excludeFromGit(created.filter((file) => file.hostContent !== null));
   }
 
   /** The release of a session: the adapter has stripped its entries locally, so the host gets the same. */
@@ -176,6 +262,57 @@ export class HostFileSync {
   }
 }
 
+/**
+ * What Kangentic last knew each host file to hold, by host and path, shared by every session on the host.
+ * A session's own pull goes stale the moment another session pushes the same file (Gemini's settings,
+ * Codex's config, a trusted-folders list all are shared), so a release that compared the host with its
+ * own pull would call another session's entries "a change by someone else" and leave its own on the host.
+ */
+const knownHostContent = new Map<string, string | null>();
+
+/** How long a pull may go unpushed before it stops protecting the folder, for a spawn that failed and never pushed. */
+const EDIT_WINDOW_MS = 60_000;
+/** The files a spawn has pulled and not yet pushed, with when the pull happened. */
+const filesBeingEdited = new Map<string, Map<TrackedFile, number>>();
+
+/** Forget what is known and what is being edited. For tests, which share this module's state. */
+export function resetHostFileSyncState(): void {
+  knownHostContent.clear();
+  filesBeingEdited.clear();
+  syncsBySession.clear();
+}
+
+function hostFileKey(hostId: string, hostPath: string): string {
+  return `${hostId}\u0000${hostPath}`;
+}
+
+function isBeingEdited(key: string): boolean {
+  const holders = filesBeingEdited.get(key);
+  if (!holders) return false;
+  const now = Date.now();
+  for (const [file, since] of holders) {
+    if (now - since > EDIT_WINDOW_MS) holders.delete(file);
+  }
+  if (holders.size === 0) {
+    filesBeingEdited.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function markBeingEdited(key: string, file: TrackedFile): void {
+  const holders = filesBeingEdited.get(key) ?? new Map<TrackedFile, number>();
+  holders.set(file, Date.now());
+  filesBeingEdited.set(key, holders);
+}
+
+function clearBeingEdited(key: string, file: TrackedFile): void {
+  const holders = filesBeingEdited.get(key);
+  if (!holders) return;
+  holders.delete(file);
+  if (holders.size === 0) filesBeingEdited.delete(key);
+}
+
 /** A relative path that stays inside the folder it is joined to. */
 function assertRelative(relative: string): void {
   if (relative.length === 0 || relative.startsWith('/') || relative.includes('\\') || relative.split('/').some((part) => part === '..' || part === '')) {
@@ -199,14 +336,15 @@ async function readLocal(localPath: string): Promise<string | null> {
 }
 
 /** Make the local copy equal the host's: write it, or remove it when the host has none. Unchanged is not rewritten. */
-async function writeLocal(localPath: string, content: string | null): Promise<void> {
+async function writeLocal(localPath: string, content: string | null, ownerOnly: boolean): Promise<void> {
   if (content === null) {
     await fs.rm(localPath, { force: true });
     return;
   }
   if ((await readLocal(localPath)) === content) return;
   await fs.mkdir(path.dirname(localPath), { recursive: true });
-  await fs.writeFile(localPath, content, 'utf8');
+  // The mirror of a CLI's home can hold its credentials, so on this computer only its owner reads the copy.
+  await fs.writeFile(localPath, content, ownerOnly ? { encoding: 'utf8', mode: 0o600 } : 'utf8');
 }
 
 /**

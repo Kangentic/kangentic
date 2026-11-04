@@ -161,6 +161,50 @@ describe('files on the host', () => {
     expect(fs.readFileSync(target, 'utf8')).toBe('new');
   });
 
+  it('leaves a file alone whose text is not what the write expected, and says which', async () => {
+    const rig = makeRig();
+    await settle();
+    const changed = path.join(home, 'changed.json');
+    const fine = path.join(home, 'fine.json');
+    const absent = path.join(home, 'absent.json');
+    fs.writeFileSync(changed, '{"user":"edit"}');
+    fs.writeFileSync(fine, '{"v":1}');
+    fs.writeFileSync(absent, 'someone made this');
+
+    const answer = await ask(rig.link.requestHelper('writeFiles', { files: [
+      { path: changed, content: 'ours', expect: '{"v":1}' },
+      { path: fine, content: 'ours', expect: '{"v":1}' },
+      { path: absent, content: 'ours', expect: null },
+    ] }));
+
+    expect(answer).toEqual({ written: 1, conflicts: [changed, absent] });
+    expect(fs.readFileSync(changed, 'utf8')).toBe('{"user":"edit"}');
+    expect(fs.readFileSync(fine, 'utf8')).toBe('ours');
+    expect(fs.readFileSync(absent, 'utf8')).toBe('someone made this');
+    expect(fs.readdirSync(home).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the permissions a file had when asked, and a symlink stays a symlink', async () => {
+    const rig = makeRig();
+    await settle();
+    const private_ = path.join(home, 'mine.json');
+    fs.writeFileSync(private_, 'old', { mode: 0o600 });
+    const real = path.join(home, 'dotfiles', 'settings.json');
+    fs.mkdirSync(path.dirname(real), { recursive: true });
+    fs.writeFileSync(real, 'old');
+    const link = path.join(home, 'settings.json');
+    fs.symlinkSync(real, link);
+
+    await ask(rig.link.requestHelper('writeFiles', { files: [
+      { path: private_, content: 'new', mode: 0o644, keepExistingMode: true },
+      { path: link, content: 'new' },
+    ] }));
+
+    expect(fs.statSync(private_).mode & 0o777).toBe(0o600);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe('new');
+  });
+
   it('reads a file, and says so when it is not there', async () => {
     const rig = makeRig();
     await settle();

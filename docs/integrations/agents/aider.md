@@ -34,7 +34,7 @@ An Aider on a remote host over SSH (#913) runs as `aider`, found by the host's l
 
 - The idle notification is the WSL hook transport's `event idle </dev/null`, named by the script's path on the host, which the session relay pushes with the session folder. No node is needed on the host.
 - Every start is fresh, as locally. `--restore-chat-history` is read by Aider from its own `.aider.chat.history.md` on the host.
-- Not available: the chat history lives on the host, and the readers for live cost and tokens, the history locator and the command verifier look in this computer's empty shell folder. They find nothing, so the card shows no cost or token count and a command Kangentic types is never confirmed.
+- Not available: the chat history lives on the host, and the readers for live cost and tokens, the history locator and the command verifier look in this computer's empty shell folder. They find nothing, so the card shows no cost or token count and a command Kangentic types has no verifier on a host, so it settles by time and is never confirmed.
 
 ## Permission Modes
 

@@ -43,7 +43,7 @@ function startMock(fixture: string, args: string[], env: Record<string, string> 
     collected += chunk;
     for (const listener of [...listeners]) listener();
   });
-  const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+  const exited = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
   return {
     child,
     output: () => collected,

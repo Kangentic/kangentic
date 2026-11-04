@@ -65,6 +65,10 @@ describe('reading the program\'s output out of the shell\'s', () => {
   it('says nothing ran when the opening marker never came', () => {
     expect(readBracketedOutput('bash: cannot start\n')).toEqual({ output: '', status: null });
   });
+
+  it('reads the status from the closing line only, so a logout script that prints cannot hide it', () => {
+    expect(readBracketedOutput('__KANGENTIC_BEGIN__\nabc\n__KANGENTIC_END__ 0\nlogout\nbye\n')).toEqual({ output: 'abc', status: 0 });
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('running a program on a POSIX host', () => {
@@ -158,6 +162,31 @@ describe.skipIf(process.platform === 'win32')('running a program on a POSIX host
     );
     expect(result.code).toBeNull();
     expect(result.error).toMatch(/ENOENT/);
+  });
+
+  it('says the folder is missing, never that the program is not installed', async () => {
+    const home = makeHome();
+    const result = await runHostCommand(
+      { file: 'true', args: [], timeoutMs: 10_000 },
+      { shellPath: makeNoisyShell(home), cwd: path.join(home, 'no-such-folder'), baseEnv },
+    );
+    expect(result.code).toBeNull();
+    expect(result.error).toMatch(/does not exist on this host/);
+    expect(result.error).not.toMatch(/ENOENT/);
+  });
+
+  it('answers once the shell has exited even when a background process still holds the output', async () => {
+    const home = makeHome();
+    const started = Date.now();
+    // The program starts something that keeps the inherited output open long after it returns.
+    const result = await runHostCommand(
+      { file: 'sh', args: ['-c', '(sleep 20 &) ; echo done'], timeoutMs: 15_000 },
+      { shellPath: makeNoisyShell(home), cwd: home, baseEnv },
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('done\n');
+    expect(result.timedOut).toBe(false);
+    expect(Date.now() - started).toBeLessThan(8_000);
   });
 
   it('runs an unknown shell\'s probe through sh instead of failing', async () => {

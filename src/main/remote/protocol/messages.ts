@@ -93,6 +93,20 @@ export interface HostFileWrite {
   content: string;
   /** Unix permission bits, such as 0o755 for a script. Defaults to owner read and write. */
   mode?: number;
+  /**
+   * The text the file must hold when it is replaced (null: it must not exist). The helper checks it
+   * right before it renames the new file in, and leaves a file that differs alone, naming it in the
+   * answer's `conflicts`. Absent: the file is written whatever it holds.
+   */
+  expect?: string | null;
+  /** An existing file keeps the permission bits it has, and `mode` applies only when the file is new. */
+  keepExistingMode?: boolean;
+}
+
+export interface HostWriteResult {
+  written: number;
+  /** Paths whose `expect` did not match, so they were not written. Absent when there were none. */
+  conflicts?: string[];
 }
 
 export interface HostCommandRequest {
@@ -148,7 +162,7 @@ export interface HelperRequestMap {
    * Write files the agent's command needs (its settings, its hook scripts), making their folders, and
    * make `directories` that hold no file of their own (a hook folder the script publishes into).
    */
-  writeFiles: { params: { files: HostFileWrite[]; directories?: string[] }; result: { written: number } };
+  writeFiles: { params: { files: HostFileWrite[]; directories?: string[] }; result: HostWriteResult };
   /** Write one file whose bytes ride the frame's raw part (up to 1 MiB), for content too large for the JSON body. */
   writeFileRaw: { params: { path: string; mode?: number }; result: { written: number } };
   /** Edit a JSON file a CLI shares with Kangentic, under the CLI's own lock (`json-patch.ts`). */

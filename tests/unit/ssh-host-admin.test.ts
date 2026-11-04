@@ -261,6 +261,14 @@ describe('adding a host', () => {
     expect(rig.run.calls).toHaveLength(callsAfterFirst);
   });
 
+  it('reads the same address in another letter case as the same host', async () => {
+    const rig = makeRig();
+    await rig.admin.addHost({ name: 'Lab', destination: 'Dev@Lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+
+    await expect(rig.admin.addHost({ name: 'Lab 2', destination: 'dev@lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT }))
+      .rejects.toThrow('already added as "Lab"');
+  });
+
   it('refuses a second add of one address that starts before the first has made its row', async () => {
     const rig = makeRig();
     const first = rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });

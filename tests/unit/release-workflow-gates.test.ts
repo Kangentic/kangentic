@@ -271,6 +271,12 @@ describe('release.yml job graph', () => {
     expect(attach).not.toMatch(/gh release upload[^\n]*--clobber/);
     expect(stepBody('build-host', 'Verify the manifest and the archives it names')).toContain('--archives host-out');
 
+    // A re-run of the whole workflow is the documented recovery. It reuses the run's artifacts, so the
+    // upload must overwrite, and the re-run compares gzip bytes, so Node is an exact version.
+    expect(buildHost?.body).toMatch(/node-version: \d+\.\d+\.\d+/);
+    expect(stepBody('build-host', 'Hand the manifest to the build legs')).toContain('overwrite: true');
+    expect(attach).not.toMatch(/gh release view[^\n]*\|\s*grep/);
+
     // Every leg downloads the manifest before packaging and checks it afterwards.
     const buildOrder = (releaseJob?.body ?? '').indexOf('Fetch the host program manifest');
     expect(buildOrder).toBeGreaterThan(-1);

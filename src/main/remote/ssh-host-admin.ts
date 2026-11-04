@@ -81,14 +81,16 @@ export class SshHostAdmin {
     // One host per address. Two rows for one machine would run two links that take the host over from each
     // other (one install, one owner at a time), each seeing "the peer ended the connection" again and again.
     // The in-flight check covers a second add that starts before the first has made its row.
-    const existing = this.deps.hosting.hosts.list().find((candidate) => candidate.destination === input.destination);
+    // Host names do not differ by case, so `Me@Build` and `me@build` are one address here.
+    const addressKey = input.destination.trim().toLowerCase();
+    const existing = this.deps.hosting.hosts.list().find((candidate) => candidate.destination.trim().toLowerCase() === addressKey);
     if (existing) throw new Error(`${input.destination} is already added as "${existing.name}".`);
-    if (this.adding.has(input.destination)) throw new Error(`${input.destination} is already being added.`);
-    this.adding.add(input.destination);
+    if (this.adding.has(addressKey)) throw new Error(`${input.destination} is already being added.`);
+    this.adding.add(addressKey);
     try {
       return await this.addNewHost(input, name);
     } finally {
-      this.adding.delete(input.destination);
+      this.adding.delete(addressKey);
     }
   }
 

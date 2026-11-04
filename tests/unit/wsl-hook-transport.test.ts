@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   WSL_HOOK_SCRIPT,
+  WSL_MCP_REQUEST_HEAD,
   parseWslHookRecord,
   prepareWslHookTransport,
   wslHookEventCommand,
@@ -610,6 +611,31 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     expect(answered).toEqual({ stdout: JSON.stringify({ additionalContext: 'shell abc123' }), code: 0 });
     expect(ignored).toEqual({ stdout: '', code: 0 });
     expect(fs.readdirSync(wslHookPaths(sessionDirectory).responses)).toEqual([]);
+  });
+
+  // A request can carry the MCP token. On a shared host the default umask (022) would leave it readable by
+  // every account until the helper has sent it.
+  it.skipIf(process.platform === 'win32')('publishes a request readable by its owner only, even under a permissive umask', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    prepareWslHookTransport(sessionDirectory);
+    const paths = wslHookPaths(sessionDirectory);
+    const child = spawn('sh', ['-c', 'umask 022; exec sh "$0" reply some-request payload', paths.script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    child.stdin.end('');
+    const closed = new Promise<void>((resolve) => child.on('close', () => resolve()));
+
+    const requestName = await waitFor(() => fs.readdirSync(paths.requests).find((name) => name.endsWith('.req')) ?? null);
+    const mode = fs.statSync(path.join(paths.requests, requestName)).mode & 0o777;
+    // Answer it so the script ends now rather than after its wait.
+    fs.writeFileSync(path.join(paths.responses, requestName.replace(/\.req$/, '.res')), '');
+    await closed;
+
+    expect(mode & 0o077).toBe(0);
+  });
+
+  it('sets the owner-only umask before the MCP server publishes a request, which carries the token', () => {
+    const afterMcpCase = WSL_HOOK_SCRIPT.slice(WSL_HOOK_SCRIPT.indexOf(`${WSL_MCP_REQUEST_HEAD})`));
+    expect(afterMcpCase.indexOf('umask 077')).toBeGreaterThan(-1);
+    expect(afterMcpCase.indexOf('umask 077')).toBeLessThan(afterMcpCase.indexOf('publish requests'));
   });
 
   it('approves a plan with the marker in the events file before the answer is printed', async () => {

@@ -113,7 +113,7 @@ export class RemoteSessionRelay {
     await this.release(registration.sessionId);
     const pending = { released: false };
     this.registering.set(registration.sessionId, pending);
-    let hostHooksDirectory: string;
+    let hostHooksDirectory = '';
     let localHooks: ReturnType<typeof wslHookPaths>;
     const pushedPaths: string[] = [];
     try {
@@ -144,6 +144,14 @@ export class RemoteSessionRelay {
         ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
       );
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
+    } catch (error) {
+      // The spawn fails, so nothing releases a session that was never registered: what was pushed (the
+      // settings and the MCP config, which holds the token) is removed here, as a release would.
+      if (pushedPaths.length > 0) {
+        await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+        await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
+      }
+      throw error;
     } finally {
       this.registering.delete(registration.sessionId);
     }

@@ -1012,6 +1012,9 @@ export class TransitionEngine {
     const { statusOutputPath, eventsOutputPath, shell, resumePromptKeptOff } = launch;
     const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
     if (hostFiles) {
+      // Remembered before the push: a push that fails partway has already written some files, and the
+      // release below strips them on the host along with the local copies.
+      rememberHostFileSync(ptySessionId, hostFiles);
       try {
         await hostFiles.push();
       } catch (error) {
@@ -1019,7 +1022,6 @@ export class TransitionEngine {
         releaseCommandHold(adapter, cwd, ptySessionId);
         throw error;
       }
-      rememberHostFileSync(ptySessionId, hostFiles);
     }
 
     // Where an isolated column's pass begins, so the main conversation, resumed
