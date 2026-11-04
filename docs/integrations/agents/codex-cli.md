@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Codex CLI
-description: Why Codex's MCP and hook overrides go in as quote-free -c flags, how hook trust comes from Codex's own app-server hash, how per-worktree trust entries are added to and removed from config.toml, and how permission modes map to sandbox and approval flags.
+description: Why Codex's MCP, hook and effort overrides go in as quote-free -c flags, how hook trust and the model list come from Codex's own app-server, how per-worktree trust entries are added to and removed from config.toml, how permission modes map to sandbox and approval flags, what the rollout feeds the per-task stats, and which Claude parity gaps wait on a live probe.
 tags: [agents, adapter, codex]
 sources:
   - resource: src/main/agent/adapters/codex/codex-adapter.ts
@@ -12,6 +12,12 @@ sources:
   - resource: src/main/agent/adapters/codex/trust-manager.ts
   - resource: src/main/agent/adapters/codex/config-toml.ts
   - resource: src/main/agent/adapters/codex/session-history-parser.ts
+  - resource: src/main/agent/adapters/codex/model-catalog.ts
+  - resource: src/main/agent/adapters/codex/app-server-rpc.ts
+  - resource: src/main/agent/adapters/codex/capability-discovery.ts
+  - resource: src/main/agent/shared/jsonl-complete-lines.ts
+  - resource: src/main/agent/adapters/codex/transcript-usage.ts
+  - resource: src/main/agent/adapters/codex/transcript-parser.ts
 ---
 # Codex CLI
 
@@ -29,6 +35,7 @@ Detection follows the same pattern as Claude: check `config.agent.cliPaths.codex
 
 ```
 codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
+  [-c model_reasoning_effort=<level>] \
   -c mcp_servers.kangentic.url=<url> \
   -c mcp_servers.kangentic.env_http_headers.X-Kangentic-Token=KANGENTIC_MCP_TOKEN \
   [-c shell_environment_policy.set.KANGENTIC_TASK_ID=<taskId>] \
@@ -41,6 +48,7 @@ codex -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
 
 ```
 codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [--model <m>] \
+  [-c <the same effort override>] \
   -c <the same two MCP overrides> \
   [-c <the same task tag override>] \
   -c check_for_update_on_startup=false \
@@ -57,6 +65,21 @@ The hook overrides appear only when Codex confirmed their trust for this binary 
 The task tag override is added for every session, a Command Terminal included (it carries its own made-up task id, so its leftovers are reaped when it ends). Codex passes its environment to tool shells through `shell_environment_policy`, which a user can narrow (`inherit = "core"`), and that strips `KANGENTIC_TASK_ID`, the tag a terminal transition finds a task's leftover processes by (see [Process reaping](../../architecture/worktrees/process-reaping.md)). A `set` entry always wins over the inherit and filter steps, and it adds to the user's own `set` table rather than replacing it (measured on codex-cli 0.154.0).
 
 Resume is a subcommand in Codex (not a flag like Claude). Both forms emit the same flags: `codex resume` accepts `-c`, `-s/--sandbox`, `-a/--ask-for-approval`, `-m/--model`, `-C/--cd`, and `--disable`. The resume branch used to return early after `-C`, so a resumed session silently lost its permission mode, model override, and MCP wiring.
+
+### Non-interactive session
+
+A legacy Start agent row with `nonInteractive` set runs `codex exec`, "Run Codex non-interactively" in `codex --help` (codex-cli 0.163.0). The builder used to pass `-q --json`, which came from the retired TypeScript CLI; 0.163.0's `codex --help` lists neither.
+
+```
+codex exec -C <cwd> --sandbox <level> [--model <m>] [-c ...the same overrides] ["prompt text"]
+codex exec resume <sessionId> -c sandbox_mode=<level> [--model <m>] [-c ...the same overrides] ["prompt text"]
+```
+
+`codex exec --help` lists no `-a/--ask-for-approval` (`exec` never asks), so the permission mode becomes the sandbox alone: `read-only` for `plan` and `dontAsk`, `workspace-write` otherwise, and the bypass flag for `bypassPermissions`. `codex exec resume --help` lists neither `-C` nor `-s`, so a resume takes its sandbox as `-c sandbox_mode=<level>` (the key `--sandbox` sets, per https://learn.chatgpt.com/docs/config-file/config-reference) and its working folder from the PTY's. Built from the help text; not yet run against a signed-in Codex.
+
+### The shared app-server daemon
+
+Since 0.157 an interactive `codex` runs its thread inside a shared app-server daemon by default (`daemon_auto_start`, stable and on in `codex features list`; release notes for 0.154.0, 0.156.0 and 0.157.0). That daemon keeps the environment it started with ("per-client environment isolation is not provided", `codex-rs/app-server-daemon/README.md`), which would put every session's hooks on the first session's `KANGENTIC_EVENTS_PATH`, its tool shells on the first task's `KANGENTIC_TASK_ID`, and its MCP calls on the first session's token. Kangentic never reaches it: any `-c` override other than a feature boolean makes the TUI run its own embedded app-server ("Running without the shared background server: ... requires embedded mode", `config_exclusion` in `codex-rs/tui/src/daemon_startup.rs` at rust-v0.163.0), and every form above carries `-c check_for_update_on_startup=false`. `codex-adapter.test.ts` pins that every form keeps one, so do not drop it as tidying. Passing `--no-daemon` instead was not chosen: the flag arrived in 0.156.0, and an older Codex exits on it.
 
 ## MCP Wiring
 
@@ -84,6 +107,22 @@ The entry is also **removed** when Kangentic deletes the worktree, via the adapt
 ## Launch Options
 
 Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optional Properties](optional-properties.md)): `disableApps`, off by default. When enabled, `--disable apps` is appended to both the new-session and `resume` command forms, skipping Codex's optional cloud ChatGPT Apps MCP connector (`apps` feature, stable and on by default per `codex features list`), which can hang the whole session at `Booting MCP server: codex_apps` (openai/codex#20167, #19284, #16550). The flag is per-invocation only - it never touches the user's `~/.codex/config.toml`. Configured via the Agent settings tab's Launch Options row, stored at `agent.launchOptions.codex.disableApps`.
+
+## Models and reasoning effort
+
+Codex has no effort flag. `model_reasoning_effort` is a config key ("Reasoning effort advertised by the selected model, such as `low`, `medium`, `high`, `xhigh`, `max`, or `ultra`", https://learn.chatgpt.com/docs/config-file/config-reference), and `-c` sets it for one process on `codex`, `codex resume` and `codex exec` (each one's `--help`, codex-cli 0.163.0). A column's effort goes in as `-c model_reasoning_effort=<level>` on both session forms, and the title and Knowledge Graph answer runs pass their effort the same way (`answerCapabilities.effort`, `low` by default). The schema takes any non-empty string (`ReasoningEffort` in `codex-rs/core/config.schema.json`), so Codex judges the level against the model. A level that is not one bare token is dropped, under the same quoting contract as the MCP overrides.
+
+A session spawn passes the level only when Codex's own `model/list` (below) advertises it for the chosen model, or for any listed model when none is chosen, and passes none without that list. Codex ignored the effort before, and nothing upstream checks a spawn's effort (`resolveSpawnOverrides`): a column whose agent changed to Codex keeps the effort set for Claude, and an MCP override is accepted unchecked for an agent that listed no levels. Without the gate such a value would start failing every turn. `ensureTrust` waits for the list read beside the hook trust read, both bounded at 8 s, so the first spawn after detection sees it. The title and answer runs need no gate, because their callers pass only a level discovery reported.
+
+The levels and the model list come from Codex itself (`model-catalog.ts`). The adapter runs `codex app-server` and asks `model/list` (`initialize`, `initialized`, then `model/list { includeHidden: false }`, following `nextCursor`), per `ModelListParams` and `Model` in `codex-rs/app-server-protocol/src/protocol/v2/model.rs` at rust-v0.163.0:
+
+- `models` are the listed `model` ids in Codex's order, then any other model a rollout's `turn_context` names.
+- `modelDisplayNames` are each entry's `displayName`, which also name the card's model before the rollout does (`configuredModelFromCommand`, read from the flag region before `check_for_update_on_startup=false`, so a prompt holding `--model` is never misread) and a model learned from telemetry (`modelDisplayName`).
+- `effortLevels` are every `supportedReasoningEfforts[].reasoningEffort`, deduplicated in first-seen order.
+
+The list "depends on the client and account" (https://learn.chatgpt.com/docs/app-server), so this read runs on the user's real `CODEX_HOME`, unlike the hook trust read's scratch home, and it may reach the network. `detect` starts it, beside the trust read. It is bounded at 20 s, cached per binary for 12 h (a failed read is tried again after 5 minutes, and keeps the last good list), and a forced refresh (a model dropdown opening) reads again once the last read is a minute old. Discovery waits at most 8 s for it, so a cold app-server never holds the agent list, and without an answer it reports today's result: the rollout models and no effort levels, which hides the Effort row. The whole discovery answer is kept per binary, since the answer and condition runs ask on every run: for 12 h when it was built from a list, and for 5 minutes when the read settled with none (a Codex whose app-server fails or has no `model/list`). An answer built while a read was still running is not kept, even when that read lands before discovery returns. A forced refresh or a detection reset asks again. The hook trust read and this one share one JSON-RPC framing (`app-server-rpc.ts`). A Codex in a WSL distro is asked in the distro, on the distro's own home. The E2E mock Codex exits at once on `app-server`, so both reads fail fast there.
+
+Live model and effort changes still need a respawn. Codex's `/model` only opens a picker (it is not in `supports_inline_args` in `codex-rs/tui/src/slash_command.rs`), and no slash command sets effort, so `getInjectionSequence` returns `[]`.
 
 ## Permission Modes
 
@@ -114,7 +153,20 @@ Kangentic registers its hooks as `-c hooks.<Event>=[...]` overrides in Codex's s
 
 What no hook reports comes from the rollout (`codex/session-history-parser.ts`): a command still running at its yield (`Process running with session ID N`, which fires PreToolUse but no PostToolUse) is a background start keyed by its call id, a `write_stdin` poll that finds it exited ends it, `turn_aborted` (an Esc interrupt, no hook) is an Interrupted event, and a `task_complete` that carries an `error` (a failed model request, no Stop) is a TurnFailed event. The rollout no longer forces activity or reports tool starts, and `sessionHistory.suppressesPtyFallback: false` keeps its reads from turning the PTY tracker off, so a session whose hooks Codex did not confirm keeps that tracker.
 
+The rollout also carries the live usage. `turn_context` names the model and the turn's `effort`, reported as the agent's own (`reportedByAgent`). Codex 0.163 writes a `token_usage_record` per model response (`codex-rs/history/src/rollout_payload.rs`), whose `usage` is that response's request size, read as the context in use the same way an older rollout's `token_count.last_token_usage` is; a record whose `thread_id` is not its `session_id` belongs to another thread and is skipped.
+
 The legacy project-local `.codex/hooks.json` from builds before Codex 0.128 is still swept of Kangentic-owned entries by `buildHooks`.
+
+## Per-task stats and the transcript
+
+The rollout feeds the per-task stats as Claude's transcript does (`transcript-usage.ts`, read whole and streamed in the retrieval worker, the rollout found by id with `findCodexTranscriptFile`):
+
+- `transcriptUsage` sums each `token_usage_record.usage` once per `response_id`, for the rollout's own thread (its `session_meta.payload.id`). A rollout from before 0.163 has no such records and takes the last `token_count.info.total_token_usage`. Codex's `input_tokens` already includes cached input, the same total Claude's reader sums from its three input buckets.
+- `transcriptToolCounts` counts distinct `call_id`s over `function_call`, `custom_tool_call` and `local_shell_call` lines. Each is named as Codex's hooks name it, so a rollout count and the live count land on one row: `exec_command` and the local shell are `Bash` (`HookToolName::bash()` in `codex-rs/core/src/tools/handlers/unified_exec.rs`), `apply_patch` and `spawn_agent` keep their names (`hook_names.rs`), and an MCP call is `mcp__<namespace>__<name>` (`ensure_mcp_prefix(join_tool_name(..))` in `handlers/mcp.rs`). `write_stdin` polls are left out, because no hook reports them.
+- `transcriptToolResultTokens` estimates each output's text at chars/4 under its call's name, from a per-path cursor that reads only the bytes appended since the last call. It reads in 4 MB chunks through the line reader Claude's cursor uses (`shared/jsonl-complete-lines.ts`), one read per path at a time, so two overlapping popover refetches never count an output twice. An output's image items are not estimated.
+- `scopesTranscriptReadsByTime` is true: a resume appends to the same rollout (`open_rollout_for_append` in `codex-rs/rollout/src/recorder.rs`), and every line carries a `timestamp` (`RolloutLine` in `codex-rs/history/src/lib.rs`), so both reads keep to one run's `[sinceMs, untilMs)`.
+
+The transcript parser (`get_transcript`, the Conversation viewer) maps `custom_tool_call` to a `tool_use` and `custom_tool_call_output` to a `tool_result`. An `apply_patch` input becomes `{ file_path, patch }` (see `fileChangeTools` below); any other freeform input keeps its raw text. Every `apply_patch` is one ("This is a FREEFORM tool, so do not wrap the patch in JSON", `codex-rs/core/src/tools/handlers/apply_patch_spec.rs`), so before this every edit Codex made was missing from the viewer. `local_shell_call` and `web_search_call` become `tool_use` entries carrying their `action`, and an output given as content items reads as its text items joined.
 
 Codex's rollout, transcript and model-history readers resolve Codex's home through `codexHomeDir` (`config-toml.ts`), so `$CODEX_HOME` is honored there too; with `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry at all.
 
@@ -128,8 +180,52 @@ Codex's home for a distro is the `CODEX_HOME` its interactive shell sets, mapped
 
 The session id comes from the SessionStart hook, the startup banner, or a scan of the distro's `sessions/<YYYY>/<MM>/<DD>/` folders for today and yesterday (UTC), which matches a rollout's `session_meta.cwd` against the `/mnt` form of the cwd. The rollout is found by id in the same folders and tailed over the share. The transcript, the auto_command check and the model scan read the same home. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Codex installed in a distro.
 
+## Claude Code parity (task #980)
+
+Each gap against the Claude adapter was checked against Codex's own documentation and source for codex-cli 0.163.0 (the release the installed binary reports, tag `rust-v0.163.0`). Codex could not be run signed in, so nothing here was checked against a live session.
+
+**Built from documentation, not yet run against a signed-in Codex:**
+
+- The effort override on both session forms, and on the title and answer runs.
+- The `model/list` read for a signed-in account. A logged-out codex-cli 0.163.0 answered with its whole list, and `tests/fixtures/codex-app-server-model-list.json` replays that answer.
+- `configuredModelFromCommand` and `modelDisplayName`.
+- Live effort, `reportedByAgent`, and `token_usage_record` in the live usage.
+- `transcriptUsage`, `transcriptToolCounts`, `transcriptToolResultTokens` and `scopesTranscriptReadsByTime`.
+- The `custom_tool_call`, `local_shell_call` and `web_search_call` entries in the transcript.
+- `fileChangeTools` for `apply_patch`.
+- The `codex exec` non-interactive form.
+
+**Supported by the docs, waiting on a live probe:**
+
+- **`proveConversationGone`.** `codex resume` of a missing id exits with "No saved session found with ID" (`tui/src/lib.rs`), so a deleted rollout could start fresh from a recap as Claude's does. But Codex documents no retention sweep, and the part the 0.158+ SQLite thread index (`thread_history_1.sqlite`) plays in a resume is not settled.
+- **Hook events `SubagentStart`, `SubagentStop`, `PostCompact`, `SessionEnd` and `Interrupt`** (`codex-rs/hooks/src/schema.rs`). The trust read is all-or-nothing, so an event a user's Codex does not know would turn every hook off. The `hooks-list` fixture has to be captured again from the real CLI. The same probe should show whether a denied approval fires any hook that ends its wait.
+- **`pastedImageNativeExtensions`:** png, jpg, jpeg, gif and webp, attached by content (`paste_input.rs`, `chat_composer.rs`).
+- **The exit sequence.** One Ctrl+C only shows "press again to quit" (`footer.rs`), while `/quit`, `/exit` and a second Ctrl+C exit. The pty-teardown rule asks for the dialog probe before a sequence changes.
+- **`describeStartupFailure`** for "No saved session found with ID". A recognizer needs wording seen on a real card.
+- **Subagent transcripts and usage.** A child is its own thread (`SubAgentSource.thread_spawn.parent_thread_id` in `protocol.rs`); where its rollout lives is implied, not stated, and no local rollout holds a spawn.
+- **The answer run's streaming, search and usage** (`codex exec --json` `turn.completed`, `exec_events.rs`), and a warm `openAnswerSession` over app-server.
+- **`supportsReadOnlyLaunch` and `supportsReadableDirectories`.** The read-only sandbox reads the whole disk (`has_full_disk_read_access`).
+- **`consoleCloseIsGraceful`, `hungTurn` and a paste verifier.** Codex documents none of these.
+- **Checks on the builds above:**
+  - that `model/list` answers for a signed-in account;
+  - that `codex exec resume` honors `sandbox_mode`, and takes the PTY's folder as its working folder under WSL;
+  - that a resumed session's `token_usage_record` lines carry a `session_id` equal to their `thread_id`. If not, the live filter skips every record and the context bar stops moving.
+
+**Not supported by the CLI:**
+
+- **Live model or effort injection.** `/model` opens a picker and takes no argument.
+- **A plan-mode launch, plan exit and plan auto-approval.** No flag or config key starts Plan mode; only `/plan` does (`config.schema.json` has `plan_mode_reasoning_effort` and no mode key). The `plan` permission mode stays a read-only sandbox.
+- **Cost telemetry.** The rollout has no USD figure.
+
+**Supported, not built, by decision:**
+
+- **Rate-limit windows.** `token_count.rate_limits` carries them. But the renderer keeps one rate-limit snapshot for every agent (`latestRateLimits` in `session-store.ts`), so Codex windows would also show on Claude's pill. Parsing them in the adapter alone would do exactly that, so nothing reads them. Showing them needs a per-agent snapshot in shared renderer code, which this adapter's task left alone while sibling adapters were changing in parallel.
+- **`parseTranscriptWindow`.** The format supports it, but the measured rollouts are at most 0.3 MB against the 16 MB tail cap, so the tail already indexes whole conversations.
+
+`fileChangeTools` is built inside the adapter, with no contract change. `apply_patch` input is patch text with no path field, so the transcript parser records each call's input as `{ file_path, patch }`. Its `file_path` is the first file the patch's `*** Add File:`, `*** Update File:`, `*** Delete File:` or `*** Move to:` headers name (`codex-rs/core/assets/tools/apply_patch.lark` at rust-v0.163.0). It leads the JSON, because the chunker cuts each tool input at 200 characters. A patch touching several files is recorded under its first, and the Conversation viewer shows the patch inside that object.
+
 ## Limitations
 
-- No real-time token usage or cost data (no statusLine equivalent)
-- No merged settings file mechanism
-- No live `/model` or `/reasoning-effort` injection: changing either requires a respawn (`getInjectionSequence` returns `[]`), and effort is `config.toml`-only with no CLI flag
+- No cost data: the rollout carries tokens, not dollars.
+- No merged settings file mechanism.
+- No live `/model` or effort injection: changing either requires a respawn (`getInjectionSequence` returns `[]`).

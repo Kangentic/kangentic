@@ -139,10 +139,53 @@ describe('discoverCodexCapabilities', () => {
     expect(capabilities.supportsModelOverride).toBe(false);
   });
 
-  it('returns empty effortLevels (Codex effort is config-only)', async () => {
+  it('returns no effort levels when there is no model list to read them from', async () => {
     setHelpOutput('  -m, --model <MODEL>  Model the agent should use\n');
     const capabilities = await discoverCodexCapabilities('/usr/bin/codex');
     expect(capabilities.effortLevels).toEqual([]);
+  });
+
+  describe('Codex model/list (model-catalog.ts)', () => {
+    const CATALOG = {
+      models: ['model-a', 'model-b'],
+      displayNames: { 'model-a': 'Model A' },
+      effortLevels: ['low', 'medium', 'high'],
+      effortsByModel: { 'model-a': ['low', 'medium', 'high'], 'model-b': ['medium'] },
+    };
+
+    it('lists the CLI models first in its order, then models only the rollouts name, with names and efforts', async () => {
+      setHelpOutput('  -m, --model <MODEL>  Model\n');
+      setSessionStore({
+        '2026': { '05': { '03': {
+          'rollout-A.jsonl': `${JSON.stringify({ type: 'turn_context', payload: { model: 'model-old' } })}\n${JSON.stringify({ type: 'turn_context', payload: { model: 'model-b' } })}\n`,
+        } } },
+      });
+      const capabilities = await discoverCodexCapabilities('/usr/bin/codex', async () => CATALOG);
+      expect(capabilities.models).toEqual(['model-a', 'model-b', 'model-old']);
+      expect(capabilities.modelDisplayNames).toEqual({ 'model-a': 'Model A' });
+      expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high']);
+    });
+
+    it('answers as before, rollout models and no efforts, when the read fails or times out', async () => {
+      setHelpOutput('  -m, --model <MODEL>  Model\n');
+      setSessionStore({
+        '2026': { '05': { '03': { 'rollout-A.jsonl': `${JSON.stringify({ type: 'turn_context', payload: { model: 'model-old' } })}\n` } } },
+      });
+      for (const readCatalog of [async () => null, async () => { throw new Error('offline'); }]) {
+        const capabilities = await discoverCodexCapabilities('/usr/bin/codex', readCatalog);
+        expect(capabilities.models).toEqual(['model-old']);
+        expect(capabilities.modelDisplayNames).toBeUndefined();
+        expect(capabilities.effortLevels).toEqual([]);
+      }
+    });
+
+    it('offers no models without the --model flag, but still reports the efforts', async () => {
+      setHelpOutput('Usage: codex [options]\n');
+      const capabilities = await discoverCodexCapabilities('/usr/bin/codex', async () => CATALOG);
+      expect(capabilities.supportsModelOverride).toBe(false);
+      expect(capabilities.models).toBeUndefined();
+      expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high']);
+    });
   });
 
   it('returns empty capabilities when help invocation throws', async () => {

@@ -281,6 +281,13 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model']);
   });
 
+  it('Codex passes the chosen effort as its config override, one argv item, unquoted', async () => {
+    answerSpy.mockClear();
+    await new CodexAdapter().answerFromContext('THE PROMPT', '/bin/agent', '/scratch', 'some-model', { effort: 'low' });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model', '-c', 'model_reasoning_effort=low']);
+  });
+
   it('Gemini streams in plan mode, past the folder-trust check, under a session id it can remove', async () => {
     const options = await optionsFor(new GeminiAdapter());
     const sessionIdIndex = options.args.indexOf('--session-id');

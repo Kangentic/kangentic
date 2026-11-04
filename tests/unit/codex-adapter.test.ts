@@ -10,8 +10,24 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+/**
+ * Lets one test decide what `resolveCliTarget` answers for a Codex in a WSL
+ * distro. Unset, every call goes to the real function.
+ */
+const cliTargetOverride = vi.hoisted(() => ({ resolve: null as null | (() => Promise<unknown>) }));
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    resolveCliTarget: (...args: Parameters<typeof original.resolveCliTarget>) =>
+      (cliTargetOverride.resolve ? cliTargetOverride.resolve() : original.resolveCliTarget(...args)),
+  };
+});
+
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
+import { resetCodexResultCursorsForTests } from '../../src/main/agent/adapters/codex/transcript-usage';
+import { CodexModelCatalogCache, type CodexModelCatalog } from '../../src/main/agent/adapters/codex/model-catalog';
 import type { AgentInfo, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import { cliPathForTarget, type CliPlace } from '../../src/main/agent/shared/cli-target';
 import type { PermissionMode } from '../../src/shared/types';
@@ -39,19 +55,32 @@ function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommand
 /**
  * The adapter's private collaborators, narrowed to what the trust wiring tests
  * replace. `detector` would otherwise probe the machine's own Codex, and
- * `hookTrust` would start a real `codex app-server`.
+ * `hookTrust` and `modelCatalog` would each start a real `codex app-server`.
  */
 interface CodexAdapterInternals {
   detector: { detect: (overridePath?: string | null) => Promise<AgentInfo> };
   hookTrust: {
-    start: (codexPath: string) => void;
+    start: (codexPath: string, wslRead?: unknown) => void;
     settle: (timeoutMs: number) => Promise<void>;
     stateOverrideFor: (codexPath: string) => string | null;
   };
+  modelCatalog: CodexModelCatalogCache;
 }
 
 function internalsOf(adapter: CodexAdapter): CodexAdapterInternals {
   return adapter as unknown as CodexAdapterInternals;
+}
+
+/**
+ * Give `adapter` a model list cache whose read answers `catalog` without an
+ * app-server, through the cache's own reader parameter, and start its read for
+ * /usr/bin/codex.
+ */
+async function seedModelList(adapter: CodexAdapter, catalog: CodexModelCatalog): Promise<void> {
+  const cache = new CodexModelCatalogCache(async () => catalog);
+  Object.assign(adapter, { modelCatalog: cache });
+  cache.start('/usr/bin/codex');
+  await cache.settle(1000);
 }
 
 describe('Codex Adapter', () => {
@@ -85,10 +114,37 @@ describe('Codex Adapter', () => {
       expect(command).not.toContain(' -- ');
     });
 
-    it('adds -q and --json flags for non-interactive mode', () => {
-      const command = adapter.buildCommand(makeOptions({ nonInteractive: true }));
-      expect(command).toContain('-q');
-      expect(command).toContain('--json');
+    it('runs a non-interactive session as codex exec, which takes no approval flag', () => {
+      // `-q --json` came from the retired TypeScript CLI; codex-cli 0.163.0's
+      // `--help` lists neither, and `codex exec --help` lists no `-a`.
+      const command = adapter.buildCommand(makeOptions({ nonInteractive: true, shell: 'bash', prompt: 'go' }));
+      expect(command).toMatch(/^\/usr\/bin\/codex exec -C /);
+      expect(command).toContain('--sandbox workspace-write');
+      expect(command).not.toContain('--ask-for-approval');
+      expect(command).not.toContain('-q');
+      expect(command).not.toContain('--json');
+    });
+
+    it('resumes a non-interactive session as codex exec resume, its sandbox as a config override and no -C', () => {
+      // `codex exec resume --help` (0.163.0) lists neither -C nor -s.
+      const command = adapter.buildCommand(makeOptions({
+        nonInteractive: true, resume: true, sessionId: 'sess-1', permissionMode: 'plan', shell: 'bash',
+      }));
+      expect(command).toMatch(/^\/usr\/bin\/codex exec resume sess-1 /);
+      expect(command).toContain("-c 'sandbox_mode=read-only'");
+      expect(command).not.toContain(' -C ');
+      expect(command).not.toContain('--sandbox');
+      expect(command).not.toContain('--ask-for-approval');
+    });
+
+    it('keeps the bypass flag on both non-interactive forms', () => {
+      for (const resume of [false, true]) {
+        const command = adapter.buildCommand(makeOptions({
+          nonInteractive: true, resume, sessionId: 'sess-1', permissionMode: 'bypassPermissions', shell: 'bash',
+        }));
+        expect(command).toContain('--dangerously-bypass-approvals-and-sandbox');
+        expect(command).not.toContain('sandbox_mode');
+      }
     });
 
     it('adds --disable apps when the disableApps launch option is enabled', () => {
@@ -104,6 +160,109 @@ describe('Codex Adapter', () => {
     it('omits --disable apps when no launch options are provided', () => {
       const command = adapter.buildCommand(makeOptions());
       expect(command).not.toContain('--disable');
+    });
+  });
+
+  describe('buildCommand - reasoning effort', () => {
+    /** Give the adapter a model list for /usr/bin/codex, as a finished `model/list` read would. */
+    async function seedCatalog(effortsByModel: Record<string, string[]>): Promise<void> {
+      const effortLevels = [...new Set(Object.values(effortsByModel).flat())];
+      await seedModelList(adapter, { models: Object.keys(effortsByModel), displayNames: {}, effortLevels, effortsByModel });
+    }
+
+    it('passes a listed effort as -c model_reasoning_effort on a new session, a resume and an exec run', async () => {
+      await seedCatalog({ 'model-a': ['low', 'high'] });
+      for (const overrides of [{}, { resume: true, sessionId: 'sess-1' }, { nonInteractive: true }]) {
+        const command = adapter.buildCommand(makeOptions({ ...overrides, effort: 'high', shell: 'bash' }));
+        expect(command).toContain("-c 'model_reasoning_effort=high'");
+      }
+    });
+
+    it('places the effort before the prompt, which is the last argument', async () => {
+      await seedCatalog({ 'model-a': ['low'] });
+      const command = adapter.buildCommand(makeOptions({ effort: 'low', prompt: 'do it', shell: 'bash' }));
+      expect(command.indexOf('model_reasoning_effort=low')).toBeLessThan(command.indexOf("'do it'"));
+    });
+
+    it('leaves the effort out with no model list, so a level set for another agent changes nothing', () => {
+      // Codex ignored the effort before; a column whose agent changed keeps it.
+      const command = adapter.buildCommand(makeOptions({ effort: 'max', shell: 'bash' }));
+      expect(command).not.toContain('model_reasoning_effort');
+    });
+
+    it('checks the level against the chosen model, else against every listed model', async () => {
+      await seedCatalog({ 'model-a': ['low', 'medium'], 'model-b': ['high'] });
+      expect(adapter.buildCommand(makeOptions({ model: 'model-a', effort: 'high', shell: 'bash' }))).not.toContain('model_reasoning_effort');
+      expect(adapter.buildCommand(makeOptions({ model: 'model-b', effort: 'high', shell: 'bash' }))).toContain('model_reasoning_effort=high');
+      expect(adapter.buildCommand(makeOptions({ effort: 'high', shell: 'bash' }))).toContain('model_reasoning_effort=high');
+      expect(adapter.buildCommand(makeOptions({ model: 'typed-in-model', effort: 'medium', shell: 'bash' }))).toContain('model_reasoning_effort=medium');
+      expect(adapter.buildCommand(makeOptions({ effort: 'max', shell: 'bash' }))).not.toContain('model_reasoning_effort');
+    });
+
+    it('drops an effort that is not one bare token, rather than quoting it into TOML', async () => {
+      await seedCatalog({ 'model-a': ['very high', 'high"', "x'y", 'a=b'] });
+      for (const effort of ['', '   ', 'very high', 'high"', "x'y", 'a=b']) {
+        const command = adapter.buildCommand(makeOptions({ effort, shell: 'bash' }));
+        expect(command).not.toContain('model_reasoning_effort');
+      }
+    });
+
+    it('waits for the model list read in ensureTrust, beside the hook trust read', async () => {
+      const settle = vi.spyOn(internalsOf(adapter).modelCatalog, 'settle').mockResolvedValue(undefined);
+      vi.spyOn(internalsOf(adapter).hookTrust, 'settle').mockResolvedValue(undefined);
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-effort-trust-'));
+      const previousHome = process.env.CODEX_HOME;
+      process.env.CODEX_HOME = home;
+      try {
+        await adapter.ensureTrust(path.join(home, 'project'));
+        expect(settle).toHaveBeenCalledWith(8000);
+      } finally {
+        if (previousHome === undefined) delete process.env.CODEX_HOME;
+        else process.env.CODEX_HOME = previousHome;
+        vi.restoreAllMocks();
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('buildCommand - embedded app-server', () => {
+    // Since 0.157 an interactive codex runs inside a shared app-server daemon
+    // that keeps the environment it started with, unless a `-c` override other
+    // than a feature boolean forces embedded mode (`config_exclusion` in
+    // codex-rs/tui/src/daemon_startup.rs, 0.163.0). The events path, the task
+    // tag and the MCP token all ride this session's environment, so every form
+    // must carry one such override even with MCP, hooks and effort all off.
+    it('every form carries a non-feature -c override, so the TUI never joins the shared daemon', () => {
+      const forms: Array<Partial<SpawnCommandOptions>> = [
+        {},
+        { resume: true, sessionId: 'sess-1' },
+        { nonInteractive: true },
+        { nonInteractive: true, resume: true, sessionId: 'sess-1' },
+      ];
+      for (const form of forms) {
+        const command = adapter.buildCommand(makeOptions({ ...form, mcpServerEnabled: false, shell: 'bash' }));
+        expect(command).toContain("-c 'check_for_update_on_startup=false'");
+      }
+    });
+  });
+
+  describe('configuredModelFromCommand', () => {
+    it('reads the --model the command was built with', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'gpt-5.2-codex', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'gpt-5.2-codex', displayName: 'gpt-5.2-codex' });
+    });
+
+    it('never reads a --model inside the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: 'run it with --model other', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toBeNull();
+    });
+
+    it('names the model the way Codex model/list named it', async () => {
+      await seedModelList(adapter, { models: ['gpt-5.2-codex'], displayNames: { 'gpt-5.2-codex': 'GPT-5.2 Codex' }, effortLevels: ['low'], effortsByModel: { 'gpt-5.2-codex': ['low'] } });
+      const command = adapter.buildCommand(makeOptions({ model: 'gpt-5.2-codex', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'gpt-5.2-codex', displayName: 'GPT-5.2 Codex' });
+      expect(adapter.modelDisplayName('gpt-5.2-codex')).toBe('GPT-5.2 Codex');
+      expect(adapter.modelDisplayName('unknown-model')).toBeNull();
     });
   });
 
@@ -733,23 +892,61 @@ describe('Codex Adapter', () => {
       fs.rmSync(workspace, { recursive: true, force: true });
     });
 
-    it('starts the trust read for the binary detect finds, and passes the override path on', async () => {
-      const { detector, hookTrust } = internalsOf(adapter);
+    it('starts the trust read and the model list read for the binary detect finds, and passes the override path on', async () => {
+      const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
       const found: AgentInfo = { found: true, path: CODEX_PATH, version: '0.163.0' };
       const detect = vi.spyOn(detector, 'detect').mockResolvedValue(found);
       const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+      const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
       await expect(adapter.detect('/opt/custom/codex')).resolves.toEqual(found);
       expect(detect).toHaveBeenCalledWith('/opt/custom/codex');
       expect(start).toHaveBeenCalledTimes(1);
       expect(start).toHaveBeenCalledWith(CODEX_PATH);
+      expect(catalogStart).toHaveBeenCalledTimes(1);
+      expect(catalogStart).toHaveBeenCalledWith(CODEX_PATH);
     });
 
-    it('starts no trust read when detect finds no binary', async () => {
-      const { detector, hookTrust } = internalsOf(adapter);
+    describe('a Codex in a WSL distro', () => {
+      const WSL_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\codex';
+      const found: AgentInfo = { found: true, path: WSL_PATH, version: '0.163.0', cliTarget: { kind: 'wsl', distro: 'Ubuntu' } };
+      const resolvedTarget = { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/codex' };
+
+      afterEach(() => {
+        cliTargetOverride.resolve = null;
+      });
+
+      it('reads the model list in the distro the target names', async () => {
+        const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
+        vi.spyOn(detector, 'detect').mockResolvedValue(found);
+        const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+        const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
+        cliTargetOverride.resolve = async () => resolvedTarget;
+        await adapter.detect();
+        expect(catalogStart).toHaveBeenCalledTimes(1);
+        expect(catalogStart).toHaveBeenCalledWith(WSL_PATH, resolvedTarget);
+        expect(start).toHaveBeenCalledWith(WSL_PATH, { target: resolvedTarget, version: '0.163.0' });
+      });
+
+      it('starts no read, here or there, when the distro cannot be resolved', async () => {
+        const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
+        vi.spyOn(detector, 'detect').mockResolvedValue(found);
+        const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+        const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
+        cliTargetOverride.resolve = async () => { throw new Error('distro not reachable'); };
+        await expect(adapter.detect()).resolves.toEqual(found);
+        expect(catalogStart).not.toHaveBeenCalled();
+        expect(start).not.toHaveBeenCalled();
+      });
+    });
+
+    it('starts no trust read and no model list read when detect finds no binary', async () => {
+      const { detector, hookTrust, modelCatalog } = internalsOf(adapter);
       vi.spyOn(detector, 'detect').mockResolvedValue({ found: false, path: null, version: null });
       const start = vi.spyOn(hookTrust, 'start').mockImplementation(() => undefined);
+      const catalogStart = vi.spyOn(modelCatalog, 'start').mockImplementation(() => undefined);
       await adapter.detect();
       expect(start).not.toHaveBeenCalled();
+      expect(catalogStart).not.toHaveBeenCalled();
     });
 
     /** A spawn that asks for hooks: an events file in a real folder, the shell fixed so quoting is predictable. */
@@ -1263,5 +1460,75 @@ describe('CodexAdapter.locateSessionHistoryFile - any day, no wait', () => {
     await expect(new CodexAdapter().locateSessionHistoryFile(ROLLOUT_ID, '/mock/project')).resolves.toBeNull();
     expect(timers).not.toHaveBeenCalled();
     timers.mockRestore();
+  });
+});
+
+describe('CodexAdapter transcript stats - rollout found by session id', () => {
+  const SESSION_ID = '019df02a-e744-7de2-8f30-63d9ae3ab36b';
+  let codexHome: string;
+  let originalCodexHome: string | undefined;
+
+  const call = (callId: string, name: string, at: string): string =>
+    JSON.stringify({ timestamp: at, type: 'response_item', payload: { type: 'function_call', name, arguments: '{}', call_id: callId } });
+  const result = (callId: string, text: string, at: string): string =>
+    JSON.stringify({ timestamp: at, type: 'response_item', payload: { type: 'function_call_output', call_id: callId, output: text } });
+  const usage = JSON.stringify({
+    timestamp: '2026-10-20T10:01:00.000Z',
+    type: 'token_usage_record',
+    payload: { thread_id: SESSION_ID, session_id: SESSION_ID, response_id: 'resp-1', usage: { input_tokens: 900, output_tokens: 9 } },
+  });
+
+  beforeEach(() => {
+    codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-codex-stats-'));
+    originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    resetCodexResultCursorsForTests();
+    const directory = path.join(codexHome, 'sessions', '2026', '10', '20');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, `rollout-2026-10-20T10-00-00-${SESSION_ID}.jsonl`), `${[
+      JSON.stringify({ timestamp: '2026-10-20T10:00:00.000Z', type: 'session_meta', payload: { id: SESSION_ID } }),
+      call('call-1', 'exec_command', '2026-10-20T10:00:10.000Z'),
+      result('call-1', 'x'.repeat(40), '2026-10-20T10:00:11.000Z'),
+      call('call-2', 'apply_patch', '2026-10-20T10:20:00.000Z'),
+      call('call-3', 'exec_command', '2026-10-20T11:00:10.000Z'),
+      result('call-3', 'y'.repeat(8), '2026-10-20T11:00:11.000Z'),
+      usage,
+    ].join('\n')}\n`);
+  });
+
+  afterEach(() => {
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  });
+
+  it('counts the calls inside the window of the rollout named by the session id', async () => {
+    const adapter = new CodexAdapter();
+    const windowStart = Date.parse('2026-10-20T10:00:00.000Z');
+    const windowEnd = Date.parse('2026-10-20T10:30:00.000Z');
+    await expect(adapter.transcriptToolCounts({ agentSessionId: SESSION_ID, sinceMs: windowStart, untilMs: windowEnd })).resolves.toEqual({
+      toolCallCount: 2,
+      toolBreakdown: [
+        // Equal counts sort by name.
+        { toolName: 'apply_patch', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+        { toolName: 'Bash', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+      ],
+    });
+    await expect(adapter.transcriptToolCounts({ agentSessionId: SESSION_ID })).resolves.toMatchObject({ toolCallCount: 3 });
+  });
+
+  it('reads usage and result tokens from the same rollout', async () => {
+    const adapter = new CodexAdapter();
+    await expect(adapter.transcriptUsage({ agentSessionId: SESSION_ID })).resolves.toEqual({ inputTokens: 900, outputTokens: 9 });
+    await expect(adapter.transcriptToolResultTokens({ agentSessionId: SESSION_ID })).resolves.toEqual({ Bash: 12 });
+    await expect(adapter.transcriptToolResultTokens({ agentSessionId: SESSION_ID, untilMs: Date.parse('2026-10-20T10:30:00.000Z') })).resolves.toEqual({ Bash: 10 });
+  });
+
+  it('answers null when there is no session id, and when no rollout carries it', async () => {
+    const adapter = new CodexAdapter();
+    await expect(adapter.transcriptToolCounts({ agentSessionId: null })).resolves.toBeNull();
+    await expect(adapter.transcriptUsage({ agentSessionId: null })).resolves.toBeNull();
+    await expect(adapter.transcriptToolResultTokens({})).resolves.toBeNull();
+    await expect(adapter.transcriptToolCounts({ agentSessionId: '019df02a-0000-4000-8000-00000000ffff' })).resolves.toBeNull();
   });
 });

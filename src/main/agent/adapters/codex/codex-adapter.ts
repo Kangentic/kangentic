@@ -3,12 +3,15 @@ import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
-import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage } from './transcript-parser';
+import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage, CODEX_PATCH_TOOL, CODEX_PATCH_PATH_FIELD } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
-import { CodexHookTrustCheck } from './hook-trust';
+import { CodexHookTrustCheck, shimFamilyKey } from './hook-trust';
 import { discoverCodexCapabilities } from './capability-discovery';
+import { CodexModelCatalogCache, CATALOG_DISCOVERY_WAIT_MS, CATALOG_TTL_MS, FAILED_READ_RETRY_MS, catalogAcceptsEffort } from './model-catalog';
+import { codexEffortExecArgs } from './command-builder';
+import { codexTranscriptToolCounts, codexTranscriptToolResultTokens, codexTranscriptUsage } from './transcript-usage';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
@@ -23,11 +26,12 @@ import type {
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
 } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
+import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo, TranscriptUsage, TranscriptToolCounts } from '../../../../shared/types';
+import type { AnswerFromContextOptions } from '../../agent-adapter';
 import { ActivityDetection } from '../../../../shared/types';
 
-/** How long a spawn waits for the hook trust read before going without hooks. */
-const HOOK_TRUST_SETTLE_MS = 8_000;
+/** How long a spawn waits for the hook trust and model list reads before going without them. */
+const SPAWN_READS_SETTLE_MS = 8_000;
 
 /**
  * Codex CLI adapter - wraps CodexDetector, CodexCommandBuilder, and
@@ -89,6 +93,27 @@ export class CodexAdapter implements AgentAdapter {
   /** Codex's own answer for the trust of Kangentic's hooks, per binary (hook-trust.ts). */
   private readonly hookTrust = new CodexHookTrustCheck();
 
+  /** Codex's own model list, per binary (model-catalog.ts). */
+  private readonly modelCatalog = new CodexModelCatalogCache();
+
+  /** The last whole `discoverCapabilities` answer per binary, and how long it is kept. */
+  private readonly capabilitiesCache = new Map<string, { capabilities: AgentCapabilities; at: number; ttlMs: number }>();
+
+  /**
+   * Resume appends to the same rollout (`open_rollout_for_append` in
+   * `codex-rs/rollout/src/recorder.rs` at rust-v0.163.0), and every rollout
+   * line carries a `timestamp`, so the transcript reads below honor `sinceMs`
+   * and `untilMs` (transcript-usage.ts).
+   */
+  readonly scopesTranscriptReadsByTime = true;
+
+  /**
+   * Codex edits every file through `apply_patch`, whose transcript entry names
+   * the first file its patch touches as `file_path` (transcript-parser.ts,
+   * `patchToolInput`), so the memory index's change corpus finds Codex's edits.
+   */
+  readonly fileChangeTools = [{ tool: CODEX_PATCH_TOOL, pathField: CODEX_PATCH_PATH_FIELD }];
+
   /**
    * Background commands (task #859): the rollout reports a command still
    * running at its yield (`Process running with session ID N`, which Codex's
@@ -105,12 +130,14 @@ export class CodexAdapter implements AgentAdapter {
     if (info.found && info.path) {
       if (!info.cliTarget) {
         this.hookTrust.start(info.path);
+        this.modelCatalog.start(info.path);
       } else {
         // A distro whose facts cannot be read now is left unread, never read
         // as this machine's: its sessions then run without hooks until a later
         // detection reads it, as after a read that outlives its bound.
         const target = await resolveCliTarget(info.path, true).catch(() => null);
         if (target && info.version) this.hookTrust.start(info.path, { target, version: info.version });
+        if (target) this.modelCatalog.start(info.path, target);
       }
     }
     return info;
@@ -118,6 +145,7 @@ export class CodexAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+    this.capabilitiesCache.clear();
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
@@ -128,10 +156,34 @@ export class CodexAdapter implements AgentAdapter {
     // answer that carries forward. See trust-manager.ts. A Codex in a WSL
     // distro keeps its trust in the distro's config.toml.
     await ensureWorktreeTrust(workingDirectory, place ?? null);
-    // Every spawn path awaits this before buildCommand, which reads the
-    // result synchronously. A read still running after the bound leaves this
-    // session without hooks rather than holding the spawn.
-    await this.hookTrust.settle(HOOK_TRUST_SETTLE_MS);
+    // Every spawn path awaits this before buildCommand, which reads both
+    // results synchronously. A read still running after the bound leaves this
+    // session without hooks, or without its effort override, rather than
+    // holding the spawn. The two reads run at once, so the wait is the longer.
+    await Promise.all([
+      this.hookTrust.settle(SPAWN_READS_SETTLE_MS),
+      this.modelCatalog.settle(SPAWN_READS_SETTLE_MS),
+    ]);
+  }
+
+  /**
+   * The effort a session spawn passes to the binary at `cliPath`, or
+   * undefined. Only a level Codex's own `model/list` advertises for this model
+   * (any listed model when none is set) goes through, and none goes through
+   * without a list. Codex ignored the effort before this was built, and a
+   * spawn's effort is not checked upstream (`resolveSpawnOverrides`): a column
+   * whose agent changed keeps its effort, and an MCP override is accepted
+   * unchecked while Codex lists no levels, so such a value must not start
+   * failing turns. The title and answer runs need no gate: their callers pass
+   * only a level `discoverCapabilities` reported.
+   */
+  private acceptedEffort(cliPath: string, effort: string | null | undefined, model: string | null | undefined): string | undefined {
+    const level = effort?.trim();
+    if (!level) return undefined;
+    const catalog = this.modelCatalog.catalogFor(cliPath);
+    if (catalog && catalogAcceptsEffort(catalog, level, model)) return level;
+    console.log(`[codex] effort "${level}" left out: ${catalog ? 'Codex does not list it for this model' : 'no model list read for this Codex'}`);
+    return undefined;
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -139,7 +191,7 @@ export class CodexAdapter implements AgentAdapter {
     const command = this.commandBuilder.buildCodexCommand({
       codexPath: agentPath,
       model,
-      effort,
+      effort: this.acceptedEffort(agentPath, effort, model),
       ...rest,
       codexHookStateOverride: this.hookTrust.stateOverrideFor(agentPath),
     });
@@ -323,13 +375,112 @@ export class CodexAdapter implements AgentAdapter {
     return readCodexTranscriptPage(agentSessionId, filePath, request);
   }
 
-  async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
-    return discoverCodexCapabilities(cliPath);
+  /** Lifetime tokens from the rollout's per-response usage (transcript-usage.ts). */
+  async transcriptUsage(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    place?: CliPlace | null;
+  }): Promise<TranscriptUsage | null> {
+    const filePath = await this.rolloutFor(input);
+    return filePath ? codexTranscriptUsage(filePath) : null;
+  }
+
+  /** Distinct tool calls in the rollout, named as the hooks name them, within `[sinceMs, untilMs)`. */
+  async transcriptToolCounts(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+    untilMs?: number | null;
+    place?: CliPlace | null;
+  }): Promise<TranscriptToolCounts | null> {
+    const filePath = await this.rolloutFor(input);
+    return filePath ? codexTranscriptToolCounts(filePath, input.sinceMs, input.untilMs) : null;
+  }
+
+  /** Estimated result tokens per tool, reading only what the rollout appended since the last call. */
+  async transcriptToolResultTokens(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+    sinceMs?: number | null;
+    untilMs?: number | null;
+    place?: CliPlace | null;
+  }): Promise<Record<string, number> | null> {
+    const filePath = await this.rolloutFor(input);
+    return filePath ? codexTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs) : null;
+  }
+
+  /** The rollout of a session, found by its id (rollouts are named by id, not by cwd). */
+  private async rolloutFor(input: { agentSessionId?: string | null; place?: CliPlace | null }): Promise<string | null> {
+    if (!input.agentSessionId) return null;
+    return findCodexTranscriptFile(input.agentSessionId, input.place ?? null);
+  }
+
+  /**
+   * The model list and effort levels come from Codex's own `model/list`
+   * (model-catalog.ts). `detect` starts that read; discovery waits for it at
+   * most `CATALOG_DISCOVERY_WAIT_MS`, so a cold app-server never holds the
+   * agent list, and answers without it on a timeout or failure. A forced
+   * refresh (a model dropdown opening) reads again.
+   */
+  async discoverCapabilities(cliPath: string, forceRefresh = false): Promise<AgentCapabilities> {
+    // The answer and condition runs ask on every run (they declare `effort`),
+    // so a whole answer is kept and `--help` and the rollout scan are not run
+    // each time. One built from the model list is kept for the list's own time
+    // to live; one whose read settled with no list (an app-server that failed
+    // or has no `model/list`) for the failed read's retry window. A read still running when the
+    // wait gave up is asked again on the next call.
+    const key = shimFamilyKey(cliPath);
+    const cached = this.capabilitiesCache.get(key);
+    if (!forceRefresh && cached && Date.now() - cached.at < cached.ttlMs) return structuredClone(cached.capabilities);
+    let builtFromList = false;
+    const capabilities = await discoverCodexCapabilities(cliPath, async (target) => {
+      this.modelCatalog.start(cliPath, target, forceRefresh);
+      const catalog = await this.modelCatalog.wait(cliPath, CATALOG_DISCOVERY_WAIT_MS);
+      builtFromList = catalog !== null;
+      return catalog;
+    });
+    // Judged by the list this answer was built from, not the list now: a read
+    // that lands after the wait gave up must not keep a list-less answer.
+    const settledWithoutList = !builtFromList && this.modelCatalog.isSettled(cliPath) && !this.modelCatalog.catalogFor(cliPath);
+    if (builtFromList || settledWithoutList) {
+      this.capabilitiesCache.set(key, {
+        capabilities: structuredClone(capabilities),
+        at: Date.now(),
+        ttlMs: builtFromList ? CATALOG_TTL_MS : FAILED_READ_RETRY_MS,
+      });
+    }
+    return capabilities;
+  }
+
+  /**
+   * The model the command was built with, so the card names it before the
+   * rollout does. Read only from the flag region: every form emits
+   * `check_for_update_on_startup=false` after `--model` and before the prompt,
+   * so a prompt containing `--model` is never misread. The name is Codex's own
+   * `displayName` from `model/list` when a read has one, else the id.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const flagEnd = command.indexOf('check_for_update_on_startup=false');
+    const flagRegion = flagEnd === -1 ? command : command.slice(0, flagEnd);
+    const match = flagRegion.match(/--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const id = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+    if (!id) return null;
+    return { id, displayName: this.modelCatalog.displayNameOf(id) ?? id };
+  }
+
+  /** Codex's own `displayName` for a model id learned from telemetry, from any `model/list` read so far. */
+  modelDisplayName(modelId: string): string | null {
+    return this.modelCatalog.displayNameOf(modelId);
   }
 
   getInjectionSequence(_spec: SettingsChangeSpec): string[] {
-    // Codex does not support live `/model` or `/reasoning-effort` slash commands.
-    // Model/effort changes require respawn (handled by task-move.ts fallback).
+    // Codex's `/model` only opens a picker ("choose what model and reasoning
+    // effort to use"; not in `supports_inline_args`, codex-rs/tui/src/slash_command.rs
+    // at rust-v0.163.0), and no slash command sets effort, so there is nothing
+    // to type. Model/effort changes require respawn (handled by task-move.ts fallback).
     return [];
   }
 
@@ -342,7 +493,13 @@ export class CodexAdapter implements AgentAdapter {
     // Codex yet (the CLI here was logged out).
     return runCliPrintSummarize({
       cliPath,
-      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(options?.model ? ['--model', options.model] : [])],
+      args: [
+        'exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral',
+        ...(options?.model ? ['--model', options.model] : []),
+        // Already one of `discoverCapabilities`' levels: the caller passes only
+        // a level the CLI reports (automation-agent.ts).
+        ...codexEffortExecArgs(options?.effort),
+      ],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       // A Codex installed in a WSL distro runs there.
@@ -350,7 +507,14 @@ export class CodexAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+  /**
+   * `effort`: the run passes the level as `-c model_reasoning_effort=<level>`,
+   * which `codex exec` takes (`codex exec --help`, codex-cli 0.163.0;
+   * https://learn.chatgpt.com/docs/config-file/config-reference), and only a
+   * level `model/list` reported reaches it. `low` keeps an answer cheap where
+   * the model offers it. Built from documentation; not yet run signed in.
+   */
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true, defaultEffort: 'low' };
 
   /**
    * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
@@ -375,12 +539,19 @@ export class CodexAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error.
-      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(model ? ['--model', model] : [])],
+      args: [
+        'exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral',
+        ...(model ? ['--model', model] : []),
+        // Already one of `discoverCapabilities`' levels: the caller passes only
+        // a level the CLI reports (answer-run.ts, automation-agent.ts).
+        ...codexEffortExecArgs(options?.effort),
+      ],
       prompt,
       cwd,
       // A Codex installed in a WSL distro runs there.

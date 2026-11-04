@@ -1,14 +1,17 @@
 /**
- * Codex CLI capability discovery: detect available models and model override support.
+ * Codex CLI capability discovery: detect available models, effort levels and
+ * model override support.
  *
  * Codex supports:
  * - `--model <model>` or `-m <model>` flag for model selection
- * - `model_reasoning_effort` config in config.toml (config-file only, not CLI)
- * - No documented live `/model` slash command
+ * - `model_reasoning_effort`, a config key `-c` sets per invocation (no flag)
+ * - No live `/model <id>`: Codex's `/model` only opens a picker
+ *   (`supports_inline_args` in `codex-rs/tui/src/slash_command.rs`, codex-cli 0.163.0)
  *
  * Models are discovered from:
  * 1. `codex --help` output (static support detection)
- * 2. Session history in ~/.codex/sessions directory (JSONL init events + turn_context)
+ * 2. `codex app-server`'s `model/list` (model-catalog.ts): models, display names, efforts
+ * 3. Session history in ~/.codex/sessions directory (JSONL init events + turn_context)
  */
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
@@ -16,6 +19,7 @@ import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
 import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { codexHomeDir } from './config-toml';
+import type { CodexModelCatalog } from './model-catalog';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -118,15 +122,25 @@ async function scanCodexSessionHistory(target: CliTarget | null): Promise<string
 }
 
 /**
- * Discover Codex's capabilities: model override support and available models.
- * Returns:
- * - supportsModelOverride: true if --model flag is supported
- * - models: list of discovered models (from history)
- * - effortLevels: empty array (Codex effort is config-file only, not CLI)
+ * Discover Codex's capabilities: model override support, its models, their
+ * display names, and the reasoning efforts they advertise.
  *
- * Best-effort: always returns a capabilities object even if detection partially fails.
+ * - supportsModelOverride: true if --model flag is supported
+ * - models: Codex's own `model/list` (model-catalog.ts), then any other model
+ *   its rollouts recorded
+ * - modelDisplayNames: `model/list`'s `displayName` per model
+ * - effortLevels: every `supportedReasoningEfforts` level `model/list` reported.
+ *   They reach the CLI as `-c model_reasoning_effort=<level>` (command-builder.ts).
+ *   Empty when the list could not be read, which hides the Effort row as before.
+ *
+ * `readCatalog` gives the model list for the resolved target, or null; the
+ * adapter passes its cache's bounded wait. Best-effort: always returns a
+ * capabilities object even if detection partially fails.
  */
-export async function discoverCodexCapabilities(cliPath: string): Promise<AgentCapabilities> {
+export async function discoverCodexCapabilities(
+  cliPath: string,
+  readCatalog?: (target: CliTarget | null) => Promise<CodexModelCatalog | null>,
+): Promise<AgentCapabilities> {
   // A Codex installed in a WSL distro: its --help runs there, and its session
   // history is in the distro's CODEX_HOME. A distro whose facts cannot be read
   // cannot be asked either, and is never asked as this machine.
@@ -139,6 +153,8 @@ export async function discoverCodexCapabilities(cliPath: string): Promise<AgentC
     // Flag detection failure - continue with assumed no support
   }
 
+  const catalog = readCatalog ? await readCatalog(target).catch(() => null) : null;
+
   // Discover models from session history (best-effort)
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
@@ -149,11 +165,17 @@ export async function discoverCodexCapabilities(cliPath: string): Promise<AgentC
     }
   }
 
+  // The CLI's own list first, in its order, then what only the rollouts name
+  // (a model the account no longer lists but a session ran on).
+  const models = supportsModelOverride
+    ? [...(catalog?.models ?? []), ...discoveredModels.filter((model) => !catalog?.models.includes(model))]
+    : [];
+  const displayNames = catalog ? catalog.displayNames : {};
+
   return {
     supportsModelOverride,
-    models: discoveredModels.length > 0 ? discoveredModels : undefined,
-    // Codex effort/reasoning is config-file only (config.toml: model_reasoning_effort)
-    // No CLI flag, so effortLevels is always empty
-    effortLevels: [],
+    models: models.length > 0 ? models : undefined,
+    ...(Object.keys(displayNames).length > 0 ? { modelDisplayNames: { ...displayNames } } : {}),
+    effortLevels: catalog ? [...catalog.effortLevels] : [],
   };
 }

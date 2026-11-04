@@ -69,6 +69,16 @@ describe('scopesTranscriptReadsByTime on the real adapters', () => {
     expect(typeof adapter?.transcriptToolCounts).toBe('function');
   });
 
+  // Codex appends every resume to the same rollout, and its counts and result
+  // tokens filter calls by each line's timestamp (codex/transcript-usage.ts).
+  it('the registered Codex adapter declares it, and the earlier-run fill can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('codex_agent');
+    expect(adapter, 'codex_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
+  });
+
   // Grok and Antigravity count tool calls over the whole transcript and ignore
   // sinceMs and untilMs. Declaring the flag on either would let a whole
   // conversation's calls land on one run's record, double counting every

@@ -42,6 +42,15 @@ if (args.includes('--version')) {
   process.exit(0);
 }
 
+// `codex app-server` is the JSON-RPC server the adapter asks for its hook trust
+// and its model list (hook-trust.ts, model-catalog.ts). The mock speaks no
+// JSON-RPC: exiting at once fails both reads fast, so the sessions run without
+// hooks and the pickers keep the rollout models, instead of a "session" that
+// writes a rollout and waits out each read's 20 s bound.
+if (args[0] === 'app-server') {
+  process.exit(1);
+}
+
 let sessionId = null;
 let resumed = false;
 let prompt = null;
