@@ -3876,9 +3876,27 @@ test.describe('Command Terminal', () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first, second } = await openTwoReady(page);
+        // What opening the terminals sent is behind us, so the shrink's refits are counted from here.
+        await settleResizes(page);
+        const frameWidths = () => page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+          .map((frame) => Math.round(frame.getBoundingClientRect().width)));
+        const widthsBefore = await frameWidths();
         await dragPanelEdgeTo(page, 'e', { x: 10 });
         await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
         await stillTerminals(page, [first, second]);
+        await expectNoFrameHold(page);
+        await settleFrames(page, 10);
+        // Each terminal the shrink narrowed refits once, after its frame hold ends. A quiet gap
+        // cannot tell that refit from none, and one that landed after it ran into the grow
+        // below as a resize mid-drag (a loaded CI runner), so wait for the refit itself.
+        const widthsAfter = await frameWidths();
+        for (const [index, sessionId] of [first, second].entries()) {
+          if (Math.abs(widthsAfter[index] - widthsBefore[index]) <= 8) continue;
+          await expect.poll(async () => (await resizesOf(page, sessionId)).length, {
+            message: `terminal ${index + 1} refit after the shrink, ${widthsBefore[index]} to ${widthsAfter[index]}px`,
+            timeout: 8000,
+          }).toBeGreaterThanOrEqual(1);
+        }
         await settleResizes(page);
         await expectNoFrameHold(page);
 
