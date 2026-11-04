@@ -56,6 +56,14 @@ export function parseModelAnnouncement(text: string): string | null {
   return match ? match[1] : null;
 }
 
+/** One count in a `Tokens:` report, `<number>[k|M] <label>`, per label. */
+const TOKEN_VALUE = {
+  sent: /([0-9][0-9,.]*)\s*(k|M)?\s+sent/i,
+  received: /([0-9][0-9,.]*)\s*(k|M)?\s+received/i,
+  cacheWrite: /([0-9][0-9,.]*)\s*(k|M)?\s+cache write/i,
+  cacheHit: /([0-9][0-9,.]*)\s*(k|M)?\s+cache hit/i,
+} as const;
+
 /**
  * The counts in a `Tokens:` report, or null when the text is not one or names
  * neither sent nor received tokens. Aider's `format_tokens` writes `1.2k` above
@@ -84,13 +92,19 @@ export function parseCostReport(text: string): AiderCostReport | null {
   return { messageUsd, sessionUsd };
 }
 
-/** One count in a `Tokens:` report, `<number>[k|M] <label>`, per label. */
-const TOKEN_VALUE = {
-  sent: /([0-9][0-9,.]*)\s*(k|M)?\s+sent/i,
-  received: /([0-9][0-9,.]*)\s*(k|M)?\s+received/i,
-  cacheWrite: /([0-9][0-9,.]*)\s*(k|M)?\s+cache write/i,
-  cacheHit: /([0-9][0-9,.]*)\s*(k|M)?\s+cache hit/i,
-} as const;
+const BARE_COST_LINE = /^Cost: \$\S+ message, \$\S+ session\.?$/;
+
+/**
+ * Whether a line is the `Cost:` half of a `Tokens:` report printed on a line
+ * of its own. Aider does that when the report carries both cache fields, and
+ * `tool_output` quotes only the first line, so in the history this half has
+ * no `> `. The line counts as the report's half only right after a `Tokens:`
+ * line; callers check that. The match is the whole line, so a reply that only
+ * mentions a cost is not taken for it.
+ */
+export function isBareCostLine(line: string): boolean {
+  return BARE_COST_LINE.test(line.trim());
+}
 
 function tokenValue(report: string, pattern: RegExp): number {
   const match = pattern.exec(report);
@@ -140,6 +154,13 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
   let anyCost = false;
   let previousWasTokensReport = false;
 
+  const readCost = (text: string): void => {
+    const cost = parseCostReport(text);
+    if (!cost) return;
+    currentRunCost = cost.sessionUsd;
+    anyCost = true;
+  };
+
   for (const line of content.split(/\r?\n/)) {
     if (AIDER_SESSION_HEADER.test(line)) {
       if (currentRunCost !== null) finishedRunsCost += currentRunCost;
@@ -147,15 +168,19 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
       previousWasTokensReport = false;
       continue;
     }
-    const quoted = stripBlockquote(line);
-    const reportText = quoted ?? (previousWasTokensReport ? line : null);
-    previousWasTokensReport = false;
-    if (reportText === null) continue;
 
-    const model = quoted !== null ? parseModelAnnouncement(quoted) : null;
+    const quoted = stripBlockquote(line);
+    if (quoted === null) {
+      // The one unquoted line read: a report's `Cost:` half on its own line.
+      if (previousWasTokensReport && isBareCostLine(line)) readCost(line);
+      previousWasTokensReport = false;
+      continue;
+    }
+
+    const model = parseModelAnnouncement(quoted);
     if (model) summary.model = model;
 
-    const tokens = quoted !== null ? parseTokensReport(quoted) : null;
+    const tokens = parseTokensReport(quoted);
     if (tokens) {
       summary.lastTokens = tokens;
       summary.totals.sent += tokens.sent;
@@ -163,15 +188,10 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
       summary.totals.cacheWrite += tokens.cacheWrite;
       summary.totals.cacheHit += tokens.cacheHit;
       summary.reportCount += 1;
-      previousWasTokensReport = true;
     }
-
-    const cost = parseCostReport(reportText);
-    if (cost) {
-      currentRunCost = cost.sessionUsd;
-      anyCost = true;
-      previousWasTokensReport = false;
-    }
+    // A `Tokens:` line whose `Cost:` half shares it is a complete report.
+    previousWasTokensReport = tokens !== null && parseCostReport(quoted) === null;
+    readCost(quoted);
   }
   if (currentRunCost !== null) finishedRunsCost += currentRunCost;
   summary.totalCostUsd = anyCost ? finishedRunsCost : null;

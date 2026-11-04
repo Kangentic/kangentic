@@ -35,7 +35,7 @@ type TranscriptFormat = 'structured' | 'raw';
  *   assistant text, tool calls and results - rendered as clean markdown.
  *   Sourced from each agent's native session history via the adapter's
  *   optional `parseTranscript` capability (no agent-name branching here).
- *   Adapters without that capability (Aider, and agents whose history
+ *   Adapters without that capability (Copilot, and agents whose history
  *   location is unknown) report that the structured format is unsupported
  *   and point at `format: "raw"`.
  *

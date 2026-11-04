@@ -15,6 +15,7 @@ import { discoverAiderCapabilities } from './capability-discovery';
 import { aiderTranscriptUsage, parseAiderTranscript } from './transcript-parser';
 import {
   aiderModelDisplayName,
+  isBareCostLine,
   parseCostReport,
   parseModelAnnouncement,
   parseTokensReport,
@@ -44,6 +45,9 @@ import { ActivityDetection } from '../../../../shared/types';
  * A backslash is live there too, but both paths are forward-slashed first.
  */
 const LIVE_IN_DOUBLE_QUOTES = /["$`]/;
+
+/** Any C0 control character or DEL, none of which belongs in a typed command. */
+const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
 
 /**
  * The idle command Aider runs through its own shell (`subprocess.run` with
@@ -114,8 +118,9 @@ function buildWslNotificationsCommand(eventsOutputPath: string, place: CliPlace)
  * restore. Each Kangentic session gets its own history file (see
  * `history-paths.ts`), which carries the conversation, the model and the
  * tokens and cost of every message. Everything here is built from Aider's
- * published options and source (v0.86.1) and has not been run against an
- * installed Aider.
+ * published options and source (v0.86.1). Every flag it sends is checked
+ * against a real `aider --help` capture (0.86.2); no Aider session has been
+ * run against it.
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = 'aider';
@@ -149,9 +154,7 @@ export class AiderAdapter implements AgentAdapter {
   // history is a file in the project folder, which Windows reads as before.
   readonly supportsWslCli = true;
 
-  // Aider uses the shared AgentDetector via composition (keeps the
-  // single-file layout while deduplicating detection logic across
-  // all four adapters).
+  // Detection is the shared AgentDetector, by composition.
   private readonly detector = new AgentDetector({
     binaryName: 'aider',
     // Aider is most commonly installed via `pip install --user`, which puts
@@ -486,15 +489,6 @@ export class AiderAdapter implements AgentAdapter {
 const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odel: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
 /** The line Aider prints after one: `Tokens: 2.3k sent, 145 received. Cost: ...`. */
 const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
-/**
- * The `Cost:` half of that report, which Aider prints on a line of its own
- * when the `Tokens:` half carries both cache fields
- * (`calculate_and_show_tokens_and_cost`, aider/coders/base_coder.py).
- */
-const AIDER_COST_LINE = /^Cost: \$\S+ message, \$\S+ session\.?$/;
-
-/** Any C0 control character or DEL, none of which belongs in a typed command. */
-const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
 
 /** Where an answer run's stdout splits into banner, answer and usage report. */
 interface AiderAnswerLayout {
@@ -516,7 +510,7 @@ function layoutAiderAnswer(stdout: string): AiderAnswerLayout {
     const previousIsTokensReport = end - 2 >= start && AIDER_TOKENS_LINE.test(lines[end - 2].trim());
     if (last === '' || AIDER_TOKENS_LINE.test(last)) {
       end -= 1;
-    } else if (AIDER_COST_LINE.test(last) && previousIsTokensReport) {
+    } else if (isBareCostLine(last) && previousIsTokensReport) {
       end -= 2;
     } else {
       break;
