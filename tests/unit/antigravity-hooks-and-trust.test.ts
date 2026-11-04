@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import which from 'which';
 
 // Mock os.homedir() to redirect ~/.gemini/antigravity-cli/* to a temp dir.
 let tmpHome: string;
@@ -47,8 +48,6 @@ import {
 } from '../../src/main/agent/adapters/antigravity/hook-manager';
 import { migrateAntigravityProjectData } from '../../src/main/agent/adapters/antigravity/project-relocation';
 import { transformHookEvent, hookReplyFrom } from '../../src/main/agent/event-bridge';
-import { resetAntigravityCapabilityCacheForTests, setAntigravityHelpFeaturesForTests } from '../../src/main/agent/adapters/antigravity/capability-discovery';
-import { AGY_SESSION_SETTINGS_FILE } from '../../src/main/agent/adapters/antigravity/command-builder';
 import { normalizeForCompare } from '../../src/main/agent/adapters/antigravity/trust-manager';
 
 let tmpRoot: string;
@@ -229,6 +228,63 @@ describe('buildHooks', () => {
   });
 });
 
+describe('buildHooks with no node to run the PreToolUse hook', () => {
+  // agy denies a tool whose PreToolUse handler never answers, so a machine with
+  // no node would have every tool denied. The lookup keeps a hit for the
+  // process, so each case loads hook-manager afresh.
+  async function freshHookManager(): Promise<typeof import('../../src/main/agent/adapters/antigravity/hook-manager')> {
+    vi.resetModules();
+    return import('../../src/main/agent/adapters/antigravity/hook-manager');
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('leaves PreToolUse out, warns, and keeps the hooks whose failure harms nothing', async () => {
+    vi.spyOn(which, 'sync').mockReturnValue(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const entry = hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse).toBeUndefined();
+    expect(entry.SessionStart).toHaveLength(1);
+    expect(entry.PreInvocation).toHaveLength(1);
+    expect(entry.PostToolUse).toHaveLength(1);
+    expect(entry.Stop).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('No node on PATH'));
+  });
+
+  it('keeps the every-tool entry, with no warning, when node resolves', async () => {
+    vi.spyOn(which, 'sync').mockReturnValue('/usr/bin/node');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const entry = hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse?.map((group) => group.matcher)).toEqual(['*']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('asks again after a miss, so a node installed later counts, and keeps a hit', async () => {
+    const nodeLookup = vi.spyOn(which, 'sync').mockReturnValueOnce(null).mockReturnValueOnce('/usr/bin/node');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const build = () => hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(build().PreToolUse).toBeUndefined();
+    expect(build().PreToolUse).toHaveLength(1);
+    expect(build().PreToolUse).toHaveLength(1);
+    expect(nodeLookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('never asks about node for an agy in a WSL distro, which runs no node hook', async () => {
+    const nodeLookup = vi.spyOn(which, 'sync').mockReturnValue(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    hookManager.buildHooks('script', 'script', {}, (eventType) => `transport ${eventType}`);
+    expect(nodeLookup).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('filterOurHooks', () => {
   it('drops kangentic-prefixed names and command-fingerprint matches, keeps user hooks', () => {
     const root: AntigravityHooksFile = {
@@ -340,54 +396,6 @@ describe('AntigravityCommandBuilder side effects', () => {
   function eventsPathFor(cwd: string): string {
     return path.join(cwd, '.kangentic', 'sessions', 's1', 'events.jsonl');
   }
-
-  // Whether agy merges a --settings file over the saved settings.json or
-  // replaces it is undocumented. Replaced, a statusLine-only file would drop
-  // the saved trust (every spawn would stop at the folder trust prompt) and the
-  // user's permission rules, so the file repeats those keys and nothing else.
-  it('repeats the saved trust and guard settings in the --settings file, and never copies other keys', () => {
-    writeSettings({
-      trustedWorkspaces: [workspace],
-      permissions: { deny: ['command(rm -rf)'] },
-      toolPermission: 'strict',
-      agentMode: 'plan',
-      customModels: [{ name: 'my-model', apiKey: 'secret-key' }],
-    });
-    setAntigravityHelpFeaturesForTests('/usr/bin/agy', { sessionSettings: true, modes: ['accept-edits', 'auto', 'plan'] });
-    try {
-      const statusOutputPath = path.join(workspace, '.kangentic', 'sessions', 's1', 'status.json');
-      const command = builder.buildAntigravityCommand({
-        agyPath: '/usr/bin/agy',
-        taskId: 't1',
-        cwd: workspace,
-        permissionMode: 'default',
-        shell: 'bash',
-        statusOutputPath,
-      });
-      expect(command).toContain('--settings');
-      const sessionSettings = JSON.parse(fs.readFileSync(path.join(path.dirname(statusOutputPath), AGY_SESSION_SETTINGS_FILE), 'utf-8')) as Record<string, unknown>;
-      expect(Object.keys(sessionSettings).sort()).toEqual(['agentMode', 'permissions', 'statusLine', 'toolPermission', 'trustedWorkspaces']);
-      expect(sessionSettings.trustedWorkspaces).toEqual([workspace]);
-      expect(sessionSettings.permissions).toEqual({ deny: ['command(rm -rf)'] });
-      expect(JSON.stringify(sessionSettings)).not.toContain('secret-key');
-    } finally {
-      resetAntigravityCapabilityCacheForTests();
-    }
-  });
-
-  it('writes a status-line-only --settings file when there are no saved settings', () => {
-    setAntigravityHelpFeaturesForTests('/usr/bin/agy', { sessionSettings: true, modes: [] });
-    try {
-      const statusOutputPath = path.join(workspace, '.kangentic', 'sessions', 's1', 'status.json');
-      builder.buildAntigravityCommand({
-        agyPath: '/usr/bin/agy', taskId: 't1', cwd: workspace, permissionMode: 'default', shell: 'bash', statusOutputPath,
-      });
-      const sessionSettings = JSON.parse(fs.readFileSync(path.join(path.dirname(statusOutputPath), AGY_SESSION_SETTINGS_FILE), 'utf-8')) as Record<string, unknown>;
-      expect(Object.keys(sessionSettings)).toEqual(['statusLine']);
-    } finally {
-      resetAntigravityCapabilityCacheForTests();
-    }
-  });
 
   it('writes hooks.json and deploys the .cjs bridge copy when events are wired', () => {
     builder.buildAntigravityCommand({

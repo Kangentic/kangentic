@@ -88,7 +88,6 @@ import {
   parseHelpFeatures,
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { AGY_SESSION_SETTINGS_FILE } from '../../src/main/agent/adapters/antigravity/command-builder';
-import { buildHooks, KANGENTIC_HOOK_NAME } from '../../src/main/agent/adapters/antigravity/hook-manager';
 import { isBareShellToken } from '../../src/shared/shell-quote';
 import { toForwardSlash } from '../../src/shared/paths';
 import { resolveBridgeScript } from '../../src/main/agent/shared/bridge-utils';
@@ -380,32 +379,6 @@ describe('AntigravityAdapter.buildCommand', () => {
         expect(command).toContain('--settings');
       }
     });
-  });
-});
-
-describe('the PreToolUse hook with no node to run it', () => {
-  // agy denies a tool whose PreToolUse handler never answers, so a machine with
-  // no node would have every tool denied.
-  it('leaves PreToolUse out and keeps the hooks whose failure harms nothing', () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const entry = buildHooks('../bridge.cjs', '../events.jsonl', {}, undefined, () => false)[KANGENTIC_HOOK_NAME];
-    expect(entry.PreToolUse).toBeUndefined();
-    expect(entry.SessionStart).toHaveLength(1);
-    expect(entry.PreInvocation).toHaveLength(1);
-    expect(entry.PostToolUse).toHaveLength(1);
-    expect(entry.Stop).toHaveLength(1);
-    vi.restoreAllMocks();
-  });
-
-  it('keeps the every-tool entry when node resolves', () => {
-    const entry = buildHooks('../bridge.cjs', '../events.jsonl', {}, undefined, () => true)[KANGENTIC_HOOK_NAME];
-    expect(entry.PreToolUse?.map((group) => group.matcher)).toEqual(['*']);
-  });
-
-  it('never asks about node for an agy in a WSL distro, which runs no node hook', () => {
-    const nodeOnPath = vi.fn(() => true);
-    buildHooks('script', 'script', {}, (eventType) => `transport ${eventType}`, nodeOnPath);
-    expect(nodeOnPath).not.toHaveBeenCalled();
   });
 });
 

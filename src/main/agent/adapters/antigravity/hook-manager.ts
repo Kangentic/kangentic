@@ -220,13 +220,13 @@ const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'Absolut
  *   question and command dialogs still showed under it. The cost: a handler
  *   that fails before it answers now denies whatever tool it fired for. With
  *   no `node` on PATH every handler fails that way and the agent cannot run a
- *   tool, so the entry is left out there (`nodeOnPath`): the session runs with
- *   no tool starts and no question waits. For
- *   `ask_question` alone the same entry appends a question wait
- *   (`appendPermissionWaitForTool`), since that dialog always waits on the
- *   user (#452). Approvals are not read here. agy's policy decides whether a
- *   tool asks, so a PreToolUse cannot tell an approval from a tool that just
- *   runs; the status line's `tool_confirmation_pending` reports them
+ *   tool, so the entry is left out there (`isNodeOnPath`). Such a session runs
+ *   with no tool starts and no question waits. For `ask_question` alone the
+ *   same entry appends a question wait (`appendPermissionWaitForTool`), since
+ *   that dialog always waits on the user (#452). Approvals are not read here.
+ *   agy's policy decides whether a tool asks, so a PreToolUse cannot tell an
+ *   approval from a tool that just runs; the status line's
+ *   `tool_confirmation_pending` reports them
  *   (`AntigravityStatusParser.parseStatusEvents`), and attributes the wait to
  *   the newest tool these entries started. Each tool call now starts the
  *   bridge, which agy waits on for the reply before the tool runs. Not wired
@@ -247,21 +247,20 @@ export function buildHooks(
   eventsToken: string,
   existingRoot: AntigravityHooksFile,
   eventCommand?: (eventType: string, ...directives: string[]) => string,
-  nodeOnPath: () => boolean = isNodeOnPath,
 ): AntigravityHooksFile {
   const bridge = (eventType: string, ...directives: string[]): string => (eventCommand
     ? eventCommand(eventType, ...directives)
     : ['node', bridgeToken, eventsToken, eventType, ...directives].join(' '));
 
   // A PreToolUse handler must answer `allow` on stdout, or agy denies the
-  // tool. The WSL hook transport carries no reply, so a distro's agy gets no
-  // PreToolUse entry, so it records no tool starts and raises no question wait.
-  // Neither does a machine with no node to run the bridge, or every tool is denied.
-  const canAnswerToolStart = !eventCommand && nodeOnPath();
-  if (!eventCommand && !canAnswerToolStart) {
+  // tool. The WSL hook transport carries no reply, and a machine with no node
+  // cannot run the bridge, so neither gets the entry. Those sessions record no
+  // tool starts and raise no question wait.
+  const nodeMissing = !eventCommand && !isNodeOnPath();
+  if (nodeMissing) {
     console.warn('[antigravity] No node on PATH; skipping the PreToolUse hook, which would deny every tool');
   }
-  const toolStart: AntigravityHookGroup[] | undefined = !canAnswerToolStart
+  const toolStart: AntigravityHookGroup[] | undefined = eventCommand || nodeMissing
     ? undefined
     : [
       {
@@ -330,8 +329,10 @@ export function buildHooks(
 let nodeWasFound = false;
 
 /**
- * Whether a bare `node` resolves on PATH, which the hooks' commands run with.
- * Only a hit is kept: a miss is asked again at the next spawn.
+ * Whether a bare `node` resolves on main's PATH, the one a session's shell
+ * starts from. Only a hit is kept, so a miss is asked again at the next spawn.
+ * A node that only a Windows shell profile adds reads as a miss, which costs
+ * the session its tool starts. A wrong hit would deny every tool.
  */
 function isNodeOnPath(): boolean {
   nodeWasFound ||= which.sync('node', { nothrow: true }) !== null;

@@ -4,7 +4,7 @@
  * agy in a WSL distro, when it is skipped, and what a failed write leaves. All
  * writes stay under os.tmpdir(); the host home is mocked per test.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type TestContext } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -27,6 +27,9 @@ import {
 import { resetAntigravityCapabilityCacheForTests, setAntigravityHelpFeaturesForTests } from '../../src/main/agent/adapters/antigravity/capability-discovery';
 import { cliPathForTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths, wslStatusLineCommand } from '../../src/main/agent/shared/wsl-hook-transport';
+import { resolveBridgeScript } from '../../src/main/agent/shared/bridge-utils';
+import { isBareShellToken } from '../../src/shared/shell-quote';
+import { toForwardSlash } from '../../src/shared/paths';
 
 const FEATURES = { sessionSettings: true, modes: ['accept-edits', 'auto', 'plan'] };
 
@@ -73,7 +76,60 @@ function build(agyPath: string): string {
   return builder.buildAntigravityCommand({ agyPath, taskId: 't1', cwd: workspace, permissionMode: 'default', shell: 'bash', statusOutputPath });
 }
 
+/**
+ * On Windows every status-line token stays bare, so a temp folder or bridge
+ * path a bare token cannot carry writes no file (antigravity-adapter.test.ts
+ * pins that). A case that reads the file skips there.
+ */
+function skipWithoutBarePaths(context: TestContext): void {
+  if (process.platform === 'win32'
+    && !(isBareShellToken(toForwardSlash(sessionDirectory)) && isBareShellToken(toForwardSlash(resolveBridgeScript('status-bridge'))))) {
+    context.skip();
+  }
+}
+
 describe('the saved guard settings in the --settings file', () => {
+  // Whether agy merges a --settings file over the saved settings.json or
+  // replaces it is undocumented. Replaced, a statusLine-only file would drop
+  // the saved trust (every spawn would stop at the folder trust prompt) and the
+  // user's permission rules, so the file repeats those keys and nothing else.
+  it('repeats the saved trust and guard settings, and never copies other keys', (context) => {
+    skipWithoutBarePaths(context);
+    writeSettingsAt(hostHome, {
+      trustedWorkspaces: [workspace],
+      permissions: { deny: ['command(rm -rf)'] },
+      toolPermission: 'strict',
+      agentMode: 'plan',
+      customModels: [{ name: 'my-model', apiKey: 'secret-key' }],
+    });
+    setAntigravityHelpFeaturesForTests('/usr/bin/agy', FEATURES);
+    expect(build('/usr/bin/agy')).toContain('--settings');
+    const sessionSettings = readSessionSettings();
+    expect(Object.keys(sessionSettings).sort()).toEqual(['agentMode', 'permissions', 'statusLine', 'toolPermission', 'trustedWorkspaces']);
+    expect(sessionSettings.trustedWorkspaces).toEqual([workspace]);
+    expect(sessionSettings.permissions).toEqual({ deny: ['command(rm -rf)'] });
+    expect(JSON.stringify(sessionSettings)).not.toContain('secret-key');
+  });
+
+  it('holds only the status line when there are no saved settings', (context) => {
+    skipWithoutBarePaths(context);
+    setAntigravityHelpFeaturesForTests('/usr/bin/agy', FEATURES);
+    build('/usr/bin/agy');
+    expect(Object.keys(readSessionSettings())).toEqual(['statusLine']);
+  });
+
+  // A throw here would be caught by writeSessionSettings and drop the session's
+  // live telemetry, so a bad saved file must still yield the status-line file.
+  it('holds only the status line when the saved settings.json is not JSON', (context) => {
+    skipWithoutBarePaths(context);
+    const settingsFile = path.join(hostHome, '.gemini', 'antigravity-cli', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(settingsFile, 'not json');
+    setAntigravityHelpFeaturesForTests('/usr/bin/agy', FEATURES);
+    build('/usr/bin/agy');
+    expect(Object.keys(readSessionSettings())).toEqual(['statusLine']);
+  });
+
   // A truthiness check, or a key missing from the constant, would drop these and
   // let a user's `false` sandbox or empty rule list fall back to agy's default.
   const falsyValues: Record<(typeof AGY_SESSION_GUARD_KEYS)[number], unknown> = {
@@ -84,7 +140,8 @@ describe('the saved guard settings in the --settings file', () => {
     agentMode: '',
   };
 
-  it('copies a falsy saved value of every guard key exactly', () => {
+  it('copies a falsy saved value of every guard key exactly', (context) => {
+    skipWithoutBarePaths(context);
     expect(Object.keys(falsyValues).sort()).toEqual([...AGY_SESSION_GUARD_KEYS].sort());
     writeSettingsAt(hostHome, falsyValues);
     setAntigravityHelpFeaturesForTests('/usr/bin/agy', FEATURES);
@@ -94,13 +151,6 @@ describe('the saved guard settings in the --settings file', () => {
       expect(sessionSettings, key).toHaveProperty(key);
       expect(sessionSettings[key], key).toEqual(falsyValues[key]);
     }
-  });
-
-  it('carries enableTerminalSandbox: false', () => {
-    writeSettingsAt(hostHome, { enableTerminalSandbox: false });
-    setAntigravityHelpFeaturesForTests('/usr/bin/agy', FEATURES);
-    build('/usr/bin/agy');
-    expect(readSessionSettings().enableTerminalSandbox).toBe(false);
   });
 
   it('for an agy in a WSL distro reads the distro\'s settings.json, not the host\'s', () => {

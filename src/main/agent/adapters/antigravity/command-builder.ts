@@ -278,7 +278,7 @@ export class AntigravityCommandBuilder {
    * lose the saved trust (and stop at agy's folder trust prompt) and the
    * user's permission rules. So the file also carries the saved values of the
    * keys that keep a session unblocked and as guarded as the user set it
-   * (`savedSessionGuards`): either way, the session sees them. Every spawn
+   * (`savedSessionGuards`), so the session sees them either way. Every spawn
    * path awaits `ensureTrust` before it builds the command, so the copied
    * trust list already names this folder.
    *

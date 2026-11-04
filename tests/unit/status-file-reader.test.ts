@@ -485,8 +485,7 @@ describe('StatusFileReader', () => {
         await driver.writeAndRead('WRITE-A');
         await driver.writeAndRead('WRITE-B');
 
-        expect(callbacks.onEventsParsed).toHaveBeenCalledTimes(dispatches);
-        expect(dispatches).toBeGreaterThanOrEqual(2);
+        expect(callbacks.onEventsParsed).toHaveBeenCalledTimes(2);
         expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Status events for session-1 failed to dispatch'), expect.any(Error));
         // Let any stray rejection surface before asserting there was none.
         await new Promise((resolve) => setImmediate(resolve));
