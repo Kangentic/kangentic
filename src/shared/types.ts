@@ -6714,6 +6714,15 @@ export interface AgentParser {
    */
   remoteSessionFiles?(): readonly string[];
   /**
+   * Optional: the files this agent keeps appending to for a conversation (its transcript), as the path
+   * its own readers build in this computer's mirror of the host's home (#913). The host sends each one's
+   * bytes as they are written, and they land at the same offset in the mirror, so the conversation viewer,
+   * the search index and the token ledger read a remote conversation as they read a local one. `cwd` is the
+   * session's folder as this computer names it, and `cliTarget` the host. Absent for an agent whose
+   * transcript is not one plain file, or that names it only after the session starts.
+   */
+  remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[];
+  /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
    * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.

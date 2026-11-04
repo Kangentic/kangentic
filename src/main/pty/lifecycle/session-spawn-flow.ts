@@ -453,6 +453,11 @@ export async function performSpawn(
         localSessionDirectory: path.dirname(input.statusOutputPath),
         statusOutputPath: input.statusOutputPath,
         extraFiles: input.agentParser?.remoteSessionFiles?.() ?? [],
+        // The transcript of a conversation whose id the spawn already has (a caller-owned id, or a resume),
+        // so the viewer, the search index and the token ledger have it on this computer.
+        transcriptFiles: input.agentSessionId && input.cliTarget
+          ? input.agentParser?.remoteTranscriptFiles?.({ agentSessionId: input.agentSessionId, cwd: input.cwd, cliTarget: input.cliTarget }) ?? []
+          : [],
       });
     } catch (error) {
       registrationError = error instanceof Error ? error : new Error(String(error));

@@ -1,5 +1,6 @@
 import { app, ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { IPC } from '../../../shared/ipc-channels';
 import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshRemoteFolderProbe } from '../../../shared/types';
@@ -37,6 +38,7 @@ export function createSshHostAdmin(context: IpcContext): SshHostAdmin | null {
     remoteProjectsRoot: remoteProjectsRoot(),
     newShellFolder: () => PATHS.remoteProjectShell(randomUUID()),
     appVersion: () => app.getVersion(),
+    removeHomeMirror: (hostId) => fs.rm(PATHS.remoteHomeMirror(hostId), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }),
     log: (line) => console.log(line),
   });
 }

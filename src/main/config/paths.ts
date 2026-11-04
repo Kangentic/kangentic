@@ -63,7 +63,11 @@ export const PATHS = {
   get projectsDir() { return path.join(this.configDir, 'projects'); },
   /** The folder standing in for a remote project on this computer (#913): its config, logs and session files. */
   remoteProjectShell(projectId: string) { return path.join(this.configDir, 'remote-projects', projectId); },
-  /** This computer's mirror of a remote host's home, where readers look. Empty until the read mirror exists. */
+  /**
+   * This computer's mirror of a remote host's home, where readers look. A remote session's transcript is
+   * copied into it as the agent writes it (`remote-session-relay.ts`); nothing else is, and it holds no
+   * proof that anything is absent on the host.
+   */
   remoteHomeMirror(hostId: string) { return path.join(this.configDir, 'remote-homes', hostId); },
   /** Local archive of announcements this client has seen, and their read-state.
    *  A sidecar rather than a config.json key: it holds full markdown bodies,

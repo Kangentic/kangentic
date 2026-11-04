@@ -172,6 +172,14 @@ export interface HelperRequestMap {
    * folder holding `inbox/` and `requests/`, and `statusFile` the status line's JSON.
    */
   watchHooks: { params: { sessionId: string; directory: string; statusFile?: string }; result: { watching: true } };
+  /**
+   * Start sending the growing files of a session (its transcript) as `fileChunk` events, from their
+   * first byte (`file-tail.ts`). Paths are absolute and beneath the user's home. A file that is not
+   * there yet is sent once it exists.
+   */
+  watchFiles: { params: { sessionId: string; files: Array<{ key: string; path: string }> }; result: { watching: true } };
+  /** Stop, after one last pass that sends the end of each file. */
+  unwatchFiles: { params: { sessionId: string }; result: { watching: false } };
   /** Stop, after sending what is already published. */
   unwatchHooks: { params: { sessionId: string }; result: { watching: false } };
   /** Remove files the app wrote and a CLI should no longer find (its hooks, its MCP entry). A missing file is not an error. */

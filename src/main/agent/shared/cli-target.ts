@@ -136,6 +136,18 @@ export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): 
   return path.join(best.local, ...rest.split('/').filter(Boolean));
 }
 
+/**
+ * A path in this computer's mirror of the host's home folder, as the host names it, or null when the path
+ * is not inside the mirror. The mirror is laid out as the host's home is, so what an adapter's reader
+ * builds under `cliHomeDir` is the host's file once the home replaces the mirror's root.
+ */
+export function mirrorPathToHost(localPath: string, place: SshCliPlace): string | null {
+  if (!place.localHome) return null;
+  const relative = path.relative(place.localHome, localPath);
+  if (relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  return `${normalizedHost(place.home)}/${relative.split(path.sep).join('/')}`;
+}
+
 export type CliTarget = CliPlace & {
   /** The CLI's path where it runs: in the distro, or on the SSH host (`/home/dev/.local/bin/claude`). */
   linuxCliPath: string;

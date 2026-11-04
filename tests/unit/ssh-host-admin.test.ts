@@ -28,6 +28,7 @@ let shellRoot: string;
 
 interface Rig {
   admin: SshHostAdmin;
+  removeHomeMirror: ReturnType<typeof vi.fn>;
   hosts: SshHost[];
   projects: Project[];
   removedProjects: string[];
@@ -99,6 +100,7 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     programInfo: vi.fn(async () => ({ version: '0.53.0', startedAt: '2026-11-04T08:00:00.000Z', liveSessions: 3, installedVersions: ['0.52.0', '0.53.0'] })),
   };
   let counter = 0;
+  const removeHomeMirror = vi.fn(async (_hostId: string) => undefined);
   const deps: SshHostAdminDeps = {
     hosting: {
       hosts: {
@@ -131,8 +133,9 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     remoteProjectsRoot: shellRoot,
     newShellFolder: () => path.join(shellRoot, `shell-${++counter}`),
     appVersion: () => '0.54.0',
+    removeHomeMirror,
   };
-  return { admin: new SshHostAdmin(deps), hosts, projects, removedProjects, run, hostService, status, connectHost, setup };
+  return { admin: new SshHostAdmin(deps), removeHomeMirror, hosts, projects, removedProjects, run, hostService, status, connectHost, setup };
 }
 
 function project(id: string, hostId: string, shellFolder: string): Project {
@@ -344,6 +347,16 @@ describe('removing a host', () => {
     expect(rig.hosts).toEqual([]);
     expect(rig.status.get(hostId)).toBeUndefined();
     expect(rig.hostService.disconnect).toHaveBeenCalledWith(hostId);
+  });
+
+  it('deletes this computer\'s copy of the host\'s files, and still removes the host when that fails', async () => {
+    const { rig, hostId } = await rigWithHost();
+    rig.removeHomeMirror.mockRejectedValueOnce(new Error('EBUSY'));
+
+    await rig.admin.removeHost(hostId);
+
+    expect(rig.removeHomeMirror).toHaveBeenCalledWith(hostId);
+    expect(rig.hosts).toEqual([]);
   });
 
   it('never deletes a folder outside the one remote projects live in, whatever a project row says', async () => {

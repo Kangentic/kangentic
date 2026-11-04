@@ -27,7 +27,7 @@
 import * as fsSync from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
+import { localPathToHost, mirrorPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
 import type { PtyHostEvent } from '../pty/host/protocol';
@@ -39,6 +39,8 @@ export interface RemoteSessionFiles {
   writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<unknown>;
   watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<unknown>;
   unwatchHooks(hostId: string, sessionId: string): Promise<unknown>;
+  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<unknown>;
+  unwatchFiles(hostId: string, sessionId: string): Promise<unknown>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
   removeEmptyDirectories(hostId: string, paths: string[]): Promise<unknown>;
 }
@@ -56,9 +58,26 @@ export interface RemoteSessionRegistration {
    * name that is not a plain relative path is refused, so an adapter cannot reach outside the folder.
    */
   extraFiles?: readonly string[];
+  /**
+   * Files the agent keeps appending to on the host, as the path its reader builds in this computer's
+   * mirror of the host's home (`AgentParser.remoteTranscriptFiles`). The host sends each one's bytes as
+   * they are written, and they are written at the same offset here. A path outside the mirror is refused.
+   */
+  transcriptFiles?: readonly string[];
+}
+
+/** A file opened to be written anywhere in, made when it is not there. */
+function openForWriteAt(filePath: string): number {
+  try {
+    return fsSync.openSync(filePath, 'r+');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return fsSync.openSync(filePath, 'w+');
+  }
 }
 
 type HookFileEvent = Extract<PtyHostEvent, { type: 'hookFile' }>;
+type FileChunkEvent = Extract<PtyHostEvent, { type: 'fileChunk' }>;
 
 /** The shape of a file name the hook script publishes: epoch nanoseconds, a pid, an extension. */
 const INBOX_NAME = /^\d{19}-\d+\.rec$/;
@@ -85,6 +104,8 @@ interface Registered extends RemoteSessionRegistration {
   lastFailure: string | null;
   /** The release under way, so a second one waits on it and asks the host nothing. */
   releaseDone: Promise<void> | null;
+  /** The transcript files the host sends, by the key it names them with, to where each is written here. */
+  tails: Map<string, string>;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -139,6 +160,7 @@ export class RemoteSessionRelay {
     let hostHooksDirectory = '';
     let localHooks: ReturnType<typeof wslHookPaths>;
     const pushedPaths: string[] = [];
+    const tails = new Map<string, string>();
     try {
       localHooks = wslHookPaths(registration.localSessionDirectory);
       const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
@@ -167,6 +189,27 @@ export class RemoteSessionRelay {
         ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
       );
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
+      // The transcript is extra: an agent with no transcript here still runs. A host that cannot tail it
+      // costs the conversation viewer, not the session.
+      const tailRequest: Array<{ key: string; path: string }> = [];
+      for (const localPath of registration.transcriptFiles ?? []) {
+        const hostPath = mirrorPathToHost(localPath, registration.place);
+        if (hostPath === null) {
+          this.options.log?.(`not tailing ${path.basename(localPath)} for ${registration.sessionId.slice(0, 8)}: it is not inside the mirror of the host's home`);
+          continue;
+        }
+        const key = String(tailRequest.length);
+        tails.set(key, localPath);
+        tailRequest.push({ key, path: hostPath });
+      }
+      if (tailRequest.length > 0) {
+        try {
+          await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest);
+        } catch (error) {
+          tails.clear();
+          this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     } catch (error) {
       // The spawn fails, so nothing releases a session that was never registered: what was pushed (the
       // settings and the MCP config, which holds the token) is removed here, as a release would.
@@ -179,6 +222,7 @@ export class RemoteSessionRelay {
     if (pending.released) {
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+      if (tails.size > 0) await this.options.files.unwatchFiles(registration.hostId, registration.sessionId).catch(() => undefined);
       await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
       return;
     }
@@ -192,6 +236,7 @@ export class RemoteSessionRelay {
       inFlight: new Set(),
       lastFailure: null,
       releaseDone: null,
+      tails,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
@@ -219,6 +264,12 @@ export class RemoteSessionRelay {
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
+    // The transcript's last bytes arrive before this answers, so the copy here holds the whole of it.
+    if (entry.tails.size > 0) {
+      await this.options.files.unwatchFiles(entry.hostId, sessionId).catch((error: unknown) => {
+        this.options.log?.(`could not stop the host tailing ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
     // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
     await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths, entry.hostHooksDirectory);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
@@ -282,6 +333,32 @@ export class RemoteSessionRelay {
       }
     } catch (error) {
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Write a piece of a file the host is tailing (a transcript) at its offset in this computer's copy. A key
+   * the session did not register is dropped, so a host cannot name a path here: it names only what the app
+   * asked it to send. Synchronous and in the stream's order, like `deliver`, so the copy is whole before the
+   * session's exit is handled, and a chunk is at most a couple of hundred KB.
+   */
+  deliverChunk(event: FileChunkEvent): void {
+    const localPath = this.sessions.get(event.sessionId)?.tails.get(event.key);
+    if (!localPath) return;
+    try {
+      // Inside this try: a failure is logged and the next chunk tries again.
+      fsSync.mkdirSync(path.dirname(localPath), { recursive: true });
+      // Read and write without append mode, which would put every write at the end whatever its offset.
+      const descriptor = openForWriteAt(localPath);
+      try {
+        if (event.reset) fsSync.ftruncateSync(descriptor, 0);
+        const bytes = Buffer.from(event.data, 'base64');
+        if (bytes.length > 0) fsSync.writeSync(descriptor, bytes, 0, bytes.length, event.offset);
+      } finally {
+        fsSync.closeSync(descriptor);
+      }
+    } catch (error) {
+      this.options.log?.(`could not write the transcript for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

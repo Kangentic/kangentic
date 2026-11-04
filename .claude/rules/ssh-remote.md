@@ -37,6 +37,13 @@ process, a path tested against the wrong disk, an environment that overwrites th
   and read through its `readFile`, never by this computer's disk or a local mirror, and a failed ask
   is an error, never "absent". With the link down nothing is pruned, demoted, retired or deleted
   for want of a path.
+- **A transcript is copied, never read from the host in place.** The conversation viewer, the search
+  index and the token ledger read this computer's disk, and for a session on a host the adapter names
+  the transcript (`remoteTranscriptFiles()`, as the path its own readers build under `cliHomeDir`), the
+  helper tails the host's file by byte offset, and the relay writes each chunk at its offset into this
+  computer's mirror of the host's home (`PATHS.remoteHomeMirror`). The relay writes only to a path it
+  registered, so a host names a key and never a path. A reader treats that copy as what has arrived so
+  far: empty at first, stale while the link is down, and never proof that a conversation is gone.
 - **A drop is a state, never an exit.** The link reports `remoteLink`, and agents on the host keep
   running. A session ends only when the host reports its exit, or reports it gone after a restart
   (`remoteSessions`, `lost`), which resumes it through the recovery path.
@@ -95,6 +102,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   runner on POSIX (banner stripped, exit code, stdin, timeout) and pins the shell choice.
   `tests/unit/<adapter>-ssh-remote.test.ts` runs each adapter's real trust and builder over a fake
   host and asserts what lands there carries host paths and nothing of this computer.
+- **Tests (transcripts):** `tests/unit/remote-transcript-tail.test.ts` pins the file tail on real files (the
+  backfill, the pace, a chunk edge inside a multi-byte character, a replaced or emptied file, the unpaced
+  last pass) and Claude's declared file, and `tests/unit/remote-session-relay.test.ts` runs the whole path
+  through the real link and helper: a copy that grows, a file that appears late, the end of the file in the
+  copy when the session is released, a path outside the mirror refused, and a chunk written at its offset.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only

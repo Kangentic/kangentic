@@ -48,7 +48,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean } = {}): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: string[] } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -65,12 +65,15 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
       ? Promise.reject(new Error('the host could not watch the folder'))
       : link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) })),
     unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
+    watchFiles: (_hostId, sessionId, tailed) => link.requestHelper('watchFiles', { sessionId, files: tailed }),
+    unwatchFiles: (_hostId, sessionId) => link.requestHelper('unwatchFiles', { sessionId }),
     removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
     removeEmptyDirectories: (_hostId, paths) => link.requestHelper('removeEmptyDirectories', { paths }),
   };
   const relay = new RemoteSessionRelay({ files });
   link.setEventListener((event) => {
     if (event.type === 'hookFile') relay.deliver(event);
+    if (event.type === 'fileChunk') relay.deliverChunk(event);
   });
 
   const place: SshCliPlace = {
@@ -121,6 +124,7 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     localSessionDirectory: localSession,
     statusOutputPath: statusPath,
     ...(options.declareExtra ? { extraFiles: options.declareExtra } : {}),
+    ...(options.transcriptFiles ? { transcriptFiles: options.transcriptFiles } : {}),
   });
   const hostSession = path.join(hostProject, '.kangentic', 'sessions', 's1');
   return { relay, link, place, localSession, hostSession, eventsPath, statusPath, inbox, mcpCalls };
@@ -381,6 +385,8 @@ function makeFakeHost() {
       if (state.holdUnwatch) await state.holdUnwatch.promise;
       watching.delete(sessionId);
     },
+    watchFiles: async () => ({ watching: true }),
+    unwatchFiles: async () => ({ watching: false }),
     removeFiles: async (_hostId, paths) => { for (const removed of paths) written.delete(removed); },
     removeEmptyDirectories: async () => undefined,
   };
@@ -520,5 +526,83 @@ describe('a session registered and released while another operation on its id is
     expect(host.rawWrites[0].path).toBe(`/home/dev/project/.kangentic/sessions/s1/wsl-hooks/responses/${responseName}`);
     expect(host.rawWrites[0].content).toBe(answer);
     expect(host.jsonWrites.some((written) => written.endsWith(responseName))).toBe(false);
+  });
+});
+
+describe('a session\'s transcript', () => {
+  const RELATIVE = ['.claude', 'projects', '-home-dev-api', 'abc.jsonl'];
+  const localTranscript = (): string => path.join(scratch, 'mirror', ...RELATIVE);
+  const hostTranscript = (): string => path.join(hostHome, ...RELATIVE);
+
+  function writeOnHost(content: string): void {
+    fs.mkdirSync(path.dirname(hostTranscript()), { recursive: true });
+    fs.writeFileSync(hostTranscript(), content);
+  }
+
+  it('is copied from the host into this computer\'s mirror, backfill first, then as it grows', async () => {
+    const lines = ['{"type":"user","n":1}', '{"type":"assistant","n":2}'];
+    writeOnHost(`${lines[0]}\n`);
+    await makeRig({ transcriptFiles: [localTranscript()] });
+
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.readFileSync(localTranscript(), 'utf8') === `${lines[0]}\n`);
+
+    fs.appendFileSync(hostTranscript(), `${lines[1]}\n`);
+    await waitFor(() => fs.readFileSync(localTranscript(), 'utf8') === `${lines.join('\n')}\n`);
+  });
+
+  it('starts once the agent creates the file, and carries multi-byte text whole across a chunk edge', async () => {
+    await makeRig({ transcriptFiles: [localTranscript()] });
+    expect(fs.existsSync(localTranscript())).toBe(false);
+
+    const text = `${JSON.stringify({ message: '界'.repeat(120_000) })}\n`;
+    writeOnHost(text);
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.readFileSync(localTranscript(), 'utf8') === text, 8000);
+  });
+
+  it('is emptied and copied again when the host replaces the file with a shorter one', async () => {
+    writeOnHost('{"first":"a long first conversation line to be replaced"}\n');
+    await makeRig({ transcriptFiles: [localTranscript()] });
+    await waitFor(() => fs.existsSync(localTranscript()) && fs.statSync(localTranscript()).size > 40);
+
+    fs.rmSync(hostTranscript());
+    fs.writeFileSync(hostTranscript(), '{"b":1}\n');
+    await waitFor(() => fs.readFileSync(localTranscript(), 'utf8') === '{"b":1}\n');
+  });
+
+  it('has its last bytes in the copy by the time the release finishes', async () => {
+    writeOnHost('{"n":1}\n');
+    const rig = await makeRig({ transcriptFiles: [localTranscript()] });
+    await waitFor(() => fs.existsSync(localTranscript()));
+
+    fs.appendFileSync(hostTranscript(), '{"n":2}\n');
+    await rig.relay.release('s1');
+
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('{"n":1}\n{"n":2}\n');
+  });
+
+  it('is not tailed from a path outside the mirror, and a chunk for a key nobody asked for writes nothing', async () => {
+    const outside = path.join(scratch, 'elsewhere', 'abc.jsonl');
+    const rig = await makeRig({ transcriptFiles: [outside] });
+
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, data: Buffer.from('x').toString('base64') });
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '9', offset: 0, reset: false, data: Buffer.from('x').toString('base64') });
+
+    expect(fs.existsSync(outside)).toBe(false);
+    expect(fs.existsSync(path.join(scratch, 'elsewhere'))).toBe(false);
+  });
+
+  it('writes at the offset it was sent, so a chunk delivered twice leaves the file as it was', async () => {
+    const rig = await makeRig({ transcriptFiles: [localTranscript()] });
+    const chunk = (offset: number, text: string, reset = false) => ({
+      type: 'fileChunk' as const, sessionId: 's1', key: '0', offset, reset, data: Buffer.from(text).toString('base64'),
+    });
+
+    rig.relay.deliverChunk(chunk(0, 'abc'));
+    rig.relay.deliverChunk(chunk(3, 'def'));
+    rig.relay.deliverChunk(chunk(3, 'def'));
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('abcdef');
+
+    rig.relay.deliverChunk(chunk(0, 'z', true));
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('z');
   });
 });

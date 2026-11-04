@@ -23,6 +23,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
+import { FileTail } from './file-tail';
 import { runHostCommand } from './host-command';
 import { readListeningPorts } from './listening-ports';
 import { HookWatcher } from './hook-watcher';
@@ -202,6 +203,11 @@ export class HelperServer {
     emit: (event) => this.endpoint.send({ t: 'event', event: { type: 'hookFile', ...event } } satisfies HelperToLinkMessage),
   });
 
+  /** Sends each session's transcript across the link as it grows (`file-tail.ts`). */
+  private readonly fileTail = new FileTail({
+    emit: (event) => this.endpoint.send({ t: 'event', event: { type: 'fileChunk', ...event } } satisfies HelperToLinkMessage),
+  });
+
   constructor(private readonly options: HelperServerOptions) {
     this.core = new PtyHostCore({ ...options.coreDeps, emit: (event) => this.onCoreEvent(event) });
     this.endpoint = new ResumeEndpoint(
@@ -248,6 +254,7 @@ export class HelperServer {
   /** Drop the connection and let go of the core's port. PTYs keep running. */
   dispose(): void {
     this.hookWatcher.dispose();
+    this.fileTail.dispose();
     this.endpoint.detach('the helper is shutting down');
   }
 
@@ -379,6 +386,11 @@ export class HelperServer {
       return { watching: true };
     },
     unwatchHooks: (params) => this.hookWatcher.unwatch(params.sessionId).then(() => ({ watching: false as const })),
+    watchFiles: (params) => {
+      this.fileTail.watch(params.sessionId, params.files.map((file) => ({ key: file.key, path: this.homePath(file.path) })));
+      return { watching: true };
+    },
+    unwatchFiles: (params) => this.fileTail.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     readFile: (params) => this.readFile(params),
     pathPresence: (params) => this.pathPresence(params.paths),
     removeFiles: (params) => this.removeFiles(params.paths),

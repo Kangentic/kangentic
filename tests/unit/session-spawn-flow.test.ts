@@ -2182,6 +2182,32 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       }));
     });
 
+    it('asks the parser which transcript files to copy from the host, for a conversation whose id the spawn has', async () => {
+      const context = makeContext();
+      const remoteTranscriptFiles = vi.fn(() => ['/mirror/.claude/projects/-home-dev-projects-api/abc.jsonl']);
+      const agentParser = { remoteTranscriptFiles } as unknown as SpawnSessionInput['agentParser'];
+
+      await performSpawn(remoteInput({ agentParser, agentSessionId: 'abc' }), context);
+
+      expect(remoteTranscriptFiles).toHaveBeenCalledWith({ agentSessionId: 'abc', cwd: shellFolder, cliTarget: sshTarget });
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
+        transcriptFiles: ['/mirror/.claude/projects/-home-dev-projects-api/abc.jsonl'],
+      }));
+    });
+
+    it('copies no transcript when the spawn has no conversation id yet, or the agent declares none', async () => {
+      const context = makeContext();
+      const remoteTranscriptFiles = vi.fn(() => ['/mirror/x.jsonl']);
+
+      await performSpawn(remoteInput({ agentParser: { remoteTranscriptFiles } as unknown as SpawnSessionInput['agentParser'] }), context);
+      await performSpawn(remoteInput({ id: 'second-session-id-0000-000000000000', agentSessionId: 'abc' }), context);
+
+      expect(remoteTranscriptFiles).not.toHaveBeenCalled();
+      for (const call of vi.mocked(context.remoteSessions!.register).mock.calls) {
+        expect(call[0].transcriptFiles).toEqual([]);
+      }
+    });
+
     it('starts no PTY, and fails the spawn with the host\'s words, when the host could not be reached', async () => {
       // A failed spawn, not a throw: a throw left a promoted queue row `queued` for good, while the
       // failure path ends it as an exited placeholder the board can show.

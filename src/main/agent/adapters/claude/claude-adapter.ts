@@ -13,6 +13,7 @@ import {
   parseClaudeTranscriptToolCounts,
   parseClaudeTranscriptToolResultTokens,
   readClaudeTranscriptPage,
+  locateClaudeTranscriptFile,
 } from './transcript-parser';
 import {
   CLAUDE_SUBAGENT_SPAWN_TOOL,
@@ -78,6 +79,7 @@ import type {
   TranscriptUsage,
   TranscriptToolCounts,
   ExitSequenceStep,
+  StoredCliTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { peekModelPickerAliasIds } from './model-picker-probe';
@@ -563,6 +565,18 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   consoleCloseIsGraceful(platform: NodeJS.Platform): boolean {
     return platform === 'win32' || platform === 'linux';
+  }
+
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file Claude appends to under
+   * `~/.claude/projects/<slug>/`, in this computer's mirror of the host's home, where every Claude reader
+   * already looks for it. A remote task has no worktree, so the folder Claude started in is the folder it
+   * resumes in, and the slug is the same file's. Subagent transcripts are not carried.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [locateClaudeTranscriptFile(options.agentSessionId, options.cwd, place)];
   }
 
   /**

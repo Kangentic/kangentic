@@ -59,6 +59,8 @@ export interface SshHostAdminDeps {
   remoteProjectsRoot: string;
   /** A new folder id and path for a remote project's shell. */
   newShellFolder(): string;
+  /** Delete this computer's mirror of a host's home folder, where its transcripts are copied to. */
+  removeHomeMirror?: (hostId: string) => Promise<void>;
   /** This app's version, to compare with the program's on a host. */
   appVersion?: () => string | null;
   log?: (line: string) => void;
@@ -183,6 +185,10 @@ export class SshHostAdmin {
     });
     this.deps.hosting.status.remove(hostId);
     await deleteHostKeys(hostId, this.deps.setup).catch(() => undefined);
+    // The copies of the host's transcripts are this computer's, and nothing reads them once the host is gone.
+    await this.deps.removeHomeMirror?.(hostId).catch((error: unknown) => {
+      this.deps.log?.(`[remote] could not remove the copy of ${host.name}'s files: ${error instanceof Error ? error.message : String(error)}`);
+    });
     this.deps.hosting.hosts.delete(hostId);
   }
 

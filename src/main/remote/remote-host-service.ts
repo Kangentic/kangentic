@@ -156,6 +156,15 @@ export class RemoteHostService {
     return this.helper(hostId, 'unwatchHooks', { sessionId });
   }
 
+  /** Start sending a session's growing files (its transcript) across the link as `fileChunk` events. */
+  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<HelperRequestMap['watchFiles']['result']> {
+    return this.helper(hostId, 'watchFiles', { sessionId, files });
+  }
+
+  unwatchFiles(hostId: string, sessionId: string): Promise<HelperRequestMap['unwatchFiles']['result']> {
+    return this.helper(hostId, 'unwatchFiles', { sessionId });
+  }
+
   /** Remove files the app wrote on the host (an agent's hooks or MCP entry at the end of a session). */
   removeFiles(hostId: string, paths: string[]): Promise<HelperRequestMap['removeFiles']['result']> {
     return this.helper(hostId, 'removeFiles', { paths });

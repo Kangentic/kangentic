@@ -432,7 +432,11 @@ export type PtyHostEvent =
   /** A hook file a remote agent published on its host, sent once (#913). Kangentic writes it into the
    *  same folder on its own disk, where the WSL hook transport's inbox reads it. `status` is the
    *  status line's JSON, which replaces the last. */
-  | { type: 'hookFile'; sessionId: string; folder: 'inbox' | 'requests' | 'status'; name: string; content: string };
+  | { type: 'hookFile'; sessionId: string; folder: 'inbox' | 'requests' | 'status'; name: string; content: string }
+  /** A piece of a file a remote agent keeps appending to on its host, its transcript (#913). `data` is
+   *  base64 and goes at `offset` in Kangentic's copy; `reset` empties the copy first (the file was
+   *  replaced or shortened). `key` is the name the app gave the file when it asked for it. */
+  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; data: string };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

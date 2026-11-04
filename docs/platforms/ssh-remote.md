@@ -21,6 +21,7 @@ sources:
   - resource: src/main/remote/port-forward-plan.ts
   - resource: src/main/remote/helper/listening-ports.ts
   - resource: src/main/remote/helper/program-versions.ts
+  - resource: src/main/remote/helper/file-tail.ts
   - resource: src/main/agent/shared/remote-files.ts
   - resource: scripts/build-host.mjs
   - resource: scripts/lib/deterministic-tar.mjs
@@ -134,7 +135,15 @@ All 15 adapters that declare `supportsWslCli` declare `remoteCliName` and run on
 
 Real CLIs are the Beta gate: the mocks do not run hooks themselves, ask for a login, or draw a real TUI, and the real Codex hook-trust read and Cursor's `create-chat` have only met fakes.
 
-What is not available over SSH for any agent yet: the transcript and conversation viewer, token and cost figures read from the CLI's own session files, and the session-id pass that reads those files. They read this computer's disk, which holds nothing of the host's, and they degrade to nothing without errors. A session id still arrives from the agent's hooks or its output where the adapter has one.
+### Transcripts
+
+The conversation viewer, the search index and the token and cost ledger read a conversation's transcript from this computer's disk. For a session on a host, Kangentic keeps a copy of the transcript there. The adapter names the file (`remoteTranscriptFiles()`, as the path its own readers build under this computer's mirror of the host's home, `<config folder>/remote-homes/<host>/`), the helper tails the host's file by byte offset (`helper/file-tail.ts`, a poll every 250 ms), and the relay writes each chunk at the same offset into the copy (`RemoteSessionRelay.deliverChunk`). Every reader then works on a remote conversation as it does on a local one, with no change.
+
+- **Claude Code is the one agent that does this so far.** Its transcript is the one file it appends to under `~/.claude/projects/<slug>/`, filed under the slug of the folder on the host. Subagent transcripts are not carried. The other adapters have not declared a transcript file, so for them the viewer, the index and the token ledger are empty, and a session id still arrives from the agent's hooks or its output where the adapter has one.
+- **A resume copies the whole file first.** The copy starts from byte 0 each session, at a few chunks a scan (about 1 MB a second) so it shares the link with the terminal instead of crowding it. A transcript of tens of megabytes takes under a minute to arrive, and the viewer fills in as it does. The last pass when a session is released is not paced, so the end of the conversation is in the copy when the session is.
+- **The copy never proves anything gone.** It is empty until the first bytes arrive and stale while the link is down, so no reader may treat a missing or old copy as "the conversation does not exist". A resume still asks the host (`resume-conversation-guard.ts` answers `unknown` for a host, and nothing is demoted for want of a file).
+- **A file the agent replaces or shortens is copied again from the start.** The copy is emptied first.
+- **Removing a host deletes its copy.**
 
 An agent that cannot run on a host fails the spawn with a sentence saying so.
 
@@ -147,7 +156,7 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **A crash of the process holding the links can leave a forward's `ssh` running,** holding its local port. The next forward of that port then shows as blocked, with the port named as in use on this computer. End the stray `ssh`, or restart the computer.
 - **A host whose `sshd` sets `AllowTcpForwarding no` cannot forward.** The port shows as blocked with `ssh`'s own refusal.
 - **Tasks in a remote project share one folder.** There are no worktrees, so two agents edit the same files. The Add project form says so.
-- **A remote session has no process-tree watching.** The background-shell watcher, the transcript readers and the session-id filesystem pass read this computer's disk, so they are off for a remote session until the read mirror lands.
+- **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session. Transcripts are copied for Claude Code only (see Transcripts).
 - **A macOS client is unmeasured** for how an agent exits, as it is for local sessions.
 - **System32 `ssh.exe` on Windows can lose bytes mid-stream.** Every frame is checksummed and a framing error ends the connection and resumes from the last acknowledged offset, so the loss costs a reconnect, not data.
 

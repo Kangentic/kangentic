@@ -1182,6 +1182,11 @@ export class SessionManager extends EventEmitter {
         // session writes it into the hook folder the inbox reads (`remote-session-relay.ts`).
         this.emit('remote-hook-file', event);
         return;
+      case 'fileChunk':
+        // A piece of a remote agent's transcript (#913), written at its offset into the copy the
+        // viewer, the search index and the token ledger read.
+        this.emit('remote-file-chunk', event);
+        return;
       case 'remoteSessions':
         // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable ones
         // are live agents on a host this app holds no row for. Nothing adopts them yet, so they are
@@ -1245,6 +1250,7 @@ export class SessionManager extends EventEmitter {
   setRemoteSessionRelay(relay: RemoteSessionRelay): void {
     this.remoteSessionRelay = relay;
     this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
+    this.on('remote-file-chunk', (event: Extract<PtyHostEvent, { type: 'fileChunk' }>) => relay.deliverChunk(event));
   }
 
   /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
