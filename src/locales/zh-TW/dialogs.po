@@ -2480,6 +2480,10 @@ msgstr "任務摘要"
 msgid "Task title"
 msgstr "任務標題"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
+msgstr ""
+
 #: src/renderer/components/dialogs/attachment-utils.ts
 msgctxt "file type"
 msgid "Text File"

@@ -203,6 +203,10 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
             }}
           />
         </Field>
+        {/* A remote project has no worktree per task, so every task works in this one folder. */}
+        <p className="text-xs text-fg-faint" data-testid="add-remote-project-note">
+          <Trans>Tasks work in this folder directly, with no worktree each. Run one agent in it at a time.</Trans>
+        </p>
         {error ? <ReportedError error={error} testId="add-remote-project-error" /> : null}
       </div>
     </BaseDialog>

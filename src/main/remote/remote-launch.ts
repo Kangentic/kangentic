@@ -36,6 +36,8 @@ export interface RemoteLaunchInput {
 
 export interface RemoteLaunchResolver {
   resolve(input: RemoteLaunchInput): Promise<RemoteLaunch | null>;
+  /** Whether a project's folder here is the shell of a project on a host. Cheap, and never asks the host. */
+  isRemote(projectPath: string): boolean;
 }
 
 /** An agent that has not been made to run on a host yet. */
@@ -63,6 +65,11 @@ export function setRemoteLaunchResolver(resolver: RemoteLaunchResolver | null): 
 
 export async function resolveRemoteLaunch(input: RemoteLaunchInput): Promise<RemoteLaunch | null> {
   return current ? current.resolve(input) : null;
+}
+
+/** Whether the project at this path runs on an SSH host, for the few places that must tell a user or an agent so. */
+export function isRemoteProjectPath(projectPath: string | null | undefined): boolean {
+  return Boolean(projectPath) && current !== null && current.isRemote(projectPath as string);
 }
 
 /** The CLI a spawn runs and where, or null when no local CLI was found. */
@@ -112,6 +119,7 @@ export interface RemoteLaunchResolverDeps {
 
 export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): RemoteLaunchResolver {
   return {
+    isRemote: (projectPath) => deps.remoteOfProjectPath(projectPath) !== null,
     async resolve({ projectPath, cwd, adapter }) {
       const remote = projectPath ? deps.remoteOfProjectPath(projectPath) : null;
       if (!projectPath || !remote) return null;

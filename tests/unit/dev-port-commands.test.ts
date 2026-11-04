@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 /**
@@ -60,6 +61,7 @@ const { handleReserveDevPorts, handleCheckDevPorts } = await import(
 const context = {
   projectId: 'proj-1',
   getProjectDb: () => ({}),
+  getProjectPath: () => '/projects/local',
   getDevServerPortRange: () => ({ rangeStart: 7300, rangeEnd: 7499 }),
 } as unknown as CommandContext;
 
@@ -73,6 +75,32 @@ beforeEach(() => {
   reserveDevPorts.mockResolvedValue([7300]);
   getDevPortsForTask.mockReturnValue([]);
   describeDevPorts.mockResolvedValue([]);
+});
+
+describe('handleReserveDevPorts on a project that runs on an SSH host', () => {
+  const hostContext = { ...context, getProjectPath: () => '/shells/remote-project' } as unknown as CommandContext;
+
+  afterEach(() => setRemoteLaunchResolver(null));
+
+  it('tells the agent the port is on the host and is not forwarded, so it does not send the user to localhost', async () => {
+    setRemoteLaunchResolver({ isRemote: (projectPath) => projectPath === '/shells/remote-project', resolve: async () => null });
+
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('Reserved port 7300');
+    expect(result.message).toContain('not forwarded to the user');
+    expect(result.data).toMatchObject({ ports: [7300], onRemoteHost: true });
+  });
+
+  it('says nothing of a host for a project on this computer', async () => {
+    setRemoteLaunchResolver({ isRemote: (projectPath) => projectPath === '/shells/remote-project', resolve: async () => null });
+
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
+
+    expect(result.message).not.toContain('remote host');
+    expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1 });
+  });
 });
 
 describe('handleReserveDevPorts', () => {
@@ -94,6 +122,7 @@ describe('handleReserveDevPorts', () => {
     const narrow = {
       projectId: 'proj-1',
       getProjectDb: () => ({}),
+      getProjectPath: () => '/projects/local',
       getDevServerPortRange: () => ({ rangeStart: 9000, rangeEnd: 9010 }),
     } as unknown as CommandContext;
     await handleReserveDevPorts({ taskId: 'task-1', count: 2 }, narrow);

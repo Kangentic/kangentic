@@ -6,6 +6,7 @@ import {
 } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { TaskRepository } from '../../db/repositories/task-repository';
+import { isRemoteProjectPath } from '../../remote/remote-launch';
 import { resolveTask } from './task-resolver';
 
 /** Bounded so a single call cannot drain the range. */
@@ -90,12 +91,19 @@ export const handleReserveDevPorts: CommandHandler = async (
     };
   }
 
+  // A project on an SSH host runs its server there. The number is reserved on the user's computer (the
+  // ledger and the bind probe are theirs), and nothing carries a host port to it yet, so a server started
+  // on the host is not reachable at localhost for the user, or for a Browser pane.
+  const onHost = isRemoteProjectPath(context.getProjectPath());
+  const hostNote = onHost
+    ? ' This project runs on a remote host, so a server you start there is on the host and is not forwarded to the user\'s computer: do not tell them to open localhost, and do not expect the Browser pane to reach it.'
+    : '';
   return {
     success: true,
-    message: ports.length < count
+    message: (ports.length < count
       ? `Reserved ${ports.length} of ${count} requested ports: ${ports.join(', ')}. The range ran out - use your project's own configured ports for the rest.`
-      : `Reserved ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')} for this task. Nothing else on this machine will be given them.`,
-    data: { ports, requested: count, reserved: ports.length },
+      : `Reserved ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')} for this task. Nothing else on this machine will be given them.`) + hostNote,
+    data: { ports, requested: count, reserved: ports.length, ...(onHost ? { onRemoteHost: true } : {}) },
   };
 };
 

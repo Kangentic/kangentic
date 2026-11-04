@@ -3034,6 +3034,10 @@ msgstr "Resumo da tarefa"
 msgid "Task title"
 msgstr "Título da tarefa"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
+msgstr ""
+
 #: src/renderer/components/dialogs/attachment-utils.ts
 #, fuzzy
 msgctxt "file type"
