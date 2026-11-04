@@ -85,7 +85,7 @@ export function parseTokensReport(text: string): AiderTokenCounts | null {
 /** A `Cost:` report's two figures, `$<message> message, $<session> session`. */
 const COST_FIGURES = String.raw`Cost:\s*\$([0-9][0-9,.]*)\s+message,\s*\$([0-9][0-9,.]*)\s+session`;
 const COST_REPORT = new RegExp(COST_FIGURES);
-const BARE_COST_LINE = new RegExp(`^${COST_FIGURES}\\.?$`);
+const BARE_COST_LINE = new RegExp(String.raw`^${COST_FIGURES}\.?$`);
 
 /** The `$<message> message, $<session> session` figures anywhere in `text`, or null. */
 export function parseCostReport(text: string): AiderCostReport | null {
@@ -166,13 +166,6 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
   let anyCost = false;
   let previousWasTokensReport = false;
 
-  const readCost = (text: string): void => {
-    const cost = parseCostReport(text);
-    if (!cost) return;
-    currentRunCost = cost.sessionUsd;
-    anyCost = true;
-  };
-
   for (const line of content.split(/\r?\n/)) {
     if (AIDER_SESSION_HEADER.test(line)) {
       if (currentRunCost !== null) finishedRunsCost += currentRunCost;
@@ -182,9 +175,14 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
     }
 
     const quoted = stripBlockquote(line);
+    // The one unquoted line read: a report's `Cost:` half on its own line.
+    const costText = quoted ?? (previousWasTokensReport && isBareCostLine(line) ? line : null);
+    const cost = costText === null ? null : parseCostReport(costText);
+    if (cost) {
+      currentRunCost = cost.sessionUsd;
+      anyCost = true;
+    }
     if (quoted === null) {
-      // The one unquoted line read: a report's `Cost:` half on its own line.
-      if (previousWasTokensReport && isBareCostLine(line)) readCost(line);
       previousWasTokensReport = false;
       continue;
     }
@@ -202,7 +200,6 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
       summary.reportCount += 1;
     }
     previousWasTokensReport = isSplitTokensReport(quoted);
-    readCost(quoted);
   }
   if (currentRunCost !== null) finishedRunsCost += currentRunCost;
   summary.totalCostUsd = anyCost ? finishedRunsCost : null;

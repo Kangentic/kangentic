@@ -128,8 +128,9 @@ On top of that:
 - Everything between a run's header and its first `####` is skipped. That is the command line and
   the announcements. A multi-line `--message` holding a `#### ` line (a markdown heading in the
   task) spills it bare there, so the skip ends early and the rest of the spill reads as turns.
-  Aider's own reader splits it the same way. A cut read starts after its run's header, so its
-  leading lines are read as the end of a turn, not skipped.
+  Aider's own reader splits it the same way. A cut read starts at a byte offset, so its leading
+  lines are read as the end of a turn, not skipped. A cut that lands inside a preamble cannot be
+  told from that, so the rest of that preamble's spill reads as a reply.
 - A user line starting with `/` is a `command` entry, and the tool output after it is its
   `command_output`. `/ask`, `/code`, `/architect` and `/context` with text stay user turns, as
   messages sent in that mode.

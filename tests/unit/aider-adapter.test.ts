@@ -337,6 +337,7 @@ describe('AiderAdapter', () => {
 
     it('puts --model ahead of the prompt', () => {
       const command = adapter.buildCommand(makeOptions({ model: 'gpt-5', prompt: 'use --model other', shell: 'bash' }));
+      expect(command).toContain('--model gpt-5');
       expect(command.indexOf('--model gpt-5')).toBeLessThan(command.indexOf('--message'));
     });
 
@@ -737,7 +738,7 @@ describe('aiderAnswerUsage', () => {
       'Model: gpt-4o with diff edit format',
       'The answer.',
       '',
-      'Tokens: 12k sent, 40 received. Cost: $0.01 message, $0.01 session.',
+      'Tokens: 12k sent, 40 received. Cost: $0.02 message, $0.07 session.',
     ].join('\n');
     expect(aiderAnswerUsage(stdout)).toEqual({
       model: 'gpt-4o',
@@ -745,7 +746,7 @@ describe('aiderAnswerUsage', () => {
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 0,
       outputTokens: 40,
-      costUsd: 0.01,
+      costUsd: 0.02,
     });
   });
 
