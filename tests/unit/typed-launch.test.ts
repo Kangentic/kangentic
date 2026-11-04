@@ -64,13 +64,13 @@ describe('buildTypedLaunch', () => {
   });
 
   it.each([
-    { shell: '/bin/zsh', fileName: 'launch.sh', statement: 'clear; .' },
-    { shell: '/bin/bash', fileName: 'launch.sh', statement: 'clear; .' },
-    { shell: '/bin/dash', fileName: 'launch.sh', statement: 'clear; .' },
+    { shell: '/bin/zsh', fileName: 'launch.sh', statement: 'clear; eval "$(cat' },
+    { shell: '/bin/bash', fileName: 'launch.sh', statement: 'clear; eval "$(cat' },
+    { shell: '/bin/dash', fileName: 'launch.sh', statement: 'clear; eval "$(cat' },
     { shell: '/usr/bin/fish', fileName: 'launch.fish', statement: 'clear; source' },
     { shell: '/opt/homebrew/bin/nu', fileName: 'launch.nu', statement: 'clear; source' },
     { shell: '/usr/local/bin/pwsh', fileName: 'launch.ps1', statement: 'Clear-Host; .' },
-  ])('sources $fileName from $shell with its own statement', ({ shell, fileName, statement }) => {
+  ])('runs $fileName from $shell with its own statement', ({ shell, fileName, statement }) => {
     const launch = buildTypedLaunch({
       command: commandOfBytes(2000),
       shell,
@@ -127,7 +127,7 @@ describe('buildTypedLaunch', () => {
       platform: 'win32',
     });
     expect(launch.launcher?.filePath.startsWith('C:')).toBe(true);
-    expect(launch.typedLine).toBe('clear; . /mnt/c/Users/dev/project/.kangentic/sessions/session-1/launch.sh');
+    expect(launch.typedLine).toBe('clear; eval "$(cat /mnt/c/Users/dev/project/.kangentic/sessions/session-1/launch.sh)"');
   });
 
   describe('a WSL shell with a session folder on a Windows share', () => {
@@ -159,18 +159,18 @@ describe('buildTypedLaunch', () => {
     it('sources the folder\'s own path in the distro, comparing the distro name without case', () => {
       const launch = launchFor('wsl -d Ubuntu', `\\\\wsl.localhost\\ubuntu\\${WSL_FOLDER_SUFFIX}`);
       expect(launch.launcher).not.toBeNull();
-      expect(launch.typedLine).toBe('clear; . /home/dev/p/.kangentic/sessions/s/launch.sh');
+      expect(launch.typedLine).toBe('clear; eval "$(cat /home/dev/p/.kangentic/sessions/s/launch.sh)"');
     });
 
     it('sources it under a bare wsl, which runs the default distro', () => {
       const launch = launchFor('wsl', `\\\\wsl.localhost\\Ubuntu\\${WSL_FOLDER_SUFFIX}`);
       expect(launch.launcher).not.toBeNull();
-      expect(launch.typedLine).toBe('clear; . /home/dev/p/.kangentic/sessions/s/launch.sh');
+      expect(launch.typedLine).toBe('clear; eval "$(cat /home/dev/p/.kangentic/sessions/s/launch.sh)"');
     });
 
     it('writes a POSIX launcher for a distro whose name contains pwsh, never a PowerShell one', () => {
       const launch = launchFor('wsl -d my-pwsh', `\\\\wsl.localhost\\my-pwsh\\${WSL_FOLDER_SUFFIX}`);
-      expect(launch.typedLine).toBe('clear; . /home/dev/p/.kangentic/sessions/s/launch.sh');
+      expect(launch.typedLine).toBe('clear; eval "$(cat /home/dev/p/.kangentic/sessions/s/launch.sh)"');
       expect(launch.launcher?.filePath.endsWith('launch.sh')).toBe(true);
       expect(launch.launcher?.contents).toBe(`${commandOfBytes(5000)}\n`);
       expect(launch.launcher?.contents.startsWith('& ')).toBe(false);

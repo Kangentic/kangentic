@@ -123,6 +123,9 @@ interface Rig {
   sessionDirectory: string;
   agentPath: string;
   resultPath: string;
+  /** An agent that stays up until it is ended, and writes its pid to `holdPidPath`. */
+  holdAgentPath: string;
+  holdPidPath: string;
 }
 
 function makeRig(shell: ProbeShell, delayMs: number): Rig {
@@ -151,12 +154,23 @@ function makeRig(shell: ProbeShell, delayMs: number): Rig {
   const agentPath = path.join(agentDirectory, 'agent');
   fs.writeFileSync(agentPath, `#!/bin/sh\nexec "${process.execPath}" "${stubPath}" "$@"\n`);
   fs.chmodSync(agentPath, 0o755);
-  return { root, sessionDirectory, agentPath, resultPath };
+  const holdPidPath = path.join(root, 'hold-pid.txt');
+  const holdStubPath = path.join(agentDirectory, 'hold.cjs');
+  fs.writeFileSync(holdStubPath, [
+    "const fs = require('node:fs');",
+    `fs.writeFileSync(${JSON.stringify(holdPidPath)}, String(process.pid));`,
+    'setInterval(() => undefined, 1000);',
+    '',
+  ].join('\n'));
+  const holdAgentPath = path.join(agentDirectory, 'hold-agent');
+  fs.writeFileSync(holdAgentPath, `#!/bin/sh\nexec "${process.execPath}" "${holdStubPath}" "$@"\n`);
+  fs.chmodSync(holdAgentPath, 0o755);
+  return { root, sessionDirectory, agentPath, resultPath, holdAgentPath, holdPidPath };
 }
 
-function commandFor(shell: ProbeShell, rig: Rig, args: readonly string[]): string {
+function commandFor(shell: ProbeShell, rig: Rig, args: readonly string[], agentPath: string = rig.agentPath): string {
   const quote = (value: string): string => quoteArg(value, shell.program, { multiline: true });
-  return [rig.agentPath, ...args].map(quote).join(' ');
+  return [agentPath, ...args].map(quote).join(' ');
 }
 
 /** Start the shell the way a session does, in a home holding only the rig's startup file. */
@@ -194,9 +208,56 @@ async function waitForReport(rig: Rig, deadlineMs: number): Promise<StubReport |
 }
 
 /** Spawn the shell, then type `line` at `typedAtMs`, as the spawn timer does. */
-function typeLine(shell: ProbeShell, rig: Rig, line: string, typedAtMs: number): void {
+function typeLine(shell: ProbeShell, rig: Rig, line: string, typedAtMs: number): IPty {
   const pty = startShell(shell, rig);
   setTimeout(() => pty.write(`${line}\r`), typedAtMs);
+  return pty;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** How long a hung-up shell has to end its agent, which node-pty's kill asks for with a SIGHUP. */
+const HANGUP_SETTLE_MS = 6_000;
+
+/**
+ * Run a long-lived agent from a launch typed at a shell that has reached its
+ * prompt, hang the shell up, and say whether the agent ended. A suspend ends a
+ * Linux Claude by exactly this hangup. Measured on bash, an agent started from a
+ * sourced file outlived it where one typed at the prompt did not, and the
+ * launcher's `source` form was replaced for it.
+ */
+async function agentEndsOnHangup(shell: ProbeShell, viaLauncher: boolean): Promise<boolean> {
+  const rig = makeRig(shell, 0);
+  const args = ['--append-system-prompt', policyOfBytes(OVERSIZED_BYTES)];
+  const command = commandFor(shell, rig, args, rig.holdAgentPath);
+  const line = viaLauncher ? launchLine(shell, rig, command) : fullLine(shell, command);
+  const pty = typeLine(shell, rig, line, STARTUP_DELAY_MS);
+
+  const deadline = Date.now() + STUB_DEADLINE_MS;
+  while (Date.now() < deadline && !fs.existsSync(rig.holdPidPath)) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const pidText = fs.existsSync(rig.holdPidPath) ? fs.readFileSync(rig.holdPidPath, 'utf8') : '';
+  const agentPid = Number.parseInt(pidText, 10);
+  expect(Number.isInteger(agentPid), 'the agent never started, so there is nothing to hang up').toBe(true);
+  // A survivor must not outlive the test.
+  cleanups.push(() => {
+    try { process.kill(agentPid, 'SIGKILL'); } catch { /* gone */ }
+  });
+
+  pty.kill();
+  const settleDeadline = Date.now() + HANGUP_SETTLE_MS;
+  while (Date.now() < settleDeadline && isAlive(agentPid)) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isAlive(agentPid);
 }
 
 /** The line `performSpawn` typed before the launcher: the whole command. */
@@ -255,6 +316,17 @@ describe.skipIf(shellsUnderTest.length === 0)('a launch typed while the shell st
       expect(report?.argv).toEqual(args);
       expect(report?.stdoutIsTerminal).toBe(true);
     }, 30_000);
+
+    // The launcher must change nothing about how a suspend ends the agent. Where
+    // a shell does not pass a hangup on to a typed agent, it is no regression
+    // that it does not for a launched one, so the invariant is equality.
+    it('ends an agent started through the launcher when the shell is hung up, as it ends one typed whole', async () => {
+      const typedEnds = await agentEndsOnHangup(shell, false);
+      const launcherEnds = await agentEndsOnHangup(shell, true);
+
+      console.log(`[typed-launch hangup] ${process.platform} ${shell.program}: typed ${typedEnds ? 'ended' : 'survived'}, launcher ${launcherEnds ? 'ended' : 'survived'}`);
+      expect(launcherEnds).toBe(typedEnds);
+    }, 60_000);
   });
 });
 

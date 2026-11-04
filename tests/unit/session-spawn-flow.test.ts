@@ -275,7 +275,7 @@ describe('performSpawn - a command too long to type', () => {
     return (ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
   }
 
-  it('writes the launcher, then types the line that sources it, and records the bytes', async () => {
+  it('writes the launcher, then types the line that runs it, and records the bytes', async () => {
     const context = makeContext();
     const sessionDirectory = path.join(root, 'sessions', 'session-1');
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
@@ -297,7 +297,7 @@ describe('performSpawn - a command too long to type', () => {
 
     expect(launcherAtSpawn).toBe(`${LONG_COMMAND}\n`);
     const line = await typedLine();
-    expect(line.endsWith('launch.sh\r') || line.endsWith("launch.sh'\r")).toBe(true);
+    expect(line).toMatch(/eval "\$\(cat .*launch\.sh'?\)"\r$/);
     expect(line).not.toContain('--append-system-prompt');
     const session = context.registry.get('input-session-id-0000-000000000000');
     expect(session?.launcherUsed).toBe(true);
@@ -357,7 +357,7 @@ describe('performSpawn - a command too long to type', () => {
     expect(silent.registry.get('silent-session')?.reportsAgentStart).toBe(false);
   });
 
-  it('types the cwd fixup first and then the line that sources the launcher, not the whole command', async () => {
+  it('types the cwd fixup first and then the line that runs the launcher, not the whole command', async () => {
     const fixup = "Set-Location -LiteralPath '/home/dev/[foo]/bar'";
     vi.mocked(resolveSpawnCwd).mockReturnValueOnce({ effectiveCwd: '/home/dev/[foo]/bar', cwdFixupCommand: fixup });
     const sessionDirectory = path.join(root, 'sessions', 'session-fixup');
@@ -374,7 +374,7 @@ describe('performSpawn - a command too long to type', () => {
     });
     const writes = (ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0] as string);
     expect(writes[0]).toBe(`${fixup}\r`);
-    expect(writes[1].endsWith('launch.sh\r') || writes[1].endsWith("launch.sh'\r")).toBe(true);
+    expect(writes[1]).toMatch(/eval "\$\(cat .*launch\.sh'?\)"\r$/);
     expect(writes[1]).not.toContain('--append-system-prompt');
   });
 

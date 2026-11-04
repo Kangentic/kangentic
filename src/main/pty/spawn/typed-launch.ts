@@ -73,18 +73,27 @@ function launcherPathForShell(filePath: string, wslShell: WslShellSpec | null): 
 }
 
 /**
- * The file name and sourcing statement for a shell. `.` is the POSIX spelling
- * (dash and sh have no `source`), and fish still takes it, so a WSL distro whose
- * login shell is fish runs it too. Nushell's `source` is a parser keyword, which
- * reads its path while it parses the line: a literal is the only form it takes,
- * and the file has to exist before the line is typed. PowerShell dot-sources only
- * a `.ps1`.
+ * The file name and the statement that runs it, given the file's quoted path.
+ *
+ * A POSIX shell evaluates the file's text (`eval "$(cat <path>)"`) instead of
+ * sourcing it. Measured on bash, a SIGHUP to the shell leaves an agent started
+ * from a sourced file running, where it ends an agent typed at the prompt, and a
+ * suspend ends a Linux Claude by exactly that hangup. `eval` keeps the agent a
+ * job of the interactive shell, so the hangup reaches it as it does a typed line,
+ * and still runs in this shell. `cat` rather than `$(< file)`, which dash and sh
+ * lack. The text is parsed as the typed line would have been.
+ *
+ * fish, nushell and PowerShell still source, which has no such measurement:
+ * nushell's `source` is a parser keyword that reads its path while the line
+ * parses, so a literal is the only form it takes, and the file has to exist
+ * before the line is typed. PowerShell dot-sources only a `.ps1`.
+ * `typed-launch-round-trip.test.ts` hangs each of them up.
  */
-function launcherFormFor(shellName: string): { fileName: string; sourceStatement: string } {
-  if (isNushellShell(shellName)) return { fileName: 'launch.nu', sourceStatement: 'source' };
-  if (isFishShell(shellName)) return { fileName: 'launch.fish', sourceStatement: 'source' };
-  if (isPowerShellShell(shellName)) return { fileName: 'launch.ps1', sourceStatement: '.' };
-  return { fileName: 'launch.sh', sourceStatement: '.' };
+function launcherFormFor(shellName: string): { fileName: string; run: (quotedPath: string) => string } {
+  if (isNushellShell(shellName)) return { fileName: 'launch.nu', run: (quotedPath) => `source ${quotedPath}` };
+  if (isFishShell(shellName)) return { fileName: 'launch.fish', run: (quotedPath) => `source ${quotedPath}` };
+  if (isPowerShellShell(shellName)) return { fileName: 'launch.ps1', run: (quotedPath) => `. ${quotedPath}` };
+  return { fileName: 'launch.sh', run: (quotedPath) => `eval "$(cat ${quotedPath})"` };
 }
 
 function typedLaunchOf(typedLine: string, launcher: TypedLaunch['launcher']): TypedLaunch {
@@ -95,8 +104,8 @@ function typedLaunchOf(typedLine: string, launcher: TypedLaunch['launcher']): Ty
  * The line a spawn types, keeping it short whatever the command's length.
  *
  * Within the budget the command is typed as it is. Past it, the command goes in a
- * file and the shell is typed a line that sources it, so it runs in the same shell
- * the typed line would have. The clear prelude stays on the typed line, so it runs
+ * file and the shell is typed a line that runs it in the same shell the typed
+ * line would have (`launcherFormFor`). The clear prelude stays on the typed line, so it runs
  * first either way. The file holds `adaptCommandForShell`'s output, already quoted
  * for that shell.
  */
@@ -109,12 +118,12 @@ export function buildTypedLaunch(input: TypedLaunchInput): TypedLaunch {
   const wslShell = parseWslShellSpec(input.shell);
   if (input.sessionDirectory === null || !readsPosixTty(wslShell, input.platform)) return fullLaunch;
 
-  const { fileName, sourceStatement } = launcherFormFor(shellName);
+  const { fileName, run } = launcherFormFor(shellName);
   const filePath = path.join(input.sessionDirectory, fileName);
   const shellPath = launcherPathForShell(filePath, wslShell);
   if (shellPath === null) return fullLaunch;
   // `multiline` only to keep the path exact: the default form collapses a run of
   // spaces, which a folder name may hold.
-  const typedLine = `${prelude}${sourceStatement} ${quoteArg(shellPath, shellName, { multiline: true })}`;
+  const typedLine = prelude + run(quoteArg(shellPath, shellName, { multiline: true }));
   return typedLaunchOf(typedLine, { filePath, contents: `${adapted}\n` });
 }
