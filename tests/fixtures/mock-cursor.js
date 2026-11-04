@@ -7,6 +7,7 @@
  *   agent --resume="<chat-id>"                   -> resume existing session
  *   agent "prompt"                               -> new interactive session
  *   agent --trust --force "prompt"               -> interactive session, approvals skipped
+ *   agent --trust --mode plan "prompt"           -> interactive session in plan mode
  *   agent --trust -p "prompt" --output-format stream-json -> new non-interactive session
  *
  * Markers for test assertions (mirrors mock-claude):
@@ -15,6 +16,7 @@
  *   MOCK_CURSOR_PROMPT:<text>  -> prompt text delivered
  *   MOCK_CURSOR_MODE:interactive   -> spawned in interactive mode
  *   MOCK_CURSOR_MODE:noninteractive -> spawned with -p flag
+ *   MOCK_CURSOR_STARTUP_MODE:<mode> -> spawned with --mode <mode> (plan)
  *
  * Env knobs:
  *   MOCK_CURSOR_TUI_REDRAWS=1 -> emit periodic ANSI-only cursor repositioning
@@ -63,6 +65,7 @@ let sessionId = null;
 let resumed = false;
 let prompt = null;
 let nonInteractive = false;
+let mode = null;
 
 for (let i = 0; i < args.length; i++) {
   const argument = args[i];
@@ -94,6 +97,12 @@ for (let i = 0; i < args.length; i++) {
   // Model override (skip value)
   if (argument === '--model' && i + 1 < args.length) {
     i++;
+    continue;
+  }
+
+  // Startup mode (`--mode plan`): skip the value too, or it reads as the prompt
+  if (argument === '--mode' && i + 1 < args.length) {
+    mode = args[++i];
     continue;
   }
 
@@ -155,6 +164,11 @@ if (nonInteractive) {
   }
 } else {
   console.log('MOCK_CURSOR_MODE:interactive');
+}
+
+// `--mode plan` was passed (Cursor's plan mode, the Planning column's launch)
+if (mode) {
+  console.log('MOCK_CURSOR_STARTUP_MODE:' + mode);
 }
 
 // Always emit the prompt marker regardless of mode - it's a test
