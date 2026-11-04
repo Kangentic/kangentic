@@ -80,6 +80,7 @@ const { agentRegistry } = await import('../../src/main/agent/agent-registry');
 import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 
 interface FakeSession {
   id: string;
@@ -1029,6 +1030,24 @@ describe('the workflow agent\'s reads across projects', () => {
         expect(builtPrompts()[0]).toContain(`kangentic-mobile at ${paths.mobile}`);
         expect(builtPrompts()[0]).toContain('Kangentic restarted you');
         expect(mockPasteAgentMessage).not.toHaveBeenCalled();
+      });
+
+      it('restarts a Gemini agent for the checkout, because Gemini declares it can read more directories', async () => {
+        // The stand-in adapter takes Gemini's real capability flag, so the
+        // restart and the launch's readableDirectories follow what Gemini declares.
+        const standIn = agentRegistry.get('claude') as unknown as Record<string, unknown>;
+        spies.push(vi.spyOn(agentRegistry, 'get').mockReturnValue({
+          ...standIn,
+          supportsReadableDirectories: new GeminiAdapter().supportsReadableDirectories,
+        } as unknown as AgentAdapter));
+        midTurnAgentOwedMobile();
+
+        activity['session-mid-turn'] = 'idle';
+        manager.emit('activity', 'session-mid-turn', 'idle');
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        await nextTurn();
+
+        expect(buildCommand.mock.calls[0][0].readableDirectories).toEqual([paths.mobile]);
       });
 
       it('types the restart\'s reason in for an agent whose resume carries no prompt', async () => {

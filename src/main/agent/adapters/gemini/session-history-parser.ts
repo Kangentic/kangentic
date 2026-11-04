@@ -291,9 +291,11 @@ export function geminiChatsDir(cwd: string, place: CliPlace | null = null): stri
  * The name Gemini gives a session's chat file: `session-<time>-<first 8 of the
  * id>.jsonl`, or the legacy `.json`. Gemini 0.37 and later embed only the first
  * 8 characters of the id (verified on real files). The one rule every reader
- * that finds a chat by its id matches against.
+ * that finds a chat by its id matches against. An empty id matches no file,
+ * never every session's.
  */
 export function geminiChatFilePattern(agentSessionId: string): RegExp {
+  if (agentSessionId.length === 0) return /(?!)/;
   const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
 }

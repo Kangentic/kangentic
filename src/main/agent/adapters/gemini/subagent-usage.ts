@@ -116,11 +116,13 @@ export async function parseGeminiSubagentUsage(
   let complete = true;
   for (const file of files) {
     let subagentId = path.basename(file, '.jsonl');
-    const replies = new Map<string, Record<string, unknown>>();
+    // Only the fields the ledger reads, so a reply's content and tool results
+    // are not held for the whole file.
+    const replies = new Map<string, Pick<Record<string, unknown>, 'tokens' | 'timestamp' | 'model'>>();
     const take = (message: unknown, fallbackKey: string): void => {
       if (!isRecord(message) || message.type !== 'gemini') return;
       const key = typeof message.id === 'string' && message.id.length > 0 ? message.id : fallbackKey;
-      replies.set(key, message);
+      replies.set(key, { tokens: message.tokens, timestamp: message.timestamp, model: message.model });
     };
     const readWhole = await streamJsonlRecords(file, (record, lineIndex) => {
       if (typeof record.sessionId === 'string' && typeof record.projectHash === 'string') {
