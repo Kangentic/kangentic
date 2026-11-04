@@ -16,6 +16,7 @@ import path from 'node:path';
 import {
   findGooseSession,
   gooseDataDirectory,
+  gooseDatabaseStamp,
   gooseSessionUsage,
   readGooseSession,
   withGooseDatabase,
@@ -312,6 +313,102 @@ describe('the session row', () => {
   });
 });
 
+describe('gooseSessionUsage edge cases', () => {
+  function usageRow(overrides: Partial<GooseSessionRow>): GooseSessionRow {
+    return {
+      id: GOOSE_ID, name: NAME, workingDirectory: null,
+      totalTokens: null, inputTokens: null, outputTokens: null, cacheReadTokens: null,
+      accumulatedInputTokens: null, accumulatedOutputTokens: null, accumulatedCost: null,
+      modelName: null, contextLimit: null,
+      ...overrides,
+    };
+  }
+
+  it('clamps the used percentage to 100 when the tokens pass the context limit', () => {
+    const usage = gooseSessionUsage(usageRow({ totalTokens: 200000, contextLimit: 128000 }));
+    expect(usage?.contextWindow?.usedPercentage).toBe(100);
+    expect(usage?.contextWindow?.usedTokens).toBe(200000);
+  });
+
+  it('reports only the cost for a row with only an accumulated cost', () => {
+    expect(gooseSessionUsage(usageRow({ accumulatedCost: 0.5 }))).toEqual({ cost: { totalCostUsd: 0.5, totalDurationMs: 0 } });
+  });
+
+  it('reports only the model for a row with only a model', () => {
+    expect(gooseSessionUsage(usageRow({ modelName: 'gpt-4o' })))
+      .toEqual({ model: { id: 'gpt-4o', displayName: 'gpt-4o', reportedByAgent: true } });
+  });
+});
+
+describe('the database stamp', () => {
+  it('moves on a write that lands only in the WAL, before any checkpoint', () => {
+    const database = openDatabase();
+    database.pragma('journal_mode = WAL');
+    database.pragma('wal_autocheckpoint = 0');
+    database.exec('CREATE TABLE notes (body TEXT)');
+    database.pragma('wal_checkpoint(TRUNCATE)');
+    try {
+      const before = gooseDatabaseStamp(dbPath);
+      const mainFileBefore = fs.statSync(dbPath);
+      database.prepare('INSERT INTO notes (body) VALUES (?)').run('x'.repeat(2000));
+      expect(fs.existsSync(`${dbPath}-wal`)).toBe(true);
+      const mainFileAfter = fs.statSync(dbPath);
+      // The main file did not change, so only the WAL entry can move the stamp.
+      expect(mainFileAfter.size).toBe(mainFileBefore.size);
+      expect(mainFileAfter.mtimeMs).toBe(mainFileBefore.mtimeMs);
+      expect(gooseDatabaseStamp(dbPath)).not.toBe(before);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('still answers with the main file alone when no WAL file is present', () => {
+    createDatabase(CONVERSATION);
+    useRollbackJournal();
+    expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
+    const stamp = gooseDatabaseStamp(dbPath);
+    expect(stamp).toMatch(/^[\d.]+:\d+;$/);
+  });
+
+  it('answers null with no database file', () => {
+    expect(gooseDatabaseStamp(path.join(rootDirectory, 'nope.db'))).toBeNull();
+  });
+});
+
+describe('withGooseDatabase', () => {
+  it('opens read-only: a write in the callback throws and the fallback is returned', () => {
+    createDatabase(CONVERSATION);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = withGooseDatabase(dbPath, 'fallback', (database) => {
+        database.prepare('INSERT INTO sessions (id, name, working_dir) VALUES (?, ?, ?)').run('written', 'written', '/projects/x');
+        return 'wrote';
+      });
+      expect(result).toBe('fallback');
+      expect(readGooseSession(dbPath, 'written')).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('logs a failed read once per path and message', () => {
+    // A fresh path per test, since the logged set is module-level.
+    const database = openDatabase();
+    database.exec(SESSIONS_TABLE);
+    database.prepare('INSERT INTO sessions (id, name, working_dir) VALUES (?, ?, ?)').run(GOOSE_ID, NAME, '/projects/my-app');
+    database.close();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(readGooseTail(dbPath, NAME)).toEqual({ entries: [], totalPosition: 0 });
+      expect(readGooseTail(dbPath, NAME)).toEqual({ entries: [], totalPosition: 0 });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('messages');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe('the conversation', () => {
   it('reads the whole session in order, scoped to it, with positions for the viewer', () => {
     createDatabase(CONVERSATION);
@@ -428,7 +525,7 @@ describe('paging the conversation', () => {
     const whole = readGooseTail(dbPath, NAME).entries;
     const pages: TranscriptEntry[][] = [];
     let cursor = FIRST_CURSOR;
-    let lastPage = pageOrThrow({ direction: 'after', cursor, maxBytes: 200 });
+    let lastPage: ReturnType<typeof pageOrThrow> | undefined;
     for (let guard = 0; guard < 20; guard++) {
       lastPage = pageOrThrow({ direction: 'after', cursor, maxBytes: 200 });
       pages.push(lastPage.entries);
@@ -437,8 +534,8 @@ describe('paging the conversation', () => {
     }
     expect(pages.length).toBeGreaterThan(1);
     expect(pages.flat().map((entry) => entry.uuid)).toEqual(whole.map((entry) => entry.uuid));
-    expect(lastPage.reachedEnd).toBe(true);
-    expect(lastPage.endCursor).toBe('g:end');
+    expect(lastPage?.reachedEnd).toBe(true);
+    expect(lastPage?.endCursor).toBe('g:end');
   });
 
   it('centres a request with only a position on the message that spans it', () => {
@@ -592,6 +689,49 @@ describe('GooseAdapter over the session store', () => {
     expect(applied[0].model).toEqual({ id: 'gpt-4o', displayName: 'gpt-4o', reportedByAgent: true });
     expect(applied[0].contextWindow?.contextWindowSize).toBe(128000);
     attachment.dispose();
+  });
+
+  it('reports the transcript position as the byte sum of the session\'s content_json values', async () => {
+    createDatabase(CONVERSATION);
+    const parsed = await new GooseAdapter().parseTranscript(NAME, '/projects/my-app');
+    expect(parsed.totalPosition).toBe(sumOf(conversationSizes(CONVERSATION)));
+  });
+
+  it('forwards sinceMs and untilMs to the tool readers, so a call before sinceMs is not counted', async () => {
+    createDatabase(CONVERSATION);
+    const adapter = new GooseAdapter();
+    const counts = await adapter.transcriptToolCounts({ agentSessionId: NAME, sinceMs: 1_800_000_020_000, untilMs: 1_800_000_040_000 });
+    expect(counts).toEqual({ toolCallCount: 1, toolBreakdown: [expect.objectContaining({ toolName: 'edit', callCount: 1 })] });
+    expect(await adapter.transcriptToolResultTokens({ agentSessionId: NAME, sinceMs: 1_800_000_040_000, untilMs: null }))
+      .toEqual({ shell: Math.ceil('all tests passed'.length / 4) });
+    // Unscoped, the same session counts all three calls.
+    expect((await adapter.transcriptToolCounts({ agentSessionId: NAME }))?.toolCallCount).toBe(3);
+  });
+
+  it('keeps no launch record after dispose, so a second attach for the same session polls nothing', () => {
+    createDatabase(CONVERSATION);
+    const adapter = new GooseAdapter();
+    adapter.buildCommand({ agentPath: '/usr/bin/goose', taskId: 't', cwd: rootDirectory, permissionMode: 'default', ptySessionId: 'pty-1', sessionId: NAME });
+    const first: Array<Partial<SessionUsage>> = [];
+    adapter.attachSession({ sessionId: 'pty-1', applyUsage: (usage) => first.push(usage) }).dispose();
+    expect(first).toHaveLength(1);
+
+    const second: Array<Partial<SessionUsage>> = [];
+    adapter.attachSession({ sessionId: 'pty-1', applyUsage: (usage) => second.push(usage) }).dispose();
+    expect(second).toEqual([]);
+  });
+
+  it('keeps no launch record after a distro launch\'s dispose either', () => {
+    const adapter = new GooseAdapter();
+    adapter.buildCommand({
+      agentPath: '/usr/bin/goose', taskId: 't', cwd: rootDirectory, permissionMode: 'default', ptySessionId: 'pty-wsl', sessionId: NAME,
+      cliTarget: { distro: 'Ubuntu', linuxCliPath: '/usr/bin/goose' } as Parameters<GooseAdapter['buildCommand']>[0]['cliTarget'],
+    });
+    // The launch table is private and the early return gives nothing else to observe.
+    const launches = (adapter as unknown as { sessionLaunches: Map<string, unknown> }).sessionLaunches;
+    expect(launches.has('pty-wsl')).toBe(true);
+    adapter.attachSession({ sessionId: 'pty-wsl', applyUsage: () => undefined }).dispose();
+    expect(launches.has('pty-wsl')).toBe(false);
   });
 
   it('polls nothing for a session it never saw launched', () => {

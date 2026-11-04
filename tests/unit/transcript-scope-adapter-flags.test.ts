@@ -15,6 +15,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { AntigravityAdapter } from '../../src/main/agent/adapters/antigravity/antigravity-adapter';
+import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 
 describe('scopesTranscriptReadsByTime on the real adapters', () => {
   // Reverting `readonly scopesTranscriptReadsByTime = true;` in
@@ -30,6 +31,20 @@ describe('scopesTranscriptReadsByTime on the real adapters', () => {
     // skips it unless it has BOTH transcriptToolResultTokens and the flag.
     const adapter = agentRegistry.getBySessionType('claude_agent');
     expect(adapter, 'claude_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+  });
+
+  // Every Goose message row carries created_timestamp, and its tool counts and
+  // result tokens read only [sinceMs, untilMs), so a resumed session's earlier
+  // runs are not counted onto the latest run's record.
+  it('GooseAdapter declares true, a real boolean and not merely a truthy value', () => {
+    expect(new GooseAdapter().scopesTranscriptReadsByTime).toBe(true);
+  });
+
+  it('the registered Goose adapter carries it, and the earlier-run fill can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('goose_agent');
+    expect(adapter, 'goose_agent must resolve to a registered adapter').toBeDefined();
     expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
     expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
   });

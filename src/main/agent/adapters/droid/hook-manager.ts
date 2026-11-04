@@ -1,5 +1,4 @@
 import { EventType, IdleReason } from '../../../../shared/types';
-import type { SessionEvent } from '../../../../shared/types';
 import { buildBridgeCommand, type HookShell } from '../../shared/hook-utils';
 import {
   emitOnlyWhenDetailMatches, extractDetail, extractTool, setDetail, setWaitKind, setWaitKindWhen,
@@ -85,18 +84,6 @@ export interface DroidHookOptions {
   eventCommand?: (eventType: string, ...directives: string[]) => string;
 }
 
-/** One events.jsonl line the hooks wrote, as the event bridge wrote it, or null. */
-export function parseDroidHookEvent(line: string): SessionEvent | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== 'object' || typeof (parsed as { type?: unknown }).type !== 'string') return null;
-    return parsed as SessionEvent;
-  } catch {
-    return null;
-  }
-}
 
 /** A session id as Droid writes one: a standard 8-4-4-4-12 UUID. */
 const DROID_SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

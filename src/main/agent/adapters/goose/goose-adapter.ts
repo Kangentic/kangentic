@@ -6,6 +6,7 @@ import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { parseBridgeEventLine } from '../../shared/hook-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type {
   AgentAdapter,
@@ -34,7 +35,6 @@ import {
   GOOSE_EVENTS_PATH_ENV,
   GOOSE_PLUGIN_NAME,
   gooseWindowsHookPath,
-  parseGooseHookEvent,
   removeGooseHooks,
   writeGooseHooks,
 } from './hook-manager';
@@ -59,8 +59,9 @@ import {
  *   https://goose-docs.ai/docs/guides/context-engineering/hooks . A plugin in
  *   `<cwd>/.agents/plugins/kangentic-goose/` reports session start and end,
  *   each prompt, each tool's start and end, and each turn's end (Stop) to the
- *   event bridge. Goose runs hooks with `sh -c`, so on Windows they fire only
- *   where `sh` is on PATH; elsewhere activity falls back to the PTY timer.
+ *   event bridge. Goose runs hooks with `sh -c`, so on Windows `buildEnv`
+ *   appends Git for Windows' `bin` folder to PATH when no `sh` is on it. With
+ *   no Git for Windows at all, activity falls back to the PTY timer.
  * - Waits on the user: Goose 1.56's OSC 7501 program status on the terminal
  *   (`program-status-parser.ts`), since no hook marks a question or approval.
  * - The session store (`session-store.ts`, `transcript-parser.ts`): Goose's logs
@@ -320,7 +321,7 @@ export class GooseAdapter implements AgentAdapter {
     activity: ActivityDetection.hooksAndPty(),
     statusFile: {
       parseStatus: () => null,
-      parseEvent: parseGooseHookEvent,
+      parseEvent: parseBridgeEventLine,
       isFullRewrite: false,
     },
     // Goose 1.56+ writes an OSC 7501 program status to the terminal, the one

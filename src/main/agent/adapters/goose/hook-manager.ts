@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventType, type SessionEvent } from '../../../../shared/types';
+import { EventType } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
 import { buildBridgeCommand, type HookShell } from '../../shared/hook-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
@@ -100,16 +100,26 @@ export interface GooseHooksFile {
 export type GooseEventCommand = (eventType: string, ...directives: string[]) => string;
 
 /**
- * Where Git for Windows puts `sh.exe`, by its installer's defaults: a machine
- * install under Program Files (64- or 32-bit) and a per-user install under
- * `%LOCALAPPDATA%\Programs`. Its `bin` folder holds only `sh`, `bash` and `git`.
+ * Where Git for Windows puts `sh.exe`. First the Git already on PATH: its
+ * installer's default PATH choice adds `<root>\cmd`, which holds `git.exe` and
+ * not `sh`, so a Git installed to any folder is found through its `cmd` folder's
+ * sibling `bin`. Then the installer's default roots: a machine install under
+ * Program Files (64- or 32-bit) and a per-user install under
+ * `%LOCALAPPDATA%\Programs`. A `bin` folder holds only `sh`, `bash` and `git`.
  */
-function gitForWindowsBinCandidates(environment: NodeJS.ProcessEnv): string[] {
-  const roots = [environment.ProgramFiles, environment.ProgramW6432, environment['ProgramFiles(x86)']]
+function gitForWindowsBinCandidates(
+  environment: NodeJS.ProcessEnv,
+  pathFolders: readonly string[],
+  exists: (filePath: string) => boolean,
+): string[] {
+  const fromPath = pathFolders
+    .filter((folder) => path.win32.basename(folder).toLowerCase() === 'cmd' && exists(path.win32.join(folder, 'git.exe')))
+    .map((folder) => path.win32.join(path.win32.dirname(folder), 'bin'));
+  const defaults = [environment.ProgramFiles, environment.ProgramW6432, environment['ProgramFiles(x86)']]
     .filter((root): root is string => Boolean(root))
     .map((root) => path.win32.join(root, 'Git', 'bin'));
-  if (environment.LOCALAPPDATA) roots.push(path.win32.join(environment.LOCALAPPDATA, 'Programs', 'Git', 'bin'));
-  return roots;
+  if (environment.LOCALAPPDATA) defaults.push(path.win32.join(environment.LOCALAPPDATA, 'Programs', 'Git', 'bin'));
+  return [...fromPath, ...defaults];
 }
 
 /**
@@ -130,7 +140,7 @@ export function gooseWindowsHookPath(
   const currentPath = environment[pathKey] ?? '';
   const folders = currentPath.split(';').map((folder) => folder.trim()).filter(Boolean);
   if (folders.some((folder) => exists(path.win32.join(folder, 'sh.exe')))) return null;
-  const gitBin = gitForWindowsBinCandidates(environment).find((folder) => exists(path.win32.join(folder, 'sh.exe')));
+  const gitBin = gitForWindowsBinCandidates(environment, folders, exists).find((folder) => exists(path.win32.join(folder, 'sh.exe')));
   if (!gitBin) return null;
   return { [pathKey]: currentPath ? `${currentPath.replace(/;+$/, '')};${gitBin}` : gitBin };
 }
@@ -151,9 +161,6 @@ function rule(command: string): GooseHookRule {
  * - Stop -> `idle`: "goose finishes a turn or receives a stop event" (hooks
  *   guide), the turn end the adapter's `reportsTurnEnd` declares.
  * - SessionEnd -> `session_end`.
- *
- * The payload's fields are snake_case like Claude's (`tool_name`), so the
- * bridge's tool-scoped guards would read them, though none is needed here.
  */
 export function buildGooseHooks(eventBridge: string, eventCommand?: GooseEventCommand): GooseHooksFile {
   const bridge: GooseEventCommand = eventCommand
@@ -178,23 +185,6 @@ export function buildGooseHooks(eventBridge: string, eventCommand?: GooseEventCo
       SessionEnd: [rule(bridge(EventType.SessionEnd))],
     },
   };
-}
-
-/**
- * One events.jsonl line the hooks wrote, as the event bridge wrote it, or null
- * for a blank line, malformed JSON, or anything but an object with a string
- * `type` (an array has none). The adapter's `statusFile.parseEvent`.
- */
-export function parseGooseHookEvent(line: string): SessionEvent | null {
-  const trimmed = line.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== 'object' || typeof (parsed as { type?: unknown }).type !== 'string') return null;
-    return parsed as SessionEvent;
-  } catch {
-    return null;
-  }
 }
 
 /** `<directory>/.agents/plugins/kangentic-goose`. */

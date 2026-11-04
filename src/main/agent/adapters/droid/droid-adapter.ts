@@ -4,7 +4,8 @@ import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-
 import { droidTranscriptFilePath, parseDroidTranscript, readDroidTranscriptPage } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
-import { parseDroidHookEvent, parseDroidSessionIdFromHook } from './hook-manager';
+import { parseDroidSessionIdFromHook } from './hook-manager';
+import { parseBridgeEventLine } from '../../shared/hook-utils';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
@@ -172,7 +173,7 @@ export class DroidAdapter implements AgentAdapter {
     statusFile: {
       // Droid writes no status line; the events file is the hooks'.
       parseStatus: () => null,
-      parseEvent: parseDroidHookEvent,
+      parseEvent: parseBridgeEventLine,
       isFullRewrite: false,
     },
     sessionId: {

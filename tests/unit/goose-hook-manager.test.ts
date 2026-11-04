@@ -168,6 +168,25 @@ describe('gooseWindowsHookPath', () => {
     expect(gooseWindowsHookPath({ Path: 'C:\\Windows', ProgramFiles: 'C:\\Program Files' }, only())).toBeNull();
   });
 
+  it('finds a Git installed to a custom folder through its cmd folder on PATH', () => {
+    const environment = { Path: 'C:\\Windows;D:\\Tools\\Git\\cmd' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Git\\cmd\\git.exe', 'D:\\Tools\\Git\\bin\\sh.exe'))).toEqual({
+      Path: 'C:\\Windows;D:\\Tools\\Git\\cmd;D:\\Tools\\Git\\bin',
+    });
+  });
+
+  it('prefers the Git on PATH over a Program Files default when both exist', () => {
+    const environment = { Path: 'C:\\Windows;D:\\Tools\\Git\\cmd', ProgramFiles: 'C:\\Program Files' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Git\\cmd\\git.exe', 'D:\\Tools\\Git\\bin\\sh.exe', gitSh))).toEqual({
+      Path: 'C:\\Windows;D:\\Tools\\Git\\cmd;D:\\Tools\\Git\\bin',
+    });
+  });
+
+  it('ignores a cmd folder on PATH that holds no git.exe', () => {
+    const environment = { Path: 'C:\\Windows;D:\\Tools\\Other\\cmd' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Other\\bin\\sh.exe'))).toBeNull();
+  });
+
   it('finds a per-user install under LOCALAPPDATA', () => {
     const environment = { Path: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' };
     expect(gooseWindowsHookPath(environment, only('C:\\Users\\dev\\AppData\\Local\\Programs\\Git\\bin\\sh.exe'))).toEqual({
