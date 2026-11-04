@@ -231,6 +231,14 @@ export function resolveCursorModelId(input: string, catalog: CursorModelCatalog)
 }
 
 /**
+ * The display name the last `--list-models` catalog gave `modelId`, or null
+ * when no catalog is cached or the id is not in it.
+ */
+export function cachedCursorModelDisplayName(modelId: string): string | null {
+  return cache?.capabilities.modelDisplayNames?.[modelId.trim()] ?? null;
+}
+
+/**
  * Resolve against the catalog `discoverCursorCapabilities` last stored for
  * `cliPath`, or the most recent catalog if that path has not been probed.
  * Trimmed input when nothing is cached, so a spawn before discovery still

@@ -172,6 +172,48 @@ describe('a Cursor session in a WSL distro', () => {
     expect(fs.existsSync(wslHookPaths(path.dirname(options.eventsOutputPath!)).directory)).toBe(false);
   });
 
+  // The hooks: a distro may have no node, so each command runs the folder's
+  // copy of the WSL hook transport's script, which finds the session's folder
+  // through `KANGENTIC_WSL_HOOK_DIR`. The spawn sets that for every distro
+  // session, print runs too, so each command runs inside a shell test of the
+  // variable only a session screen carries.
+  it('a session screen hooks through the folder copy of the transport script, gated on its own variable', () => {
+    const adapter = new CursorAdapter();
+    const target = targetOn('nat');
+    const options = { ...sessionOptions(target), permissionMode: 'default' as const };
+    adapter.buildCommand(options);
+    const sessionDirectory = path.dirname(options.eventsOutputPath!);
+
+    const hooks = JSON.parse(fs.readFileSync(path.join(options.cwd, '.cursor', 'hooks.json'), 'utf-8')) as {
+      hooks: Record<string, Array<{ command: string }>>;
+    };
+    const copy = cliPathForTarget(path.join(options.cwd, '.kangentic', 'cursor-wsl-hook.sh'), target);
+    for (const [eventName, entries] of Object.entries(hooks.hooks)) {
+      const command = entries[0].command;
+      expect(command, eventName).toMatch(/^if \[ -n "\$KANGENTIC_EVENTS_PATH_INTERACTIVE" \]; then sh /);
+      expect(command, eventName).toContain(copy);
+      expect(command, eventName).toContain(' event ');
+      expect(command, eventName).not.toMatch(/[A-Za-z]:\\/);
+      expect(command, eventName).not.toContain('node ');
+    }
+    expect(hooks.hooks.beforeSubmitPrompt[0].command).toMatch(/; fi; printf '%s' '\{"continue":true\}'$/);
+    expect(fs.existsSync(path.join(options.cwd, '.kangentic', 'cursor-wsl-hook.sh'))).toBe(true);
+    expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
+    // A flag, not a path: the transport finds the folder itself.
+    expect(adapter.buildEnv(options)?.KANGENTIC_EVENTS_PATH_INTERACTIVE).toBe('1');
+
+    adapter.removeHooks(options.cwd, 'pty-1');
+    expect(fs.existsSync(path.join(options.cwd, '.cursor', 'hooks.json'))).toBe(false);
+  });
+
+  it('a print run in a distro writes no hooks and sets no hook variable', () => {
+    const adapter = new CursorAdapter();
+    const options = sessionOptions(targetOn('nat'));
+    adapter.buildCommand(options);
+    expect(fs.existsSync(path.join(options.cwd, '.cursor', 'hooks.json'))).toBe(false);
+    expect(adapter.buildEnv(options)).not.toHaveProperty('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+  });
+
   it('every reference in the bridge entry is one the bridge reads or a session sets', () => {
     expect(referencedVariables(CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY).sort()).toEqual(
       ['KANGENTIC_MCP_BRIDGE_SCRIPT', 'KANGENTIC_MCP_TOKEN', 'KANGENTIC_MCP_URL'],
