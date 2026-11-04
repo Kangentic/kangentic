@@ -293,6 +293,16 @@ describe('readCodexHookTrust', () => {
     expect(server.written.map((line) => (JSON.parse(line) as { method: string }).method)).toEqual(['initialize', 'initialized', 'hooks/list']);
   });
 
+  it('rejects when hooks/list answers an error, so the check can read again later', async () => {
+    const server = scriptedAppServer((method) => {
+      if (method === 'initialize') return {};
+      server.child.stdout.emit('data', Buffer.from(`${JSON.stringify({ id: 2, error: { code: -32600, message: 'unsupported' } })}\n`));
+      return undefined;
+    });
+    await expect(readCodexHookTrust('codex', codexHookDefinitions().slice(0, 1), spawnReturning(server.child)))
+      .rejects.toThrow('hooks/list failed');
+  });
+
   it('rejects when app-server exits without answering, so the check can read again later', async () => {
     const server = scriptedAppServer(() => undefined);
     const pending = readCodexHookTrust('codex', codexHookDefinitions().slice(0, 1), spawnReturning(server.child));

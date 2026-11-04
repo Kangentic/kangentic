@@ -223,8 +223,9 @@ describe('validateSpawnOverrides - effortOverride', () => {
   });
 
   it('accepts any level when the agent enumerates none', async () => {
-    // codex / gemini / droid all report `effortLevels: []` because they have
-    // no effort flag at all. Empty means "cannot validate", never "invalid".
+    // gemini / droid report `effortLevels: []` because they have no effort
+    // flag at all, and codex does whenever its model list could not be read.
+    // Empty means "cannot validate", never "invalid".
     mockListAgents.mockResolvedValue([agentInfo('codex', { supportsModelOverride: true, effortLevels: [] })]);
     const rejection = await validateSpawnOverrides({ ...BASE, agentOverride: 'codex', effortOverride: 'whatever' });
     expect(rejection).toBeNull();

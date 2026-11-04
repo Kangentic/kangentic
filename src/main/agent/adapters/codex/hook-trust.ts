@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnCli, stopCli } from '../../shared/cli-print';
+import { converseWithAppServer } from './app-server-rpc';
 import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
 import { shimFamilyKey } from '../../shared/shim-family-key';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
@@ -48,45 +49,18 @@ const FAILED_READ_RETRY_MS = 5 * 60_000;
 /** Longest the scratch folder waits for a stopped app-server to exit before it is removed anyway. */
 const SCRATCH_RELEASE_WAIT_MS = 10_000;
 
-/** One stdio JSON-RPC conversation with `codex app-server`. */
+/** `hooks/list` for the scratch folder, over one app-server conversation. */
 function listSessionFlagHooks(child: CliChildProcess, workingDirectory: string): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let buffered = '';
-    // An app-server that exits before reading (a Codex without the
-    // subcommand) fails the write with EPIPE; its exit rejects the read.
-    child.stdin.on('error', () => undefined);
-    const send = (message: unknown): void => { child.stdin.write(`${JSON.stringify(message)}\n`); };
-    const timer = setTimeout(() => reject(new Error('timed out')), TRUST_READ_TIMEOUT_MS);
-    timer.unref?.();
-    const finish = (settle: () => void): void => { clearTimeout(timer); settle(); };
-    child.once('error', (error: Error) => finish(() => reject(error)));
-    child.once('exit', () => finish(() => reject(new Error('app-server exited before answering'))));
-    child.stderr.resume();
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffered += chunk.toString('utf8');
-      let newline = buffered.indexOf('\n');
-      while (newline >= 0) {
-        const line = buffered.slice(0, newline).trim();
-        buffered = buffered.slice(newline + 1);
-        newline = buffered.indexOf('\n');
-        if (!line) continue;
-        let message: unknown;
-        try {
-          message = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (!isRecord(message)) continue;
-        if (message.id === 1) {
-          send({ jsonrpc: '2.0', method: 'initialized' });
-          send({ jsonrpc: '2.0', id: 2, method: 'hooks/list', params: { cwds: [workingDirectory] } });
-        } else if (message.id === 2) {
-          finish(() => (message.error ? reject(new Error('hooks/list failed')) : resolve(message.result)));
-        }
-      }
-    });
-    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { clientInfo: { name: 'kangentic', title: 'Kangentic', version: '0' } } });
-  });
+  return converseWithAppServer<unknown>(
+    child,
+    TRUST_READ_TIMEOUT_MS,
+    (conversation) => conversation.send({ jsonrpc: '2.0', id: 2, method: 'hooks/list', params: { cwds: [workingDirectory] } }),
+    (message, conversation) => {
+      if (message.id !== 2) return;
+      if (message.error) conversation.reject(new Error('hooks/list failed'));
+      else conversation.resolve(message.result);
+    },
+  );
 }
 
 /**
