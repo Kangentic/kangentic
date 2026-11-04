@@ -20,18 +20,20 @@ import {
  * `blocked`. Goose writes it only when stdout is a terminal and
  * `GOOSE_CLI_PROGRAM_STATUS` is not turned off.
  *
- * This parser reports only the waits. Goose's activity otherwise stays on the
- * PTY tracker, whose silence timer leaves a waiting session alone (it fires
- * only while the session is thinking), so the wait holds until Goose says it
- * moved on:
+ * This parser reports only the waits, which none of Goose's hooks marks. The
+ * rest of Goose's activity comes from its hooks, with the PTY tracker as the
+ * fallback, whose silence timer leaves a waiting session alone (it fires only
+ * while the session is thinking), so the wait holds until Goose says it moved
+ * on:
  * - `blocked`: the permission wait, of the kind Goose names (`permission` is
  *   an approval). A wait with no kind is left unknown.
  * - `working` after a wait: the synthetic resume event the PTY tracker itself
  *   writes (`prompt`, `PromptReason.PtyActivity`), which clears the wait.
  * - `idle`, `done`, `error` or `clear` after a wait: `interrupted`, which
  *   clears it and settles the session idle at once. Never a plain `idle`,
- *   which the engine reads as the agent's own turn end and which would run the
- *   column's turn-end automations for an agent that reports none.
+ *   which the engine reads as the agent's own turn end: Goose's Stop hook
+ *   reports that (`hook-manager.ts`), and a second one here would run the
+ *   column's turn-end automations twice, or for a turn the user cut short.
  * Every other sequence writes nothing.
  */
 

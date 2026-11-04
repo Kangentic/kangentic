@@ -88,9 +88,9 @@ describe('GooseProgramStatusParser', () => {
     expect(eventsOf(parser, status('state=blocked:kind=question:app=goose'))).toHaveLength(1);
   });
 
-  it('is the adapter\'s stream parser, with activity kept on the PTY tracker', () => {
+  it('is the adapter\'s stream parser beside its hooks, with the PTY tracker as the fallback', () => {
     const adapter = new GooseAdapter();
-    expect(adapter.runtime.activity.kind).toBe('pty');
+    expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
     expect(adapter.runtime.streamOutput?.createParser()).toBeInstanceOf(GooseProgramStatusParser);
   });
 

@@ -4120,6 +4120,15 @@
           },
           {
             name: 'goose', displayName: 'Goose CLI', found: false, path: null, version: null,
+            supportsSummarize: true,
+            // KEEP IN SYNC with GooseAdapter (src/main/agent/adapters/goose/goose-adapter.ts):
+            // pastedImageReferenceTemplate, supportsWslCli, answerFromContext and its
+            // answerCapabilities, and discoverCapabilities' free-form model override.
+            pastedImageReferenceTemplate: 'Read this image: {path} ',
+            supportsWslCli: true,
+            supportsAnswerFromContext: true,
+            answerCapabilities: { streaming: false, search: false, model: true, effort: false },
+            capabilities: { supportsModelOverride: true },
             // KEEP IN SYNC with GooseAdapter.permissions in src/main/agent/adapters/goose/goose-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Chat Only, No File Access)' },

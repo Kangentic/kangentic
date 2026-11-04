@@ -41,7 +41,7 @@ There are three tiers, and the line between the first two is a safety property, 
 | Cursor | `null` | `null` | none | measured turn-end flushed: appends land within ~40ms of the turn ending |
 | Warp | `null` | `null` | none | no history file accessible via CLI |
 | Ollama | `null` | `null` | none | `ollama run` keeps no session history |
-| Goose | `null` | `null` | none | `getSubmissionVerifier` returns null for every context; no transcript is parsed |
+| Goose | `null` | `null` | none | user turns are `messages` rows in its `sessions.db`, which the adapter reads for the transcript, but the flush-on-submit timing is unmeasured (Goose not installed on the measuring machine) |
 
 ### Why escalation takes two proofs, and measurement is only the first
 

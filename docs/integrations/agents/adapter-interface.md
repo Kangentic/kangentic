@@ -28,7 +28,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [npm .cmd shims under PowerShell and Git Bash](../../platforms/shells-and-paths.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
-| `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
+| `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`); Goose holds its `.agents/plugins/kangentic-goose/` hook plugin the same way and strips it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which times the boot geometry re-assert. A heuristic, not proof the agent is up, so it does not lift the launch overlay - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd, place?, reportedPath?)` | Locate the agent's native session history file on disk, in the WSL distro's home when `place` names one. `reportedPath`, here and on every transcript method, is a path the agent itself reported for the conversation (a session row's `transcript_path`, a live session's usage `transcriptPath`). It may be stale or name another id, so an adapter that reads it checks both; adapters that find their files by id ignore it |
 
@@ -65,7 +65,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | Ollama | `ollama-adapter.ts` | `ollama` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
 | Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `typed` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
 | Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | `command-line` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
-| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | `command-line` | No (PTY-only) | No | Not wired | No |
+| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | `command-line` | Yes (events.jsonl via the `.agents/plugins/kangentic-goose/` hook plugin; usage from `sessions.db`; built from Goose's docs) | No (wholly-owned plugin folder) | Not wired | No |
 
 The Resume Prompt column is `resumePromptDelivery`. A `command-line` agent's resume command
 carries the message (a column's message, a plan continuation, a handoff pointer, held messages).
@@ -131,7 +131,8 @@ on a dialog (see [Qwen's MCP approval gate](qwen-code.md#kangentic-mcp-server-an
 agent, which has not been run live. Cursor's interactive and print sessions use the same static
 `${env:...}` entry its answer path measured; the interactive path has not been run live yet.
 Goose's `streamable_http` extensions take `headers` with `${VAR}` (its source), but its CLI flag
-takes only a URL, and a config-file entry has not been run live, so it stays unwired.
+takes only a URL and a timeout (`parse_streamable_http_extension`), its plugins carry no MCP server,
+and its config file is global to every Goose run, so it stays unwired.
 Grok reads its project block only in a folder the user trusted in Grok, which Kangentic never
 decides for them.
 
@@ -273,7 +274,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/chat_history.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). It names the transcript `parseTranscriptWindow` walks, so the index, archive and message trail offset the right file. The attach-time `runtime.sessionHistory.locate` tails `updates.jsonl` for telemetry instead, and additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
 | Antigravity CLI | `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl` | Direct path computation from the conversation id, with a short existence poll (the transcript appears when the first turn starts) |
-| Goose CLI | N/A | Returns null (no transcript parsing; resume rides on the caller-supplied `--name`) |
+| Goose CLI | `<data dir>/sessions/sessions.db` (SQLite, shared by every session) | Returns null: no file is this session's own. The transcript methods read the database by the caller-supplied `--name` instead, and resume rides on that name |
 
 ## Prompt Templates
 
