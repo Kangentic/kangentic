@@ -111,6 +111,8 @@ interface AttachedState {
   firstStatusDelivered: boolean;
   /** Bumped per status read; a read that finishes after a later one began is dropped. */
   statusReadSequence: number;
+  /** The last status write dispatched, which `parseStatusEvents` reads the next one against. */
+  lastStatusRaw: string | null;
   /** The session's events reads, one after another, so events dispatch in order. */
   eventsChain: Promise<void>;
   /** Bumped by the synchronous exit flush, which supersedes any read in flight. */
@@ -166,6 +168,7 @@ export class StatusFileReader {
       statusFileHook,
       firstStatusDelivered: false,
       statusReadSequence: 0,
+      lastStatusRaw: null,
       eventsChain: Promise.resolve(),
       eventsGeneration: 0,
       wslInbox: null,
@@ -368,11 +371,52 @@ export class StatusFileReader {
     });
   }
 
-  /** Parse a status.json read and hand its usage to the consumer. */
+  /**
+   * Parse a status.json read and hand its usage to the consumer, then any
+   * activity events the adapter reads off the write (`parseStatusEvents`).
+   */
   private dispatchStatus(sessionId: string, state: AttachedState, raw: string): void {
-    if (!state.statusFileHook) return;
+    const hook = state.statusFileHook;
+    if (!hook) return;
+    // Neither step throws, so the events go out even when the write has no usage.
+    this.dispatchStatusUsage(sessionId, state, hook, raw);
+    this.dispatchStatusEvents(sessionId, state, hook, raw);
+  }
+
+  /**
+   * The events a status write reports against the previous write. Dispatched
+   * after the write's usage, through the events callback with no raw lines,
+   * so they reach the engine as hook events do. Never throws.
+   *
+   * Only a write the adapter could read becomes the next comparison. The
+   * bridge rewrites the file in place, so a read can land on an empty or torn
+   * write; taking one as the baseline would make the next whole write look
+   * like a fresh edge and raise a wait that is already open a second time.
+   */
+  private dispatchStatusEvents(sessionId: string, state: AttachedState, hook: StatusFileHook, raw: string): void {
+    // An empty read is the reset before the agent starts or a write caught
+    // half done. Neither is a state, so the adapter is not asked.
+    if (!hook.parseStatusEvents || raw.trim().length === 0) return;
+    let events: SessionEvent[] | null;
     try {
-      const usage = state.statusFileHook.parseStatus(raw);
+      events = hook.parseStatusEvents(raw, state.lastStatusRaw, Date.now());
+    } catch {
+      return;
+    }
+    if (events === null) return;
+    state.lastStatusRaw = raw;
+    if (events.length === 0) return;
+    try {
+      this.callbacks.onEventsParsed(sessionId, [], events);
+    } catch (error) {
+      console.error(`[status-file-reader] Status events for ${sessionId} failed to dispatch`, error);
+    }
+  }
+
+  /** The write's usage, if the adapter reads one. Never throws. */
+  private dispatchStatusUsage(sessionId: string, state: AttachedState, hook: StatusFileHook, raw: string): void {
+    try {
+      const usage = hook.parseStatus(raw);
       if (!usage) return;
       // Dev-only: append the parsed delta to status-deltas.jsonl for
       // the trace replay pipeline. Recorded at read time so the ts
@@ -497,7 +541,7 @@ export class StatusFileReader {
     if (rawLines.length === 0) return;
 
     // Parse into SessionEvent objects only when the adapter has a
-    // statusFile hook (currently only Claude). Other adapters still
+    // statusFile hook (every adapter that declares one). Other adapters still
     // need `rawLines` delivered so the consumer can run
     // hook-based session-ID capture on the `hookContext` field.
     const events: SessionEvent[] = [];

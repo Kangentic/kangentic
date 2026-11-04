@@ -451,4 +451,38 @@ test.describe('Rate limits with one reported window', () => {
       await browser.close();
     }
   });
+
+  test('another agent\'s windows in the shared snapshot are not drawn on this agent\'s pill', async () => {
+    // Main stamps each window with the agent that reported it. The snapshot is
+    // shared, so an Antigravity session's quota sits beside Claude's 7d window,
+    // and the Claude task's pill must draw only its own.
+    const { browser, page } = await launchWithState(makePreConfig(ONE_WINDOW_SEED));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.evaluate(() => {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const stores = (window as unknown as {
+          __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+        }).__zustandStores;
+        stores.session.setState({
+          latestRateLimits: {
+            rateLimits: [
+              { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 56, resetsAt: nowSeconds + 86400 * 3, windowDurationSeconds: 7 * 24 * 60 * 60, agent: 'claude' },
+              { id: 'antigravity-quota-gemini-weekly', label: 'gemini-weekly', iconKind: 'period', usedPercentage: 9, resetsAt: nowSeconds + 86400 * 2, agent: 'antigravity' },
+            ],
+            capturedAt: Date.now(),
+            sourceSessionId: 'sess-rate-limits-fresh',
+          },
+        });
+      });
+
+      const pill = await openFreshTaskPill(page);
+      await expect(pill).toBeVisible();
+      await expect(pill.locator('span.block.h-full.rounded-full')).toHaveCount(1);
+      await expect(pill).toHaveAccessibleDescription(/^7d weekly 56%\. Resets /);
+      expect(await pill.getAttribute('aria-description')).not.toContain('gemini-weekly');
+    } finally {
+      await browser.close();
+    }
+  });
 });

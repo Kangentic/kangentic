@@ -28,10 +28,12 @@ export interface AntigravityHookGroup {
 /**
  * One NAMED hook in Antigravity's hooks.json. The file's top level maps hook
  * names to this shape; tool events are grouped (matcher + hooks), the
- * invocation/stop events are flat handler lists.
+ * session/invocation/stop events are flat handler lists. The six events are
+ * the hooks reference's (https://antigravity.google/docs/hooks).
  */
 export interface AntigravityNamedHook {
   enabled?: boolean;
+  SessionStart?: AntigravityHookHandler[];
   PreToolUse?: AntigravityHookGroup[];
   PostToolUse?: AntigravityHookGroup[];
   PreInvocation?: AntigravityHookHandler[];
@@ -45,7 +47,7 @@ export type AntigravityHooksFile = Record<string, AntigravityNamedHook>;
 export const KANGENTIC_HOOK_NAME = 'kangentic-events';
 
 /**
- * agy's question tool, the one PreToolUse is wired for (#452). Its dialog
+ * agy's question tool, the one whose start is also a wait (#452). Its dialog
  * always waits on the user, unlike a tool whose approval agy's own policy may
  * skip, so its start is the wait. Measured on agy 1.3.4 with a probe hook that
  * answered `allow`: the PreToolUse carried `toolCall.name: "ask_question"` and
@@ -142,6 +144,7 @@ function stripKangenticHandlers(entry: AntigravityNamedHook): AntigravityNamedHo
 
   const survivor: AntigravityNamedHook = {
     ...entry,
+    SessionStart: filterHandlers(entry.SessionStart),
     PreToolUse: filterGroups(entry.PreToolUse),
     PostToolUse: filterGroups(entry.PostToolUse),
     PreInvocation: filterHandlers(entry.PreInvocation),
@@ -150,13 +153,15 @@ function stripKangenticHandlers(entry: AntigravityNamedHook): AntigravityNamedHo
   };
 
   const survivingHandlerCount =
-    (survivor.PreToolUse ?? []).reduce((count, group) => count + group.hooks.length, 0)
+    (survivor.SessionStart ?? []).length
+    + (survivor.PreToolUse ?? []).reduce((count, group) => count + group.hooks.length, 0)
     + (survivor.PostToolUse ?? []).reduce((count, group) => count + group.hooks.length, 0)
     + (survivor.PreInvocation ?? []).length
     + (survivor.PostInvocation ?? []).length
     + (survivor.Stop ?? []).length;
   const originalHandlerCount =
-    (entry.PreToolUse ?? []).reduce((count, group) => count + (group.hooks ?? []).length, 0)
+    (entry.SessionStart ?? []).length
+    + (entry.PreToolUse ?? []).reduce((count, group) => count + (group.hooks ?? []).length, 0)
     + (entry.PostToolUse ?? []).reduce((count, group) => count + (group.hooks ?? []).length, 0)
     + (entry.PreInvocation ?? []).length
     + (entry.PostInvocation ?? []).length
@@ -185,33 +190,49 @@ export function filterOurHooks(root: AntigravityHooksFile): AntigravityHooksFile
   return kept;
 }
 
+/** The primary-argument keys a tool event's detail is read from, under `toolCall.args`. */
+const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'];
+
 /**
  * Build the merged hooks.json content: user hooks preserved, one fresh
  * Kangentic named hook injected. `bridgeToken` and `eventsToken` are the
  * `.agents`-relative space-free tokens produced by the command builder.
  *
- * Event mapping (agy has five hook events; see the adapter's runtime notes):
+ * Event mapping (agy's six hook events, https://antigravity.google/docs/hooks):
+ * - SessionStart -> `session_start`. Fires once when a NEW conversation
+ *   starts, before the first model call. The bridge captures a session_start
+ *   payload as `hookContext` on its own, so the conversation id is read before
+ *   the first turn. A `--conversation` resume gets none, which is why
+ *   PreInvocation keeps its capture. The hooks reference lists the event, but
+ *   no changelog entry dates it; not yet run against a real agy.
  * - PreInvocation -> `prompt`. The turn-initiating signal (ModelStart is NOT
  *   in TURN_INITIATING_EVENTS), fired before every model call. Also carries
  *   `captureHookContext` so `runtime.sessionId.fromHook` can read
- *   `conversationId` from the payload - agy has no once-per-session hook for
- *   the bridge's automatic session_start capture to ride.
+ *   `conversationId` from a resumed conversation's payload.
+ * - PreToolUse -> `tool_start` for every tool (matcher `*`), with the same
+ *   name and detail directives as PostToolUse. The hooks reference makes
+ *   `decision` REQUIRED and agy treats a response without one as a DENY
+ *   (observed on 1.1.13: `{}` put the model in a tool-denied retry loop), so
+ *   the entry carries `replyJson({ decision: 'allow' })`, which the bridge
+ *   writes to stdout before anything else. `allow` "proceed[s], deferring to
+ *   the next hook or default policy" (hooks reference), and on 1.3.4 the
+ *   question and command dialogs still showed under it. The cost: a handler
+ *   that fails before it answers now denies whatever tool it fired for. For
+ *   `ask_question` alone the same entry appends a question wait
+ *   (`appendPermissionWaitForTool`), since that dialog always waits on the
+ *   user (#452). Approvals are not read here. agy's policy decides whether a
+ *   tool asks, so a PreToolUse cannot tell an approval from a tool that just
+ *   runs; the status line's `tool_confirmation_pending` reports them
+ *   (`AntigravityStatusParser.parseStatusEvents`), and attributes the wait to
+ *   the newest tool these entries started. Each tool call now starts the
+ *   bridge, which agy waits on for the reply before the tool runs. Not wired
+ *   for a WSL agy, whose hook transport carries no reply.
  * - PostToolUse -> `tool_end`, with the tool name at `toolCall.name` and the
  *   primary argument under `toolCall.args` (path-addressed directives).
  * - Stop -> `idle`. Fires when the execution loop terminates (payload carries
- *   `fullyIdle: true`), the authoritative turn-end.
- * - PreToolUse is hooked for `ask_question` ONLY, as the question wait
- *   (`tool_start` plus an appended question `idle:permission`). agy treats a
- *   handler response without a `decision` field as a DENY (observed: `{}`
- *   put the model in a tool-denied retry loop), so the entry carries
- *   `replyJson({ decision: 'allow' })`, which the bridge writes to stdout
- *   first. `allow` "delegates to the next hook or default policy" (agy's hook
- *   docs), and on 1.3.4 the question and command dialogs still showed under
- *   it. No other tool is matched: agy's policy decides whether a tool asks,
- *   so a PreToolUse cannot tell an approval from a tool that just runs, and
- *   approvals stay on the envelope. Not wired for a WSL agy, whose hook
- *   transport carries no reply. PostInvocation is skipped as pure noise (fires
- *   with PreInvocation's cadence, carries nothing Stop/Prompt do not).
+ *   `fullyIdle`), the authoritative turn-end.
+ * - PostInvocation is skipped as pure noise (fires with PreInvocation's
+ *   cadence, carries nothing Stop/Prompt do not).
  *
  * `eventCommand`, for an agy installed in a WSL distro, builds each command in
  * place of `node <bridge> <events>` with the same event types and directives
@@ -227,20 +248,21 @@ export function buildHooks(
     ? eventCommand(eventType, ...directives)
     : ['node', bridgeToken, eventsToken, eventType, ...directives].join(' '));
 
-  // The question wait needs the hook to answer `allow` on stdout, or agy denies
-  // the question. The WSL hook transport carries no reply, so a distro's agy
-  // keeps the envelope rather than lose its questions.
-  const questionWait: AntigravityHookGroup[] | undefined = eventCommand
+  // A PreToolUse handler must answer `allow` on stdout, or agy denies the
+  // tool. The WSL hook transport carries no reply, so a distro's agy gets no
+  // PreToolUse entry, so it records no tool starts and raises no question wait.
+  const toolStart: AntigravityHookGroup[] | undefined = eventCommand
     ? undefined
     : [
       {
-        matcher: AGY_QUESTION_TOOL,
+        matcher: '*',
         hooks: [
           {
             type: 'command',
             command: bridge(
               EventType.ToolStart,
               extractToolPath(['toolCall', 'name']),
+              extractDetailPath(['toolCall', 'args'], TOOL_DETAIL_ARGS),
               appendPermissionWaitForTool({ toolPath: ['toolCall', 'name'], tool: AGY_QUESTION_TOOL, waitKind: 'question' }),
               replyJson({ decision: 'allow' }),
             ),
@@ -253,7 +275,14 @@ export function buildHooks(
   return {
     ...filterOurHooks(existingRoot),
     [KANGENTIC_HOOK_NAME]: {
-      ...(questionWait ? { PreToolUse: questionWait } : {}),
+      SessionStart: [
+        {
+          type: 'command',
+          command: bridge(EventType.SessionStart),
+          timeout: 10,
+        },
+      ],
+      ...(toolStart ? { PreToolUse: toolStart } : {}),
       PreInvocation: [
         {
           type: 'command',
@@ -270,10 +299,7 @@ export function buildHooks(
               command: bridge(
                 EventType.ToolEnd,
                 extractToolPath(['toolCall', 'name']),
-                extractDetailPath(
-                  ['toolCall', 'args'],
-                  ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'],
-                ),
+                extractDetailPath(['toolCall', 'args'], TOOL_DETAIL_ARGS),
               ),
               timeout: 10,
             },

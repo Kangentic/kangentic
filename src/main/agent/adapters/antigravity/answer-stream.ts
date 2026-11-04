@@ -22,7 +22,8 @@ import type { CliPlace } from '../../shared/cli-target';
 interface AntigravityRecord {
   event?: unknown;
   conversation_id?: unknown;
-  step_update?: { step_type?: unknown; state?: unknown; text_delta?: unknown; tool_name?: unknown };
+  step_update?: { conversation_id?: unknown; step_type?: unknown; state?: unknown; text_delta?: unknown; tool_name?: unknown };
+  result?: { conversation_id?: unknown };
 }
 
 function parse(line: string): AntigravityRecord | null {
@@ -49,11 +50,30 @@ export function antigravityAnswerEvents(line: string): AnswerStreamEvent[] {
   return [];
 }
 
-/** The conversation id on the init event, or null. */
-export function antigravityConversationId(line: string): string | null {
-  if (!line.includes('"init"')) return null;
+/**
+ * The conversation id any stream line names: the init event's, a step
+ * update's (`step_update.conversation_id`), or a result's (top level or
+ * nested). A one-shot answer reads it off its `init`. A warm answer session's
+ * `init` arrives before its first turn, where no turn reads it, so the session
+ * reads the id off its turns' own lines. The
+ * headless doc (https://antigravity.google/docs/cli/headless) lists
+ * `conversation_id` on both `step_update` and `result`.
+ */
+export function antigravityStreamConversationId(line: string): string | null {
+  if (!line.includes('conversation_id')) return null;
   const record = parse(line);
-  return record?.event === 'init' && typeof record.conversation_id === 'string' ? record.conversation_id : null;
+  if (!record) return null;
+  const candidates = [record.conversation_id, record.step_update?.conversation_id, record.result?.conversation_id];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return null;
+}
+
+/** True for the `result` event that ends each stream-json turn (headless doc: "Each turn ends with a `result` event"). */
+export function isAntigravityResultLine(line: string): boolean {
+  if (!line.includes('"result"')) return false;
+  return parse(line.trim())?.event === 'result';
 }
 
 /**

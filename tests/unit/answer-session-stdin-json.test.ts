@@ -125,6 +125,29 @@ describe('openStdinJsonSession', () => {
     expect(session.busy).toBe(false);
   });
 
+  it('hands every line to onLine, the start-up line before any turn included, and turns still read theirs', async () => {
+    const seen: string[] = [];
+    const { child, session } = open({ onLine: (line) => seen.push(line) });
+    await session.ready;
+    child.say('{"type":"init","session":"s-1"}');
+    await flush();
+    expect(seen).toEqual(['{"type":"init","session":"s-1"}']);
+
+    const answer = session.ask('q');
+    await flush();
+    child.say(result('Answer.'));
+    await expect(answer).resolves.toBe('Answer.');
+    expect(seen).toEqual(['{"type":"init","session":"s-1"}', result('Answer.')]);
+  });
+
+  it('keeps a turn going when onLine throws', async () => {
+    const { child, session } = open({ onLine: () => { throw new Error('adapter bookkeeping failed'); } });
+    const answer = session.ask('q');
+    await flush();
+    child.say(result('Still answered.'));
+    await expect(answer).resolves.toBe('Still answered.');
+  });
+
   it('reassembles a line split across stdout chunks', async () => {
     const { child, session } = open();
     const answer = session.ask('q');

@@ -1,5 +1,16 @@
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../shared/types';
-import type { RateLimitWindow } from '../../shared/types';
+import type { RateLimitWindow, SessionUsage } from '../../shared/types';
+
+/**
+ * A status report's usage with each rate-limit window stamped with the agent
+ * whose session reported it (`RateLimitWindow.agent`), so the renderer's
+ * shared snapshot can show each agent only its own windows. The same usage
+ * object when it carries no windows or the session's agent is unknown.
+ */
+export function withRateLimitAgent(usage: SessionUsage, agentName: string | undefined): SessionUsage {
+  if (!usage.rateLimits || !agentName) return usage;
+  return { ...usage, rateLimits: usage.rateLimits.map((rateLimitWindow) => ({ ...rateLimitWindow, agent: agentName })) };
+}
 
 /**
  * How far a fresh report must fall to count as a reset, in percentage points. A

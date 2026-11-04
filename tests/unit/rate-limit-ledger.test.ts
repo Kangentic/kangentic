@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { RateLimitLedger, RATE_LIMIT_RESET_MIN_DROP_POINTS } from '../../src/main/activity-engine/rate-limit-ledger';
+import { RateLimitLedger, RATE_LIMIT_RESET_MIN_DROP_POINTS, withRateLimitAgent } from '../../src/main/activity-engine/rate-limit-ledger';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
-import type { RateLimitWindow } from '../../src/shared/types';
+import type { RateLimitWindow, SessionUsage } from '../../src/shared/types';
 
 // Fixed epochs: the ledger compares reported values and `resetsAt` only, never
 // the wall clock, so every case is deterministic.
@@ -199,5 +199,29 @@ describe('RateLimitLedger', () => {
     // the same report in the same window, so sess-b stays behind generation 1.
     const jitteredResetsAt = SEVEN_DAY_RESET + RATE_LIMIT_RESET_EPSILON_SECONDS / 2;
     expect(report('sess-b', 99, jitteredResetsAt)).toBe(0);
+  });
+});
+
+describe('withRateLimitAgent', () => {
+  const usage: SessionUsage = {
+    contextWindow: { usedPercentage: 0, usedTokens: 0, cacheTokens: 0, totalInputTokens: 0, totalOutputTokens: 0, contextWindowSize: 0 },
+    cost: { totalCostUsd: 0, totalDurationMs: 0 },
+    model: { id: 'm', displayName: 'M' },
+  };
+
+  it('stamps every window with the reporting session\'s agent, so the pill can show each agent its own', () => {
+    const stamped = withRateLimitAgent({ ...usage, rateLimits: [sevenDay(10), fiveHour(20)] }, 'antigravity');
+    expect(stamped.rateLimits?.map((rateLimitWindow) => rateLimitWindow.agent)).toEqual(['antigravity', 'antigravity']);
+  });
+
+  it('keeps the same usage when it carries no windows or the agent is unknown', () => {
+    expect(withRateLimitAgent(usage, 'antigravity')).toBe(usage);
+    const withWindows = { ...usage, rateLimits: [sevenDay(10)] };
+    expect(withRateLimitAgent(withWindows, undefined)).toBe(withWindows);
+  });
+
+  it('keeps the stamp through the ledger, which spreads each window it stamps', () => {
+    const stamped = withRateLimitAgent({ ...usage, rateLimits: [sevenDay(10)] }, 'claude');
+    expect(new RateLimitLedger().stamp('sess-a', stamped.rateLimits ?? [])[0]).toMatchObject({ agent: 'claude', generation: 0 });
   });
 });

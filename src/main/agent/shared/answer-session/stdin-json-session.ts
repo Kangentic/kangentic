@@ -57,6 +57,13 @@ export interface StdinJsonSessionOptions {
   isTurnEnd: (line: string) => boolean;
   /** The turn's answer from every line it produced. Throws on an agent error. */
   extractAnswer: (turnStdout: string) => string;
+  /**
+   * Every non-blank stdout line, in a turn or between turns, before the turn
+   * reads it. For what the CLI prints outside any turn, such as the start-up
+   * line that names the session's conversation (Antigravity's `init`), which
+   * no turn ever sees. Never throws into the session: a throw is ignored.
+   */
+  onLine?: (line: string) => void;
   turnTimeoutMs?: number;
   turnOutputBudget?: number;
   /**
@@ -137,9 +144,17 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
   };
 
   const handleLine = (line: string): void => {
+    if (!line.trim()) return;
+    if (options.onLine) {
+      try {
+        options.onLine(line);
+      } catch {
+        // The adapter's own bookkeeping; a turn's answer never depends on it.
+      }
+    }
     // Lines between turns (a start-up banner, a late event) belong to no turn.
     const current = turn;
-    if (!current || !line.trim()) return;
+    if (!current) return;
     current.lines.push(line);
     current.size += line.length;
     if (current.size > turnOutputBudget) {

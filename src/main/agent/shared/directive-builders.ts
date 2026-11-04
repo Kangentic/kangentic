@@ -64,14 +64,16 @@ export function extractDetailPath(parents: string[], fields: string[]): string {
 /**
  * Capture the ENTIRE stdin payload as `event.hookContext` (capped at 2048
  * chars), regardless of event type. The bridge does this automatically for
- * `session_start` events; this directive is for agents whose hook schema has
- * NO once-per-session event (Antigravity's earliest hook is the per-invocation
- * `PreInvocation`), so the session-id capture path
+ * `session_start` events; this directive is for a session no once-per-session
+ * event reaches, so the session-id capture path
  * (`SessionTelemetry.captureHookSessionIds` -> `runtime.sessionId.fromHook`)
- * still gets a payload to parse. `captureHookSessionIds` is type-agnostic and
- * one-shot, so repeated captures cost only JSONL bytes, never a re-parse.
- * Unknown to older bridge copies -> logged no-op, and the adapter's other
- * capture paths (`fromOutput`) still function.
+ * still gets a payload to parse. Antigravity's `SessionStart` fires only for a
+ * NEW conversation, so a `--conversation` resume's first payload is its
+ * per-invocation `PreInvocation`, which carries this directive.
+ * `captureHookSessionIds` is type-agnostic and one-shot, so repeated captures
+ * cost only JSONL bytes, never a re-parse. Unknown to older bridge copies ->
+ * logged no-op, and the adapter's other capture paths (`fromOutput`) still
+ * function.
  */
 export function captureHookContext(): string {
   return encodeDirective('captureHookContext', {});

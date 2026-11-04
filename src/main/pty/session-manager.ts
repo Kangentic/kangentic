@@ -19,6 +19,7 @@ import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
 import type { OpenWork } from '../activity-engine/open-work-ledger';
+import { withRateLimitAgent } from '../activity-engine/rate-limit-ledger';
 import { forgetAutomatedKeysSession } from './automated-keys-guard';
 import type { TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
@@ -998,7 +999,10 @@ export class SessionManager extends EventEmitter {
     });
 
     this.statusFileReader = new StatusFileReader({
-      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(sessionId, this.usageOnHost(sessionId, usage)),
+      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(
+        sessionId,
+        withRateLimitAgent(this.usageOnHost(sessionId, usage), this.registry.get(sessionId)?.agentName),
+      ),
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         // Before the events, and on every batch: a SessionStart that moves the

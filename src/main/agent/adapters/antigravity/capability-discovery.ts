@@ -1,12 +1,16 @@
 /**
- * Antigravity CLI capability discovery: model + effort override support and
- * the model list.
+ * Antigravity CLI capability discovery: model + effort override support, the
+ * model list, and the flags the command builder only passes where the CLI
+ * lists them.
  *
- * Verified against agy 1.1.13:
  * - `agy --help` documents `--model` ("Model for the current CLI session")
- *   and `--effort` ("Reasoning effort ... (low|medium|high)") - both parsed
- *   from the live help text so a future CLI that drops a flag degrades
- *   automatically.
+ *   and `--effort` ("Reasoning effort ... (low|medium|high)" on 1.1.13,
+ *   `(low|medium|high|xhigh|max)` on 1.4.12) - both parsed from the live help
+ *   text so a future CLI that drops a flag or adds a level follows on its own.
+ * - The same help on 1.4.12 lists `--settings` ("Settings for this session
+ *   only, never saved") and `--mode` with `(accept-edits, auto, plan)`. An
+ *   older CLI lacks one or both, and passing an unknown flag or value could
+ *   stop its launch, so the builder reads `antigravityHelpFeatures` first.
  * - `agy models` prints "Fetching available models..." then one
  *   `<slug>\t<Display Name>` line per model (a NETWORK fetch, hence the
  *   longer timeout and the cache) - e.g.
@@ -24,9 +28,71 @@ const MODELS_TIMEOUT_MS = 10000;
 
 let cache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
 
-/** Test-only: reset the discovery cache between cases. */
+/** Flags whose presence the command builder checks before passing them. */
+export interface AntigravityHelpFeatures {
+  /** `--settings` (per-session settings, never saved): carries the status line. */
+  sessionSettings: boolean;
+  /** The values `--mode` lists (`accept-edits`, `auto`, `plan` on 1.4.12). */
+  modes: readonly string[];
+}
+
+/**
+ * Help-derived features per CLI path. Filled by discovery, read synchronously
+ * by the command builder. A path discovery has not read yet answers null,
+ * which the builder treats as an older CLI (no `--settings`, no `auto`).
+ */
+const helpFeaturesByCliPath = new Map<string, AntigravityHelpFeatures>();
+
+/** What `agy --help` said about the flags the builder gates on, or null before discovery ran for `cliPath`. */
+export function antigravityHelpFeatures(cliPath: string): AntigravityHelpFeatures | null {
+  return helpFeaturesByCliPath.get(cliPath) ?? null;
+}
+
+/** Test-only: reset the discovery caches between cases. */
 export function resetAntigravityCapabilityCacheForTests(): void {
   cache = null;
+  helpFeaturesByCliPath.clear();
+}
+
+/** Test-only: seed what discovery would have read from `--help`. */
+export function setAntigravityHelpFeaturesForTests(cliPath: string, features: AntigravityHelpFeatures): void {
+  helpFeaturesByCliPath.set(cliPath, features);
+}
+
+/** The documented effort levels (headless flag table), for a help line that lists none. */
+const DOCUMENTED_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+/**
+ * The description on the help line of `flag` (Go's flag usage:
+ * `  --flag   Description`), empty when the line has none, or null when the
+ * help does not list the flag. The match stays on one line, so a flag with no
+ * description never reads the next flag's text, and a CRLF help reads the same.
+ * `flag` is a plain `--name`, which needs no regex escaping.
+ */
+function helpLineOf(helpText: string, flag: string): string | null {
+  const match = helpText.match(new RegExp(`^[ \\t]*${flag}(?:[ \\t]+(.*?))?\\r?$`, 'm'));
+  return match ? (match[1] ?? '') : null;
+}
+
+/**
+ * The effort levels `--effort` lists in its parenthesized `a|b|c` set, or the
+ * documented three when the line has none. Null when the flag is absent.
+ */
+export function parseEffortLevels(helpText: string): string[] | null {
+  const line = helpLineOf(helpText, '--effort');
+  if (line === null) return null;
+  const listed = line.match(/\(([a-z]+(?:\|[a-z]+)+)\)/);
+  return listed ? listed[1].split('|') : [...DOCUMENTED_EFFORT_LEVELS];
+}
+
+/** `--settings` presence and the `--mode` values, read off the help text. */
+export function parseHelpFeatures(helpText: string): AntigravityHelpFeatures {
+  const modeLine = helpLineOf(helpText, '--mode');
+  const modeList = modeLine?.match(/\(([a-z-]+(?:,\s*[a-z-]+)+)\)/);
+  return {
+    sessionSettings: helpLineOf(helpText, '--settings') !== null,
+    modes: modeList ? modeList[1].split(/,\s*/) : [],
+  };
 }
 
 /** Run agy and return stdout. An agy installed in a WSL distro (`target`) runs there, through `wsl.exe`. */
@@ -92,7 +158,8 @@ export async function discoverAntigravityCapabilities(
   try {
     const helpText = await runCli(cliPath, ['--help'], HELP_TIMEOUT_MS, target);
     supportsModelOverride = /--model\s/.test(helpText);
-    if (/--effort\s/.test(helpText)) effortLevels = ['low', 'medium', 'high'];
+    effortLevels = parseEffortLevels(helpText) ?? [];
+    helpFeaturesByCliPath.set(cliPath, parseHelpFeatures(helpText));
   } catch {
     // Help failure - assume no override support.
   }

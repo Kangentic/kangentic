@@ -4108,17 +4108,20 @@
             // in src/main/agent/adapters/antigravity/antigravity-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Read-Only Research)' },
-              { mode: 'default', label: 'Default (Request Review)' },
+              { mode: 'default', label: 'Default (Saved Agent Mode)' },
               { mode: 'acceptEdits', label: 'Accept Edits (Auto-Approve Edits)' },
+              { mode: 'auto', label: 'Auto (Sandbox + Review)' },
               { mode: 'bypassPermissions', label: 'Skip Permissions (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
+            // KEEP IN SYNC with AntigravityAdapter.reportsRateLimits (its status line's quota buckets).
+            reportsRateLimits: true,
             liveTelemetryUnsupported: {
               unavailableLabel: 'Telemetry: TUI only',
               unavailableTitle:
-                'Antigravity does not stream live telemetry to Kangentic.\n' +
-                'The agy TUI footer shows the active model and effort; per-thought\n' +
-                'token counts appear inline in its output.',
+                'This Antigravity session has not reported live telemetry to Kangentic.\n' +
+                'Older agy versions cannot; the agy TUI footer shows the active\n' +
+                'model and effort.',
             },
           },
           {

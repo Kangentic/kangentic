@@ -323,7 +323,7 @@ readonly runtime: AdapterRuntimeStrategy = {
 };
 ```
 
-`StatusFileReader` (`src/main/pty/readers/status-file-reader.ts`) reads `session.agentParser?.runtime?.statusFile` at attach time and dispatches through the hook's `parseStatus` / `parseEvent` methods. It contains no Claude-specific parsing code - swap the hook and the same reader serves any future adapter that wants to ride the same pipeline.
+`StatusFileReader` (`src/main/pty/readers/status-file-reader.ts`) reads `session.agentParser?.runtime?.statusFile` at attach time and dispatches through the hook's `parseStatus` / `parseEvent` methods. It contains no Claude-specific parsing code - swap the hook and the same reader serves any future adapter that wants to ride the same pipeline. A hook that declares `parseStatusEvents` also gets each non-empty status write read against the session's previous one, and the events it returns are dispatched after the write's usage through the same `onEventsParsed` callback as events-file lines (Antigravity's approval wait and plan mode, see [Antigravity](antigravity.md#live-telemetry)).
 
 | Field | Semantics |
 |-------|-----------|
