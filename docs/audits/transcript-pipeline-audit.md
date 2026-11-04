@@ -55,6 +55,8 @@ files on a dogfooding machine (`~/.claude/projects/<slug>/*.jsonl`, `~/.codex`, 
   into the handoff path, untouched by this work.
 - **Aider: no structured transcript.** Aider has no per-session native artifact (only a
   project-cumulative `.aider.chat.history.md`); structured format is unsupported, raw only.
+  Superseded since: each Aider task session now writes its own `.aider.chat.history.<id>.md`
+  through `--chat-history-file`, and the adapter parses it (`docs/integrations/agents/aider.md`).
 - **Warp / Cursor / Copilot: raw only.** Their native history locations are not yet known.
 - **Multi-session continuity.** Structured format reads the latest session's native file;
   resumed Claude sessions carry prior history forward in-file. Selecting older sessions by
