@@ -485,4 +485,27 @@ test.describe('Rate limits with one reported window', () => {
       await browser.close();
     }
   });
+
+  test('a session\'s own stamped windows pick its agent when the task has none of its own', async () => {
+    // Both tasks fall back to the claude project default. The fresh session
+    // reports an Antigravity window, so its pill must draw that one and not
+    // the Claude 7d window the stale session put in the shared snapshot.
+    const { browser, page } = await launchWithState(makePreConfig({
+      fresh: `[
+        { id: 'antigravity-quota-gemini-weekly', label: 'gemini-weekly', iconKind: 'period', usedPercentage: 9, resetsAt: nowSeconds + 86400 * 2, agent: 'antigravity' },
+      ]`,
+      stale: `[
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 56, resetsAt: nowSeconds + 86400 * 3, windowDurationSeconds: 7 * 24 * 60 * 60, agent: 'claude' },
+      ]`,
+    }));
+    try {
+      const pill = await openFreshTaskPill(page);
+      await expect(pill).toBeVisible();
+      await expect(pill.locator('span.block.h-full.rounded-full')).toHaveCount(1);
+      await expect(pill).toHaveAccessibleDescription(/gemini-weekly/);
+      expect(await pill.getAttribute('aria-description')).not.toContain('7d weekly');
+    } finally {
+      await browser.close();
+    }
+  });
 });
