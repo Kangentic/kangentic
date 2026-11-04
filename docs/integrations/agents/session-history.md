@@ -551,8 +551,8 @@ never touched again. The facts this design rests on:
 
 Kangentic tracks the move at two layers. Neither branches on an agent name. Both ride the
 generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which
-Claude's and Antigravity's do today (Copilot's and Grok's `statusFile` declarations carry only the
-events channel, since their `parseStatus` returns null), and `parseSessionStart`, which reads the
+Claude's and Antigravity's do today (every other `statusFile` declaration carries only the
+events channel, since its `parseStatus` returns null), and `parseSessionStart`, which reads the
 hook. Antigravity's parser reports no session id, so it declares no `parseSessionStart`. An adapter without `parseSessionStart`
 follows every status id change, as before.
 
