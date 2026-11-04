@@ -13,7 +13,7 @@
  * mock-claude's conversation harness is opt-in here
  * (`MOCK_CLAUDE_TRANSCRIPT_FOLDER`). The transcripts go in a folder of this run's
  * own under `~/.claude/projects`, which `afterAll` deletes: a fake HOME crashes
- * Chromium on Windows (see kimi-concurrent-spawns.spec.ts).
+ * Chromium on Windows.
  *
  * Red-green: without the restore, the second launch's panel starts one fresh
  * terminal with no MOCK_CLAUDE_RESUMED marker, and the conversations wait in Earlier.

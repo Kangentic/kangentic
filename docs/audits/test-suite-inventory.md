@@ -30,7 +30,6 @@ red test can still guard an expensive miss.
 | e2e/workflow-engine.spec.ts | 4 | 32 | 2 | 0/1/1 |  | keep | red with a product change in the window |
 | e2e/agent-activity-special-modes.spec.ts | 4 | 30 | 6 | 1/0/0 |  | keep | no signal against it |
 | e2e/browser-agent-key-focus.spec.ts | 2 | 25 | 1 | 0/0/0 | agent-driven-focus | keep | named as a rule enforcement |
-| e2e/kimi-concurrent-spawns.spec.ts | 1 | 21 | 4 | 0/0/0 |  | keep | no signal against it |
 | e2e/task-delete.spec.ts | 4 | 18 | 24 | 0/0/0 |  | keep | no signal against it |
 | e2e/session-model-name.spec.ts | 3 | 17 | 4 | 0/0/0 |  | keep | no signal against it |
 | e2e/codex-activity-detection.spec.ts | 2 | 16 | 10 | 0/0/0 |  | keep | no signal against it |
@@ -1312,12 +1311,10 @@ red test can still guard an expensive miss.
 | unit/keybindings-registry.test.ts | 39 | 0 | 7 | 0/0/0 | keybindings-registry | keep | named as a rule enforcement |
 | unit/kimi-adapter.test.ts | 76 | 0 | 9 | 0/0/0 |  | keep | no signal against it |
 | unit/kimi-capability-discovery.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
-| unit/kimi-project-relocation.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/kimi-session-history-parser.test.ts | 17 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/kimi-transcript-cleanup.test.ts | 7 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/kimi-transcript-parser.test.ts | 11 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/kimi-wire-parser.test.ts | 93 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
-| unit/kimi-wire-telemetry.test.ts | 3 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/knowledge-graph-answer-handler.test.ts | 73 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
 | unit/knowledge-graph-answer-markdown.test.ts | 29 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/knowledge-graph-answer-tasks.test.ts | 29 | 0 | 1 | 0/0/0 |  | keep | no signal against it |

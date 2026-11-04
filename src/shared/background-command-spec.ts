@@ -11,8 +11,7 @@
 
 /**
  * What an id must look like for the engine to track a shell by name
- * (`looksLikeShellId`). The engine, Kimi's wire parser and the MCP tool read it
- * from here. The two bridges are bare scripts that import nothing, so each holds
+ * (`looksLikeShellId`). The engine and the MCP tool read it from here. The two bridges are bare scripts that import nothing, so each holds
  * it as a literal in its shared matcher block, and
  * `tests/unit/background-call-match-parity.test.ts` pins that literal to this.
  */
@@ -112,7 +111,7 @@ export interface BackgroundCommandSupport {
   /**
    * Where the starts come from: the adapter's hook entries (Claude's remaps, or
    * directives built from a `BackgroundCommandSpec`), or its session-history
-   * parser (Codex's rollout, Kimi's wire.jsonl).
+   * parser (Codex's rollout).
    */
   source: 'hooks' | 'session-history';
   /** True when a launch is answered with the mark-as-service hint beside its result. */
