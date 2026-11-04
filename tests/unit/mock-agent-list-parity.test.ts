@@ -128,6 +128,39 @@ describe('mock-electron-api agents.list() fixture stays in sync with the agent r
     ).toEqual(expected);
   });
 
+  it("the mock antigravity entry's declared capability fields match the real AntigravityAdapter", async () => {
+    // Same turn of "KEEP IN SYNC" comment into a failing test as claude's above:
+    // the permission picker, the rate-limit pill and the telemetry fallback pill
+    // all read these off the mock in every UI spec.
+    const adapter = agentRegistry.getOrThrow('antigravity');
+    const mockAntigravity = (await readMockAgentList()).find((entry) => entry.name === 'antigravity');
+    expect(mockAntigravity, 'the mock agents.list() fixture has no antigravity entry').toBeDefined();
+
+    const expected = {
+      permissions: adapter.permissions,
+      defaultPermission: adapter.defaultPermission,
+      reportsRateLimits: adapter.reportsRateLimits,
+      liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
+    };
+    const actual = {
+      permissions: mockAntigravity?.permissions,
+      defaultPermission: mockAntigravity?.defaultPermission,
+      reportsRateLimits: mockAntigravity?.reportsRateLimits,
+      liveTelemetryUnsupported: mockAntigravity?.liveTelemetryUnsupported,
+    };
+
+    // Guard against a vacuous pass: the adapter really declares each of these.
+    expect(expected.reportsRateLimits).toBe(true);
+    expect(expected.liveTelemetryUnsupported?.unavailableLabel).toBeTruthy();
+    expect(expected.liveTelemetryUnsupported?.unavailableTitle).toBeTruthy();
+
+    expect(
+      actual,
+      'tests/ui/mock-electron-api.js antigravity entry drifted from src/main/agent/adapters/antigravity/antigravity-adapter.ts; '
+      + 'update the fixture field(s) that differ (see the KEEP IN SYNC comments beside each).',
+    ).toEqual(expected);
+  });
+
   // Which agents Settings > Workflows offers is read off these two fields, so a
   // mock entry that drifts from its adapter leaves every UI spec offering a
   // different set of Workflow agents than the app does.

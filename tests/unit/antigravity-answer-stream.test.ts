@@ -9,7 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   antigravityAnswerEvents,
-  antigravityConversationId,
+  antigravityStreamConversationId,
+  isAntigravityResultLine,
   removeAntigravityConversation,
 } from '../../src/main/agent/adapters/antigravity/answer-stream';
 import { antigravityDataRoot } from '../../src/main/agent/adapters/antigravity/data-paths';
@@ -35,10 +36,31 @@ describe('antigravityAnswerEvents', () => {
   });
 });
 
-describe('antigravityConversationId', () => {
-  it('reads the conversation id off the init event only', () => {
-    expect(antigravityConversationId(CAPTURED[0])).toBe(ID);
-    expect(antigravityConversationId(CAPTURED[1])).toBeNull();
+describe('antigravityStreamConversationId', () => {
+  it('reads the conversation id off every captured line: the init, each step update, and the result', () => {
+    for (const line of CAPTURED) expect(antigravityStreamConversationId(line)).toBe(ID);
+  });
+
+  it('reads a result\'s top-level id too', () => {
+    expect(antigravityStreamConversationId(JSON.stringify({ event: 'result', conversation_id: ID }))).toBe(ID);
+  });
+
+  it('reads nothing off an empty id, a line that names none, or a line that is not JSON', () => {
+    expect(antigravityStreamConversationId(JSON.stringify({ event: 'init', conversation_id: '' }))).toBeNull();
+    expect(antigravityStreamConversationId(JSON.stringify({ event: 'step_update', step_update: { step_index: 0 } }))).toBeNull();
+    expect(antigravityStreamConversationId('{"event":"init","conversation_id":')).toBeNull();
+  });
+});
+
+describe('isAntigravityResultLine', () => {
+  it('is true for the captured result line only', () => {
+    expect(CAPTURED.map(isAntigravityResultLine)).toEqual([false, false, false, false, false, false, true]);
+  });
+
+  it('is false for a step whose text says "result", and for a line that is not JSON', () => {
+    const textMentioningResult = JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: 'the "result" field' } });
+    expect(isAntigravityResultLine(textMentioningResult)).toBe(false);
+    expect(isAntigravityResultLine('{"event":"result"')).toBe(false);
   });
 });
 
