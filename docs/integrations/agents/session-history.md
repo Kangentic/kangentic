@@ -57,7 +57,7 @@ Runtime flow:
 1. An agent adapter declares a `sessionHistory` block in its `runtime` strategy (`src/shared/types.ts` - `AdapterRuntimeStrategy.sessionHistory`).
 2. On PTY spawn, the adapter's full runtime strategy is stored on `ManagedSession.agentParser` - SessionManager does nothing session-history-specific.
 3. The agent's session ID is captured via one of four paths (whichever fires first):
-   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Kimi, and Grok.
+   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Kimi, Grok, and Gemini (whose spawn-time `locate` waits up to 30 s, since its chat file appears only once the CLI has booted).
    - `runtime.sessionId.fromHook` (Gemini hook stdin)
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
@@ -167,6 +167,12 @@ A header line, then some mixture of `$set` patch lines carrying a whole `message
 standalone message lines. Gemini **re-emits the same message `id` while a reply streams**, so
 `collectGeminiMessages` deduplicates by `id`, last write wins. Without that dedupe a streaming reply
 appears many times over.
+
+Gemini 0.66.0 also writes `{"$rewindTo":"<id>"}` on `/rewind` and `{"$patch":{...}}` records
+(chatRecordingTypes.ts at that tag). `collectGeminiMessages` applies the rewind as the CLI's loader
+does, dropping that message and everything after it (everything, when the id is unknown), and
+drops the messages a patch names in `removeIds`, so the live model and tokens never come from a
+turn the user rewound. Built from the CLI's source, not yet read off a real rewound session.
 
 ```jsonl
 {"sessionId":"<uuid>","projectHash":"<sha256>","startTime":"<iso>","kind":"main"}
@@ -356,7 +362,7 @@ behavior below is the resume contract.
 |---|---|---|---|---|---|---|
 | Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
-| Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
+| Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |
 | Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
@@ -420,7 +426,8 @@ it is over the 6,000-character cap. See [How the resume prompt arrives](../../ar
 > needs the adapter's own proof (`AgentAdapter.proveConversationGone`): for Claude, the reported
 > file and the one every reader would open (the locator's, which looks past the cwd) both ENOENT,
 > the projects folder above readable, and no project folder
-> holding the file. Absence of evidence is never evidence, so a missing report leaves today's
+> holding the file; for Gemini, the hook-reported chat missing and no project's `chats` folder
+> under Gemini's `tmp` holding a file for the id. Absence of evidence is never evidence, so a missing report leaves today's
 > behavior untouched, which is exactly what keeps the mocked resumes below passing. A wrong
 > verdict costs a new conversation, never data: the old record is kept and the new one opens on a
 > recap. See [A resume the CLI cannot serve starts fresh instead](../../architecture/sessions/resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead). The
@@ -756,7 +763,7 @@ Gaps that remain in how Kangentic handles a Claude background session
 
 ### First-session race
 
-If a task completes in less than ~1 second (before the PTY scraper captures the session UUID), the history file watcher never starts and the card never shows telemetry. See the backlog task "Zero-latency telemetry pill for Codex/Gemini" for a potential pre-snapshot + claim-registry design that eliminates this window.
+If a task completes in less than ~1 second (before the PTY scraper captures the session UUID), the history file watcher never starts and the card never shows telemetry. See the backlog task "Zero-latency telemetry pill for Codex/Gemini" for a potential pre-snapshot + claim-registry design that eliminates this window. Gemini no longer has the race: it starts under the id the spawn chose (`--session-id`), so its reader attaches at spawn.
 
 ## Adding a new agent with a session history file
 

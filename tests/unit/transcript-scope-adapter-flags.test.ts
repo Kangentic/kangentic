@@ -59,6 +59,16 @@ describe('scopesTranscriptReadsByTime on the real adapters', () => {
     expect(typeof adapter?.transcriptToolCounts).toBe('function');
   });
 
+  // Gemini appends every --resume to one chat file too, and its cursor
+  // (gemini/transcript-usage.ts) filters calls by their own timestamps.
+  it('the registered Gemini adapter declares it and can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('gemini_agent');
+    expect(adapter, 'gemini_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
+  });
+
   // Grok and Antigravity count tool calls over the whole transcript and ignore
   // sinceMs and untilMs. Declaring the flag on either would let a whole
   // conversation's calls land on one run's record, double counting every

@@ -5,6 +5,7 @@
  * Gemini command shapes (see src/main/agent/adapters/gemini/command-builder.ts):
  *   gemini --version                                            -> detector probe
  *   gemini [--approval-mode <m>] --resume <sessionId> [prompt]  -> resume
+ *   gemini [--approval-mode <m>] --session-id <id> [prompt]     -> new session under id
  *   gemini [--approval-mode <m>] [-p] [prompt]                  -> new session
  *
  * Markers for test assertions:
@@ -43,6 +44,16 @@ for (let i = 0; i < args.length; i++) {
     sessionId = args[i + 1];
     resumed = true;
     i++;
+    continue;
+  }
+  // A fresh session under the id Kangentic chose (the adapter's supportsCallerSessionId).
+  if (a === '--session-id' && args[i + 1]) {
+    sessionId = args[i + 1];
+    i++;
+    continue;
+  }
+  if (a === '--model' || a === '--include-directories') {
+    if (args[i + 1]) i++;
     continue;
   }
   if (a === '--approval-mode' || a === '-p') {

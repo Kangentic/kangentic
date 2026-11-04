@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 import type { CliPlace } from '../../shared/cli-target';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
-import { geminiChatsDir } from './session-history-parser';
+import { geminiChatFilePattern, geminiChatsDir } from './session-history-parser';
 
 /** A Gemini message without its own id is named by its line, so the tail, its notice and every page count lines. */
 const UUIDS_NUMBER_LINES = true;
@@ -24,7 +24,8 @@ const UUIDS_NUMBER_LINES = true;
  *     opening user turn); later `$set`s touch only `lastUpdated`. So `$set`
  *     payloads can carry a `messages[]` array we must fold in;
  *   - standalone message lines `{ id, timestamp, type: 'user'|'gemini',
- *     content, thoughts?, tokens?, model?, toolCalls? }`.
+ *     content, thoughts?, tokens?, model?, toolCalls? }`;
+ *   - `$patch` and `$rewindTo` records, applied as `parseGeminiLines` describes.
  *
  * Critical: Gemini RE-EMITS a message with the SAME `id` as it streams (first
  * without `toolCalls`, then again with them). We dedupe by `id`, last emission
@@ -66,7 +67,7 @@ export async function parseGeminiTranscript(
   const isWholeFile = window.omittedBytes === 0 && window.nextByteOffset >= window.totalBytes;
   if (isWholeFile && trimmed.startsWith('{') && trimmed.endsWith('}') && !trimmed.includes('\n')) {
     // Legacy single-object form: one JSON object with a messages[] array.
-    const kept = new Map<string, KeptMessage>();
+    const kept = new Map<string, KeptItem>();
     const parsed = tryParseJson(trimmed);
     if (isRecord(parsed) && Array.isArray(parsed.messages)) {
       // The legacy form is one object on one line, so every message shares
@@ -114,6 +115,54 @@ export async function readGeminiTranscriptPage(
   });
 }
 
+/**
+ * One bounded window of a Gemini chat file (`AgentAdapter.parseTranscriptWindow`),
+ * retaining nothing between calls: the conversation indexer walks the whole
+ * file this way, the message trail reads what was appended, and a turn end's
+ * reply is read from its anchor.
+ *
+ * Patches and rewinds apply within the window, as for the tail and a page.
+ * Usage needs no carry across windows: a reply's uuid is its message id, so
+ * a copy re-emitted in a later window updates the same ledger row.
+ *
+ * Lines are counted from the file's start only when the window holds a
+ * message with no id of its own, the one case whose uuid is its line number.
+ * Gemini 0.66.0 gives every message an id, so a live read never pays for the
+ * count. A legacy single document is one line: the window at byte 0 parses it
+ * whole, and any later window holds nothing.
+ */
+export async function parseGeminiTranscriptWindow(
+  agentSessionId: string,
+  filePath: string,
+  startByte: number,
+  maxBytes: number,
+): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number; firstByteOffset: number; endByte: number }> {
+  if (await isLegacyGeminiDocument(filePath)) {
+    const totalBytes = await fs.promises.stat(filePath).then((stat) => stat.size, () => null);
+    if (totalBytes === null) return { entries: [], nextByteOffset: 0, totalBytes: 0, firstByteOffset: 0, endByte: 0 };
+    const entries = startByte === 0 ? await parseGeminiTranscript(agentSessionId, filePath) : [];
+    return { entries, nextByteOffset: totalBytes, totalBytes, firstByteOffset: Math.min(startByte, totalBytes), endByte: totalBytes };
+  }
+  let window = await readJsonlWindow(filePath, { startByte, maxBytes });
+  let namedByLine = false;
+  let entries = parseGeminiLines(
+    agentSessionId,
+    splitJsonlLines(window.text, window.startByte, window.startByte === 0 ? 0 : null),
+    () => { namedByLine = true; },
+  );
+  if (namedByLine && window.startByte > 0) {
+    window = await readJsonlWindow(filePath, { startByte, maxBytes, countOmittedLines: true });
+    entries = parseGeminiLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  }
+  return {
+    entries,
+    nextByteOffset: window.nextByteOffset,
+    totalBytes: window.totalBytes,
+    firstByteOffset: window.startByte,
+    endByte: window.endByte,
+  };
+}
+
 /** Head bytes read to tell the legacy single document from a current JSONL file. */
 const GENERATION_PROBE_BYTES = 4096;
 
@@ -142,12 +191,26 @@ async function isLegacyGeminiDocument(filePath: string): Promise<boolean> {
   }
 }
 
-/** A message the dedupe kept, with the byte its kept emission's line starts at. */
-interface KeptMessage {
-  message: Record<string, unknown>;
-  /** Null for the legacy single document, whose entries carry no origin. */
-  position: number | null;
-}
+/**
+ * What a window keeps, in order: a message the dedupe kept, or the tool results
+ * a `$patch` line delivered for a message this window does not hold.
+ */
+type KeptItem =
+  | {
+    kind: 'message';
+    message: Record<string, unknown>;
+    /** The byte its kept emission's line starts at. Null for the legacy single document, whose entries carry no origin. */
+    position: number | null;
+  }
+  | {
+    kind: 'patched-results';
+    /** The uuid of the message the results belong to, so they key as its own results do. */
+    messageUuid: string;
+    toolCalls: Array<Record<string, unknown>>;
+    position: number;
+    /** A patch line has no time of its own: the latest message time the window read before it. */
+    ts: number | null;
+  };
 
 /**
  * Parse whole JSONL lines into entries, for the tail and a history page alike.
@@ -155,9 +218,34 @@ interface KeptMessage {
  * re-emitted in a later window is parsed there again under the same uuid with
  * its own line's origin. The viewer keeps the copy from the later position,
  * which is the same last-emission rule.
+ *
+ * The other records apply as the CLI's own loader applies them
+ * (`createJsonlRecordAccumulator`, chatRecordingService.ts at v0.66.0,
+ * https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/core/src/services/chatRecordingService.ts),
+ * within this window:
+ *   - `$patch` sets a message's `content` and its tool calls' `result` by call
+ *     id, also for each entry of `updates[]`; `removeIds` deletes messages;
+ *     `orderIds` moves the listed messages to the end in that order. Gemini
+ *     writes a tool's result this way after the call was recorded, so a patch
+ *     for a message an earlier window holds yields that message's results
+ *     here, at the patch line.
+ *   - `$rewindTo: <id>` (written by `/rewind`) drops that message and every
+ *     one after it. When the id is not in the window the CLI clears what it
+ *     holds, and that is also right for a window: the target sits earlier, so
+ *     everything this window kept so far came after it. A window that starts
+ *     after the rewind line, a page of older history, still shows the turns the
+ *     rewind dropped.
+ * `collectGeminiMessages` in session-history-parser.ts applies the same
+ * records for the telemetry reader: change both together.
+ * Built from that source, not yet run against a real session file.
  */
-function parseGeminiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
-  const kept = new Map<string, KeptMessage>();
+function parseGeminiLines(
+  agentSessionId: string,
+  lines: ReadonlyArray<JsonlLine>,
+  onLineNamedMessage?: () => void,
+): TranscriptEntry[] {
+  const kept = new Map<string, KeptItem>();
+  let latestMessageTs: number | null = null;
   for (const { text, byte, line } of lines) {
     if (text.length === 0) continue;
     const parsed = tryParseJson(text);
@@ -167,14 +255,92 @@ function parseGeminiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine
     if (isRecord(parsed.$set)) {
       if (Array.isArray(parsed.$set.messages)) {
         for (const [index, message] of parsed.$set.messages.entries()) {
-          keepMessage(kept, agentSessionId, message, lineNumber, index, byte);
+          if (keepMessage(kept, agentSessionId, message, lineNumber, index, byte)) onLineNamedMessage?.();
         }
       }
       continue;
     }
-    keepMessage(kept, agentSessionId, parsed, lineNumber, null, byte);
+    if (typeof parsed.$rewindTo === 'string') {
+      rewindTo(kept, parsed.$rewindTo);
+      continue;
+    }
+    if (isRecord(parsed.$patch)) {
+      applyPatchRecord(kept, parsed.$patch, byte, latestMessageTs);
+      continue;
+    }
+    const messageTs = typeof parsed.timestamp === 'string' ? Date.parse(parsed.timestamp) : Number.NaN;
+    if (Number.isFinite(messageTs)) latestMessageTs = messageTs;
+    if (keepMessage(kept, agentSessionId, parsed, lineNumber, null, byte)) onLineNamedMessage?.();
   }
   return entriesFromMessages(agentSessionId, kept);
+}
+
+/** Drop `messageId` and everything after it, or everything when it is not here. */
+function rewindTo(kept: Map<string, KeptItem>, messageId: string): void {
+  if (!kept.has(messageId)) {
+    kept.clear();
+    return;
+  }
+  let found = false;
+  for (const key of [...kept.keys()]) {
+    if (key === messageId) found = true;
+    if (found) kept.delete(key);
+  }
+}
+
+/** One `$patch` record: its own patch, then each of `updates[]`, then `removeIds` and `orderIds`. */
+function applyPatchRecord(
+  kept: Map<string, KeptItem>,
+  patch: Record<string, unknown>,
+  position: number,
+  ts: number | null,
+): void {
+  const singles: unknown[] = [patch, ...(Array.isArray(patch.updates) ? patch.updates : [])];
+  for (const [index, single] of singles.entries()) {
+    // Keyed by the line's byte, never its line number: a window that does not
+    // start at byte 0 numbers no lines, and every patch in it would share a key.
+    if (isRecord(single)) applySinglePatch(kept, single, `${position}.${index}`, position, ts);
+  }
+  if (Array.isArray(patch.removeIds)) {
+    for (const removeId of patch.removeIds) {
+      if (typeof removeId === 'string') kept.delete(removeId);
+    }
+  }
+  if (Array.isArray(patch.orderIds)) {
+    for (const orderId of patch.orderIds) {
+      if (typeof orderId !== 'string') continue;
+      const item = kept.get(orderId);
+      if (!item) continue;
+      kept.delete(orderId);
+      kept.set(orderId, item);
+    }
+  }
+}
+
+function applySinglePatch(
+  kept: Map<string, KeptItem>,
+  patch: Record<string, unknown>,
+  patchKey: string,
+  position: number,
+  ts: number | null,
+): void {
+  if (typeof patch.id !== 'string' || patch.id.length === 0) return;
+  const toolCallPatches = Array.isArray(patch.toolCalls) ? patch.toolCalls.filter(isRecord) : [];
+  const target = kept.get(patch.id);
+  if (target?.kind === 'message') {
+    if ('content' in patch) target.message.content = patch.content;
+    const calls = Array.isArray(target.message.toolCalls) ? target.message.toolCalls : [];
+    for (const callPatch of toolCallPatches) {
+      if (!('result' in callPatch)) continue;
+      const call = calls.find((candidate) => isRecord(candidate) && candidate.id === callPatch.id);
+      if (isRecord(call)) call.result = callPatch.result;
+    }
+    return;
+  }
+  // The message is in an earlier window: its results show here, at the patch.
+  const withResults = toolCallPatches.filter((callPatch) => 'result' in callPatch && typeof callPatch.id === 'string');
+  if (withResults.length === 0) return;
+  kept.set(`$patch:${patchKey}`, { kind: 'patched-results', messageUuid: patch.id, toolCalls: withResults, position, ts });
 }
 
 /**
@@ -188,38 +354,99 @@ function parseGeminiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine
  * `resolveTaskTranscript` dedups by uuid keeping the first, so all but one
  * vanished from the stitched Conversation tab. The fallback is now the
  * session-scoped absolute line index used by the Codex and Kimi parsers.
+ *
+ * Returns true when the uuid came from the line number, which a window read
+ * needs to know: only then must it count the lines before its window.
  */
 function keepMessage(
-  kept: Map<string, KeptMessage>,
+  kept: Map<string, KeptItem>,
   agentSessionId: string,
   message: unknown,
   lineNumber: number,
   indexWithinLine: number | null,
   position: number | null,
-): void {
-  if (!isRecord(message)) return;
+): boolean {
+  if (!isRecord(message)) return false;
   const type = message.type;
-  if (type !== 'user' && type !== 'gemini') return;
+  if (type !== 'user' && type !== 'gemini') return false;
   let messageId = typeof message.id === 'string' && message.id.length > 0 ? message.id : null;
+  const namedByLine = messageId === null;
   if (messageId === null) {
     // A `$set` line seeds SEVERAL messages, so the line alone is not unique.
     messageId = indexWithinLine === null
       ? `${agentSessionId}:${lineNumber}`
       : `${agentSessionId}:${lineNumber}.${indexWithinLine}`;
   }
-  kept.set(messageId, { message, position });
+  kept.set(messageId, { kind: 'message', message, position });
+  return namedByLine;
 }
 
-/** Map the kept messages to entries, each stamped with its kept emission's line. */
-function entriesFromMessages(agentSessionId: string, kept: Map<string, KeptMessage>): TranscriptEntry[] {
+/** Map the kept items to entries, each stamped with its kept emission's line. */
+function entriesFromMessages(agentSessionId: string, kept: Map<string, KeptItem>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  // The key IS the uuid (see `keepMessage`).
-  for (const [uuid, { message, position }] of kept) {
+  // A message's key IS its uuid (see `keepMessage`).
+  for (const [key, item] of kept) {
     const firstNew = entries.length;
-    appendMessageEntries(uuid, message, entries);
-    if (position !== null) stampOrigin(entries, firstNew, agentSessionId, position);
+    if (item.kind === 'message') {
+      appendMessageEntries(key, item.message, entries);
+    } else {
+      // Keyed as the message's own results are (`transcriptEntryKey`: uuid and
+      // call id), so a copy the message also carries dedupes to one, and the
+      // assistant entry (keyed by uuid alone) is never shadowed. The viewer's
+      // page merge and the task stitch both key this way.
+      const ts = item.ts ?? Date.now();
+      for (const call of item.toolCalls) {
+        entries.push({
+          kind: 'tool_result',
+          uuid: item.messageUuid,
+          ts,
+          toolUseId: typeof call.id === 'string' ? call.id : '',
+          content: extractToolCallOutput(call),
+        });
+      }
+    }
+    if (item.position !== null) stampOrigin(entries, firstNew, agentSessionId, item.position);
   }
   return entries;
+}
+
+/** Statuses after which a call's result is final (Gemini's `CoreToolCallStatus`). */
+const FINISHED_TOOL_STATUSES = new Set(['success', 'error', 'cancelled']);
+
+/**
+ * Whether a call has a result to show yet. Gemini records the call before it
+ * runs and patches the result in later, so a call with no `result`, no
+ * `resultDisplay` and no finished status is still pending: no result entry,
+ * rather than an empty one.
+ */
+function hasToolResult(call: Record<string, unknown>): boolean {
+  if (call.result !== undefined && call.result !== null) return true;
+  if (call.resultDisplay !== undefined && call.resultDisplay !== null) return true;
+  return typeof call.status === 'string' && FINISHED_TOOL_STATUSES.has(call.status);
+}
+
+/**
+ * Per-turn usage for the turn-usage ledger, from a message's `tokens`
+ * (chatRecordingTypes.ts v0.66.0: `input` is promptTokenCount, `cached` is
+ * cachedContentTokenCount, `thoughts` is thoughtsTokenCount). The Gemini API
+ * counts the cached part inside promptTokenCount, so fresh input is `input`
+ * less `cached`. Thinking tokens are billed as output, so they join `output`.
+ * Gemini reports no cache write.
+ */
+export function turnUsageFromTokens(tokens: unknown): TranscriptTurnUsage | undefined {
+  if (!isRecord(tokens)) return undefined;
+  const input = toCount(tokens.input);
+  const cached = Math.min(toCount(tokens.cached), input);
+  return {
+    inputTokens: input - cached,
+    outputTokens: toCount(tokens.output) + toCount(tokens.thoughts),
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: cached,
+  };
+}
+
+function toCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 /** Append the entries one kept message yields. */
@@ -261,6 +488,7 @@ function appendMessageEntries(uuid: string, message: Record<string, unknown>, en
       const id = typeof call.id === 'string' ? call.id : '';
       const name = typeof call.name === 'string' ? call.name : 'tool';
       blocks.push({ type: 'tool_use', id, name, input: call.args });
+      if (!hasToolResult(call)) continue;
       toolResults.push({
         kind: 'tool_result',
         uuid,
@@ -272,7 +500,8 @@ function appendMessageEntries(uuid: string, message: Record<string, unknown>, en
     }
   }
 
-  if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+  const usage = turnUsageFromTokens(message.tokens);
+  if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, ...(usage ? { usage } : {}), blocks });
   for (const result of toolResults) entries.push(result);
 }
 
@@ -284,8 +513,7 @@ function appendMessageEntries(uuid: string, message: Record<string, unknown>, en
  */
 export function locateGeminiTranscriptFile(agentSessionId: string, cwd: string, place: CliPlace | null = null): string | null {
   const directory = geminiChatsDir(cwd, place);
-  const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
+  const pattern = geminiChatFilePattern(agentSessionId);
   let names: string[];
   try {
     names = fs.readdirSync(directory);

@@ -142,6 +142,13 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
   Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is background
   housekeeping, first run 5 s after launch and at most once a day, while `--resume` resolves its
   file at launch.
+  Gemini's (`adapters/gemini/conversation-gone.ts`) reads the path its SessionStart hook reported
+  (`transcript_path`, from the session's events file): absolute, in a `chats` folder under
+  Gemini's `tmp`, named `session-<time>-<first 8 of the id>.jsonl` (or the legacy `.json`) and
+  failing with ENOENT; the reader's own folder holding no file for the id; and `tmp` readable with
+  no project's `chats` folder holding one. Gemini deletes chats past
+  `general.sessionRetention.maxAge` (30 days by default). Built from its docs and source, not yet
+  run against an expired chat.
 - **`unknown`** is everything else, and resumes exactly as before. Mocked CLIs write no status and
   no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
 

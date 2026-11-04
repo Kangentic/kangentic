@@ -10,7 +10,7 @@
  * Per-agent capture path:
  *   - codex:     fromFilesystem (planted rollout JSONL with known UUID)
  *   - droid:     fromFilesystem (mock writes ~/.factory/sessions/<slug>/<uuid>.jsonl)
- *   - gemini:    fromHook       (planted SessionStart event with known UUID)
+ *   - gemini:    none needed    (the id chosen at launch via --session-id)
  *   - kimi:      fromOutput     ("Session: <uuid>" banner regex)
  *   - kimi-fs:   fromFilesystem (mtime-windowed scan of ~/.kimi/sessions/<hash>)
  *   - opencode:  fromOutput     ("session id: ses_..." regex)
@@ -66,11 +66,10 @@ test.describe.configure({ mode: 'parallel' });
 
 const runId = Date.now();
 
-// UUIDs that the Codex / Gemini cases plant explicitly. Mock binaries echo
-// whatever the resume command passes them, so a planted UUID is the truth
-// value the test asserts against.
+// The UUID the Codex case plants explicitly. Mock binaries echo whatever the
+// resume command passes them, so a planted UUID is the truth value the test
+// asserts against.
 const KNOWN_CODEX_UUID = 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
-const KNOWN_GEMINI_UUID = 'bbbb2222-cccc-dddd-eeee-ffffffffffff';
 const MOCK_OPENCODE_SESSION_ID = 'ses_2349b5c91ffeKd6qajuUTR4clq';
 
 // --- Per-agent helpers (file/hook plant routines) --------------------------
@@ -92,30 +91,6 @@ function writeCodexRolloutFile(cwd: string): string {
     payload: { id: KNOWN_CODEX_UUID, cli_version: '0.118.0', cwd, timestamp: isoTimestamp },
   }) + '\n');
   return filepath;
-}
-
-/**
- * The newest session's events.jsonl under the project. Gemini's folder-shared
- * settings file names no session's path (task #859): its hooks say
- * `env:KANGENTIC_EVENTS_PATH` and each session spawn sets that variable.
- */
-function findGeminiEventsOutputPath(projectDir: string): string | null {
-  const sessionsDir = path.join(projectDir, '.kangentic', 'sessions');
-  if (!fs.existsSync(sessionsDir)) return null;
-  const candidates = fs.readdirSync(sessionsDir)
-    .map((sessionId) => path.join(sessionsDir, sessionId, 'events.jsonl'))
-    .filter((eventsPath) => fs.existsSync(eventsPath))
-    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
-  return candidates[0] ?? null;
-}
-
-function injectGeminiSessionStart(eventsPath: string, sessionId: string): void {
-  fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
-  fs.appendFileSync(eventsPath, JSON.stringify({
-    ts: Date.now(),
-    type: 'session_start',
-    hookContext: JSON.stringify({ session_id: sessionId }),
-  }) + '\n');
 }
 
 // --- Shared test runner ----------------------------------------------------
@@ -306,19 +281,21 @@ test.describe('Agent session-ID capture pipeline', () => {
     }, `Droid Capture ${runId}`);
   });
 
-  test('Gemini: hook-injected SessionStart UUID flows through to resume', async () => {
+  test('Gemini: the id chosen at launch (--session-id) flows through to resume', async () => {
+    // Gemini takes the id Kangentic chooses (`supportsCallerSessionId`), so
+    // nothing is captured: the mock starts its session under `--session-id`
+    // and prints it, with its header and session file suppressed.
     await runCaptureCase(page, tmpDir, {
       agent: 'gemini',
       spawnMarker: 'MOCK_GEMINI_SESSION:',
       resumeMarker: 'MOCK_GEMINI_RESUMED:',
       uuidPattern: /MOCK_GEMINI_RESUMED:([a-f0-9-]+)/,
-      resolveExpectedUuid: ({ tmpDir }) => {
-        const eventsPath = findGeminiEventsOutputPath(tmpDir);
-        if (!eventsPath) throw new Error('Gemini settings missing events.jsonl hook path');
-        injectGeminiSessionStart(eventsPath, KNOWN_GEMINI_UUID);
-        return KNOWN_GEMINI_UUID;
+      resolveExpectedUuid: ({ spawnScrollback }) => {
+        const match = spawnScrollback.match(/MOCK_GEMINI_SESSION:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+        if (!match) throw new Error('mock-gemini did not emit a session marker');
+        return match[1];
       },
-    }, `Gemini Capture ${runId}`);
+    }, `Gemini Chosen Id ${runId}`);
   });
 
   test('Kimi: PTY banner UUID flows through to resume', async () => {

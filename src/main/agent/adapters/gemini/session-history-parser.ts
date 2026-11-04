@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { geminiHomeDir } from './gemini-home';
+import { geminiModelDisplayName } from './model-display-name';
 import path from 'node:path';
 import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
@@ -129,6 +130,8 @@ export class GeminiSessionHistoryParser {
     cwd: string;
     /** Where the CLI runs when it is not this machine (a WSL distro). */
     cliTarget?: StoredCliTarget | null;
+    /** Polls 500 ms apart. Default 10 (5 s), for a caller asking about a session that already ran. */
+    maxAttempts?: number;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
 
@@ -136,13 +139,9 @@ export class GeminiSessionHistoryParser {
 
     // Gemini 0.37 embeds only the FIRST 8 CHARS of the session UUID
     // in the filename, e.g. `session-2026-04-09T19-18-08889b8d.json`
-    // for session `08889b8d-c485-...`. Empirically verified on
-    // real on-disk files. The historical regex matched the full
-    // UUID and never fired.
-    const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // `.jsonl?` so both on-disk generations match - see the note in
-    // `captureSessionIdFromFilesystem`.
-    const pattern = new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
+    // for session `08889b8d-c485-...`. The historical regex matched the
+    // full UUID and never fired.
+    const pattern = geminiChatFilePattern(agentSessionId);
 
     // Fast path: captureSessionIdFromFilesystem already found this file.
     // Return the cached path immediately instead of re-scanning.
@@ -152,7 +151,7 @@ export class GeminiSessionHistoryParser {
       if (fs.existsSync(cached)) return cached;
     }
 
-    const maxAttempts = 10;
+    const maxAttempts = options.maxAttempts ?? 10;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const found = findMatchingFile(directory, pattern);
       if (found) return found;
@@ -235,7 +234,7 @@ export class GeminiSessionHistoryParser {
       },
       model: {
         id: modelId,
-        displayName: modelId,
+        displayName: geminiModelDisplayName(modelId) ?? modelId,
       },
     };
     const usage = sparseUsage as unknown as SessionUsage;
@@ -286,6 +285,17 @@ export function computeGeminiProjectDirName(cwd: string): string {
  */
 export function geminiChatsDir(cwd: string, place: CliPlace | null = null): string {
   return path.join(geminiHomeDir(place), 'tmp', computeGeminiProjectDirName(cwd), 'chats');
+}
+
+/**
+ * The name Gemini gives a session's chat file: `session-<time>-<first 8 of the
+ * id>.jsonl`, or the legacy `.json`. Gemini 0.37 and later embed only the first
+ * 8 characters of the id (verified on real files). The one rule every reader
+ * that finds a chat by its id matches against.
+ */
+export function geminiChatFilePattern(agentSessionId: string): RegExp {
+  const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
 }
 
 /**
@@ -391,6 +401,46 @@ function collectGeminiMessages(content: string): unknown[] | null {
     const patch = entry.$set;
     if (isRecord(patch) && Array.isArray(patch.messages)) {
       for (const message of patch.messages) append(message);
+      continue;
+    }
+    // `/rewind` writes `$rewindTo: <id>`, and a `$patch` may carry
+    // `removeIds` and `orderIds`. The CLI's loader (chatRecordingService.ts at
+    // v0.66.0) drops the named message and everything after it, or everything
+    // when the id is unknown, and moves `orderIds` to the end, so the latest
+    // model and tokens come from the message the CLI itself ends on. The
+    // transcript parser applies the same records to its own map
+    // (`parseGeminiLines` in transcript-parser.ts): change both together.
+    if (typeof entry.$rewindTo === 'string') {
+      const cutIndex = indexById.get(entry.$rewindTo);
+      const keepCount = cutIndex ?? 0;
+      ordered.length = keepCount;
+      for (const [id, index] of [...indexById]) {
+        if (index >= keepCount) indexById.delete(id);
+      }
+      continue;
+    }
+    if (isRecord(entry.$patch)) {
+      const removeIds = entry.$patch.removeIds;
+      if (Array.isArray(removeIds)) {
+        for (const removeId of removeIds) {
+          if (typeof removeId !== 'string') continue;
+          const index = indexById.get(removeId);
+          if (index !== undefined) ordered[index] = null;
+          indexById.delete(removeId);
+        }
+      }
+      const orderIds = entry.$patch.orderIds;
+      if (Array.isArray(orderIds)) {
+        for (const orderId of orderIds) {
+          if (typeof orderId !== 'string') continue;
+          const index = indexById.get(orderId);
+          if (index === undefined) continue;
+          const message = ordered[index];
+          ordered[index] = null;
+          indexById.set(orderId, ordered.length);
+          ordered.push(message);
+        }
+      }
       continue;
     }
     // A standalone message line. The header line has no `type`, so it is
