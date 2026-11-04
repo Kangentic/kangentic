@@ -351,6 +351,20 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.promptFileFlag).toBe('--message-file');
   });
 
+  it('every flag Aider\'s answer run sends is one the real 0.86.2 help lists', async () => {
+    // Derived from the args the run actually passes, so a flag added there
+    // without a check against the CLI fails here. The hand-kept list in
+    // aider-capability-discovery.test.ts cannot notice a flag it does not name.
+    const help = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'aider-help-0.86.2.txt'), 'utf-8');
+    const options = await optionsFor(new AiderAdapter());
+    const flags = options.args.filter((argument) => argument.startsWith('--'));
+    expect(flags.length).toBeGreaterThan(10);
+    for (const flag of flags) {
+      const escaped = flag.replace(/-/g, '\\-');
+      expect(help, flag).toMatch(new RegExp(`(?:^|[\\s\\[,|])${escaped}(?=[\\s\\],|])`, 'm'));
+    }
+  });
+
   it('Aider hands what the run cost to onUsage, read from its banner and token report', async () => {
     // Shaped to base_coder.py's announcement and `calculate_and_show_tokens_and_cost`;
     // both cache fields put the Cost half on its own line. Aider is not

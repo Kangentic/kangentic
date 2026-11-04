@@ -3,6 +3,7 @@
  *
  * These tests exercise pure logic without any Electron, DOM, or IPC dependencies.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { adaptCommandForShell, quoteArg } from '../../src/shared/paths';
@@ -726,6 +727,35 @@ describe('agent-display-name - aider entry', () => {
 
   it('agentInstallUrl returns the Aider homepage URL for "aider"', () => {
     expect(agentInstallUrl('aider')).toBe('https://aider.chat');
+  });
+});
+
+// -- flags against the real help ---------------------------------------------
+
+describe('every flag buildCommand emits is one the real Aider 0.86.2 help lists', () => {
+  // Derived from the command the builder returns, so a flag added to it without
+  // a check against the CLI fails here. The hand-kept list in
+  // aider-capability-discovery.test.ts cannot notice a flag it does not name.
+  const help = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-help-0.86.2.txt'), 'utf-8');
+  const ALL_OPTIONS = {
+    sessionId: '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00',
+    resume: true,
+    prompt: 'do the thing',
+    model: 'some-model',
+    effort: 'high',
+    shell: 'bash',
+    eventsOutputPath: EVENTS_PATH,
+  };
+
+  it.each<PermissionMode>(['plan', 'default', 'acceptEdits', 'bypassPermissions'])('in %s mode with every option set', (permissionMode) => {
+    const command = new AiderAdapter().buildCommand(makeOptions({ ...ALL_OPTIONS, permissionMode }));
+    // Quoted values are single-quoted or bare here; none of them starts with `--`.
+    const flags = command.split(/\s+/).filter((token) => token.startsWith('--'));
+    expect(flags).toEqual(expect.arrayContaining(['--chat-history-file', '--restore-chat-history', '--model', '--reasoning-effort', '--message', '--notifications-command']));
+    for (const flag of flags) {
+      const escaped = flag.replace(/-/g, '\\-');
+      expect(help, flag).toMatch(new RegExp(`(?:^|[\\s\\[,|])${escaped}(?=[\\s\\],|])`, 'm'));
+    }
   });
 });
 
