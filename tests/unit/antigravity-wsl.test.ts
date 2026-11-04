@@ -16,7 +16,9 @@ import { AntigravityAdapter } from '../../src/main/agent/adapters/antigravity';
 import { antigravityTranscriptPath } from '../../src/main/agent/adapters/antigravity/data-paths';
 import { ensureWorkspaceTrust, removeWorkspaceTrust } from '../../src/main/agent/adapters/antigravity/trust-manager';
 import { cliPathForTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
-import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
+import { wslHookPaths, wslStatusLineCommand } from '../../src/main/agent/shared/wsl-hook-transport';
+import { resetAntigravityCapabilityCacheForTests, setAntigravityHelpFeaturesForTests } from '../../src/main/agent/adapters/antigravity/capability-discovery';
+import { AGY_SESSION_SETTINGS_FILE } from '../../src/main/agent/adapters/antigravity/command-builder';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 
 const TOKEN = 'agy-wsl-token-0123456789';
@@ -115,6 +117,25 @@ describe('an Antigravity session in a WSL distro', () => {
     const project = makeDirectory('kangentic-agy-wsl-project-');
     new AntigravityAdapter().buildCommand(sessionOptions(targetOn('mirrored'), project));
     expect(readPluginEntry(project)).toEqual({ serverUrl: MCP_URL, headers: { 'X-Kangentic-Token': TOKEN } });
+  });
+
+  it('runs its status line through the transport\'s status mode, its --settings file named as the distro sees it', () => {
+    const target = targetOn('nat');
+    const project = makeDirectory('kangentic-agy-wsl-project-');
+    const options = sessionOptions(target, project);
+    const sessionDirectory = path.dirname(options.eventsOutputPath!);
+    const statusOutputPath = path.join(sessionDirectory, 'status.json');
+    setAntigravityHelpFeaturesForTests(options.agentPath, { sessionSettings: true, modes: ['accept-edits', 'auto', 'plan'] });
+    try {
+      const command = new AntigravityAdapter().buildCommand({ ...options, statusOutputPath });
+      const settingsPath = path.join(sessionDirectory, AGY_SESSION_SETTINGS_FILE);
+      expect(command).toContain(cliPathForTarget(settingsPath, target));
+      const statusLine = (JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { statusLine: { command: string } }).statusLine;
+      expect(statusLine.command).toBe(wslStatusLineCommand(wslHookPaths(sessionDirectory), target, statusOutputPath));
+      expect(statusLine.command).not.toContain('node ');
+    } finally {
+      resetAntigravityCapabilityCacheForTests();
+    }
   });
 });
 

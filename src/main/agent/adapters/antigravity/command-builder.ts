@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import {
   antigravityHooksPath,
@@ -11,10 +11,28 @@ import {
   type AntigravityHooksFile,
 } from './hook-manager';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import type { CliPlace, CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
-import { prepareWslHookTransport } from '../../shared/wsl-hook-transport';
+import { prepareWslHookTransport, wslStatusLineCommand, type WslHookPaths } from '../../shared/wsl-hook-transport';
+import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { quoteBridgePath, type HookShell } from '../../shared/hook-utils';
+import { antigravityHelpFeatures } from './capability-discovery';
 import type { PermissionMode } from '../../../../shared/types';
+
+/**
+ * How agy runs a status line command on Windows: `cmd /c` (statusline doc,
+ * https://antigravity.google/docs/cli/statusline). Whether agy hands cmd the
+ * command verbatim or escaped is not documented, and an escaped command line
+ * turns every `"` into `\"`, so every token stays bare. A path with a space
+ * then gets no status line rather than a broken one.
+ */
+const AGY_STATUS_LINE_SHELL: HookShell = 'bare-tokens';
+
+/** The per-session settings file passed with `--settings`, beside the session's status file. */
+export const AGY_SESSION_SETTINGS_FILE = 'antigravity-settings.json';
+
+/** CLI paths already logged as spawned before discovery read their `--help`, so each is logged once. */
+const undiscoveredCliPathsLogged = new Set<string>();
 
 /**
  * Single gate for the Kangentic MCP plugin, shared by "should we write" and
@@ -73,35 +91,56 @@ export class AntigravityCommandBuilder {
     // polluting git status and riding along with any `git add -A` an agent
     // runs - which for the MCP plugin would commit the per-launch token.
     this.seedGitExcludes(options);
+    // An agy in a WSL distro publishes its hooks and status line through the
+    // session's WSL hook transport, prepared once for both. A failed write
+    // throws to the spawn's caller, as the other files do.
+    const statusLinePath = this.sessionSettingsEnabled(options) ? options.statusOutputPath : undefined;
+    const sessionFilePath = options.eventsOutputPath ?? statusLinePath;
+    const wslHooks = place && sessionFilePath ? prepareWslHookTransport(path.dirname(sessionFilePath)) : null;
     if (options.eventsOutputPath) {
-      this.writeMergedHooks(options.cwd, options.eventsOutputPath, place);
+      this.writeMergedHooks(options.cwd, options.eventsOutputPath, wslHooks);
     }
     if (antigravityMcpWiringEnabled(options)) {
       const server = this.kangenticServer(options, place);
       if (server) this.writeMcpPlugin(options.cwd, server);
     }
 
-    // Permission mode mapping onto agy's native autonomy flags
-    // (`--mode accept-edits|plan`, `--dangerously-skip-permissions`; the
-    // unflagged default is agy's "request-review"). dontAsk maps to the skip
-    // flag because agy's plan mode still executes read tools and its
-    // description ("Auto-approve all tool permission requests without
-    // prompting") is exactly dontAsk's contract.
+    // Permission mode mapping onto agy's native modes
+    // (https://antigravity.google/docs/cli/modes): `--mode plan`,
+    // `--mode accept-edits`, `--mode auto`, and `--dangerously-skip-permissions`.
+    // No flag leaves agy in its own saved mode, which is `auto` where the
+    // terminal sandbox and the account allow it and `default` (review before
+    // each write and command) otherwise.
     switch (options.permissionMode) {
+      // dontAsk: agy has no deny-unless-allowed mode. Plan mode investigates
+      // with read-only tools, which keeps dontAsk's promise that nothing
+      // unapproved runs (Gemini, Qwen and Copilot map it the same way).
       case 'plan':
+      case 'dontAsk':
         parts.push('--mode', 'plan');
         break;
-      case 'acceptEdits':
       case 'auto':
+        // `--mode auto` exists from agy 1.3.5 (macOS, Linux) and 1.4.4
+        // (Windows). Where the sandbox or the account rules it out agy starts
+        // in `default` (modes doc). Passed only when this CLI's `--help`
+        // lists it; an older CLI keeps the accept-edits mapping.
+        parts.push('--mode', antigravityHelpFeatures(options.agyPath)?.modes.includes('auto') ? 'auto' : 'accept-edits');
+        break;
+      case 'acceptEdits':
         parts.push('--mode', 'accept-edits');
         break;
       case 'bypassPermissions':
-      case 'dontAsk':
         parts.push('--dangerously-skip-permissions');
         break;
       case 'default':
       default:
         break;
+    }
+
+    // Live telemetry: a per-session status line through `--settings`.
+    const settingsPath = statusLinePath ? this.writeSessionSettings(statusLinePath, place, wslHooks) : null;
+    if (settingsPath) {
+      parts.push('--settings', quoteArg(place ? cliPathForTarget(settingsPath, place) : settingsPath, shell));
     }
 
     // Resume a specific prior conversation. Works cross-directory (verified),
@@ -147,16 +186,18 @@ export class AntigravityCommandBuilder {
    * wiring is skipped: the session still works, activity falls back to the
    * PTY silence timer (`hooks_and_pty`), and session-id capture falls back
    * to the shutdown-summary PTY scrape.
+   *
+   * `wslHooks` is the session's prepared WSL hook transport for an agy in a
+   * WSL distro, else null.
    */
-  private writeMergedHooks(cwd: string, eventsOutputPath: string, place: CliPlace | null): void {
+  private writeMergedHooks(cwd: string, eventsOutputPath: string, wslHooks: WslHookPaths | null): void {
     let bridgeToken: string | null;
     let eventsToken: string | null;
     let eventCommand: ((eventType: string, ...directives: string[]) => string) | undefined;
-    if (place) {
+    if (wslHooks) {
       // An agy in a WSL distro may have no node: its hooks publish through the
       // WSL hook transport, the session's script named by a space-free token.
-      // A failed write throws to the spawn's caller, as the other files do.
-      const scriptToken = spaceFreeAgentsToken(cwd, prepareWslHookTransport(path.dirname(eventsOutputPath)).script);
+      const scriptToken = spaceFreeAgentsToken(cwd, wslHooks.script);
       bridgeToken = scriptToken;
       eventsToken = scriptToken;
       if (scriptToken) eventCommand = (eventType, ...directives) => wslAgentsHookCommand(scriptToken, eventType, ...directives);
@@ -190,6 +231,78 @@ export class AntigravityCommandBuilder {
       console.log(`[antigravity] Wrote hooks to ${hooksPath} (events -> ${eventsToken})`);
     } catch (error) {
       console.error(`[antigravity] Failed to write hooks file: ${hooksPath}`, error);
+    }
+  }
+
+  /**
+   * Whether this spawn gets a per-session status line: it has a status file to
+   * report to and this CLI's `--help` lists `--settings`. Discovery reads the
+   * help when the agent list loads, so an agy spawned before that (a session
+   * resumed at startup) is treated as an older CLI for its lifetime. That is
+   * logged once per CLI path rather than left silent.
+   */
+  private sessionSettingsEnabled(options: AntigravityCommandOptions): boolean {
+    if (!options.statusOutputPath) return false;
+    const features = antigravityHelpFeatures(options.agyPath);
+    if (!features && !undiscoveredCliPathsLogged.has(options.agyPath)) {
+      undiscoveredCliPathsLogged.add(options.agyPath);
+      console.warn(`[antigravity] Spawning ${options.agyPath} before its --help was read; no --settings status line or --mode auto for this session`);
+    }
+    return features?.sessionSettings === true;
+  }
+
+  /**
+   * Write the session's `--settings` file and return its path, or null when
+   * this spawn passes none.
+   *
+   * agy's custom status line (https://antigravity.google/docs/cli/statusline)
+   * pipes a JSON state payload (model, context window, tokens, cost) to its
+   * command on stdin whenever the agent state changes. Its documented home is
+   * the user's global `settings.json`, which every agy session shares, so it
+   * goes in `--settings` instead: "Settings for this session only, never
+   * saved: a JSON object of settings.json keys, inline or as a file path"
+   * (`agy --help`, 1.4.12; no changelog entry dates the flag, so it is passed
+   * only when this CLI's help lists it). The command is `status-bridge.js`
+   * with the session's status file, which it rewrites whole on every run. An
+   * agy in a WSL distro runs the WSL hook transport's `status` mode instead,
+   * since the distro may have no node.
+   *
+   * `stack_with_default: true` keeps agy's built-in status line, whose
+   * `? for shortcuts` hint `detectIdle` reads; the bridge prints nothing below
+   * it. Built from the documentation; not yet run against a real agy.
+   *
+   * Never throws: a path a bare token cannot carry or a failed write leaves
+   * the session without live telemetry, as an older agy is.
+   */
+  private writeSessionSettings(
+    statusOutputPath: string,
+    place: CliPlace | null,
+    wslHooks: WslHookPaths | null,
+  ): string | null {
+    const sessionDir = path.dirname(statusOutputPath);
+    const settingsPath = path.join(sessionDir, AGY_SESSION_SETTINGS_FILE);
+    try {
+      let statusLineCommand: string;
+      if (place) {
+        if (!wslHooks) return null;
+        statusLineCommand = wslStatusLineCommand(wslHooks, place, statusOutputPath);
+      } else {
+        const statusBridge = toForwardSlash(resolveBridgeScript('status-bridge'));
+        statusLineCommand = `node ${quoteBridgePath(statusBridge, AGY_STATUS_LINE_SHELL)} ${quoteBridgePath(toForwardSlash(statusOutputPath), AGY_STATUS_LINE_SHELL)}`;
+      }
+      const settings = {
+        statusLine: {
+          type: 'command',
+          command: statusLineCommand,
+          stack_with_default: true,
+        },
+      };
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      return settingsPath;
+    } catch (error) {
+      console.warn('[antigravity] No per-session status line for this spawn; live telemetry is off', error);
+      return null;
     }
   }
 

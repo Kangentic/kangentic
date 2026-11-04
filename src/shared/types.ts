@@ -2504,8 +2504,21 @@ export type SubmissionVerifier = (context: SubmissionContext) => Promise<boolean
 // === Session Usage (Claude Code Status Line) ===
 
 export interface RateLimitWindow {
-  /** Stable adapter-defined key, e.g. 'five-hour', 'seven-day'. Used as React key. */
+  /**
+   * Stable adapter-defined key, e.g. 'five-hour', 'seven-day'. Used as React
+   * key. Unique across agents: main's `RateLimitLedger` and the renderer's
+   * snapshot merge both key windows by it, so an adapter that adds windows
+   * prefixes its ids (Antigravity's `antigravity-quota-<bucket>`).
+   */
   id: string;
+  /**
+   * The adapter whose session reported the window (`AgentAdapter.name`),
+   * stamped by main as the report arrives, never by an adapter. The pill
+   * shows an agent only its own windows: limits are account-wide per
+   * provider, not across them. Absent on windows from before the stamp
+   * existed and on fixtures, which every agent's pill shows.
+   */
+  agent?: string;
   /** Human-readable label, e.g. '5h session', '7d weekly'. Used in tooltips and aria-label. */
   label: string;
   /** Renderer maps this to a Lucide icon. Kept as a small enum so the renderer stays in charge of visual vocabulary. */
@@ -6773,8 +6786,8 @@ export interface AdapterRuntimeStrategy {
    * real-time telemetry. Used by agents that emit telemetry through
    * Kangentic-injected hooks (event-bridge.js + status-bridge.js)
    * which write to per-session `status.json` and `events.jsonl` files
-   * under `.kangentic/sessions/<sessionId>/`. Today only Claude Code
-   * uses this pipeline; other agents rely on `sessionHistory` instead.
+   * under `.kangentic/sessions/<sessionId>/`. Agents with no such hooks
+   * rely on `sessionHistory` instead.
    *
    * Per-session file paths are caller-supplied (set on the spawn
    * options) since they are runtime values, not static adapter
@@ -6802,6 +6815,23 @@ export interface AdapterRuntimeStrategy {
      * separate byte cursor regardless of this flag.
      */
     readonly isFullRewrite: boolean;
+
+    /**
+     * Activity events a status write reports that no hook does, read from
+     * this write against the session's previous one (null for its first), at
+     * `now` (epoch ms). The reader dispatches them like events-file lines,
+     * after the write's usage. An adapter reports only an edge (a state that
+     * began with this write), never a level, because the CLI rewrites the
+     * file on every state change and a repeat would re-raise a cleared wait.
+     * Antigravity reports a tool approval dialog opening
+     * (`tool_confirmation_pending`) and a change of plan mode (`cycle_mode`, on
+     * a log-only `config_change` carrying `planMode`), neither of which its
+     * hooks can see. Null when `raw` is not a readable state (a torn write):
+     * the reader then keeps the previous write as the comparison, so the next
+     * whole write is not mistaken for an edge. Omitted when a status write
+     * carries usage only.
+     */
+    parseStatusEvents?(raw: string, previousRaw: string | null, now: number): SessionEvent[] | null;
 
     /**
      * Read a SessionStart hook's payload (the `hookContext` of a

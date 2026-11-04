@@ -82,7 +82,15 @@ import {
   parseModelsOutput,
   discoverAntigravityCapabilities,
   resetAntigravityCapabilityCacheForTests,
+  setAntigravityHelpFeaturesForTests,
+  antigravityHelpFeatures,
+  parseEffortLevels,
+  parseHelpFeatures,
 } from '../../src/main/agent/adapters/antigravity/capability-discovery';
+import { AGY_SESSION_SETTINGS_FILE } from '../../src/main/agent/adapters/antigravity/command-builder';
+import { isBareShellToken } from '../../src/shared/shell-quote';
+import { toForwardSlash } from '../../src/shared/paths';
+import { resolveBridgeScript } from '../../src/main/agent/shared/bridge-utils';
 import { AntigravityStatusParser } from '../../src/main/agent/adapters/antigravity/status-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import { extractPrintResult, runAntigravityPrint } from '../../src/main/agent/adapters/antigravity/print-runner';
@@ -96,6 +104,8 @@ import {
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 
 const adapter = new AntigravityAdapter();
+/** What discovery reads off agy 1.4.12's `--help` (AGY_1_4_12_HELP below). */
+const AGY_1_4_12_FEATURES = { sessionSettings: true, modes: ['accept-edits', 'auto', 'plan'] };
 const runAntigravityPrintMock = runAntigravityPrint as unknown as ReturnType<typeof vi.fn>;
 
 function spawnOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
@@ -117,42 +127,44 @@ describe('AntigravityAdapter identity', () => {
     expect(adapter.supportsCallerSessionId).toBe(false);
   });
 
-  it('declares the four permission modes mapped onto agy autonomy flags', () => {
+  it('declares the five permission modes mapped onto agy modes', () => {
     expect(adapter.permissions.map((entry) => entry.mode)).toEqual([
-      'plan', 'default', 'acceptEdits', 'bypassPermissions',
+      'plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions',
     ]);
     expect(adapter.defaultPermission).toBe('acceptEdits');
   });
 
-  it('uses hooks_and_pty activity with an events statusFile pipeline and no fromFilesystem', () => {
+  it('uses hooks_and_pty activity with a whole-file status line and no fromFilesystem', () => {
     expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
-    expect(adapter.runtime.statusFile?.isFullRewrite).toBe(false);
+    // status-bridge.js rewrites the status file whole on every status-line run.
+    expect(adapter.runtime.statusFile?.isFullRewrite).toBe(true);
     expect(adapter.runtime.sessionId?.fromFilesystem).toBeUndefined();
     expect(adapter.runtime.sessionId?.fromHook).toBeDefined();
     expect(adapter.runtime.sessionId?.fromOutput).toBeDefined();
   });
 
-  it('exits via double Ctrl+C (agy has no /quit command)', () => {
+  it('exits via the measured double Ctrl+C', () => {
     expect(adapter.getExitSequence()).toEqual(['\x03', '\x03']);
   });
 
   it('pins liveTelemetryUnsupported label and title on the real adapter (tests/ui/mock-electron-api.js hand-copies these strings)', () => {
     expect(adapter.liveTelemetryUnsupported.unavailableLabel).toBe('Telemetry: TUI only');
     expect(adapter.liveTelemetryUnsupported.unavailableTitle).toBe(
-      'Antigravity does not stream live telemetry to Kangentic.\n'
-      + 'The agy TUI footer shows the active model and effort; per-thought\n'
-      + 'token counts appear inline in its output.',
+      'This Antigravity session has not reported live telemetry to Kangentic.\n'
+      + 'Older agy versions cannot; the agy TUI footer shows the active\n'
+      + 'model and effort.',
     );
   });
 });
 
 // ── liveTelemetryUnsupported capability ─────────────────────────────────────
 //
-// Antigravity has no per-session telemetry channel Kangentic can subscribe
-// to (verified 1.1.13: neither the interactive transcript nor the hook
-// payloads carry usage). The adapter declares a static
-// `liveTelemetryUnsupported` affordance so ContextBar can render a static
-// pill instead of an indefinite spinner. Same droid-adapter.test.ts
+// An agy without `--settings` has no per-session telemetry channel Kangentic
+// can subscribe to (verified 1.1.13: neither the interactive transcript nor
+// the hook payloads carry usage), and a newer one reports through its status
+// line. The adapter keeps a static `liveTelemetryUnsupported` affordance so
+// ContextBar renders a static pill instead of an indefinite spinner while no
+// model name is known. Same droid-adapter.test.ts
 // precedent: (a) the field is defined, (b) the label is a non-empty string,
 // (c) the tooltip title contains the "Antigravity" product-name marker so an
 // accidental field-clear is caught.
@@ -283,17 +295,112 @@ describe('AntigravityAdapter.buildCommand', () => {
   it.each([
     ['plan', '--mode plan'],
     ['acceptEdits', '--mode accept-edits'],
+    // An agy whose --help was never read keeps the pre-1.3.5 mapping.
     ['auto', '--mode accept-edits'],
     ['bypassPermissions', '--dangerously-skip-permissions'],
-    ['dontAsk', '--dangerously-skip-permissions'],
+    // agy has no deny-unless-allowed mode; read-only plan mode keeps the promise.
+    ['dontAsk', '--mode plan'],
   ] as const)('maps permission mode %s to %s', (mode, expected) => {
     expect(adapter.buildCommand(spawnOptions({ permissionMode: mode }))).toContain(expected);
   });
 
-  it('emits no autonomy flag for the default mode (agy request-review)', () => {
+  it('never maps dontAsk onto the skip-every-approval flag', () => {
+    expect(adapter.buildCommand(spawnOptions({ permissionMode: 'dontAsk' }))).not.toContain('--dangerously-skip-permissions');
+  });
+
+  it('emits no autonomy flag for the default mode (agy keeps its own saved mode)', () => {
     const command = adapter.buildCommand(spawnOptions({ permissionMode: 'default' }));
     expect(command).not.toContain('--mode');
     expect(command).not.toContain('--dangerously-skip-permissions');
+  });
+
+  describe('with a CLI whose --help lists --mode auto and --settings', () => {
+    let sessionDir: string;
+    beforeEach(() => {
+      sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-session-'));
+      setAntigravityHelpFeaturesForTests('/usr/local/bin/agy', AGY_1_4_12_FEATURES);
+    });
+    afterEach(() => {
+      resetAntigravityCapabilityCacheForTests();
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    });
+
+    it('maps auto to --mode auto', () => {
+      expect(adapter.buildCommand(spawnOptions({ permissionMode: 'auto' }))).toContain('--mode auto');
+    });
+
+    it('keeps accept-edits for auto when the listed modes lack it', () => {
+      setAntigravityHelpFeaturesForTests('/usr/local/bin/agy', { sessionSettings: true, modes: ['accept-edits', 'plan'] });
+      expect(adapter.buildCommand(spawnOptions({ permissionMode: 'auto' }))).toContain('--mode accept-edits');
+    });
+
+    it('passes --settings naming a per-session status line that stacks on the built-in one', (context) => {
+      // On Windows every token stays bare, so a temp folder or bridge path a
+      // bare token cannot carry gets no status line (pinned below).
+      if (process.platform === 'win32'
+        && !(isBareShellToken(toForwardSlash(sessionDir)) && isBareShellToken(toForwardSlash(resolveBridgeScript('status-bridge'))))) {
+        context.skip();
+      }
+      const statusOutputPath = path.join(sessionDir, 'status.json');
+      const command = adapter.buildCommand(spawnOptions({ statusOutputPath }));
+      const settingsPath = path.join(sessionDir, AGY_SESSION_SETTINGS_FILE);
+      expect(command).toContain('--settings');
+      expect(command).toContain(AGY_SESSION_SETTINGS_FILE);
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
+        statusLine: { type: string; command: string; stack_with_default: boolean };
+      };
+      expect(settings.statusLine.type).toBe('command');
+      expect(settings.statusLine.stack_with_default).toBe(true);
+      // Bare tokens on Windows (agy runs it with `cmd /c`), single-quoted under `sh -c`.
+      expect(settings.statusLine.command).toMatch(/^node '?\S*status-bridge\.js'? /);
+      expect(settings.statusLine.command).toContain('status.json');
+    });
+
+    it('passes no --settings without a status file to report to', () => {
+      expect(adapter.buildCommand(spawnOptions())).not.toContain('--settings');
+    });
+
+    it('passes no --settings to a CLI whose --help does not list it', () => {
+      setAntigravityHelpFeaturesForTests('/usr/local/bin/agy', { sessionSettings: false, modes: [] });
+      const command = adapter.buildCommand(spawnOptions({ statusOutputPath: path.join(sessionDir, 'status.json') }));
+      expect(command).not.toContain('--settings');
+      expect(fs.existsSync(path.join(sessionDir, AGY_SESSION_SETTINGS_FILE))).toBe(false);
+    });
+
+    it('passes no --settings on Windows for a status path a bare token cannot carry, rather than a broken command', () => {
+      const spacedDir = path.join(sessionDir, 'with space');
+      const statusOutputPath = path.join(spacedDir, 'status.json');
+      const command = adapter.buildCommand(spawnOptions({ statusOutputPath }));
+      if (process.platform === 'win32') {
+        expect(command).not.toContain('--settings');
+        expect(fs.existsSync(path.join(spacedDir, AGY_SESSION_SETTINGS_FILE))).toBe(false);
+      } else {
+        // Off Windows the status line runs under `sh -c`, which quotes the path.
+        expect(command).toContain('--settings');
+      }
+    });
+  });
+});
+
+describe('AntigravityAdapter.getInjectionSequence', () => {
+  it('sends /model before /effort for the fields that changed', () => {
+    expect(adapter.getInjectionSequence({ model: 'gemini-3.1-pro-high', modelChanged: true, effort: 'xhigh', effortChanged: true }))
+      .toEqual(['/model gemini-3.1-pro-high', '/effort xhigh']);
+  });
+
+  it('sends only what changed, and nothing for a cleared value', () => {
+    expect(adapter.getInjectionSequence({ model: 'gemini-3.1-pro-high', modelChanged: false, effort: 'low', effortChanged: true }))
+      .toEqual(['/effort low']);
+    expect(adapter.getInjectionSequence({ model: null, modelChanged: true, effort: null, effortChanged: true })).toEqual([]);
+  });
+});
+
+describe('AntigravityAdapter.fileChangeTools', () => {
+  it('names the documented file-writing tools by TargetFile', () => {
+    expect(adapter.fileChangeTools.map((entry) => entry.tool)).toEqual([
+      'write_to_file', 'replace_file_content', 'multi_replace_file_content',
+    ]);
+    expect(adapter.fileChangeTools.every((entry) => entry.pathField === 'TargetFile')).toBe(true);
   });
 });
 
@@ -1233,6 +1340,17 @@ describe('AntigravityAdapter.locateSessionHistoryFile', () => {
 // util.promisify still wrapping them.
 // ---------------------------------------------------------------------------
 
+/** The flag lines of `agy --help` on 1.4.12 that discovery reads (Go's flag usage layout). */
+const AGY_1_4_12_HELP = [
+  'Usage of agy.exe:',
+  '  --add-dir                       Add a directory to the workspace (repeatable) (default [])',
+  '  --effort                        Reasoning effort for the current CLI session (low|medium|high|xhigh|max)',
+  '  --mode                          Set the agent execution mode for this session (accept-edits, auto, plan)',
+  '  --model                         Model for the current CLI session',
+  '  --settings                      Settings for this session only, never saved: a JSON object of settings.json keys, inline or as a file path',
+  '',
+].join('\n');
+
 describe('discoverAntigravityCapabilities', () => {
   const execMock = exec as unknown as ReturnType<typeof vi.fn>;
   const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -1309,6 +1427,19 @@ describe('discoverAntigravityCapabilities', () => {
     });
   });
 
+  it('leaves the help features unread when the help probe fails, so the builder treats the CLI as older', async () => {
+    // Control: a successful read does record features for its path. A failed
+    // read records nothing, and the builder reads null as an older CLI.
+    respondInOrder(AGY_1_4_12_HELP, '');
+    await discoverAntigravityCapabilities('/usr/bin/agy-ok');
+    expect(antigravityHelpFeatures('/usr/bin/agy-ok')).toEqual({ sessionSettings: true, modes: ['accept-edits', 'auto', 'plan'] });
+
+    respondWithFailure(new Error('ENOENT: agy not found'));
+    await discoverAntigravityCapabilities('/usr/bin/agy-broken');
+
+    expect(antigravityHelpFeatures('/usr/bin/agy-broken')).toBeNull();
+  });
+
   it('sets supportsModelOverride without effortLevels when --help documents --model but not --effort', async () => {
     respondInOrder(
       'Usage: agy [options]\n  --model <name>  Model for the current CLI session\n',
@@ -1367,16 +1498,189 @@ describe('discoverAntigravityCapabilities', () => {
     await discoverAntigravityCapabilities('/usr/bin/agy', true);
     expect(execMock.mock.calls.length + execFileMock.mock.calls.length).toBeGreaterThan(callsAfterFirstProbe);
   });
+
+  it('records --settings and the --mode values for the command builder, from the help it already reads', async () => {
+    respondInOrder(AGY_1_4_12_HELP, 'Fetching available models...\n');
+    expect(antigravityHelpFeatures('/usr/bin/agy')).toBeNull();
+
+    const capabilities = await discoverAntigravityCapabilities('/usr/bin/agy');
+
+    expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(antigravityHelpFeatures('/usr/bin/agy')).toEqual(AGY_1_4_12_FEATURES);
+  });
+});
+
+describe('help-derived features', () => {
+  it('reads every effort level --effort lists', () => {
+    expect(parseEffortLevels(AGY_1_4_12_HELP)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('falls back to the documented three when --effort lists none, and to null when it is absent', () => {
+    expect(parseEffortLevels('  --effort <level>  Reasoning effort\n')).toEqual(['low', 'medium', 'high']);
+    expect(parseEffortLevels('  --model <name>  Model\n')).toBeNull();
+  });
+
+  it('reads --settings and the --mode values, and nothing from an older help', () => {
+    expect(parseHelpFeatures(AGY_1_4_12_HELP)).toEqual(AGY_1_4_12_FEATURES);
+    expect(parseHelpFeatures('  --mode   Set the agent execution mode (accept-edits, plan)\n')).toEqual({
+      sessionSettings: false,
+      modes: ['accept-edits', 'plan'],
+    });
+    expect(parseHelpFeatures('  --model <name>  Model\n')).toEqual({ sessionSettings: false, modes: [] });
+  });
+
+  it('does not read --settings out of another flag\'s description', () => {
+    expect(parseHelpFeatures('  --mode   Mode; see --settings for more\n').sessionSettings).toBe(false);
+  });
+
+  it('reads a CRLF help the same as an LF one', () => {
+    const crlfHelp = AGY_1_4_12_HELP.replace(/\n/g, '\r\n');
+    expect(parseHelpFeatures(crlfHelp)).toEqual(AGY_1_4_12_FEATURES);
+    expect(parseEffortLevels(crlfHelp)).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+  });
+
+  it('never reads the next flag\'s line for a flag with no description', () => {
+    expect(parseHelpFeatures('  --mode\n  --other   Pick one (alpha, beta)\n')).toEqual({ sessionSettings: false, modes: [] });
+    expect(parseHelpFeatures('  --settings\n').sessionSettings).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
-// AntigravityStatusParser: no status-line channel, event-bridge JSONL parsing
+// AntigravityStatusParser: the status-line payload, event-bridge JSONL parsing
 // ---------------------------------------------------------------------------
 
 describe('AntigravityStatusParser', () => {
-  it('parseStatus always returns null (agy has no status-line channel)', () => {
+  // The status line doc's sample payload (https://antigravity.google/docs/cli/statusline),
+  // with its account fields made generic.
+  const docPayload = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'fixtures', 'antigravity-statusline-payload.json'), 'utf-8',
+  )) as Record<string, unknown>;
+
+  it('maps the documented payload onto SessionUsage', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify(docPayload));
+    expect({ ...usage, rateLimits: undefined }).toEqual({
+      rateLimits: undefined,
+      contextWindow: {
+        usedPercentage: 14.24,
+        usedTokens: 63382 + 346 + 20857,
+        cacheTokens: 20857,
+        totalInputTokens: 88244,
+        totalOutputTokens: 61074,
+        contextWindowSize: 1048576,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'Gemini 3.5 Flash (High)', displayName: 'Gemini 3.5 Flash (High)', reportedByAgent: true },
+    });
+  });
+
+  it('never reports conversation_id as the session id (main would adopt every change of it)', () => {
+    expect(AntigravityStatusParser.parseStatus(JSON.stringify(docPayload))?.sessionId).toBeUndefined();
+  });
+
+  it('reads the effort and the estimated cost when the payload carries them', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify({
+      ...docPayload,
+      model: { id: 'gemini-3.1-pro', display_name: 'Gemini 3.1 Pro', effort: 'high' },
+      cost: { total_usd: 0.4123, subagent_usd: 0.1, estimated: true },
+    }));
+    expect(usage?.model).toEqual({ id: 'gemini-3.1-pro', displayName: 'Gemini 3.1 Pro', effort: 'high', reportedByAgent: true });
+    expect(usage?.cost.totalCostUsd).toBe(0.4123);
+  });
+
+  it('reports each quota bucket with a fraction as a rate-limit window under an Antigravity-only id', () => {
+    expect(AntigravityStatusParser.parseStatus(JSON.stringify(docPayload))?.rateLimits).toEqual([{
+      id: 'antigravity-quota-gemini-weekly',
+      label: 'gemini-weekly',
+      iconKind: 'period',
+      usedPercentage: expect.closeTo(6.22, 2),
+      resetsAt: Math.floor(Date.parse('2026-07-06T07:50:32Z') / 1000),
+    }]);
+  });
+
+  it('skips a disabled bucket and one that reports an amount, and reads a missing reset as unknown', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify({
+      ...docPayload,
+      quota: {
+        'off-bucket': { remaining_fraction: 0.5, reset_time: '2026-07-06T07:50:32Z', disabled: true },
+        credits: { remaining_amount: 120, reset_time: '2026-07-06T07:50:32Z' },
+        daily: { remaining_fraction: 0.25 },
+      },
+    }));
+    expect(usage?.rateLimits).toEqual([{ id: 'antigravity-quota-daily', label: 'daily', iconKind: 'period', usedPercentage: 75, resetsAt: 0 }]);
+  });
+
+  it('reports no rate limits when no bucket has a fraction', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify({ ...docPayload, quota: { credits: { remaining_amount: 5 } } }));
+    expect(usage?.rateLimits).toBeUndefined();
+  });
+
+  describe('parseStatusEvents', () => {
+    // The doc's sample payload carries neither `tool_confirmation_pending` nor
+    // `cycle_mode`, so these cases add them as the statusline doc defines them.
+    // Neither value has been captured from a real agy yet (antigravity.md).
+    const pending = JSON.stringify({ ...docPayload, tool_confirmation_pending: true });
+    const quiet = JSON.stringify(docPayload);
+
+    it('raises an approval wait on the write where a tool confirmation dialog opens', () => {
+      expect(AntigravityStatusParser.parseStatusEvents(pending, quiet, 42)).toEqual([
+        { ts: 42, type: 'idle', detail: 'permission', waitKind: 'approval' },
+      ]);
+      // The first write the reader sees, with the dialog already up (an app restart).
+      expect(AntigravityStatusParser.parseStatusEvents(pending, null, 42)).toHaveLength(1);
+    });
+
+    it('raises nothing while the dialog stays up, when it closes, or with no dialog', () => {
+      expect(AntigravityStatusParser.parseStatusEvents(pending, pending, 42)).toEqual([]);
+      expect(AntigravityStatusParser.parseStatusEvents(quiet, pending, 42)).toEqual([]);
+      expect(AntigravityStatusParser.parseStatusEvents(quiet, quiet, 42)).toEqual([]);
+    });
+
+    it('answers null for a torn write, so the reader keeps the last whole one as the comparison', () => {
+      expect(AntigravityStatusParser.parseStatusEvents('{"tool_confirmation_pending":', quiet, 42)).toBeNull();
+      expect(AntigravityStatusParser.parseStatusEvents('[]', quiet, 42)).toBeNull();
+    });
+
+    it('reports a change of plan mode on a log-only config_change carrying planMode', () => {
+      const planning = JSON.stringify({ ...docPayload, cycle_mode: 'plan' });
+      const editing = JSON.stringify({ ...docPayload, cycle_mode: 'accept-edits' });
+      expect(AntigravityStatusParser.parseStatusEvents(planning, quiet, 7)).toEqual([
+        { ts: 7, type: 'config_change', detail: 'plan', planMode: true },
+      ]);
+      // A session launched in plan mode reports it on its first write.
+      expect(AntigravityStatusParser.parseStatusEvents(planning, null, 7)).toEqual([
+        { ts: 7, type: 'config_change', detail: 'plan', planMode: true },
+      ]);
+      // Leaving plan mode; `cycle_mode` is omitted in default mode.
+      expect(AntigravityStatusParser.parseStatusEvents(editing, planning, 7)).toEqual([
+        { ts: 7, type: 'config_change', detail: 'accept-edits', planMode: false },
+      ]);
+      expect(AntigravityStatusParser.parseStatusEvents(quiet, planning, 7)).toEqual([
+        { ts: 7, type: 'config_change', detail: 'default', planMode: false },
+      ]);
+      // No change of plan-ness, no event: in plan mode throughout, or between two other modes.
+      expect(AntigravityStatusParser.parseStatusEvents(planning, planning, 7)).toEqual([]);
+      expect(AntigravityStatusParser.parseStatusEvents(editing, quiet, 7)).toEqual([]);
+    });
+
+    it('is wired into the adapter\'s status file hook', () => {
+      expect(adapter.runtime.statusFile?.parseStatusEvents).toBe(AntigravityStatusParser.parseStatusEvents);
+    });
+  });
+
+  it('estimates the used tokens from the percentage before the first response', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify({
+      model: { id: 'm', display_name: 'M' },
+      context_window: { used_percentage: 10, context_window_size: 1000, current_usage: null },
+    }));
+    expect(usage?.contextWindow.usedTokens).toBe(100);
+    expect(usage?.contextWindow.cacheTokens).toBe(0);
+  });
+
+  it('returns null before a model is selected, and on malformed or non-object input', () => {
+    expect(AntigravityStatusParser.parseStatus(JSON.stringify({ ...docPayload, model: null }))).toBeNull();
     expect(AntigravityStatusParser.parseStatus('')).toBeNull();
-    expect(AntigravityStatusParser.parseStatus('{"input_tokens":100}')).toBeNull();
+    expect(AntigravityStatusParser.parseStatus('{"model":')).toBeNull();
+    expect(AntigravityStatusParser.parseStatus('[1,2]')).toBeNull();
   });
 
   it('parseEvent returns null, not throws, on malformed JSON', () => {

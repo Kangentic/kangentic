@@ -35,7 +35,8 @@ const UUIDS_NUMBER_LINES = false;
  * - tool_calls args values are themselves JSON-encoded strings
  *   (`"\"ok\""`, `"true"`); they are decoded for display when they parse.
  * - The transcript carries NO token usage - that is why the adapter has no
- *   `transcriptUsage` and declares `liveTelemetryUnsupported`.
+ *   `transcriptUsage`. Live usage comes from the status line instead
+ *   (status-parser.ts).
  */
 
 interface AntigravityStep {
