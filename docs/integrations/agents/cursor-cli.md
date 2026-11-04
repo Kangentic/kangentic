@@ -259,6 +259,29 @@ changelog at v2026.10.22:
 
 ## What a live run should check next
 
+First, the hooks themselves, which every turn end on a session screen rests on. On a machine with
+Cursor signed in (`cursor-agent login`, not `agent`, which can be Grok's CLI, see
+[CLI Detection](#cli-detection)), run one session-screen turn and one print turn that call a shell
+tool, in a scratch folder whose `.cursor/hooks.json` dumps each hook's stdin to a file.
+- Confirm that the hooks fire on the session screen at all, and that Cursor loads a hooks file
+  with no `version` key (a user's file keeps its own keys as they are).
+- Confirm `sessionStart.session_id`, `tool_name` and `tool_use_id`, and `stop.status`
+  (`completed`, `aborted`, `error`).
+- Pin the sanitized payloads and the print run's `init` and `result` lines under `tests/fixtures/`,
+  and replay them in `cursor-hook-config.test.ts` and `cursor-stream-parser.test.ts`.
+- Fix `buildCursorHookCommands` if a field differs. If no hook fires on the session screen, set
+  `reportsTurnEnd` back to false.
+
+A CLI that is not signed in cannot stand in. On v2026.09.26 a print run with no login exits on
+"Authentication required" before any hook fires, `sessionStart` included.
+
+Until then `reportsTurnEnd` stays true on the docs' word. The terminal carries activity until the
+first hook arrives, and the stale-thinking reclaim returns the card to idle after a `stop` that
+never comes. That reclaim is a watchdog guess, not a turn end (`turn-end-runner.ts`), so if the
+hooks do not fire, a Cursor column's On agent turn end rows never run and its workflow tasks wait.
+The alternative was to keep it false until the capture, which would leave Cursor's columns with no
+On agent turn end automations and its workflow tasks advancing only by hand.
+
 These members are measured before an adapter declares them, so the docs alone do not build them:
 `supportsReadOnlyLaunch` (`--mode ask`, "read-only exploration without making changes"),
 `pastedImageNativeExtensions` (Ctrl+V pastes a clipboard image since April 2026, and a copied image
