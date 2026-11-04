@@ -57,11 +57,7 @@ describe('Adapter getInjectionSequence (drives the Command Terminal live swap)',
     { name: 'kimi',     importPath: '../../src/main/agent/adapters/kimi/kimi-adapter',         className: 'KimiAdapter' },
     { name: 'opencode', importPath: '../../src/main/agent/adapters/opencode/opencode-adapter', className: 'OpenCodeAdapter' },
     { name: 'droid',    importPath: '../../src/main/agent/adapters/droid/droid-adapter',       className: 'DroidAdapter' },
-    // Grok HAS /model + /effort slash commands, but declares
-    // canVerifySlashSubmission false (slash input runs in the TUI palette and
-    // never becomes a chat_history turn), so an injection could not be
-    // confirmed and an unconfirmed slash would pollute the prompt.
-    { name: 'grok',     importPath: '../../src/main/agent/adapters/grok/grok-adapter',         className: 'GrokAdapter' },
+    // Grok types `/model` and `/effort` live; grok-adapter.test.ts pins its sequence.
   ] as const;
 
   it.each(ADAPTERS_WITHOUT_LIVE_SWITCH)(
