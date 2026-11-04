@@ -75,10 +75,9 @@ const HOOK_CONVERSATION_RE = new RegExp(`"conversationId"\\s*:\\s*"(${CONVERSATI
  * the per-session status line, SessionStart and every-tool PreToolUse hooks,
  * `--mode auto`, help-derived effort levels, the live `/model` and `/effort`
  * swap, and the warm answer session (docs/integrations/agents/antigravity.md
- * lists each with its source). Antigravity
- * shares `~/.gemini` with the Gemini CLI but keeps its own subtree, its own
- * trust store, and a different hook/MCP schema - hence a sibling adapter
- * rather than a Gemini variant.
+ * lists each with its source). Antigravity shares `~/.gemini` with the Gemini
+ * CLI but keeps its own subtree, its own trust store, and a different hook/MCP
+ * schema - hence a sibling adapter rather than a Gemini variant.
  */
 export class AntigravityAdapter implements AgentAdapter {
   readonly name = 'antigravity';

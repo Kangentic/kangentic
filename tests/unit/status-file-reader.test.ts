@@ -428,6 +428,23 @@ describe('StatusFileReader', () => {
       expect(previousRawFor(parseStatusEvents, 'WRITE-B')).toBe('WRITE-A');
     });
 
+    it('logs a throwing adapter once, though it throws on every write', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const driver = attachWithStatusEvents(() => {
+          throw new Error('unreadable status');
+        });
+
+        await driver.writeAndRead('BOOM-1');
+        await driver.writeAndRead('BOOM-2');
+
+        const statusEventLogs = consoleError.mock.calls.filter((call) => String(call[0]).includes('Status events for session-1'));
+        expect(statusEventLogs).toHaveLength(1);
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+
     it('keeps the last readable write as the baseline across an empty read, which the adapter is never asked about', async () => {
       const parseStatusEvents = vi.fn((): SessionEvent[] | null => []);
       const driver = attachWithStatusEvents(parseStatusEvents);

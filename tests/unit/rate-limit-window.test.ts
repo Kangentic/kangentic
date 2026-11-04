@@ -6,6 +6,7 @@ import {
   mergeRateLimitSnapshot,
   rateLimitWindowsForAgent,
   rateLimitWindowsShortestFirst,
+  sessionRateLimitAgent,
   type RateLimitSnapshot,
 } from '../../src/renderer/utils/rate-limit-window';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
@@ -23,6 +24,20 @@ describe('rateLimitWindowsForAgent', () => {
 
   it('shows a window with no stamp to every agent (reports from before the stamp, fixtures)', () => {
     expect(rateLimitWindowsForAgent([unstamped, agyQuota], 'claude')).toEqual([unstamped]);
+  });
+
+  it('shows every window when no agent is known, so the pill does not go empty', () => {
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], null)).toEqual([claudeWeek, agyQuota]);
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], undefined)).toEqual([claudeWeek, agyQuota]);
+  });
+
+  it('reads the agent off the session\'s own stamped windows ahead of the fallback', () => {
+    // A task with no agent falls back to the project default, which may have
+    // changed since this session started.
+    expect(sessionRateLimitAgent([unstamped, agyQuota], 'claude')).toBe('antigravity');
+    expect(sessionRateLimitAgent([unstamped], 'claude')).toBe('claude');
+    expect(sessionRateLimitAgent(undefined, 'claude')).toBe('claude');
+    expect(sessionRateLimitAgent(undefined, null)).toBeNull();
   });
 });
 

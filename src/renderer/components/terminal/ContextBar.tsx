@@ -9,7 +9,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/progress-color';
-import { liveRateLimitWindows, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, windowElapsedPercentage } from '../../utils/rate-limit-window';
+import { liveRateLimitWindows, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, sessionRateLimitAgent, windowElapsedPercentage } from '../../utils/rate-limit-window';
 import { formatTokenCount, isContextWindowKnown, isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatMonthDayTime, formatTimeAgo } from '../../lib/datetime';
@@ -288,9 +288,10 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const task = useBoardStore((s) => s.tasks.find((t) => t.id === session?.taskId));
   const taskAgent = task?.agent ?? agentFallback;
   // The shared snapshot holds every agent's windows; this agent draws its own.
+  const rateLimitAgent = sessionRateLimitAgent(usage?.rateLimits, taskAgent);
   const agentRateLimits = useMemo(
-    () => (latestRateLimits ? rateLimitWindowsForAgent(latestRateLimits.rateLimits, taskAgent) : []),
-    [latestRateLimits, taskAgent],
+    () => (latestRateLimits ? rateLimitWindowsForAgent(latestRateLimits.rateLimits, rateLimitAgent) : []),
+    [latestRateLimits, rateLimitAgent],
   );
   // The agent's own list entry - not agentDisplayName's separate hardcoded map - so the
   // version pill can never name one agent while showing another's version number.
