@@ -211,7 +211,8 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   [Automation triggers](../automations/triggers.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
   Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode, Goose (its Stop
-  hook) and Kimi (whose wire protocol emits `TurnEnd`); false for agents whose only signal is
+  hook), Kimi (whose wire protocol emits `TurnEnd`) and Cursor (its `stop` hook on a session screen,
+  its stream-json `result` event on a print run); false for agents whose only signal is
   terminal silence, where a quiet compile and a finished turn look the same.
 - Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and two replay fixtures:
   `session-030-code-review-background-subagents` (#529's pass #76: 12 Stops, 3 turn ends, because

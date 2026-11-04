@@ -3955,7 +3955,7 @@
           },
           {
             name: 'cursor', displayName: 'Cursor CLI', found: false, path: null, version: null,
-            // KEEP IN SYNC with CursorAdapter.permissions in src/main/agent/adapters/cursor/cursor-adapter.ts
+            // KEEP IN SYNC with CursorAdapter.permissions and defaultPermission in src/main/agent/adapters/cursor/cursor-adapter.ts
             permissions: [
               { mode: 'default', label: 'Interactive (Confirm Changes)' },
               { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
