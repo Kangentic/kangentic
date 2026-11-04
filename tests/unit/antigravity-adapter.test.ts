@@ -1609,6 +1609,24 @@ describe('AntigravityStatusParser', () => {
     expect(usage?.rateLimits).toEqual([{ id: 'antigravity-quota-daily', label: 'daily', iconKind: 'period', usedPercentage: 75, resetsAt: 0 }]);
   });
 
+  it('keeps a bucket\'s used share within 0 to 100 and reads an unparseable reset as unknown', () => {
+    const usage = AntigravityStatusParser.parseStatus(JSON.stringify({
+      ...docPayload,
+      quota: {
+        overdrawn: { remaining_fraction: -0.2, reset_time: '2026-07-06T07:50:32Z' },
+        surplus: { remaining_fraction: 1.4, reset_time: '2026-07-06T07:50:32Z' },
+        garbled: { remaining_fraction: 0.5, reset_time: 'next tuesday' },
+        textual: { remaining_fraction: '0.5', reset_time: '2026-07-06T07:50:32Z' },
+      },
+    }));
+    const byId = Object.fromEntries((usage?.rateLimits ?? []).map((rateLimitWindow) => [rateLimitWindow.id, rateLimitWindow]));
+    expect(byId['antigravity-quota-overdrawn'].usedPercentage).toBe(100);
+    expect(byId['antigravity-quota-surplus'].usedPercentage).toBe(0);
+    expect(byId['antigravity-quota-garbled']).toMatchObject({ usedPercentage: 50, resetsAt: 0 });
+    // A fraction sent as text is not a number, so it makes no window.
+    expect(byId['antigravity-quota-textual']).toBeUndefined();
+  });
+
   it('reports no rate limits when no bucket has a fraction', () => {
     const usage = AntigravityStatusParser.parseStatus(JSON.stringify({ ...docPayload, quota: { credits: { remaining_amount: 5 } } }));
     expect(usage?.rateLimits).toBeUndefined();
