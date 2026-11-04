@@ -160,7 +160,7 @@ Compared member by member with the Claude adapter in 2026-11, against Gemini CLI
 **Built from documentation, not yet run against the real CLI.** Each comes from the CLI's published docs or source, and each needs a live check:
 
 - `/model set <id>` for the live model swap.
-- `$patch`, `$rewindTo`, `removeIds` and `orderIds` in the transcript and the live telemetry, and per-turn `usage`.
+- `$patch`, `removeIds` and `orderIds` in the transcript and the live telemetry, `$rewindTo` in the live telemetry (the transcript readers replay the real rewind above), and per-turn `usage`.
 - `transcriptUsage`, `transcriptToolCounts`, `transcriptToolResultTokens` and `scopesTranscriptReadsByTime`.
 - `configuredModelFromCommand` and `modelDisplayName`.
 - `fileChangeTools`.

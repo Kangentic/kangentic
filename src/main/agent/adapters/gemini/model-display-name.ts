@@ -31,17 +31,24 @@ const BUILDER_VALUE_FLAGS = new Set(['--approval-mode', '--resume', '--session-i
  *     with a literal trailing backslash. A nushell value holding `"` before a
  *     space reads the same way and ends the word early, so its command yields
  *     no model, the same answer as a command with no `--model`;
- *   - a single-quoted run, where `\` escapes the next character (fish writes
- *     `\'` inside one);
+ *   - a single-quoted run. fish reads `\` there as escaping the next character
+ *     and writes `\'` inside one; a POSIX shell reads it literally, so bash
+ *     quotes `C:\` as `'C:\'`. The command does not say which shell built it,
+ *     so it is read the fish way first and the POSIX way when that finds no
+ *     model (`modelFromGeminiCommand`);
  *   - a backslash escape outside quotes (POSIX writes an apostrophe as `'\''`);
  *   - a bare run.
  */
-const WORD_PIECE = /"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'(?:[^'\\]|\\[\s\S])*'|\\[\s\S]|[^\s"'\\]+/y;
+const WORD_PIECE_FISH = /"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'(?:[^'\\]|\\[\s\S])*'|\\[\s\S]|[^\s"'\\]+/y;
+const WORD_PIECE_POSIX = /"(?:[^"\\]|\\(?!"(?:\s|$))[\s\S]|\\)*"|'[^']*'|\\[\s\S]|[^\s"'\\]+/y;
 
 /** The text a piece stands for, its quotes and escapes removed. */
-function unquotePiece(piece: string): string {
+function unquotePiece(piece: string, singleQuoteEscapes: boolean): string {
   if (piece.startsWith('"')) return piece.slice(1, -1).replace(/\\(["\\])/g, '$1');
-  if (piece.startsWith('\'')) return piece.slice(1, -1).replace(/\\(['\\])/g, '$1');
+  if (piece.startsWith('\'')) {
+    const inner = piece.slice(1, -1);
+    return singleQuoteEscapes ? inner.replace(/\\(['\\])/g, '$1') : inner;
+  }
   if (piece.startsWith('\\')) return piece.slice(1);
   return piece;
 }
@@ -52,7 +59,8 @@ function unquotePiece(piece: string): string {
  * the builder's own output, not for shell syntax in general: a word that does
  * not parse ends the split, and the caller then finds no flag.
  */
-function shellWords(command: string): string[] {
+function shellWords(command: string, singleQuoteEscapes: boolean): string[] {
+  const piecePattern = singleQuoteEscapes ? WORD_PIECE_FISH : WORD_PIECE_POSIX;
   const words: string[] = [];
   let index = 0;
   while (index < command.length) {
@@ -62,11 +70,11 @@ function shellWords(command: string): string[] {
     }
     let word = '';
     while (index < command.length && !/\s/.test(command[index])) {
-      WORD_PIECE.lastIndex = index;
-      const match = WORD_PIECE.exec(command);
+      piecePattern.lastIndex = index;
+      const match = piecePattern.exec(command);
       if (!match) return words;
-      word += unquotePiece(match[0]);
-      index = WORD_PIECE.lastIndex;
+      word += unquotePiece(match[0], singleQuoteEscapes);
+      index = piecePattern.lastIndex;
     }
     words.push(word);
   }
@@ -77,10 +85,14 @@ function shellWords(command: string): string[] {
  * The model a built Gemini command pins with `--model`, or null. Walks the
  * command from its start: an optional PowerShell `&`, the executable, then only
  * the builder's own flags and their values. `-p` (the headless prompt flag) and
- * any other token end the walk, since the prompt follows.
+ * any other token end the walk, since the prompt follows. Read with fish's
+ * single quotes, then POSIX's when that finds none (see `WORD_PIECE_FISH`).
  */
 export function modelFromGeminiCommand(command: string): string | null {
-  const words = shellWords(command);
+  return modelFromWords(shellWords(command, true)) ?? modelFromWords(shellWords(command, false));
+}
+
+function modelFromWords(words: ReadonlyArray<string>): string | null {
   let index = 0;
   if (words[index] === '&') index++;
   index++; // the executable

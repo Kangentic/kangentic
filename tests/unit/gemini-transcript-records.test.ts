@@ -6,16 +6,16 @@ import { parseGeminiTranscriptWindow, turnUsageFromTokens } from '../../src/main
 import { GeminiSessionHistoryParser } from '../../src/main/agent/adapters/gemini/session-history-parser';
 import type { TranscriptEntry } from '../../src/shared/types';
 
-const createdDirs: string[] = [];
+const createdDirectories: string[] = [];
 
 afterEach(() => {
-  for (const dir of createdDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  for (const directory of createdDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
 function writeLines(lines: string[]): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-records-'));
-  createdDirs.push(dir);
-  const filePath = path.join(dir, 'session-2026-06-01T00-00-abcd1234.jsonl');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-records-'));
+  createdDirectories.push(directory);
+  const filePath = path.join(directory, 'session-2026-06-01T00-00-abcd1234.jsonl');
   fs.writeFileSync(filePath, lines.join('\n') + '\n');
   return filePath;
 }

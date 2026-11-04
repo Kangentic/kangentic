@@ -50,14 +50,14 @@ export async function proveGeminiConversationGone(params: {
     .map((candidate) => hostPathForTarget(candidate, place))
     .find((candidate) => path.isAbsolute(candidate)
       && fileName.test(path.basename(candidate))
-      && path.basename(path.dirname(candidate)) === 'chats'
-      && path.basename(path.dirname(path.dirname(path.dirname(candidate)))) === 'tmp');
+      && tmpRootOfChatFile(candidate) !== null);
   if (!reportedPath) return false;
 
   if (!(await isConfirmedMissing(reportedPath))) return false;
   if (locateGeminiTranscriptFile(params.agentSessionId, params.cwd, place)) return false;
 
-  const tmpRoot = path.dirname(path.dirname(path.dirname(reportedPath)));
+  const tmpRoot = tmpRootOfChatFile(reportedPath);
+  if (tmpRoot === null) return false;
   let projectFolders: fs.Dirent[];
   try {
     projectFolders = await fs.promises.readdir(tmpRoot, { withFileTypes: true });
@@ -73,6 +73,17 @@ export async function proveGeminiConversationGone(params: {
     if (verdicts.includes(false)) return false;
   }
   return true;
+}
+
+/**
+ * Gemini's `tmp` folder for a chat file laid out as
+ * `<tmp>/<project>/chats/<file>`, or null when the path has another shape.
+ */
+function tmpRootOfChatFile(chatFile: string): string | null {
+  const chatsFolder = path.dirname(chatFile);
+  if (path.basename(chatsFolder) !== 'chats') return null;
+  const tmpRoot = path.dirname(path.dirname(chatsFolder));
+  return path.basename(tmpRoot) === 'tmp' ? tmpRoot : null;
 }
 
 /**

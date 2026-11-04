@@ -17,6 +17,7 @@ import {
   repoRelativePath,
   CHANGE_RECORD_VERSION,
 } from '../../src/main/retrieval/change/change-record';
+import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 import { sweepChangeRecords } from '../../src/main/retrieval/change/change-indexer';
 import { PREPARE_BUDGET_MS } from '../../src/main/retrieval/timed-slices';
 
@@ -49,6 +50,22 @@ describe('changedFilesFromChunkTexts', () => {
   it('skips a path the 200-character cut left without its closing quote', () => {
     const files = changedFilesFromChunkTexts(['Tool: Edit {"file_path":"/repo/src/a-very-long-path-that-was-cu…'], TOOLS);
     expect(files.size).toBe(0);
+  });
+
+  it('names the files Gemini\'s write_file and replace calls changed, and skips read_file', () => {
+    const text = [
+      'Tool: write_file {"file_path":"/repo/src/new-file.ts","content":"x"}',
+      'Tool: replace {"file_path":"/repo/src/old-file.ts","old_string":"a","new_string":"b"}',
+      'Tool: read_file {"file_path":"/repo/src/only-read.ts"}',
+      'Tool: replace {"file_path":"/repo/src/old-file.ts","old_string":"c","new_string":"d"}',
+    ].join('\n');
+
+    const files = changedFilesFromChunkTexts([text], new GeminiAdapter().fileChangeTools);
+
+    expect([...files]).toEqual([
+      ['/repo/src/new-file.ts', 1],
+      ['/repo/src/old-file.ts', 2],
+    ]);
   });
 
   it('reads nothing for an agent that declares no file-changing tools', () => {

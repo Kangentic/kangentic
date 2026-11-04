@@ -172,7 +172,8 @@ Gemini 0.66.0 also writes `{"$rewindTo":"<id>"}` on `/rewind` and `{"$patch":{..
 (chatRecordingTypes.ts at that tag). `collectGeminiMessages` applies the rewind as the CLI's loader
 does, dropping that message and everything after it (everything, when the id is unknown), and
 drops the messages a patch names in `removeIds`, so the live model and tokens never come from a
-turn the user rewound. Built from the CLI's source, not yet read off a real rewound session.
+turn the user rewound. Built from the CLI's source. A real 0.66.0 rewind is replayed through the
+transcript readers (`gemini-real-rewind.test.ts`), not yet through this one.
 
 ```jsonl
 {"sessionId":"<uuid>","projectHash":"<sha256>","startTime":"<iso>","kind":"main"}
@@ -362,7 +363,7 @@ behavior below is the resume contract.
 |---|---|---|---|---|---|---|
 | Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
-| Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
+| Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<project>/chats/session-<time>-<first 8 of id>.jsonl` (legacy `.json`) | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |
 | Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |

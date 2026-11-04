@@ -237,7 +237,9 @@ type KeptItem =
  *     rewind dropped.
  * `collectGeminiMessages` in session-history-parser.ts applies the same
  * records for the telemetry reader: change both together.
- * Built from that source, not yet run against a real session file.
+ * Built from that source. `$rewindTo` is replayed from a real 0.66.0 chat
+ * (gemini-real-rewind.test.ts); `$patch`, `removeIds` and `orderIds` are not
+ * yet run against a real session file.
  */
 function parseGeminiLines(
   agentSessionId: string,
@@ -293,13 +295,13 @@ function applyPatchRecord(
   kept: Map<string, KeptItem>,
   patch: Record<string, unknown>,
   position: number,
-  ts: number | null,
+  timestampMs: number | null,
 ): void {
   const singles: unknown[] = [patch, ...(Array.isArray(patch.updates) ? patch.updates : [])];
   for (const [index, single] of singles.entries()) {
     // Keyed by the line's byte, never its line number: a window that does not
     // start at byte 0 numbers no lines, and every patch in it would share a key.
-    if (isRecord(single)) applySinglePatch(kept, single, `${position}.${index}`, position, ts);
+    if (isRecord(single)) applySinglePatch(kept, single, `${position}.${index}`, position, timestampMs);
   }
   if (Array.isArray(patch.removeIds)) {
     for (const removeId of patch.removeIds) {
@@ -322,7 +324,7 @@ function applySinglePatch(
   patch: Record<string, unknown>,
   patchKey: string,
   position: number,
-  ts: number | null,
+  timestampMs: number | null,
 ): void {
   if (typeof patch.id !== 'string' || patch.id.length === 0) return;
   const toolCallPatches = Array.isArray(patch.toolCalls) ? patch.toolCalls.filter(isRecord) : [];
@@ -340,7 +342,7 @@ function applySinglePatch(
   // The message is in an earlier window: its results show here, at the patch.
   const withResults = toolCallPatches.filter((callPatch) => 'result' in callPatch && typeof callPatch.id === 'string');
   if (withResults.length === 0) return;
-  kept.set(`$patch:${patchKey}`, { kind: 'patched-results', messageUuid: patch.id, toolCalls: withResults, position, ts });
+  kept.set(`$patch:${patchKey}`, { kind: 'patched-results', messageUuid: patch.id, toolCalls: withResults, position, ts: timestampMs });
 }
 
 /**
