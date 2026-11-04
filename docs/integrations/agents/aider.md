@@ -15,6 +15,8 @@ sources:
     title: parseAiderTranscript, aiderTranscriptUsage
   - resource: src/main/agent/adapters/aider/capability-discovery.ts
     title: discoverAiderCapabilities
+  - resource: src/main/agent/adapters/aider/command-injection-verifier.ts
+    title: createAiderCommandInjectionVerifier (the session's own history file, confirm-only)
 ---
 # Aider
 
@@ -40,8 +42,14 @@ Detection is the shared `AgentDetector`: check `config.agent.cliPaths.aider`, fa
 `src/main/agent/adapters/aider/aider-adapter.ts`
 
 ```
-aider [--model <id>] [--reasoning-effort <level>] [--chat-history-file <file>] --message "prompt text" --chat-mode <mode> --no-auto-commits
+aider [--model <id>] [--reasoning-effort <level>] [--chat-history-file <file>] [--message "prompt text"]
+      [--chat-mode ask | --architect] [--yes-always] --no-auto-commits --no-suggest-shell-commands
+      [--restore-chat-history] [--notifications --notifications-command <idle command>]
 ```
+
+Each bracketed flag is sent only when it applies: the permission-mode flags per the
+[table below](#permission-modes), `--restore-chat-history` on a resume, and the notifications pair
+when the session has an events file.
 
 - `--model` and `--reasoning-effort` carry the column's model and effort. They come ahead of the
   prompt, so `configuredModelFromCommand` never reads a `--model` out of task text.
@@ -51,11 +59,13 @@ aider [--model <id>] [--reasoning-effort <level>] [--chat-history-file <file>] -
   options page says it will "process reply then exit (disables chat mode)", so an Aider task runs
   one turn and exits.
 - `--no-auto-commits` prevents Aider from auto-committing, because Kangentic manages git.
+- `--no-suggest-shell-commands` turns off Aider's shell command suggestions (on by default,
+  `args.py`), which would print noise into a Kangentic-managed session.
 - `--notifications --notifications-command` runs `node <event-bridge> <events file> idle` when Aider waits for input. Aider runs it through its own shell, so the paths are written bare when they allow it. A path that cannot be carried through the outer shell drops the pair, and the prompt regex stays the idle signal (see `isBareShellToken` in [Shells and paths](../../platforms/shells-and-paths.md#path-handling))
 
 ## Chat history and resume
 
-Aider has no session id. It writes a markdown chat history, `.aider.chat.history.md` by default,
+Aider has no session id of its own. It writes a markdown chat history, `.aider.chat.history.md` by default,
 and `--chat-history-file` points it at another file. `--restore-chat-history` loads that file's
 messages into the next run (`Coder.__init__` reads it through `split_chat_history_markdown`).
 
@@ -182,8 +192,10 @@ only because argparse accepts an unambiguous prefix of an option.
 ## Knowledge Graph answers
 
 `answerFromContext` sends the prompt with `--message-file` in `--chat-mode ask`, with `--no-git`,
-`--yes-always`, `--no-auto-commits`, `--no-pretty`, `--no-stream`, no update check and no model
-warnings. Its history files go in the run directory. `extractAiderAnswer` trims the banner and the
+`--yes-always`, `--no-auto-commits`, `--no-pretty`, `--no-stream`, no update check, no model
+warnings, no shell command suggestions and `--no-restore-chat-history`. It adds `--model <id>` when
+a model is chosen (`answerCapabilities.model`). Its history files go in the run directory.
+`extractAiderAnswer` trims the banner and the
 token report, including a `Cost:` half on its own line. `aiderAnswerUsage` reads the banner's
 `Model:` line and the `Tokens:` / `Cost:` report into the run's `AgentCallUsage`, which goes to
 `onUsage`:
