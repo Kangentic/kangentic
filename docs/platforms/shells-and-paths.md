@@ -97,15 +97,24 @@ in WSL, and ran when typed after the prompt.
 `TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included). Past that, `performSpawn` writes
 the output of `adaptCommandForShell` to a launcher file in the session's
 `.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the clear
-prelude plus a statement that sources the file. The file runs in the same shell the typed line
+prelude plus a statement that runs the file. The file runs in the same shell the typed line
 would have, so a shell's own functions, aliases and environment apply as before.
 
 | Shell | Typed after the prelude | File |
 |-------|------------------------|------|
-| bash, zsh, sh, dash, ksh, WSL | `. <path>` (dash has no `source`) | `launch.sh` |
+| bash, zsh, sh, dash, ksh, WSL | `eval "$(cat <path>)"` | `launch.sh` |
 | fish | `source <path>` | `launch.fish` |
 | nushell | `source <path>`, a literal, because `source` is a parser keyword that reads the file while the line parses | `launch.nu` |
 | pwsh on macOS or Linux | `. <path>` | `launch.ps1` |
+
+A POSIX shell evaluates the file's text instead of sourcing it, for a measured reason. On bash, a
+SIGHUP to the shell leaves an agent started from a sourced file running, where it ends an agent
+typed at the prompt, and a suspend ends a Linux Claude by exactly that hangup
+([Agent absence sweep](../architecture/sessions/agent-absence-sweep.md#how-claude-code-ends-on-linux-measured)).
+An agent that outlived its suspend would keep editing its worktree. `eval "$(cat <path>)"` keeps
+the agent a job of the interactive shell, so the hangup reaches it as before, and `cat` rather than
+`$(< file)` because dash and sh lack that. fish, nushell and PowerShell still source. The round trip
+hangs each of them up and requires a launched agent to end whenever the same agent typed whole does.
 
 A WSL shell gets the path through `toWslPath`, except a session folder on a Windows share or in
 another distro. WSL cannot read those, so that shell types the whole command: a sourced path that
