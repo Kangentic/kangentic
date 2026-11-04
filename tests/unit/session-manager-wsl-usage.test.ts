@@ -154,6 +154,40 @@ describe('SessionManager: a distro CLI\'s transcript path reaches telemetry as t
     expect(processStatusUpdate.mock.calls[0][1]).not.toHaveProperty('transcriptPath');
   });
 
+  it('stamps every rate-limit window with the reporting session\'s agent before telemetry sees it', () => {
+    internals.registry.set('session-agy', { id: 'session-agy', cliTarget: null, agentName: 'antigravity' });
+    registeredSessionIds.push('session-agy');
+    const usage: SessionUsage = {
+      ...makeUsage(),
+      rateLimits: [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 10, resetsAt: 1_800_000_000 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 40, resetsAt: 1_800_500_000 },
+      ],
+    };
+
+    deliverStatus('session-agy', usage);
+
+    const delivered = processStatusUpdate.mock.calls[0][1] as SessionUsage;
+    expect(delivered.rateLimits).toHaveLength(2);
+    expect(delivered.rateLimits?.map((rateLimitWindow) => rateLimitWindow.agent)).toEqual(['antigravity', 'antigravity']);
+    // Only the stamp is added; the window's own numbers ride along.
+    expect(delivered.rateLimits?.map((rateLimitWindow) => rateLimitWindow.usedPercentage)).toEqual([10, 40]);
+    // The reader's parsed usage is not rewritten in place.
+    expect(usage.rateLimits?.[0]).not.toHaveProperty('agent');
+  });
+
+  it('leaves rate-limit windows unstamped for a session the registry does not hold', () => {
+    const usage: SessionUsage = {
+      ...makeUsage(),
+      rateLimits: [{ id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 10, resetsAt: 1_800_000_000 }],
+    };
+
+    deliverStatus('session-unknown', usage);
+
+    const delivered = processStatusUpdate.mock.calls[0][1] as SessionUsage;
+    expect(delivered.rateLimits?.[0]).not.toHaveProperty('agent');
+  });
+
   it('maps by the session that reported, so two sessions on different machines never cross', () => {
     registerSession('session-wsl', TARGET_WITH_HOMES);
     registerSession('session-local', null);
