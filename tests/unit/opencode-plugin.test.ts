@@ -502,6 +502,28 @@ describe('opencode-plugin', () => {
         expect(tracker.status()?.contextLimit).toBe(100000);
       });
 
+      it('registers a child\'s model name and size without showing it, until a root answer names that model', () => {
+        const tracker = createSessionTracker();
+        const rootId = 'ses_2349b5c91ffeKd6qajuUTR4clq';
+        const childId = 'ses_child0000000000000000cc';
+        const paramsFor = (sessionID: string, id: string, name: string, context: number) => ({
+          sessionID,
+          model: { providerID: 'anthropic', id, name, limit: { context } },
+        });
+        tracker.onEvent({ type: 'session.created', properties: { info: { id: childId, parentID: rootId } } }, FIXED_TIMESTAMP);
+
+        tracker.onChatParams(paramsFor(rootId, 'model-a', 'Model A', 200000));
+        expect(tracker.takeStatusChange()).toBe(true);
+        tracker.onChatParams(paramsFor(childId, 'model-b', 'Model B', 100000));
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-a', name: 'Model A' });
+        expect(tracker.status()?.contextLimit).toBe(200000);
+
+        // The root's answer from model B shows it, with the name and size the child's params registered.
+        tracker.onEvent(rootAnswer('msg_b', 2000, 'model-b', 300), FIXED_TIMESTAMP);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-b', name: 'Model B' });
+        expect(tracker.status()?.contextLimit).toBe(100000);
+      });
+
       it('says when it changed, once', () => {
         const tracker = createSessionTracker();
         expect(tracker.takeStatusChange()).toBe(false);

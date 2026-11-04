@@ -62,6 +62,15 @@ import type {
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
+/** What the transcript readers are asked with: the session, where it ran, and an optional time window. */
+interface OpenCodeTranscriptReadInput {
+  agentSessionId?: string | null;
+  cwd?: string | null;
+  sinceMs?: number | null;
+  untilMs?: number | null;
+  place?: CliPlace | null;
+}
+
 // Session-ID regexes hoisted to module scope so they compile once.
 // `fromOutput` is invoked on every PTY chunk during the pre-capture
 // window (potentially many times per second of TUI startup), so
@@ -227,7 +236,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
     unavailableLabel: 'Telemetry: TUI only',
     unavailableTitle:
-      'Remote OpenCode sessions do not stream live telemetry to Kangentic.\n'
+      'A local OpenCode session reports telemetry once its first turn starts. A remote one never does.\n'
       + 'The TUI shows the model, context and cost.',
   };
 
@@ -288,12 +297,19 @@ export class OpenCodeAdapter implements AgentAdapter {
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
     forgetDistroOpenCodeVersions();
-    this.modelInventory = null;
+    // The CLI at the path may be another one now, so its list is read again,
+    // but kept as the fallback a failed read answers with. A read in flight is
+    // dropped and not kept.
+    if (this.modelInventory) this.modelInventory = { ...this.modelInventory, stale: true };
     this.pendingModelRead = null;
   }
 
-  /** The last `opencode models` read, per CLI path (`discoverCapabilities`). Null inventory: the read failed. */
-  private modelInventory: { cliPath: string; inventory: OpenCodeModelInventory | null } | null = null;
+  /**
+   * The last `opencode models` read, per CLI path (`discoverCapabilities`).
+   * Null inventory: the read failed. Stale: a re-detection since, so the next
+   * ask reads again.
+   */
+  private modelInventory: { cliPath: string; inventory: OpenCodeModelInventory | null; stale: boolean } | null = null;
 
   /** The `opencode models` read in flight, per CLI path, so concurrent asks share one run. */
   private pendingModelRead: { cliPath: string; read: Promise<OpenCodeModelInventory | null> } | null = null;
@@ -629,9 +645,10 @@ export class OpenCodeAdapter implements AgentAdapter {
    * `opencode.db` (`transcript-usage.ts`). A remote or distro session has no
    * local row, so it answers null and the caller keeps the live snapshot.
    */
-  async transcriptUsage(input: { agentSessionId?: string | null; cwd?: string | null; place?: CliPlace | null }): Promise<TranscriptUsage | null> {
-    if (!this.isLocalSession(input)) return null;
-    return readOpenCodeTranscriptUsageAtPath(openCodeTranscriptSourcePath(), input.agentSessionId as string);
+  async transcriptUsage(input: OpenCodeTranscriptReadInput): Promise<TranscriptUsage | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeTranscriptUsageAtPath(openCodeTranscriptSourcePath(), sessionId);
   }
 
   /**
@@ -639,15 +656,10 @@ export class OpenCodeAdapter implements AgentAdapter {
    * `untilMs` when given (`transcript-usage.ts`). Null for a remote or distro
    * session, or one with no tool call.
    */
-  async transcriptToolCounts(input: {
-    agentSessionId?: string | null;
-    cwd?: string | null;
-    sinceMs?: number | null;
-    untilMs?: number | null;
-    place?: CliPlace | null;
-  }): Promise<TranscriptToolCounts | null> {
-    if (!this.isLocalSession(input)) return null;
-    return readOpenCodeToolCountsAtPath(openCodeTranscriptSourcePath(), input.agentSessionId as string, { sinceMs: input.sinceMs, untilMs: input.untilMs });
+  async transcriptToolCounts(input: OpenCodeTranscriptReadInput): Promise<TranscriptToolCounts | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeToolCountsAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
   }
 
   /**
@@ -655,15 +667,10 @@ export class OpenCodeAdapter implements AgentAdapter {
    * `untilMs` (`transcript-usage.ts`). Null for a remote or distro session,
    * which has no local row, so the earlier-run fill moves on.
    */
-  async transcriptToolResultTokens(input: {
-    agentSessionId?: string | null;
-    cwd?: string | null;
-    sinceMs?: number | null;
-    untilMs?: number | null;
-    place?: CliPlace | null;
-  }): Promise<Record<string, number> | null> {
-    if (!this.isLocalSession(input)) return null;
-    return readOpenCodeToolResultTokensAtPath(openCodeTranscriptSourcePath(), input.agentSessionId as string, { sinceMs: input.sinceMs, untilMs: input.untilMs });
+  async transcriptToolResultTokens(input: OpenCodeTranscriptReadInput): Promise<Record<string, number> | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeToolResultTokensAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
   }
 
   /**
@@ -681,14 +688,14 @@ export class OpenCodeAdapter implements AgentAdapter {
    * (`subagent-usage.ts`): their count, stored size and newest update.
    */
   statSubagentTranscripts(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null {
-    if (!this.isLocalSession({ agentSessionId, cwd, place })) return null;
+    if (!this.localSessionId({ agentSessionId, cwd, place })) return null;
     return statOpenCodeSubagentsAtPath(openCodeTranscriptSourcePath(), agentSessionId);
   }
 
   /** Each subagent answer's tokens, from the session's `task` child sessions (`subagent-usage.ts`). */
   async parseSubagentUsage(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage> {
     const sourcePath = openCodeTranscriptSourcePath();
-    if (!this.isLocalSession({ agentSessionId, cwd, place })) {
+    if (!this.localSessionId({ agentSessionId, cwd, place })) {
       return { directoryPresent: false, complete: true, sourcePath, turns: [], spawnLinks: [] };
     }
     return readOpenCodeSubagentUsageAtPath(sourcePath, agentSessionId);
@@ -709,15 +716,20 @@ export class OpenCodeAdapter implements AgentAdapter {
     place?: CliPlace | null,
   ): Promise<ParsedTranscriptWindow> {
     const sourcePath = openCodeTranscriptSourcePath();
-    if (!this.isLocalSession({ agentSessionId, cwd, place })) {
+    if (!this.localSessionId({ agentSessionId, cwd, place })) {
       return { entries: [], sourcePath: null, nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };
     }
     return { ...readOpenCodeTranscriptWindowAtPath(sourcePath, agentSessionId, startByte, maxBytes), sourcePath };
   }
 
-  /** A session whose history is in this machine's `opencode.db`: it has an id, and is neither remote nor in a distro. */
-  private isLocalSession(input: { agentSessionId?: string | null; cwd?: string | null; place?: CliPlace | null }): boolean {
-    return Boolean(input.agentSessionId) && !input.place && !(input.cwd && this.remoteTargetsByCwd.has(input.cwd));
+  /**
+   * The id of a session whose history is in this machine's `opencode.db`, or
+   * null for one with no id, a remote one, or one in a distro.
+   */
+  private localSessionId(input: OpenCodeTranscriptReadInput): string | null {
+    if (!input.agentSessionId || input.place) return null;
+    if (input.cwd && this.remoteTargetsByCwd.has(input.cwd)) return null;
+    return input.agentSessionId;
   }
 
   /** One page of a local session's history for the Conversation viewer; a remote one does not page. */
@@ -734,24 +746,21 @@ export class OpenCodeAdapter implements AgentAdapter {
    * re-detection, since each read starts the CLI's provider layer.
    *
    * The agent list waits on every adapter's discovery before it answers
-   * (`agent-list.ts`), so an unforced call with no list yet starts the read and
-   * answers without one, rather than holding every agent's row for the CLI's
-   * provider start. A forced call waits for the read (the one in flight, if
-   * any), so an opening dropdown gets the list.
+   * (`agent-list.ts`), so an unforced call starts the read and answers with
+   * the list it has (none on a first call), rather than holding every agent's
+   * row for the CLI's provider start. A forced call (an opening dropdown,
+   * which re-detects every CLI first) waits for a fresh read.
    */
   async discoverCapabilities(cliPath: string, forceRefresh = false): Promise<AgentCapabilities> {
     const version = await this.versionFor(cliPath);
     const capabilities = await discoverOpenCodeCapabilities(cliPath, version);
     if (!capabilities.supportsModelOverride || isOpenCodeV2(version)) return capabilities;
-    const cached = this.modelInventory?.cliPath === cliPath ? this.modelInventory.inventory : undefined;
-    let inventory: OpenCodeModelInventory | null | undefined = forceRefresh ? undefined : cached;
-    if (inventory === undefined) {
-      const read = this.readModelInventory(cliPath, forceRefresh, cached);
-      if (!forceRefresh && cached === undefined) {
-        void read;
-        return capabilities;
-      }
-      inventory = await read;
+    const entry = this.modelInventory?.cliPath === cliPath ? this.modelInventory : undefined;
+    let inventory: OpenCodeModelInventory | null | undefined = entry?.inventory;
+    if (forceRefresh || !entry || entry.stale) {
+      const read = this.readModelInventory(cliPath, entry?.inventory);
+      if (forceRefresh) inventory = await read;
+      else void read;
     }
     if (!inventory) return capabilities;
     return { ...capabilities, models: inventory.models, modelDisplayNames: inventory.displayNames };
@@ -759,16 +768,17 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   /**
    * Read the CLI's models and keep them. A read that fails (a timeout, a
-   * provider error) keeps the last list read from this CLI rather than
-   * emptying the picker. A forced read joins one already in flight.
+   * provider error) keeps the last list read from this CLI, even one a
+   * re-detection marked stale, rather than emptying the picker. A call joins a
+   * read already in flight for the same path.
    */
-  private readModelInventory(cliPath: string, forceRefresh: boolean, cached: OpenCodeModelInventory | null | undefined): Promise<OpenCodeModelInventory | null> {
-    if (this.pendingModelRead?.cliPath === cliPath && (forceRefresh || cached === undefined)) return this.pendingModelRead.read;
+  private readModelInventory(cliPath: string, fallback: OpenCodeModelInventory | null | undefined): Promise<OpenCodeModelInventory | null> {
+    if (this.pendingModelRead?.cliPath === cliPath) return this.pendingModelRead.read;
     const read: Promise<OpenCodeModelInventory | null> = discoverOpenCodeModels(cliPath).then((fresh) => {
-      const inventory = fresh ?? cached ?? null;
+      const inventory = fresh ?? fallback ?? null;
       // A re-detection while this ran dropped it (`invalidateDetectionCache`):
       // the CLI at this path may be another one now, so its list is not kept.
-      if (this.pendingModelRead?.read === read) this.modelInventory = { cliPath, inventory };
+      if (this.pendingModelRead?.read === read) this.modelInventory = { cliPath, inventory, stale: false };
       return inventory;
     }).finally(() => {
       if (this.pendingModelRead?.read === read) this.pendingModelRead = null;

@@ -200,10 +200,10 @@ function readTokens(tokens) {
  * tool runs a subagent in a CHILD session, created with `parentID` set
  * (`Session.parentID` in the SDK types), and the `event` hook receives every
  * session's events with no filter (`packages/opencode/src/plugin/index.ts`).
- * So a child's `session.created` and `session.idle` used to be written as the
- * task's own `session_start` and `idle`, which ended the task's turn while the
- * subagent was still running. Now they are `subagent_start` and
- * `subagent_stop`, keyed by the child's session id.
+ * A child's `session.created` and `session.idle` write `subagent_start` and
+ * `subagent_stop`, keyed by the child's session id, never the task's own
+ * `session_start` or `idle`, so the task's turn does not end while the
+ * subagent runs.
  *
  * A session is a child once a `session.created` or `session.updated` shows its
  * `parentID`; every other session is the root (the TUI's own session, or the
@@ -397,7 +397,7 @@ function createSessionTracker() {
       const shownModel = lastRootMessage?.model ?? requestedModel;
       if (!shownModel) return null;
       const facts = modelFacts.get(shownModel);
-      const totals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+      const totals = readTokens(undefined);
       for (const tokens of rootTokensByMessage.values()) {
         for (const key of Object.keys(totals)) totals[key] += tokens[key];
       }
@@ -411,7 +411,7 @@ function createSessionTracker() {
           ...(facts?.name ? { name: facts.name } : {}),
         },
         contextLimit: facts?.contextLimit ?? 0,
-        context: last ?? { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        context: last ?? readTokens(undefined),
         totals,
         costUsd,
       };

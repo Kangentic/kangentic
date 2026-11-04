@@ -36,7 +36,11 @@ function assistantUsage(tokens: unknown): TranscriptUsage | null {
   };
 }
 
-/** Sum every assistant message's tokens. Null when the session has none with usage. */
+/**
+ * Sum every assistant message's tokens. Null when the session has none with
+ * usage: OpenCode stores an answer with every count 0 when its step starts, so
+ * a session whose only answer is still running keeps the caller's live numbers.
+ */
 export function readOpenCodeTranscriptUsageAtPath(dbPath: string, sessionId: string): TranscriptUsage | null {
   return withDatabase<TranscriptUsage | null>(dbPath, null, (database) => {
     // Only `tokens` leaves SQLite, so an OpenCode 2 record's content is never copied out.
@@ -51,7 +55,7 @@ export function readOpenCodeTranscriptUsageAtPath(dbPath: string, sessionId: str
     const total: TranscriptUsage = { inputTokens: 0, outputTokens: 0 };
     for (const row of rows) {
       const usage = row.tokens ? assistantUsage(parseJsonRecord(row.tokens)) : null;
-      if (!usage) continue;
+      if (!usage || usage.inputTokens + usage.outputTokens === 0) continue;
       messagesWithUsage += 1;
       total.inputTokens += usage.inputTokens;
       total.outputTokens += usage.outputTokens;
@@ -66,23 +70,24 @@ interface TimeWindow {
   untilMs?: number | null;
 }
 
-function windowClause(window: TimeWindow, column: string): { sql: string; values: number[] } {
+/** The SQL that keeps a query's rows to `timeWindow` by their `time_created`, and its bound values. */
+function windowClause(timeWindow: TimeWindow): { sql: string; values: number[] } {
   const parts: string[] = [];
   const values: number[] = [];
-  if (typeof window.sinceMs === 'number') {
-    parts.push(`${column} >= ?`);
-    values.push(window.sinceMs);
+  if (typeof timeWindow.sinceMs === 'number') {
+    parts.push('time_created >= ?');
+    values.push(timeWindow.sinceMs);
   }
-  if (typeof window.untilMs === 'number') {
-    parts.push(`${column} < ?`);
-    values.push(window.untilMs);
+  if (typeof timeWindow.untilMs === 'number') {
+    parts.push('time_created < ?');
+    values.push(timeWindow.untilMs);
   }
   return { sql: parts.length > 0 ? ` AND ${parts.join(' AND ')}` : '', values };
 }
 
 /** OpenCode 1 tool parts in the window: only the call id and tool name leave SQLite. */
-function v1ToolCalls(database: DatabaseType.Database, sessionId: string, window: TimeWindow): Array<{ id: string; name: string }> {
-  const clause = windowClause(window, 'time_created');
+function v1ToolCalls(database: DatabaseType.Database, sessionId: string, timeWindow: TimeWindow): Array<{ id: string; name: string }> {
+  const clause = windowClause(timeWindow);
   const rows = database
     .prepare<Array<string | number>, { callId: unknown; tool: unknown }>(
       `SELECT json_extract(data, '$.callID') AS callId, json_extract(data, '$.tool') AS tool
@@ -97,8 +102,8 @@ function v1ToolCalls(database: DatabaseType.Database, sessionId: string, window:
 }
 
 /** Each `{ type: 'tool', id, name, state }` item of OpenCode 2's assistant records in the window, in stored order. */
-function* v2ToolItems(database: DatabaseType.Database, sessionId: string, window: TimeWindow): Generator<{ id: string; name: string; state: unknown }> {
-  const clause = windowClause(window, 'time_created');
+function* v2ToolItems(database: DatabaseType.Database, sessionId: string, timeWindow: TimeWindow): Generator<{ id: string; name: string; state: unknown }> {
+  const clause = windowClause(timeWindow);
   const rows = database
     .prepare<Array<string | number>, { data: string }>(`SELECT data FROM session_message WHERE session_id = ? AND type = 'assistant'${clause.sql} ORDER BY seq ASC`)
     .all(sessionId, ...clause.values);
@@ -132,17 +137,17 @@ function toolResultText(state: unknown): string {
  * once, at its last stored result. Null only when the database cannot be read;
  * a session with no call answers an empty object.
  */
-export function readOpenCodeToolResultTokensAtPath(dbPath: string, sessionId: string, window: TimeWindow = {}): Record<string, number> | null {
+export function readOpenCodeToolResultTokensAtPath(dbPath: string, sessionId: string, timeWindow: TimeWindow = {}): Record<string, number> | null {
   return withDatabase<Record<string, number> | null>(dbPath, null, (database) => {
     const resultByCall = new Map<string, { name: string; characters: number }>();
     if (storeOf(database, sessionId) === 'v2') {
-      for (const item of v2ToolItems(database, sessionId, window)) {
+      for (const item of v2ToolItems(database, sessionId, timeWindow)) {
         resultByCall.set(item.id, { name: item.name, characters: toolResultText(item.state).length });
       }
     } else {
       // Sized in SQLite (`json_extract`), so a session's tool outputs are never
       // copied out and parsed on each of the popover's refetches.
-      const clause = windowClause(window, 'time_created');
+      const clause = windowClause(timeWindow);
       const rows = database
         .prepare<Array<string | number>, { callId: unknown; tool: unknown; characters: number | null }>(
           `SELECT json_extract(data, '$.callID') AS callId, json_extract(data, '$.tool') AS tool,
@@ -169,9 +174,9 @@ export function readOpenCodeToolResultTokensAtPath(dbPath: string, sessionId: st
  * `untilMs` (by the stored part's or message's `time_created`). Null when the
  * session has none, so the caller keeps its live count.
  */
-export function readOpenCodeToolCountsAtPath(dbPath: string, sessionId: string, window: TimeWindow = {}): TranscriptToolCounts | null {
+export function readOpenCodeToolCountsAtPath(dbPath: string, sessionId: string, timeWindow: TimeWindow = {}): TranscriptToolCounts | null {
   return withDatabase<TranscriptToolCounts | null>(dbPath, null, (database) => {
-    const calls = storeOf(database, sessionId) === 'v2' ? [...v2ToolItems(database, sessionId, window)] : v1ToolCalls(database, sessionId, window);
+    const calls = storeOf(database, sessionId) === 'v2' ? [...v2ToolItems(database, sessionId, timeWindow)] : v1ToolCalls(database, sessionId, timeWindow);
     const seen = new Set<string>();
     const countsByName = new Map<string, number>();
     for (const call of calls) {

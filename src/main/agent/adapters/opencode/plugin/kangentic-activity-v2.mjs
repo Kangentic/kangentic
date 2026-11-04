@@ -1,6 +1,8 @@
 // kangentic-activity
 // OpenCode 2 plugin that emits structured activity events into the
-// Kangentic events.jsonl pipeline. OpenCode 2 does not run OpenCode 1
+// Kangentic events.jsonl pipeline, and keeps the session's status.json
+// (model, context, tokens, cost) beside it for `parseOpenCodeStatus`
+// (status-parser.ts). OpenCode 2 does not run OpenCode 1
 // plugins (kangentic-activity.mjs), so hook-manager.ts installs this one for
 // a V2 session, as `.opencode/plugins/kangentic-activity/index.js`: OpenCode 2
 // discovers a local plugin as a directory with an `index` entry. OpenCode 1's
@@ -138,10 +140,10 @@ function readTokens(tokens) {
  * One OpenCode 2 process's sessions. The `task` subagent runs in a child
  * session whose `session.created` carries `data.parentID`
  * (`packages/schema/src/session-event.ts` at v2.2.5), and the event stream
- * holds every session's events. Without this, a child's first event wrote the
- * task's `session_start` and its `session.execution.succeeded` the task's
- * `idle`, which ended the task's turn while the subagent ran. A child now
- * writes `subagent_start` and `subagent_stop`, keyed by its session id.
+ * holds every session's events. A child's start and its execution end write
+ * `subagent_start` and `subagent_stop`, keyed by its session id, never the
+ * task's own `session_start` or `idle`, so the task's turn does not end while
+ * the subagent runs.
  *
  * It also keeps the session's telemetry for `status.json` (the same shape the
  * OpenCode 1 plugin writes, read by `parseOpenCodeStatus`): the model from the
@@ -258,7 +260,7 @@ function createV2SessionTracker() {
 
     status() {
       if (!model) return null;
-      const totals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+      const totals = readTokens(undefined);
       for (const tokens of rootTokensByMessage.values()) {
         for (const key of Object.keys(totals)) totals[key] += tokens[key];
       }
@@ -268,7 +270,7 @@ function createV2SessionTracker() {
         kangenticOpenCodeStatus: 1,
         model: { id: model },
         contextLimit: 0,
-        context: (lastRootMessage && rootTokensByMessage.get(lastRootMessage)) || { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        context: (lastRootMessage && rootTokensByMessage.get(lastRootMessage)) || readTokens(undefined),
         totals,
         costUsd,
       };

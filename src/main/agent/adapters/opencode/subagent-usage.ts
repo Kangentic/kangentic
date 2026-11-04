@@ -92,8 +92,16 @@ export function statOpenCodeSubagentsAtPath(dbPath: string, sessionId: string): 
   });
 }
 
-/** The `task` calls in these sessions: each call's id, the message that made it, its child, and its subagent type. */
-function taskCalls(database: DatabaseType.Database, sessionIds: string[]): Array<{ callId: string; messageId: string; childId: string | null; agentType: string | null }> {
+/** One `task` call: its id, the message that made it, the child session it ran, and its subagent type. */
+interface TaskCall {
+  callId: string;
+  messageId: string;
+  childId: string | null;
+  agentType: string | null;
+}
+
+/** The `task` calls in these sessions. */
+function taskCalls(database: DatabaseType.Database, sessionIds: string[]): TaskCall[] {
   if (sessionIds.length === 0) return [];
   // Filtered and picked in SQLite, so no other part (a tool's output) is copied out and parsed.
   const rows = database
@@ -105,7 +113,7 @@ function taskCalls(database: DatabaseType.Database, sessionIds: string[]): Array
          AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') = 'task'`,
     )
     .all(...sessionIds);
-  const calls: Array<{ callId: string; messageId: string; childId: string | null; agentType: string | null }> = [];
+  const calls: TaskCall[] = [];
   for (const row of rows) {
     if (typeof row.callId !== 'string') continue;
     calls.push({

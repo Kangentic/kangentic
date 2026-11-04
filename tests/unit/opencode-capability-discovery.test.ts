@@ -16,7 +16,19 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
+// Real target resolution and execution by default; the WSL test overrides both
+// once, so the distro branch is reached without a distro on the machine.
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...actual,
+    resolveCliTarget: vi.fn(actual.resolveCliTarget),
+    execCliForTarget: vi.fn(actual.execCliForTarget),
+  };
+});
+
 import { execFile, exec } from 'node:child_process';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { discoverOpenCodeCapabilities, discoverOpenCodeModels, parseOpenCodeModels } from '../../src/main/agent/adapters/opencode/capability-discovery';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
@@ -165,6 +177,33 @@ describe('discoverOpenCodeModels', () => {
     const call = process.platform === 'win32' ? execMock.mock.calls[0][0] : execFileMock.mock.calls[0][1];
     expect(String(call)).toContain('models');
     expect(String(call)).toContain('--verbose');
+  });
+
+  it('runs `models --verbose` inside the distro for a CLI in a WSL distro, and parses its output', async () => {
+    const target: CliTarget = {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      linuxCliPath: '/home/dev/.local/bin/opencode',
+      facts: {
+        distro: 'Ubuntu',
+        homeLinux: '/home/dev',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+        interactivePath: '/usr/bin',
+        env: {},
+        networkingMode: 'unknown',
+      },
+    };
+    vi.mocked(resolveCliTarget).mockResolvedValueOnce(target);
+    vi.mocked(execCliForTarget).mockResolvedValueOnce({ stdout: VERBOSE_MODELS, stderr: '' });
+    const inventory = await discoverOpenCodeModels('\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\opencode');
+    expect(vi.mocked(execCliForTarget)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(execCliForTarget).mock.calls[0][0]).toBe(target);
+    expect(vi.mocked(execCliForTarget).mock.calls[0][1]).toEqual(['models', '--verbose']);
+    expect(inventory?.models).toEqual(['opencode/big-pickle', 'anthropic/claude-sonnet-4-5', 'openrouter/anthropic/claude-sonnet-4.5']);
+    // The local exec paths are not taken for a distro CLI.
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execFileMock).not.toHaveBeenCalled();
   });
 
   it('answers null when the run fails or lists nothing, which keeps the free-form input', async () => {

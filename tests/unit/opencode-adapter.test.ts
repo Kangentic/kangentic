@@ -64,6 +64,10 @@ vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) =
 const toolReads = vi.hoisted(() => ({
   counts: vi.fn((..._args: unknown[]): null => null),
   resultTokens: vi.fn((..._args: unknown[]): null => null),
+  usage: vi.fn((..._args: unknown[]): unknown => null),
+  subagentStat: vi.fn((..._args: unknown[]): unknown => null),
+  subagentUsage: vi.fn((..._args: unknown[]): unknown => null),
+  transcriptWindow: vi.fn((..._args: unknown[]): unknown => null),
 }));
 vi.mock('../../src/main/agent/adapters/opencode/transcript-usage', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/transcript-usage')>();
@@ -71,6 +75,22 @@ vi.mock('../../src/main/agent/adapters/opencode/transcript-usage', async (import
     ...actual,
     readOpenCodeToolCountsAtPath: (...args: unknown[]) => toolReads.counts(...args),
     readOpenCodeToolResultTokensAtPath: (...args: unknown[]) => toolReads.resultTokens(...args),
+    readOpenCodeTranscriptUsageAtPath: (...args: unknown[]) => toolReads.usage(...args),
+  };
+});
+vi.mock('../../src/main/agent/adapters/opencode/subagent-usage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/subagent-usage')>();
+  return {
+    ...actual,
+    statOpenCodeSubagentsAtPath: (...args: unknown[]) => toolReads.subagentStat(...args),
+    readOpenCodeSubagentUsageAtPath: (...args: unknown[]) => toolReads.subagentUsage(...args),
+  };
+});
+vi.mock('../../src/main/agent/adapters/opencode/transcript-parser', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/transcript-parser')>();
+  return {
+    ...actual,
+    readOpenCodeTranscriptWindowAtPath: (...args: unknown[]) => toolReads.transcriptWindow(...args),
   };
 });
 
@@ -188,6 +208,26 @@ describe('OpenCode Adapter', () => {
         const command = adapter.buildCommand(makeOptions({ permissionMode, prompt: 'go' }));
         expect(command).not.toContain('--dangerously-skip-permissions');
       }
+    });
+
+    describe('bypassPermissions and --auto', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('passes --auto with --agent build when the cached version supports it', () => {
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'bypassPermissions', prompt: 'go' }));
+        expect(command).toContain('--agent build');
+        expect(command).toContain('--auto');
+      });
+
+      it('omits --auto on a version without it, keeping --agent build', () => {
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.17.11');
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'bypassPermissions', prompt: 'go' }));
+        expect(command).toContain('--agent build');
+        expect(command).not.toContain('--auto');
+      });
     });
 
     describe('--agent flag (permission mode → OpenCode primary agent)', () => {
@@ -804,6 +844,43 @@ describe('OpenCode Adapter', () => {
       expect(modelReads()).toBe(2);
     });
 
+    it('does not join a read in flight for one CLI path with a call for another path', async () => {
+      const release = holdModelReads();
+      const first = adapter.discoverCapabilities('/usr/bin/opencode', true);
+      await vi.waitFor(() => expect(modelReads()).toBe(1));
+      const second = adapter.discoverCapabilities('/opt/bin/opencode', true);
+      await vi.waitFor(() => expect(modelReads()).toBe(2));
+      release();
+      await Promise.all([first, second]);
+    });
+
+    describe('a dropdown refresh after a re-detection', () => {
+      const BOTH_MODELS = ['anthropic/claude-sonnet-4-5', 'openai/gpt-5'];
+
+      it('answers a forced call with the last list when the new read fails, after reading again', async () => {
+        await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        adapter.invalidateDetectionCache();
+        helpReads.modelsOutput = '';
+        const refreshed = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        expect(refreshed.models).toEqual(BOTH_MODELS);
+        expect(modelReads()).toBe(2);
+      });
+
+      it('answers an unforced call with the last list at once and reads again', async () => {
+        await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        adapter.invalidateDetectionCache();
+        const unforced = await adapter.discoverCapabilities('/usr/bin/opencode');
+        expect(unforced.models).toEqual(BOTH_MODELS);
+        await vi.waitFor(() => expect(modelReads()).toBe(2));
+      });
+
+      it('answers an unforced call with no models when no list was ever read', async () => {
+        adapter.invalidateDetectionCache();
+        const capabilities = await adapter.discoverCapabilities('/usr/bin/opencode');
+        expect('models' in capabilities).toBe(false);
+      });
+    });
+
     it('asks for no list when the help has no --model, or on OpenCode 2', async () => {
       helpReads.helpText = 'opencode [project]\n';
       expect(await adapter.discoverCapabilities('/usr/bin/opencode')).toEqual({ supportsModelOverride: false, effortLevels: [] });
@@ -829,6 +906,16 @@ describe('OpenCode Adapter', () => {
   });
 
   describe('transcript usage and tool counts', () => {
+    beforeEach(() => {
+      for (const reader of Object.values(toolReads)) reader.mockReset();
+      toolReads.counts.mockReturnValue(null);
+      toolReads.resultTokens.mockReturnValue(null);
+      toolReads.usage.mockReturnValue(null);
+      toolReads.subagentStat.mockReturnValue(null);
+      toolReads.subagentUsage.mockReturnValue(null);
+      toolReads.transcriptWindow.mockReturnValue(null);
+    });
+
     it('answers null for a session with no id, a distro session, or a remote one, without reading', async () => {
       const distroPlace: CliPlace = {
         kind: 'wsl',
@@ -850,6 +937,39 @@ describe('OpenCode Adapter', () => {
       adapter.buildCommand(makeOptions({ cwd: '/srv/remote-cwd', executionTarget: { url: 'http://10.0.0.5:4096', auth: { kind: 'none' }, workingDirectory: '/srv' } }));
       expect(await adapter.transcriptUsage({ agentSessionId: 'ses_x', cwd: '/srv/remote-cwd' })).toBeNull();
       expect(await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/srv/remote-cwd' })).toBeNull();
+      expect(await adapter.transcriptToolCounts({ agentSessionId: null, cwd: '/x' })).toBeNull();
+      expect(toolReads.usage).not.toHaveBeenCalled();
+      expect(toolReads.counts).not.toHaveBeenCalled();
+
+      // A local session does reach both readers, so the nulls above are not coincidence.
+      await adapter.transcriptUsage({ agentSessionId: 'ses_x', cwd: '/x' });
+      await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/x' });
+      expect(toolReads.usage).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x');
+      expect(toolReads.counts).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x', { sinceMs: undefined, untilMs: undefined });
+    });
+
+    it('hands a local session to the usage, subagent and window readers and returns what they read', async () => {
+      const usage = { inputTokens: 1 };
+      const signature = { count: 2, size: 3, newestUpdate: 4 };
+      const subagentUsage = { directoryPresent: true, complete: true, sourcePath: '/db', turns: [], spawnLinks: [] };
+      const window = { entries: [], nextByteOffset: 9, totalBytes: 10, firstByteOffset: 5, endByte: 9, sourcePath: '/reader-path' };
+      toolReads.usage.mockReturnValueOnce(usage);
+      toolReads.subagentStat.mockReturnValueOnce(signature);
+      toolReads.subagentUsage.mockReturnValueOnce(subagentUsage);
+      toolReads.transcriptWindow.mockReturnValueOnce(window);
+
+      expect(await adapter.transcriptUsage({ agentSessionId: 'ses_loc', cwd: '/x' })).toBe(usage);
+      expect(toolReads.usage).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      expect(adapter.statSubagentTranscripts('ses_loc', '/x')).toBe(signature);
+      expect(toolReads.subagentStat).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      expect(await adapter.parseSubagentUsage('ses_loc', '/x')).toBe(subagentUsage);
+      expect(toolReads.subagentUsage).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      const parsed = await adapter.parseTranscriptWindow('ses_loc', '/x', 5, 1000);
+      expect(toolReads.transcriptWindow).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc', 5, 1000);
+      expect(parsed).toEqual({ ...window, sourcePath: openCodeTranscriptSourcePath() });
     });
 
     describe('local reads and the non-local shapes', () => {
