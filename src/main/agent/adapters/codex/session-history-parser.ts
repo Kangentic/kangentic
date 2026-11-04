@@ -161,6 +161,7 @@ export class CodexSessionHistoryParser {
     // State we accumulate across this chunk. Usage starts empty and
     // only gets populated if we see a relevant event.
     let modelId: string | undefined;
+    let effort: string | undefined;
     let contextWindowSize: number | undefined;
     let totalInputTokens: number | undefined;
     let totalOutputTokens: number | undefined;
@@ -205,6 +206,32 @@ export class CodexSessionHistoryParser {
         const model = payload.model;
         if (typeof model === 'string' && model.length > 0) {
           modelId = model;
+        }
+        // The turn's reasoning effort, `effort` on `TurnContextItem`
+        // (codex-cli 0.163.0 rollouts; absent for a model with none).
+        const turnEffort = payload.effort;
+        if (typeof turnEffort === 'string' && turnEffort.length > 0) {
+          effort = turnEffort;
+        }
+      } else if (entryType === 'token_usage_record' && isRecord(payload)) {
+        // Codex 0.163 writes one per model response
+        // (`codex-rs/history/src/rollout_payload.rs` at rust-v0.163.0), where
+        // older builds wrote a `token_count` after each one. Its `usage` is that
+        // response's own request, the same reading as `last_token_usage`
+        // below. A record of a thread other than the rollout's own session
+        // (both ids are on the record) is a nested turn's, never this
+        // session's context.
+        const ownThread = typeof payload.thread_id !== 'string'
+          || typeof payload.session_id !== 'string'
+          || payload.thread_id === payload.session_id;
+        const responseUsage = payload.usage;
+        if (ownThread && isRecord(responseUsage)) {
+          const input = responseUsage.input_tokens;
+          const output = responseUsage.output_tokens;
+          const cached = responseUsage.cached_input_tokens;
+          if (typeof input === 'number') totalInputTokens = input;
+          if (typeof output === 'number') totalOutputTokens = output;
+          if (typeof cached === 'number') cachedInputTokens = cached;
         }
       } else if (entryType === 'task_started' && isRecord(payload)) {
         const windowSize = payload.model_context_window;
@@ -267,6 +294,7 @@ export class CodexSessionHistoryParser {
     // Build usage if we captured any token/model signal in this chunk.
     const usage = buildUsage({
       modelId,
+      effort,
       contextWindowSize,
       totalInputTokens,
       totalOutputTokens,
@@ -409,6 +437,7 @@ const CODEX_DISPATCH_TYPES = [
   'turn_context',
   'task_started',
   'token_count',
+  'token_usage_record',
   'task_complete',
   'turn_aborted',
   'response_item',
@@ -560,6 +589,7 @@ function sleep(ms: number): Promise<void> {
  */
 function buildUsage(captured: {
   modelId: string | undefined;
+  effort?: string | undefined;
   contextWindowSize: number | undefined;
   totalInputTokens: number | undefined;
   totalOutputTokens: number | undefined;
@@ -567,6 +597,7 @@ function buildUsage(captured: {
 }): SessionUsage | null {
   const {
     modelId,
+    effort,
     contextWindowSize,
     totalInputTokens,
     totalOutputTokens,
@@ -609,7 +640,14 @@ function buildUsage(captured: {
     result.contextWindow = contextWindow;
   }
   if (hasModel) {
-    result.model = { id: modelId, displayName: modelId };
+    // The rollout is Codex's own record of the model a turn ran on, so this
+    // block is agent-reported, not the `--model` the spawn seeded.
+    result.model = {
+      id: modelId,
+      displayName: modelId,
+      reportedByAgent: true,
+      ...(effort !== undefined ? { effort } : {}),
+    };
   }
 
   return result as unknown as SessionUsage;

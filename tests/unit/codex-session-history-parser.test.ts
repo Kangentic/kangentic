@@ -365,6 +365,54 @@ describe('CodexSessionHistoryParser', () => {
     });
   });
 
+  describe('0.163 usage records, live effort and the agent-reported model', () => {
+    const SESSION = '00000000-0000-4000-8000-000000000001';
+
+    /** A `token_usage_record` shaped like codex-cli 0.163.0's (history/src/rollout_payload.rs). */
+    function usageRecord(threadId: string, responseId: string, input: number, output: number, cached = 0): string {
+      const usage = { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0, total_tokens: input + output };
+      return JSON.stringify({
+        timestamp: '2026-10-20T16:38:49.463Z',
+        ordinal: 10,
+        type: 'token_usage_record',
+        payload: {
+          thread_id: threadId, turn_id: 'turn-1', session_id: SESSION, root_turn_id: 'turn-1', response_id: responseId,
+          usage, turn_token_usage: usage, thread_token_usage: usage,
+        },
+      });
+    }
+
+    it('reads the newest response request size as the context in use', () => {
+      const result = CodexSessionHistoryParser.parse(`${usageRecord(SESSION, 'resp-1', 10_000, 50, 4_000)}\n${usageRecord(SESSION, 'resp-2', 12_000, 80, 9_000)}\n`, 'append');
+      expect(result.usage?.contextWindow).toMatchObject({ usedTokens: 12_000, totalInputTokens: 12_000, totalOutputTokens: 80, cacheTokens: 9_000 });
+    });
+
+    it('ignores a record of another thread, so a nested turn never moves the context bar', () => {
+      const result = CodexSessionHistoryParser.parse(`${usageRecord(SESSION, 'resp-1', 10_000, 50)}\n${usageRecord('00000000-0000-4000-8000-000000000002', 'resp-2', 90_000, 5)}\n`, 'append');
+      expect(result.usage?.contextWindow).toMatchObject({ usedTokens: 10_000 });
+    });
+
+    it('counts a record that names no session as the session own, and one that names no thread', () => {
+      const withoutSession = JSON.parse(usageRecord('00000000-0000-4000-8000-000000000002', 'resp-1', 90_000, 5)) as { payload: Record<string, unknown> };
+      delete withoutSession.payload.session_id;
+      expect(CodexSessionHistoryParser.parse(`${JSON.stringify(withoutSession)}\n`, 'append').usage?.contextWindow).toMatchObject({ usedTokens: 90_000 });
+      const withoutThread = JSON.parse(usageRecord(SESSION, 'resp-2', 12_000, 6)) as { payload: Record<string, unknown> };
+      delete withoutThread.payload.thread_id;
+      expect(CodexSessionHistoryParser.parse(`${JSON.stringify(withoutThread)}\n`, 'append').usage?.contextWindow).toMatchObject({ usedTokens: 12_000 });
+    });
+
+    it('reports the turn model as agent-reported, with the effort the turn ran at', () => {
+      const line = JSON.stringify({ timestamp: '2026-10-20T16:38:48.412Z', type: 'turn_context', payload: { turn_id: 'turn-1', model: 'model-x', effort: 'medium', summary: 'none' } });
+      const result = CodexSessionHistoryParser.parse(`${line}\n`, 'append');
+      expect(result.usage?.model).toEqual({ id: 'model-x', displayName: 'model-x', reportedByAgent: true, effort: 'medium' });
+    });
+
+    it('leaves effort out for a turn that names none', () => {
+      const line = JSON.stringify({ timestamp: '2026-10-20T16:38:48.412Z', type: 'turn_context', payload: { model: 'model-x' } });
+      expect(CodexSessionHistoryParser.parse(`${line}\n`, 'append').usage?.model).toEqual({ id: 'model-x', displayName: 'model-x', reportedByAgent: true });
+    });
+  });
+
   describe('what no Codex hook reports (task #859, measured on 0.154.0 and 0.163.0)', () => {
     beforeEach(() => {
       resetCodexCallMemosForTests();

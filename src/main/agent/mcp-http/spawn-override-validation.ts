@@ -16,8 +16,9 @@
  *      `AgentCapabilities`, never a hardcoded map or a switch on agent name.
  *   2. An agent can legitimately enumerate NOTHING - it may declare no
  *      `discoverCapabilities`, may not be installed (discovery never runs), or
- *      may probe successfully and find nothing (codex/gemini/droid all report
- *      `effortLevels: []` because they have no effort flag at all). So an empty
+ *      may probe successfully and find nothing (gemini/droid report
+ *      `effortLevels: []` because they have no effort flag at all, and codex
+ *      does whenever its model list could not be read). So an empty
  *      or absent list means "cannot validate" and the value is ACCEPTED, exactly
  *      as the renderer falls back to a free-form text input in that case. This
  *      module never guesses.

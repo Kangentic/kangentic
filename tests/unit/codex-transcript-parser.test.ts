@@ -6,10 +6,37 @@ import {
   parseCodexTranscript,
   locateCodexTranscriptFile,
   readCodexTranscriptPage,
+  patchFilePaths,
 } from '../../src/main/agent/adapters/codex/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import type { TranscriptEntry } from '../../src/shared/types';
 import { walkHistoryPages } from './helpers/history-page-tiling';
+import { chunkTranscript } from '../../src/main/retrieval/conversation/transcript-chunker';
+import { changedFilesFromChunkTexts } from '../../src/main/retrieval/change/change-record';
+import { CodexAdapter } from '../../src/main/agent/adapters/codex/codex-adapter';
+
+describe('patchFilePaths', () => {
+  it('names every file an apply_patch hunk touches, in order, once each (apply_patch.lark, 0.163.0)', () => {
+    const patch = [
+      '*** Begin Patch',
+      '*** Add File: docs/new.md',
+      '+hello',
+      '*** Update File: src/old-name.ts',
+      '*** Move to: src/new-name.ts',
+      '@@',
+      '-a',
+      '+b',
+      '*** Delete File: src/gone.ts',
+      '*** Update File: docs/new.md',
+      '*** End Patch',
+    ].join('\n');
+    expect(patchFilePaths(patch)).toEqual(['docs/new.md', 'src/old-name.ts', 'src/new-name.ts', 'src/gone.ts']);
+  });
+
+  it('ignores a header-like line inside a hunk body, which carries a +, - or space prefix', () => {
+    expect(patchFilePaths('*** Begin Patch\n*** Update File: a.ts\n@@\n+*** Update File: not-a-file.ts\n*** End Patch\n')).toEqual(['a.ts']);
+  });
+});
 
 const SESSION_ID = '019df02a-e744-7de2-8f30-63d9ae3ab36a';
 
@@ -105,6 +132,59 @@ describe('parseCodexTranscript', () => {
     const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
     expect(entries[0]).toMatchObject({ kind: 'assistant', model: 'gpt-5-codex', blocks: [{ type: 'tool_use', id: 'call_1', name: 'shell', input: { command: ['ls'] } }] });
     expect(entries[1]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_1', content: 'a.txt' });
+  });
+
+  it('maps a freeform apply_patch call and its output, the shape every Codex edit takes (0.163.0)', async () => {
+    // `apply_patch` is a FREEFORM tool (codex-rs/core/src/tools/handlers/apply_patch_spec.rs):
+    // its `input` is the patch text itself, never JSON.
+    const patch = '*** Begin Patch\n*** Update File: src/main.go\n@@\n-old\n+new\n*** End Patch\n';
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-09-12T20:06:31Z', payload: { type: 'custom_tool_call', status: 'completed', call_id: 'call_2', name: 'apply_patch', input: patch } },
+      { type: 'response_item', timestamp: '2026-09-12T20:06:32Z', payload: { type: 'custom_tool_call_output', call_id: 'call_2', output: 'Success. Updated the following files:\nM src/main.go' } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'tool_use', id: 'call_2', name: 'apply_patch', input: { file_path: 'src/main.go', patch } }] });
+    expect(entries[1]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_2', content: 'Success. Updated the following files:\nM src/main.go' });
+  });
+
+  it('records the files a Codex patch changed in the memory index change corpus, through the real chunker', async () => {
+    // The adapter declares apply_patch by file_path (fileChangeTools); the
+    // chunker cuts each tool input at 200 characters, so the path must lead it.
+    const longPatch = `*** Begin Patch\n*** Update File: src/renderer/components/terminal/TerminalPane.tsx\n@@\n${'-old line\n+new line\n'.repeat(40)}*** End Patch\n`;
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-09-12T20:06:31Z', payload: { type: 'custom_tool_call', status: 'completed', call_id: 'call_7', name: 'apply_patch', input: longPatch } },
+    ]);
+    const chunks = chunkTranscript(await parseCodexTranscript(SESSION_ID, tmpFile));
+    const files = changedFilesFromChunkTexts(chunks.map((chunk) => chunk.text), new CodexAdapter().fileChangeTools);
+    expect([...files.keys()]).toEqual(['src/renderer/components/terminal/TerminalPane.tsx']);
+  });
+
+  it('keeps a freeform input that names no file as its raw text', async () => {
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-09-12T20:06:31Z', payload: { type: 'custom_tool_call', status: 'completed', call_id: 'call_8', name: 'apply_patch', input: 'not a patch' } },
+      { type: 'response_item', timestamp: '2026-09-12T20:06:32Z', payload: { type: 'custom_tool_call', status: 'completed', call_id: 'call_9', name: 'other_tool', input: '*** Update File: a.ts' } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ blocks: [{ type: 'tool_use', name: 'apply_patch', input: 'not a patch' }] });
+    expect(entries[1]).toMatchObject({ blocks: [{ type: 'tool_use', name: 'other_tool', input: '*** Update File: a.ts' }] });
+  });
+
+  it('maps a local shell call and a hosted web search to tool_use entries carrying their action', async () => {
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-10-01T10:00:00Z', payload: { type: 'local_shell_call', call_id: 'call_3', status: 'completed', action: { type: 'exec', command: ['ls'] } } },
+      { type: 'response_item', timestamp: '2026-10-01T10:00:01Z', payload: { type: 'web_search_call', status: 'completed', action: { type: 'search', query: 'codex hooks' } } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'tool_use', id: 'call_3', name: 'local_shell', input: { type: 'exec', command: ['ls'] } }] });
+    expect(entries[1]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'tool_use', id: '', name: 'web_search', input: { type: 'search', query: 'codex hooks' } }] });
+  });
+
+  it('joins the text items of an output given as content items', async () => {
+    tmpFile = writeFixture([
+      { type: 'response_item', timestamp: '2026-10-01T10:00:00Z', payload: { type: 'function_call_output', call_id: 'call_4', output: [{ type: 'input_text', text: 'first' }, { type: 'input_image', image_url: 'data:image/png;base64,AAAA' }, { type: 'input_text', text: 'second' }] } },
+    ]);
+    const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'tool_result', toolUseId: 'call_4', content: 'first\nsecond' });
   });
 
   it('parses only the tail of a transcript larger than the parse cap, marking the omission', async () => {

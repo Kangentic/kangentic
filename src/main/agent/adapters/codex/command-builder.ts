@@ -87,6 +87,52 @@ function mapPermissionMode(mode: PermissionMode): string[] {
 }
 
 /**
+ * The permission mode for a `codex exec` run, which never asks for approval.
+ *
+ * `codex exec --help` (codex-cli 0.163.0) lists `-s/--sandbox` and
+ * `--dangerously-bypass-approvals-and-sandbox` but no `-a/--ask-for-approval`,
+ * which it rejects. `codex exec resume --help` lists neither `-s` nor `-C`, so a
+ * resume carries the sandbox as `-c sandbox_mode=<mode>`, the config key
+ * `--sandbox` sets (https://learn.chatgpt.com/docs/config-file/config-reference).
+ * The same QUOTING CONTRACT as the other overrides: a bare value, no quotes.
+ */
+function mapExecPermissionMode(mode: PermissionMode, resume: boolean, shell: string | undefined): string[] {
+  if (mode === 'bypassPermissions') return ['--dangerously-bypass-approvals-and-sandbox'];
+  const sandbox = mode === 'plan' || mode === 'dontAsk' ? 'read-only' : 'workspace-write';
+  return resume ? ['-c', quoteArg(`sandbox_mode=${sandbox}`, shell)] : ['--sandbox', sandbox];
+}
+
+/** A reasoning effort value the QUOTING CONTRACT can carry bare. */
+const EFFORT_TOKEN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The column's reasoning effort as `-c model_reasoning_effort=<level>`.
+ *
+ * Codex has no effort flag; `model_reasoning_effort` is the config key
+ * ("Reasoning effort advertised by the selected model, such as low, medium,
+ * high, xhigh, max, or ultra", https://learn.chatgpt.com/docs/config-file/config-reference),
+ * and `-c` sets it for this process only on `codex`, `codex resume` and
+ * `codex exec` (each one's `--help`, codex-cli 0.163.0). The schema takes any
+ * non-empty string (`core/config.schema.json`, `ReasoningEffort`), so the CLI
+ * is the one that judges the level against the model. A level that is not one
+ * bare token is dropped rather than quoted, keeping the QUOTING CONTRACT.
+ *
+ * Returns the unquoted `-c` value, or null for no effort: the session command
+ * quotes it for its shell, and a headless `exec` run passes it as an argv item.
+ */
+function codexEffortOverride(effort: string | null | undefined): string | null {
+  const level = effort?.trim();
+  if (!level || !EFFORT_TOKEN.test(level)) return null;
+  return `model_reasoning_effort=${level}`;
+}
+
+/** `codexEffortOverride` as argv items for a headless `codex exec` run (no shell). */
+export function codexEffortExecArgs(effort: string | null | undefined): string[] {
+  const override = codexEffortOverride(effort);
+  return override ? ['-c', override] : [];
+}
+
+/**
  * HTTP header the Kangentic MCP server authenticates with, and the name of
  * the environment variable that carries its value into the Codex process.
  *
@@ -303,11 +349,16 @@ export class CodexCommandBuilder {
     const place = options.cliTarget ?? null;
     parts.push(quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.codexPath, shell));
 
+    // A non-interactive run is `codex exec` (`codex exec resume` for a resume):
+    // "Run Codex non-interactively" (`codex --help`, codex-cli 0.163.0). The
+    // `-q --json` this used to pass came from the retired TypeScript CLI, and
+    // 0.163.0's `codex --help` lists neither.
+    const execRun = Boolean(options.nonInteractive);
+    if (execRun) parts.push('exec');
+
     if (isResume) {
-      // Resume is a subcommand: codex resume <sessionId> ...
+      // Resume is a subcommand: codex [exec] resume <sessionId> ...
       parts.push('resume', quoteArg(options.sessionId!, shell));
-    } else if (options.nonInteractive) {
-      parts.push('-q', '--json');
     }
 
     // Every flag below is accepted by BOTH `codex` and `codex resume`
@@ -315,12 +366,18 @@ export class CodexCommandBuilder {
     // share one emission path. They did not always: the resume branch used to
     // return early after `-C`, silently dropping the permission mode, the
     // model override, and the MCP wiring from every resumed session.
+    // `codex exec resume` is the exception: it takes no `-C` (its cwd is the
+    // PTY's) and no `-s` (see mapExecPermissionMode).
 
     // Working directory, as the CLI sees it (forward slashes here, /mnt in a WSL distro)
-    parts.push('-C', quoteArg(cliPathForTarget(options.cwd, place), shell));
+    if (!(execRun && isResume)) {
+      parts.push('-C', quoteArg(cliPathForTarget(options.cwd, place), shell));
+    }
 
     // Approval mode
-    parts.push(...mapPermissionMode(options.permissionMode));
+    parts.push(...(execRun
+      ? mapExecPermissionMode(options.permissionMode, isResume, shell)
+      : mapPermissionMode(options.permissionMode)));
 
     // Skip the optional cloud ChatGPT Apps MCP connector, which can hang
     // startup at "Booting MCP server: codex_apps" (openai/codex#20167).
@@ -332,6 +389,10 @@ export class CodexCommandBuilder {
     if (options.model && options.model.trim().length > 0) {
       parts.push('--model', quoteArg(options.model.trim(), shell));
     }
+
+    // Per-column reasoning effort (`-c model_reasoning_effort=<level>`).
+    const effortOverride = codexEffortOverride(options.effort);
+    if (effortOverride) parts.push('-c', quoteArg(effortOverride, shell));
 
     // Kangentic's MCP server. Must precede the positional prompt, since
     // Codex's grammar is `codex [OPTIONS] [PROMPT]`.

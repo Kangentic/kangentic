@@ -122,7 +122,7 @@ describe('Adapter summarize() invocation shapes', () => {
   const GROK_SESSION_UUID = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   type Summarizer = { summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null }) => Promise<string> };
   const summarizers: Array<[string, () => Promise<Summarizer>, unknown[]]> = [
-    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1']],
+    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1', '-c', 'model_reasoning_effort=low']],
     ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--print', '--quiet', '--model', 'm1']],
     ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--chat-recording=false', '--model', 'm1']],
     ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1', '-r', 'low']],
