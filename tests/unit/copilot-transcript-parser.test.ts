@@ -190,6 +190,38 @@ describe('parseCopilotTranscript event edge cases', () => {
     expect(await parseCopilotTranscript(SESSION_ID, filePath)).toEqual([]);
   });
 
+  // Copilot appends to the log while the viewer reads it, so the last line can
+  // be torn. One bad line must never cost the entries around it.
+  it('skips a torn line, a non-object line, a record with no data and a blank user message, keeping its neighbors', async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-transcript-'));
+    const filePath = path.join(tmpDir, 'events.jsonl');
+    fs.writeFileSync(filePath, [
+      JSON.stringify({ type: 'user.message', id: 'u-1', timestamp, data: { content: 'first' } }),
+      '{"type":"user.message","id":"torn","data":{"content":"cut o',
+      '[1,2,3]',
+      'null',
+      JSON.stringify({ type: 'user.message', id: 'no-data', timestamp }),
+      JSON.stringify({ type: 'user.message', id: 'blank', timestamp, data: { content: '   ' } }),
+      JSON.stringify({ type: 'user.message', id: 'u-2', timestamp, data: { content: 'second' } }),
+    ].join('\n') + '\n');
+    const entries = await parseCopilotTranscript(SESSION_ID, filePath);
+    expect(entries.map((entry) => entry.uuid)).toEqual(['u-1', 'u-2']);
+  });
+
+  it('stamps an event whose timestamp is missing or unparseable with the current time', async () => {
+    const filePath = writeLog([
+      { type: 'user.message', id: 'u-1', data: { content: 'no timestamp' } },
+      { type: 'user.message', id: 'u-2', timestamp: 'not a date', data: { content: 'bad timestamp' } },
+    ]);
+    const before = Date.now();
+    const entries = await parseCopilotTranscript(SESSION_ID, filePath);
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(Number.isFinite(entry.ts)).toBe(true);
+      expect(entry.ts).toBeGreaterThanOrEqual(before - 5_000);
+    }
+  });
+
   it('falls back to the error text for a successful call with no result', async () => {
     const filePath = writeLog([
       { type: 'tool.execution_complete', id: 'r-1', timestamp, data: { toolCallId: 'call-1', success: true, error: { message: 'warned' } } },
