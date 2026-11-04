@@ -70,7 +70,7 @@ const TOOL_CALL_CURSOR_LIMIT = 16;
 const TOOL_CALL_BYTES_PER_CALL = 128;
 const TOOL_CALL_CURSOR_BYTE_BUDGET = 32 * 1024 * 1024;
 /** Bytes read per positioned read: bounds the peak to a chunk plus one line. */
-const TOOL_CALL_READ_CHUNK_BYTES = 4 * 1024 * 1024;
+export const TOOL_CALL_READ_CHUNK_BYTES = 4 * 1024 * 1024;
 /** Length of `ToolCallCursor.tail`. */
 const TOOL_CALL_TAIL_BYTES = 64;
 
@@ -259,7 +259,7 @@ async function readTail(handle: Awaited<ReturnType<typeof fs.open>>, offset: num
  * when its newline arrives, so its bytes are copied once rather than once per
  * chunk it spans.
  */
-async function forEachCompleteLine(
+export async function forEachCompleteLine(
   handle: Awaited<ReturnType<typeof fs.open>>,
   filePath: string,
   startByte: number,
