@@ -44,7 +44,9 @@ process cwd, and a normalized `--cwd` value could key it under a different encod
 **Hooks (the activity pipeline).** Grok fires the full Claude-compatible hook set -
 including in headless mode - with camelCase payloads (`toolName`, `toolUseId`, `toolInput`,
 `toolResult`, `reason`, `stopHookActive`). `Stop` fires only for the main agent (subagents
-fire `SubagentStop` in the subagent), so Claude's subagent-depth gating is unnecessary.
+fire `SubagentStop` in the subagent), so Claude's subagent-depth gating is unnecessary. That
+was measured on 1.0.0. The docs-built entries below still skip a payload that carries
+`subagentType`, because 10-hooks.md says a subagent's payload carries it.
 Grok has no per-session settings flag, so the hook file is per-cwd:
 `<cwd>/.grok/hooks/kangentic.json`, a wholly-Kangentic-owned file (grok merges every
 `*.json` in that directory, so user hook files are never read, merged, or swept). The
@@ -158,8 +160,9 @@ The CLI here is 1.0.0, which xAI's API refuses, so these behaviors were built fr
 and have not been run against a Grok. Two doc sources: the user guide each install ships in
 `~/.grok/docs/user-guide/` (1.0.0 here), and the same guide on `main` of
 [xai-org/grok-build](https://github.com/xai-org/grok-build/tree/main/crates/codegen/xai-grok-pager/docs/user-guide),
-a mirror with no tags whose newest changelog entry is 1.0.45 (2026-09-29). Their fixtures are
-named `tests/fixtures/grok-hooks/grok-docs-1.0.45-*`, apart from the `grok-1.0.0-*` captures.
+a mirror with no tags whose newest changelog entry is 1.0.45 (2026-09-29). The hook fixtures
+for these behaviors are named `tests/fixtures/grok-hooks/grok-docs-1.0.45-*`, apart from the
+`grok-1.0.0-*` captures.
 
 | Behavior | Hook or member | Source |
 |---|---|---|
