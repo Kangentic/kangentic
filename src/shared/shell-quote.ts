@@ -64,7 +64,7 @@ export function isUnixLikeShell(shellName: string): boolean {
  * whole spec is the path (`pty-spawn.ts` splits arguments off a WSL spec only),
  * so a directory with a space in it stays part of the path.
  */
-function shellProgramName(shellName: string): string {
+export function shellProgramName(shellName: string): string {
   const basename = shellName.trim().toLowerCase().split(/[\\/]/).pop() ?? '';
   return basename.replace(/\.exe$/, '');
 }

@@ -556,6 +556,9 @@ export class ClaudeAdapter implements AgentAdapter {
     return platform === 'win32' || platform === 'linux';
   }
 
+  /** The SessionStart hook runs at launch, resumes included, before any prompt. */
+  readonly reportsAgentStart = true;
+
   /**
    * Measured 2026-10-25 on 437 turns of a board's workflow tasks: no healthy
    * turn went more than 10.0 minutes without a write to its transcript or a

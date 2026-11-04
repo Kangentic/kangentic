@@ -551,6 +551,7 @@ export async function performSpawn(
     // agent there is typed into as before.
     consoleCloseIsGraceful: !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
     reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
+    reportsAgentStart: input.agentParser?.reportsAgentStart === true,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,
