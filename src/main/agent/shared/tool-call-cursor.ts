@@ -20,7 +20,7 @@ import { touchBounded } from './bounded-lru';
 export interface ToolCallEntry {
   /** The line's timestamp; +Infinity when it carried none, so the call
    *  counts under any open window rather than vanishing. */
-  ts: number;
+  timestampMs: number;
   toolName: string;
   /** Set once its result arrives; undefined while it is still pending. */
   resultTokens: number | undefined;
@@ -46,7 +46,7 @@ export interface ToolCallCursor<Entry extends ToolCallEntry> {
   callById: Map<string, Entry>;
 }
 
-/** A record's ISO `timestamp` in ms, or +Infinity when it has none (`ToolCallEntry.ts`). */
+/** A record's ISO `timestamp` in ms, or +Infinity when it has none (`ToolCallEntry.timestampMs`). */
 export function toolCallTimestampMs(timestamp: unknown): number {
   const parsedMs = typeof timestamp === 'string' ? Date.parse(timestamp) : Number.NaN;
   return Number.isFinite(parsedMs) ? parsedMs : Number.POSITIVE_INFINITY;
@@ -178,10 +178,10 @@ export function createToolCallCursorStore<Entry extends ToolCallEntry>(
 }
 
 /**
- * The calls with `sinceMs <= ts < untilMs`; a missing bound is open. A call
- * whose line carried no timestamp has `ts` = +Infinity: it counts under any
- * open-ended window rather than vanishing, and is left out of a closed one,
- * which cannot claim a call it cannot place.
+ * The calls with `sinceMs <= timestampMs < untilMs`; a missing bound is open. A
+ * call whose line carried no timestamp has `timestampMs` = +Infinity: it counts
+ * under any open-ended window rather than vanishing, and is left out of a closed
+ * one, which cannot claim a call it cannot place.
  */
 export function* callsInWindow<Entry extends ToolCallEntry>(
   cursor: ToolCallCursor<Entry>,
@@ -192,8 +192,8 @@ export function* callsInWindow<Entry extends ToolCallEntry>(
   const until = typeof untilMs === 'number' && Number.isFinite(untilMs) ? untilMs : Number.POSITIVE_INFINITY;
   const closed = until !== Number.POSITIVE_INFINITY;
   for (const call of cursor.calls) {
-    if (call.ts < since) continue;
-    if (closed && !(call.ts < until)) continue;
+    if (call.timestampMs < since) continue;
+    if (closed && !(call.timestampMs < until)) continue;
     yield call;
   }
 }

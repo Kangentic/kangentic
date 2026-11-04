@@ -875,7 +875,6 @@ export class SessionTelemetry {
       if (runtime?.sessionId?.followsSessionStartMoves) {
         if (currentId !== undefined && currentId !== sessionStart.agentSessionId) {
           this.recordReportedId(sessionId, sessionStart.agentSessionId);
-          this.agentSessionIdChecked.add(sessionId);
           this.callbacks.onAgentSessionId?.(sessionId, sessionStart.agentSessionId, { conversationMoved: true });
         }
         continue;

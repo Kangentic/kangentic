@@ -116,6 +116,17 @@ describe('qwenRuntimeDir', () => {
     expect(qwenRuntimeDir(null)).toBe(home);
   });
 
+  it('falls through an invalid workspace settings file to the user\'s value', () => {
+    const home = makeDirectory('kangentic-qwen-runtime-');
+    process.env.QWEN_HOME = home;
+    const cwd = path.join(home, 'project');
+    fs.mkdirSync(path.join(cwd, '.qwen'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.qwen', 'settings.json'), '{ not json');
+    const fromUser = path.join(home, 'user-runtime');
+    fs.writeFileSync(path.join(home, 'settings.json'), JSON.stringify({ advanced: { runtimeOutputDir: fromUser } }));
+    expect(qwenRuntimeDir(cwd)).toBe(fromUser);
+  });
+
   it('skips a settings file it cannot parse', () => {
     const home = makeDirectory('kangentic-qwen-runtime-');
     process.env.QWEN_HOME = home;

@@ -24,7 +24,8 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
-import { cliPathForTarget, hostPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -276,27 +277,11 @@ function isResultLine(line: string): boolean {
 
 /**
  * The transcript a run-level read targets: the path Claude reported in its live
- * status.json when that file is there, whatever id it names, since the live
- * report moves to a `/clear` fork's file before the session row's id does.
- * Else wherever the locator finds the conversation (`transcript-locator.ts`).
- * With no session id or cwd to locate by, the reported path as given, else null.
+ * status.json (a `/clear` fork's file before the session row's id moves), else
+ * wherever the locator finds the conversation (`transcript-locator.ts`).
  */
-async function resolveRunTranscriptPath(input: {
-  transcriptPath?: string | null;
-  agentSessionId?: string | null;
-  cwd?: string | null;
-  place?: CliPlace | null;
-}): Promise<string | null> {
-  const place = input.place ?? null;
-  // A Claude in a WSL distro reports its transcript by its Linux path.
-  const reported = input.transcriptPath ? hostPathForTarget(input.transcriptPath, place) : null;
-  if (reported && path.isAbsolute(reported) && await fs.promises.stat(reported).then(() => true, () => false)) {
-    return reported;
-  }
-  if (input.agentSessionId && input.cwd) {
-    return resolveClaudeTranscriptFile({ agentSessionId: input.agentSessionId, cwd: input.cwd, place });
-  }
-  return reported;
+function claudeRunTranscriptPath(input: RunTranscriptInput): Promise<string | null> {
+  return resolveRunTranscriptPath(input, (agentSessionId, cwd, place) => resolveClaudeTranscriptFile({ agentSessionId, cwd, place }));
 }
 
 /**
@@ -743,7 +728,7 @@ export class ClaudeAdapter implements AgentAdapter {
    * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the
    * `transcriptPath` Claude reported in status.json when its file is there;
    * otherwise the locator finds the conversation from the session id + cwd
-   * (`resolveRunTranscriptPath`). Returns null (caller falls back to the live
+   * (`claudeRunTranscriptPath`). Returns null (caller falls back to the live
    * snapshot) when neither a path nor an id+cwd is available, or the file is
    * missing/unparseable.
    */
@@ -753,7 +738,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     place?: CliPlace | null;
   }): Promise<TranscriptUsage | null> {
-    const filePath = await resolveRunTranscriptPath(input);
+    const filePath = await claudeRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptUsage(filePath);
   }
@@ -766,7 +751,7 @@ export class ClaudeAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
-    const filePath = await resolveRunTranscriptPath(input);
+    const filePath = await claudeRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolCounts(filePath, input.sinceMs, input.untilMs);
   }
@@ -779,7 +764,7 @@ export class ClaudeAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<Record<string, number> | null> {
-    const filePath = await resolveRunTranscriptPath(input);
+    const filePath = await claudeRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs);
   }

@@ -860,7 +860,7 @@ export class SessionManager extends EventEmitter {
           // spawn-time resume of an existing file never reaches here: the
           // idempotent spawn-time attach (which passes startAtEnd) holds it.
           // A moved conversation's file may not exist until its first prompt,
-          // so that attach waits for it (`waitForFile`).
+          // so that attach waits for it while the session runs (`waitForFile`).
           this.sessionHistoryReader.attach({
             sessionId,
             agentSessionId: agentReportedId,
@@ -868,7 +868,9 @@ export class SessionManager extends EventEmitter {
             hook: historyHook,
             agentName: session.agentName,
             cliTarget: session.cliTarget,
-            waitForFile: options?.conversationMoved === true,
+            waitForFile: options?.conversationMoved
+              ? () => this.registry.get(sessionId)?.status === 'running'
+              : undefined,
           }).catch((err) => {
             console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, err);
           });

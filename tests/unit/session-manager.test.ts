@@ -2180,7 +2180,7 @@ describe('Transcript-fallback handoff', () => {
       sendClear: () => void;
     }
 
-    async function spawnQwenSession(taskId: string): Promise<MoveHarness> {
+    async function spawnQwenSession(taskId: string, spyBeforeFirstCapture = false): Promise<MoveHarness> {
       const originalChat = path.join(tmpDir, `${taskId}-original.jsonl`);
       const clearedChat = path.join(tmpDir, `${taskId}-cleared.jsonl`);
       fs.writeFileSync(originalChat, '');
@@ -2207,11 +2207,14 @@ describe('Transcript-fallback handoff', () => {
       manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, agentReportedId: string) => {
         capturedAgentSessionIds.push(agentReportedId);
       });
+      const earlyAttachSpy = spyBeforeFirstCapture
+        ? vi.spyOn(managerInternals.sessionHistoryReader, 'attach')
+        : null;
       fs.appendFileSync(eventsPath, qwenSessionStart('qwen-original-id', 'startup'));
       managerInternals.statusFileReader.handleEventsChange(session.id);
       await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['qwen-original-id']));
 
-      const attachSpy = vi.spyOn(managerInternals.sessionHistoryReader, 'attach');
+      const attachSpy = earlyAttachSpy ?? vi.spyOn(managerInternals.sessionHistoryReader, 'attach');
       const detachSpy = vi.spyOn(managerInternals.sessionHistoryReader, 'detach');
       return {
         sessionId: session.id,
@@ -2225,7 +2228,7 @@ describe('Transcript-fallback handoff', () => {
       };
     }
 
-    it('re-points with waitForFile: true after detaching the old tail', async () => {
+    it('re-points with a waitForFile check after detaching the old tail', async () => {
       const harness = await spawnQwenSession('task-qwen-move-wait');
       harness.sendClear();
       await vi.waitFor(() => expect(harness.attachSpy).toHaveBeenCalledTimes(1));
@@ -2233,8 +2236,30 @@ describe('Transcript-fallback handoff', () => {
       expect(harness.attachSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
         sessionId: harness.sessionId,
         agentSessionId: 'qwen-cleared-id',
-        waitForFile: true,
+        waitForFile: expect.any(Function),
       }));
+    });
+
+    it('the waitForFile check of a move holds while the session runs and ends with it', async () => {
+      const harness = await spawnQwenSession('task-qwen-move-check');
+      const registry = (manager as unknown as { registry: { get(id: string): { status: string } | undefined } }).registry;
+      harness.sendClear();
+      await vi.waitFor(() => expect(harness.attachSpy).toHaveBeenCalledTimes(1));
+      const waitForFile = (harness.attachSpy.mock.calls[0][0] as { waitForFile: () => boolean }).waitForFile;
+
+      expect(waitForFile()).toBe(true);
+      const row = registry.get(harness.sessionId);
+      expect(row).toBeDefined();
+      row!.status = 'exited';
+      expect(waitForFile()).toBe(false);
+    });
+
+    it('an ordinary id capture attaches without a waitForFile check', async () => {
+      const harness = await spawnQwenSession('task-qwen-first-capture', true);
+      expect(harness.attachSpy).toHaveBeenCalledTimes(1);
+      const firstAttach = harness.attachSpy.mock.calls[0][0] as { agentSessionId: string; waitForFile?: unknown };
+      expect(firstAttach.agentSessionId).toBe('qwen-original-id');
+      expect(firstAttach.waitForFile).toBeUndefined();
     });
 
     it('a move that lands after the session ended neither detaches nor attaches', async () => {

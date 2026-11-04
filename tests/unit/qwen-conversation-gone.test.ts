@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { proveQwenConversationGone } from '../../src/main/agent/adapters/qwen-code/conversation-gone';
-import { PROJECT_SCAN_BATCH } from '../../src/main/agent/shared/project-folders';
+import { PROJECT_SCAN_BATCH, noFolderHolds } from '../../src/main/agent/shared/project-folders';
 import { qwenChatsDir } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 
 const SESSION_ID = '5d6f1c2a-7b3e-4c1d-9a8f-0e2b4c6d8f10';
@@ -85,20 +85,25 @@ describe('proveQwenConversationGone', () => {
     expect(await proveQwenConversationGone({ agentSessionId: SESSION_ID, reportedPaths: [reported], cwd })).toBe(false);
   });
 
+  // `proveQwenConversationGone` lists the projects folder with readdir, whose
+  // order is unsorted on Linux, so it cannot place the holder past the first
+  // batch. The scan itself is driven here with an explicit order.
   it('is not proof when the chat sits in a project folder past the first scan batch', async () => {
-    const reported = reportedPath();
     const projectsRoot = path.join(qwenHome, 'projects');
-    // More than PROJECT_SCAN_BATCH (32) folders, so the holder lands in the second batch.
-    const folderCount = PROJECT_SCAN_BATCH + 8;
-    for (let index = 0; index < folderCount; index += 1) {
-      fs.mkdirSync(path.join(projectsRoot, `project-${String(index).padStart(3, '0')}`, 'chats'), { recursive: true });
+    const folders: string[] = [];
+    for (let index = 0; index < PROJECT_SCAN_BATCH + 8; index += 1) {
+      const folder = path.join(projectsRoot, `project-${String(index).padStart(3, '0')}`);
+      fs.mkdirSync(path.join(folder, 'chats'), { recursive: true });
+      folders.push(folder);
     }
-    const holder = path.join(projectsRoot, `project-${String(folderCount - 1).padStart(3, '0')}`, 'chats');
-    fs.writeFileSync(path.join(holder, `${SESSION_ID}.jsonl`), '{}\n');
-    expect(await proveQwenConversationGone({ agentSessionId: SESSION_ID, reportedPaths: [reported], cwd })).toBe(false);
+    const relativePath = path.join('chats', `${SESSION_ID}.jsonl`);
+    const holderFile = path.join(folders[PROJECT_SCAN_BATCH + 3], relativePath);
+    fs.writeFileSync(holderFile, '{}\n');
+
+    expect(await noFolderHolds(folders, relativePath)).toBe(false);
     // The same scan with the holder removed proves it gone, so the false above is the second batch's doing.
-    fs.rmSync(path.join(holder, `${SESSION_ID}.jsonl`));
-    expect(await proveQwenConversationGone({ agentSessionId: SESSION_ID, reportedPaths: [reported], cwd })).toBe(true);
+    fs.rmSync(holderFile, { force: true });
+    expect(await noFolderHolds(folders, relativePath)).toBe(true);
   });
 
   it('is not proof when the reader path still holds the chat', async () => {

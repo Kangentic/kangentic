@@ -29,6 +29,20 @@ describe('parseQwenTranscript', () => {
     expect(entries).toEqual([]);
   });
 
+  it('does not show a tool_result record\'s plain text output as something the user typed', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-tool-result-text-'));
+    tmpFile = path.join(directory, `${SESSION_ID}.jsonl`);
+    fs.writeFileSync(tmpFile, JSON.stringify({
+      type: 'tool_result',
+      uuid: 'tr-1',
+      timestamp: '2026-11-01T10:00:00.000Z',
+      message: { role: 'user', parts: [{ text: 'output' }] },
+    }) + '\n');
+
+    const entries = await parseQwenTranscript(SESSION_ID, tmpFile);
+    expect(entries.filter((entry) => entry.kind === 'user')).toEqual([]);
+  });
+
   it('parses the pinned fixture: thought + text + functionCall, with a paired functionResponse', async () => {
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'qwen-real-session-tools.jsonl');
     const entries = await parseQwenTranscript(SESSION_ID, fixturePath);

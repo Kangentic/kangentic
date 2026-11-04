@@ -860,11 +860,11 @@ function applyToolCallLine(cursor: ToolCallCursor<ClaudeToolCallEntry>, line: st
   if (!isRecord(message) || !Array.isArray(message.content)) return;
 
   if (raw.type === 'assistant' && mayHoldToolUse) {
-    const ts = toolCallTimestampMs(raw.timestamp);
+    const timestampMs = toolCallTimestampMs(raw.timestamp);
     for (const block of message.content) {
       if (!isRecord(block) || block.type !== 'tool_use') continue;
       addToolCall(cursor, typeof block.id === 'string' ? block.id : '', {
-        ts,
+        timestampMs,
         toolName: typeof block.name === 'string' && block.name.length > 0 ? block.name : 'tool',
         sidechain: raw.isSidechain === true,
         resultTokens: undefined,

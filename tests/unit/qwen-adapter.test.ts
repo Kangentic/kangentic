@@ -14,6 +14,7 @@ import { QwenAdapter, QwenCommandBuilder } from '../../src/main/agent/adapters/q
 import { QWEN_SUBAGENT_LAUNCH_TOOLS } from '../../src/main/agent/adapters/qwen-code/hook-manager';
 import { resetQwenToolCallCursorsForTests } from '../../src/main/agent/adapters/qwen-code/transcript-metrics';
 import { qwenProjectSlug } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
+import { resolveRunTranscriptPath } from '../../src/main/agent/shared/run-transcript-path';
 import {
   agentDisplayName,
   agentShortName,
@@ -399,6 +400,18 @@ describe('QwenAdapter - configuredModelFromCommand', () => {
     });
     expect(new QwenAdapter().configuredModelFromCommand(command)).toBeNull();
   });
+
+  it('reads a double-quoted and a single-quoted --model value without the quotes', () => {
+    const adapter = new QwenAdapter();
+    expect(adapter.configuredModelFromCommand('qwen --model "my model-1" -i "hello"')).toEqual({ id: 'my model-1', displayName: 'my model-1' });
+    expect(adapter.configuredModelFromCommand("qwen --model 'my-model-2' -i 'hello'")).toEqual({ id: 'my-model-2', displayName: 'my-model-2' });
+  });
+
+  it('stops the flag region at a -p prompt, so a --model inside it is not the flag', () => {
+    const adapter = new QwenAdapter();
+    expect(adapter.configuredModelFromCommand("qwen -p 'explain --model x'")).toBeNull();
+    expect(adapter.configuredModelFromCommand("qwen --model real-model -p 'explain --model x'")?.id).toBe('real-model');
+  });
 });
 
 // -- QwenAdapter getInjectionSequence -----------------------------------------
@@ -565,7 +578,7 @@ describe('Qwen Adapter - which transcript file a run reads', () => {
     writeTranscript(reportedPath, [assistantRecord('reported-1', 100, 10, [{ id: 'call-reported', at: CALL_TIME_MS }])]);
     const missingPath = path.join(tmpBase, 'reported', 'missing-chat.jsonl');
     const resolveRunPath = (input: { transcriptPath?: string | null; agentSessionId?: string | null; cwd?: string | null }): Promise<string | null> =>
-      (adapter as unknown as { runTranscriptPath(input: object): Promise<string | null> }).runTranscriptPath(input);
+      resolveRunTranscriptPath(input, () => { throw new Error('nothing to locate by'); });
 
     expect(await resolveRunPath({ transcriptPath: reportedPath })).toBe(reportedPath);
     // Nothing to fall back on: the missing path is handed back as it was reported.

@@ -57,17 +57,16 @@ export interface SessionHistoryAttachOptions {
    */
   startAtEnd?: boolean;
   /**
-   * Keep locating while the file does not exist yet, for up to
-   * `WAIT_FOR_FILE_BUDGET_MS`, instead of falling back after the hook's own
-   * `locate` gives up. Set for a conversation a SessionStart hook moved to (a
-   * `/clear`): Qwen creates its chat file with the first record, the user's
-   * next prompt, which can come long after the move.
+   * Keep locating a file that does not exist yet for as long as this returns
+   * true, instead of falling back after the hook's own `locate` gives up. Set
+   * for a conversation a SessionStart hook moved to (a `/clear`): Qwen creates
+   * its chat file with the first record, the user's next prompt, which can come
+   * at any point in the session's life. A PTY exit leaves the reader attached
+   * (`detachOnPtyExit`), so this is what ends the wait there.
    */
-  waitForFile?: boolean;
+  waitForFile?: () => boolean;
 }
 
-/** How long a `waitForFile` attach keeps locating a file that does not exist yet. */
-const WAIT_FOR_FILE_BUDGET_MS = 10 * 60_000;
 /** The pause between two `locate` rounds of a `waitForFile` attach. */
 const WAIT_FOR_FILE_RETRY_MS = 1_000;
 
@@ -162,7 +161,6 @@ export class SessionHistoryReader {
     const isCurrent = (): boolean => this.pending.get(sessionId) === token;
     try {
       let resolvedPath: string | null;
-      const waitDeadline = Date.now() + WAIT_FOR_FILE_BUDGET_MS;
       for (;;) {
         try {
           resolvedPath = await hook.locate({ agentSessionId, cwd, cliTarget: options.cliTarget ?? null });
@@ -172,7 +170,7 @@ export class SessionHistoryReader {
         }
         // Detach may have been called while we were awaiting locate.
         if (!isCurrent()) return;
-        if (resolvedPath || !options.waitForFile || Date.now() >= waitDeadline) break;
+        if (resolvedPath || !options.waitForFile?.()) break;
         await new Promise((resolve) => setTimeout(resolve, WAIT_FOR_FILE_RETRY_MS));
         if (!isCurrent()) return;
       }
@@ -345,6 +343,9 @@ export class SessionHistoryReader {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
+        // A detached tail's queued read can land after a newer attach began, and
+        // its file going away says nothing about the file the session tails now.
+        if (this.states.get(sessionId) !== state) return;
         console.warn(`[session-history] ${state.filePath} disappeared for session=${sessionId.slice(0, 8)}, closing watcher`);
         this.detach(sessionId);
       } else {
