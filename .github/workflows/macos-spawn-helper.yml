@@ -99,6 +99,14 @@ jobs:
       # executable, and a real PTY spawns through it.
       - name: Make node-pty's spawn-helper executable
         run: chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+      # A launch failed under this theme's instant prompt, which draws a prompt
+      # before the startup files finish. Pinned: v1.20.0, a commit a tag cannot move.
+      - name: Check out powerlevel10k
+        run: |
+          git init "$RUNNER_TEMP/powerlevel10k"
+          git -C "$RUNNER_TEMP/powerlevel10k" fetch --depth 1 https://github.com/romkatv/powerlevel10k.git 35833ea15f14b71dbcebc7e54c104d8d56ca5268
+          git -C "$RUNNER_TEMP/powerlevel10k" checkout FETCH_HEAD
+          echo "KANGENTIC_POWERLEVEL10K_DIRECTORY=$RUNNER_TEMP/powerlevel10k" >> "$GITHUB_ENV"
       # Verbose and not silent, so the job log carries the keystroke measurement.
       - name: Run a typed launch through real zsh
         # A missing zsh fails the run instead of skipping it.
