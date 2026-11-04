@@ -342,10 +342,51 @@ describe('answer run flags and prompt delivery', () => {
 
   it('Aider asks without editing, from a message file, outside git', async () => {
     const options = await optionsFor(new AiderAdapter());
-    expect(options.args).toEqual(expect.arrayContaining(['--chat-mode', 'ask', '--no-git', '--no-auto-commits', '--yes']));
+    // `--yes-always` is the flag aider/args.py defines; `--yes` was only an
+    // argparse prefix of it.
+    expect(options.args).toEqual(expect.arrayContaining(['--chat-mode', 'ask', '--no-git', '--no-auto-commits', '--yes-always']));
+    expect(options.args).not.toContain('--yes');
     expect(options.args.slice(-2)).toEqual(['--model', 'some-model']);
     expect(options.promptVia).toBe('file');
     expect(options.promptFileFlag).toBe('--message-file');
+  });
+
+  it('Aider hands what the run cost to onUsage, read from its banner and token report', async () => {
+    // Shaped to base_coder.py's announcement and `calculate_and_show_tokens_and_cost`;
+    // both cache fields put the Cost half on its own line. Aider is not
+    // installed where this was written.
+    const stdout = [
+      'Aider v0.86.1',
+      'Main model: anthropic/claude-sonnet-4-5-20250929 with ask edit format, infinite output',
+      'Weak model: anthropic/claude-haiku-4-5-20251001',
+      '',
+      'Two tasks changed the renderer.',
+      '',
+      'Tokens: 12k sent, 1.5k cache write, 3.1k cache hit, 40 received.',
+      'Cost: $0.0123 message, $0.0123 session.',
+    ].join('\n');
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new AiderAdapter().answerFromContext('THE PROMPT', '/bin/aider', '/scratch', null, { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.extractRaw?.(stdout)).toBe('Two tasks changed the renderer.');
+    expect(onUsage).toHaveBeenCalledWith({
+      model: 'anthropic/claude-sonnet-4-5-20250929',
+      inputTokens: 12_000,
+      cacheCreationInputTokens: 1_500,
+      cacheReadInputTokens: 3_100,
+      outputTokens: 40,
+      costUsd: 0.0123,
+    });
+  });
+
+  it('Aider reports no usage when the run printed no token report', async () => {
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new AiderAdapter().answerFromContext('THE PROMPT', '/bin/aider', '/scratch', null, { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.extractRaw?.('Aider v0.86.1\n\nAn answer.\n')).toBe('An answer.');
+    expect(onUsage).not.toHaveBeenCalled();
   });
 
   it('Goose reads instructions from stdin in chat mode, which has no tools', async () => {
@@ -621,5 +662,24 @@ describe('answer extraction', () => {
       'Tokens: 12k sent, 3.1k cache hit, 40 received. Cost: $0.01 message, $0.01 session.',
     ].join('\n');
     expect(extractAiderAnswer(stdout)).toBe(answer);
+  });
+
+  it('trims a token report whose Cost half is on a line of its own', () => {
+    // base_coder.py joins the two halves with a newline when both cache fields
+    // are present; the old trim kept that Cost line as part of the answer.
+    const stdout = [
+      'Aider v0.86.1',
+      '',
+      'Two tasks changed the renderer.',
+      '',
+      'Tokens: 12k sent, 1.5k cache write, 3.1k cache hit, 40 received.',
+      'Cost: $0.01 message, $0.01 session.',
+    ].join('\n');
+    expect(extractAiderAnswer(stdout)).toBe('Two tasks changed the renderer.');
+  });
+
+  it('keeps an answer that ends on a Cost line of its own words', () => {
+    const answer = 'Spend so far:\nCost: $0.10 message, $0.20 session.';
+    expect(extractAiderAnswer(`Aider v0.86.1\n\n${answer}\n`)).toBe(answer);
   });
 });

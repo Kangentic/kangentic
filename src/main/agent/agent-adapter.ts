@@ -860,7 +860,7 @@ export interface AgentAdapter {
    * Locate the agent's native session history file on disk for a given
    * session ID and working directory. Returns an absolute path to the
    * file (e.g. Claude's JSONL, Codex's rollout JSONL, Gemini's chat JSON),
-   * or null if the agent has no session history files (Aider) or the file
+   * or null if the agent has no session history files (Ollama) or the file
    * cannot be found.
    *
    * `place`, here and on every transcript method below, is where the session's
@@ -986,8 +986,8 @@ export interface AgentAdapter {
    * A single parse method (rather than a locate+parse pair) is used because
    * some agents (OpenCode) read from a shared SQLite database keyed by
    * session id, not a per-session file. Adapters whose native history cannot
-   * be parsed into a conversation (Aider's cumulative markdown, agents whose
-   * history location is unknown) omit this; `get_transcript` then reports that
+   * be parsed into a conversation (agents whose history location is unknown)
+   * omit this; `get_transcript` then reports that
    * the structured format is unsupported and points at `format: "raw"`.
    */
   parseTranscript?(
@@ -1373,9 +1373,10 @@ export interface AgentAdapter {
    *
    * Two adapters declare `false`, for different reasons:
    *
-   *   - Aider has NO session id at all (no `sessionIdCapture` in its runtime),
-   *     because it keeps a single `.aider.chat.history.md` per project
-   *     directory. `cwd` alone identifies its history.
+   *   - Aider has no session id of its own. A task session's history is the
+   *     file its caller-owned id names, but a session with no id (a Command
+   *     Terminal) writes Aider's shared `.aider.chat.history.md`, which `cwd`
+   *     alone identifies.
    *   - Copilot HAS a session id, but its prompt history is a single GLOBAL
    *     `~/.copilot/command-history-state.json` covering every session and
    *     project, so neither the id nor `cwd` helps locate it.
@@ -1507,8 +1508,9 @@ export interface AgentAdapter {
    * `--print` (or equivalent) mode to turn a free-form description into a short
    * task title. Used by the task title suggestion and the Command Terminal
    * namer, both of which run it on the Automation agent. Adapters that lack a
-   * non-interactive print mode (Aider) omit this; the renderer hides the "Name
-   * from prompt" affordances unless the Automation agent has it.
+   * non-interactive print mode (Warp), or whose run has not been measured to
+   * title cleanly (Aider), omit this; the renderer hides the "Name from prompt"
+   * affordances unless the Automation agent has it.
    *
    * `cwd` is the shared answer home (`answer-run-directory.ts`), never the
    * project: a title needs nothing from the repository, and a project root

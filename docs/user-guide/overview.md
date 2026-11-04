@@ -54,7 +54,7 @@ Teams commit a `kangentic.json` file to share column layout, colors, icons, acti
 
 ### Session Persistence
 
-Agent sessions survive application restarts. Kangentic resumes each session with its CLI's own resume flag (Claude Code's `--resume`, for example), so the agent picks up its conversation. Every agent supports this except Aider, Oz CLI, and Ollama, which start fresh. Sessions paused manually by the user (via the pause button) stay paused on relaunch. Only system-suspended sessions auto-resume.
+Agent sessions survive application restarts. Kangentic resumes each session with its CLI's own resume flag (Claude Code's `--resume`, for example), so the agent picks up its conversation. Every agent supports this except Oz CLI and Ollama, which start fresh. Aider has no session id, so Kangentic gives each Aider session its own chat history file and resumes by restoring it (`--restore-chat-history`). Sessions paused manually by the user (via the pause button) stay paused on relaunch. Only system-suspended sessions auto-resume.
 
 ### Git Worktrees
 

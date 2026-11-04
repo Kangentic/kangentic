@@ -57,7 +57,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `command-line` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
 | Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | `typed` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned; a resume brings `session-state/<id>` into its new config home) | `typed` | Partial (events.jsonl; the status line's input is undocumented, so its parser returns null) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | No (no documented pre-trust; `--trust-folder` is prompt-mode only and conflicts with `--session-id`) |
-| Aider | `aider-adapter.ts` | `aider` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
+| Aider | `aider-adapter.ts` | `aider` | `--chat-history-file <cwd>/.aider.chat.history.<id>.md --restore-chat-history` (caller-owned file name) | `command-line` | No (usage from the session's chat history markdown) | No | Not possible (CLI has no MCP client) | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | `--mcp <sessionDir>/mcp.json` | No |
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | `command-line` | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
 | Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | Partial (events.jsonl via a per-session `--settings` file; turn ends stay on the PTY tracker) | Per-session `--settings` (hooks only) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
@@ -238,7 +238,7 @@ An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed 
 | Qwen Code | `Ctrl+C`, `/quit` | Same TUI shutdown as Gemini (fork) |
 | Cursor CLI | `Ctrl+C` | No graceful exit needed |
 | GitHub Copilot CLI | `Ctrl+C`, `/exit` | Same TUI exit pattern as Claude |
-| Aider | `Ctrl+C`, `/exit` | `/exit` lets Aider flush `.aider.chat.history.md` before termination |
+| Aider | `Ctrl+C`, `/exit` | `/exit` lets Aider flush its chat history file before termination |
 | Oz CLI (Warp) | `Ctrl+C` | No session resume mechanism |
 | Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
 | Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
@@ -266,7 +266,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Qwen Code | `<runtime>/projects/<sanitized-cwd>/chats/<sessionId>.jsonl`, where `<runtime>` is `QWEN_RUNTIME_DIR`, then `advanced.runtimeOutputDir`, then `~/.qwen` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
 | Cursor CLI | `~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl` | Direct path. The slug replaces every non-alphanumeric character with `-`, collapses runs, and keeps the working directory's case. Returned only when the file exists. View conversation reads it: the `<user_query>` wrapper comes off, a leading `<timestamp>` tag is dropped, and no clock is shown. The command-injection verifier stays unwired ([Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified)) |
 | GitHub Copilot CLI | `<config home>/session-state/<sessionId>/events.jsonl` | The reported path, then the newest log in the project's Kangentic config homes (`.kangentic/sessions/*/copilot-config/`), then the user's Copilot home (`session-state.ts`). From GitHub's config directory reference, not yet run against a real CLI. `locateResumeHistoryFile` answers null, so a renamed worktree's saved cwd is always rewritten |
-| Aider | `<cwd>/.aider.chat.history.md` | Direct path in the working directory, returned only when the file exists. One history file per project directory, with no session id in its name |
+| Aider | `<cwd>/.aider.chat.history.<agentSessionId>.md` | Direct path in the working directory, returned only when the file exists. The session's own file, named by the caller-owned id Kangentic hands Aider through `--chat-history-file`; a session with no id (a Command Terminal) keeps Aider's shared `<cwd>/.aider.chat.history.md` |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
 | Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table, or `session_v2` for OpenCode 2) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
