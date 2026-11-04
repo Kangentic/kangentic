@@ -16,9 +16,9 @@ import type { PerToolStat, TranscriptToolCounts, TranscriptUsage } from '../../.
  * - `history/src/rollout_payload.rs`: the line types, `token_usage_record`
  *   among them (one per model response in 0.163, with `thread_id`,
  *   `response_id` and that response's `usage`).
- * - `protocol/src/protocol.rs` `TokenCountEvent`: before 0.163 a rollout's only
- *   usage is `event_msg` `token_count`, whose `info.total_token_usage` is the
- *   thread's running total.
+ * - `protocol/src/protocol.rs` `TokenCountEvent`: an older rollout's only usage
+ *   is `event_msg` `token_count`, whose `info.total_token_usage` is the thread's
+ *   running total. Local rollouts date the records: 0.141.0 wrote none, 0.154.0 did.
  * - `protocol/src/models.rs` `ResponseItem`: `function_call`, `custom_tool_call`
  *   (every `apply_patch`, a FREEFORM tool per `core/src/tools/handlers/apply_patch_spec.rs`),
  *   `local_shell_call`, and their outputs, joined by `call_id`.
@@ -33,7 +33,10 @@ import type { PerToolStat, TranscriptToolCounts, TranscriptUsage } from '../../.
  * `token_usage_record`'s `usage` once per `response_id`, for the rollout's own
  * thread only (its `session_meta.payload.id`): a record of another thread, such
  * as a nested turn's, never adds to this one. A rollout with no such records
- * (Codex before 0.163) takes the last `token_count.info.total_token_usage`.
+ * takes the last `token_count.info.total_token_usage`. One an older Codex
+ * started and a newer one resumed has both, so the sum starts from the last
+ * total written before its first record: a response's record comes before its
+ * `token_count`, so that total holds none of the responses the records sum.
  * Codex's `input_tokens` already includes cached input, the same total Claude's
  * reader sums from its three input buckets. Null when the file could not be
  * read to the end or holds no usage.
@@ -45,6 +48,7 @@ export async function codexTranscriptUsage(filePath: string): Promise<Transcript
   let recordOutput = 0;
   let sawRecord = false;
   let lastTotal: TranscriptUsage | null = null;
+  let totalBeforeRecords: TranscriptUsage = { inputTokens: 0, outputTokens: 0 };
   const readWholeFile = await streamJsonlRecords(filePath, (line) => {
     const payload = line.payload;
     if (!isRecord(payload)) return;
@@ -61,6 +65,7 @@ export async function codexTranscriptUsage(filePath: string): Promise<Transcript
       }
       const usage = payload.usage;
       if (!isRecord(usage)) return;
+      if (!sawRecord && lastTotal) totalBeforeRecords = lastTotal;
       sawRecord = true;
       recordInput += numberOrZero(usage.input_tokens);
       recordOutput += numberOrZero(usage.output_tokens);
@@ -74,7 +79,12 @@ export async function codexTranscriptUsage(filePath: string): Promise<Transcript
     }
   });
   if (!readWholeFile) return null;
-  if (sawRecord) return { inputTokens: recordInput, outputTokens: recordOutput };
+  if (sawRecord) {
+    return {
+      inputTokens: totalBeforeRecords.inputTokens + recordInput,
+      outputTokens: totalBeforeRecords.outputTokens + recordOutput,
+    };
+  }
   return lastTotal;
 }
 
