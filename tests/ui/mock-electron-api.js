@@ -4044,7 +4044,11 @@
             // KEEP IN SYNC with DroidAdapter.permissions and DroidAdapter.liveTelemetryUnsupported
             // in src/main/agent/adapters/droid/droid-adapter.ts
             permissions: [
-              { mode: 'default', label: 'Default (use Droid TUI controls)' },
+              { mode: 'plan', label: 'Spec Mode (Plan First)' },
+              { mode: 'default', label: 'Default (Ask for Each Action)' },
+              { mode: 'acceptEdits', label: 'Auto Low (Safe Edits)' },
+              { mode: 'auto', label: 'Auto Medium (Local Development)' },
+              { mode: 'bypassPermissions', label: 'Auto High (Push and Deploy)' },
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
