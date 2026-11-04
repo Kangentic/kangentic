@@ -41,7 +41,7 @@ export function parseCommandTerminalBrowserOwner(ownerKey: string): { projectId:
   if (!isCommandTerminalBrowserOwner(ownerKey)) return null;
   const rest = ownerKey.slice(COMMAND_TERMINAL_OWNER_PREFIX.length);
   const separator = rest.lastIndexOf('::');
-  if (separator <= 0 || separator === rest.length - 2) return null;
+  if (separator <= 0 || rest.endsWith('::')) return null;
   return { projectId: rest.slice(0, separator), slot: rest.slice(separator + 2) };
 }
 
