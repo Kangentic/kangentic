@@ -14,10 +14,12 @@ sources:
   - resource: src/main/activity-engine/engine/event-handlers.ts
   - resource: src/main/activity-engine/engine/predicate.ts
   - resource: src/main/pty/turn-settled.ts
+  - resource: src/main/pty/readers/status-file-reader.ts
+  - resource: src/main/agent/adapters/antigravity/status-parser.ts
 ---
 # Activity event types
 
-The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_approved` are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent` and `tool_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
+The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_approved` are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent` and `tool_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. One more source skips the file: an adapter's `statusFile.parseStatusEvents` turns a `status.json` write into events (Antigravity's approval `idle` and plan-mode `config_change`), which `StatusFileReader` dispatches straight to the engine. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
 
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
