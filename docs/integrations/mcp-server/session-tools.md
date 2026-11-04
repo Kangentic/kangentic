@@ -32,7 +32,7 @@ A resume is a new record that reports the conversation's running total, so each 
 
 ## kangentic_get_session_history
 
-Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSON) from the most recent session. Large files are truncated to the most recent portion.
+Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSONL, or its legacy `.json`) from the most recent session. Large files are truncated to the most recent portion.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -185,7 +185,7 @@ Returns one line per id: `marked` (it was holding the session and no longer does
 
 ## kangentic_get_session_files
 
-Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSON). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
+Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -49,7 +49,7 @@ spawnAgent() enters handoff path (agent-spawn.ts)
 Locate source agent's native session file:
     |--- Claude: ~/.claude/projects/<slug>/<sessionId>.jsonl
     |--- Codex:  ~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl
-    |--- Gemini: ~/.gemini/tmp/<projectDir>/chats/session-<id>.json
+    |--- Gemini: ~/.gemini/tmp/<projectDir>/chats/session-<time>-<first 8 of id>.jsonl (legacy .json)
     |--- Aider:  null (no session history files)
     |
     v
