@@ -68,6 +68,21 @@ describe('CodexAdapter.discoverCapabilities cache', () => {
     }
   });
 
+  it('does not keep an answer from a discovery that never reached the list, whatever an earlier read left', async () => {
+    const adapter = adapterReading(async () => { throw new Error('offline'); });
+    const modelCatalog = (adapter as unknown as { modelCatalog: CodexModelCatalogCache }).modelCatalog;
+    // A detect's read already settled with no list, so the read looks failed.
+    modelCatalog.start('/usr/bin/codex');
+    await modelCatalog.settle(1_000);
+    expect(modelCatalog.isSettled('/usr/bin/codex')).toBe(true);
+    // Discovery gave up before the list: the distro's facts could not be read.
+    discoverMock.mockImplementationOnce(async () => ({ supportsModelOverride: false, effortLevels: [] }));
+    await adapter.discoverCapabilities('/usr/bin/codex');
+    const recovered = await adapter.discoverCapabilities('/usr/bin/codex');
+    expect(discoverMock).toHaveBeenCalledTimes(2);
+    expect(recovered.supportsModelOverride).toBe(true);
+  });
+
   it('keeps an answer built from the model list under twelve hours, and runs discovery again at twelve', async () => {
     const adapter = adapterReading(async () => CATALOG);
     const startMs = Date.now();

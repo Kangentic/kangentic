@@ -430,13 +430,17 @@ export class CodexAdapter implements AgentAdapter {
     // so a whole answer is kept and `--help` and the rollout scan are not run
     // each time. One built from the model list is kept for the list's own time
     // to live; one whose read settled with no list (an app-server that failed
-    // or has no `model/list`) for the failed read's retry window. A read still running when the
-    // wait gave up is asked again on the next call.
+    // or has no `model/list`) for the failed read's retry window. A read still
+    // running when the wait gave up is asked again on the next call, and so is
+    // a discovery that never reached the list (a distro whose facts it could
+    // not read), whatever an earlier read left.
     const key = shimFamilyKey(cliPath);
     const cached = this.capabilitiesCache.get(key);
     if (!forceRefresh && cached && Date.now() - cached.at < cached.ttlMs) return structuredClone(cached.capabilities);
+    let reachedList = false;
     let builtFromList = false;
     const capabilities = await discoverCodexCapabilities(cliPath, async (target) => {
+      reachedList = true;
       this.modelCatalog.start(cliPath, target, forceRefresh);
       const catalog = await this.modelCatalog.wait(cliPath, CATALOG_DISCOVERY_WAIT_MS);
       builtFromList = catalog !== null;
@@ -444,7 +448,7 @@ export class CodexAdapter implements AgentAdapter {
     });
     // Judged by the list this answer was built from, not the list now: a read
     // that lands after the wait gave up must not keep a list-less answer.
-    const settledWithoutList = !builtFromList && this.modelCatalog.isSettled(cliPath) && !this.modelCatalog.catalogFor(cliPath);
+    const settledWithoutList = reachedList && !builtFromList && this.modelCatalog.isSettled(cliPath) && !this.modelCatalog.catalogFor(cliPath);
     if (builtFromList || settledWithoutList) {
       this.capabilitiesCache.set(key, {
         capabilities: structuredClone(capabilities),
