@@ -46,10 +46,9 @@ export interface PreparedSpawn {
   statusOutputPath: string;
   eventsOutputPath: string;
   /**
-   * Adapter-specific env vars to merge into the PTY spawn env. Populated
-   * from `adapter.buildEnv?.(...)` for adapters that wire MCP via env
-   * (OpenCode `OPENCODE_CONFIG_CONTENT`). Null for adapters that wire MCP
-   * via CLI flag or settings file.
+   * Adapter-specific env vars to merge into the PTY spawn env, from
+   * `adapter.buildEnv?.(...)`: MCP wiring (OpenCode `OPENCODE_CONFIG_CONTENT`)
+   * or a hook's events path (Cursor). Null when the adapter sets none.
    */
   extraEnv: Record<string, string> | null;
   /**
