@@ -19,7 +19,8 @@ sources:
 # Aider
 
 Every behavior on this page comes from Aider's published docs and source. The flags are checked
-against a real `aider --help` from Aider 0.86.2, but no Aider session has been run against any of
+against a real `aider --help` from Aider 0.86.2, and the history readers replay excerpts of the
+history Aider publishes in its own repository, but no Aider session has been run against any of
 it. See [Built from documentation](#built-from-documentation) for the list.
 
 The docs and source referenced throughout are Aider v0.86.1. The sources are:
@@ -100,6 +101,12 @@ The parsers follow what Aider's source writes.
 When both cache fields are present, the `Cost:` half lands on its own line without the `> `. The
 `session` figure is that Aider process's running total, so it starts over in each run.
 
+A history file can hold what an older Aider wrote, and the readers accept it. Aider's published
+history shows `Models: <name> with <format> edit format, weak model <name>`,
+`Cost: $<message> request, $<session> session.`, and a `Cost:` half on its own line for reports
+with one cache field or none, some followed by `Use --no-stream for accurate caching costs.`
+Aider 0.86.2's `base_coder.py` writes none of these.
+
 ### Live telemetry
 
 `AiderSessionHistoryParser` reads the whole file (`isFullRewrite`):
@@ -133,7 +140,8 @@ On top of that:
   told from that, so the rest of that preamble's spill reads as a reply.
 - A user line starting with `/` is a `command` entry, and the tool output after it is its
   `command_output`. `/ask`, `/code`, `/architect` and `/context` with text stay user turns, as
-  messages sent in that mode.
+  messages sent in that mode. Aider logs that text again as a second `####` line, and the parser
+  drops that echo so one question shows once.
 - A second run in the file opens with a `session_boundary`.
 - The read is the shared bounded tail with its truncation notice.
 - Uuids are `<id>:<line>`.
@@ -193,6 +201,21 @@ One part is checked against the real CLI. `aider --help` from Aider 0.86.2 was c
 against it, and holds every flag the session builder and the answer run send to it, including
 `--yes-always` and the absence of a bare `--yes`.
 
+The history readers replay Aider's published examples, which are not captures.
+`tests/fixtures/aider-published-chat-history.md` holds whole runs from `tests/fixtures/chat-history.md`
+in Aider's repository at `v0.86.2`, written by Aider v0.48 to v0.51 in August 2024.
+`aider-published-chat-history.source.md` beside it names the commit, the lines, the fetch date and
+the one substitution, a home directory in the logged command lines. Aider's 14
+`aider/website/examples` transcripts and the `tests/basic` files that mention `Tokens:` hold no
+report line, and its scripting and caching pages show no stdout of a `--message` run.
+
+Replaying the published file corrected four readings that fixtures shaped to the source could not
+catch: the `request` wording, the `--no-stream` warning after a bare `Cost:` half, the plural
+`Models:` announcement, and the `/ask` echo. It also confirmed the format this page describes, and
+that `tool_output` quotes only the first line of a multi-line message. What it holds comes from
+versions far older than 0.86.2, so it shows the format is read correctly, not that 0.86.2 writes it.
+For the current report, the check is `base_coder.py` at the tag.
+
 What each flag does once Aider runs is still unchecked. None of these has been run in an Aider
 session, because that needs a model reply:
 
@@ -204,16 +227,21 @@ session, because that needs a model reply:
   prompt with `--message-file` would keep it out of the logged command line. That was not done:
   the prompt would then not be in the command at all, which `resume-prompt-delivery-parity.test.ts`
   holds every `command-line` adapter to, and nobody has yet seen the spill break a restore.
-- the model, token and cost readers over the history file
-- `parseTranscript` and `transcriptUsage`
+- the model, token and cost readers over a file 0.86.2 writes
+- `parseTranscript` and `transcriptUsage` over such a file
 - `--model` and `--reasoning-effort` on the command
 - `configuredModelFromCommand` and `getInjectionSequence`
 - the answer run's usage
 
-The history, transcript and answer-usage tests still run on fixtures shaped to Aider's source,
-not on captures. Replacing them needs a run that makes model calls. The captures to take are:
+Some fixtures stay shaped to Aider's source because Aider publishes nothing to replay. No published
+run uses `--restore-chat-history` or a multi-line `--message`, so
+`aider-chat-history-session.md` stays. Aider publishes no answer run's stdout, so those tests stay,
+and one case reads a published history run with its quoting taken off.
+
+A future capture would follow these steps, each a run that makes model calls:
 - a `--message` run with `--chat-history-file`, then a `--restore-chat-history` resume in the
-  same file
+  same file, recording whether the restored request opens on an assistant message (the open
+  question above)
 - one Anthropic turn whose `Tokens:` and `Cost:` halves split across two lines
 - an answer run's stdout
 

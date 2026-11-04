@@ -119,8 +119,9 @@ function buildWslNotificationsCommand(eventsOutputPath: string, place: CliPlace)
  * `history-paths.ts`), which carries the conversation, the model and the
  * tokens and cost of every message. Everything here is built from Aider's
  * published options and source (v0.86.1). Every flag it sends is checked
- * against a real `aider --help` capture (0.86.2); no Aider session has been
- * run against it.
+ * against a real `aider --help` capture (0.86.2), and its history readers
+ * replay excerpts of the history Aider publishes in its own repository. No
+ * Aider session has been run against it.
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = 'aider';
@@ -486,7 +487,7 @@ export class AiderAdapter implements AgentAdapter {
  * The lines Aider prints before an answer: its version banner, the model and
  * repo summary, and any startup notice.
  */
-const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odel: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
+const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odels?: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
 /** The line Aider prints after one: `Tokens: 2.3k sent, 145 received. Cost: ...`. */
 const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
 

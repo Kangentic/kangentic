@@ -69,7 +69,7 @@ import {
   extractAntigravityStreamResponse,
   formatAntigravityUserMessage,
 } from '../../src/main/agent/adapters/antigravity/antigravity-adapter';
-import { AiderAdapter, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
+import { AiderAdapter, aiderAnswerUsage, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
 import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama/ollama-adapter';
 import {
@@ -630,6 +630,8 @@ describe('answer extraction', () => {
     expect(JSON.parse(line).message.content[0].text).toBe('first line\nsecond line');
   });
 
+  // Aider publishes no stdout of an answer run, so the Aider cases below stay
+  // shaped to its source. The last one replays a published history run instead.
   it('strips Aider\'s status lines around the answer', () => {
     const stdout = [
       'Aider v0.86.1',
@@ -681,5 +683,35 @@ describe('answer extraction', () => {
   it('keeps an answer that ends on a Cost line of its own words', () => {
     const answer = 'Spend so far:\nCost: $0.10 message, $0.20 session.';
     expect(extractAiderAnswer(`Aider v0.86.1\n\n${answer}\n`)).toBe(answer);
+  });
+
+  it('reads a published Aider run with the history\'s quoting taken off', () => {
+    // The last run of aider-published-chat-history.md, a `--msg /ask` (see its
+    // .source.md). `tool_output` writes the same text to stdout and to the
+    // history, so these are stdout's lines, less the logged command line and
+    // the `####` lines Aider writes only to the history. A history is not a
+    // stdout capture: Aider publishes no such capture.
+    const history = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'aider-published-chat-history.md'), 'utf-8');
+    const stdout = history
+      .slice(history.lastIndexOf('# aider chat started at'))
+      .split('\n')
+      .filter((line) => !line.startsWith('#') && !line.startsWith('> /home/dev'))
+      .map((line) => line.replace(/^> /, ''))
+      .join('\n');
+    expect(extractAiderAnswer(stdout)).toMatch(/^Je vais bien, merci de demander ! .* pourriez avoir\.$/);
+    expect(aiderAnswerUsage(stdout)).toEqual({
+      model: 'claude-3-5-sonnet-20240620',
+      inputTokens: 66,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      outputTokens: 38,
+      costUsd: 0.00077,
+    });
+  });
+
+  it('takes an older Models line for banner, as Aider\'s published history writes it', () => {
+    const stdout = 'Models: gpt-4o with diff edit format, weak model gpt-4o-mini\nThe answer.\nTokens: 500 sent, 20 received.';
+    expect(extractAiderAnswer(stdout)).toBe('The answer.');
+    expect(aiderAnswerUsage(stdout)?.model).toBe('gpt-4o');
   });
 });

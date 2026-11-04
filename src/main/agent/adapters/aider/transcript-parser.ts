@@ -32,7 +32,9 @@ import {
  * - A user message that starts with `/` is a command (`system`/`command`), and
  *   the tool output after it is its output (`command_output`). `/ask`, `/code`,
  *   `/architect` and `/context` with text are messages sent in that mode
- *   (https://aider.chat/docs/usage/modes.html), so they stay user turns.
+ *   (https://aider.chat/docs/usage/modes.html), so they stay user turns. Aider
+ *   logs that text again as the message it sends, so the echo right after is
+ *   dropped, or one question shows twice.
  * - A second or later run in the same file (a restored conversation) opens with
  *   a `session_boundary`.
  *
@@ -52,7 +54,7 @@ import {
  */
 
 /** Commands whose text is a message to the model in that mode, not a client command. */
-const MESSAGE_COMMANDS = /^\/(?:ask|code|architect|context)\s+\S/;
+const MESSAGE_COMMANDS = /^\/(?:ask|code|architect|context)\s+(\S[\s\S]*)$/;
 
 type BufferKind = 'user' | 'assistant' | 'tool';
 
@@ -84,6 +86,8 @@ export function parseAiderHistoryMarkdown(text: string, conversationId: string, 
     if (flushed.kind === 'user') {
       const message = flushed.lines.join('\n').trim();
       if (!message) return;
+      const previous = entries[entries.length - 1];
+      if (previous?.kind === 'user' && MESSAGE_COMMANDS.exec(previous.text)?.[1] === message) return;
       const isCommand = message.startsWith('/') && !MESSAGE_COMMANDS.test(message);
       if (isCommand) {
         entries.push({ kind: 'system', subtype: 'command', uuid: uuidFor(flushed.firstLineIndex), ts: 0, text: message });

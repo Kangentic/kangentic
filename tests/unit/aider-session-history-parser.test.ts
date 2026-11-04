@@ -41,6 +41,12 @@ describe('Aider cost line helpers', () => {
     expect(isBareCostLine('  Cost: $0.02 message, $0.05 session.  ')).toBe(true);
   });
 
+  it('isBareCostLine accepts the older report wordings Aider published', () => {
+    expect(isBareCostLine('Cost: $0.02 request, $0.05 session.')).toBe(true);
+    expect(isBareCostLine('Cost: $0.07 message, $0.07 session. Use --no-stream for accurate caching costs.  ')).toBe(true);
+    expect(isBareCostLine('Cost: $0.00024 message, $0.00024 session.Use --no-stream for accurate caching costs.  ')).toBe(true);
+  });
+
   it('isBareCostLine rejects other text after Cost:', () => {
     expect(isBareCostLine('Cost: roughly five dollars')).toBe(false);
     expect(isBareCostLine('Cost: $0.02 message, $0.05 session. and more')).toBe(false);
@@ -379,6 +385,42 @@ describe('AiderSessionHistoryParser', () => {
       expect(result.activity).toBeNull();
     });
 
+    // Excerpts of the history Aider publishes in its own repository, with no
+    // capture behind them: aider-published-chat-history.source.md names the
+    // tag, the lines and the fetch date.
+    it("parses Aider's published history", () => {
+      const fixturePath = path.resolve(__dirname, '../fixtures/aider-published-chat-history.md');
+      const result = AiderSessionHistoryParser.parse(fs.readFileSync(fixturePath, 'utf-8'), 'full');
+
+      // Each run's own session total, whichever word or trailing warning it wrote:
+      // $0.000051 + $0.00024 + $0.0034 + $0.05 + $0.00077.
+      expect(result.usage!.cost.totalCostUsd).toBeCloseTo(0.054461, 10);
+      // Comma counts: 292 + 529 + 23,172 + 12,963 + 66 sent.
+      expect(result.usage!.contextWindow.totalInputTokens).toBe(37022);
+      expect(result.usage!.contextWindow.totalOutputTokens).toBe(254);
+      expect(result.usage!.contextWindow.usedTokens).toBe(66);
+      expect(result.usage!.model?.id).toBe('claude-3-5-sonnet-20240620');
+    });
+
+    it("reads an older Models announcement, as Aider's published history writes it", () => {
+      const result = AiderSessionHistoryParser.parse(
+        '> Models: gpt-4o with diff edit format, weak model gpt-4o-mini  \n> Tokens: 12 sent, 3 received.  \n',
+        'full',
+      );
+      expect(result.usage!.model).toEqual({ id: 'gpt-4o', displayName: 'gpt-4o', reportedByAgent: true });
+    });
+
+    it("reads the k counts and split report of Aider's published history", () => {
+      // Lines 87327-87328 of the published file, whose run is a verbose dump the
+      // fixture leaves out.
+      const content = '> Tokens: 15k sent, 13k cache write, 1.6k cache hit, 133 received.\nCost: $0.05 message, $0.05 session.  \n';
+      const result = AiderSessionHistoryParser.parse(content, 'full');
+      expect(result.usage!.cost.totalCostUsd).toBe(0.05);
+      expect(result.usage!.contextWindow.totalInputTokens).toBe(15000);
+      expect(result.usage!.contextWindow.cacheTokens).toBe(14600);
+    });
+
+    // Aider publishes no restored run, so this file stays shaped to its source.
     it('parses a restored two-run session file with its command lines and announcements', () => {
       const fixturePath = path.resolve(__dirname, '../fixtures/aider-chat-history-session.md');
       const content = fs.readFileSync(fixturePath, 'utf-8');

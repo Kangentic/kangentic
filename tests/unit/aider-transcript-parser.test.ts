@@ -8,7 +8,12 @@
  * aider/io.py, aider/main.py and aider/coders/base_coder.py write: each run
  * opens with its header, the logged command line (a multi-line `--message`
  * spills unprefixed lines) and the announcements, all before the first `####`.
- * Not a capture: Aider is not installed where this was written.
+ * Not a capture: Aider is not installed where this was written, and Aider
+ * publishes no restored run or multi-line `--message` to replay instead.
+ *
+ * PUBLISHED is excerpts of the history Aider publishes in its own repository,
+ * also not a capture: aider-published-chat-history.source.md names the tag, the
+ * lines and the fetch date.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -24,6 +29,7 @@ import { AiderAdapter } from '../../src/main/agent/adapters/aider';
 
 const SESSION_ID = '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00';
 const FIXTURE = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-chat-history-session.md'), 'utf-8');
+const PUBLISHED = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-published-chat-history.md'), 'utf-8');
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -179,6 +185,71 @@ describe('parseAiderHistoryMarkdown', () => {
   it('reads CRLF files', () => {
     const entries = parseAiderHistoryMarkdown(FIXTURE.replace(/\n/g, '\r\n'), SESSION_ID);
     expect(entries).toHaveLength(7);
+  });
+
+  describe("Aider's published history", () => {
+    const published = shapeOf(parseAiderHistoryMarkdown(PUBLISHED, SESSION_ID));
+    const turnsOfRun = (startedAt: string): Array<[string, string]> => {
+      const start = published.findIndex(([kind, text]) => kind === 'system:session_boundary' && text.endsWith(startedAt));
+      const end = published.findIndex(([kind], index) => index > start && kind === 'system:session_boundary');
+      return published.slice(start + 1, end === -1 ? published.length : end);
+    };
+
+    it('splits every run into its turns', () => {
+      expect(published.map(([kind]) => kind)).toEqual([
+        'system:command', 'system:command_output', 'assistant',
+        'system:session_boundary', 'user', 'assistant',
+        'system:session_boundary', 'system:command',
+        'system:session_boundary', 'user', 'assistant',
+        'system:session_boundary', 'user', 'assistant',
+        'system:session_boundary', 'user', 'assistant',
+        'system:session_boundary', 'user', 'assistant',
+      ]);
+    });
+
+    it('keeps one turn for a /ask that Aider logs twice', () => {
+      expect(turnsOfRun('2024-08-10 14:16:24')).toEqual([
+        ['user', '/ask hi'],
+        ['assistant', 'Hello! How can I assist you today with Aider?'],
+      ]);
+      expect(turnsOfRun('2024-08-21 16:17:15').filter(([kind]) => kind === 'user')).toEqual([['user', '/ask how are you?']]);
+    });
+
+    it('keeps the report out of the reply, whichever shape its Cost half takes', () => {
+      const replies = published.filter(([kind]) => kind === 'assistant').map(([, text]) => text);
+      expect(replies).toHaveLength(6);
+      for (const reply of replies) {
+        expect(reply).not.toContain('Cost:');
+        expect(reply).not.toContain('Tokens:');
+        expect(reply).not.toContain('--no-stream');
+      }
+    });
+
+    it('reads a /run and its output, and takes a multi-line prompt\'s bare second line for a reply', () => {
+      // Aider's own reader splits it the same way: `tool_output` quotes only the
+      // first line of a multi-line message.
+      expect(published.slice(0, 3)).toEqual([
+        ['system:command', '/run tput u6'],
+        ['system:command_output', '\x1b[%i%d;%dR\nAdd the output to the chat?'],
+        ['assistant', '(y/n/instructions) n'],
+      ]);
+    });
+
+    it('skips the logged command lines and announcements of every run', () => {
+      const text = JSON.stringify(published);
+      expect(text).not.toContain('/home/dev');
+      expect(text).not.toContain('Repo-map');
+      expect(text).not.toContain('Weak model');
+    });
+
+    it('adds up its tokens through the window reader', async () => {
+      expect(await aiderTranscriptUsage(SESSION_ID, writeSessionHistory(PUBLISHED))).toEqual({ inputTokens: 37022, outputTokens: 254 });
+    });
+  });
+
+  it('keeps a repeated message that is not the echo of a mode command', () => {
+    const entries = parseAiderHistoryMarkdown('#### /ask why?\n\nBecause.\n\n#### why?\n\nAgain, because.\n', SESSION_ID);
+    expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'user', 'assistant']);
   });
 });
 

@@ -48,9 +48,9 @@ export function stripBlockquote(line: string): string | null {
   return match ? match[1] : null;
 }
 
-const MODEL_ANNOUNCEMENT = /^(?:Main )?[Mm]odel: (\S.*?) with \S+ edit format\b/;
+const MODEL_ANNOUNCEMENT = /^(?:Main )?[Mm]odels?: (\S.*?) with \S+ edit format\b/;
 
-/** The model name in a `Model:` / `Main model:` announcement, or null. */
+/** The model name in a `Model:` / `Main model:` / older `Models:` announcement, or null. */
 export function parseModelAnnouncement(text: string): string | null {
   const match = MODEL_ANNOUNCEMENT.exec(text.trim());
   return match ? match[1] : null;
@@ -82,10 +82,15 @@ export function parseTokensReport(text: string): AiderTokenCounts | null {
   return counts;
 }
 
-/** A `Cost:` report's two figures, `$<message> message, $<session> session`. */
-const COST_FIGURES = String.raw`Cost:\s*\$([0-9][0-9,.]*)\s+message,\s*\$([0-9][0-9,.]*)\s+session`;
+/**
+ * A `Cost:` report's two figures, `$<message> message, $<session> session`.
+ * Older Aider wrote `request` where 0.86.2 writes `message`.
+ */
+const COST_FIGURES = String.raw`Cost:\s*\$([0-9][0-9,.]*)\s+(?:message|request),\s*\$([0-9][0-9,.]*)\s+session`;
 const COST_REPORT = new RegExp(COST_FIGURES);
-const BARE_COST_LINE = new RegExp(String.raw`^${COST_FIGURES}\.?$`);
+/** Older Aider followed a streamed report with this warning; 0.86.2 does not. */
+const NO_STREAM_WARNING = String.raw`\s*Use --no-stream for accurate caching costs\.`;
+const BARE_COST_LINE = new RegExp(String.raw`^${COST_FIGURES}\.?(?:${NO_STREAM_WARNING})?$`);
 
 /** The `$<message> message, $<session> session` figures anywhere in `text`, or null. */
 export function parseCostReport(text: string): AiderCostReport | null {
@@ -99,11 +104,12 @@ export function parseCostReport(text: string): AiderCostReport | null {
 
 /**
  * Whether a line is the `Cost:` half of a `Tokens:` report printed on a line
- * of its own. Aider does that when the report carries both cache fields, and
- * `tool_output` quotes only the first line, so in the history this half has
- * no `> `. The line counts as the report's half only right after a line
- * `isSplitTokensReport` accepts; callers check that. The match is the whole
- * line, so a reply that only mentions a cost is not taken for it.
+ * of its own. Aider 0.86.2 does that when the report carries both cache fields
+ * (older Aider did it for other reports too), and `tool_output` quotes only the
+ * first line, so in the history this half has no `> `. The line counts as the
+ * report's half only right after a line `isSplitTokensReport` accepts; callers
+ * check that. The match is the whole line, so a reply that only mentions a cost
+ * is not taken for it.
  */
 export function isBareCostLine(line: string): boolean {
   return BARE_COST_LINE.test(line.trim());
