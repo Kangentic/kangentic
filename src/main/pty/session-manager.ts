@@ -3606,7 +3606,19 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
-    if (launchNeverStarted(session)) reportAgentNeverStarted(session);
+    if (launchNeverStarted(session) && session.launchFailureNoted !== true) {
+      session.launchFailureNoted = true;
+      reportAgentNeverStarted(session);
+      // A task keeps its way back: it pauses rather than exits, so its Resume
+      // stands, and the conversation does not read as one the user ended. A
+      // Command Terminal ends below, and a workflow's agent keeps the exited row
+      // its pane restarts from. If this pause never lands, the row is still
+      // running at the next sweep, which retires it as below.
+      if (!session.transient && this.listenerCount('agent-never-started') > 0) {
+        this.emit('agent-never-started', sessionId, toSession(session));
+        return;
+      }
+    }
     // A Command Terminal ENDS when its agent exits (desktop and phone alike):
     // its window closes as it does on Stop, and no shell is left for a phone's
     // `interactive-terminal` to type into. It has no task record to resume or
