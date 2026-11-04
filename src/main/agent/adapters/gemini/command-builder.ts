@@ -6,7 +6,7 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
-import type { CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
 import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV, kangenticMcpServer, mcpBridgeScriptEnv } from '../../shared/kangentic-mcp-server';
 import {
   WSL_MCP_REQUEST_HEAD,
@@ -92,6 +92,8 @@ export interface GeminiCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /** More directories the agent may read, beyond `cwd` (`supportsReadableDirectories`). */
+  readableDirectories?: readonly string[];
   /**
    * A Gemini installed in a WSL distro (`CommandOptions.cliTarget`): named by
    * the path the distro sees, its hooks run the WSL hook transport's script
@@ -140,10 +142,29 @@ export class GeminiCommandBuilder {
         break;
     }
 
-    // Session resume: Gemini uses --resume <id> for existing sessions.
-    // For new sessions, no flag is needed (Gemini creates implicitly).
-    if (options.resume && options.sessionId) {
-      parts.push('--resume', quoteArg(options.sessionId, shell));
+    // Session: `--resume <id>` continues a conversation, `--session-id <id>`
+    // starts a new one under the id Kangentic chose (`supportsCallerSessionId`).
+    // Never both: the CLI rejects the pair ("The flags --resume, --session-id,
+    // and --session-file are mutually exclusive"). `--session-id` ("Start a new
+    // session with a manually provided UUID") shipped in v0.41.0 (PR #26060),
+    // and the parser is strict, so an older Gemini exits on it. Source:
+    // https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/cli/src/config/config.ts
+    // Run headless on 0.66.0 with `--session-id` (gemini-real-rewind.test.ts).
+    if (options.sessionId) {
+      parts.push(options.resume ? '--resume' : '--session-id', quoteArg(options.sessionId, shell));
+    }
+
+    // Other checkouts the agent may read (a workflow agent's other projects),
+    // one `--include-directories` each: an array option taking one value per
+    // flag (`nargs: 1`, config.ts v0.66.0), so the positional prompt after it
+    // is never taken as a directory. Gemini's default policy asks no approval
+    // for its read tools (https://geminicli.com/docs/tools/file-system/: only
+    // write_file and replace need one). The configuration reference says 5
+    // directories at most, but v0.66.0's parser has no cap and no check, so
+    // every directory is passed. A Gemini in a WSL distro gets the distro's
+    // path for each.
+    for (const directory of options.readableDirectories ?? []) {
+      parts.push('--include-directories', quoteArg(place ? cliPathForTarget(directory, place) : directory, shell));
     }
 
     // Per-column model override

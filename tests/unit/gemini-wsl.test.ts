@@ -21,6 +21,7 @@ import { removeGeminiChat } from '../../src/main/agent/adapters/gemini/answer-st
 import { cliPathForTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
+import { quoteArg } from '../../src/shared/paths';
 
 const TOKEN = 'gemini-wsl-token-0123456789';
 const MCP_URL = 'http://127.0.0.1:47123/mcp/project-1/session-1';
@@ -124,6 +125,18 @@ describe('a Gemini session in a WSL distro', () => {
     for (const name of referencedVariables(entry)) expect(Object.keys(environment), name).toContain(name);
     expect(environment.KANGENTIC_MCP_BRIDGE_SCRIPT).toBe(cliPathForTarget(wslHookPaths(sessionDirectory).script, target));
     expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
+  });
+
+  it('hands each readable directory to the distro by its /mnt path', () => {
+    const target = targetOn('mirrored');
+    const project = makeDirectory('kangentic-gemini-wsl-project-');
+    const otherProject = makeDirectory('kangentic-gemini-wsl-other-');
+    const command = new GeminiAdapter().buildCommand({
+      ...sessionOptions(target, project, 'session-1'),
+      readableDirectories: [otherProject],
+    });
+    // On Windows the drive path becomes `/mnt/<drive>/...`; elsewhere it is already POSIX.
+    expect(command).toContain(`--include-directories ${quoteArg(cliPathForTarget(otherProject, target), 'wsl -d Ubuntu')}`);
   });
 
   it('on mirrored networking keeps the URL entry', () => {

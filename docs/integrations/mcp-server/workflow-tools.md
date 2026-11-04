@@ -260,7 +260,7 @@ removed. A task in Done stays with its workflow.
 For a workflow's own agent: read another registered project's code while planning. It is granted
 at once, with no approval, and kept on the workflow (`agent_read_project_ids`), so every later
 start and resume reads it too. A running agent picks it up at its next idle: Kangentic resumes it
-on the same conversation with that checkout added (Claude's `--add-dir`) and tells it where the
+on the same conversation with that checkout added (Claude's `--add-dir`, Gemini's `--include-directories`) and tells it where the
 checkout is. The agent already reads every project its workflow's tasks are on, and a checkout
 missing from disk is left out. An agent whose CLI cannot widen its reads
 (`supportsReadableDirectories`) keeps reading its own project only.

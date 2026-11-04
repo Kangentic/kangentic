@@ -143,11 +143,12 @@ export interface SubagentSpawnLink {
  * transcript's mtime and size do not move while a subagent runs: the subagent
  * side needs its own signature or a fan-out's turns are never seen as stale.
  *
- * Shaped around a per-SESSION directory, which is a Claude fact rather than a
- * general one: Codex writes each thread's rollout into a date directory and
- * Gemini writes every session, main and subagent alike, into one per-project
- * `chats/` directory. Signing either would invalidate on any unrelated session's
- * change. Widening this is part of adding a second agent, not a detail of it.
+ * Shaped around a per-SESSION directory. Claude has one, and so does Gemini
+ * CLI (0.66.0 nests a subagent's chat under its parent's id,
+ * `chats/<parent id>/<subagent id>.jsonl`). Codex does not: it writes each
+ * thread's rollout into a date directory, and signing that would invalidate on
+ * any unrelated session's change. Widening this is part of adding such an
+ * agent, not a detail of it.
  */
 export interface SubagentTranscriptSignature {
   fileCount: number;

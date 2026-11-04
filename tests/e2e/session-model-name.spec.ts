@@ -10,8 +10,8 @@
  *   Claude: status.json -> StatusFileReader -> usage with model name -> card
  *   Codex:  rollout JSONL -> captureSessionIdFromFilesystem -> locate ->
  *           FileWatcher -> parse -> usage with model name -> card
- *   Gemini: session JSON -> captureSessionIdFromFilesystem -> locate ->
- *           FileWatcher -> parse -> usage with model name -> card
+ *   Gemini: id chosen at spawn (--session-id) -> locate -> FileWatcher ->
+ *           parse -> usage with model name -> card
  *
  * Consolidated into a single describe block with one Electron launch shared
  * across all three agents. The mocks write their own session files except
@@ -153,14 +153,16 @@ test.describe('Agent model-name resolution on task card', () => {
     const taskId = await getTaskIdByTitle(page, title);
 
     // mock-gemini writes a session JSON with model='gemini-3-flash-preview'
-    // in the messages array. Capture pipeline picks it up.
+    // in the messages array, named by the id the spawn chose (--session-id),
+    // so the reader attaches at spawn. The card shows the label derived from
+    // the id in Gemini's word order (gemini/model-display-name.ts).
     await moveTaskIpc(page, taskId, swimlaneIds.planning);
     await waitForRunningSession(page);
     await waitForScrollback(page, 'MOCK_GEMINI_SESSION:');
 
     const usageBar = page.locator(`[data-task-id="${taskId}"] [data-testid="usage-bar"]`);
     await expect(usageBar).toBeVisible({ timeout: 15000 });
-    await expect(usageBar).toContainText('gemini-3-flash-preview', { timeout: 15000 });
+    await expect(usageBar).toContainText('Gemini 3 Flash Preview', { timeout: 15000 });
     await expect(usageBar).not.toContainText('Loading agent...');
   });
 });

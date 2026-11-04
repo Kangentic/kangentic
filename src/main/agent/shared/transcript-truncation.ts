@@ -115,7 +115,7 @@ export function buildTruncationMarker(
       : {}),
     // Deliberately makes NO claim about search coverage. An earlier draft said
     // "Search still covers the full history", which is true only for an agent
-    // whose adapter implements `parseTranscriptWindow` (Claude today); for the
+    // whose adapter implements `parseTranscriptWindow`; for the
     // rest the indexer falls back to this same bounded read, so the index is
     // cut off at the same place the reader is. A notice that overstates what
     // survives is worse than one that just states the omission.
