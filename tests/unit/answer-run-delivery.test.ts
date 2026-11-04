@@ -349,8 +349,16 @@ describe('answer run flags and prompt delivery', () => {
 
   it('Ollama runs the chosen model with the prompt piped, and refuses to guess one', async () => {
     const options = await optionsFor(new OllamaAdapter());
-    expect(options.args).toEqual(['run', 'some-model']);
+    // --hidethinking: a thinking model otherwise prints its reasoning to
+    // stdout, and the runner would return it as part of the answer.
+    expect(options.args).toEqual(['run', 'some-model', '--hidethinking']);
     expect(options.promptVia ?? 'stdin').toBe('stdin');
+
+    // An effort is the `=` form of --think: a spaced level would be read as a positional.
+    answerSpy.mockClear();
+    await new OllamaAdapter().answerFromContext('THE PROMPT', '/bin/ollama', '/scratch', 'some-model', { effort: 'high' });
+    const withEffort = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(withEffort.args).toEqual(['run', 'some-model', '--hidethinking', '--think=high']);
 
     answerSpy.mockClear();
     await expect(new OllamaAdapter().answerFromContext('THE PROMPT', '/bin/ollama', '/scratch', null))
