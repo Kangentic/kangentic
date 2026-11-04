@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, markSubagentLaunch, setDetail, setToolWhen, setTypeWhen, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives, nestedBackgroundShellHintEntries } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
@@ -48,6 +48,15 @@ const QWEN_PLAN_EXIT_TOOL = 'exit_plan_mode';
  * any tool, so its wait is the one that is a question rather than an approval.
  */
 export const QWEN_QUESTION_TOOL = 'ask_user_question';
+
+/**
+ * The tool that starts a subagent: `agent`, with `task` its legacy alias
+ * (https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/tool-names.ts).
+ * Built from Qwen's source, not yet captured from a real Qwen.
+ */
+export const QWEN_SUBAGENT_TOOL = 'agent';
+/** The tools that start a subagent: `agent`, and `task`, its legacy alias. */
+export const QWEN_SUBAGENT_LAUNCH_TOOLS: readonly string[] = [QWEN_SUBAGENT_TOOL, 'task'];
 
 /**
  * Reports Qwen's plan exit as Kangentic's (`AgentTool.ExitPlanMode`) only for
@@ -121,6 +130,15 @@ export interface QwenBuildHooksOptions {
    * the node bridge, as before.
    */
   eventCommand?: (eventType: string, ...directives: string[]) => string;
+  /**
+   * Carry the submitted prompt in the Prompt event's detail, for the Command
+   * Terminal's namer. Qwen's UserPromptSubmit payload has `prompt` and, at a
+   * supported submission boundary, `submitted_prompt`, the user's own text,
+   * which is read first
+   * (https://github.com/QwenLM/qwen-code/blob/v0.26.6/docs/users/features/hooks.md).
+   * Built from Qwen's docs; `submitted_prompt` has not been captured live.
+   */
+  capturePromptText?: boolean;
 }
 
 /**
@@ -238,12 +256,26 @@ export function buildHooks(
   // The session's mode at each prompt and turn end (SessionEvent.planMode),
   // never a subagent's, whose payload carries `agent_id`.
   const planMode = extractPlanMode('permission_mode', ['plan'], { unlessField: 'agent_id' });
+  const promptDirectives = options.capturePromptText
+    ? [extractDetail(['submitted_prompt', 'prompt']), planMode]
+    : [planMode];
+  // Every payload carries `agent_id` only when the event fires inside a
+  // subagent (https://github.com/QwenLM/qwen-code/blob/v0.26.6/docs/users/features/hooks.md,
+  // and the live 0.25.2 subagent-pre-tool-use.json), as Claude's tool hooks
+  // do, so a subagent's tool cannot drain a main-agent tool of the same name.
+  const subagentId = extractSubagentId(['agent_id']);
   return {
     ...userHooks,
     [QwenHookEvent.PreToolUse]: withBridge(QwenHookEvent.PreToolUse, EventType.ToolStart,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),
-      extractDetail(['file_path', 'command', 'query'], { nested: 'tool_input' })),
+      subagentId,
+      extractDetail(['file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
+      // Only the approved subagent call's own start may let its subagent_start
+      // close the prompt it awaited. On 0.25.2 PreToolUse comes before
+      // PermissionRequest and this pairs them; on 0.25.3's reverse order the
+      // call is not yet pending when the prompt opens, so it does nothing.
+      markSubagentLaunch([...QWEN_SUBAGENT_LAUNCH_TOOLS])),
     // Fires only for a result with no error; an error or a cancel fires
     // PostToolUseFailure instead.
     // The background launch and stop ride this entry (`appendBackground*`),
@@ -253,6 +285,7 @@ export function buildHooks(
       ...withBridge(QwenHookEvent.PostToolUse, EventType.ToolEnd,
         extractTool('tool_name'),
         extractToolId(['tool_use_id']),
+        subagentId,
         APPROVED_PLAN_EXIT,
         backgroundLaunchDirective(QWEN_BACKGROUND_COMMAND_SPEC),
         ...backgroundStopDirectives(QWEN_BACKGROUND_COMMAND_SPEC)),
@@ -261,9 +294,10 @@ export function buildHooks(
     [QwenHookEvent.PostToolUseFailure]: withBridge(QwenHookEvent.PostToolUseFailure, EventType.ToolEnd,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),
+      subagentId,
       setTypeWhen({ field: 'is_interrupt', equals: 'true', to: EventType.Interrupted }),
       extractDetail(['error'])),
-    [QwenHookEvent.UserPromptSubmit]: withBridge(QwenHookEvent.UserPromptSubmit, EventType.Prompt, planMode),
+    [QwenHookEvent.UserPromptSubmit]: withBridge(QwenHookEvent.UserPromptSubmit, EventType.Prompt, ...promptDirectives),
     [QwenHookEvent.Stop]: withBridge(QwenHookEvent.Stop, EventType.Idle, planMode),
     // Fires instead of Stop when an API error or loop detection ends the turn.
     // The TUI fires it from its error handler once retries are over, so it is
@@ -288,6 +322,11 @@ export function buildHooks(
     [QwenHookEvent.SubagentStop]: withBridge(QwenHookEvent.SubagentStop, EventType.SubagentStop,
       extractDetail(['agent_type']),
       extractSubagentId(['agent_id'])),
+    // Log-only, including `idle_prompt`. Unlike Claude's "waiting for your
+    // input", which Claude's hooks turn into an idle hint, Qwen's fires each
+    // time its streaming state passes through Idle (useAttentionNotifications.ts),
+    // and a live 0.25.2 session sent it right after almost every PreToolUse,
+    // mid-turn (tests/fixtures/qwen-hooks/notification-idle-prompt-mid-turn.json).
     [QwenHookEvent.Notification]: withBridge(QwenHookEvent.Notification, EventType.Notification, extractDetail(['message', 'notification'])),
     [QwenHookEvent.PreCompact]: withBridge(QwenHookEvent.PreCompact, EventType.Compact),
     [QwenHookEvent.SessionStart]: withBridge(QwenHookEvent.SessionStart, EventType.SessionStart),

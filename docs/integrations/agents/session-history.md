@@ -62,8 +62,8 @@ Runtime flow:
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
 
    See [Adapter types and capability discovery](adapter-types.md#adapterruntimestrategy) for the full table.
-4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless.
-5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
+4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless. A `detach()` cancels an attach still in flight (each attach holds a token, and the detach drops it), so an `attach()` right after it starts clean: that is how a conversation a SessionStart moved to (`followsSessionStartMoves`) gets its tail.
+5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read. A null locate falls back to the PTY tracker, except for an attach with `waitForFile` (a moved conversation, whose file appears with its first prompt), which locates again every second for up to 10 minutes.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
 7. The resulting `SessionHistoryParseResult` flows through `dispatchSessionHistoryResult()` into the generic callback primitives (`onUsageUpdate`, `onEvents`, `onActivity`, `onFirstTelemetry`) that SessionManager wired to SessionTelemetry at construction time.
 8. On the first successful dispatch, `onFirstTelemetry` fires, which calls into `SessionTelemetry`'s PTY-tracker suppression - PtyActivityTracker stops contributing activity signals for the rest of the session. An adapter whose history file carries only part of the activity picture sets `sessionHistory.suppressesPtyFallback: false` (Codex, whose rollout reports background commands, interrupts and failed turns beside its hooks), and neither the first read nor a turn-initiating event it reports turns the tracker off.
@@ -561,7 +561,13 @@ follows every status id change, as before.
    rewrite `sessions.agent_session_id` in place. The PTY-output and hook capture channels stay
    strictly **one-shot** (multi-shot output capture would reintroduce the OpenCode
    stale-flag-echo poisoning bug), and any capture closes them, so only the status file may
-   later revise the id.
+   later revise the id. The one exception is an adapter with no status id that declares
+   `runtime.sessionId.followsSessionStartMoves` (Qwen): there a SessionStart that moves the
+   conversation to a different id switches it directly, through the same `recoverStaleSessionId`
+   chain, and the session manager re-points the history tail at the new conversation's file. That
+   tail's locate polls about 5 s, and Qwen writes a cleared conversation's chat only at its next
+   prompt, so a first prompt more than about 5 s later leaves the card on the old usage for the
+   rest of that run, while the id, and so the next resume, already follow the move.
 2. **Resume-time reconcile.** `reconcileResumeAgentSessionId`
    (`src/main/transition-engine/resume-id-reconcile.ts`), run at both resume chokepoints
    (`executeSpawnAgent` before `migrateResumeCwdIfRenamed`, and `prepareAgentSpawn` for startup

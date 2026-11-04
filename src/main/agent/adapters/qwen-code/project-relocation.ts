@@ -10,7 +10,7 @@ import {
 } from '../../shared/relocation-utils';
 import { qwenProjectSlug } from './session-history-parser';
 import { withQwenTrustLock } from './trust-manager';
-import { qwenHomeDir } from './qwen-home';
+import { qwenHomeDir, qwenRuntimeDir } from './qwen-home';
 
 /**
  * Migrate Qwen Code's per-project data when a Kangentic project is relocated.
@@ -75,10 +75,14 @@ function readTrustedFolderKeys(): string[] {
 }
 
 function migrateProjectDirectories(pairs: RelocationPathPair[]): void {
-  const projectsRoot = path.join(qwenDir(), 'projects');
-  const tmpRoot = path.join(qwenDir(), 'tmp');
-
   for (const pair of pairs) {
+    // The chats and tmp live under Qwen's runtime directory, which
+    // QWEN_RUNTIME_DIR or the old folder's `advanced.runtimeOutputDir` can
+    // move (`qwenRuntimeDir`). Read from the new location, where the
+    // project's own settings now are.
+    const runtimeRoot = qwenRuntimeDir(pair.newAbsolute);
+    const projectsRoot = path.join(runtimeRoot, 'projects');
+    const tmpRoot = path.join(runtimeRoot, 'tmp');
     try {
       renameOrMergeDirectory(
         path.join(projectsRoot, qwenProjectSlug(pair.oldAbsolute)),

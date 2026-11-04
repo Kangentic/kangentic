@@ -44,6 +44,8 @@ export const WSL_ENV_KEYS = [
   'COPILOT_HOME',
   'KIMI_CODE_HOME',
   'QWEN_HOME',
+  // Moves Qwen's chats away from QWEN_HOME (`qwenRuntimeDir`).
+  'QWEN_RUNTIME_DIR',
   'XDG_CONFIG_HOME',
   'XDG_DATA_HOME',
   'XDG_STATE_HOME',

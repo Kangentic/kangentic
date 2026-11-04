@@ -10,7 +10,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code';
+import { QwenAdapter, QwenCommandBuilder } from '../../src/main/agent/adapters/qwen-code';
+import { QWEN_SUBAGENT_LAUNCH_TOOLS } from '../../src/main/agent/adapters/qwen-code/hook-manager';
+import { resetQwenToolCallCursorsForTests } from '../../src/main/agent/adapters/qwen-code/transcript-metrics';
+import { qwenProjectSlug } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 import {
   agentDisplayName,
   agentShortName,
@@ -231,6 +234,27 @@ describe('Qwen Adapter - concurrent-session hook holds', () => {
     }
   });
 
+  // The Command Terminal's namer reads the first prompt's text, which only
+  // reaches the hooks file when the spawn's `capturePromptText` survives the
+  // adapter's option spread into the builder.
+  it('carries capturePromptText from the spawn into the UserPromptSubmit hook', () => {
+    const promptCommand = (): string => {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+      const entries = settings.hooks.UserPromptSubmit;
+      return entries[entries.length - 1].hooks[0].command;
+    };
+    adapter.buildCommand(buildOptions(sandbox, 'session-plain'));
+    const plain = promptCommand();
+    adapter.removeHooks(sandbox, 'session-plain');
+
+    adapter.buildCommand({ ...buildOptions(sandbox, 'session-terminal'), capturePromptText: true });
+    const capturing = promptCommand();
+    adapter.removeHooks(sandbox, 'session-terminal');
+
+    // One more directive: the prompt detail, ahead of the plan mode.
+    expect(capturing.split(' ')).toHaveLength(plain.split(' ').length + 1);
+  });
+
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
     expect(() => adapter.removeHooks(sandbox, 'orphan-session')).not.toThrow();
@@ -348,6 +372,35 @@ describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
   });
 });
 
+// -- QwenAdapter configuredModelFromCommand ------------------------------------
+
+describe('QwenAdapter - configuredModelFromCommand', () => {
+  // The card names the column's model from the spawned command before Qwen's
+  // first assistant record reports one.
+  it('reads the --model the builder emitted, with the raw id as the label', () => {
+    const command = new QwenCommandBuilder().buildQwenCommand({
+      qwenPath: '/usr/bin/qwen',
+      taskId: 'task-1',
+      cwd: '/mock/project',
+      permissionMode: 'acceptEdits',
+      model: 'qwen3-coder-plus',
+      prompt: 'Rename the loader',
+    });
+    expect(new QwenAdapter().configuredModelFromCommand(command)).toEqual({ id: 'qwen3-coder-plus', displayName: 'qwen3-coder-plus' });
+  });
+
+  it('never reads a --model that sits inside the prompt', () => {
+    const command = new QwenCommandBuilder().buildQwenCommand({
+      qwenPath: '/usr/bin/qwen',
+      taskId: 'task-1',
+      cwd: '/mock/project',
+      permissionMode: 'default',
+      prompt: 'Explain what --model gpt-fake does',
+    });
+    expect(new QwenAdapter().configuredModelFromCommand(command)).toBeNull();
+  });
+});
+
 // -- QwenAdapter getInjectionSequence -----------------------------------------
 
 describe('QwenAdapter - getInjectionSequence', () => {
@@ -406,5 +459,130 @@ describe('QwenAdapter - getInjectionSequence', () => {
       effortChanged: false,
     });
     expect(sequence).toEqual([]);
+  });
+});
+
+describe('Qwen Adapter - subagent spawn tool', () => {
+  it('names one of the tools that launch a subagent', () => {
+    expect(QWEN_SUBAGENT_LAUNCH_TOOLS).toContain(new QwenAdapter().subagentSpawnToolName);
+  });
+});
+
+describe('Qwen Adapter - which transcript file a run reads', () => {
+  const SESSION_ID = '4231e6aa-5409-4749-9272-270e9aab079b';
+  const CALL_TIME_MS = Date.parse('2026-06-12T10:00:00.000Z');
+  let adapter: QwenAdapter;
+  let tmpBase: string;
+  let qwenHome: string;
+  let workspace: string;
+  let reportedPath: string;
+  let chatPath: string;
+  let savedQwenHome: string | undefined;
+  let savedRuntimeDir: string | undefined;
+
+  /** An assistant record with one API response's usage and the tool calls it made. */
+  function assistantRecord(uuid: string, promptTokens: number, candidateTokens: number, calls: Array<{ id: string; at: number }>): string {
+    return JSON.stringify({
+      uuid,
+      type: 'assistant',
+      timestamp: new Date(calls[0]?.at ?? CALL_TIME_MS).toISOString(),
+      message: {
+        role: 'model',
+        parts: calls.map((call) => ({ functionCall: { id: call.id, name: 'list_directory', args: { path: '.' } } })),
+      },
+      usageMetadata: {
+        promptTokenCount: promptTokens,
+        candidatesTokenCount: candidateTokens,
+        totalTokenCount: promptTokens + candidateTokens,
+      },
+    });
+  }
+
+  function writeTranscript(filePath: string, lines: string[]): void {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf-8');
+  }
+
+  beforeEach(() => {
+    savedQwenHome = process.env.QWEN_HOME;
+    savedRuntimeDir = process.env.QWEN_RUNTIME_DIR;
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-adapter-transcript-'));
+    qwenHome = path.join(tmpBase, 'qwen-home');
+    workspace = path.join(tmpBase, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    process.env.QWEN_HOME = qwenHome;
+    delete process.env.QWEN_RUNTIME_DIR;
+    chatPath = path.join(qwenHome, 'projects', qwenProjectSlug(workspace), 'chats', `${SESSION_ID}.jsonl`);
+    reportedPath = path.join(tmpBase, 'reported', 'reported-chat.jsonl');
+    resetQwenToolCallCursorsForTests();
+    adapter = new QwenAdapter();
+  });
+
+  afterEach(() => {
+    if (savedQwenHome === undefined) delete process.env.QWEN_HOME;
+    else process.env.QWEN_HOME = savedQwenHome;
+    if (savedRuntimeDir === undefined) delete process.env.QWEN_RUNTIME_DIR;
+    else process.env.QWEN_RUNTIME_DIR = savedRuntimeDir;
+    resetQwenToolCallCursorsForTests();
+    fs.rmSync(tmpBase, { recursive: true, force: true });
+  });
+
+  /** Two transcripts that differ in usage and tool calls, so the result shows which was read. */
+  function writeBothTranscripts(): void {
+    writeTranscript(reportedPath, [assistantRecord('reported-1', 100, 10, [{ id: 'call-reported', at: CALL_TIME_MS }])]);
+    writeTranscript(chatPath, [
+      assistantRecord('chat-1', 200, 20, [{ id: 'call-chat-1', at: CALL_TIME_MS }]),
+      assistantRecord('chat-2', 300, 30, [{ id: 'call-chat-2', at: CALL_TIME_MS + 1000 }]),
+    ]);
+  }
+
+  it('reads the reported transcript when it exists, over the chat the session id and cwd name', async () => {
+    writeBothTranscripts();
+    const input = { transcriptPath: reportedPath, agentSessionId: SESSION_ID, cwd: workspace };
+
+    expect(await adapter.transcriptUsage(input)).toEqual({ inputTokens: 100, outputTokens: 10 });
+    expect((await adapter.transcriptToolCounts(input))?.toolCallCount).toBe(1);
+  });
+
+  it('falls back to the chat the session id and cwd name when the reported path does not exist', async () => {
+    writeBothTranscripts();
+    fs.rmSync(reportedPath, { force: true });
+    const input = { transcriptPath: reportedPath, agentSessionId: SESSION_ID, cwd: workspace };
+
+    // Both of the chat's responses: 200 + 300 in, 20 + 30 out.
+    expect(await adapter.transcriptUsage(input)).toEqual({ inputTokens: 500, outputTokens: 50 });
+    expect((await adapter.transcriptToolCounts(input))?.toolCallCount).toBe(2);
+  });
+
+  it('reads the chat when no transcript path was reported', async () => {
+    writeBothTranscripts();
+
+    expect(await adapter.transcriptUsage({ agentSessionId: SESSION_ID, cwd: workspace }))
+      .toEqual({ inputTokens: 500, outputTokens: 50 });
+  });
+
+  it('returns the reported path when there is no session id or cwd to fall back on', async () => {
+    writeTranscript(reportedPath, [assistantRecord('reported-1', 100, 10, [{ id: 'call-reported', at: CALL_TIME_MS }])]);
+    const missingPath = path.join(tmpBase, 'reported', 'missing-chat.jsonl');
+    const resolveRunPath = (input: { transcriptPath?: string | null; agentSessionId?: string | null; cwd?: string | null }): Promise<string | null> =>
+      (adapter as unknown as { runTranscriptPath(input: object): Promise<string | null> }).runTranscriptPath(input);
+
+    expect(await resolveRunPath({ transcriptPath: reportedPath })).toBe(reportedPath);
+    // Nothing to fall back on: the missing path is handed back as it was reported.
+    expect(await resolveRunPath({ transcriptPath: missingPath })).toBe(missingPath);
+    expect(await resolveRunPath({ transcriptPath: reportedPath, agentSessionId: SESSION_ID })).toBe(reportedPath);
+    expect(await resolveRunPath({})).toBeNull();
+    expect(await adapter.transcriptUsage({ transcriptPath: reportedPath }))
+      .toEqual({ inputTokens: 100, outputTokens: 10 });
+  });
+
+  it('passes untilMs through, so a call made after it is not counted', async () => {
+    writeBothTranscripts();
+    const input = { agentSessionId: SESSION_ID, cwd: workspace };
+
+    expect((await adapter.transcriptToolCounts({ ...input, untilMs: CALL_TIME_MS + 500 }))?.toolCallCount).toBe(1);
+    expect((await adapter.transcriptToolCounts({ ...input, untilMs: CALL_TIME_MS + 5000 }))?.toolCallCount).toBe(2);
+    // sinceMs rides the same input: the first call is before it.
+    expect((await adapter.transcriptToolCounts({ ...input, sinceMs: CALL_TIME_MS + 500 }))?.toolCallCount).toBe(1);
   });
 });

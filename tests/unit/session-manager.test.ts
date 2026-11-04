@@ -63,6 +63,8 @@ import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-
 import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
+import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code/qwen-adapter';
+import { QwenSessionHistoryParser } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 import { traceTerminal } from '../../src/main/pty/terminal-trace';
 
 const claudeAdapter = new ClaudeAdapter();
@@ -2102,6 +2104,151 @@ describe('Transcript-fallback handoff', () => {
     managerInternals.statusFileReader.handleStatusChange(session.id);
     await vi.waitFor(() => expect(dispatchSpy).toHaveBeenCalledTimes(1));
     expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']);
+  });
+
+  // Qwen writes no status file, so its /clear reaches Kangentic only as a
+  // SessionStart hook (`followsSessionStartMoves`). The session's id must
+  // follow it, and the history tail must move to the new conversation's chat:
+  // the reader attaches once per session, so without the re-point it kept
+  // tailing the cleared conversation for the rest of the session.
+  it('a Qwen /clear moves the session id and re-points the history tail at the new chat', async () => {
+    const originalChat = path.join(tmpDir, 'qwen-original.jsonl');
+    const clearedChat = path.join(tmpDir, 'qwen-cleared.jsonl');
+    const assistantLine = (model: string) => JSON.stringify({
+      type: 'assistant', model, contextWindowSize: 100000,
+      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, totalTokenCount: 1010 },
+      message: { role: 'model', parts: [{ text: 'ok' }] },
+    }) + '\n';
+    fs.writeFileSync(originalChat, assistantLine('qwen-before-clear'));
+    fs.writeFileSync(clearedChat, assistantLine('qwen-after-clear'));
+    const locate = vi.spyOn(QwenSessionHistoryParser, 'locate').mockImplementation(async ({ agentSessionId }) => (
+      agentSessionId === 'qwen-cleared-id' ? clearedChat : originalChat
+    ));
+    const adapter = new QwenAdapter();
+
+    const eventsPath = path.join(tmpDir, 'qwen-events.jsonl');
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-qwen-clear',
+      command: '',
+      cwd: tmpDir,
+      agentSessionId: 'qwen-original-id',
+      eventsOutputPath: eventsPath,
+      agentParser: adapter,
+    });
+    const managerInternals = manager as unknown as {
+      statusFileReader: { handleEventsChange(id: string): void };
+    };
+    await vi.waitFor(() => expect(manager.getUsageCache()[session.id]?.model.id).toBe('qwen-before-clear'));
+
+    const capturedAgentSessionIds: string[] = [];
+    manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, agentReportedId: string) => {
+      capturedAgentSessionIds.push(agentReportedId);
+    });
+    const qwenSessionStart = (agentSessionId: string, source: string) => JSON.stringify({
+      ts: 1, type: 'session_start',
+      hookContext: JSON.stringify({ session_id: agentSessionId, hook_event_name: 'SessionStart', source }),
+    }) + '\n';
+
+    fs.appendFileSync(eventsPath, qwenSessionStart('qwen-original-id', 'startup'));
+    managerInternals.statusFileReader.handleEventsChange(session.id);
+    await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['qwen-original-id']));
+
+    fs.appendFileSync(eventsPath, qwenSessionStart('qwen-cleared-id', 'clear'));
+    managerInternals.statusFileReader.handleEventsChange(session.id);
+    await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['qwen-original-id', 'qwen-cleared-id']));
+    expect(manager.listSessions().find((listed) => listed.id === session.id)?.agentSessionId).toBe('qwen-cleared-id');
+    await vi.waitFor(() => expect(manager.getUsageCache()[session.id]?.model.id).toBe('qwen-after-clear'));
+    expect(locate).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'qwen-cleared-id' }));
+  });
+
+  // The moved conversation's chat file does not exist until the user's next
+  // prompt, so the re-point waits for it; and a move landing after the session
+  // ended must leave the already-released tail alone.
+  describe('a Qwen /clear move and the history tail', () => {
+    const qwenSessionStart = (agentSessionId: string, source: string) => JSON.stringify({
+      ts: 1, type: 'session_start',
+      hookContext: JSON.stringify({ session_id: agentSessionId, hook_event_name: 'SessionStart', source }),
+    }) + '\n';
+
+    interface MoveHarness {
+      sessionId: string;
+      attachSpy: ReturnType<typeof vi.spyOn>;
+      detachSpy: ReturnType<typeof vi.spyOn>;
+      capturedAgentSessionIds: string[];
+      sendClear: () => void;
+    }
+
+    async function spawnQwenSession(taskId: string): Promise<MoveHarness> {
+      const originalChat = path.join(tmpDir, `${taskId}-original.jsonl`);
+      const clearedChat = path.join(tmpDir, `${taskId}-cleared.jsonl`);
+      fs.writeFileSync(originalChat, '');
+      fs.writeFileSync(clearedChat, '');
+      vi.spyOn(QwenSessionHistoryParser, 'locate').mockImplementation(async ({ agentSessionId }) => (
+        agentSessionId === 'qwen-cleared-id' ? clearedChat : originalChat
+      ));
+      const eventsPath = path.join(tmpDir, `${taskId}-events.jsonl`);
+      const mock = createMockPty();
+      vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+      const session = await manager.spawn({
+        taskId,
+        command: '',
+        cwd: tmpDir,
+        agentSessionId: 'qwen-original-id',
+        eventsOutputPath: eventsPath,
+        agentParser: new QwenAdapter(),
+      });
+      const managerInternals = manager as unknown as {
+        statusFileReader: { handleEventsChange(id: string): void };
+        sessionHistoryReader: { attach(...args: unknown[]): Promise<void>; detach(id: string): void };
+      };
+      const capturedAgentSessionIds: string[] = [];
+      manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, agentReportedId: string) => {
+        capturedAgentSessionIds.push(agentReportedId);
+      });
+      fs.appendFileSync(eventsPath, qwenSessionStart('qwen-original-id', 'startup'));
+      managerInternals.statusFileReader.handleEventsChange(session.id);
+      await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['qwen-original-id']));
+
+      const attachSpy = vi.spyOn(managerInternals.sessionHistoryReader, 'attach');
+      const detachSpy = vi.spyOn(managerInternals.sessionHistoryReader, 'detach');
+      return {
+        sessionId: session.id,
+        attachSpy,
+        detachSpy,
+        capturedAgentSessionIds,
+        sendClear: () => {
+          fs.appendFileSync(eventsPath, qwenSessionStart('qwen-cleared-id', 'clear'));
+          managerInternals.statusFileReader.handleEventsChange(session.id);
+        },
+      };
+    }
+
+    it('re-points with waitForFile: true after detaching the old tail', async () => {
+      const harness = await spawnQwenSession('task-qwen-move-wait');
+      harness.sendClear();
+      await vi.waitFor(() => expect(harness.attachSpy).toHaveBeenCalledTimes(1));
+      expect(harness.detachSpy).toHaveBeenCalledWith(harness.sessionId);
+      expect(harness.attachSpy.mock.calls[0][0]).toEqual(expect.objectContaining({
+        sessionId: harness.sessionId,
+        agentSessionId: 'qwen-cleared-id',
+        waitForFile: true,
+      }));
+    });
+
+    it('a move that lands after the session ended neither detaches nor attaches', async () => {
+      const harness = await spawnQwenSession('task-qwen-move-ended');
+      const registry = (manager as unknown as { registry: { get(id: string): { status: string } | undefined } }).registry;
+      const row = registry.get(harness.sessionId);
+      expect(row).toBeDefined();
+      row!.status = 'exited';
+
+      harness.sendClear();
+      await vi.waitFor(() => expect(harness.capturedAgentSessionIds).toEqual(['qwen-original-id', 'qwen-cleared-id']));
+      expect(harness.detachSpy).not.toHaveBeenCalled();
+      expect(harness.attachSpy).not.toHaveBeenCalled();
+    });
   });
 
   // Claude Code 2.1.316's background daemon ran a moved conversation and an

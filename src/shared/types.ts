@@ -6689,6 +6689,16 @@ export interface AdapterRuntimeStrategy {
       /** Where the CLI runs when it is not this machine (a WSL distro): it writes its files there. */
       cliTarget?: StoredCliTarget | null;
     }): Promise<string | null>;
+    /**
+     * True when a SessionStart hook that moves the conversation to another id
+     * (`statusFile.parseSessionStart`: a `/clear`, a branch, a `/resume` inside
+     * the TUI) switches the session's id by itself. For an agent whose
+     * `parseStatus` reports no id, so no status write can carry the move:
+     * without it, the session record keeps the conversation it started with
+     * and a later resume reopens that one. The history tail follows the new
+     * id too. Qwen declares it.
+     */
+    readonly followsSessionStartMoves?: boolean;
   };
 
   /**

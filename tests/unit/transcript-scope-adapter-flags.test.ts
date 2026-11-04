@@ -49,6 +49,16 @@ describe('scopesTranscriptReadsByTime on the real adapters', () => {
     expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
   });
 
+  // Qwen's cursor filters calls by each record's timestamp, as Claude's does
+  // (qwen-code/transcript-metrics.ts), and a `--resume` appends to one file.
+  it('the registered Qwen adapter declares true, with the token reader the earlier-run fill needs', () => {
+    const adapter = agentRegistry.getBySessionType('qwen_agent');
+    expect(adapter, 'qwen_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
+  });
+
   // Grok and Antigravity count tool calls over the whole transcript and ignore
   // sinceMs and untilMs. Declaring the flag on either would let a whole
   // conversation's calls land on one run's record, double counting every

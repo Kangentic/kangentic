@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseQwenTranscript,
+  parseQwenTranscriptWindow,
   locateQwenTranscriptFile,
+  qwenTurnUsage,
   readQwenTranscriptPage,
 } from '../../src/main/agent/adapters/qwen-code/transcript-parser';
 import { qwenChatsDir } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
@@ -213,6 +215,119 @@ describe('parseQwenTranscript', () => {
       pageBytes: 700,
     });
     expect(whole.some((entry) => entry.uuid === `${SESSION_ID}:0`)).toBe(true);
+  });
+});
+
+/**
+ * Record shapes from packages/core/src/services/chatRecordingService.ts at
+ * v0.26.6: a tool result is its own `tool_result` record, and each assistant
+ * record carries one API response's `usageMetadata`.
+ */
+describe('Qwen v0.26 records', () => {
+  let directory: string | null = null;
+  afterEach(() => {
+    if (directory) fs.rmSync(directory, { recursive: true, force: true });
+    directory = null;
+  });
+
+  function writeSession(records: ReadonlyArray<Record<string, unknown>>): string {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-transcript-'));
+    const filePath = path.join(directory, `${SESSION_ID}.jsonl`);
+    fs.writeFileSync(filePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+    return filePath;
+  }
+
+  it('reads a tool_result record as the tool result, never as user text', async () => {
+    const filePath = writeSession([
+      { type: 'user', uuid: 'u1', timestamp: '2026-11-01T10:00:00.000Z', message: { role: 'user', parts: [{ text: 'Read the config' }] } },
+      { type: 'assistant', uuid: 'a1', timestamp: '2026-11-01T10:00:01.000Z', model: 'qwen3-coder-plus', message: { role: 'model', parts: [{ functionCall: { id: 'call-1', name: 'read_file', args: { file_path: 'config.ts' } } }] } },
+      { type: 'tool_result', uuid: 't1', timestamp: '2026-11-01T10:00:02.000Z', message: { role: 'user', parts: [{ functionResponse: { id: 'call-1', name: 'read_file', response: { output: 'export default {}' } } }] }, toolCallResult: { callId: 'call-1' } },
+    ]);
+    const entries = await parseQwenTranscript(SESSION_ID, filePath);
+    expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'tool_result']);
+    expect(entries[2]).toMatchObject({ kind: 'tool_result', uuid: 't1', toolUseId: 'call-1', content: 'export default {}' });
+  });
+
+  it('puts each assistant record\'s tokens on its entry: fresh input, cache reads, output', async () => {
+    const entries = await parseQwenTranscript(SESSION_ID, path.join(__dirname, '..', 'fixtures', 'qwen-real-session.jsonl'));
+    const assistant = entries.find((entry) => entry.kind === 'assistant');
+    // The 0.15.3 record: promptTokenCount 10, candidatesTokenCount 43, totalTokenCount 53.
+    expect(assistant?.kind === 'assistant' && assistant.usage).toEqual({
+      inputTokens: 10, outputTokens: 43, cacheCreationInputTokens: 0, cacheReadInputTokens: 0,
+    });
+  });
+
+  it.each([
+    // Gemini reports reasoning apart: output is candidates plus thoughts.
+    ['thoughts apart (Gemini)', { promptTokenCount: 100, cachedContentTokenCount: 40, candidatesTokenCount: 20, thoughtsTokenCount: 30, totalTokenCount: 150 }, 60, 50, 40],
+    // An OpenAI-compatible provider counts reasoning inside candidates: never twice.
+    ['thoughts inside (OpenAI-compatible)', { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 30, totalTokenCount: 150 }, 100, 50, 0],
+    ['no total to decide by', { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 30 }, 100, 50, 0],
+  ] as const)('counts output once with %s', (_label, usageMetadata, inputTokens, outputTokens, cacheReadInputTokens) => {
+    expect(qwenTurnUsage(usageMetadata)).toEqual({ inputTokens, outputTokens, cacheCreationInputTokens: 0, cacheReadInputTokens });
+  });
+
+  it('has no usage for a record without counts', () => {
+    expect(qwenTurnUsage(undefined)).toBeUndefined();
+    expect(qwenTurnUsage({ promptTokenCount: 0, candidatesTokenCount: 0 })).toBeUndefined();
+  });
+
+  it('mints the same uuids window by window as a whole-file parse, a record with no uuid included', async () => {
+    const records: Record<string, unknown>[] = [];
+    for (let turn = 0; turn < 30; turn += 1) {
+      const timestamp = new Date(Date.UTC(2026, 10, 1, 9, turn)).toISOString();
+      records.push({ type: 'user', timestamp, ...(turn % 7 === 0 ? {} : { uuid: `user-${turn}` }), message: { role: 'user', parts: [{ text: `question ${turn} ${'x'.repeat(80)}` }] } });
+      records.push({ type: 'assistant', timestamp, uuid: `assistant-${turn}`, model: 'qwen3-coder-plus', usageMetadata: { promptTokenCount: 10 + turn, candidatesTokenCount: 5, totalTokenCount: 15 + turn }, message: { role: 'model', parts: [{ text: `answer ${turn}` }] } });
+    }
+    const filePath = writeSession(records);
+    const whole = await parseQwenTranscript(SESSION_ID, filePath);
+
+    const windowed: string[] = [];
+    let startByte = 0;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const window = await parseQwenTranscriptWindow(SESSION_ID, filePath, startByte, 600);
+      windowed.push(...window.entries.map((entry) => entry.uuid));
+      if (window.nextByteOffset <= startByte || window.nextByteOffset >= window.totalBytes) break;
+      startByte = window.nextByteOffset;
+    }
+    expect(windowed).toEqual(whole.map((entry) => entry.uuid));
+    expect(windowed).toContain(`${SESSION_ID}:28`);
+  });
+
+  it('counts the lines before a window for a record with no top-level uuid, even when a tool arg holds a nested uuid key', async () => {
+    const firstLine = JSON.stringify({ uuid: 'first-record', type: 'user', message: { role: 'user', parts: [{ text: 'hi' }] } });
+    // No top-level uuid; "uuid" appears only inside the functionCall args.
+    const secondLine = JSON.stringify({
+      type: 'assistant', model: 'qwen3-coder-plus',
+      message: { role: 'model', parts: [{ functionCall: { id: 'call-1', name: 'read_file', args: { uuid: 'nested-value' } } }] },
+    });
+    const filePath = writeSession([]);
+    fs.writeFileSync(filePath, `${firstLine}\n${secondLine}\n`);
+    // A mid-file window drops through its first newline, so starting on the
+    // first line's own newline begins the window exactly at the second line.
+    const startByte = Buffer.byteLength(firstLine, 'utf-8');
+
+    const whole = await parseQwenTranscript(SESSION_ID, filePath);
+    const wholeAssistant = whole.find((entry) => entry.kind === 'assistant');
+    // Absolute physical line 1 (0-based): the record after the first line.
+    expect(wholeAssistant?.uuid).toBe(`${SESSION_ID}:1`);
+
+    const window = await parseQwenTranscriptWindow(SESSION_ID, filePath, startByte, 1024 * 1024);
+    expect(window.entries.map((entry) => entry.kind)).toEqual(['assistant']);
+    expect(window.entries[0].uuid).toBe(`${SESSION_ID}:1`);
+  });
+
+  it('replays the real tool-call fixture from byte 0 into the same entries as a whole-file parse', async () => {
+    const fixturePath = path.join(__dirname, '..', 'fixtures', 'qwen-real-session-tools.jsonl');
+    const whole = await parseQwenTranscript(SESSION_ID, fixturePath);
+    const window = await parseQwenTranscriptWindow(SESSION_ID, fixturePath, 0, 1024 * 1024);
+    const shape = (entries: typeof whole) => entries.map((entry) => ({
+      uuid: entry.uuid,
+      kind: entry.kind,
+      blockKinds: entry.kind === 'assistant' ? entry.blocks.map((block) => block.type) : [],
+    }));
+    expect(shape(window.entries)).toEqual(shape(whole));
+    expect(shape(window.entries)[1].blockKinds).toEqual(['thinking', 'text', 'tool_use']);
   });
 });
 
