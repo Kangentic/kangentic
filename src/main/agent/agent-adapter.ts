@@ -1166,7 +1166,7 @@ export interface AgentAdapter {
    * else locate the file from `agentSessionId` + `cwd`. Must NOT throw on a
    * missing/partial transcript: return null so the caller falls back to the
    * live snapshot. Implemented only by adapters whose CLI writes a parseable,
-   * append-across-resume transcript (Claude today).
+   * append-across-resume transcript (Claude, Grok and Aider today).
    */
   transcriptUsage?(input: {
     transcriptPath?: string | null;

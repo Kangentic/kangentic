@@ -232,6 +232,14 @@ describe('discoverAiderCapabilities', () => {
     expect(probeCallCount()).toBe(3);
   });
 
+  it('keeps each cliPath cached when calls alternate between two paths', async () => {
+    respondWith(AIDER_HELP);
+    await discoverAiderCapabilities('/usr/bin/aider');
+    await discoverAiderCapabilities('/opt/aider/bin/aider');
+    await discoverAiderCapabilities('/usr/bin/aider');
+    expect(probeCallCount()).toBe(2);
+  });
+
   it('is what the adapter reports', async () => {
     respondWith(AIDER_HELP);
     expect((await new AiderAdapter().discoverCapabilities('/usr/bin/aider')).supportsModelOverride).toBe(true);

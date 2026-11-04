@@ -29,7 +29,8 @@ import type { AgentCapabilities } from '../../../../shared/types';
 /** Aider is a Python program that imports LiteLLM at start, so its help is slow. */
 const HELP_TIMEOUT_MS = 15000;
 
-let cache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
+/** What each cliPath's help said. A failed read is not kept. */
+const capabilitiesByCliPath = new Map<string, AgentCapabilities>();
 
 /**
  * Probes still running, by cliPath, so callers that arrive together share one
@@ -39,7 +40,7 @@ const probesInFlight = new Map<string, Promise<AgentCapabilities>>();
 
 /** Test-only: reset the discovery cache between cases. */
 export function resetAiderCapabilityCacheForTests(): void {
-  cache = null;
+  capabilitiesByCliPath.clear();
   probesInFlight.clear();
 }
 
@@ -69,7 +70,8 @@ export function helpListsModelFlag(helpText: string): boolean {
  * A caller that arrives while a probe for the same cliPath is running shares it.
  */
 export async function discoverAiderCapabilities(cliPath: string, forceRefresh = false): Promise<AgentCapabilities> {
-  if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
+  const cached = capabilitiesByCliPath.get(cliPath);
+  if (!forceRefresh && cached) return cached;
 
   const running = probesInFlight.get(cliPath);
   if (running) return running;
@@ -94,6 +96,6 @@ async function probeCapabilities(cliPath: string): Promise<AgentCapabilities> {
   }
 
   const capabilities: AgentCapabilities = { supportsModelOverride, effortLevels: [] };
-  cache = { cliPath, capabilities };
+  capabilitiesByCliPath.set(cliPath, capabilities);
   return capabilities;
 }
