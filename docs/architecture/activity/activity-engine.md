@@ -222,8 +222,9 @@ had the same gap before the kind existed. The rules in `updatePermissionFlag` cl
 
 - The awaited tool (`permissionAwaitedToolId`) is the newest pending entry the event's `tool`
   names, and the stack top only when the event names none or names no pending call. Claude, Qwen
-  and the appended Codex, Antigravity and Grok waits carry `tool`. The usage accumulator credits the waited call by the
-  same rule.
+  and the appended Codex, Antigravity and Grok waits carry `tool`; Grok's `permission_prompt`
+  wait, which comes from a notification and not from a tool start, does not. The usage
+  accumulator credits the waited call by the same rule.
 - The other pending ids at that moment are the wait's siblings (`permissionSiblingToolIds`,
   engine-internal). A depth-0 ToolEnd of a sibling leaves the wait open and drops that id.
 - Another call's depth-0 ToolStart or ToolEnd clears the wait only when the engine cannot tell it

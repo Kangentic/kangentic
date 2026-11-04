@@ -37,7 +37,7 @@ Implementations live next to each adapter. The run's `cwd` is the shared answer 
 | Cursor | `agent --trust --output-format text [--model] -p "<prompt>"` | positional arg |
 | Droid | `droid exec -o text [--model] "<prompt>"` | positional arg |
 | Copilot | Its answer run: `copilot --silent --output-format json --stream off --session-id <uuid> --no-ask-user [--model] [--reasoning-effort]`, the session folder removed after | stdin |
-| Grok Build | `grok --output-format plain --deny Write --deny Edit --deny Bash --no-subagents --disable-web-search --no-memory [--model] [--reasoning-effort] -s <uuid> -p "<prompt>"` | positional arg |
+| Grok Build | `grok --output-format plain --deny Write --deny Edit --deny Bash --no-subagents --disable-web-search --no-memory [--model] [--reasoning-effort] -s <uuid> -p "<prompt>"` (the `-s` session folder removed after) | positional arg |
 | Antigravity | `agy -p "<prompt>" --output-format json [--model] [--effort]` through a hidden PTY (`agy -p` hangs without a TTY, upstream #318); runs in a pre-trusted scratch cwd so it never touches the project workspace's `agy -c` mapping. It removes the conversation the run made and reports the result's `usage` | flag arg |
 | Warp | (no headless run) | n/a |
 | Aider | (headless answer run only; summarize not wired) | n/a |
