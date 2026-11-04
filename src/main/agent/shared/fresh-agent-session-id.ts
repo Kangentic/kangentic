@@ -38,7 +38,10 @@ export async function resolveFreshAgentSessionId(
   })) {
     return null;
   }
-  const created = adapter.createSessionId(input.cliPath, input.workingDirectory, input.place ?? null);
+  // The place goes only when the CLI runs somewhere else, so a spawn on this computer calls it exactly as before.
+  const created = input.place
+    ? adapter.createSessionId(input.cliPath, input.workingDirectory, input.place)
+    : adapter.createSessionId(input.cliPath, input.workingDirectory);
   const { signal } = input;
   if (!signal) return created;
   if (signal.aborted) return null;

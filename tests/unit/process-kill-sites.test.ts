@@ -51,6 +51,10 @@ const CLASSIFIED_SITES: Record<string, { primitives: Primitive[]; reason: string
     primitives: ['taskkill', 'process-kill'],
     reason: 'the by-pid kill for the E2E janitor and the reaps off Windows; on Windows, once the pty host\'s Stop is registered, the reaps stop by identity',
   },
+  'src/main/remote/helper/host-command.ts': {
+    primitives: ['process-kill'],
+    reason: 'runs on an SSH host and signals only the process group of the child it spawned itself, whose handle is still held, so the pid cannot have been reused',
+  },
   'src/main/pty/process-tag/win32-reader.ts': {
     primitives: ['terminate-process'],
     reason: 'terminates only through a handle whose creation time it re-read',
