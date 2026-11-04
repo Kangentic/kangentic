@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Aider
-description: Aider's --message prompt delivery, the permission-mode flags, a per-session --chat-history-file that carries resume, the transcript, the model and the token and cost telemetry, --model and --reasoning-effort, the answer run's usage, and what Aider lacks (hooks, MCP, trust). Built from Aider's docs, not yet run against a real Aider.
+description: Aider's --message prompt delivery, the permission-mode flags, a per-session --chat-history-file that carries resume, the transcript, the model and the token and cost telemetry, --model and --reasoning-effort, the answer run's usage, and what Aider lacks (hooks, MCP, trust). Built from Aider's docs, with its flags checked against a real --help capture and no Aider session run yet.
 tags: [agents, adapter, aider]
 sources:
   - resource: src/main/agent/adapters/aider/aider-adapter.ts
@@ -18,12 +18,11 @@ sources:
 ---
 # Aider
 
-Every behavior on this page comes from Aider's published docs and source. Aider is not installed
-on the machine this was built on, so none of it has been run against a real Aider yet. See
-[Built from documentation](#built-from-documentation) for the list.
+Every behavior on this page comes from Aider's published docs and source. The flags are checked
+against a real `aider --help` from Aider 0.86.2, but no Aider session has been run against any of
+it. See [Built from documentation](#built-from-documentation) for the list.
 
-The version referenced throughout is Aider v0.86.1, the newest release in
-[HISTORY](https://aider.chat/HISTORY.html). The sources are:
+The docs and source referenced throughout are Aider v0.86.1. The sources are:
 - the [options reference](https://aider.chat/docs/config/options.html)
 - [in-chat commands](https://aider.chat/docs/usage/commands.html)
 - [notifications](https://aider.chat/docs/usage/notifications.html)
@@ -33,7 +32,7 @@ The version referenced throughout is Aider v0.86.1, the newest release in
 
 ## CLI Detection
 
-Detection is inlined in the adapter (no separate detector class): check `config.agent.cliPaths.aider`, fall back to `PATH` via `which`, run `aider --version`. The version output (`aider 86.2`) is parsed to strip the product name prefix.
+Detection is the shared `AgentDetector`: check `config.agent.cliPaths.aider`, fall back to `PATH` via `which`, run `aider --version`. The version output (`aider 86.2`) is parsed to strip the product name prefix.
 
 ## Command Building
 
@@ -115,9 +114,6 @@ When both cache fields are present, the `Cost:` half lands on its own line witho
   table is not allowed (`cli-features-over-custom-layers.md`).
 - No **rate limits** are reported, because Aider prints none.
 
-Before this per-session file, the history reader never attached to an Aider session. Aider had no
-session id at spawn and nothing captured one, so this card was empty.
-
 ### Transcript
 
 `parseTranscript` (`transcript-parser.ts`) splits the file the way Aider's own reader,
@@ -130,7 +126,9 @@ session id at spawn and nothing captured one, so this card was empty.
 On top of that:
 
 - Everything between a run's header and its first `####` is skipped. That is the command line and
-  the announcements.
+  the announcements. A multi-line `--message` holding a `#### ` line (a markdown heading in the
+  task) spills it bare there, so the skip ends early and the rest of the spill reads as turns.
+  Aider's own reader splits it the same way.
 - A user line starting with `/` is a `command` entry, and the tool output after it is its
   `command_output`. `/ask`, `/code`, `/architect` and `/context` with text stay user turns, as
   messages sent in that mode.

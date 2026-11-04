@@ -31,6 +31,16 @@ afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
+/** Each entry as its kind and its text, for a whole-conversation comparison. */
+function shapeOf(entries: ReturnType<typeof parseAiderHistoryMarkdown>): Array<[string, string]> {
+  return entries.map((entry): [string, string] => {
+    if (entry.kind === 'assistant') return ['assistant', entry.blocks.map((block) => ('text' in block ? block.text : '')).join('')];
+    if (entry.kind === 'system') return [`system:${entry.subtype}`, entry.text];
+    if (entry.kind === 'user') return ['user', entry.text];
+    return [entry.kind, ''];
+  });
+}
+
 /** A working directory holding `content` as the session's history file. */
 function writeSessionHistory(content: string): string {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-aider-transcript-'));
@@ -41,15 +51,7 @@ function writeSessionHistory(content: string): string {
 
 describe('parseAiderHistoryMarkdown', () => {
   it('turns a restored two-run file into turns, commands and a run boundary', () => {
-    const entries = parseAiderHistoryMarkdown(FIXTURE, SESSION_ID);
-    const shapes = entries.map((entry) => {
-      if (entry.kind === 'assistant') return ['assistant', entry.blocks.map((block) => ('text' in block ? block.text : '')).join('')];
-      if (entry.kind === 'system') return [`system:${entry.subtype}`, entry.text];
-      if (entry.kind === 'user') return ['user', entry.text];
-      return [entry.kind, ''];
-    });
-
-    expect(shapes).toEqual([
+    expect(shapeOf(parseAiderHistoryMarkdown(FIXTURE, SESSION_ID))).toEqual([
       ['user', '<task>\n<title>Add a health check</title>\n</task>'],
       ['assistant', "I'll add a `/health` route to `server.py`.\n\nserver.py\n```python\n@app.get(\"/health\")\ndef health():\n    return {\"status\": \"ok\"}\n```"],
       ['system:session_boundary', 'Aider chat started at 2026-11-03 10:40:11'],
@@ -96,14 +98,7 @@ describe('parseAiderHistoryMarkdown', () => {
   it('parses the older single-run history: turns in order, the /run as a command, no usage lines', () => {
     const older = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-chat-history.md'), 'utf-8');
     const entries = parseAiderHistoryMarkdown(older, SESSION_ID);
-    const shapes = entries.map((entry) => {
-      if (entry.kind === 'assistant') return ['assistant', entry.blocks.map((block) => ('text' in block ? block.text : '')).join('')];
-      if (entry.kind === 'system') return [`system:${entry.subtype}`, entry.text];
-      if (entry.kind === 'user') return ['user', entry.text];
-      return [entry.kind, ''];
-    });
-
-    expect(shapes).toEqual([
+    expect(shapeOf(entries)).toEqual([
       ['user', 'Add a hello world function'],
       ['assistant', "Here's the hello world function:\n\n```python\ndef hello():\n    print(\"Hello, world!\")\n```\n\nI've added a `hello()` function to `main.py`."],
       ['user', 'Now add unit tests for the hello function'],
@@ -200,5 +195,7 @@ describe('aiderTranscriptUsage', () => {
     const adapter = new AiderAdapter();
     expect(await adapter.transcriptUsage({ agentSessionId: SESSION_ID, cwd })).toEqual({ inputTokens: 8500, outputTokens: 350 });
     expect(await adapter.transcriptUsage({ agentSessionId: null, cwd })).toBeNull();
+    expect(await adapter.transcriptUsage({ agentSessionId: SESSION_ID, cwd: null })).toBeNull();
+    expect(await adapter.transcriptUsage({ agentSessionId: SESSION_ID, cwd: undefined })).toBeNull();
   });
 });

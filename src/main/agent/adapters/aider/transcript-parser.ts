@@ -3,7 +3,7 @@ import type { ParsedTranscript } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { aiderHistoryPath } from './history-paths';
-import { AIDER_SESSION_HEADER, parseTokensReport, stripBlockquote, summarizeAiderHistory } from './chat-history-markdown';
+import { AIDER_SESSION_HEADER, isBareCostLine, parseTokensReport, stripBlockquote, summarizeAiderHistory } from './chat-history-markdown';
 
 /**
  * Aider's chat history markdown as a structured conversation.
@@ -32,6 +32,10 @@ import { AIDER_SESSION_HEADER, parseTokensReport, stripBlockquote, summarizeAide
  * that writes a `#### ` heading or a `> ` quote line splits there: the heading
  * reads as a user turn and the quote as tool output. Aider restores such a
  * reply the same way, and the file carries nothing else to tell them apart.
+ * The preamble skip has the same limit: a multi-line `--message` holding a
+ * `#### ` line (a markdown heading in a task description) spills that line
+ * bare into the logged command line, so the preamble ends there, the heading
+ * reads as a user turn and the rest of the spill as a reply.
  *
  * The file records no time per entry, only each run's start in local time, so
  * every entry carries `ts: 0` (`transcriptHasTimestamps` is false). Uuids are
@@ -139,7 +143,7 @@ export function parseAiderHistoryMarkdown(text: string, conversationId: string, 
     }
     // The `Cost:` half of a `Tokens:` report with both cache fields arrives on
     // its own line without the `> ` (tool_output quotes only the first line).
-    if (previousWasTokensReport && /^Cost:\s/.test(line)) {
+    if (previousWasTokensReport && isBareCostLine(line)) {
       append('tool', lineIndex, line.trimEnd());
       previousWasTokensReport = false;
       continue;

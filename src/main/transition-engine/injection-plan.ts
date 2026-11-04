@@ -465,8 +465,9 @@ export function buildCommandInjectionVerifier(
     // yet, so this poll simply has no answer. Reporting "not confirmed" lets
     // the caller keep retrying rather than treating it as a hard failure.
     //
-    // An adapter whose history is keyed by cwd alone (Aider, which has no
-    // session id at all) opts out of the id requirement - otherwise its
+    // An adapter whose history can be keyed by cwd alone (Aider, whose
+    // Command Terminal sessions have no id and share the folder's default
+    // history file) opts out of the id requirement - otherwise its
     // verifier could never confirm, and a verifier that always says no is
     // worse than none: the burst still retries and then reports `failed`
     // where it would previously have stayed silently `unconfirmed`.

@@ -17,7 +17,8 @@
  *   levels a model refuses. A column's effort override still reaches the CLI
  *   through `buildCommand`.
  *
- * Built from the docs; not run against an installed Aider.
+ * The `--help` parse is checked against a real Aider 0.86.2 capture
+ * (`tests/fixtures/aider-help-0.86.2.txt`). No Aider session has been run.
  */
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
@@ -51,9 +52,15 @@ async function readHelp(cliPath: string, target: CliTarget | null): Promise<stri
   return (await execFileAsync(cliPath, ['--help'], options)).stdout;
 }
 
-/** Whether `aider --help` text documents `--model`. */
+/**
+ * Whether `aider --help` text defines `--model`: a help line that opens with
+ * the flag (`  --model MODEL   Specify the model ...`). Other flags' help
+ * mentions it too ("default depends on --model", "deprecated, use --model"),
+ * and those mentions must not count, or a CLI that dropped the flag would
+ * still report an override.
+ */
 export function helpListsModelFlag(helpText: string): boolean {
-  return /(?:^|\s)--model\b(?!-)/m.test(helpText);
+  return /^[ \t]*--model(?=[\s,=]|$)/m.test(helpText);
 }
 
 /**

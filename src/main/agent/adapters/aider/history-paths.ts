@@ -1,6 +1,4 @@
-import path from 'node:path';
-
-/**
+/*
  * Where an Aider session's chat history lives.
  *
  * Aider has no session id of its own. It writes one markdown chat history,
@@ -22,6 +20,9 @@ import path from 'node:path';
  * is caller-owned) keeps Aider's default file, shared by every Aider run in that
  * directory.
  */
+import path from 'node:path';
+
+/** Aider's own history file name, which every run in a directory shares. */
 export const AIDER_DEFAULT_HISTORY_FILE = '.aider.chat.history.md';
 
 /**

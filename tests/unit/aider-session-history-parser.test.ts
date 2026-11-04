@@ -338,7 +338,7 @@ describe('AiderSessionHistoryParser', () => {
       expect(result.usage!.contextWindow.usedTokens).toBe(3200);
       expect(result.usage!.contextWindow.cacheTokens).toBe(3500); // 1500 + 2000
 
-      // This capture holds no announcement.
+      // This fixture holds no announcement.
       expect(result.usage!.model).toBeUndefined();
       expect(result.events).toEqual([]);
       expect(result.activity).toBeNull();

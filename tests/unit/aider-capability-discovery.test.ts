@@ -53,14 +53,14 @@ import { AiderAdapter } from '../../src/main/agent/adapters/aider';
 const AIDER_HELP = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-help-0.86.2.txt'), 'utf-8');
 
 /**
- * The real help with every line that names `--model` itself removed, so only
- * the flags that merely start with it are left (`--models`,
- * `--model-settings-file`, `--model-metadata-file`, and the deprecated model
- * switches' "use --model" text).
+ * The real help with the `--model MODEL` option and usage lines removed. What
+ * is left still names the flag: the flags that start with it (`--models`,
+ * `--model-settings-file`, `--model-metadata-file`), and other flags' help
+ * that mentions it ("default depends on --model", "deprecated, use --model").
  */
 const HELP_WITHOUT_MODEL = AIDER_HELP
   .split('\n')
-  .filter((line) => !/--model MODEL\b/.test(line) && !/use --model\)/.test(line) && !/^\s*--model\)/.test(line) && !/depends on --model\)/.test(line))
+  .filter((line) => !/--model MODEL\b/.test(line))
   .join('\n');
 
 type ExecCallback = (error: Error | null, result?: { stdout: string; stderr: string }) => void;
@@ -112,7 +112,9 @@ describe('helpListsModelFlag', () => {
     expect(helpListsModelFlag(AIDER_HELP)).toBe(true);
   });
 
-  it('does not take --models or --model-settings-file for it', () => {
+  it('does not take --models, --model-settings-file or another flag mentioning --model for it', () => {
+    expect(HELP_WITHOUT_MODEL).toMatch(/depends on --model\)/);
+    expect(HELP_WITHOUT_MODEL).toMatch(/use --model\)/);
     expect(helpListsModelFlag(HELP_WITHOUT_MODEL)).toBe(false);
   });
 });
@@ -156,6 +158,17 @@ describe('discoverAiderCapabilities', () => {
     expect(probeCallCount()).toBe(1);
     expect(first).toEqual(second);
     expect(first.supportsModelOverride).toBe(true);
+  });
+
+  it('shares the in-flight probe even when a concurrent call passes forceRefresh', async () => {
+    respondWith(AIDER_HELP);
+    const [plain, forced] = await Promise.all([
+      discoverAiderCapabilities('/usr/bin/aider'),
+      discoverAiderCapabilities('/usr/bin/aider', true),
+    ]);
+    expect(probeCallCount()).toBe(1);
+    expect(plain.supportsModelOverride).toBe(true);
+    expect(forced.supportsModelOverride).toBe(true);
   });
 
   it('probes again on forceRefresh once the shared probe has settled', async () => {
