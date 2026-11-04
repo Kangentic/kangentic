@@ -14,8 +14,13 @@ name: macOS spawn-helper
 # unsigned app, build/afterSign.js on the signed one), but a failure at that
 # point costs a release.
 #
+# The job also runs a spawn's typed launch through real zsh: macOS keeps 1024
+# bytes of a line a shell is not yet reading, and only a Mac's tty has that
+# limit (tests/unit/typed-launch-round-trip.test.ts). It shares this job so a
+# real node-pty session on macOS costs no second macOS slot (test-value.md).
+#
 # Path-filtered, and deliberately NOT a required check: ci.yml runs at the job
-# cap (see the note at the top of that file), and this only has something to say when the helper, its gates, or node-pty change.
+# cap (see the note at the top of that file), and this only has something to say when the helper, its gates, node-pty, or the typed launch change.
 # package-lock.json is in the filter because a node-pty bump is the change most
 # likely to break the helper's contract.
 
@@ -28,6 +33,8 @@ on:
       - 'build/afterPack.js'
       - 'build/afterSign.js'
       - 'package-lock.json'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'tests/unit/typed-launch-round-trip.test.ts'
       - '.github/workflows/macos-spawn-helper.yml'
   push:
     branches: [main]
@@ -37,6 +44,8 @@ on:
       - 'build/afterPack.js'
       - 'build/afterSign.js'
       - 'package-lock.json'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'tests/unit/typed-launch-round-trip.test.ts'
       - '.github/workflows/macos-spawn-helper.yml'
   workflow_dispatch:
 
@@ -86,3 +95,12 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Compile and verify the spawn-helper
         run: node build/install-spawn-helper.js --self-test
+      # --ignore-scripts skipped node-pty's own step that marks its shipped helper
+      # executable, and a real PTY spawns through it.
+      - name: Make node-pty's spawn-helper executable
+        run: chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+      - name: Run a typed launch through real zsh
+        # A missing zsh fails the run instead of skipping it.
+        env:
+          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: zsh
+        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts

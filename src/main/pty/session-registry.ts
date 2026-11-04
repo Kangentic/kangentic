@@ -117,6 +117,10 @@ export interface ManagedSession {
    * a shell slow to reach the agent command is not ended as agentless.
    */
   agentStartObservedAt?: number | null;
+  /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
+  typedLineBytes?: number | null;
+  /** The typed line sourced a launcher file instead of carrying the command. */
+  launcherUsed?: boolean;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at

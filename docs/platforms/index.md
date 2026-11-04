@@ -11,7 +11,7 @@
 ## Per-OS behavior
 
 * [Windows](windows.md) - Windows-only behavior: the AUMID that ties the taskbar icon to the installer shortcut, core.longpaths for worktrees, why MAX_PATH rarely binds and where it does (ninja, CMake), and how CHROME_CRASHPAD_PIPE_NAME is kept from terminal children.
-* [macOS](macos.md) - macOS-only behavior: the hidden title bar and traffic lights, hardened runtime entitlements and notarization, and the custom node-pty spawn-helper that clears mach exception ports so terminal children do not report crashes to Kangentic's Crashpad.
+* [macOS](macos.md) - macOS-only behavior: the hidden title bar and traffic lights, hardened runtime entitlements and notarization, the custom node-pty spawn-helper that clears mach exception ports so terminal children do not report crashes to Kangentic's Crashpad, and the 1024-byte limit on a line typed into a shell that is still starting.
 
 ## Failure recovery
 

@@ -96,7 +96,7 @@ sessions bypass all of this (not task agents).
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
      - The host runs the output handler (16ms batched flush, 512KB scrollback)
-     - After 100ms delay, write CLI command to PTY stdin, prefixed with the shell's own clear via `buildSpawnClearPrelude` (every typed command launches an agent, a transient session's included: a Command Terminal or a workflow's agent)
+     - After 100ms delay, write CLI command to PTY stdin (a command past the typed-line budget goes in a launcher file the typed line sources, see [A command too long to type](../../platforms/shells-and-paths.md#a-command-too-long-to-type)), prefixed with the shell's own clear via `buildSpawnClearPrelude` (every typed command launches an agent, a transient session's included: a Command Terminal or a workflow's agent)
 
 ## An agent started during the setup script
 
