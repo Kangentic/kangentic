@@ -4896,6 +4896,21 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    /**
+     * Type a query into the Earlier search and make sure it landed there. `fill` focuses the
+     * field and then inserts text into whatever holds focus, and the terminal beside the rail
+     * takes its own arrival focus a frame or more after it mounts (deferred init, scrollback
+     * replay). When that lands between the two, the query is typed into the terminal and the
+     * field stays empty. The query is retried until the field holds it.
+     */
+    async function typeEarlierQuery(page: Page, query: string): Promise<void> {
+      const field = page.getByTestId('command-terminal-earlier-search');
+      await expect(async () => {
+        await field.fill(query);
+        await expect(field).toHaveValue(query, { timeout: 1000 });
+      }).toPass({ timeout: 10_000 });
+    }
+
     test('a different query drops the last answer\'s text rows and searches again; typing on keeps them', async () => {
       const entries = [
         { agentSessionId: 'by-text', agentName: 'claude', label: 'Fix the save hotkey', firstPrompt: null, endedAt: new Date().toISOString() },
@@ -4903,21 +4918,23 @@ test.describe('Command Terminal', () => {
       const { browser, page } = await launchWithState(earlierPreConfig(entries));
       try {
         await openWithOneTerminal(page);
+        // The terminal's xterm is built in the init that also focuses it, so once it is
+        // there the focus grab is done or one frame away.
+        await expect(page.getByTestId('command-terminal-window').locator('.xterm')).toBeVisible();
         await seedSearch(page, { __mockCommandTerminalHistoryText: { 'by-text': 'goes out in the next release' } });
-        const field = page.getByTestId('command-terminal-earlier-search');
-        await field.fill('rele');
+        await typeEarlierQuery(page, 'rele');
         await expect(page.locator('[data-agent-session-id="by-text"] mark')).toHaveText('rele');
 
         // Typing on: the row stays while main is asked again.
         await seedSearch(page, { __mockHoldCommandTerminalHistorySearch: true });
-        await field.fill('release');
+        await typeEarlierQuery(page, 'release');
         await expect(page.locator('[data-agent-session-id="by-text"]')).toBeVisible();
         await page.waitForFunction(() => typeof (window as unknown as { __mockReleaseCommandTerminalHistorySearch?: unknown }).__mockReleaseCommandTerminalHistorySearch === 'function');
         await page.evaluate(() => (window as unknown as { __mockReleaseCommandTerminalHistorySearch: () => void }).__mockReleaseCommandTerminalHistorySearch());
         await expect(page.locator('[data-agent-session-id="by-text"] mark')).toHaveText('release');
 
         // Another word: the old row goes at once and the search line shows.
-        await field.fill('hotkeyz');
+        await typeEarlierQuery(page, 'hotkeyz');
         await expect(page.locator('[data-agent-session-id="by-text"]')).toHaveCount(0);
         await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
       } finally {
