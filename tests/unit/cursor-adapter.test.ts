@@ -635,6 +635,17 @@ describe('CursorAdapter', () => {
       expect(cachedCursorModelDisplayName('other-id')).toBeNull();
     });
 
+    it.each([
+      ['an unquoted id at the end', 'agent --trust "do it" --model gpt-5'],
+      ['an unquoted id before the print output format', 'agent --trust "do it" --model gpt-5 --output-format stream-json'],
+    ])('reads the id of a hand-written command with %s', (_label, command) => {
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'gpt-5', displayName: 'gpt-5' });
+    });
+
+    it('is null when --model is not the last flag', () => {
+      expect(adapter.configuredModelFromCommand('agent --model gpt-5 "prompt"')).toBeNull();
+    });
+
     it('is null for a command with no model, even when its prompt mentions --model', () => {
       expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ prompt: 'go' })))).toBeNull();
       expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ prompt: 'try --model gpt-5', shell: 'bash' })))).toBeNull();
