@@ -156,11 +156,11 @@ describe('convertHtmlToMarkdown', () => {
 
   it('handles a realistic Azure DevOps bug description', () => {
     const html = `<div>The following ticket:<br>
-<ul><li><a href="https://dev.azure.com/OCC/_workitems/edit/462188">Bug 462188</a>: Legacy Wells have Missing Locations</li></ul>
+<ul><li><a href="https://dev.azure.com/ACME/_workitems/edit/1001">Bug 1001</a>: Legacy records have missing fields</li></ul>
 Does <strong>NOT</strong> appear in the release notes.</div>`;
     const result = convertHtmlToMarkdown(html);
-    expect(result).toContain('[Bug 462188](https://dev.azure.com/OCC/_workitems/edit/462188)');
+    expect(result).toContain('[Bug 1001](https://dev.azure.com/ACME/_workitems/edit/1001)');
     expect(result).toContain('**NOT**');
-    expect(result).toContain('- [Bug 462188](https://dev.azure.com/OCC/_workitems/edit/462188): Legacy Wells have Missing Locations');
+    expect(result).toContain('- [Bug 1001](https://dev.azure.com/ACME/_workitems/edit/1001): Legacy records have missing fields');
   });
 });

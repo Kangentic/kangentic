@@ -294,7 +294,7 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
 
   it('(i) seeds new project with the overridable subset from the most-recently-opened project', async () => {
     // The previous project has a full config that also contains importSources and
-    // browser - mimicking the real TWC-Website leak scenario.
+    // browser - mimicking the real leak scenario.
     const previousProject = makeProject({
       id: 'proj-previous',
       path: '/mock/projects/previous',
@@ -310,8 +310,8 @@ describe('getLastProjectOverrides (via PROJECT_CREATE handler)', () => {
       agent: { permissionMode: 'acceptEdits' },
       git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
       // Non-overridable keys that must be dropped:
-      importSources: [{ id: 'e83c7746', source: 'azure_devops', label: 'OCC / 2026-06' }],
-      browser: { defaultUrl: 'http://troyweb.com/' },
+      importSources: [{ id: 'e83c7746', source: 'azure_devops', label: 'ACME / 2026-06' }],
+      browser: { defaultUrl: 'http://example.com/' },
     };
 
     const context = makeContext(

@@ -86,7 +86,7 @@ describe('detectCrossProjectMention', () => {
   });
 
   it('does not fire when no registered project is mentioned', () => {
-    const resolver = makeResolver([{ name: 'TWC-Website' }]);
+    const resolver = makeResolver([{ name: 'Acme-Website' }]);
     expect(detectCrossProjectMention(resolver, 'fix the broken login form')).toEqual([]);
   });
 
@@ -98,9 +98,9 @@ describe('detectCrossProjectMention', () => {
   });
 
   it('escapes regex metacharacters and matches case-insensitively', () => {
-    const resolver = makeResolver([{ name: 'OCC-RBDMS-OKIES' }]);
-    expect(detectCrossProjectMention(resolver, 'add a bug to the occ-rbdms-okies board')).toEqual([
-      'OCC-RBDMS-OKIES',
+    const resolver = makeResolver([{ name: 'ACME-WEB-PORTAL' }]);
+    expect(detectCrossProjectMention(resolver, 'add a bug to the acme-web-portal board')).toEqual([
+      'ACME-WEB-PORTAL',
     ]);
   });
 
@@ -121,11 +121,11 @@ describe('detectCrossProjectMention', () => {
   });
 
   it('returns each matched project once even when mentioned repeatedly', () => {
-    const resolver = makeResolver([{ name: 'Agent Testing' }, { name: 'TWC-Website' }]);
+    const resolver = makeResolver([{ name: 'Agent Testing' }, { name: 'Acme-Website' }]);
     const result = detectCrossProjectMention(
       resolver,
-      'move Agent Testing work to TWC-Website and keep Agent Testing in sync',
+      'move Agent Testing work to Acme-Website and keep Agent Testing in sync',
     );
-    expect(result).toEqual(['Agent Testing', 'TWC-Website']);
+    expect(result).toEqual(['Agent Testing', 'Acme-Website']);
   });
 });

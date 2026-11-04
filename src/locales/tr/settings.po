@@ -878,8 +878,9 @@ msgid "Couldn't save shortcuts"
 msgstr "Kısayollar kaydedilemedi"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save Stop script"
-msgstr ""
+msgstr "Durdurma betiği kaydedilemedi"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1342,8 +1343,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Yüksek efor daha yavaş yanıt verir ve birçok görevdeki sayımlara yardımcı olabilir; özetler her zaman ajanın varsayılanını kullanır."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold prompt for script"
-msgstr ""
+msgstr "İstemi betik için beklet"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1443,8 +1445,9 @@ msgid "How the relay works"
 msgstr "Röle nasıl çalışır"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr ""
+msgstr "Bu projenin, görevden kalan işlemleri nasıl durduracağı."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1868,9 +1871,10 @@ msgid "Not found"
 msgstr "Bulunamadı"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
+#, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr ""
+msgstr "Ayarlanmadı"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2575,8 +2579,8 @@ msgstr "Terminal panelini panonun altında göster"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Yönetici atlama yetkiniz bir PR'ı gerekli incelemeyi atlayarak birleştirebiliyorsa onu hazır gösterir; başarısız bir denetimi asla atlamaz."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Gerekli incelemesini atlayabildiğiniz bir PR'ı hazır gösterir; başarısız bir denetimi asla atlamaz."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2649,8 +2653,9 @@ msgstr "Artakalan işlemleri durdur"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Stop script"
-msgstr ""
+msgstr "Durdurma betiği"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2658,8 +2663,9 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "Görevi tamamlandığında, Yapılacaklar'a döndüğünde veya silindiğinde ya da Komut Terminali sona erdiğinde ajanın klasöründe çalışır bıraktığı şeyleri durdur."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr ""
+msgstr "Görevin boşta kalma veya düşük bellek duraklatmasından sonra ya da bitmeden önce çalışır durumda bıraktıklarını durdurur; kangentic.json dosyasına kaydedilir."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2764,8 +2770,9 @@ msgid "Test connection"
 msgstr "Bağlantıyı test et"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr ""
+msgstr "Ajan ilk istemini, betik çalışırken hemen değil, betik başarılı olduğunda alır."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

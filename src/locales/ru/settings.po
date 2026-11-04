@@ -878,8 +878,9 @@ msgid "Couldn't save shortcuts"
 msgstr "Не удалось сохранить ярлыки"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save Stop script"
-msgstr ""
+msgstr "Не удалось сохранить скрипт остановки"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1342,8 +1343,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Чем выше уровень усилий, тем медленнее ответы, но точнее подсчёты по многим задачам; сводки всегда используют уровень агента по умолчанию."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold prompt for script"
-msgstr ""
+msgstr "Удерживать промпт до конца скрипта"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1443,8 +1445,9 @@ msgid "How the relay works"
 msgstr "Как работает ретранслятор"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr ""
+msgstr "Как проект завершает процессы, оставшиеся после задачи."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1868,9 +1871,10 @@ msgid "Not found"
 msgstr "Не найден"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
+#, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr ""
+msgstr "Не задано"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2575,8 +2579,8 @@ msgstr "Показывать панель терминала под доской
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Показывать PR как готовый, если обход администратора позволяет слить его без обязательного ревью, но не при проваленной проверке."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Показывать PR как готовый, если вы можете обойти обязательное ревью, но не при проваленной проверке."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2649,8 +2653,9 @@ msgstr "Останавливать оставшиеся процессы"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Stop script"
-msgstr ""
+msgstr "Скрипт остановки"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2658,8 +2663,9 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "Останавливать то, что агент оставил запущенным в своей папке, когда задача выполнена, возвращена в To Do или удалена либо когда завершается её командный терминал."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr ""
+msgstr "Останавливает то, что задача оставила запущенным, после паузы из-за простоя или нехватки памяти или перед завершением. Сохраняется в kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2764,8 +2770,9 @@ msgid "Test connection"
 msgstr "Проверить подключение"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr ""
+msgstr "Агент получает первый промпт после успешного выполнения скрипта, а не сразу, пока скрипт ещё работает."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

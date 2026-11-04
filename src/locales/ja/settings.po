@@ -878,8 +878,9 @@ msgid "Couldn't save shortcuts"
 msgstr "ショートカットを保存できませんでした"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save Stop script"
-msgstr ""
+msgstr "停止スクリプトを保存できませんでした"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1342,8 +1343,9 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "エフォートを高くすると回答は遅くなりますが、多数のタスクにまたがる集計に役立つ場合があります。要約には常にエージェントの既定値が使われます。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold prompt for script"
-msgstr ""
+msgstr "スクリプト完了までプロンプトを保留"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1443,8 +1445,9 @@ msgid "How the relay works"
 msgstr "リレーの仕組み"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr ""
+msgstr "タスクが実行したまま残したものをプロジェクトで停止する方法。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -1868,9 +1871,10 @@ msgid "Not found"
 msgstr "見つかりません"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
+#, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr ""
+msgstr "未設定"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2575,8 +2579,8 @@ msgstr "ボードの下にターミナルパネルを表示"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "管理者バイパスで必須レビューを越えてマージできる PR を準備完了として表示します。失敗したチェックは越えません。"
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "必須レビューをバイパスできる PR を準備完了として表示します。失敗したチェックは越えません。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2649,8 +2653,9 @@ msgstr "残存プロセスを停止"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Stop script"
-msgstr ""
+msgstr "停止スクリプト"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2658,8 +2663,9 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "タスクの完了時、To Do への戻し時、削除時、またはコマンドターミナルの終了時に、エージェントがフォルダーで実行したままのものを停止します。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr ""
+msgstr "アイドル時やメモリ不足による一時停止の後、またはタスクの完了前に、タスクが実行したまま残したものを停止します。kangentic.json に保存されます。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2764,8 +2770,9 @@ msgid "Test connection"
 msgstr "接続をテスト"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr ""
+msgstr "スクリプトの実行中にすぐ送信するのではなく、スクリプトの成功後にエージェントへ最初のプロンプトを送信します。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
