@@ -181,6 +181,13 @@ describe('CursorStreamParser', () => {
     ]);
   });
 
+  it('ends the turn on a result line that carries no duration_ms', () => {
+    const parser = new CursorStreamParser();
+    parser.parseTelemetry(`${initLine}\n`);
+    const result = parser.parseTelemetry(`${JSON.stringify({ type: 'result', subtype: 'success' })}\n`);
+    expect(result?.events).toEqual([expect.objectContaining({ type: EventType.Idle })]);
+  });
+
   // A session screen's TUI text goes through the same parser. A result line
   // with no init before it is the agent's own answer quoting one, not a run.
   it('ends no turn on a result line that no init line opened', () => {

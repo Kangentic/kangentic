@@ -74,6 +74,9 @@ type WslFolderHooks = ReturnType<typeof prepareWslHookTransport>;
  */
 export const CURSOR_HOOK_EVENTS_ENV = 'KANGENTIC_EVENTS_PATH_INTERACTIVE';
 
+/** The value `CURSOR_HOOK_EVENTS_ENV` holds for a Cursor in a WSL distro, where the commands only test it. */
+export const CURSOR_WSL_HOOK_FLAG = '1';
+
 /** The folder copy of the WSL hook transport's script a Cursor in a WSL distro runs its hooks with. */
 export const CURSOR_WSL_HOOK_COPY_NAME = 'cursor-wsl-hook.sh';
 
@@ -82,6 +85,15 @@ export interface CursorWslHooks {
   place: CliPlace;
   sessionDirectory: string;
 }
+
+/** What the WSL commands are built from: the transport's paths with the folder's script copy, and the distro. */
+interface CursorWslTransport {
+  folderHooks: WslFolderHooks;
+  place: CliPlace;
+}
+
+/** How the hook commands are handed to a shell on Windows: PowerShell, per Cursor's hooks docs. */
+export const CURSOR_HOOK_SHELL: HookShell = 'sh-or-powershell';
 
 /**
  * Builds one hook's command from its event type and directives, and the JSON
@@ -121,9 +133,6 @@ function wslTransportCommandBuilder(folderHooks: WslFolderHooks, place: CliPlace
   };
 }
 
-/** How the hook commands are handed to a shell on Windows: PowerShell, per Cursor's hooks docs. */
-export const CURSOR_HOOK_SHELL: HookShell = 'sh-or-powershell';
-
 /** Seconds each hook may run. The bridge appends one line and exits. */
 const CURSOR_HOOK_TIMEOUT_SECONDS = 10;
 
@@ -158,31 +167,30 @@ type JsonObject = Record<string, unknown>;
  */
 export function buildCursorHookCommands(
   eventBridge: string,
-  wsl: { folderHooks: WslFolderHooks; place: CliPlace } | null = null,
+  wsl: CursorWslTransport | null = null,
 ): Record<string, string> {
-  const buildWithReply = wsl ? wslTransportCommandBuilder(wsl.folderHooks, wsl.place) : nodeBridgeCommandBuilder(eventBridge);
-  const silentCommand = (eventType: string, ...directives: string[]): string => buildWithReply(eventType, directives, null);
+  const buildHookCommand = wsl ? wslTransportCommandBuilder(wsl.folderHooks, wsl.place) : nodeBridgeCommandBuilder(eventBridge);
+  const silentCommand = (eventType: string, ...directives: string[]): string => buildHookCommand(eventType, directives, null);
   // Every tool hook carries `tool_name` and `tool_use_id` (hooks docs, preToolUse
   // and postToolUse inputs), so a start and its end pair by id.
   const toolDirectives = [extractTool('tool_name'), extractToolId(['tool_use_id'])];
-  const hookEvent = CURSOR_HOOK_EVENTS;
   return {
-    [hookEvent.sessionStart]: silentCommand(EventType.SessionStart),
-    [hookEvent.sessionEnd]: silentCommand(EventType.SessionEnd),
-    [hookEvent.beforeSubmitPrompt]: buildWithReply(EventType.Prompt, [], { continue: true }),
-    [hookEvent.preToolUse]: silentCommand(EventType.ToolStart, ...toolDirectives),
-    [hookEvent.postToolUse]: silentCommand(EventType.ToolEnd, ...toolDirectives),
-    [hookEvent.postToolUseFailure]: silentCommand(EventType.ToolEnd, ...toolDirectives),
+    [CURSOR_HOOK_EVENTS.sessionStart]: silentCommand(EventType.SessionStart),
+    [CURSOR_HOOK_EVENTS.sessionEnd]: silentCommand(EventType.SessionEnd),
+    [CURSOR_HOOK_EVENTS.beforeSubmitPrompt]: buildHookCommand(EventType.Prompt, [], { continue: true }),
+    [CURSOR_HOOK_EVENTS.preToolUse]: silentCommand(EventType.ToolStart, ...toolDirectives),
+    [CURSOR_HOOK_EVENTS.postToolUse]: silentCommand(EventType.ToolEnd, ...toolDirectives),
+    [CURSOR_HOOK_EVENTS.postToolUseFailure]: silentCommand(EventType.ToolEnd, ...toolDirectives),
     // `subagent_id` and `subagent_type` are subagentStart's inputs. subagentStop
     // carries the type but no id, so its stop is counted rather than matched.
     // The type keeps its detail non-empty, since the engine reads an empty
     // detail as a subagent's inner-loop stop and ignores it.
-    [hookEvent.subagentStart]: silentCommand(EventType.SubagentStart, extractSubagentId(['subagent_id']), extractDetail(['subagent_type'])),
-    [hookEvent.subagentStop]: silentCommand(EventType.SubagentStop, extractDetail(['subagent_type'])),
-    [hookEvent.preCompact]: silentCommand(EventType.Compact),
+    [CURSOR_HOOK_EVENTS.subagentStart]: silentCommand(EventType.SubagentStart, extractSubagentId(['subagent_id']), extractDetail(['subagent_type'])),
+    [CURSOR_HOOK_EVENTS.subagentStop]: silentCommand(EventType.SubagentStop, extractDetail(['subagent_type'])),
+    [CURSOR_HOOK_EVENTS.preCompact]: silentCommand(EventType.Compact),
     // "Called when the agent loop ends", with `status` completed, aborted or
     // error. An aborted loop is the user's interrupt, an errored one a failed turn.
-    [hookEvent.stop]: silentCommand(
+    [CURSOR_HOOK_EVENTS.stop]: silentCommand(
       EventType.Idle,
       setTypeWhen({ field: 'status', equals: 'aborted', to: EventType.Interrupted }),
       setTypeWhen({ field: 'status', equals: 'error', to: EventType.TurnFailed }),
@@ -266,7 +274,7 @@ export function writeCursorProjectHooks(
     // A distro's hooks publish into the session's transport folder, through a
     // script copy in the project's `.kangentic/` (one command for every session
     // in the folder; the copy finds each session's folder by its variable).
-    const wslCommands = wsl
+    const wslTransport: CursorWslTransport | null = wsl
       ? {
           folderHooks: {
             ...prepareWslHookTransport(wsl.sessionDirectory),
@@ -275,9 +283,9 @@ export function writeCursorProjectHooks(
           place: wsl.place,
         }
       : null;
-    commands = buildCursorHookCommands(eventBridge ?? toForwardSlash(resolveBridgeScript('event-bridge')), wslCommands);
+    commands = buildCursorHookCommands(eventBridge ?? toForwardSlash(resolveBridgeScript('event-bridge')), wslTransport);
   } catch (error) {
-    console.error(`[cursor] Could not prepare the WSL hook transport; the session runs on terminal activity: ${configPath}`, error);
+    console.error(`[cursor] Could not build the hook commands; the session runs on terminal activity: ${configPath}`, error);
     return false;
   }
   const existingHooks = current.kind === 'usable' ? current.hooks : {};
@@ -319,7 +327,9 @@ export function removeCursorProjectHooks(directory: string): void {
   if (!removedAny) return;
   const remainingHooks: Record<string, unknown[]> = {};
   for (const [eventName, entries] of Object.entries(kept)) {
-    if (entries.length > 0) remainingHooks[eventName] = entries;
+    // A list the user left empty stays, as the write keeps it; one that held
+    // only Kangentic's entries goes with them.
+    if (entries.length > 0 || current.hooks[eventName].length === 0) remainingHooks[eventName] = entries;
   }
   const remaining: JsonObject = { ...current.config };
   if (Object.keys(remainingHooks).length > 0) remaining.hooks = remainingHooks;
@@ -338,17 +348,23 @@ export function removeCursorProjectHooks(directory: string): void {
 }
 
 /**
+ * Whether a parsed line is one of the event bridge's events. The bridge writes
+ * every line with a numeric `ts` and a string `type` and owns the other fields.
+ */
+function isBridgeEvent(value: unknown): value is SessionEvent {
+  return isJsonObject(value) && typeof value.type === 'string' && typeof value.ts === 'number';
+}
+
+/**
  * One events.jsonl line the hooks wrote, as the event bridge wrote it, or null.
- * The bridge writes every line with a numeric `ts` and a string `type`; a line
- * without both is not one of its events.
+ * A line without a numeric `ts` and a string `type` is not one of its events.
  */
 export function parseCursorHookEvent(line: string): SessionEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
     const parsed: unknown = JSON.parse(trimmed);
-    if (!isJsonObject(parsed) || typeof parsed.type !== 'string' || typeof parsed.ts !== 'number') return null;
-    return parsed as unknown as SessionEvent;
+    return isBridgeEvent(parsed) ? parsed : null;
   } catch {
     return null;
   }

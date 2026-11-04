@@ -15,6 +15,7 @@ import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { cachedCursorModelDisplayName, discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
 import {
   CURSOR_HOOK_EVENTS_ENV,
+  CURSOR_WSL_HOOK_FLAG,
   cursorSessionIdFromHook,
   parseCursorHookEvent,
   removeCursorProjectHooks,
@@ -485,7 +486,7 @@ export class CursorAdapter implements AgentAdapter {
       // screen only: everything else leaves it unset and the hooks write nothing.
       // A distro's commands only test it (their transport finds the session's
       // folder itself), so it is a flag there, with no Windows path to cross.
-      ...(cursorHooksWired(options) ? { [CURSOR_HOOK_EVENTS_ENV]: place ? '1' : options.eventsOutputPath } : {}),
+      ...(cursorHooksWired(options) ? { [CURSOR_HOOK_EVENTS_ENV]: place ? CURSOR_WSL_HOOK_FLAG : options.eventsOutputPath } : {}),
       ...(cursorMcpWiringEnabled(options)
         ? {
             [CURSOR_MCP_URL_ENV]: options.mcpServerUrl,
