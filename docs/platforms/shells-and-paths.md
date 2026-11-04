@@ -114,7 +114,10 @@ typed at the prompt, and a suspend ends a Linux Claude by exactly that hangup
 An agent that outlived its suspend would keep editing its worktree. `eval "$(cat <path>)"` keeps
 the agent a job of the interactive shell, so the hangup reaches it as before, and `cat` rather than
 `$(< file)` because dash and sh lack that. fish, nushell and PowerShell still source. The round trip
-hangs each of them up and requires a launched agent to end whenever the same agent typed whole does.
+hangs bash, zsh, fish and nushell up and requires a launched agent to end whenever the same agent
+typed whole does: with `source`, fish and nushell passed it, so only the POSIX family needed
+`eval`. pwsh on macOS or Linux is unmeasured. Its first run never started even the typed-whole
+control, so its `. <path>.ps1` form has had no hangup or round-trip check.
 
 A WSL shell gets the path through `toWslPath`, except a session folder on a Windows share or in
 another distro. WSL cannot read those, so that shell types the whole command: a sourced path that

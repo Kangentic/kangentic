@@ -124,7 +124,10 @@ jobs:
           KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS: '1'
         run: npx vitest run tests/unit/command-builder.test.ts tests/unit/shell-quote.test.ts tests/unit/codex-hook-overrides.test.ts
       # Each shell's launcher form, typed while the shell is in its startup files.
+      # pwsh is left out: its first run here never started even the typed-whole
+      # control, so the rig does not yet work for it, and nothing measured its
+      # launcher. Add it back once its rig starts the stub agent.
       - name: Run a typed launch through each real shell
         env:
-          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: 'bash,zsh,fish,nu,pwsh'
+          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: 'bash,zsh,fish,nu'
         run: npx vitest run tests/unit/typed-launch-round-trip.test.ts
