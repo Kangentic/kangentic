@@ -74,7 +74,11 @@ function runDaemon(): void {
     process.exit(70);
   });
 
+  // host.js sits at <host root>/<version>/app/host.js, so the version's own folder is two levels up. A copy run
+  // from anywhere else (a development build) is not a version of the install and reports none.
+  const programDirectory = path.resolve(path.dirname(process.argv[1] ?? ''), '..');
   const server = new HelperServer({
+    ...(path.basename(path.dirname(programDirectory)) === 'host' ? { programDirectory } : {}),
     coreDeps: {
       resolveAgent: (_sessionId, agentName) => (agentName ? agentRegistry.get(agentName) : undefined),
       // The transcript spool is Phase 2's. Until then a host session keeps no raw transcript.

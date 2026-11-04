@@ -7,6 +7,11 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: es\n"
 
+#. placeholder {0}: program.liveSessions
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #, fuzzy
 msgid "{blurb}. Opens the docs page."
@@ -2244,6 +2249,18 @@ msgstr "Privacidad"
 #, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "Perfila el proceso principal e indica las funciones más pesadas de un bloqueo en el informe del bucle de eventos; consume CPU mientras está activo."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

@@ -180,6 +180,16 @@ export class RemoteHostService {
     return this.helper(hostId, 'pathPresence', { paths });
   }
 
+  /** Which program version the host runs, for how long, with how many terminals, and which versions it holds. */
+  programInfo(hostId: string): Promise<HelperRequestMap['programInfo']['result']> {
+    return this.helper(hostId, 'programInfo', {});
+  }
+
+  /** Remove old program versions from the host. Never the running one, and never one in `keep`. */
+  pruneVersions(hostId: string, keep: string[], olderThanDays: number): Promise<HelperRequestMap['pruneVersions']['result']> {
+    return this.helper(hostId, 'pruneVersions', { keep, olderThanDays });
+  }
+
   private async helper<M extends HelperMethod>(hostId: string, method: M, params: HelperRequestMap[M]['params']): Promise<HelperRequestMap[M]['result']> {
     return await this.deps.send({ op: 'helper', hostId, method, params }) as HelperRequestMap[M]['result'];
   }

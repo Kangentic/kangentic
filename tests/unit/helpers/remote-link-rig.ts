@@ -78,6 +78,8 @@ export interface HelperRigOptions {
   baseEnv?: NodeJS.ProcessEnv;
   /** Where the helper reads the kernel's tables from, for a test with fixture text. */
   procDirectory?: string;
+  /** The helper's own version folder, for a test of the program's version and its pruning. */
+  programDirectory?: string;
 }
 
 /** A helper whose node-pty hands out the queued fakes in order. */
@@ -93,6 +95,7 @@ export function makeHelperRig(fakeCount = 1, options: HelperRigOptions = {}): He
     homeDirectory: options.homeDirectory,
     baseEnv: options.baseEnv,
     procDirectory: options.procDirectory,
+    programDirectory: options.programDirectory,
     coreDeps: {
       resolveAgent: () => undefined,
       transcriptSinkFor: () => null,

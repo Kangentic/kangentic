@@ -106,6 +106,20 @@ export interface SshHostStatus {
   projectCount: number;
 }
 
+/** The Kangentic program on a host: which version, how long it has run, how many terminals it holds. */
+export interface SshHostProgram {
+  /** The program's version, or null when the host cannot tell. */
+  version: string | null;
+  /** This app's version, so the row can say when the host's program is an older one. */
+  appVersion: string | null;
+  /** UTC ISO time the program started. */
+  startedAt: string;
+  /** Terminals the program holds that are still running. */
+  liveSessions: number;
+  /** Versions of the program installed on the host, oldest first. */
+  installedVersions: string[];
+}
+
 export interface SshClientStatus {
   found: boolean;
   /** ssh's own version line, such as `OpenSSH_9.5p1`. */
@@ -9163,6 +9177,8 @@ export interface ElectronAPI {
     renameHost: (hostId: string, name: string) => Promise<void>;
     /** Try the connection again now, installing Kangentic's program on the host first if it is not there. */
     reconnectHost: (hostId: string) => Promise<SshHostStatus>;
+    /** What the host's program reports. Rejects while the host is not connected, with the reason. */
+    hostProgram: (hostId: string) => Promise<SshHostProgram>;
     /** Forget the recorded key of a host whose key changed, so the next connection asks again. */
     forgetHostKey: (hostId: string) => Promise<void>;
     /** Whether a folder exists on a host, for the Add project dialog. Rejects with the reason when it cannot say. */

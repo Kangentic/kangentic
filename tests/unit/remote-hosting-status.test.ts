@@ -217,3 +217,62 @@ describe('the links living in the pty host', () => {
     expect(requests()).toEqual([{ op: 'setForwards', hostId: 'host-1', ports: [7301] }]);
   });
 });
+
+describe('tidying old program versions on a host', () => {
+  const asset = { version: '1.0.0', sha256: 'a'.repeat(64), arch: 'x64' as const, filePath: '/asset.tar.gz' };
+
+  function hostingWith(hostAsset: (() => typeof asset) | undefined) {
+    const sessionManager = makeSessionManager();
+    createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => ({ list: () => [] }),
+      ...(hostAsset ? { hostAsset } : {}),
+      log: () => undefined,
+    });
+    const prunes = (): unknown[] =>
+      sessionManager.remoteHostRequest.mock.calls
+        .map((call) => call[0] as { op: string; method?: string; params?: unknown })
+        .filter((request) => request.op === 'helper' && request.method === 'pruneVersions')
+        .map((request) => request.params);
+    return { sessionManager, prunes };
+  }
+
+  it('asks a host to remove versions unused for a month, keeping this app\'s, once per run when its link first connects', async () => {
+    const { sessionManager, prunes } = hostingWith(() => asset);
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connecting', detail: null });
+    expect(prunes()).toEqual([]);
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(prunes()).toEqual([{ keep: ['1.0.0'], olderThanDays: 30 }]);
+
+    // A drop and a return is the same run: the host is not asked again.
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'reconnecting', detail: null });
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(prunes()).toHaveLength(1);
+  });
+
+  it('asks nothing of a host when this build carries no program version to keep', async () => {
+    const { sessionManager, prunes } = hostingWith(undefined);
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(prunes()).toEqual([]);
+  });
+
+  it('records the failure and goes on when the host cannot be asked', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.remoteHostRequest.mockRejectedValue(new Error('the link dropped'));
+    const lines: string[] = [];
+    const hosting = createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => ({ list: () => [] }),
+      hostAsset: () => asset,
+      log: (line) => lines.push(line),
+    });
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lines.some((line) => line.includes('could not tidy old program versions') && line.includes('the link dropped'))).toBe(true);
+    expect(hosting.status.get('host-1')?.state).toBe('connected');
+  });
+});

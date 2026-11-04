@@ -27,6 +27,7 @@ import { runHostCommand } from './host-command';
 import { readListeningPorts } from './listening-ports';
 import { HookWatcher } from './hook-watcher';
 import { patchJsonFile, type JsonPatchRequest, type JsonPatchResult } from './json-patch';
+import { listInstalledVersions, pruneOldVersions } from './program-versions';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
 import {
   toPtyHostError,
@@ -54,6 +55,7 @@ import {
   type HostCommandResult,
   type HostFileWrite,
   type HostInfo,
+  type HostProgramInfo,
   type HostWriteResult,
   type HelperSnapshot,
   type HelperToLinkMessage,
@@ -106,6 +108,8 @@ export interface HelperServerOptions {
   baseEnv?: NodeJS.ProcessEnv;
   /** Where the kernel's tables are read from. Defaults to `/proc`; a test points it at fixture text. */
   procDirectory?: string;
+  /** This program's own folder on the host (`~/.kangentic/host/<version>`). Absent in a run that is not from an install. */
+  programDirectory?: string;
   /** Everything the core needs but `emit`, which the server owns. */
   coreDeps: Omit<PtyHostCoreDeps, 'emit'>;
   /** Timers and limits for the link's endpoint, which tests shorten. */
@@ -381,6 +385,8 @@ export class HelperServer {
     removeEmptyDirectories: (params) => this.removeEmptyDirectories(params.paths),
     runCommand: (params) => this.runCommand(params),
     listeningPorts: async () => ({ ports: await readListeningPorts(this.options.procDirectory) }),
+    programInfo: () => this.programInfo(),
+    pruneVersions: (params) => this.pruneVersions(params),
   };
 
   private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {
@@ -507,6 +513,39 @@ export class HelperServer {
       args: wantsLoginShell ? [...loginFlagsFor(shell), ...params.args] : params.args,
       env: { ...env, ...params.env },
     };
+  }
+
+  /** The folder holding every installed version (`~/.kangentic/host`), or null when this run is not from one. */
+  private versionsRoot(): string | null {
+    return this.options.programDirectory ? path.dirname(path.resolve(this.options.programDirectory)) : null;
+  }
+
+  private runningVersion(): string | null {
+    return this.options.programDirectory ? path.basename(path.resolve(this.options.programDirectory)) : null;
+  }
+
+  private async programInfo(): Promise<HostProgramInfo> {
+    const root = this.versionsRoot();
+    return {
+      version: this.runningVersion(),
+      startedAt: this.startedAt,
+      liveSessions: [...this.ledger.values()].filter((entry) => entry.alive).length + [...this.pendingSpawns.values()].filter((pending) => !pending.ended).length,
+      installedVersions: root ? (await listInstalledVersions(root)).map((installed) => installed.version) : [],
+    };
+  }
+
+  private async pruneVersions(params: { keep: string[]; olderThanDays: number }): Promise<{ removed: string[] }> {
+    const root = this.versionsRoot();
+    const running = this.runningVersion();
+    if (!root || !running) return { removed: [] };
+    const removed = await pruneOldVersions({
+      root,
+      keep: new Set([...params.keep, running]),
+      olderThanDays: params.olderThanDays,
+      nowMs: Date.now(),
+    });
+    if (removed.length > 0) this.log(`pruned program versions: ${removed.join(', ')}`);
+    return { removed };
   }
 
   private hostInfo(): HostInfo {

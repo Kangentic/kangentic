@@ -17,6 +17,7 @@ import type {
   SshHost,
   SshHostAddInput,
   SshHostKeyProbe,
+  SshHostProgram,
   SshHostStatus,
   SshRemoteFolderProbe,
 } from '../../shared/types';
@@ -58,6 +59,8 @@ export interface SshHostAdminDeps {
   remoteProjectsRoot: string;
   /** A new folder id and path for a remote project's shell. */
   newShellFolder(): string;
+  /** This app's version, to compare with the program's on a host. */
+  appVersion?: () => string | null;
   log?: (line: string) => void;
 }
 
@@ -141,6 +144,22 @@ export class SshHostAdmin {
     if (trimmed.length === 0 || trimmed.length > MAX_HOST_NAME_LENGTH) throw new Error(`Give the host a name of 1 to ${MAX_HOST_NAME_LENGTH} characters.`);
     this.requireHost(hostId);
     this.deps.hosting.hosts.rename(hostId, trimmed);
+  }
+
+  /**
+   * What the program on a host reports about itself. Asks the host, so it rejects with the link's own words
+   * while the host is not connected; the settings row asks only for a connected host.
+   */
+  async hostProgram(hostId: string): Promise<SshHostProgram> {
+    this.requireHost(hostId);
+    const info = await this.deps.hosting.hostService.programInfo(hostId);
+    return {
+      version: info.version,
+      appVersion: this.deps.appVersion?.() ?? null,
+      startedAt: info.startedAt,
+      liveSessions: info.liveSessions,
+      installedVersions: info.installedVersions,
+    };
   }
 
   async forgetHostKey(hostId: string): Promise<void> {

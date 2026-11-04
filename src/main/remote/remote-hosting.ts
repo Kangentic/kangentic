@@ -50,6 +50,9 @@ export interface RemoteHostingDeps {
   log?: (line: string) => void;
 }
 
+/** A program version on a host that nothing has installed or touched for this long is removed. */
+const PRUNE_AFTER_DAYS = 30;
+
 /** Whether two paths name the same folder: case-insensitive on Windows, where the project list may differ in case. */
 function samePath(left: string, right: string): boolean {
   const normalize = (value: string): string => (process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value));
@@ -59,6 +62,20 @@ function samePath(left: string, right: string): boolean {
 export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const log = deps.log ?? ((line: string) => console.log(line));
   const hosts = new SshHostRepository();
+  /**
+   * Remove program versions that sat unused for a month, keeping this app's and the one running. A month, so
+   * two computers on one host account never delete each other's version between connects. Best effort.
+   */
+  const pruneOldProgramVersions = async (hostId: string): Promise<void> => {
+    const asset = deps.hostAsset?.();
+    const appVersion = Array.isArray(asset) ? asset[0]?.version : (asset as HostAsset | null | undefined)?.version;
+    if (!appVersion) return;
+    try {
+      await hostService.pruneVersions(hostId, [appVersion], PRUNE_AFTER_DAYS);
+    } catch (error) {
+      log(`[remote] could not tidy old program versions on ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const hostService = new RemoteHostService({
     sshPath: deps.sshPath ?? defaultSshClientPaths().ssh,
     hosts,
@@ -71,8 +88,14 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   deps.sessionManager.setRemoteSessionRelay(relay);
   const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
   // A link reports its own state; a drop is a state here, never the end of a session.
+  const pruned = new Set<string>();
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
     status.noteLink(event.hostId, event.state, event.detail);
+    // Once per host per run, when its link first comes up: tidy the versions of the program a host kept.
+    if (event.state === 'connected' && !pruned.has(event.hostId)) {
+      pruned.add(event.hostId);
+      void pruneOldProgramVersions(event.hostId);
+    }
   });
 
   setRemoteLaunchResolver(createRemoteLaunchResolver({

@@ -36,6 +36,7 @@ interface Rig {
     connect: ReturnType<typeof vi.fn>;
     disconnect: ReturnType<typeof vi.fn>;
     hostInfo: ReturnType<typeof vi.fn>;
+    programInfo: ReturnType<typeof vi.fn>;
     pathPresence: ReturnType<typeof vi.fn>;
     readFile: ReturnType<typeof vi.fn>;
     writeFiles: ReturnType<typeof vi.fn>;
@@ -95,6 +96,7 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     pathPresence: vi.fn(async (_hostId: string, paths: string[]) => paths.map(() => 'present' as const)),
     readFile: vi.fn(async () => ({ exists: false, content: null })),
     writeFiles: vi.fn(async () => ({ written: 1 })),
+    programInfo: vi.fn(async () => ({ version: '0.53.0', startedAt: '2026-11-04T08:00:00.000Z', liveSessions: 3, installedVersions: ['0.52.0', '0.53.0'] })),
   };
   let counter = 0;
   const deps: SshHostAdminDeps = {
@@ -128,6 +130,7 @@ function makeRig(runOptions: { keyBlob?: string; installFails?: boolean } = {}):
     removeProject: async (project) => { removedProjects.push(project.id); },
     remoteProjectsRoot: shellRoot,
     newShellFolder: () => path.join(shellRoot, `shell-${++counter}`),
+    appVersion: () => '0.54.0',
   };
   return { admin: new SshHostAdmin(deps), hosts, projects, removedProjects, run, hostService, status, connectHost, setup };
 }
@@ -387,6 +390,29 @@ describe('removing a host', () => {
     await rig.admin.removeHost(hostId);
 
     expect(rig.run.calls.some((call) => call.args.some((arg) => arg.includes('grep -vxF')))).toBe(false);
+  });
+});
+
+describe('the program on a host', () => {
+  it('reports the host\'s program with this app\'s version beside it', async () => {
+    const rig = makeRig();
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' });
+
+    expect(await rig.admin.hostProgram('h1')).toEqual({
+      version: '0.53.0',
+      appVersion: '0.54.0',
+      startedAt: '2026-11-04T08:00:00.000Z',
+      liveSessions: 3,
+      installedVersions: ['0.52.0', '0.53.0'],
+    });
+  });
+
+  it('passes a host that cannot be asked up as an error, and refuses a host that is not set up', async () => {
+    const rig = makeRig();
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' });
+    rig.hostService.programInfo.mockRejectedValueOnce(new Error('Kangentic has no connection set up for host h1'));
+    await expect(rig.admin.hostProgram('h1')).rejects.toThrow('no connection set up');
+    await expect(rig.admin.hostProgram('missing')).rejects.toThrow('not set up');
   });
 });
 

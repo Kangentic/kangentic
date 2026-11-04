@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useProjectStore } from './project-store';
 import { describeIpcError } from '../lib/ipc-error';
-import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostStatus, SshRemoteFolderProbe } from '../../shared/types';
+import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshRemoteFolderProbe } from '../../shared/types';
 
 /**
  * Identifies the newest in-flight listHosts() so an older reply cannot clobber a newer one. A host's
@@ -39,6 +39,8 @@ interface SshStore {
   renameHost: (hostId: string, name: string) => Promise<void>;
   reconnectHost: (hostId: string) => Promise<void>;
   forgetHostKey: (hostId: string) => Promise<void>;
+  /** What the program on a connected host reports. Rejects with the reason while the host cannot answer. */
+  hostProgram: (hostId: string) => Promise<SshHostProgram>;
   probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
 }
 
@@ -114,6 +116,8 @@ const createSshStore = () => create<SshStore>((set, get) => ({
   forgetHostKey: async (hostId) => {
     await window.electronAPI.ssh.forgetHostKey(hostId);
   },
+
+  hostProgram: (hostId) => window.electronAPI.ssh.hostProgram(hostId),
 
   probeRemoteFolder: (hostId, folderPath) => window.electronAPI.ssh.probeRemoteFolder(hostId, folderPath),
 }));

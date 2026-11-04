@@ -7,6 +7,11 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
 
+#. placeholder {0}: program.liveSessions
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}。打开文档页面。"
@@ -1843,6 +1848,18 @@ msgstr "隐私"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "分析主进程，在事件循环报告中列出卡顿时最耗时的函数；开启时占用 CPU。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Progress bar"

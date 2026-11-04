@@ -7,6 +7,11 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#. placeholder {0}: program.liveSessions
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0, plural, one {# terminal running} other {# terminals running}}"
+msgstr "{0, plural, one {# terminal running} other {# terminals running}}"
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Opens the docs page."
@@ -1812,6 +1817,18 @@ msgstr "Privacy"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr "Program {version}"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr "Program {version} (this app is {appVersion})"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr "Program version unknown"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Progress bar"

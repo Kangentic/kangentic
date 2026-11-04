@@ -5187,6 +5187,17 @@
           return hosts.filter(function (status) { return status.host.id === hostId; })[0];
         },
         forgetHostKey: async function () {},
+        // window.__mockSshHostProgram: overrides the answer; window.__mockSshHostProgramError: a string that rejects it.
+        hostProgram: async function () {
+          if (win().__mockSshHostProgramError) throw new Error(win().__mockSshHostProgramError);
+          return win().__mockSshHostProgram || {
+            version: '0.53.0',
+            appVersion: '0.53.0',
+            startedAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+            liveSessions: 2,
+            installedVersions: ['0.53.0'],
+          };
+        },
         probeRemoteFolder: async function (hostId, folderPath) {
           if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
           var known = (win().__mockSshFolders || {})[folderPath];

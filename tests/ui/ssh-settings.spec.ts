@@ -246,3 +246,55 @@ test('asks before removing a host, and removing takes the row away', async () =>
   await confirmDialog().getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(row).toHaveCount(0);
 });
+
+test('shows the program version and its terminal count on a connected host, and says when it is older than the app', async () => {
+  await page.evaluate(async () => {
+    await window.electronAPI.ssh.addHost({
+      name: 'Build',
+      destination: 'build',
+      signIn: { method: 'config' },
+      expectedFingerprint: 'SHA256:x',
+    });
+  });
+  await openSshTab();
+  const row = page.locator('[data-testid="ssh-host-row"]');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('[data-testid="ssh-host-program-version"]')).toHaveText('Program 0.53.0');
+  await expect(row.locator('[data-testid="ssh-host-program-sessions"]')).toHaveText('2 terminals running');
+  await closeSettings();
+
+  // A daemon that outlived an app update keeps running its own version, and one terminal reads singular.
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__mockSshHostProgram = {
+      version: '0.52.0',
+      appVersion: '0.53.0',
+      startedAt: new Date().toISOString(),
+      liveSessions: 1,
+      installedVersions: ['0.52.0', '0.53.0'],
+    };
+  });
+  await openSshTab();
+  await expect(row.locator('[data-testid="ssh-host-program-version"]')).toHaveText('Program 0.52.0 (this app is 0.53.0)');
+  await expect(row.locator('[data-testid="ssh-host-program-sessions"]')).toHaveText('1 terminal running');
+  await page.evaluate(() => {
+    delete (window as unknown as Record<string, unknown>).__mockSshHostProgram;
+  });
+});
+
+test('shows no program line for a host that is not connected', async () => {
+  await page.evaluate(async () => {
+    (window as unknown as Record<string, unknown>).__mockSshHosts = [{
+      host: { id: 'h-down', name: 'Down', destination: 'down', key_path: null, key_created: false, created_at: new Date().toISOString() },
+      state: 'unreachable',
+      detail: 'ssh: connect to host down port 22: Connection timed out',
+      since: new Date().toISOString(),
+      projectCount: 0,
+    }];
+  });
+  await openSshTab();
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="ssh-host-program"]')).toHaveCount(0);
+  await page.evaluate(() => {
+    delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+  });
+});

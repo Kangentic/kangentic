@@ -3,7 +3,7 @@ import { Check, CircleAlert, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
-import type { SshHostConnectionState, SshHostKeyProbe, SshHostStatus, SshSignIn } from '../../../../shared/types';
+import type { SshHostConnectionState, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshSignIn } from '../../../../shared/types';
 import { formatDateTime, formatShortDateTime } from '../../../lib/datetime';
 import { describeIpcError } from '../../../lib/ipc-error';
 import { useSshStore } from '../../../stores/ssh-store';
@@ -46,6 +46,54 @@ function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: 
     case 'stopped':
       return { label: i18n._(msg`Stopped`), className: 'text-fg-faint', icon: <X size={12} /> };
   }
+}
+
+/** How often a connected host's program is asked how many terminals it holds. */
+const PROGRAM_REFRESH_MS = 15_000;
+
+/**
+ * The Kangentic program on a connected host: its version and how many terminals it is holding. Quiet when the
+ * host cannot answer: the row above already says whether the host is connected, and this line is extra.
+ */
+function HostProgramLine({ hostId }: { hostId: string }) {
+  const hostProgram = useSshStore((state) => state.hostProgram);
+  const [program, setProgram] = useState<SshHostProgram | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = (): void => {
+      hostProgram(hostId).then(
+        (answer) => { if (!cancelled) setProgram(answer); },
+        () => { if (!cancelled) setProgram(null); },
+      );
+    };
+    refresh();
+    const timer = setInterval(refresh, PROGRAM_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [hostId, hostProgram]);
+
+  if (!program) return null;
+  const version = program.version;
+  const appVersion = program.appVersion;
+  const older = version !== null && appVersion !== null && version !== appVersion;
+  return (
+    <div className="flex items-center gap-2 text-xs text-fg-faint" data-testid="ssh-host-program">
+      <span data-testid="ssh-host-program-version">
+        {version === null
+          ? <Trans>Program version unknown</Trans>
+          : older
+            ? <Trans>Program {version} (this app is {appVersion})</Trans>
+            : <Trans>Program {version}</Trans>}
+      </span>
+      <span aria-hidden="true">|</span>
+      <span data-testid="ssh-host-program-sessions">
+        {plural(program.liveSessions, { one: '# terminal running', other: '# terminals running' })}
+      </span>
+    </div>
+  );
 }
 
 export function SshTab() {
@@ -322,6 +370,7 @@ export function SshTab() {
                         {plural(projectCount, { one: '# project', other: '# projects' })}
                       </span>
                     </div>
+                    {status.state === 'connected' ? <HostProgramLine hostId={host.id} /> : null}
                     {detail ? (
                       <div>
                         <ReportedError error={detail} testId="ssh-host-error" />

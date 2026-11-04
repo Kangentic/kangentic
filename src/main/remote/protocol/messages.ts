@@ -193,6 +193,24 @@ export interface HelperRequestMap {
    * failed read is an error, never an empty list: an empty list says nothing is listening.
    */
   listeningPorts: { params: Record<string, never>; result: { ports: number[] } };
+  /** Which program this is, how long it has run, how many terminals it holds, and which versions sit on the host. */
+  programInfo: { params: Record<string, never>; result: HostProgramInfo };
+  /**
+   * Remove installed versions that are not in `keep` and were installed more than `olderThanDays` ago. The
+   * running version is always kept. Best effort: a version that cannot be removed is left.
+   */
+  pruneVersions: { params: { keep: string[]; olderThanDays: number }; result: { removed: string[] } };
+}
+
+export interface HostProgramInfo {
+  /** The version of the program this daemon is running, or null when it cannot tell (a development run). */
+  version: string | null;
+  /** UTC ISO time the daemon started. */
+  startedAt: string;
+  /** Terminals the program holds that are still running. */
+  liveSessions: number;
+  /** Every complete version on the host, oldest first. */
+  installedVersions: string[];
 }
 
 /** Where one forwarded dev-server port stands (`link/port-forward.ts`). */
