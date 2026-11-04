@@ -63,5 +63,5 @@ export async function readListeningPorts(procDirectory = '/proc'): Promise<numbe
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  return [...new Set([...parseListeningPorts(version4), ...parseListeningPorts(version6)])].sort((a, b) => a - b);
+  return [...new Set([...parseListeningPorts(version4), ...parseListeningPorts(version6)])].sort((left, right) => left - right);
 }

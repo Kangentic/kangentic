@@ -28,6 +28,7 @@ import * as fsSync from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
+import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
 import type { PtyHostEvent } from '../pty/host/protocol';
 import type { HostFileWrite } from './protocol/messages';
@@ -82,8 +83,8 @@ interface Registered extends RemoteSessionRegistration {
   inFlight: Set<string>;
   /** The last send failure logged, so one that repeats every poll is logged once. */
   lastFailure: string | null;
-  /** A release has begun, so a second one waits on nothing and asks the host nothing. */
-  releasing: boolean;
+  /** The release under way, so a second one waits on it and asks the host nothing. */
+  releaseDone: Promise<void> | null;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -128,7 +129,7 @@ export class RemoteSessionRelay {
         if (content !== null) files.push({ path: toHost(path.join(registration.localSessionDirectory, name)), content, mode });
       }
       for (const relative of registration.extraFiles ?? []) {
-        if (relative.length === 0 || relative.startsWith('/') || relative.includes('\\') || relative.split('/').some((part) => part === '' || part === '..')) {
+        if (!isPlainRelativePath(relative)) {
           throw new Error(`${relative} is not a plain path inside the session folder, so it was not sent to the host.`);
         }
         const localFile = path.join(registration.localSessionDirectory, ...relative.split('/'));
@@ -146,16 +147,19 @@ export class RemoteSessionRelay {
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
     } catch (error) {
       // The spawn fails, so nothing releases a session that was never registered: what was pushed (the
-      // settings and the MCP config, which holds the token) is removed here, as a release would.
-      if (pushedPaths.length > 0) {
+      // settings and the MCP config, which holds the token) is removed here, as a release would. A newer
+      // registration of this id has taken these paths over and keeps them.
+      if (pushedPaths.length > 0 && this.registering.get(registration.sessionId) === pending) {
         await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
         await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
       }
       throw error;
     } finally {
-      this.registering.delete(registration.sessionId);
+      if (this.registering.get(registration.sessionId) === pending) this.registering.delete(registration.sessionId);
     }
     if (pending.released) {
+      // A newer registration of this id replaced this one: the same paths on the host are now its own.
+      if (this.registering.has(registration.sessionId) || this.sessions.has(registration.sessionId)) return;
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
       await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
@@ -170,7 +174,7 @@ export class RemoteSessionRelay {
       forwarding: false,
       inFlight: new Set(),
       lastFailure: null,
-      releasing: false,
+      releaseDone: null,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
@@ -185,8 +189,14 @@ export class RemoteSessionRelay {
       return;
     }
     const entry = this.sessions.get(sessionId);
-    if (!entry || entry.releasing) return;
-    entry.releasing = true;
+    if (!entry) return;
+    // A repeat waits for the first: `register` must not push this id's files until the old ones are gone,
+    // or the release still running deletes what it just wrote.
+    entry.releaseDone ??= this.finishRelease(sessionId, entry);
+    await entry.releaseDone;
+  }
+
+  private async finishRelease(sessionId: string, entry: Registered): Promise<void> {
     clearInterval(entry.timer);
     // The registration stays until the host has answered: the records it flushes on the way out
     // arrive first, and `deliver` drops what it has no registration for.

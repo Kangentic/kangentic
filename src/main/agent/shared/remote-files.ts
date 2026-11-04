@@ -23,5 +23,13 @@ export interface RemoteFileDeclaration {
   private?: readonly string[];
 }
 
+/** A relative path with forward slashes that stays inside the folder it is joined to. */
+export function isPlainRelativePath(relative: string): boolean {
+  return relative.length > 0
+    && !relative.startsWith('/')
+    && !relative.includes('\\')
+    && relative.split('/').every((part) => part !== '' && part !== '..');
+}
+
 /** A declaration that names nothing, for an adapter that edits no file outside its session folder. */
 export const NO_REMOTE_FILES: RemoteFileDeclaration = { home: [], project: [] };

@@ -6,12 +6,14 @@
  * What a user loses if it breaks: a hook script, settings file or working folder named by a path that
  * is this computer's, which does not exist on the host.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import {
+  HostCommandError,
   cliHomeDir,
   cliPathForTarget,
   hostPathForTarget,
+  execCliForTarget,
   hostPathToLocal,
   isSameCliPlace,
   localPathToHost,
@@ -23,6 +25,8 @@ import {
   toStoredCliTarget,
   type SshCliPlace,
 } from '../../src/main/agent/shared/cli-target';
+
+import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 
 const shellFolder = path.join('C:\\Users\\dev', 'remote-projects', 'p1');
 
@@ -149,5 +153,57 @@ describe('what a session row keeps', () => {
     const distro = toStoredCliTarget({ kind: 'wsl', distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl$\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl$\\Ubuntu' });
     expect(distro?.kind).toBe('wsl');
     expect(toStoredCliTarget(sshPlace())?.kind).toBe('ssh');
+  });
+});
+
+describe('running a CLI on the host (execCliForTarget)', () => {
+  const workspaces: FakeSshWorkspace[] = [];
+  afterEach(async () => {
+    for (const workspace of workspaces.splice(0)) await workspace.dispose();
+  });
+
+  async function runOnHost(answer: ((request: unknown) => { code: number | null; stdout: string; stderr: string; timedOut: boolean; error?: string }) | null): Promise<HostCommandError> {
+    const workspace = await makeFakeSshWorkspace();
+    workspaces.push(workspace);
+    if (answer) workspace.host.commandResults.set('probe-cli', answer);
+    const outcome = await execCliForTarget({ ...workspace.place, linuxCliPath: 'probe-cli' }, ['--version'], { timeout: 5_000 }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(outcome).toBeInstanceOf(HostCommandError);
+    return outcome as HostCommandError;
+  }
+
+  it('returns the output of a program that exited 0', async () => {
+    const workspace = await makeFakeSshWorkspace();
+    workspaces.push(workspace);
+    workspace.host.commandResults.set('probe-cli', () => ({ code: 0, stdout: '1.2.3', stderr: 'warn', timedOut: false }));
+
+    const result = await execCliForTarget({ ...workspace.place, linuxCliPath: 'probe-cli' }, ['--version'], { timeout: 5_000 });
+
+    expect(result).toEqual({ stdout: '1.2.3', stderr: 'warn' });
+    expect(workspace.host.commands[0]).toMatchObject({ file: 'probe-cli', args: ['--version'], timeoutMs: 5_000 });
+  });
+
+  it('rejects with code ENOENT when the host could not start the program', async () => {
+    const error = await runOnHost(null);
+    expect(error.code).toBe('ENOENT');
+    expect(error.killed).toBe(false);
+    expect(error.message).toContain('command not found');
+  });
+
+  it('rejects as killed, with no code, when the program timed out', async () => {
+    const error = await runOnHost(() => ({ code: null, stdout: 'partial', stderr: '', timedOut: true }));
+    expect(error.killed).toBe(true);
+    expect(error.code).toBeNull();
+    expect(error.stdout).toBe('partial');
+  });
+
+  it('rejects with the exit code and the output of a program that failed', async () => {
+    const error = await runOnHost(() => ({ code: 3, stdout: 'some output', stderr: 'bad flag', timedOut: false }));
+    expect(error.code).toBe(3);
+    expect(error.killed).toBe(false);
+    expect(error.stdout).toBe('some output');
+    expect(error.stderr).toBe('bad flag');
   });
 });

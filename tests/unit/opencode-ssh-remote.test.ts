@@ -18,15 +18,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import { resolvePluginScript } from '../../src/main/agent/shared/bridge-utils';
-import { pullHostFilesFor, rememberHostFileSync, settleHostFiles } from '../../src/main/remote/host-file-sync';
+import { settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
-import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
+import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost, type HostSpawn } from './ssh-adapter-spawn-harness';
 
-const TOKEN = 'opencode-ssh-token-0123456789';
-const MCP_URL = 'http://127.0.0.1:47123/mcp/project-1/session-1';
-const SESSION_ID = 'session-1';
 const workspaces: FakeSshWorkspace[] = [];
 const temporaryDirectories: string[] = [];
 
@@ -44,36 +41,11 @@ async function newWorkspace(hostVersionOutput: string | null): Promise<FakeSshWo
   return workspace;
 }
 
-function spawnOptions(workspace: FakeSshWorkspace): SpawnCommandOptions {
-  const sessionDirectory = path.join(workspace.projectFolder, '.kangentic', 'sessions', SESSION_ID);
-  fs.mkdirSync(sessionDirectory, { recursive: true });
-  return {
-    agentPath: 'opencode',
-    taskId: 'task-1',
-    cwd: workspace.projectFolder,
-    projectRoot: workspace.projectFolder,
-    permissionMode: 'acceptEdits',
-    shell: 'bash',
-    prompt: 'fix the bug',
-    eventsOutputPath: path.join(sessionDirectory, 'events.jsonl'),
-    mcpServerEnabled: true,
-    mcpServerUrl: MCP_URL,
-    mcpServerToken: TOKEN,
-    ptySessionId: SESSION_ID,
-    cliTarget: { ...workspace.place, linuxCliPath: 'opencode' },
-  };
-}
+/** What differs from the harness's defaults: OpenCode takes its MCP server from the spawn and runs with edits accepted. */
+const OPENCODE_OVERRIDES = { mcpServerEnabled: true, permissionMode: 'acceptEdits' } as const;
 
-async function spawnOnHost(adapter: OpenCodeAdapter, workspace: FakeSshWorkspace): Promise<{ command: string; env: Record<string, string> | null }> {
-  const sync = await pullHostFilesFor(adapter, workspace.projectFolder, workspace.place);
-  if (!sync) throw new Error('the adapter declared no host files');
-  await adapter.ensureTrust(workspace.projectFolder, workspace.place);
-  const options = spawnOptions(workspace);
-  const command = adapter.buildCommand(options);
-  const env = adapter.buildEnv(options);
-  await sync.push();
-  rememberHostFileSync(SESSION_ID, sync);
-  return { command, env };
+function spawnOnOpenCodeHost(adapter: OpenCodeAdapter, workspace: FakeSshWorkspace): Promise<HostSpawn> {
+  return spawnOnHost(adapter, workspace, 'opencode', OPENCODE_OVERRIDES);
 }
 
 const v1PluginPath = (workspace: FakeSshWorkspace): string => `${workspace.hostProject}/.opencode/plugins/kangentic-activity.js`;
@@ -92,7 +64,7 @@ describe('an OpenCode 1 session on a remote host', () => {
 
   it('installs the OpenCode 1 plugin on the host and nothing for OpenCode 2', async () => {
     const workspace = await newWorkspace('1.18.31\n');
-    const { command } = await spawnOnHost(new OpenCodeAdapter(), workspace);
+    const { command } = await spawnOnOpenCodeHost(new OpenCodeAdapter(), workspace);
 
     expect(workspace.host.commands[0].args).toEqual(['--version']);
     expect(workspace.host.commands[0].file).toBe('opencode');
@@ -106,29 +78,23 @@ describe('an OpenCode 1 session on a remote host', () => {
 
   it('gives the MCP bridge on the host path through the environment, and sends nothing of this computer', async () => {
     const workspace = await newWorkspace('1.18.31');
-    const { env } = await spawnOnHost(new OpenCodeAdapter(), workspace);
+    const spawn = await spawnOnOpenCodeHost(new OpenCodeAdapter(), workspace);
+    const { env } = spawn;
 
     const config = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? '{}') as { mcp: { kangentic: unknown } };
     expect(config.mcp.kangentic).toEqual({
       type: 'local',
-      command: ['sh', `${workspace.hostProject}/.kangentic/sessions/${SESSION_ID}/wsl-hooks/wsl-hook.sh`, 'mcp', MCP_URL],
-      environment: { KANGENTIC_MCP_TOKEN: TOKEN },
+      command: ['sh', `${sessionFolders(workspace).host}/wsl-hooks/wsl-hook.sh`, 'mcp', MCP_URL],
+      environment: { KANGENTIC_MCP_TOKEN: MCP_TOKEN },
       enabled: true,
     });
-    const pushed = [...workspace.host.files.values(), env?.OPENCODE_CONFIG_CONTENT ?? ''];
-    for (const content of pushed) {
-      for (const local of [workspace.projectFolder, workspace.mirrorHome, os.tmpdir()]) {
-        expect(content).not.toContain(local);
-        expect(content).not.toContain(local.replace(/\\/g, '/'));
-        expect(content).not.toContain(local.replace(/\\/g, '\\\\'));
-      }
-    }
+    expectNoLocalPaths(workspace, spawn);
   });
 
   it('removes the plugin from the host when the session releases, leaving the user\'s other plugins', async () => {
     const workspace = await newWorkspace('1.18.31');
     const adapter = new OpenCodeAdapter();
-    await spawnOnHost(adapter, workspace);
+    await spawnOnOpenCodeHost(adapter, workspace);
     expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
 
     adapter.removeHooks(workspace.projectFolder, SESSION_ID);
@@ -138,7 +104,7 @@ describe('an OpenCode 1 session on a remote host', () => {
 
   it('starts with OpenCode 1 flags when the host\'s version cannot be read', async () => {
     const workspace = await newWorkspace(null);
-    const { command } = await spawnOnHost(new OpenCodeAdapter(), workspace);
+    const { command } = await spawnOnOpenCodeHost(new OpenCodeAdapter(), workspace);
     expect(command).toContain('--agent build');
     expect(workspace.host.files.has(v1PluginPath(workspace))).toBe(true);
   });
@@ -147,7 +113,7 @@ describe('an OpenCode 1 session on a remote host', () => {
 describe('an OpenCode 2 session on a remote host', () => {
   it('uses the OpenCode 2 command line and plugin layout', async () => {
     const workspace = await newWorkspace('opencode v2.2.5\n');
-    const { command, env } = await spawnOnHost(new OpenCodeAdapter(), workspace);
+    const { command, env } = await spawnOnOpenCodeHost(new OpenCodeAdapter(), workspace);
 
     expect(command.startsWith('opencode --standalone')).toBe(true);
     expect(command).not.toContain('--agent');
@@ -159,7 +125,7 @@ describe('an OpenCode 2 session on a remote host', () => {
   it('removes its plugin on release', async () => {
     const workspace = await newWorkspace('opencode v2.2.5');
     const adapter = new OpenCodeAdapter();
-    await spawnOnHost(adapter, workspace);
+    await spawnOnOpenCodeHost(adapter, workspace);
     adapter.removeHooks(workspace.projectFolder, SESSION_ID);
     await settleHostFiles(SESSION_ID);
     expect(workspace.host.files.has(v2PluginPath(workspace))).toBe(false);
@@ -348,5 +314,37 @@ describe('the v2 plugin module with a hook folder', () => {
     cleanup?.();
     const types = (eventsFromInbox(sessionDirectory) as Array<{ type: string }>).map((event) => event.type).sort();
     expect(types).toEqual(['idle', 'prompt', 'session_start', 'tool_start']);
+  });
+});
+
+describe('the two plugin files keep one copy of the hook folder publisher', () => {
+  // Each plugin file is deployed alone into the user's repository, so they cannot import a shared module.
+  // The publisher is therefore pasted into both, and a fix to one must reach the other. This reads source
+  // text on purpose: it is a convention across two files that cannot share code.
+  const pluginFolder = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'adapters', 'opencode', 'plugin');
+
+  function publisherBlock(fileName: string): string {
+    const source = fs.readFileSync(path.join(pluginFolder, fileName), 'utf8').replace(/\r\n/g, '\n');
+    const start = source.indexOf('/** A bridge directive on the wire');
+    const functionStart = source.indexOf('function publishToHookDirectory');
+    // The function closes at the first brace in column 0 after its start.
+    const end = source.indexOf('\n}\n', functionStart);
+    expect(start, `${fileName} lost its directive encoder`).toBeGreaterThanOrEqual(0);
+    expect(functionStart, `${fileName} lost publishToHookDirectory`).toBeGreaterThan(start);
+    expect(end, `${fileName}: publishToHookDirectory has no closing brace`).toBeGreaterThan(functionStart);
+    return source.slice(start, end + 3);
+  }
+
+  it('holds encodeDirective, hookRecordFor, publishSequence and publishToHookDirectory in both files', () => {
+    for (const fileName of ['kangentic-activity.mjs', 'kangentic-activity-v2.mjs']) {
+      const block = publisherBlock(fileName);
+      for (const name of ['function encodeDirective', 'function hookRecordFor', 'let publishSequence', 'function publishToHookDirectory']) {
+        expect(block, `${fileName} no longer holds ${name} in the shared block`).toContain(name);
+      }
+    }
+  });
+
+  it('keeps the block identical in the OpenCode 1 and OpenCode 2 plugin files', () => {
+    expect(publisherBlock('kangentic-activity-v2.mjs')).toBe(publisherBlock('kangentic-activity.mjs'));
   });
 });

@@ -234,6 +234,9 @@ export class ResumeEndpoint {
     }
     switch (frame.kind) {
       case FrameKind.message:
+        // The peer replays from the offset this side's hello named, and the old connection can deliver
+        // those same frames until the new handshake drops it. A frame already taken is not taken twice.
+        if (frame.offset + frame.byteLength <= this.receiveOffset) return;
         this.receiveOffset = frame.offset + frame.byteLength;
         connection.receivedSinceAck += frame.byteLength;
         try {

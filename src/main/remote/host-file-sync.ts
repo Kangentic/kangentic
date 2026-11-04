@@ -25,7 +25,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { isUnderLocalRoot, localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
-import type { RemoteFileDeclaration } from '../agent/shared/remote-files';
+import { isPlainRelativePath, type RemoteFileDeclaration } from '../agent/shared/remote-files';
 import type { HostFileWrite } from './protocol/messages';
 
 const LOG_TAG = '[HOST_FILES]';
@@ -114,32 +114,43 @@ export class HostFileSync {
         return { kind: 'project', relative, secret: secrets.has(relative), localPath, hostPath: localPathToHost(localPath, place.roots), hostContent: null };
       }),
     ];
-    // Each read is its own round trip and none depends on another, so they run together.
-    try {
-      await Promise.all(tracked.map(async (file) => {
-        const key = hostFileKey(place.hostId, file.hostPath);
-        const answer = await files.readFile(file.hostPath);
-        if (answer.exists && answer.content !== null && Buffer.byteLength(answer.content, 'utf8') >= HELPER_READ_LIMIT) {
-          throw new HostFileTooLargeError(file.hostPath);
-        }
-        const onHost = answer.exists ? answer.content : null;
-        knownHostContent.set(key, onHost);
-        if (isBeingEdited(key)) {
-          // Another spawn on this host pulled this file and has not pushed it yet. The folder holds its
-          // edits, and writing the host's copy over them would lose them. This spawn edits on top of what
-          // is there, and its push checks the host against what Kangentic last knew it to hold.
-          file.hostContent = await readLocal(file.localPath);
-        } else {
-          file.hostContent = onHost;
-          await writeLocal(file.localPath, onHost, file.kind === 'home' || file.secret);
-        }
-        markBeingEdited(key, file);
-      }));
-    } catch (error) {
-      for (const file of tracked) clearBeingEdited(hostFileKey(place.hostId, file.hostPath), file);
-      throw error;
+    // Each read is its own round trip and none depends on another, so they run together. All of them
+    // finish before a failure is handled: one still running would mark its file after the clear below.
+    const reads = await Promise.allSettled(tracked.map(async (file) => {
+      const key = hostFileKey(place.hostId, file.hostPath);
+      const answer = await files.readFile(file.hostPath);
+      if (answer.exists && answer.content !== null && Buffer.byteLength(answer.content, 'utf8') >= HELPER_READ_LIMIT) {
+        throw new HostFileTooLargeError(file.hostPath);
+      }
+      const onHost = answer.exists ? answer.content : null;
+      knownHostContent.set(key, onHost);
+      if (isBeingEdited(key)) {
+        // Another spawn on this host pulled this file and has not pushed it yet. The folder holds its
+        // edits, and writing the host's copy over them would lose them. This spawn edits on top of what
+        // is there, and its push checks the host against what Kangentic last knew it to hold.
+        file.hostContent = await readLocal(file.localPath);
+      } else {
+        file.hostContent = onHost;
+        await writeLocal(file.localPath, onHost, file.kind === 'home' || file.secret);
+      }
+      markBeingEdited(key, file);
+    }));
+    const sync = new HostFileSync(place, resolvedDirectory, tracked);
+    const failed = reads.find((read) => read.status === 'rejected');
+    if (failed) {
+      sync.abandon();
+      throw failed.reason;
     }
-    return new HostFileSync(place, resolvedDirectory, tracked);
+    return sync;
+  }
+
+  /**
+   * The spawn ended before its push. A later pull may refresh the folder from the host again: left marked,
+   * it would take the adapter's edits here as the host's content for the rest of the edit window, and a
+   * retry's own edits would then compare equal and never reach the host.
+   */
+  abandon(): void {
+    for (const file of this.tracked) clearBeingEdited(hostFileKey(this.place.hostId, file.hostPath), file);
   }
 
   /** Write what the adapter changed to the host, and keep new project files out of the host's git status. */
@@ -151,7 +162,7 @@ export class HostFileSync {
     } finally {
       // The adapter's edits are on the host (or the push failed and the spawn ends), so a later pull
       // may refresh the folder from the host again.
-      for (const file of this.tracked) clearBeingEdited(hostFileKey(this.place.hostId, file.hostPath), file);
+      this.abandon();
     }
   }
 
@@ -160,12 +171,17 @@ export class HostFileSync {
     const removals: Array<{ file: TrackedFile; expected: string | null }> = [];
     const created: TrackedFile[] = [];
     const written: Array<{ file: TrackedFile; content: string }> = [];
-    for (const file of this.tracked) {
-      const key = hostFileKey(this.place.hostId, file.hostPath);
+    // Each host read is a round trip on a path a spawn waits for, and none depends on another.
+    const changed = await Promise.all(this.tracked.map(async (file) => {
       const local = await readLocal(file.localPath);
-      if (local === file.hostContent) continue;
+      if (local === file.hostContent) return null;
       const current = await files.readFile(file.hostPath);
-      const hostNow = current.exists ? current.content : null;
+      return { file, local, hostNow: current.exists ? current.content : null };
+    }));
+    for (const change of changed) {
+      if (!change) continue;
+      const { file, local, hostNow } = change;
+      const key = hostFileKey(this.place.hostId, file.hostPath);
       if (hostNow === local) {
         // The host already holds what we would write (another session got there first).
         file.hostContent = local;
@@ -270,7 +286,7 @@ export class HostFileSync {
  */
 const knownHostContent = new Map<string, string | null>();
 
-/** How long a pull may go unpushed before it stops protecting the folder, for a spawn that failed and never pushed. */
+/** How long a pull may go unpushed before it stops protecting the folder, for a spawn that never ended (`abandon` covers one that threw). */
 const EDIT_WINDOW_MS = 60_000;
 /** The files a spawn has pulled and not yet pushed, with when the pull happened. */
 const filesBeingEdited = new Map<string, Map<TrackedFile, number>>();
@@ -313,9 +329,8 @@ function clearBeingEdited(key: string, file: TrackedFile): void {
   if (holders.size === 0) filesBeingEdited.delete(key);
 }
 
-/** A relative path that stays inside the folder it is joined to. */
 function assertRelative(relative: string): void {
-  if (relative.length === 0 || relative.startsWith('/') || relative.includes('\\') || relative.split('/').some((part) => part === '..' || part === '')) {
+  if (!isPlainRelativePath(relative)) {
     throw new Error(`${relative} is not a plain relative path, so it cannot be declared as a host file.`);
   }
 }
@@ -363,6 +378,39 @@ export async function pullHostFilesFor(
   return HostFileSync.pull(declaration, workingDirectory, place as SshCliPlace);
 }
 
+/** A spawn's pull, held where the spawn's failure path can reach it. */
+export interface HostFilePull {
+  sync: HostFileSync | null;
+}
+
+/**
+ * Run a spawn that pulls host files. A spawn that throws before its push abandons the pull, whichever
+ * step threw. Both chokepoints go through here, so one cannot keep a failure the other handles.
+ */
+export async function withHostFilePull<Result>(run: (pull: HostFilePull) => Promise<Result>): Promise<Result> {
+  const pull: HostFilePull = { sync: null };
+  try {
+    return await run(pull);
+  } catch (error) {
+    pull.sync?.abandon();
+    throw error;
+  }
+}
+
+/** The last step of a spawn's sync. `onFailure` runs when the push fails, before the error goes on. */
+export async function pushHostFilesForSpawn(hostFiles: HostFileSync | null, sessionId: string, onFailure: () => void): Promise<void> {
+  if (!hostFiles) return;
+  // Remembered before the push: a push that fails partway has already written some files, and the
+  // release strips them on the host along with the local copies.
+  rememberHostFileSync(sessionId, hostFiles);
+  try {
+    await hostFiles.push();
+  } catch (error) {
+    onFailure();
+    throw error;
+  }
+}
+
 /**
  * The syncs of running sessions, by the session's own id, so the release that strips the adapter's
  * entries locally can strip them on the host too (`releaseCommandHold`). One entry per session.
@@ -383,9 +431,4 @@ export async function settleHostFiles(sessionId: string): Promise<void> {
   } catch (error) {
     console.warn(`${LOG_TAG} could not restore the host's files for session ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
   }
-}
-
-/** Forget a session's sync without pushing (the spawn failed before anything was written to the host). */
-export function forgetHostFileSync(sessionId: string): void {
-  syncsBySession.delete(sessionId);
 }

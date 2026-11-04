@@ -9,22 +9,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PTY_HOST_LOST_EXIT_CODE, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostLifecycleListener, PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
+import type { PtyHostEvent } from '../../src/main/pty/host/protocol';
 import { spawnParams } from './helpers/remote-link-rig';
 
 function fakeTransport(spawnedPid: number) {
   let lifecycle: PtyHostLifecycleListener | undefined;
+  let eventListener: ((event: PtyHostEvent) => void) | undefined;
   const stopLostPtyTree = vi.fn();
   const transport: PtyHostTransport = {
     post: () => undefined,
     attachRendererPort: () => undefined,
     request: (async () => ({ ok: true, pid: spawnedPid })) as unknown as PtyHostTransport['request'],
-    setEventListener: () => undefined,
+    setEventListener: (listener) => { eventListener = listener; },
     setLifecycleListener: (listener) => { lifecycle = listener; },
     stopLostPtyTree,
     hostPid: 1234,
     shutdown: () => undefined,
   };
-  return { client: new PtyHostClient(transport), stopLostPtyTree, loseHost: () => lifecycle?.onHostDown() };
+  return { client: new PtyHostClient(transport), stopLostPtyTree, loseHost: () => lifecycle?.onHostDown(), emit: (event: PtyHostEvent) => eventListener?.(event) };
 }
 
 describe('the pid of a PTY handle', () => {
@@ -63,5 +65,26 @@ describe('a local pty host that dies', () => {
     expect(remoteExit).not.toHaveBeenCalled();
     expect(remote.pty.hasExited).toBe(false);
     expect(lostSessions).toEqual([['local-1']]);
+  });
+});
+
+describe('liveRemotePtys', () => {
+  it('lists exactly the live routes of the host asked, not another host, a local PTY or an exited one', async () => {
+    const { client, emit } = fakeTransport(4321);
+    const firstOnA = await client.spawn(spawnParams('a-1', 'task-1', 'host-a'));
+    const exitedOnA = await client.spawn(spawnParams('a-2', 'task-2', 'host-a'));
+    const secondOnA = await client.spawn(spawnParams('a-3', 'task-3', 'host-a'));
+    const onB = await client.spawn(spawnParams('b-1', 'task-4', 'host-b'));
+    const local = await client.spawn(spawnParams('local-1', 'task-5'));
+    if (!firstOnA.ok || !exitedOnA.ok || !secondOnA.ok || !onB.ok || !local.ok) throw new Error('spawn failed');
+
+    emit({ type: 'exit', ptyId: exitedOnA.pty.ptyId, exitCode: 0 } as PtyHostEvent);
+
+    expect(client.liveRemotePtys('host-a')).toEqual([
+      { sessionId: 'a-1', ptyId: firstOnA.pty.ptyId },
+      { sessionId: 'a-3', ptyId: secondOnA.pty.ptyId },
+    ]);
+    expect(client.liveRemotePtys('host-b')).toEqual([{ sessionId: 'b-1', ptyId: onB.pty.ptyId }]);
+    expect(client.liveRemotePtys('host-c')).toEqual([]);
   });
 });

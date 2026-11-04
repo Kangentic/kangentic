@@ -124,18 +124,32 @@ async function sha256OfFile(filePath: string): Promise<string | null> {
   }
 }
 
-/**
- * Put the archive at `destination`, verified against `sha256`. A copy already there that matches is kept and
- * nothing is fetched. The bytes land in a `.part` file, are hashed, and are renamed only when they match, so
- * a cut download or a wrong file is never the one a later connect finds and uploads.
- */
-export async function downloadVerified(options: {
+interface DownloadOptions {
   url: string;
   destination: string;
   sha256: string;
   expectedSize: number | null;
   fetchImpl: typeof fetch;
-}): Promise<void> {
+}
+
+const downloadsInFlight = new Map<string, Promise<void>>();
+
+/**
+ * Put the archive at `destination`, verified against `sha256`. A copy already there that matches is kept and
+ * nothing is fetched. The bytes land in a `.part` file, are hashed, and are renamed only when they match, so
+ * a cut download or a wrong file is never the one a later connect finds and uploads.
+ */
+export function downloadVerified(options: DownloadOptions): Promise<void> {
+  // Hosts connect in parallel, and two of one CPU want one archive: they share one download, or the
+  // second finds the shared `.part` renamed away under it and its connect fails with a raw ENOENT.
+  const running = downloadsInFlight.get(options.destination);
+  if (running) return running;
+  const download = fetchVerified(options).finally(() => downloadsInFlight.delete(options.destination));
+  downloadsInFlight.set(options.destination, download);
+  return download;
+}
+
+async function fetchVerified(options: DownloadOptions): Promise<void> {
   if (await sha256OfFile(options.destination) === options.sha256) return;
 
   await fs.promises.mkdir(path.dirname(options.destination), { recursive: true });

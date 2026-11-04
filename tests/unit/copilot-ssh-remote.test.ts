@@ -12,23 +12,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CopilotAdapter, COPILOT_REMOTE_SESSION_FILES } from '../../src/main/agent/adapters/copilot/copilot-adapter';
-import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
-import type { CliTarget } from '../../src/main/agent/shared/cli-target';
-import { pullHostFilesFor } from '../../src/main/remote/host-file-sync';
 import { RemoteSessionRelay, type RemoteSessionFiles } from '../../src/main/remote/remote-session-relay';
 import type { HostFileWrite } from '../../src/main/remote/protocol/messages';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
+import { MCP_TOKEN, SESSION_ID, sessionFolders, spawnOnHost, type HostSpawn } from './ssh-adapter-spawn-harness';
 
 const SHELL = 'bash';
-const TOKEN = 'copilot-ssh-token-0123456789';
 let workspace: FakeSshWorkspace;
-let target: CliTarget;
 let relays: RemoteSessionRelay[];
 
 beforeEach(async () => {
   workspace = await makeFakeSshWorkspace();
-  target = { ...workspace.place, linuxCliPath: 'copilot' };
   relays = [];
   workspace.host.files.set('/home/dev/.copilot/config.json', JSON.stringify({ logged_in_users: [{ login: 'host-user' }] }));
   workspace.host.files.set('/home/dev/.copilot/settings.json', JSON.stringify({ theme: 'dark' }));
@@ -40,32 +35,8 @@ afterEach(async () => {
   await workspace.dispose();
 });
 
-function sessionDirectory(): string {
-  return path.join(workspace.projectFolder, '.kangentic', 'sessions', 'session-1');
-}
-
-function hostSessionDirectory(): string {
-  return `${workspace.hostProject}/.kangentic/sessions/session-1`;
-}
-
-function spawnOptions(): SpawnCommandOptions {
-  const directory = sessionDirectory();
-  fs.mkdirSync(directory, { recursive: true });
-  return {
-    agentPath: 'copilot',
-    taskId: 'task-1',
-    cwd: workspace.projectFolder,
-    permissionMode: 'default',
-    shell: SHELL,
-    statusOutputPath: path.join(directory, 'status.json'),
-    eventsOutputPath: path.join(directory, 'events.jsonl'),
-    mcpServerEnabled: true,
-    mcpServerUrl: 'http://127.0.0.1:4000/mcp/project-1',
-    mcpServerToken: TOKEN,
-    ptySessionId: 'session-1',
-    cliTarget: target,
-  };
-}
+const sessionDirectory = (): string => sessionFolders(workspace).local;
+const hostSessionDirectory = (): string => sessionFolders(workspace).host;
 
 /** Every file under a folder, relative with forward slashes. */
 function listFiles(root: string, prefix = ''): string[] {
@@ -78,12 +49,15 @@ function listFiles(root: string, prefix = ''): string[] {
   return found;
 }
 
-async function prepare(adapter: AgentAdapter): Promise<{ command: string; sync: NonNullable<Awaited<ReturnType<typeof pullHostFilesFor>>> }> {
-  const sync = await pullHostFilesFor(adapter, workspace.projectFolder, target);
-  if (!sync) throw new Error('the adapter declared no host files');
-  await adapter.ensureTrust(workspace.projectFolder, target);
-  const command = adapter.buildCommand(spawnOptions());
-  return { command, sync };
+/**
+ * What differs from the harness's defaults: a URL that names no task session, so the builder adds no
+ * background-shell hint hook and every hook below is an `event` one.
+ */
+const COPILOT_OVERRIDES = { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:4000/mcp/project-1' } as const;
+
+/** One spawn as the chokepoints run it. Copilot's session files are copied by the relay, so the host's account, settings and MCP servers are pulled and nothing is pushed into its own ~/.copilot. */
+function prepare(adapter: CopilotAdapter): Promise<HostSpawn> {
+  return spawnOnHost(adapter, workspace, 'copilot', COPILOT_OVERRIDES);
 }
 
 describe('a Copilot on a remote host: the files it declares', () => {
@@ -100,8 +74,7 @@ describe('a Copilot on a remote host: the files it declares', () => {
 
   it('seeds the session\'s config home from the pulled copies and pushes nothing into the host\'s own ~/.copilot', async () => {
     const adapter = new CopilotAdapter();
-    const { sync } = await prepare(adapter);
-    await sync.push();
+    await prepare(adapter);
 
     const configHome = path.join(sessionDirectory(), 'copilot-config');
     const config = JSON.parse(fs.readFileSync(path.join(configHome, 'config.json'), 'utf-8')) as { logged_in_users?: unknown; banner?: string; statusLine?: { command: string } };
@@ -123,7 +96,7 @@ describe('a Copilot on a remote host: the command', () => {
     expect(command).toContain(`--additional-mcp-config ${quoteArg(`@${hostSessionDirectory()}/copilot-mcp.json`, SHELL)}`);
     expect(command).not.toContain(toForwardSlash(workspace.projectFolder));
     expect(command).not.toContain(toForwardSlash(os.tmpdir()));
-    expect(command).not.toContain(TOKEN);
+    expect(command).not.toContain(MCP_TOKEN);
   });
 
   it('runs every hook through the transport script on the host, and gives the host no URL to dial', async () => {
@@ -175,13 +148,13 @@ describe('a Copilot on a remote host: what the relay pushes', () => {
     relays.push(relay);
     await relay.register({
       hostId: 'host-1',
-      sessionId: 'session-1',
+      sessionId: SESSION_ID,
       place: workspace.place,
       localSessionDirectory: sessionDirectory(),
       statusOutputPath: path.join(sessionDirectory(), 'status.json'),
       extraFiles: adapter.remoteSessionFiles(),
     });
-    await relay.release('session-1');
+    await relay.release(SESSION_ID);
 
     const byPath = new Map(pushed.map((file) => [file.path, file]));
     for (const relative of adapter.remoteSessionFiles()) {

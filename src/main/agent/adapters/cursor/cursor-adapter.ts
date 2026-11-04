@@ -243,7 +243,7 @@ export class CursorAdapter implements AgentAdapter {
    */
   readonly remoteCliName = 'cursor-agent';
   /**
-   * `agent-transcripts`lines have no timestamp field. Entries use `ts: 0`,
+   * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
    * so the viewer shows no clock and orders the conversation by file order.
    */
   readonly transcriptHasTimestamps = false;

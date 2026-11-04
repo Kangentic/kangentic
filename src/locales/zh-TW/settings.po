@@ -1319,7 +1319,7 @@ msgstr "Kangentic 無法寫入設定檔。"
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-msgstr "Kangentic 會保留複本。具有複雜密碼的金鑰必須位於您的 SSH 代理程式中。"
+msgstr "Kangentic 會保留複本。具有通關密語的金鑰必須位於您的 SSH 代理程式中。"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"

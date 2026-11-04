@@ -180,13 +180,16 @@ export function fingerprintOf(base64Key: string): string {
 }
 
 /** The key entry for a host in a known_hosts file's text, preferring the host asked for and falling back to the last line (the final hop's). */
-export function pickKnownHostsEntry(text: string, token: string): { keyType: string; base64: string } | null {
+export function pickKnownHostsEntry(text: string, token: string): { hostField: string; keyType: string; base64: string } | null {
   const entries = text.split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/))
     .filter((parts) => parts.length >= 3 && !parts[0].startsWith('#') && !parts[0].startsWith('@'));
-  const matching = entries.filter((parts) => parts[0].split(',').includes(token));
-  const chosen = matching.at(-1) ?? entries.at(-1);
-  return chosen ? { keyType: chosen[1], base64: chosen[2] } : null;
+  const matched = entries.filter((parts) => parts[0].split(',').includes(token)).at(-1);
+  const chosen = matched ?? entries.at(-1);
+  if (!chosen) return null;
+  // No match means ssh recorded the host under another name (a HostKeyAlias), and that name is the one
+  // it looks up on a real connection, so it is the one to trust.
+  return { hostField: matched ? token : chosen[0], keyType: chosen[1], base64: chosen[2] };
 }
 
 /**
@@ -218,15 +221,14 @@ export async function probeHostKey(destination: string, deps: SshSetupDeps, reso
       'exit',
     ], { env: childProcessEnv(), timeout: 30_000 });
     const text = await fs.readFile(known, 'utf8').catch(() => '');
-    const token = knownHostsToken(target);
-    const entry = pickKnownHostsEntry(text, token);
+    const entry = pickKnownHostsEntry(text, knownHostsToken(target));
     if (!entry) throw new Error(`Could not reach ${target.hostname}${target.port === 22 ? '' : `:${target.port}`} to read its key. Check the address and that the host is on.`);
     return {
       hostname: target.hostname,
       port: target.port,
       keyType: entry.keyType,
       fingerprint: fingerprintOf(entry.base64),
-      knownHostsLine: `${token} ${entry.keyType} ${entry.base64}`,
+      knownHostsLine: `${entry.hostField} ${entry.keyType} ${entry.base64}`,
     };
   } finally {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);

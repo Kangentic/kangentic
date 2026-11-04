@@ -118,8 +118,8 @@ describe('a host key', () => {
 
   it('picks the line for the host asked, else the last (the final hop\'s)', () => {
     const text = '# comment\njump ssh-ed25519 AAAA\n[lab]:2222 ssh-ed25519 BBBB\nother ssh-rsa CCCC\n';
-    expect(pickKnownHostsEntry(text, '[lab]:2222')).toEqual({ keyType: 'ssh-ed25519', base64: 'BBBB' });
-    expect(pickKnownHostsEntry(text, 'missing')).toEqual({ keyType: 'ssh-rsa', base64: 'CCCC' });
+    expect(pickKnownHostsEntry(text, '[lab]:2222')).toEqual({ hostField: '[lab]:2222', keyType: 'ssh-ed25519', base64: 'BBBB' });
+    expect(pickKnownHostsEntry(text, 'missing')).toEqual({ hostField: 'other', keyType: 'ssh-rsa', base64: 'CCCC' });
     expect(pickKnownHostsEntry('', 'x')).toBeNull();
   });
 
@@ -134,6 +134,23 @@ describe('a host key', () => {
     expect(probeArgs).toEqual(expect.arrayContaining(['BatchMode=yes', 'StrictHostKeyChecking=no', 'PreferredAuthentications=none', 'HashKnownHosts=no']));
     expect(probeArgs.join(' ')).not.toContain(path.join(home, '.ssh'));
     expect(fs.readdirSync(path.join(scratch, 'tmp'))).toEqual([]);
+  });
+
+  it('carries the HostKeyAlias ssh recorded the key under, not the hostname, so a real connection finds it', async () => {
+    const run = makeRun({ keyLineHost: 'build-box-alias' });
+
+    const probe = await probeHostKey('dev@lab.example.test', makeDeps(run));
+
+    expect(probe.hostname).toBe('lab.example.test');
+    expect(probe.knownHostsLine).toBe(`build-box-alias ssh-ed25519 ${KEY_BLOB}`);
+  });
+
+  it('writes the token alone when the line names it, even if ssh wrote the host with its address', async () => {
+    const text = 'lab.example.test,10.0.0.7 ssh-ed25519 AAAA\n';
+    expect(pickKnownHostsEntry(text, 'lab.example.test')).toEqual({ hostField: 'lab.example.test', keyType: 'ssh-ed25519', base64: 'AAAA' });
+
+    const probe = await probeHostKey('dev@lab.example.test', makeDeps(makeRun({ keyLineHost: 'lab.example.test,10.0.0.7' })));
+    expect(probe.knownHostsLine).toBe(`lab.example.test ssh-ed25519 ${KEY_BLOB}`);
   });
 
   it('says it could not reach the host when nothing was learned', async () => {

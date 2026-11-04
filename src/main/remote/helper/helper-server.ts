@@ -72,6 +72,12 @@ const SESSION_ENV_NAMES = new Set(['NODE_OPTIONS', 'NODE_PATH', '_']);
 const MAX_READ_BYTES = 1_000_000;
 
 /** What a file holds right now, or null when it is not there. Synchronous so a check and the call after it share one turn. */
+/** Whether `candidate` is `folder` or lies beneath it. A child named `..cache` does not climb out. */
+function isBeneath(folder: string, candidate: string): boolean {
+  const relative = path.relative(folder, candidate);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
 function readCurrentText(target: string): string | null {
   try {
     return readFileSync(target, 'utf8');
@@ -516,8 +522,7 @@ export class HelperServer {
   private homePath(requested: string): string {
     const home = path.resolve(this.options.homeDirectory ?? os.homedir());
     const resolved = path.resolve(requested);
-    const relative = path.relative(home, resolved);
-    if (!path.isAbsolute(requested) || relative.startsWith('..') || path.isAbsolute(relative)) {
+    if (!path.isAbsolute(requested) || !isBeneath(home, resolved)) {
       throw new Error(`${requested} is not inside the home folder of this host, so it was not touched`);
     }
     return resolved;
@@ -574,7 +579,10 @@ export class HelperServer {
       const stat = await fs.lstat(target);
       if (!stat.isSymbolicLink()) return target;
       const real = await fs.realpath(target);
-      return this.homePath(real);
+      // Against the home's own real path: on a host whose /home is itself a link, every real path lies
+      // outside the home as it was named, and the link would be replaced by a plain copy.
+      const home = await fs.realpath(path.resolve(this.options.homeDirectory ?? os.homedir()));
+      return isBeneath(home, real) ? real : target;
     } catch {
       // Not there, a dangling link, or a link that leaves the home: the path as named.
       return target;

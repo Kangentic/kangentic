@@ -121,6 +121,7 @@ export class PortForwarder {
     const host = this.hosts.get(hostId);
     if (!host) return;
     for (const forward of host.forwards.values()) this.stop(forward, false);
+    host.forwards.clear();
     if (host.pollTimer) clearTimeout(host.pollTimer);
     this.hosts.delete(hostId);
   }
@@ -161,7 +162,7 @@ export class PortForwarder {
     const host = this.hosts.get(hostId);
     if (!host) return [];
     return [...host.forwards.values()]
-      .sort((a, b) => a.port - b.port)
+      .sort((left, right) => left.port - right.port)
       .map((forward) => ({ port: forward.port, state: forward.state, ...(forward.detail ? { detail: forward.detail } : {}) }));
   }
 
@@ -169,6 +170,7 @@ export class PortForwarder {
   dispose(): void {
     for (const host of this.hosts.values()) {
       for (const forward of host.forwards.values()) this.stop(forward, true);
+      host.forwards.clear();
       if (host.pollTimer) clearTimeout(host.pollTimer);
     }
     this.hosts.clear();
@@ -192,7 +194,8 @@ export class PortForwarder {
     try {
       const listening = new Set(await this.options.requestListening(hostId));
       for (const forward of [...host.forwards.values()]) {
-        if (forward.state === 'waiting' && !forward.child && listening.has(forward.port) && this.hosts.get(hostId) === host) {
+        // Each start awaits, so a forward later in this list can have been dropped by then.
+        if (forward.state === 'waiting' && !forward.child && listening.has(forward.port) && host.forwards.get(forward.port) === forward) {
           await this.start(host, forward);
         }
       }
@@ -206,7 +209,11 @@ export class PortForwarder {
 
   private async start(host: HostForwards, forward: Forward): Promise<void> {
     // Something here already holds the port (a stray ssh, another program): say so without starting ssh.
-    if (await this.localPortBound(forward.port)) {
+    const portTaken = await this.localPortBound(forward.port);
+    // Dropped during the probe (the port left the wanted set, the host was removed): no `ssh` may start,
+    // because nothing would be left to stop it. Removing a host empties its map, so this covers that too.
+    if (host.forwards.get(forward.port) !== forward) return;
+    if (portTaken) {
       this.fail(host, forward, `Port ${forward.port} is already in use on this computer, so the host's server cannot be reached there.`);
       return;
     }

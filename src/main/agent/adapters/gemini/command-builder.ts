@@ -6,7 +6,7 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
-import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
 import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV, kangenticMcpServer, mcpBridgeScriptEnv } from '../../shared/kangentic-mcp-server';
 import {
   WSL_MCP_REQUEST_HEAD,
@@ -304,10 +304,7 @@ export class GeminiCommandBuilder {
    * variables, not a credential.
    */
   private createMergedSettings(options: GeminiCommandOptions): void {
-    // On an SSH host only the cwd's settings file is pulled from the host (`remoteFiles`), so the
-    // base is read from there: any other folder here is an empty shell folder, and merging from it
-    // would write over the user's settings on the host.
-    const projectRoot = options.cliTarget?.kind === 'ssh' ? options.cwd : (options.projectRoot || options.cwd);
+    const projectRoot = pulledProjectRoot(options);
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const merged: GeminiSettings = { ...baseSettings };

@@ -23,7 +23,9 @@ export class ProjectRepository {
   }
 
   private read(id: string): Project {
-    return toProject(getGlobalDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow);
+    const row = getGlobalDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+    if (!row) throw new Error(`Project ${id} is not registered.`);
+    return toProject(row);
   }
 
   /**

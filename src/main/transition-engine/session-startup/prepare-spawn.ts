@@ -8,7 +8,7 @@ import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
-import { pullHostFilesFor, rememberHostFileSync } from '../../remote/host-file-sync';
+import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../../remote/host-file-sync';
 import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
@@ -118,7 +118,11 @@ export type PrepareResult =
  * `{ agentSessionId }` to produce a `--resume <uuid>` command, or null
  * for a fresh spawn.
  */
-export async function prepareAgentSpawn(input: {
+export function prepareAgentSpawn(input: Parameters<typeof prepareSpawnWithPull>[1]): Promise<PrepareResult> {
+  return withHostFilePull((hostFilePull) => prepareSpawnWithPull(hostFilePull, input));
+}
+
+async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   task: Task;
   swimlane: Swimlane | null;
   cwd: string;
@@ -223,6 +227,7 @@ export async function prepareAgentSpawn(input: {
   // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
   // before it runs, pushed back after the command is built (#913). Null for any other spawn.
   const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
+  hostFilePull.sync = hostFiles;
   await adapter.ensureTrust(cwd, cliTarget);
 
   // "Plan always wins, else task -> lane -> global" - the rule lives in
@@ -403,17 +408,8 @@ export async function prepareAgentSpawn(input: {
     releaseCommandHold(adapter, cwd, sessionRecordId);
     throw error;
   }
-  if (hostFiles) {
-    // Remembered before the push, so a push that fails partway is stripped on the host by the release.
-    rememberHostFileSync(sessionRecordId, hostFiles);
-    try {
-      await hostFiles.push();
-    } catch (error) {
-      // The host's files could not be written, so no caller will spawn this command.
-      releaseCommandHold(adapter, cwd, sessionRecordId);
-      throw error;
-    }
-  }
+  // A push that fails means no caller will spawn this command.
+  await pushHostFilesForSpawn(hostFiles, sessionRecordId, () => releaseCommandHold(adapter, cwd, sessionRecordId));
 
   return {
     ok: true,

@@ -34,7 +34,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
-import { pullHostFilesFor, rememberHostFileSync } from '../remote/host-file-sync';
+import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
 import { resolveRemoteLaunch, resolveSpawnCli } from '../remote/remote-launch';
 import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
@@ -732,7 +732,11 @@ export class TransitionEngine {
     };
   }
 
-  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
+  private executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
+    return withHostFilePull((hostFilePull) => this.spawnAgentWithPull(hostFilePull, config, task, vars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides));
+  }
+
+  private async spawnAgentWithPull(hostFilePull: HostFilePull, config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
     const appConfig = this.getConfig();
 
     // Resolve which agent adapter to use.
@@ -776,6 +780,7 @@ export class TransitionEngine {
     // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
     // before it runs, pushed back after the command is built (#913). Null for any other spawn.
     const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
+    hostFilePull.sync = hostFiles;
     await adapter.ensureTrust(cwd, cliTarget);
     console.log(`[spawnAgent] Trust ensured for ${cwd}`);
 
@@ -1020,18 +1025,8 @@ export class TransitionEngine {
     const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
     const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
-    if (hostFiles) {
-      // Remembered before the push: a push that fails partway has already written some files, and the
-      // release below strips them on the host along with the local copies.
-      rememberHostFileSync(ptySessionId, hostFiles);
-      try {
-        await hostFiles.push();
-      } catch (error) {
-        // The host's files could not be written, so this command never reaches spawn() to own its hold.
-        releaseCommandHold(adapter, cwd, ptySessionId);
-        throw error;
-      }
-    }
+    // A push that fails means this command never reaches spawn() to own its hold.
+    await pushHostFilesForSpawn(hostFiles, ptySessionId, () => releaseCommandHold(adapter, cwd, ptySessionId));
 
     // Where an isolated column's pass begins, so the main conversation, resumed
     // after it, can be told the commits it made. Read before the spawn: the

@@ -433,6 +433,17 @@ export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): 
   return segments.length > 0 ? `${place.facts.uncRoot}\\${segments.join('\\')}` : place.facts.uncRoot;
 }
 
+/**
+ * The folder an adapter's project settings are read from: the project root, else the working folder. On a
+ * host over SSH only the working folder's files are pulled (`remoteFiles`), and a remote task has no
+ * worktree. Any other folder here is an empty shell folder, and merging from it would write over the
+ * user's settings on the host.
+ */
+export function pulledProjectRoot(options: { cwd: string; projectRoot?: string; cliTarget?: { kind: string } | null }): string {
+  if (options.cliTarget?.kind === 'ssh') return options.cwd;
+  return options.projectRoot || options.cwd;
+}
+
 /** The home the CLI keeps its files under: the distro's, reached through its share, or this machine's. */
 export function cliHomeDir(place: CliPlace | null): string {
   if (!place) return os.homedir();

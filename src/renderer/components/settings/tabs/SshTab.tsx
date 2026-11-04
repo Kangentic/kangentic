@@ -194,7 +194,7 @@ export function SshTab() {
       >
         <CardTile className="flex flex-col gap-2.5" testId="ssh-hosts-tile">
           {hostsError ? <ReportedError error={hostsError} testId="ssh-hosts-load-error" /> : null}
-          {hostsLoaded && hosts.length === 0 && step === 'closed' ? (
+          {hostsLoaded && !hostsError && hosts.length === 0 && step === 'closed' ? (
             <p className="text-sm text-fg-faint" data-testid="ssh-no-hosts"><Trans>No hosts yet.</Trans></p>
           ) : null}
 

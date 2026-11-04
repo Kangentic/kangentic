@@ -51,6 +51,7 @@ async function resetMock() {
     const mockWindow = window as unknown as Record<string, unknown>;
     delete mockWindow.__mockSshProbeError;
     delete mockWindow.__mockSshAddError;
+    delete mockWindow.__mockSshProbeGate;
   });
 }
 
@@ -69,6 +70,28 @@ test('shows an empty list and the ssh client it found', async () => {
   await expect(page.locator('[data-testid="ssh-add-host"]')).toBeVisible();
   await expect(page.locator('[data-testid="ssh-client-status-label"]')).toHaveText('ssh found');
   await expect(page.locator('[data-testid="ssh-client-status-text"]')).toContainText('OpenSSH');
+});
+
+test('says the list could not be read, and not that there are no hosts, when listing fails', async () => {
+  // Its own page: the failure has to be the very first answer, or an earlier list would already have
+  // told the store there are no hosts.
+  const failing = await launchPage({
+    beforeLoad: async (failingPage) => {
+      await failingPage.addInitScript(() => {
+        (window as unknown as Record<string, unknown>).__mockSshListError = 'The list of hosts could not be read.';
+      });
+    },
+  });
+  try {
+    await failing.page.locator('[data-testid="settings-button"]').click();
+    await failing.page.locator('[data-testid="settings-tab-ssh"]').click();
+    await expect(failing.page.locator('[data-testid="ssh-hosts-card"]')).toBeVisible();
+
+    await expect(failing.page.locator('[data-testid="ssh-hosts-load-error"]')).toContainText('could not be read');
+    await expect(failing.page.locator('[data-testid="ssh-no-hosts"]')).toHaveCount(0);
+  } finally {
+    await failing.browser.close();
+  }
 });
 
 test('adds a host through the fingerprint step and shows it connected', async () => {
@@ -109,6 +132,31 @@ test('keeps the form and shows the reason when the host cannot be reached', asyn
   await expect(page.locator('[data-testid="ssh-add-error"]')).toContainText('Connection timed out');
   await expect(page.locator('[data-testid="ssh-add-name"]')).toHaveValue('Lab');
   await expect(page.locator('[data-testid="ssh-add-trust"]')).toHaveCount(0);
+});
+
+test('stays closed when Cancel is pressed while the host key is still being read', async () => {
+  await page.evaluate(() => {
+    const mockWindow = window as unknown as { __mockSshProbeGate?: Promise<void>; __releaseSshProbe?: () => void };
+    mockWindow.__mockSshProbeGate = new Promise<void>((resolve) => { mockWindow.__releaseSshProbe = resolve; });
+  });
+  await openSshTab();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Slow');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('slow');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+  await page.locator('[data-testid="ssh-add-cancel"]').click();
+  await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
+
+  // The probe answers after the form was closed: the answer must land nowhere.
+  await page.evaluate(async () => {
+    (window as unknown as { __releaseSshProbe: () => void }).__releaseSshProbe();
+    // Two frames after the release, which is when a late setState would have repainted the form.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+
+  await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="ssh-add-trust"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="ssh-add-host"]')).toBeVisible();
 });
 
 test('clears the password after a refused add, and keeps the rest of the form', async () => {

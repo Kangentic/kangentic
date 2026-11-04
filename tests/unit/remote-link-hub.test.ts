@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LinkHub } from '../../src/main/remote/link/link-hub';
+import { RemoteLink } from '../../src/main/remote/link/remote-link';
 import { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostEvent } from '../../src/main/pty/host/protocol';
 import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
@@ -166,6 +167,67 @@ describe('connection state', () => {
     rig.hosts['host-late'].fakes[0].feed('hello');
     await settle();
     expect(receivedOutput(renderer).map((entry) => entry.data).join('')).toBe('hello');
+  });
+});
+
+describe('sessions and renderers the hub lets go of', () => {
+  it('loses the PTY route of a session the host reports lost, so a later command no longer reaches that link', async () => {
+    const hub = new LinkHub();
+    const client = new PtyHostClient(hub);
+    const firstHelper = makeHelperRig(1);
+    // The host's helper restarts: the next dial reaches a new one that remembers no session.
+    let current = firstHelper;
+    hub.addHost('host-a', {
+      identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
+      connect: async () => dialHelper(current),
+      reconnect: FAST,
+    });
+    teardown.push(() => hub.removeHost('host-a'), () => firstHelper.helper.dispose());
+    await settle();
+    const spawning = client.spawn(spawnParams('s1', 'task-1', 'host-a'));
+    await settle();
+    const outcome = await spawning;
+    if (!outcome.ok) throw outcome.error;
+    const write = { type: 'write', ptyId: outcome.pty.ptyId, data: 'before the loss' } as const;
+    expect(hub.ownsCommand(write)).toBe(true);
+    expect(hub.hostOfSession('s1')).toBe('host-a');
+
+    const restartedHelper = makeHelperRig(1);
+    teardown.push(() => restartedHelper.helper.dispose());
+    current = restartedHelper;
+    firstHelper.linkStreams.at(-1)?.destroy();
+    await settle(600);
+
+    expect(hub.hostOfSession('s1')).toBeNull();
+    expect(hub.ownsCommand(write)).toBe(false);
+    hub.post({ ...write, data: 'after the loss' });
+    await settle();
+    expect(restartedHelper.fakes[0].write).not.toHaveBeenCalled();
+    expect(firstHelper.fakes[0].write).not.toHaveBeenCalledWith('after the loss');
+  });
+
+  it('gives a host added after a renderer was forgotten no focus for it, and a host added before it the last focus', async () => {
+    const post = vi.spyOn(RemoteLink.prototype, 'post');
+    const hub = new LinkHub();
+    const addLink = (hostId: string): void => {
+      const helper = makeHelperRig(1);
+      teardown.push(() => helper.helper.dispose(), () => hub.removeHost(hostId));
+      hub.addHost(hostId, { identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' }, connect: async () => dialHelper(helper), reconnect: FAST });
+    };
+    const focusPosts = (): unknown[] => post.mock.calls.map((call) => call[0]).filter((command) => command.type === 'setRendererFocus' && command.rendererId === 7);
+
+    hub.post({ type: 'setRendererFocus', rendererId: 7, sessionIds: ['s1'] });
+    addLink('host-a');
+    expect(focusPosts()).toHaveLength(1);
+
+    post.mockClear();
+    hub.post({ type: 'forgetRenderer', rendererId: 7 });
+    post.mockClear();
+    addLink('host-b');
+
+    expect(focusPosts()).toEqual([]);
+    post.mockRestore();
+    await settle();
   });
 });
 

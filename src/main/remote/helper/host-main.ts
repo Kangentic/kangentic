@@ -42,6 +42,8 @@ function argumentValue(name: string): string | undefined {
 function hostDirectory(): string {
   const directory = path.resolve(argumentValue('--dir') ?? path.join(os.homedir(), '.kangentic', 'host', 'run'));
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  // mkdir leaves a folder that already exists as it was, and the socket is reachable through it until its chmod.
+  fs.chmodSync(directory, 0o700);
   return directory;
 }
 

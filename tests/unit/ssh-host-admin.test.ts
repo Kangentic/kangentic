@@ -261,12 +261,20 @@ describe('adding a host', () => {
     expect(rig.run.calls).toHaveLength(callsAfterFirst);
   });
 
-  it('reads the same address in another letter case as the same host', async () => {
+  it('reads the same host name in another letter case as the same host', async () => {
     const rig = makeRig();
-    await rig.admin.addHost({ name: 'Lab', destination: 'Dev@Lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+    await rig.admin.addHost({ name: 'Lab', destination: 'dev@Lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
 
     await expect(rig.admin.addHost({ name: 'Lab 2', destination: 'dev@lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT }))
       .rejects.toThrow('already added as "Lab"');
+  });
+
+  it('keeps two accounts whose user names differ only by case apart', async () => {
+    const rig = makeRig();
+    await rig.admin.addHost({ name: 'Lab', destination: 'Deploy@lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+
+    await expect(rig.admin.addHost({ name: 'Lab 2', destination: 'deploy@lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT }))
+      .resolves.toMatchObject({ host: { destination: 'deploy@lab' } });
   });
 
   it('refuses a second add of one address that starts before the first has made its row', async () => {

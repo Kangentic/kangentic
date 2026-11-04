@@ -11,14 +11,6 @@ import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostStatus, 
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 let latestHostsRequestId: number = import.meta.hot?.data?.latestHostsRequestId ?? 0;
 
-// @ts-expect-error -- Vite handles import.meta.hot
-if (import.meta.hot) {
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.latestHostsRequestId = latestHostsRequestId;
-  });
-}
-
 /** Which step of Add project is open: nothing, the This computer / host chooser, or a host's folder form. */
 export type AddProjectDialogState =
   | { kind: 'closed' }
@@ -26,10 +18,7 @@ export type AddProjectDialogState =
   | { kind: 'remote'; hostId: string };
 
 interface SshStore {
-  /**
-   * Transient UI state. An edit of this file in dev re-creates the store and closes an open Add project
-   * dialog; that reset is accepted, since nothing is lost but an unsent form.
-   */
+  /** Transient UI state: which step of Add project is showing. */
   addProjectDialog: AddProjectDialogState;
   openAddProjectChooser: () => void;
   openAddRemoteProject: (hostId: string) => void;
@@ -61,7 +50,7 @@ interface SshStore {
  * The two loads never reject: a failure is state the tab shows. So a mutation that succeeded in main
  * is never reported as failed because the list after it could not be read.
  */
-export const useSshStore = create<SshStore>((set, get) => ({
+const createSshStore = () => create<SshStore>((set, get) => ({
   addProjectDialog: { kind: 'closed' },
   openAddProjectChooser: () => set({ addProjectDialog: { kind: 'chooser' } }),
   openAddRemoteProject: (hostId) => set({ addProjectDialog: { kind: 'remote', hostId } }),
@@ -128,3 +117,21 @@ export const useSshStore = create<SshStore>((set, get) => ({
 
   probeRemoteFolder: (hostId, folderPath) => window.electronAPI.ssh.probeRemoteFolder(hostId, folderPath),
 }));
+
+// Pattern E: this module's only runtime export is a hook, so it is not a Fast Refresh boundary. A re-eval
+// would hand a second store to part of the tree, and a host's state would land where no one is reading.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedSshStore: ReturnType<typeof createSshStore> | undefined = import.meta.hot?.data?.sshStore;
+export const useSshStore = preservedSshStore ?? createSshStore();
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.sshStore = useSshStore;
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.latestHostsRequestId = latestHostsRequestId;
+  });
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
+}

@@ -39,7 +39,7 @@ interface Rig {
   requests: number;
 }
 
-function makeRig(): Rig {
+function makeRig(probe?: (port: number) => Promise<boolean>): Rig {
   const rig: Rig = {
     children: [],
     spawnCalls: [],
@@ -64,7 +64,7 @@ function makeRig(): Rig {
       }, 300);
       return child as unknown as ChildProcess;
     }) as unknown as typeof spawn,
-    isLocalPortBound: async (port) => rig.localBound.has(port),
+    isLocalPortBound: probe ?? (async (port) => rig.localBound.has(port)),
     stopProcess: (child, immediately) => {
       const fake = child as unknown as FakeChild;
       fake.stopped = true;
@@ -256,5 +256,66 @@ describe('ending forwards', () => {
     rig.forwarder.linkState('host-a', 'reconnecting');
     expect(rig.stops).toEqual([]);
     expect(rig.forwarder.list('host-a')[0].state).toBe('forwarding');
+  });
+});
+
+describe('a forward dropped while its local port is being probed', () => {
+  /** A probe that stays pending until the test resolves it, recording the ports it was asked about. */
+  function deferredProbe(): { probe: (port: number) => Promise<boolean>; asked: number[]; resolveAll(taken: boolean): void } {
+    const asked: number[] = [];
+    const resolvers: Array<(taken: boolean) => void> = [];
+    return {
+      asked,
+      probe: (port) => {
+        asked.push(port);
+        return new Promise<boolean>((resolve) => { resolvers.push(resolve); });
+      },
+      resolveAll: (taken) => { for (const resolve of resolvers.splice(0)) resolve(taken); },
+    };
+  }
+
+  async function pendingProbeRig(ports: number[]): Promise<{ rig: Rig; deferred: ReturnType<typeof deferredProbe> }> {
+    const deferred = deferredProbe();
+    const rig = makeRig(deferred.probe);
+    for (const port of ports) rig.listening.add(port);
+    rig.forwarder.setPorts('host-a', ports);
+    rig.forwarder.linkState('host-a', 'connected');
+    await advance(50);
+    expect(deferred.asked).toEqual([ports[0]]);
+    return { rig, deferred };
+  }
+
+  it('starts no ssh when the port leaves the wanted set during the probe', async () => {
+    const { rig, deferred } = await pendingProbeRig([7300]);
+    rig.forwarder.setPorts('host-a', []);
+    deferred.resolveAll(false);
+    await advance(3000);
+    expect(rig.spawnCalls).toEqual([]);
+    expect(rig.forwarder.list('host-a')).toEqual([]);
+  });
+
+  it('starts no ssh when the host is removed during the probe', async () => {
+    const { rig, deferred } = await pendingProbeRig([7300]);
+    rig.forwarder.removeHost('host-a');
+    deferred.resolveAll(false);
+    await advance(3000);
+    expect(rig.spawnCalls).toEqual([]);
+  });
+
+  it('starts no ssh when the forwarder is disposed during the probe', async () => {
+    const { rig, deferred } = await pendingProbeRig([7300]);
+    rig.forwarder.dispose();
+    deferred.resolveAll(false);
+    await advance(3000);
+    expect(rig.spawnCalls).toEqual([]);
+  });
+
+  it('skips a second waiting forward that was removed while the first one was starting', async () => {
+    const { rig, deferred } = await pendingProbeRig([7300, 7301]);
+    rig.forwarder.setPorts('host-a', [7300]);
+    deferred.resolveAll(false);
+    await advance(50);
+    expect(deferred.asked).toEqual([7300]);
+    expect(rig.spawnCalls.map((call) => call.args.find((argument) => argument.startsWith('127.0.0.1:')))).toEqual(['127.0.0.1:7300:localhost:7300']);
   });
 });

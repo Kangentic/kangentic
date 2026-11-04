@@ -86,7 +86,7 @@ export class PortForwardPlan {
     // A host that had ports and has none now is told so, once.
     for (const hostId of this.sent.keys()) if (!wanted.has(hostId)) wanted.set(hostId, []);
     for (const [hostId, ports] of wanted) {
-      const key = [...new Set(ports)].sort((a, b) => a - b).join(',');
+      const key = [...new Set(ports)].sort((left, right) => left - right).join(',');
       if (this.sent.get(hostId) === key) continue;
       try {
         await this.deps.send({ op: 'setForwards', hostId, ports: key === '' ? [] : key.split(',').map(Number) });

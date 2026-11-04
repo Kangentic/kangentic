@@ -39,6 +39,13 @@ import {
 
 const MAX_HOST_NAME_LENGTH = 60;
 
+/** One address as a comparison key. A host name does not differ by case; the user name before it does. */
+function addressKeyOf(destination: string): string {
+  const trimmed = destination.trim();
+  const hostStart = trimmed.lastIndexOf('@') + 1;
+  return trimmed.slice(0, hostStart) + trimmed.slice(hostStart).toLowerCase();
+}
+
 export interface SshHostAdminDeps {
   hosting: Pick<RemoteHosting, 'hosts' | 'hostService' | 'status' | 'connectHost'>;
   projects: {
@@ -81,9 +88,8 @@ export class SshHostAdmin {
     // One host per address. Two rows for one machine would run two links that take the host over from each
     // other (one install, one owner at a time), each seeing "the peer ended the connection" again and again.
     // The in-flight check covers a second add that starts before the first has made its row.
-    // Host names do not differ by case, so `Me@Build` and `me@build` are one address here.
-    const addressKey = input.destination.trim().toLowerCase();
-    const existing = this.deps.hosting.hosts.list().find((candidate) => candidate.destination.trim().toLowerCase() === addressKey);
+    const addressKey = addressKeyOf(input.destination);
+    const existing = this.deps.hosting.hosts.list().find((candidate) => addressKeyOf(candidate.destination) === addressKey);
     if (existing) throw new Error(`${input.destination} is already added as "${existing.name}".`);
     if (this.adding.has(addressKey)) throw new Error(`${input.destination} is already being added.`);
     this.adding.add(addressKey);

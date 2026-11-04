@@ -186,7 +186,7 @@ msgstr "{rule}<0>，例如 {sample}</0>"
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, other {{runningCount}/# 个代理正在运行}}"
+msgstr "{maxConcurrent, plural, other {{runningCount}/# 个智能体正在运行}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
@@ -2500,7 +2500,7 @@ msgstr "任务标题"
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
 msgid "Tasks work in this folder directly, with no worktree each. Run one agent in it at a time."
-msgstr "任务直接在此文件夹中运行,不单独创建工作树。一次只能运行一个代理。"
+msgstr "任务直接在此文件夹中运行,不单独创建工作树。一次只能运行一个智能体。"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
 msgctxt "file type"

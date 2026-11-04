@@ -121,6 +121,58 @@ describe('connect', () => {
     await expect(unsafe.service.connect('host-a')).rejects.toBeInstanceOf(InvalidSshDestinationError);
   });
 
+  it('runs one install and one addHost for two connects of one host at once', async () => {
+    let release = (): void => undefined;
+    const open = new Promise<void>((resolve) => { release = resolve; });
+    let installs = 0;
+    const { service, sent } = makeService({
+      install: async () => {
+        installs += 1;
+        await open;
+        return { directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true };
+      },
+    });
+
+    const first = service.connect('host-a');
+    const second = service.connect('host-a');
+    release();
+    await Promise.all([first, second]);
+
+    expect(installs).toBe(1);
+    expect(sent.filter((request) => request.op === 'addHost')).toHaveLength(1);
+    expect(service.isConnected('host-a')).toBe(true);
+  });
+
+  it('does not remember a rejected connect, so the next one installs again', async () => {
+    let installs = 0;
+    const { service, sent } = makeService({
+      install: async () => {
+        installs += 1;
+        if (installs === 1) throw new Error('Connection refused');
+        return { directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true };
+      },
+    });
+
+    await expect(service.connect('host-a')).rejects.toThrow('Connection refused');
+    await service.connect('host-a');
+
+    expect(installs).toBe(2);
+    expect(sent.filter((request) => request.op === 'addHost')).toHaveLength(1);
+    expect(service.isConnected('host-a')).toBe(true);
+  });
+
+  it('sends the PTYs main already holds on the host with its addHost, and leaves the key out when there are none', async () => {
+    const live = [{ sessionId: 's1', ptyId: 7 }];
+    const withSessions = makeService({ liveSessions: (hostId) => (hostId === 'host-a' ? live : []) });
+    await withSessions.service.connect('host-a');
+    expect(withSessions.sent[0]).toMatchObject({ op: 'addHost', hostId: 'host-a', sessions: live });
+
+    await withSessions.service.connect('host-b');
+    const withoutSessions = withSessions.sent.find((request) => request.op === 'addHost' && request.hostId === 'host-b');
+    expect(withoutSessions).toBeDefined();
+    expect(withoutSessions).not.toHaveProperty('sessions');
+  });
+
   it('gives every connection a connect timeout, so a host that is off fails in seconds', () => {
     const args = sshArgsFor(host());
     expect(args).toContain('ConnectTimeout=15');

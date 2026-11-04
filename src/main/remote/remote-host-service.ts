@@ -56,6 +56,7 @@ export class HostProgramMissingError extends Error {
 export class RemoteHostService {
   private readonly infoByHost = new Map<string, HostInfo>();
   private readonly connected = new Set<string>();
+  private readonly connecting = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: RemoteHostServiceDeps) {}
 
@@ -68,7 +69,17 @@ export class RemoteHostService {
    * added, not once it is up: a link that cannot connect keeps retrying and says why as its state.
    * A refusal (an unsupported host, a failed checksum, `ssh`'s own error) rejects with the words as given.
    */
-  async connect(hostId: string): Promise<void> {
+  connect(hostId: string): Promise<void> {
+    // A Reconnect during a first connect joins it: two installs of one version on one host share their
+    // upload paths on the host, and each would clear the other's.
+    const running = this.connecting.get(hostId);
+    if (running) return running;
+    const connecting = this.install(hostId).finally(() => this.connecting.delete(hostId));
+    this.connecting.set(hostId, connecting);
+    return connecting;
+  }
+
+  private async install(hostId: string): Promise<void> {
     const host = this.deps.hosts.getById(hostId);
     if (!host) throw new Error('That host is not set up in Kangentic.');
     const args = sshArgsFor(host);

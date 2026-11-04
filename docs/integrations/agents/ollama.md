@@ -64,7 +64,7 @@ An Ollama installed in a WSL distro runs there (`supportsWslCli`) when its CLI p
 
 An Ollama on a remote host over SSH (#913) runs as `ollama`, found by the host's login `PATH` (`remoteCliName`), and talks to the daemon on that host. The daemon must already be running there (`ollama serve`, or the service the installer sets up): Kangentic does not start it, and `ollama run` fails with Ollama's own message when none answers. The model has to be pulled on the host, or `ollama run` pulls it there. It is checked only against a fake host in `tests/unit/ollama-ssh-remote.test.ts`, never against a real Ollama or host. Ollama edits no file, so `remoteFiles()` declares none.
 
-`discoverOllamaCapabilities(cliPath, target)` lists the host's models by running `ollama list` on the host through the helper. A remote project's model picker is not yet wired to call it, so it shows the free-form model input instead of this computer's models. `tests/fixtures/mock-ollama.js` is a mock of `ollama list` and the `>>> ` REPL.
+`discoverOllama(cliPath, target)` lists the host's models by running `ollama list` on the host through the helper. A remote project's model picker is not yet wired to call it, so it shows the free-form model input instead of this computer's models. `tests/fixtures/mock-ollama.js` is a mock of `ollama list` and the `>>> ` REPL.
 
 ## Permission Modes
 

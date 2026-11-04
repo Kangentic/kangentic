@@ -5115,8 +5115,9 @@
     // of the test. Escape hatches for specs:
     //   - window.__mockSshHosts: overrides listHosts()'s return value
     //   - window.__mockSshClient: overrides detectClient()'s result
-    //   - window.__mockSshProbeError / __mockSshAddError / __mockSshFolderError: a string that makes
-    //     that call reject with it, to drive the error shapes
+    //   - window.__mockSshProbeError / __mockSshAddError / __mockSshFolderError / __mockSshListError: a
+    //     string that makes that call reject with it, to drive the error shapes
+    //   - window.__mockSshProbeGate: a promise probeHostKey() awaits before it answers
     //   - window.__mockSshFolders: { [path]: { exists, isGitRepo } } consulted by probeRemoteFolder
     //   - window.__mockFireSshHostsChanged(): fires the push the main process sends on a state change
     ssh: (function () {
@@ -5131,6 +5132,7 @@
           return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
         },
         listHosts: async function () {
+          if (win().__mockSshListError) throw new Error(win().__mockSshListError);
           if (win().__mockSshHosts) return win().__mockSshHosts;
           // Main counts the projects on each host from the project table; so does the mock.
           return hosts.map(function (status) {
@@ -5139,6 +5141,8 @@
           });
         },
         probeHostKey: async function (destination) {
+          // A promise a spec holds open, so it can act while the probe is still in flight.
+          if (win().__mockSshProbeGate) await win().__mockSshProbeGate;
           if (win().__mockSshProbeError) throw new Error(win().__mockSshProbeError);
           return { hostname: String(destination).split('@').pop(), port: 22, keyType: 'ssh-ed25519', fingerprint: 'SHA256:mockFingerprintForTestsOnly000000000000000' };
         },

@@ -16,9 +16,13 @@
  * The reconcile is mocked so the assertion reads exactly what the engine handed it; a project on this
  * computer is the control for each assertion.
  */
+import { promises as fileSystem } from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { setRemoteLaunchResolver, type SshCliTarget } from '../../src/main/remote/remote-launch';
+import { HostFileSync } from '../../src/main/remote/host-file-sync';
+import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 
 const mockAdapter = {
   name: 'claude',
@@ -27,6 +31,7 @@ const mockAdapter = {
   supportsCallerSessionId: true,
   defaultPermission: 'default',
   remoteCliName: 'claude' as string | undefined,
+  remoteFiles: undefined as (() => { home: string[]; project: string[] }) | undefined,
   resumePromptDelivery: 'command-line',
   firstPromptMayBeTyped: vi.fn(() => true),
   detect: vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' })),
@@ -95,7 +100,7 @@ function makeTask() {
   };
 }
 
-function makeEngine(options: { resumeRecord?: boolean } = {}) {
+function makeEngine(options: { resumeRecord?: boolean; projectPath?: string } = {}) {
   const spawn = vi.fn(async (input: { id: string }) => ({ id: input.id, status: 'running' }));
   const sessionManager = {
     spawn,
@@ -124,7 +129,7 @@ function makeEngine(options: { resumeRecord?: boolean } = {}) {
     taskRepo as never,
     (() => ({
       permissionMode: 'default',
-      projectPath: PROJECT_PATH,
+      projectPath: options.projectPath ?? PROJECT_PATH,
       projectId: 'proj-1',
       projectName: 'Remote project',
       gitConfig: { worktreesEnabled: false, defaultBaseBranch: 'main', autoCleanup: false, copyFiles: [] },
@@ -144,6 +149,7 @@ function makeEngine(options: { resumeRecord?: boolean } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAdapter.remoteFiles = undefined;
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
 
@@ -213,5 +219,43 @@ describe('TransitionEngine spawn for a project on this computer (control)', () =
 
     expect(handle).not.toBeNull();
     expect(spawn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TransitionEngine spawn: a trust step that throws after the host files were pulled', () => {
+  let workspace: FakeSshWorkspace;
+
+  beforeEach(async () => {
+    workspace = await makeFakeSshWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.dispose();
+  });
+
+  it('abandons the pull, so a following pull of the same file refreshes it from the host', async () => {
+    const declaration = { home: [], project: ['.cursor/mcp.json'] };
+    const hostPath = `${workspace.hostProject}/.cursor/mcp.json`;
+    const localPath = path.join(workspace.projectFolder, '.cursor', 'mcp.json');
+    workspace.host.files.set(hostPath, '{"v":1}');
+    mockAdapter.remoteFiles = () => declaration;
+    // The adapter edits the folder copy, then fails before the push.
+    mockAdapter.ensureTrust.mockImplementationOnce(async () => {
+      await fileSystem.writeFile(localPath, '{"v":1,"adapter":1}');
+      throw new Error('trust failed');
+    });
+    setRemoteLaunchResolver({
+      resolve: async () => ({
+        place: { ...workspace.place, linuxCliPath: 'claude' },
+        remote: { hostId: 'host-1', cwd: workspace.hostProject, shellName: 'bash' },
+      }),
+    });
+    const { runSpawn } = makeEngine({ projectPath: workspace.projectFolder });
+
+    await expect(runSpawn()).rejects.toThrow('trust failed');
+    workspace.host.files.set(hostPath, '{"v":2}');
+    await HostFileSync.pull(declaration, workspace.projectFolder, workspace.place);
+
+    expect(await fileSystem.readFile(localPath, 'utf8')).toBe('{"v":2}');
   });
 });

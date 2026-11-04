@@ -343,9 +343,12 @@ export class RemoteLink implements PtyHostTransport {
   private onDetached(reason: string): void {
     this.log(`connection ended: ${reason}`);
     // A drop is a state with its reason. So is a refusal before the link ever connected: that reason
-    // is what the user is shown, in the peer's own words.
-    if (this.currentState === 'connected') this.setState('reconnecting', reason);
-    else this.handlers.onStateChanged?.(this.currentState, reason);
+    // is what the user is shown, in the peer's own words. A stopped link redials nothing, and `stop`
+    // reports its own state, so a reconnect is never announced.
+    if (!this.stopped) {
+      if (this.currentState === 'connected') this.setState('reconnecting', reason);
+      else this.handlers.onStateChanged?.(this.currentState, reason);
+    }
     const waiter = this.cycleWaiter;
     this.cycleWaiter = null;
     waiter?.();

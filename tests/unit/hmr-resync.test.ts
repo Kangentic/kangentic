@@ -294,6 +294,7 @@ describe('HMR store re-sync', () => {
       { file: 'leftover-processes-store.ts', key: 'leftoverProcessesStore', selfAccepts: true },
       { file: 'config-store.ts', key: 'configStore', selfAccepts: true },
       { file: 'host-memory-store.ts', key: 'hostMemoryStore', selfAccepts: true },
+      { file: 'ssh-store.ts', key: 'sshStore', selfAccepts: true },
     ];
     // Blank out comments but keep every newline, so a line number reported below
     // still matches the file and prose that mentions `hot.dispose` is never counted.

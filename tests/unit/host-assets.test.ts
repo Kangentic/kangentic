@@ -182,6 +182,46 @@ describe('a build that carries only the manifest and downloads the archive on fi
     expect(network.calls).toHaveLength(1);
   });
 
+  it('shares one fetch between two prepares of one destination that run at once, and both resolve', async () => {
+    manifestOnly();
+    let release = (): void => undefined;
+    const open = new Promise<void>((resolve) => { release = resolve; });
+    const calls: string[] = [];
+    const impl = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      await open;
+      return new Response(new Uint8Array(ARCHIVE), { status: 200 });
+    }) as typeof fetch;
+    const [first] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: impl }).assets;
+    const [second] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: impl }).assets;
+
+    const both = Promise.all([first.prepare!(), second.prepare!()]);
+    release();
+    await both;
+
+    expect(calls).toEqual([URL_X64]);
+    expect(fs.readFileSync(first.filePath)).toEqual(ARCHIVE);
+    expect(fs.readdirSync(path.dirname(first.filePath))).toEqual(['kangentic-host-0.52.0-linux-x64.tar.gz']);
+  });
+
+  it('does not remember a failed download, so a later prepare fetches again', async () => {
+    manifestOnly();
+    let attempt = 0;
+    const calls: string[] = [];
+    const impl = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      attempt += 1;
+      return attempt === 1 ? new Response(null, { status: 503 }) : new Response(new Uint8Array(ARCHIVE), { status: 200 });
+    }) as typeof fetch;
+    const [asset] = readHostAssets(directory, '0.52.0', { cacheDirectory, fetchImpl: impl }).assets;
+
+    await expect(asset.prepare!()).rejects.toThrow('answered 503');
+    await asset.prepare!();
+
+    expect(calls).toHaveLength(2);
+    expect(fs.readFileSync(asset.filePath)).toEqual(ARCHIVE);
+  });
+
   it('replaces a cached copy that is not the one the manifest names, instead of uploading it', async () => {
     manifestOnly();
     const network = fakeFetch(() => ({ body: ARCHIVE }));

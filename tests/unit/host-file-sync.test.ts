@@ -11,55 +11,15 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SshCliPlace } from '../../src/main/agent/shared/cli-target';
-import { HostFileChangedError, HostFileSync, HostFileTooLargeError, HostFileUnreadableError, pullHostFilesFor, rememberHostFileSync, resetHostFileSyncState, settleHostFiles } from '../../src/main/remote/host-file-sync';
-import type { HostFileWrite } from '../../src/main/remote/protocol/messages';
-
-/** A host's files in memory, answering the way the helper does. */
-class FakeHost {
-  files = new Map<string, string>();
-  directories = new Set<string>();
-  modes = new Map<string, number>();
-  writes: string[] = [];
-  removals: string[] = [];
-
-  readonly api: NonNullable<SshCliPlace['files']> = {
-    readFile: async (hostPath) => (this.files.has(hostPath) ? { exists: true, content: this.files.get(hostPath) ?? null } : { exists: false, content: null }),
-    writeFiles: async (files: HostFileWrite[]) => {
-      const conflicts: string[] = [];
-      let written = 0;
-      for (const file of files) {
-        // The helper's last look before the swap.
-        if (file.expect !== undefined && (this.files.get(file.path) ?? null) !== file.expect) {
-          conflicts.push(file.path);
-          continue;
-        }
-        this.files.set(file.path, file.content);
-        if (file.mode !== undefined) this.modes.set(file.path, file.mode);
-        this.writes.push(file.path);
-        written += 1;
-      }
-      return conflicts.length > 0 ? { written, conflicts } : { written };
-    },
-
-    removeFiles: async (paths) => {
-      for (const target of paths) {
-        this.files.delete(target);
-        this.removals.push(target);
-      }
-      return { removed: paths.length };
-    },
-    pathPresence: async (paths) => paths.map((target) => (this.directories.has(target) ? 'present' : 'absent')),
-    jsonPatch: async () => ({ applied: true, changed: false }),
-    runCommand: async () => ({ code: 0, stdout: '', stderr: '', timedOut: false }),
-  };
-}
+import { HostFileChangedError, HostFileSync, HostFileTooLargeError, HostFileUnreadableError, pullHostFilesFor, pushHostFilesForSpawn, rememberHostFileSync, resetHostFileSyncState, settleHostFiles, withHostFilePull } from '../../src/main/remote/host-file-sync';
+import { FakeSshHost } from './helpers/fake-ssh-host';
 
 let workspace: string;
 let projectFolder: string;
 let mirrorHome: string;
-let host: FakeHost;
+let host: FakeSshHost;
 let place: SshCliPlace;
 
 beforeEach(async () => {
@@ -69,7 +29,7 @@ beforeEach(async () => {
   mirrorHome = path.join(workspace, 'mirror');
   await fs.mkdir(projectFolder, { recursive: true });
   await fs.mkdir(mirrorHome, { recursive: true });
-  host = new FakeHost();
+  host = new FakeSshHost();
   place = {
     kind: 'ssh',
     hostId: 'host-1',
@@ -380,5 +340,168 @@ describe('restoring the host\'s files when the session ends', () => {
     await settleHostFiles('once');
 
     expect(host.writes).toHaveLength(writesAfterFirst);
+  });
+});
+
+async function writeProjectFile(relative: string, content: string): Promise<void> {
+  const target = path.join(projectFolder, ...relative.split('/'));
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, content);
+}
+
+describe('a pull where one read fails', () => {
+  it('clears every mark, even for a read that finishes after the failure, so a later pull refreshes from the host', async () => {
+    host.files.set('/home/dev/app/b.json', '{"v":1}');
+    const realRead = host.api.readFile;
+    let finishSlowRead: () => void = () => undefined;
+    const slowReadGate = new Promise<void>((resolve) => { finishSlowRead = resolve; });
+    host.api.readFile = async (hostPath) => {
+      if (hostPath === '/home/dev/app/a.json') throw new Error('link dropped');
+      await slowReadGate;
+      return realRead(hostPath);
+    };
+
+    const failedPull = HostFileSync.pull({ home: [], project: ['a.json', 'b.json'] }, projectFolder, place);
+    const outcome = expect(failedPull).rejects.toThrow('link dropped');
+    // The slow read finishes only after the failed one has been seen.
+    await new Promise((resolve) => setImmediate(resolve));
+    finishSlowRead();
+    await outcome;
+    await expect.poll(() => localProjectFile('b.json')).toBe('{"v":1}');
+    // Intentional fixed wait: a read that finishes late marks its file a few ticks after its local write, and nothing observable says it is done.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    host.api.readFile = realRead;
+    host.files.set('/home/dev/app/b.json', '{"v":2}');
+    await HostFileSync.pull({ home: [], project: ['b.json'] }, projectFolder, place);
+
+    expect(await localProjectFile('b.json')).toBe('{"v":2}');
+  });
+});
+
+describe('a spawn that throws after its pull', () => {
+  const declaration = { home: [], project: [CURSOR_MCP] };
+
+  /** A spawn whose adapter edits the folder copy and then fails, as a trust step that throws does. */
+  async function failedSpawn(adapterOutput: string): Promise<void> {
+    await expect(withHostFilePull(async (pull) => {
+      pull.sync = await HostFileSync.pull(declaration, projectFolder, place);
+      await writeProjectFile(CURSOR_MCP, adapterOutput);
+      throw new Error('trust failed');
+    })).rejects.toThrow('trust failed');
+  }
+
+  it('abandons the pull, so a retry inside the edit window refreshes the file from the host', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    await failedSpawn('{"v":1,"adapter":1}');
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":2}');
+
+    await HostFileSync.pull(declaration, projectFolder, place);
+
+    expect(await localProjectFile(CURSOR_MCP)).toBe('{"v":2}');
+  });
+
+  it('pushes a retry whose local copy already equals the adapter output', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const adapterOutput = '{"v":1,"adapter":1}';
+    await failedSpawn(adapterOutput);
+
+    const retry = await HostFileSync.pull(declaration, projectFolder, place);
+    await writeProjectFile(CURSOR_MCP, adapterOutput);
+    await retry.push();
+
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe(adapterOutput);
+  });
+
+  it('returns the callback result and leaves the pull for its push when nothing throws', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const result = await withHostFilePull(async (pull) => {
+      pull.sync = await HostFileSync.pull(declaration, projectFolder, place);
+      await writeProjectFile(CURSOR_MCP, '{"v":1,"adapter":1}');
+      return 'built';
+    });
+    expect(result).toBe('built');
+
+    // Another spawn pulling now must not overwrite the first one's unpushed edit.
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":2}');
+    await HostFileSync.pull(declaration, projectFolder, place);
+    expect(await localProjectFile(CURSOR_MCP)).toBe('{"v":1,"adapter":1}');
+  });
+});
+
+describe('the last step of a spawn sync', () => {
+  it('does nothing for a spawn with no sync', async () => {
+    const onFailure = vi.fn();
+
+    await expect(pushHostFilesForSpawn(null, 'session-none', onFailure)).resolves.toBeUndefined();
+    await settleHostFiles('session-none');
+
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(host.writes).toEqual([]);
+  });
+
+  it('pushes the change and does not call onFailure when the push works', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await writeProjectFile(CURSOR_MCP, '{"k":1}');
+    const onFailure = vi.fn();
+
+    await pushHostFilesForSpawn(sync, 'session-ok', onFailure);
+
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"k":1}');
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it('runs onFailure and rethrows the push error when the push fails', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await writeProjectFile(CURSOR_MCP, '{"v":1,"k":1}');
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":2}');
+    const onFailure = vi.fn();
+
+    await expect(pushHostFilesForSpawn(sync, 'session-fail', onFailure)).rejects.toBeInstanceOf(HostFileChangedError);
+
+    expect(onFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('remembers the sync before the push, so a push that fails partway is still stripped on release', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    const settle = vi.spyOn(sync, 'settle').mockResolvedValue(undefined);
+    vi.spyOn(sync, 'push').mockImplementation(async () => {
+      // The release that follows a failed spawn, run while the push is still going.
+      await settleHostFiles('session-order');
+      throw new Error('push failed partway');
+    });
+
+    await expect(pushHostFilesForSpawn(sync, 'session-order', () => undefined)).rejects.toThrow('push failed partway');
+
+    expect(settle).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('pushing several changed files', () => {
+  it('asks the host for all of their current content before any answer comes back', async () => {
+    host.files.set('/home/dev/app/a.json', '{}');
+    host.files.set('/home/dev/app/b.json', '{}');
+    host.files.set('/home/dev/app/c.json', '{}');
+    const sync = await HostFileSync.pull({ home: [], project: ['a.json', 'b.json', 'c.json'] }, projectFolder, place);
+    for (const name of ['a.json', 'b.json', 'c.json']) await writeProjectFile(name, '{"k":1}');
+
+    const realRead = host.api.readFile;
+    const requested: string[] = [];
+    const answers: Array<() => void> = [];
+    host.api.readFile = (hostPath) => {
+      requested.push(hostPath);
+      return new Promise((resolve) => { answers.push(() => resolve(realRead(hostPath))); });
+    };
+
+    const pushing = sync.push();
+    // Sequential reads would request one file and wait on it, so this poll would stop at one.
+    await expect.poll(() => requested.length, { timeout: 1000 }).toBe(3);
+    for (const answer of answers) answer();
+    await pushing;
+
+    expect(host.files.get('/home/dev/app/b.json')).toBe('{"k":1}');
   });
 });

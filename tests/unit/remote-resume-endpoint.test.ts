@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { duplexPair, type Duplex } from 'node:stream';
 import { ResumeEndpoint, type GapInfo, type ResumeEndpointOptions } from '../../src/main/remote/protocol/resume-endpoint';
+import { FrameKind, encodeFrame } from '../../src/main/remote/protocol/frame-codec';
 
 interface Side {
   endpoint: ResumeEndpoint;
@@ -303,5 +304,123 @@ describe('liveness', () => {
     for (let n = 0; n < 12; n += 1) link.endpoint.send({ n }, Buffer.alloc(100_000, n));
     expect(link.detached.some((reason) => reason.includes('send queue'))).toBe(true);
     expect(link.endpoint.stats.retainedFrames).toBeGreaterThan(0);
+  });
+
+  it('does not drop a connection onto which it replays a buffer near the retention limit, under default options', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    // Seven 1 MB frames, below the 8 MB default retention limit, written all at once on attach.
+    for (let n = 0; n < 7; n += 1) link.endpoint.send({ n }, Buffer.alloc(1024 * 1024, n));
+    const [, helperStream] = connect(link, helper);
+    helperStream.pause();
+    await settle();
+    expect(link.endpoint.connected).toBe(true);
+    expect(link.detached).toEqual([]);
+    helperStream.resume();
+    await settle();
+    expect(indexes(helper)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('a scripted peer', () => {
+  function scriptedPeer(): { endpointSide: Duplex; peerSide: Duplex } {
+    const [endpointSide, peerSide] = duplexPair();
+    peerSide.on('data', () => undefined);
+    return { endpointSide, peerSide };
+  }
+
+  const helloFrame = (offset: number) => encodeFrame({
+    kind: FrameKind.hello,
+    offset,
+    json: { protocol: { min: 1, max: 1 }, role: 'helper', identity: { name: 'peer' } },
+  });
+
+  it('takes a replayed message once when the old connection delivered it before the new handshake finished', async () => {
+    const received: unknown[] = [];
+    const endpoint = new ResumeEndpoint(
+      { onMessage: (json) => received.push(json), onAttached: () => undefined, onDetached: () => undefined, onGap: () => undefined },
+      { role: 'link', protocol: { min: 1, max: 1 }, identity: { name: 'link' } },
+    );
+    sides.push({ endpoint, messages: [], detached: [], gaps: [], attachedCount: 0 });
+    const first = scriptedPeer();
+    endpoint.attach(first.endpointSide);
+    first.peerSide.write(helloFrame(0));
+    await settle();
+    expect(endpoint.connected).toBe(true);
+
+    // B attaches while A is live. Its hello names the offset the endpoint expects at that moment: 0.
+    const second = scriptedPeer();
+    endpoint.attach(second.endpointSide);
+    const message = encodeFrame({ kind: FrameKind.message, offset: 0, json: { n: 1 } });
+    first.peerSide.write(message);
+    await settle();
+    expect(received).toEqual([{ n: 1 }]);
+    const offsetAfterDelivery = endpoint.stats.receiveOffset;
+    expect(offsetAfterDelivery).toBe(message.length);
+
+    // The peer completes B's handshake and replays from the offset B's hello named.
+    second.peerSide.write(helloFrame(0));
+    second.peerSide.write(message);
+    await settle();
+    expect(received).toEqual([{ n: 1 }]);
+    expect(endpoint.stats.receiveOffset).toBe(offsetAfterDelivery);
+  });
+});
+
+describe('handlers that throw', () => {
+  function makeThrowing(handlers: Partial<ConstructorParameters<typeof ResumeEndpoint>[0]>) {
+    const errors: unknown[] = [];
+    const detached: string[] = [];
+    let attached = 0;
+    const endpoint = new ResumeEndpoint(
+      {
+        onMessage: () => undefined,
+        onAttached: () => { attached += 1; },
+        onDetached: (reason) => detached.push(reason),
+        onGap: () => undefined,
+        onError: (error) => errors.push(error),
+        ...handlers,
+      },
+      { role: 'helper', protocol: { min: 1, max: 1 }, identity: { name: 'helper' }, retainLimitBytes: 3000 },
+    );
+    sides.push({ endpoint, messages: [], detached: [], gaps: [], attachedCount: 0 });
+    return { endpoint, errors, detached, attachedCount: () => attached };
+  }
+
+  it('refuses a peer when vetPeer throws, and reports the error', async () => {
+    const boom = new Error('vet exploded');
+    const rig = makeThrowing({ vetPeer: () => { throw boom; } });
+    const link = makeSide('link');
+    connect(link, { endpoint: rig.endpoint } as Side);
+    await settle();
+    expect(rig.errors).toContain(boom);
+    expect(rig.attachedCount()).toBe(0);
+    expect(rig.endpoint.connected).toBe(false);
+    expect(link.detached.join(' ')).toContain('could not check the peer');
+  });
+
+  it('survives a throwing onAttached and reports it', async () => {
+    const boom = new Error('attached exploded');
+    const rig = makeThrowing({ onAttached: () => { throw boom; } });
+    const link = makeSide('link');
+    connect(link, { endpoint: rig.endpoint } as Side);
+    await settle();
+    expect(rig.errors).toContain(boom);
+    expect(rig.endpoint.connected).toBe(true);
+    link.endpoint.send({ n: 1 });
+    await settle();
+    expect(rig.endpoint.stats.receiveOffset).toBeGreaterThan(0);
+  });
+
+  it('survives a throwing onGap and reports it', async () => {
+    const boom = new Error('gap exploded');
+    const rig = makeThrowing({ onGap: () => { throw boom; } });
+    const link = makeSide('link');
+    // The helper endpoint has sent more than it retains, so the link asking to resume from 0 is a gap.
+    for (let n = 0; n < 8; n += 1) rig.endpoint.send({ n }, Buffer.alloc(900, n));
+    connect(link, { endpoint: rig.endpoint } as Side);
+    await settle();
+    expect(rig.errors).toContain(boom);
+    expect(rig.endpoint.connected).toBe(true);
   });
 });

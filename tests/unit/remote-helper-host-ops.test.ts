@@ -35,7 +35,8 @@ function makeRig(baseEnv: NodeJS.ProcessEnv = { HOME: '/home/dev', SHELL: '/bin/
 
 beforeEach(() => {
   vi.useFakeTimers();
-  home = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-helper-home-'));
+  // The real path: macOS reaches os.tmpdir() through a link, and a symlink test needs a home with none in it.
+  home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-helper-home-')));
 });
 
 afterEach(() => {
@@ -203,6 +204,42 @@ describe('files on the host', () => {
     expect(fs.statSync(private_).mode & 0o777).toBe(0o600);
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(real, 'utf8')).toBe('new');
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps a symlink a symlink when the home itself is reached through a symlinked folder', async () => {
+    // The home as named is a link to a real folder, so every real path lies outside it as named.
+    const realFolder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-helper-real-')));
+    const linkedHome = path.join(os.tmpdir(), `kangentic-helper-linked-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(realFolder, linkedHome, 'dir');
+    teardown.push(() => fs.rmSync(realFolder, { recursive: true, force: true }), () => fs.rmSync(linkedHome, { force: true }));
+    home = linkedHome;
+    const rig = makeRig();
+    await settle();
+    const target = path.join(realFolder, 'dotfiles', 'settings.json');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, 'old');
+    const link = path.join(linkedHome, 'settings.json');
+    fs.symlinkSync(path.join(linkedHome, 'dotfiles', 'settings.json'), link);
+
+    await ask(rig.link.requestHelper('writeFiles', { files: [{ path: link, content: 'new' }] }));
+
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, 'utf8')).toBe('new');
+  });
+
+  it('accepts a child of the home whose name starts with two dots, and still refuses a path that climbs out', async () => {
+    const rig = makeRig();
+    await settle();
+    const dotted = path.join(home, '..cache', 'x');
+    expect(await ask(rig.link.requestHelper('writeFiles', { files: [{ path: dotted, content: 'kept' }] }))).toEqual({ written: 1 });
+    expect(fs.readFileSync(dotted, 'utf8')).toBe('kept');
+
+    const climb = path.join(home, '..', `kangentic-climb-dots-${process.pid}.txt`);
+    const attempt = rig.link.requestHelper('writeFiles', { files: [{ path: climb, content: 'x' }] });
+    const rejected = expect(attempt).rejects.toThrow('not inside the home folder');
+    await settle();
+    await rejected;
+    expect(fs.existsSync(climb)).toBe(false);
   });
 
   it('reads a file, and says so when it is not there', async () => {

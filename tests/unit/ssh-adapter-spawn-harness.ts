@@ -1,8 +1,10 @@
 /**
- * What the SSH adapter tests for Codex, Gemini, Qwen Code and Grok share (#913): one spawn on a fake host,
- * run through the adapter's real trust and command code and the real file sync, and a check that nothing
- * of this computer's paths reached what the host was sent. It is a helper, not a test: vitest only runs
- * `*.test.ts`.
+ * What the `<adapter>-ssh-remote.test.ts` files share (#913): one spawn on a fake host, run through the
+ * adapter's real trust and command code and the real file sync, and a check that nothing of this
+ * computer's paths reached what the host was sent. Every SSH adapter test (Antigravity, Codex, Copilot,
+ * Cursor, Droid, Gemini, Goose, Grok, Kimi, OpenCode, Qwen Code) uses it. What differs per adapter goes in
+ * the `overrides` argument of `spawnOnHost` / `spawnOptions`, such as OpenCode's `mcpServerEnabled` and
+ * `acceptEdits` permission mode. It is a helper, not a test: vitest only runs `*.test.ts`.
  */
 import { expect } from 'vitest';
 import fs from 'node:fs';

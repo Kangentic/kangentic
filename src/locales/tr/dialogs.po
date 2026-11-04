@@ -227,7 +227,7 @@ msgstr "{rule}<0>, örneğin {sample}</0>"
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, one {# aracıdan {runningCount} tanesi çalışıyor} other {# aracıdan {runningCount} tanesi çalışıyor}}"
+msgstr "{maxConcurrent, plural, one {# ajandan {runningCount} tanesi çalışıyor} other {# ajandan {runningCount} tanesi çalışıyor}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy

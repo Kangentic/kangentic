@@ -232,6 +232,76 @@ describe('HelperServer spawns that are still starting', () => {
   });
 });
 
+describe('RemoteLink state reports and a link that was stopped', () => {
+  async function connectedLink(helper: HelperRig): Promise<{ link: RemoteLink; states: string[] }> {
+    const states: string[] = [];
+    const link = new RemoteLink({ identity: identity('boot-1'), connect: async () => dialHelper(helper), reconnect: FAST });
+    link.setHandlers({ onStateChanged: (state) => states.push(state) });
+    teardown.push(() => link.stop());
+    link.start();
+    await settle();
+    expect(link.state).toBe('connected');
+    states.length = 0;
+    return { link, states };
+  }
+
+  it('reports stopped, and never reconnecting, when a connected link is stopped', async () => {
+    const helper = makeHelperRig(0);
+    teardown.push(() => helper.helper.dispose());
+    const { link, states } = await connectedLink(helper);
+
+    link.stop();
+    await settle();
+
+    expect(states).toContain('stopped');
+    expect(states).not.toContain('reconnecting');
+    expect(link.state).toBe('stopped');
+  });
+
+  it('still reports reconnecting when a running link drops', async () => {
+    const helper = makeHelperRig(0);
+    teardown.push(() => helper.helper.dispose());
+    const { link, states } = await connectedLink(helper);
+
+    helper.linkStreams.at(-1)?.destroy();
+    await settle(10);
+
+    expect(states[0]).toBe('reconnecting');
+    expect(link.state).not.toBe('stopped');
+  });
+
+  it('sends nothing for a renderer port message that arrives after stop', async () => {
+    const helper = makeHelperRig(0);
+    teardown.push(() => helper.helper.dispose());
+    const { link } = await connectedLink(helper);
+    const renderer = createFakeRendererPort();
+    link.attachRendererPort(1, renderer.port);
+    const sends = vi.spyOn((link as unknown as { endpoint: { send(message: unknown, raw?: Uint8Array): void } }).endpoint, 'send');
+
+    renderer.send({ type: 'write', sessionId: 's1', data: 'while running' });
+    expect(sends).toHaveBeenCalledTimes(1);
+
+    link.stop();
+    sends.mockClear();
+    renderer.send({ type: 'write', sessionId: 's1', data: 'after stop' });
+    expect(sends).not.toHaveBeenCalled();
+  });
+
+  it('still sends suspendAll with no sessions when reading the quit plan throws', async () => {
+    const helper = makeHelperRig(0);
+    teardown.push(() => helper.helper.dispose());
+    const { link } = await connectedLink(helper);
+    link.setQuitPlan(() => { throw new Error('the plan could not be built'); });
+    const requests = vi.spyOn(link, 'requestHelper');
+
+    link.shutdown();
+    await settle();
+
+    expect(requests).toHaveBeenCalledWith('suspendAll', expect.objectContaining({ sessions: [] }), expect.any(Number));
+    expect(link.state).toBe('stopped');
+  });
+});
+
 describe('RemoteLink.redialNow', () => {
   it('dials again at once instead of waiting out the backoff', async () => {
     const connect = vi.fn(async () => { throw new Error('host unreachable'); });

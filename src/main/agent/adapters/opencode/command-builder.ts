@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import type { CliTarget } from '../../shared/cli-target';
+import { pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks } from './hook-manager';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1, openCodeSupportsAutoApprove } from './version';
@@ -66,15 +66,9 @@ export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'ev
   return Boolean(options.eventsOutputPath) && !options.executionTarget;
 }
 
-/**
- * The folder whose `.opencode/plugins/` gets the activity plugin: the project root, else the working
- * folder. On a host over SSH it is always the working folder, because that is the folder whose files
- * `HostFileSync` pulls and pushes (`OpenCodeAdapter.remoteFiles`), and a remote task has no
- * worktree, so the two are the same folder there.
- */
+/** The folder whose `.opencode/plugins/` gets the activity plugin. */
 export function activityPluginRoot(options: Pick<OpenCodeCommandOptions, 'projectRoot' | 'cwd' | 'cliTarget'>): string {
-  if (options.cliTarget?.kind === 'ssh') return options.cwd;
-  return options.projectRoot || options.cwd;
+  return pulledProjectRoot(options);
 }
 
 /**

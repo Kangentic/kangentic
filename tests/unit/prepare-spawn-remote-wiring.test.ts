@@ -7,9 +7,13 @@
  * What a user loses if it breaks: a remote project that tries to launch a CLI from this computer, or
  * an agent started by recovery on the wrong machine.
  */
+import { promises as fileSystem } from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, Swimlane, Task } from '../../src/shared/types';
 import type { SshCliTarget } from '../../src/main/remote/remote-launch';
+import { HostFileSync } from '../../src/main/remote/host-file-sync';
+import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 
 const buildCommandMock = vi.fn(() => 'claude --mock-run');
 const ensureTrustMock = vi.fn(async () => {});
@@ -21,6 +25,7 @@ const adapter = {
   sessionType: 'claude_agent',
   supportsCallerSessionId: false,
   remoteCliName: 'claude' as string | undefined,
+  remoteFiles: undefined as (() => { home: string[]; project: string[] }) | undefined,
   detect: detectMock,
   ensureTrust: ensureTrustMock,
   buildCommand: buildCommandMock,
@@ -30,7 +35,11 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn((agentName: string) => (agentName === 'claude' ? adapter : undefined)) },
 }));
 
-vi.mock('node:fs', () => ({ default: { mkdirSync: vi.fn() } }));
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  const mocked = { ...original, mkdirSync: vi.fn() };
+  return { ...mocked, default: mocked };
+});
 
 import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
 import { RemoteAgentUnsupportedError, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
@@ -53,13 +62,13 @@ function makeSwimlane(): Swimlane {
   return { id: 'lane', name: 'Review', role: null, position: 0, permission_mode: null, auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' } as unknown as Swimlane;
 }
 
-function runPrepare() {
+function runPrepare(location: { cwd: string; projectPath: string } = { cwd: '/mock/project', projectPath: '/mock/project' }) {
   return prepareAgentSpawn({
     task: makeTask(),
     swimlane: makeSwimlane(),
-    cwd: '/mock/project',
+    cwd: location.cwd,
     projectId: 'proj-123',
-    projectPath: '/mock/project',
+    projectPath: location.projectPath,
     effectiveConfig: { agent: { permissionMode: 'acceptEdits', cliPaths: {} }, mcpServer: { enabled: false } } as unknown as AppConfig,
     projectDefaultAgent: 'claude',
     projectDefaultModel: null,
@@ -75,6 +84,7 @@ function runPrepare() {
 beforeEach(() => {
   vi.clearAllMocks();
   adapter.remoteCliName = 'claude';
+  adapter.remoteFiles = undefined;
 });
 
 afterEach(() => {
@@ -143,5 +153,42 @@ describe('prepareAgentSpawn: a project on this computer', () => {
 
     expect(result.ok).toBe(true);
     expect(detectMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('prepareAgentSpawn: a trust step that throws after the host files were pulled', () => {
+  let workspace: FakeSshWorkspace;
+
+  beforeEach(async () => {
+    workspace = await makeFakeSshWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.dispose();
+  });
+
+  it('abandons the pull, so a following pull of the same file refreshes it from the host', async () => {
+    const declaration = { home: [], project: ['.cursor/mcp.json'] };
+    const hostPath = `${workspace.hostProject}/.cursor/mcp.json`;
+    const localPath = path.join(workspace.projectFolder, '.cursor', 'mcp.json');
+    workspace.host.files.set(hostPath, '{"v":1}');
+    adapter.remoteFiles = () => declaration;
+    // The adapter edits the folder copy, then fails before the push.
+    ensureTrustMock.mockImplementationOnce(async () => {
+      await fileSystem.writeFile(localPath, '{"v":1,"adapter":1}');
+      throw new Error('trust failed');
+    });
+    setRemoteLaunchResolver({
+      resolve: async () => ({
+        place: { ...workspace.place, linuxCliPath: 'claude' },
+        remote: { hostId: 'host-1', cwd: workspace.hostProject, shellName: 'bash' },
+      }),
+    });
+
+    await expect(runPrepare({ cwd: workspace.projectFolder, projectPath: workspace.projectFolder })).rejects.toThrow('trust failed');
+    workspace.host.files.set(hostPath, '{"v":2}');
+    await HostFileSync.pull(declaration, workspace.projectFolder, workspace.place);
+
+    expect(await fileSystem.readFile(localPath, 'utf8')).toBe('{"v":2}');
   });
 });

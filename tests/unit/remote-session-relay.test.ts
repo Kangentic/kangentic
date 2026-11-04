@@ -8,7 +8,7 @@
  * What a user loses if it breaks: an agent on a host that shows no activity, a plan approval that
  * never reaches the agent, MCP tools that time out, or a host able to write where it should not.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -122,7 +122,6 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     statusOutputPath: statusPath,
     ...(options.declareExtra ? { extraFiles: options.declareExtra } : {}),
   });
-  teardown.push(() => inbox.close(), () => relay.dispose(), () => link.stop(), () => helperRig.helper.dispose());
   const hostSession = path.join(hostProject, '.kangentic', 'sessions', 's1');
   return { relay, link, place, localSession, hostSession, eventsPath, statusPath, inbox, mcpCalls };
 }
@@ -346,5 +345,177 @@ describe.runIf(hasSh)('with the real hook script, run by sh on the host', () => 
 
     await waitFor(() => fs.existsSync(rig.statusPath));
     expect(fs.readFileSync(rig.statusPath, 'utf8')).toBe('{"context":{"used":10}}');
+  });
+});
+
+/** An in-memory host behind the relay's file jobs, whose calls a test can hold open to line up a race. */
+function makeFakeHost() {
+  const written = new Map<string, string>();
+  const watching = new Set<string>();
+  const rawWrites: Array<{ path: string; content: string }> = [];
+  const jsonWrites: string[] = [];
+  const writeGates: Array<{ release(): void; promise: Promise<void> }> = [];
+  const gate = (): { release(): void; promise: Promise<void> } => {
+    let release = (): void => undefined;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { release, promise };
+  };
+  const state = { holdWrites: false, holdUnwatch: null as null | { release(): void; promise: Promise<void> }, writeCalls: 0 };
+  const files: RemoteSessionFiles = {
+    writeFiles: async (_hostId, fileList) => {
+      state.writeCalls += 1;
+      const contents = fileList.map((file) => ({ path: file.path, content: file.content }));
+      if (state.holdWrites) {
+        const held = gate();
+        writeGates.push(held);
+        await held.promise;
+      }
+      for (const file of contents) {
+        written.set(file.path, file.content);
+        jsonWrites.push(file.path);
+      }
+    },
+    writeFileRaw: async (_hostId, filePath, content) => { rawWrites.push({ path: filePath, content }); },
+    watchHooks: async (_hostId, sessionId) => { watching.add(sessionId); },
+    unwatchHooks: async (_hostId, sessionId) => {
+      if (state.holdUnwatch) await state.holdUnwatch.promise;
+      watching.delete(sessionId);
+    },
+    removeFiles: async (_hostId, paths) => { for (const removed of paths) written.delete(removed); },
+    removeEmptyDirectories: async () => undefined,
+  };
+  return { files, written, watching, rawWrites, jsonWrites, writeGates, state, gate };
+}
+
+describe('a session registered and released while another operation on its id is running', () => {
+  function registrationFor(): { registration: Parameters<RemoteSessionRelay['register']>[0]; settingsPath: string } {
+    const localSession = path.join(shellFolder, '.kangentic', 'sessions', 's1');
+    fs.mkdirSync(localSession, { recursive: true });
+    prepareWslHookTransport(localSession);
+    fs.writeFileSync(path.join(localSession, 'settings.json'), '{"version":1}');
+    const place: SshCliPlace = {
+      kind: 'ssh',
+      hostId: 'host-a',
+      home: '/home/dev',
+      shellName: 'sh',
+      localHome: path.join(scratch, 'mirror'),
+      roots: [{ local: shellFolder, host: '/home/dev/project' }],
+    };
+    return {
+      registration: { hostId: 'host-a', sessionId: 's1', place, localSessionDirectory: localSession, statusOutputPath: path.join(localSession, 'status.json') },
+      settingsPath: '/home/dev/project/.kangentic/sessions/s1/settings.json',
+    };
+  }
+
+  function makeRelay() {
+    const host = makeFakeHost();
+    const relay = new RemoteSessionRelay({ files: host.files });
+    teardown.push(() => relay.dispose());
+    return { host, relay };
+  }
+
+  it('makes a register of the same id wait for a slow release, and keeps the files the register pushed', async () => {
+    const { host, relay } = makeRelay();
+    const { registration, settingsPath } = registrationFor();
+    await relay.register(registration);
+    expect(host.written.has(settingsPath)).toBe(true);
+
+    const slowUnwatch = host.gate();
+    host.state.holdUnwatch = slowUnwatch;
+    const writesBefore = host.state.writeCalls;
+    const firstRelease = relay.release('s1');
+    const repeatRelease = relay.release('s1');
+    const reRegister = relay.register(registration);
+    // Negative assertion: nothing can be polled for. Give a wrongly eager register time to push.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    // The release is still waiting on the host, so the register has pushed nothing yet.
+    expect(host.state.writeCalls).toBe(writesBefore);
+
+    slowUnwatch.release();
+    await Promise.all([firstRelease, repeatRelease, reRegister]);
+    expect(host.state.writeCalls).toBe(writesBefore + 1);
+    expect(host.written.get(settingsPath)).toBe('{"version":1}');
+    expect(host.watching.has('s1')).toBe(true);
+    expect(relay.has('s1')).toBe(true);
+  });
+
+  it('leaves nothing on the host, no watcher and no timer when a release arrives during the push', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    try {
+      host.state.holdWrites = true;
+      const registering = relay.register(registration);
+      await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+
+      await relay.release('s1');
+      host.writeGates[0].release();
+      await registering;
+
+      expect(host.written.size).toBe(0);
+      expect(host.watching.size).toBe(0);
+      expect(relay.has('s1')).toBe(false);
+      expect(intervals).not.toHaveBeenCalled();
+    } finally {
+      intervals.mockRestore();
+    }
+  });
+
+  it('keeps the second of two overlapping registers of one id, with its files', async () => {
+    const { host, relay } = makeRelay();
+    const { registration, settingsPath } = registrationFor();
+    host.state.holdWrites = true;
+    const first = relay.register(registration);
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+    const second = relay.register(registration);
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
+
+    // The second finishes its push first, so the first's cleanup runs against paths the second now owns.
+    host.writeGates[1].release();
+    await second;
+    host.writeGates[0].release();
+    await first;
+
+    // The first's cleanup ran against paths the second owns, and must not have removed them.
+    expect(host.written.get(settingsPath)).toBe('{"version":1}');
+    expect(host.watching.has('s1')).toBe(true);
+    expect(relay.has('s1')).toBe(true);
+  });
+
+  it('still sees a release that arrives during the second register push', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    host.state.holdWrites = true;
+    const first = relay.register(registration);
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+    const second = relay.register(registration);
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
+
+    host.writeGates[0].release();
+    await first;
+    await relay.release('s1');
+    host.writeGates[1].release();
+    await second;
+
+    expect(relay.has('s1')).toBe(false);
+    expect(host.written.size).toBe(0);
+    expect(host.watching.size).toBe(0);
+  });
+
+  it('counts the size of an answer in bytes, so about 90,000 CJK characters go in the raw part and arrive intact', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    await relay.register(registration);
+    const answer = '界'.repeat(90_000);
+    // Fewer than 100,000 characters once JSON-encoded, about 270 KB as UTF-8.
+    expect(JSON.stringify(answer).length).toBeLessThan(100_000);
+    const responseName = '1700000000000000000-99.res';
+    fs.writeFileSync(path.join(wslHookPaths(registration.localSessionDirectory).responses, responseName), answer, 'utf8');
+
+    await vi.waitFor(() => expect(host.rawWrites).toHaveLength(1), { timeout: 4000 });
+
+    expect(host.rawWrites[0].path).toBe(`/home/dev/project/.kangentic/sessions/s1/wsl-hooks/responses/${responseName}`);
+    expect(host.rawWrites[0].content).toBe(answer);
+    expect(host.jsonWrites.some((written) => written.endsWith(responseName))).toBe(false);
   });
 });

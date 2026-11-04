@@ -13,19 +13,14 @@
  *   agy run there starts a hook script that is gone.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import os from 'node:os';
 import path from 'node:path';
-import fs from 'node:fs';
 import { AntigravityAdapter } from '../../src/main/agent/adapters/antigravity';
-import { pullHostFilesFor, rememberHostFileSync, settleHostFiles } from '../../src/main/remote/host-file-sync';
-import type { SshCliPlace } from '../../src/main/agent/shared/cli-target';
+import { settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
-import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
+import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost } from './ssh-adapter-spawn-harness';
 
-const TOKEN = 'agy-ssh-token-0123456789';
-const MCP_URL = 'http://127.0.0.1:47123/mcp/project-1/session-1';
-const SESSION_ID = 'session-1';
+const CLI_NAME = 'agy';
 const workspaces: FakeSshWorkspace[] = [];
 
 afterEach(async () => {
@@ -46,35 +41,6 @@ const USER_HOOKS = {
 function seedUserFiles(workspace: FakeSshWorkspace): void {
   workspace.host.files.set('/home/dev/.gemini/antigravity-cli/settings.json', JSON.stringify(USER_SETTINGS));
   workspace.host.files.set(`${workspace.hostProject}/.agents/hooks.json`, JSON.stringify(USER_HOOKS));
-}
-
-function spawnOptions(workspace: FakeSshWorkspace): SpawnCommandOptions {
-  const sessionDirectory = path.join(workspace.projectFolder, '.kangentic', 'sessions', SESSION_ID);
-  fs.mkdirSync(sessionDirectory, { recursive: true });
-  return {
-    agentPath: 'agy',
-    taskId: 'task-1',
-    cwd: workspace.projectFolder,
-    permissionMode: 'default',
-    shell: 'bash',
-    eventsOutputPath: path.join(sessionDirectory, 'events.jsonl'),
-    mcpServerUrl: MCP_URL,
-    mcpServerToken: TOKEN,
-    ptySessionId: SESSION_ID,
-    cliTarget: { ...workspace.place, linuxCliPath: 'agy' },
-  };
-}
-
-/** One spawn as the chokepoints run it: pull, trust, build, push. */
-async function spawnOnHost(adapter: AntigravityAdapter, workspace: FakeSshWorkspace): Promise<string> {
-  const place: SshCliPlace = workspace.place;
-  const sync = await pullHostFilesFor(adapter, workspace.projectFolder, place);
-  if (!sync) throw new Error('the adapter declared no host files');
-  await adapter.ensureTrust(workspace.projectFolder, place);
-  const command = adapter.buildCommand(spawnOptions(workspace));
-  await sync.push();
-  rememberHostFileSync(SESSION_ID, sync);
-  return command;
 }
 
 function parse(workspace: FakeSshWorkspace, hostPath: string): Record<string, unknown> {
@@ -98,7 +64,7 @@ describe('an Antigravity session on a remote host', () => {
   it('trusts the host path of the working folder in the host\'s settings and keeps the user\'s entries', async () => {
     const workspace = await newWorkspace();
     seedUserFiles(workspace);
-    const command = await spawnOnHost(new AntigravityAdapter(), workspace);
+    const { command } = await spawnOnHost(new AntigravityAdapter(), workspace, CLI_NAME);
 
     expect(command.startsWith('agy')).toBe(true);
     const settings = parse(workspace, '/home/dev/.gemini/antigravity-cli/settings.json');
@@ -110,7 +76,7 @@ describe('an Antigravity session on a remote host', () => {
   it('merges its hooks into the user\'s hooks file with sh commands that name the session script by a relative path', async () => {
     const workspace = await newWorkspace();
     seedUserFiles(workspace);
-    await spawnOnHost(new AntigravityAdapter(), workspace);
+    await spawnOnHost(new AntigravityAdapter(), workspace, CLI_NAME);
 
     const hooks = parse(workspace, `${workspace.hostProject}/.agents/hooks.json`) as Record<string, {
       PreInvocation?: Array<{ command: string }>;
@@ -125,7 +91,7 @@ describe('an Antigravity session on a remote host', () => {
       ...(named.Stop ?? []).map((handler) => handler.command),
     ];
     expect(commands.length).toBeGreaterThan(0);
-    const sessionDirectory = path.join(workspace.projectFolder, '.kangentic', 'sessions', SESSION_ID);
+    const sessionDirectory = sessionFolders(workspace).local;
     for (const hookCommand of commands) {
       const [program, scriptToken, mode] = hookCommand.split(' ');
       expect(program).toBe('sh');
@@ -139,32 +105,25 @@ describe('an Antigravity session on a remote host', () => {
 
   it('writes the MCP plugin with a stdio bridge on the host path, owner-only, and sends nothing of this computer', async () => {
     const workspace = await newWorkspace();
-    await spawnOnHost(new AntigravityAdapter(), workspace);
+    const spawn = await spawnOnHost(new AntigravityAdapter(), workspace, CLI_NAME);
 
     const configPath = `${workspace.hostProject}/.agents/plugins/kangentic/mcp_config.json`;
     const entry = (parse(workspace, configPath).mcpServers as Record<string, unknown>).kangentic;
     expect(entry).toEqual({
       command: 'sh',
-      args: [`${workspace.hostProject}/.kangentic/sessions/${SESSION_ID}/wsl-hooks/wsl-hook.sh`, 'mcp', MCP_URL],
-      env: { KANGENTIC_MCP_TOKEN: TOKEN },
+      args: [`${sessionFolders(workspace).host}/wsl-hooks/wsl-hook.sh`, 'mcp', MCP_URL],
+      env: { KANGENTIC_MCP_TOKEN: MCP_TOKEN },
     });
     expect(workspace.host.modes.get(configPath)).toBe(0o600);
     expect(workspace.host.files.has(`${workspace.hostProject}/.agents/plugins/kangentic/plugin.json`)).toBe(true);
 
-    const mirrorPaths = [workspace.projectFolder, workspace.mirrorHome, os.tmpdir()];
-    for (const [hostPath, content] of workspace.host.files) {
-      for (const local of mirrorPaths) {
-        expect(content, hostPath).not.toContain(local);
-        expect(content, hostPath).not.toContain(local.replace(/\\/g, '/'));
-        expect(content, hostPath).not.toContain(local.replace(/\\/g, '\\\\'));
-      }
-    }
+    expectNoLocalPaths(workspace, spawn);
   });
 
   it('puts the Kangentic files in the host\'s git exclude, since they were created there', async () => {
     const workspace = await newWorkspace();
     workspace.host.directories.add(`${workspace.hostProject}/.git/info`);
-    await spawnOnHost(new AntigravityAdapter(), workspace);
+    await spawnOnHost(new AntigravityAdapter(), workspace, CLI_NAME);
     const exclude = workspace.host.files.get(`${workspace.hostProject}/.git/info/exclude`) ?? '';
     expect(exclude).toContain('/.agents/plugins/kangentic/mcp_config.json');
     expect(exclude).toContain('/.agents/hooks.json');
@@ -174,7 +133,7 @@ describe('an Antigravity session on a remote host', () => {
     const workspace = await newWorkspace();
     seedUserFiles(workspace);
     const adapter = new AntigravityAdapter();
-    await spawnOnHost(adapter, workspace);
+    await spawnOnHost(adapter, workspace, CLI_NAME);
 
     adapter.removeHooks(workspace.projectFolder, SESSION_ID);
     await settleHostFiles(SESSION_ID);
@@ -187,7 +146,7 @@ describe('an Antigravity session on a remote host', () => {
   it('removes a hooks file it created when nothing of the user\'s was there', async () => {
     const workspace = await newWorkspace();
     const adapter = new AntigravityAdapter();
-    await spawnOnHost(adapter, workspace);
+    await spawnOnHost(adapter, workspace, CLI_NAME);
     expect(workspace.host.files.has(`${workspace.hostProject}/.agents/hooks.json`)).toBe(true);
 
     adapter.removeHooks(workspace.projectFolder, SESSION_ID);
