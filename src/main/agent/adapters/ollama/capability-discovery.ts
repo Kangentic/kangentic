@@ -114,10 +114,11 @@ export interface OllamaDiscovery {
  * model list comes from `ollama list`, and the effort levels are the
  * `--think` levels `ollama run --help` names.
  *
- * Best-effort: never throws. On any failure (daemon down, CLI missing,
- * unparseable output) it returns `{ supportsModelOverride: true }` with no
- * model list, so the renderer falls back to a free-form model text input,
- * and no effort levels, so the Effort row stays hidden.
+ * Best-effort: never throws. A failed `ollama list` (daemon down, CLI
+ * missing, unparseable output) leaves no model list, so the renderer falls
+ * back to a free-form model text input. A failed `run --help` reports
+ * `thinkLevels: null` with empty `effortLevels`, and the adapter offers the
+ * levels an earlier read of that CLI reported in their place.
  */
 export async function discoverOllama(cliPath: string): Promise<OllamaDiscovery> {
   const [models, thinkLevels] = await Promise.all([
