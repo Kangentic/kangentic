@@ -114,12 +114,12 @@ function preparePrompt(prompt: string, shell?: string): string {
  * inside), a double-quoted run (PowerShell and cmd), and a backslash escape
  * outside quotes (the `\'` of a POSIX `'\''`).
  *
- * Only for reading `--model` back. Copilot's command has no `--` before its
- * prompt, so a plain search could take a prompt's `--model` for the flag. It
- * is not a general shell parser: it holds only because `quoteArg` quotes
- * every value with a backslash in it, and a double-quoted run never holds a
- * `"` (`preparePrompt` and `quoteArg` turn them into single quotes for
- * PowerShell and cmd).
+ * Only for reading `--model` back, and only up to the prompt
+ * (`copilotModelFlagValue`). It is not a general shell parser: fish escapes a
+ * quote inside single quotes as `\'` and nushell inside double quotes as `\"`,
+ * which this reads as the end of the run. The values before the prompt are
+ * flags, a session id and paths, so only a path holding a quote on those two
+ * shells could mislead it.
  */
 function splitCommandArguments(command: string): string[] {
   const tokens: string[] = [];
@@ -157,15 +157,20 @@ function splitCommandArguments(command: string): string[] {
   return tokens;
 }
 
+/** The flags whose value is the prompt, always the builder's last argument. */
+const PROMPT_FLAGS = new Set(['-p', '-i']);
+
 /**
- * The model a built Copilot command passes with `--model` (or `--model=`),
- * read argument by argument so a prompt that mentions `--model` is never taken
- * for the flag. Null when the command names none.
+ * The model a built Copilot command passes with `--model` (or `--model=`).
+ * The builder writes every flag before the prompt (`-p` or `-i`), so the scan
+ * stops there: a prompt is never tokenized, and a `--model` or a quote inside
+ * it can never be taken for the flag. Null when the command names none.
  */
 export function copilotModelFlagValue(command: string): string | null {
   const tokens = splitCommandArguments(command);
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
+    if (PROMPT_FLAGS.has(token)) return null;
     if (token === '--model') {
       const value = tokens[index + 1]?.trim();
       return value ? value : null;
@@ -252,12 +257,20 @@ export class CopilotCommandBuilder {
     // Kangentic's own tools never wait on an approval, as Claude's
     // `mcp__kangentic` allow rule and Grok's `MCPTool(kangentic__*)` ensure:
     // `--allow-tool kangentic` approves every tool of that server (GitHub's
-    // allowing-tools doc; the answer run uses the same flag, measured). Before
-    // acceptEdits narrowed to `write` it rode on `--allow-all-tools`. Not in the
-    // plan modes, where a mutating board tool must keep asking, and not under
-    // --yolo, which already allows everything.
+    // allowing-tools doc; the answer run uses the same flag, measured). Not in
+    // the plan modes, where a mutating board tool must keep asking, and not
+    // under --yolo, which already allows everything.
     if (mcpConfigArgs.length > 0 && allowsKangenticTools(options.permissionMode)) {
       parts.push('--allow-tool', KANGENTIC_MCP_SERVER_NAME);
+    }
+
+    // Per-column model/effort overrides. Before the prompt in both modes:
+    // `copilotModelFlagValue` reads flags only up to the prompt.
+    if (options.model && options.model.trim().length > 0) {
+      parts.push('--model', quoteArg(options.model.trim(), shell));
+    }
+    if (options.effort && options.effort.trim().length > 0) {
+      parts.push('--reasoning-effort', quoteArg(options.effort.trim(), shell));
     }
 
     // Non-interactive mode
@@ -266,22 +279,7 @@ export class CopilotCommandBuilder {
       if (options.prompt) {
         parts.push(quoteArg(preparePrompt(options.prompt, shell), shell, { multiline: true }));
       }
-      // Per-column model/effort overrides in non-interactive mode
-      if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(options.model.trim(), shell));
-      }
-      if (options.effort && options.effort.trim().length > 0) {
-        parts.push('--reasoning-effort', quoteArg(options.effort.trim(), shell));
-      }
       return parts.join(' ');
-    }
-
-    // Per-column model/effort overrides
-    if (options.model && options.model.trim().length > 0) {
-      parts.push('--model', quoteArg(options.model.trim(), shell));
-    }
-    if (options.effort && options.effort.trim().length > 0) {
-      parts.push('--reasoning-effort', quoteArg(options.effort.trim(), shell));
     }
 
     // Interactive mode with initial prompt

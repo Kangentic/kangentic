@@ -55,6 +55,8 @@ function runCopilotHook(
   // `node "<bridge>" "<events>" <eventType> <directive>...`; the mock paths
   // carry no spaces, so token 3 is the event type and the rest are directives.
   const tokens = buildHooks('/mock/.kangentic/events.jsonl', hookOptions)[event][0].command.split(' ');
+  // One event per call, so a test may run several hooks in a row.
+  fs.rmSync(outputFile, { force: true });
   execFileSync(process.execPath, [BRIDGE, outputFile, tokens[3], ...tokens.slice(4)], {
     input: JSON.stringify(payload),
     timeout: 5000,
@@ -173,6 +175,31 @@ describe('Copilot hooks through the real event bridge (hooks reference shapes)',
       parentAgentId: 'root',
     });
     expect(emitted).toMatchObject({ type: 'tool_start', tool: 'view', subagentId: 'agent-7' });
+  });
+
+  it.each(['postToolUse', 'postToolUseFailure'])('%s inside a subagent carries the subagent id', (event) => {
+    const emitted = runCopilotHook(event, {
+      ...SESSION_FIELDS,
+      toolName: 'view',
+      toolArgs: { path: 'README.md' },
+      agentId: 'agent-7',
+      agentType: 'explore',
+      parentAgentId: 'root',
+    });
+    expect(emitted).toMatchObject({ type: 'tool_end', tool: 'view', subagentId: 'agent-7' });
+  });
+
+  it('puts the prompt text on the Prompt event alone when the session asks for it', () => {
+    const payload = { ...SESSION_FIELDS, prompt: 'Add a README', source: 'startup', toolName: 'view', toolArgs: {} };
+    const options = { capturePromptText: true };
+    expect(runCopilotHook('userPromptSubmitted', payload, options)).toMatchObject({ type: 'prompt', detail: 'Add a README' });
+
+    const sessionStarted = runCopilotHook('sessionStart', payload, options);
+    expect(sessionStarted).toMatchObject({ type: 'session_start', detail: 'startup' });
+
+    const toolStarted = runCopilotHook('preToolUse', payload, options);
+    expect(toolStarted).toMatchObject({ type: 'tool_start', tool: 'view' });
+    expect(toolStarted.detail).toBeUndefined();
   });
 
   it('userPromptSubmitted starts the turn without the prompt text', () => {

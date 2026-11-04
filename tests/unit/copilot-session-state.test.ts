@@ -64,6 +64,17 @@ function newConfigHome(recordId: string): string {
   return path.join(sessionsDir, recordId, 'copilot-config');
 }
 
+// The id becomes a path segment of the copy and of every stat. Each test makes
+// a folder at the path such an id reaches, so a missing guard finds a source.
+const UNSAFE_SESSION_IDS = ['../escape', '..', '.', 'nested/child'];
+
+/** A session folder Copilot made and never wrote a log to; its own mtime is now. */
+function emptySessionFolder(recordId: string): string {
+  const folder = path.join(newConfigHome(recordId), 'session-state', SESSION_ID);
+  fs.mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
 describe('seedResumedSessionState', () => {
   it('copies the newest earlier Kangentic folder into the new config home and keeps the source', async () => {
     kangenticSession('record-1', 'older', 1_000);
@@ -110,10 +121,151 @@ describe('seedResumedSessionState', () => {
     const own = kangenticSession('record-2', 'own', 1_000);
     const other = kangenticSession('record-1', 'other', 2_000);
 
-    seedResumedSessionState({ configHome: newConfigHome('record-2'), sessionId: SESSION_ID, sessionsDir, place: null });
+    // A rename onto the existing folder fails and is caught, so the home would
+    // look untouched without the early return. The copy never starting, and
+    // nothing warned, is what the early return buys.
+    const copySpy = vi.spyOn(fs, 'cpSync');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      seedResumedSessionState({ configHome: newConfigHome('record-2'), sessionId: SESSION_ID, sessionsDir, place: null });
+      expect(copySpy).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      copySpy.mockRestore();
+      warn.mockRestore();
+    }
 
     expect(fs.readFileSync(path.join(own, 'events.jsonl'), 'utf-8')).toBe('own');
     expect(fs.existsSync(other)).toBe(true);
+  });
+
+  it.each(UNSAFE_SESSION_IDS)('copies nothing and writes nothing for the session id %s', (unsafeId) => {
+    const escapedSource = path.join(newConfigHome('record-1'), 'session-state', unsafeId);
+    fs.mkdirSync(escapedSource, { recursive: true });
+    fs.writeFileSync(path.join(escapedSource, 'events.jsonl'), 'escaped');
+    const copySpy = vi.spyOn(fs, 'cpSync');
+    try {
+      seedResumedSessionState({ configHome: newConfigHome('record-2'), sessionId: unsafeId, sessionsDir, place: null });
+      expect(copySpy).not.toHaveBeenCalled();
+    } finally {
+      copySpy.mockRestore();
+    }
+
+    // Not even the config home was made, so nothing landed outside session-state either.
+    expect(fs.existsSync(path.join(sessionsDir, 'record-2'))).toBe(false);
+    expect(fs.readFileSync(path.join(escapedSource, 'events.jsonl'), 'utf-8')).toBe('escaped');
+  });
+
+  it('keeps the session in place and does not say it resumes empty when only the restamp fails', async () => {
+    kangenticSession('record-1', 'log', 1_000);
+    const configHome = newConfigHome('record-2');
+    const target = path.join(configHome, 'session-state', SESSION_ID);
+    const stampSpy = vi.spyOn(fs, 'utimesSync').mockImplementation(() => {
+      throw new Error('EPERM: operation not permitted');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(() => seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place: null })).not.toThrow();
+      expect(stampSpy).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).not.toContain('resumes empty');
+    } finally {
+      stampSpy.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect(fs.readFileSync(path.join(target, 'events.jsonl'), 'utf-8')).toBe('log');
+    expect(fs.readFileSync(path.join(target, 'checkpoints', 'index.md'), 'utf-8')).toBe('checkpoint');
+    // Without the restamp the copy may tie the source's write time (Windows'
+    // copy keeps it), so either log is the right answer; both hold the session.
+    const located = await locateCopilotEventsFile(SESSION_ID, projectRoot);
+    expect(located).not.toBeNull();
+    expect(fs.readFileSync(located!, 'utf-8')).toBe('log');
+  });
+
+  it('cleans up its staging folder and warns that the resume starts empty when the rename fails', () => {
+    kangenticSession('record-1', 'log', 1_000);
+    const configHome = newConfigHome('record-2');
+    const target = path.join(configHome, 'session-state', SESSION_ID);
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => {
+      throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(() => seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place: null })).not.toThrow();
+      expect(renameSpy).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('resumes empty');
+    } finally {
+      renameSpy.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect(fs.existsSync(target)).toBe(false);
+    expect(fs.readdirSync(configHome).filter((entry) => entry.startsWith('.seeding-'))).toEqual([]);
+  });
+
+  describe('a rename a scanner holds up', () => {
+    const originalPlatform = process.platform;
+    const realRename = fs.renameSync;
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      vi.restoreAllMocks();
+    });
+
+    /** Refuse the first `refusals` renames the way Windows refuses a held file, then rename for real. */
+    function refuseRenames(refusals: number) {
+      let refused = 0;
+      return vi.spyOn(fs, 'renameSync').mockImplementation((fromPath, toPath) => {
+        if (refused < refusals) {
+          refused += 1;
+          throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+        }
+        realRename(fromPath, toPath);
+      });
+    }
+
+    it('retries on Windows until the rename goes through', () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      kangenticSession('record-1', 'log', 1_000);
+      const configHome = newConfigHome('record-2');
+      const renameSpy = refuseRenames(2);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place: null });
+
+      expect(renameSpy).toHaveBeenCalledTimes(3);
+      expect(warn).not.toHaveBeenCalled();
+      expect(fs.readFileSync(path.join(configHome, 'session-state', SESSION_ID, 'events.jsonl'), 'utf-8')).toBe('log');
+    });
+
+    it('gives up on Windows once the retries run out', () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      kangenticSession('record-1', 'log', 1_000);
+      const configHome = newConfigHome('record-2');
+      const renameSpy = refuseRenames(3);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place: null });
+
+      expect(renameSpy).toHaveBeenCalledTimes(3);
+      expect(String(warn.mock.calls[0][0])).toContain('resumes empty');
+      expect(fs.existsSync(path.join(configHome, 'session-state', SESSION_ID))).toBe(false);
+    });
+
+    it('never retries off Windows, where a refused rename is not a held file', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      kangenticSession('record-1', 'log', 1_000);
+      const configHome = newConfigHome('record-2');
+      const renameSpy = refuseRenames(1);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place: null });
+
+      expect(renameSpy).toHaveBeenCalledTimes(1);
+      expect(fs.existsSync(path.join(configHome, 'session-state', SESSION_ID))).toBe(false);
+    });
   });
 
   it('never scans a parent that is not Kangentic\'s .kangentic/sessions', () => {
@@ -148,62 +300,7 @@ describe('seedResumedSessionState', () => {
       warn.mockRestore();
     }
   });
-});
 
-describe('locateCopilotEventsFile', () => {
-  it('takes the path the agent reported while it exists', async () => {
-    const reported = path.join(kangenticSession('record-1', 'reported', 1_000), 'events.jsonl');
-    kangenticSession('record-2', 'newer', 2_000);
-    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot, null, reported)).toBe(reported);
-  });
-
-  it('finds the newest log in the project\'s Kangentic homes, from a worktree too', async () => {
-    kangenticSession('record-1', 'older', 1_000);
-    const newer = kangenticSession('record-2', 'newer', 2_000);
-    const worktree = path.join(projectRoot, '.kangentic', 'worktrees', 'task-1');
-    expect(await locateCopilotEventsFile(SESSION_ID, worktree, null, path.join(tmpDir, 'gone.jsonl'))).toBe(path.join(newer, 'events.jsonl'));
-  });
-
-  it('falls back to the user\'s own Copilot home, then null', async () => {
-    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBeNull();
-    const userFolder = path.join(tmpHome, '.copilot', 'session-state', SESSION_ID);
-    fs.mkdirSync(userFolder, { recursive: true });
-    fs.writeFileSync(path.join(userFolder, 'events.jsonl'), 'user');
-    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBe(path.join(userFolder, 'events.jsonl'));
-  });
-
-  it('ranks an older folder that holds a log over a newer folder with none', async () => {
-    const older = kangenticSession('record-1', 'older', 1_000);
-    emptySessionFolder('record-2');
-    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBe(path.join(older, 'events.jsonl'));
-  });
-});
-
-/** A session folder Copilot made and never wrote a log to; its own mtime is now. */
-function emptySessionFolder(recordId: string): string {
-  const folder = path.join(newConfigHome(recordId), 'session-state', SESSION_ID);
-  fs.mkdirSync(folder, { recursive: true });
-  return folder;
-}
-
-describe('kangenticSessionFolders', () => {
-  it('leaves out the excluded config home and returns another home\'s folder', () => {
-    const excludedFolder = kangenticSession('record-1', 'excluded', 2_000);
-    const otherFolder = kangenticSession('record-2', 'other', 1_000);
-
-    expect(kangenticSessionFolders(sessionsDir, SESSION_ID).sort()).toEqual([excludedFolder, otherFolder].sort());
-    expect(kangenticSessionFolders(sessionsDir, SESSION_ID, newConfigHome('record-1'))).toEqual([otherFolder]);
-  });
-
-  it('ranks a newer folder with no log after an older folder that has one', () => {
-    const older = kangenticSession('record-1', 'older', 1_000);
-    const newerWithoutLog = emptySessionFolder('record-2');
-
-    expect(kangenticSessionFolders(sessionsDir, SESSION_ID)).toEqual([older, newerWithoutLog]);
-  });
-});
-
-describe('seedResumedSessionState details', () => {
   it('seeds from the older folder that holds a log, not a newer one with none', () => {
     kangenticSession('record-1', 'older log', 1_000);
     emptySessionFolder('record-2');
@@ -283,5 +380,71 @@ describe('seedResumedSessionState details', () => {
     seedResumedSessionState({ configHome, sessionId: SESSION_ID, sessionsDir, place });
 
     expect(fs.readFileSync(path.join(configHome, 'session-state', SESSION_ID, 'events.jsonl'), 'utf-8')).toBe('distro');
+  });
+});
+
+describe('locateCopilotEventsFile', () => {
+  it('takes the path the agent reported while it exists', async () => {
+    const reported = path.join(kangenticSession('record-1', 'reported', 1_000), 'events.jsonl');
+    kangenticSession('record-2', 'newer', 2_000);
+    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot, null, reported)).toBe(reported);
+  });
+
+  it('finds the newest log in the project\'s Kangentic homes, from a worktree too', async () => {
+    kangenticSession('record-1', 'older', 1_000);
+    const newer = kangenticSession('record-2', 'newer', 2_000);
+    const worktree = path.join(projectRoot, '.kangentic', 'worktrees', 'task-1');
+    expect(await locateCopilotEventsFile(SESSION_ID, worktree, null, path.join(tmpDir, 'gone.jsonl'))).toBe(path.join(newer, 'events.jsonl'));
+  });
+
+  it('falls back to the user\'s own Copilot home, then null', async () => {
+    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBeNull();
+    const userFolder = path.join(tmpHome, '.copilot', 'session-state', SESSION_ID);
+    fs.mkdirSync(userFolder, { recursive: true });
+    fs.writeFileSync(path.join(userFolder, 'events.jsonl'), 'user');
+    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBe(path.join(userFolder, 'events.jsonl'));
+  });
+
+  it('ranks an older folder that holds a log over a newer folder with none', async () => {
+    const older = kangenticSession('record-1', 'older', 1_000);
+    emptySessionFolder('record-2');
+    expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBe(path.join(older, 'events.jsonl'));
+  });
+
+  // A project keeps one record folder per spawn and the hang check locates a
+  // running session's log every minute, so the listing must not block.
+  it('lists .kangentic/sessions without a synchronous read', async () => {
+    const newer = kangenticSession('record-1', 'log', 1_000);
+    const listSpy = vi.spyOn(fs, 'readdirSync');
+    try {
+      expect(await locateCopilotEventsFile(SESSION_ID, projectRoot)).toBe(path.join(newer, 'events.jsonl'));
+      expect(listSpy).not.toHaveBeenCalled();
+    } finally {
+      listSpy.mockRestore();
+    }
+  });
+
+  it.each(UNSAFE_SESSION_IDS)('answers null for the session id %s, even with a folder at the path it reaches', async (unsafeId) => {
+    const escaped = path.join(newConfigHome('record-1'), 'session-state', unsafeId);
+    fs.mkdirSync(escaped, { recursive: true });
+    fs.writeFileSync(path.join(escaped, 'events.jsonl'), 'escaped');
+    expect(await locateCopilotEventsFile(unsafeId, projectRoot)).toBeNull();
+  });
+});
+
+describe('kangenticSessionFolders', () => {
+  it('leaves out the excluded config home and returns another home\'s folder', () => {
+    const excludedFolder = kangenticSession('record-1', 'excluded', 2_000);
+    const otherFolder = kangenticSession('record-2', 'other', 1_000);
+
+    expect(kangenticSessionFolders(sessionsDir, SESSION_ID).sort()).toEqual([excludedFolder, otherFolder].sort());
+    expect(kangenticSessionFolders(sessionsDir, SESSION_ID, newConfigHome('record-1'))).toEqual([otherFolder]);
+  });
+
+  it('ranks a newer folder with no log after an older folder that has one', () => {
+    const older = kangenticSession('record-1', 'older', 1_000);
+    const newerWithoutLog = emptySessionFolder('record-2');
+
+    expect(kangenticSessionFolders(sessionsDir, SESSION_ID)).toEqual([older, newerWithoutLog]);
   });
 });

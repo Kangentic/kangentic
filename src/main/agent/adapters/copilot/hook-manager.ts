@@ -274,9 +274,10 @@ export function buildHooks(
   for (const { event, bridgeEventType, directives: eventDirectives } of COPILOT_HOOK_EVENTS) {
     // Task sessions keep prompt text out of their events file; a session that
     // names itself from its first prompt asks for it.
+    const baseDirectives = eventDirectives ?? [];
     const directives = bridgeEventType === EventType.Prompt && options.capturePromptText
-      ? [...(eventDirectives || []), extractDetail(['prompt'])]
-      : (eventDirectives || []);
+      ? [...baseDirectives, extractDetail(['prompt'])]
+      : baseDirectives;
     hooks[event] = [{
       command: options.eventCommand
         ? options.eventCommand(bridgeEventType, ...directives)
@@ -486,11 +487,12 @@ export function writeSessionConfig(
   );
 
   const userDir = userCopilotConfigDir(hookOptions.place ?? null);
+  const assistedApprovals = hookOptions.assistedApprovals === true;
   const settings = withSessionSettings(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'settings.json'))),
     statusOutputPath,
     hookOptions.statusLineCommand,
-    hookOptions.assistedApprovals === true,
+    assistedApprovals,
   );
   // sync-write-ok: same reason as the mkdir above - carries the statusLine
   // wiring and the user's own settings for the session.
@@ -500,7 +502,7 @@ export function writeSessionConfig(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'config.json'))),
     statusOutputPath,
     hookOptions.statusLineCommand,
-    hookOptions.assistedApprovals === true,
+    assistedApprovals,
   );
   // sync-write-ok: same reason as the mkdir above - carries the signed-in
   // account the session runs as.

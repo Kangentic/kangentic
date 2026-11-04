@@ -29,17 +29,17 @@ export async function migrateCopilotProjectData(oldProjectPath: string, newProje
   const oldResolved = path.resolve(oldProjectPath);
   const newResolved = path.resolve(newProjectPath);
 
-  for (const sessionStateRoot of sessionStateRoots(newResolved)) {
+  for (const stateRoot of sessionStateRoots(newResolved)) {
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(sessionStateRoot, { withFileTypes: true });
+      entries = fs.readdirSync(stateRoot, { withFileTypes: true });
     } catch {
       continue; // No session-state directory here: nothing to migrate.
     }
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const workspaceYaml = path.join(sessionStateRoot, entry.name, 'workspace.yaml');
+      const workspaceYaml = path.join(stateRoot, entry.name, 'workspace.yaml');
       try {
         rewriteWorkspaceYaml(workspaceYaml, oldResolved, newResolved);
       } catch (error) {

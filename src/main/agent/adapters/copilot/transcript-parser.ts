@@ -29,8 +29,9 @@ import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcri
  *
  * Built from those docs (no CLI version stated; changelog 1.0.105 current).
  * The fields read here match local logs of Copilot 1.0.24 through 1.0.98,
- * which held no `session.compaction_complete` or `session.resume`. The
- * committed fixture is still shaped from the docs, not captured.
+ * which held no `session.compaction_complete` or `session.resume`. Two
+ * sanitized 1.0.88 logs (`tests/fixtures/copilot-events/copilot-1.0.88-*`)
+ * pin the captured shape; the doc-shaped fixture covers only those two events.
  */
 
 /** Pages need no line count: every record carries its own `id` for its uuid. */
