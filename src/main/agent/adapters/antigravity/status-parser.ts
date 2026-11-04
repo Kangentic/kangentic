@@ -153,15 +153,15 @@ export class AntigravityStatusParser {
   /**
    * The activity a status write reports that agy's hooks cannot: a change of
    * plan mode (`cycle_mode`, below), and `tool_confirmation_pending`, "True
-   * while a tool confirmation dialog
-   * shows (omitted otherwise)" (statusline doc). A PreToolUse hook cannot tell
-   * a tool that asks from one that runs, since agy's own policy decides after
-   * it. The write on which the field turns true raises an approval wait. The
-   * engine ends it on the tool's own end, the next prompt, or the turn's end,
-   * so nothing is raised when the dialog closes. Only the edge is reported,
-   * because agy rewrites the file on every state change while the dialog
-   * stays up. The payload names no tool, so the wait awaits the newest call in
-   * flight. Built from the documentation; not yet run against a real agy.
+   * while a tool confirmation dialog shows (omitted otherwise)" (statusline
+   * doc). A PreToolUse hook cannot tell a tool that asks from one that runs,
+   * since agy's own policy decides after it. The write on which the field
+   * turns true raises an approval wait. The engine ends it on the tool's own
+   * end, the next prompt, or the turn's end, so nothing is raised when the
+   * dialog closes. Only the edge is reported, because agy rewrites the file on
+   * every state change while the dialog stays up. The payload names no tool,
+   * so the wait awaits the newest call in flight. Built from the
+   * documentation; not yet run against a real agy.
    *
    * Null for a write that is not a JSON object (a read that caught the bridge
    * mid-write), so the reader keeps comparing against the last whole one.

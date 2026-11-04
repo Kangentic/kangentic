@@ -55,9 +55,9 @@ export function antigravityAnswerEvents(line: string): AnswerStreamEvent[] {
  * update's (`step_update.conversation_id`), or a result's (top level or
  * nested). A one-shot answer reads it off its `init`. A warm answer session's
  * `init` arrives before its first turn, where no turn reads it, so the session
- * reads the id off its turns' own lines. The
- * headless doc (https://antigravity.google/docs/cli/headless) lists
- * `conversation_id` on both `step_update` and `result`.
+ * reads the id off its turns' own lines. The headless doc
+ * (https://antigravity.google/docs/cli/headless) lists `conversation_id` on
+ * both `step_update` and `result`.
  */
 export function antigravityStreamConversationId(line: string): string | null {
   if (!line.includes('conversation_id')) return null;

@@ -113,6 +113,8 @@ interface AttachedState {
   statusReadSequence: number;
   /** The last status write dispatched, which `parseStatusEvents` reads the next one against. */
   lastStatusRaw: string | null;
+  /** True once a throw from `parseStatusEvents` was logged, so a parser that throws on every write logs once. */
+  statusEventsFailureLogged: boolean;
   /** The session's events reads, one after another, so events dispatch in order. */
   eventsChain: Promise<void>;
   /** Bumped by the synchronous exit flush, which supersedes any read in flight. */
@@ -169,6 +171,7 @@ export class StatusFileReader {
       firstStatusDelivered: false,
       statusReadSequence: 0,
       lastStatusRaw: null,
+      statusEventsFailureLogged: false,
       eventsChain: Promise.resolve(),
       eventsGeneration: 0,
       wslInbox: null,
@@ -400,7 +403,11 @@ export class StatusFileReader {
     let events: SessionEvent[] | null;
     try {
       events = hook.parseStatusEvents(raw, state.lastStatusRaw, Date.now());
-    } catch {
+    } catch (error) {
+      if (!state.statusEventsFailureLogged) {
+        state.statusEventsFailureLogged = true;
+        console.error(`[status-file-reader] Status events for ${sessionId} could not be read`, error);
+      }
       return;
     }
     if (events === null) return;

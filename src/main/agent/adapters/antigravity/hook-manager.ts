@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import which from 'which';
 import { EventType } from '../../../../shared/types';
 import { toForwardSlash } from '../../../../shared/paths';
 import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
@@ -217,7 +218,10 @@ const TOOL_DETAIL_ARGS = ['TargetFile', 'CommandLine', 'DirectoryPath', 'Absolut
  *   writes to stdout before anything else. `allow` "proceed[s], deferring to
  *   the next hook or default policy" (hooks reference), and on 1.3.4 the
  *   question and command dialogs still showed under it. The cost: a handler
- *   that fails before it answers now denies whatever tool it fired for. For
+ *   that fails before it answers now denies whatever tool it fired for. With
+ *   no `node` on PATH every handler fails that way and the agent cannot run a
+ *   tool, so the entry is left out there (`nodeOnPath`): the session runs with
+ *   no tool starts and no question waits. For
  *   `ask_question` alone the same entry appends a question wait
  *   (`appendPermissionWaitForTool`), since that dialog always waits on the
  *   user (#452). Approvals are not read here. agy's policy decides whether a
@@ -243,6 +247,7 @@ export function buildHooks(
   eventsToken: string,
   existingRoot: AntigravityHooksFile,
   eventCommand?: (eventType: string, ...directives: string[]) => string,
+  nodeOnPath: () => boolean = isNodeOnPath,
 ): AntigravityHooksFile {
   const bridge = (eventType: string, ...directives: string[]): string => (eventCommand
     ? eventCommand(eventType, ...directives)
@@ -251,7 +256,12 @@ export function buildHooks(
   // A PreToolUse handler must answer `allow` on stdout, or agy denies the
   // tool. The WSL hook transport carries no reply, so a distro's agy gets no
   // PreToolUse entry, so it records no tool starts and raises no question wait.
-  const toolStart: AntigravityHookGroup[] | undefined = eventCommand
+  // Neither does a machine with no node to run the bridge, or every tool is denied.
+  const canAnswerToolStart = !eventCommand && nodeOnPath();
+  if (!eventCommand && !canAnswerToolStart) {
+    console.warn('[antigravity] No node on PATH; skipping the PreToolUse hook, which would deny every tool');
+  }
+  const toolStart: AntigravityHookGroup[] | undefined = !canAnswerToolStart
     ? undefined
     : [
       {
@@ -315,6 +325,17 @@ export function buildHooks(
       ],
     },
   };
+}
+
+let nodeWasFound = false;
+
+/**
+ * Whether a bare `node` resolves on PATH, which the hooks' commands run with.
+ * Only a hit is kept: a miss is asked again at the next spawn.
+ */
+function isNodeOnPath(): boolean {
+  nodeWasFound ||= which.sync('node', { nothrow: true }) !== null;
+  return nodeWasFound;
 }
 
 /** Path to a workspace's Antigravity hooks file. */
