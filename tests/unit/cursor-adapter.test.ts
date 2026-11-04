@@ -456,6 +456,191 @@ describe('CursorAdapter', () => {
     });
   });
 
+  // ── Kangentic hooks ──────────────────────────────────────────────────────
+  //
+  // The project's `.cursor/hooks.json` is read by every Cursor session in the
+  // folder. Only a session-screen start carries the variable the hook commands
+  // write through, so a print run (which reports on stream-json) adds nothing.
+  describe('Kangentic hooks wiring', () => {
+    const hooksPathIn = (folder: string) => path.join(folder, '.cursor', 'hooks.json');
+    const hookOptions = (folder: string, overrides: Partial<SpawnCommandOptions> = {}) => makeOptions({
+      cwd: folder,
+      eventsOutputPath: path.join(folder, '.kangentic', 'sessions', 'session-1', 'events.jsonl'),
+      ...overrides,
+    });
+
+    function withFolder(run: (folder: string) => void): void {
+      const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-cursor-adapter-hooks-'));
+      try {
+        run(folder);
+      } finally {
+        fs.rmSync(folder, { recursive: true, force: true });
+      }
+    }
+
+    it.each<PermissionMode>(['default', 'acceptEdits', 'plan'])('wires the hooks and their variable on a %s session screen', (permissionMode) => {
+      withFolder((folder) => {
+        const options = hookOptions(folder, { permissionMode });
+        adapter.buildCommand(options);
+        const hooks = JSON.parse(fs.readFileSync(hooksPathIn(folder), 'utf-8')) as { version: number; hooks: Record<string, unknown[]> };
+        expect(hooks.version).toBe(1);
+        expect(Object.keys(hooks.hooks)).toEqual(expect.arrayContaining(['preToolUse', 'postToolUse', 'stop', 'sessionStart']));
+        expect(adapter.buildEnv?.(options)).toEqual({ KANGENTIC_EVENTS_PATH_INTERACTIVE: options.eventsOutputPath });
+      });
+    });
+
+    // A resume returns before `-p` is added, so it opens the session screen in
+    // every mode and prints no stream-json: its turn end can only be a hook.
+    it.each<[string, Partial<SpawnCommandOptions>]>([
+      ['a print-mode resume', { permissionMode: 'bypassPermissions', sessionId: 'chat-1', resume: true }],
+      ['a non-interactive resume', { permissionMode: 'default', nonInteractive: true, sessionId: 'chat-1', resume: true }],
+    ])('wires the hooks for %s, which opens the session screen', (_start, overrides) => {
+      withFolder((folder) => {
+        const options = hookOptions(folder, overrides);
+        expect(adapter.buildCommand(options)).not.toContain('stream-json');
+        // Not `existsSync`: this file mocks it to always answer true.
+        expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+        expect(adapter.buildEnv?.(options)).toEqual({ KANGENTIC_EVENTS_PATH_INTERACTIVE: options.eventsOutputPath });
+      });
+    });
+
+    it.each<[string, Partial<SpawnCommandOptions>]>([
+      ['a print run', { permissionMode: 'bypassPermissions' }],
+      ['a session screen asked to run non-interactive', { permissionMode: 'default', nonInteractive: true }],
+      ['a start with no events file', { eventsOutputPath: undefined }],
+    ])('wires no hooks for %s', (_start, overrides) => {
+      withFolder((folder) => {
+        const options = hookOptions(folder, overrides);
+        adapter.buildCommand(options);
+        // Not `existsSync`: this file mocks it to always answer true.
+        expect(fs.readdirSync(folder)).toEqual([]);
+        expect(adapter.buildEnv?.(options)).toBeNull();
+      });
+    });
+
+    it('keeps the hooks until the last session in the folder leaves, MCP or not', () => {
+      withFolder((folder) => {
+        adapter.buildCommand(hookOptions(folder, { taskId: 'task-a', ptySessionId: 'session-a' }));
+        adapter.buildCommand(hookOptions(folder, { taskId: 'task-b', ptySessionId: 'session-b' }));
+
+        adapter.removeHooks(folder, 'session-a');
+        expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+
+        adapter.removeHooks(folder, 'session-b');
+        expect(() => fs.readFileSync(hooksPathIn(folder), 'utf-8')).toThrow();
+      });
+    });
+
+    it('a print run leaving does not strip the hooks a session screen in the folder still uses', () => {
+      withFolder((folder) => {
+        adapter.buildCommand(hookOptions(folder, { ptySessionId: 'screen' }));
+        adapter.buildCommand(hookOptions(folder, { ptySessionId: 'print', permissionMode: 'bypassPermissions' }));
+
+        adapter.removeHooks(folder, 'print');
+        expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+      });
+    });
+
+    it('a start over a hooks file Kangentic cannot merge into takes no hold on the folder', () => {
+      withFolder((folder) => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+          const unusableText = '{ // mine\n "hooks": {} }';
+          fs.mkdirSync(path.join(folder, '.cursor'));
+          fs.writeFileSync(hooksPathIn(folder), unusableText);
+
+          adapter.buildCommand(hookOptions(folder, { ptySessionId: 'blocked' }));
+          adapter.removeHooks(folder, 'blocked');
+          expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toBe(unusableText);
+
+          // The blocked start must not have held the folder: once the user fixes
+          // the file, the next session's release strips it as the last holder.
+          adapter.buildCommand(hookOptions(folder, { ptySessionId: 'blocked' }));
+          fs.writeFileSync(hooksPathIn(folder), '{}');
+          adapter.buildCommand(hookOptions(folder, { ptySessionId: 'working' }));
+          expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+          adapter.removeHooks(folder, 'working');
+          expect(() => fs.readFileSync(hooksPathIn(folder), 'utf-8')).toThrow();
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+    });
+
+    it('a release with no session id strips the hooks while sessions still hold the folder', () => {
+      withFolder((folder) => {
+        adapter.buildCommand(hookOptions(folder, { taskId: 'task-a', ptySessionId: 'session-a' }));
+        adapter.buildCommand(hookOptions(folder, { taskId: 'task-b', ptySessionId: 'session-b' }));
+        expect(fs.readFileSync(hooksPathIn(folder), 'utf-8')).toContain('KANGENTIC_EVENTS_PATH_INTERACTIVE');
+
+        adapter.removeHooks(folder);
+
+        expect(() => fs.readFileSync(hooksPathIn(folder), 'utf-8')).toThrow();
+      });
+    });
+
+    it('carries the hooks variable beside the MCP server\'s', () => {
+      withFolder((folder) => {
+        const options = hookOptions(folder, {
+          mcpServerEnabled: true,
+          mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-1/session-1',
+          mcpServerToken: 'secret-token',
+        });
+        expect(adapter.buildEnv?.(options)).toEqual({
+          KANGENTIC_EVENTS_PATH_INTERACTIVE: options.eventsOutputPath,
+          KANGENTIC_MCP_URL: 'http://127.0.0.1:5555/mcp/project-1/session-1',
+          KANGENTIC_MCP_TOKEN: 'secret-token',
+        });
+      });
+    });
+  });
+
+  // ── The model a start passed ────────────────────────────────────────────
+
+  describe('configuredModelFromCommand', () => {
+    it.each<[PermissionMode, string]>([
+      ['default', 'bash'],
+      ['bypassPermissions', 'bash'],
+      ['default', 'powershell'],
+      ['bypassPermissions', 'cmd.exe'],
+    ])('reads the --model id back from a %s command built for %s', (permissionMode, shell) => {
+      const command = adapter.buildCommand(makeOptions({ permissionMode, model: 'cursor-grok-4.6-high', prompt: 'go', shell }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'cursor-grok-4.6-high', displayName: 'cursor-grok-4.6-high' });
+    });
+
+    it('names the model as the cached --list-models catalog does', async () => {
+      const { discoverCursorCapabilities } = await import('../../src/main/agent/adapters/cursor/capability-discovery');
+      // The exec mock answers `--help` and `--list-models` alike, so one
+      // output carries the flag the help read looks for and a model row.
+      mockAboutStdout = '  --model <model>  Model to use\ncursor-grok-4.6-high - Grok 4.6 High\n';
+      await discoverCursorCapabilities('/usr/local/bin/agent', true);
+      expect(adapter.configuredModelFromCommand('agent "go" --model cursor-grok-4.6-high')).toEqual({
+        id: 'cursor-grok-4.6-high',
+        displayName: 'Grok 4.6 High',
+      });
+    });
+
+    // The cache is module-level; `beforeEach` resets it through the module's own
+    // lever, so the "no catalog" cases here and below do not depend on test order.
+    it('has no display name before any catalog is cached', async () => {
+      const { cachedCursorModelDisplayName } = await import('../../src/main/agent/adapters/cursor/capability-discovery');
+      expect(cachedCursorModelDisplayName('cursor-grok-4.6-high')).toBeNull();
+    });
+
+    it('finds a cached display name by a trimmed id, and has none for an id the catalog lacks', async () => {
+      const { discoverCursorCapabilities, cachedCursorModelDisplayName } = await import('../../src/main/agent/adapters/cursor/capability-discovery');
+      mockAboutStdout = '  --model <model>  Model to use\nsome-id - Some Model\n';
+      await discoverCursorCapabilities('/usr/local/bin/agent', true);
+      expect(cachedCursorModelDisplayName('  some-id  ')).toBe('Some Model');
+      expect(cachedCursorModelDisplayName('other-id')).toBeNull();
+    });
+
+    it('is null for a command with no model, even when its prompt mentions --model', () => {
+      expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ prompt: 'go' })))).toBeNull();
+      expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ prompt: 'try --model gpt-5', shell: 'bash' })))).toBeNull();
+    });
+  });
+
   it('defaults to bypassPermissions so stream-json telemetry is on', () => {
     // Stream-json's init event is the only documented surface that
     // exposes Cursor's resolved model + session_id together. Defaulting
@@ -627,13 +812,13 @@ describe('CursorAdapter', () => {
 
     describe('permission mode mapping', () => {
       // `default` is the confirm-changes screen. `acceptEdits` is the same
-      // screen with --force, so commands run unless one is explicitly denied.
-      // Every other mode must emit `--output-format stream-json`. Cursor's
-      // docs say stream-json only works with --print, so without this the
-      // init event never lands and ContextBar is stuck on "Starting agent..."
-      // forever.
+      // screen with --force, so commands run unless one is explicitly denied,
+      // and `plan` is the same screen in Cursor's plan mode. Every other mode
+      // must emit `--output-format stream-json`. Cursor's docs say stream-json
+      // only works with --print, so without this the init event never lands
+      // and ContextBar is stuck on "Starting agent..." forever.
       const streamJsonModes: PermissionMode[] = [
-        'bypassPermissions', 'plan', 'dontAsk', 'auto',
+        'bypassPermissions', 'dontAsk', 'auto',
       ];
       const interactiveModes: PermissionMode[] = ['default'];
 
@@ -674,6 +859,45 @@ describe('CursorAdapter', () => {
         expect(command).not.toContain('-p');
         expect(command).not.toContain('--output-format');
         expect(command).not.toContain('stream-json');
+      });
+
+      // `--mode plan` (https://cursor.com/docs/cli/reference/parameters). The
+      // plan screen keeps the session open for Cursor's own plan review.
+      it('opens the session screen in plan mode for plan, with --trust and no force', () => {
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'plan', prompt: 'test', shell: 'bash' }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('--mode plan');
+        expect(command).toContain(quoteArg('test', 'bash'));
+        expect(command).not.toContain('--force');
+        expect(command).not.toContain('-p');
+        expect(command).not.toContain('stream-json');
+      });
+
+      it('keeps plan mode on a resumed plan session', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'plan',
+          sessionId: 'chat-abc-123',
+          resume: true,
+          prompt: 'This should be ignored',
+        }));
+        expect(command).toContain('--mode plan');
+        expect(command).toContain('--resume=');
+        expect(command).not.toContain('This should be ignored');
+      });
+
+      it('runs plan as a print run when asked to run non-interactive', () => {
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'plan', nonInteractive: true, prompt: 'test' }));
+        expect(command).toContain('-p');
+        expect(command).toContain('stream-json');
+        expect(command).not.toContain('--mode');
+      });
+
+      it('offers plan beside the three modes it already had', () => {
+        expect(adapter.permissions.map((entry) => entry.mode)).toEqual(['default', 'acceptEdits', 'plan', 'bypassPermissions']);
+      });
+
+      it('creates a chat before a plan start, which prints no session id', () => {
+        expect(adapter.reportsLaunchSessionId({ permissionMode: 'plan' })).toBe(false);
       });
 
       it('keeps --force on a resumed skip-approvals session', () => {
@@ -747,8 +971,12 @@ describe('CursorAdapter', () => {
   // ── Runtime strategy ──────────────────────────────────────────────────────
 
   describe('runtime', () => {
-    it('uses pty activity detection', () => {
-      expect(adapter.runtime.activity.kind).toBe('pty');
+    it('reads hooks first, with the terminal as the fallback until one arrives', () => {
+      expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
+    });
+
+    it('reports its turn end', () => {
+      expect(adapter.runtime.reportsTurnEnd).toBe(true);
     });
 
     it('has session ID capture via fromOutput', () => {
@@ -756,12 +984,39 @@ describe('CursorAdapter', () => {
       expect(adapter.runtime.sessionId!.fromOutput).toBeDefined();
     });
 
+    // A sessionStart hook's `session_id` is the conversation id (hooks docs).
+    // The bridge keeps at most 2048 characters of the payload, so the read must
+    // not need closed JSON.
+    it('reads the conversation id from a sessionStart hook, even cut short', () => {
+      const fromHook = adapter.runtime.sessionId!.fromHook!;
+      const sessionId = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
+      expect(fromHook(JSON.stringify({ session_id: sessionId, is_background_agent: false, hook_event_name: 'sessionStart' }))).toBe(sessionId);
+      expect(fromHook(`{"conversation_id":"${sessionId.toUpperCase()}","generation_id":"g-1","workspace_roots":["/projects/x`)).toBe(sessionId);
+      expect(fromHook('{"session_id":"not-a-uuid"}')).toBeNull();
+    });
+
     it('has no session history', () => {
       expect(adapter.runtime.sessionHistory).toBeUndefined();
     });
 
-    it('has no status file', () => {
-      expect(adapter.runtime.statusFile).toBeUndefined();
+    it('reads its hooks\' events file, with no status line', () => {
+      const statusFile = adapter.runtime.statusFile!;
+      expect(statusFile.parseStatus('{}')).toBeNull();
+      expect(statusFile.parseEvent('{"ts":1,"type":"tool_start","tool":"Shell"}')).toEqual({ ts: 1, type: 'tool_start', tool: 'Shell' });
+      expect(statusFile.parseEvent('not json')).toBeNull();
+      expect(statusFile.isFullRewrite).toBe(false);
+    });
+
+    it('accepts only a bridge-shaped line as a hook event', () => {
+      const parseEvent = adapter.runtime.statusFile!.parseEvent;
+      expect(parseEvent('')).toBeNull();
+      expect(parseEvent('   \t ')).toBeNull();
+      expect(parseEvent('{"ts":1}')).toBeNull();
+      expect(parseEvent('{"ts":1,"type":2}')).toBeNull();
+      expect(parseEvent('[{"ts":1,"type":"idle"}]')).toBeNull();
+      expect(parseEvent('{"type":"idle"}')).toBeNull();
+      expect(parseEvent('{"type":"idle","ts":"1"}')).toBeNull();
+      expect(parseEvent('{"ts":1,"type":"idle"}')).toEqual({ ts: 1, type: 'idle' });
     });
 
     it('does not export a sessionBootstrap runtime hook', () => {
@@ -803,6 +1058,40 @@ describe('CursorAdapter', () => {
       expect(aboutCallLog).toHaveLength(1);
       expect(aboutCallLog[0].path).toBe('/usr/local/bin/agent');
       expect(aboutCallLog[0].args).toEqual(['about', '--format', 'json']);
+    });
+
+    // `about` reports the account's default model. A start that passed
+    // `--model` is seeded from its command, which `about` would overwrite.
+    it('does not ask `about` for a session started with --model', async () => {
+      adapter.buildCommand(makeOptions({ model: 'gpt-5', ptySessionId: 'test-session-id' }));
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(aboutCallLog).toHaveLength(0);
+      expect(applied).toHaveLength(0);
+    });
+
+    it('disposing the --model early return clears the launch, so the next attach asks `about`', async () => {
+      adapter.buildCommand(makeOptions({ model: 'gpt-5', ptySessionId: 'test-session-id' }));
+      const { context } = makeContext();
+      const firstAttachment = adapter.attachSession!(context);
+      await flushPromises();
+      expect(aboutCallLog).toHaveLength(0);
+
+      firstAttachment.dispose();
+      adapter.attachSession!(context);
+      await flushPromises();
+
+      expect(aboutCallLog).toHaveLength(1);
+    });
+
+    it('still asks `about` for a resume, which carries no --model', async () => {
+      adapter.buildCommand(makeOptions({ model: 'gpt-5', sessionId: 'chat-1', resume: true, ptySessionId: 'test-session-id' }));
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(aboutCallLog).toHaveLength(1);
+      expect(applied).toEqual([{ model: { id: 'Auto', displayName: 'Auto' } }]);
     });
 
     it('applies usage with model from the about payload', async () => {

@@ -12,7 +12,14 @@ import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
-import { discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
+import { cachedCursorModelDisplayName, discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
+import {
+  CURSOR_HOOK_EVENTS_ENV,
+  cursorSessionIdFromHook,
+  parseCursorHookEvent,
+  removeCursorProjectHooks,
+  writeCursorProjectHooks,
+} from './hook-config';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import {
   CURSOR_KANGENTIC_MCP_ENTRY,
@@ -115,20 +122,51 @@ function runAgentAbout(cursorPath: string, target: CliTarget | null): Promise<st
 interface CursorSessionLaunch {
   cliPath: string;
   target: CliTarget | null;
+  /**
+   * The start passed `--model`. `about` reports the account's default model,
+   * not this one, so it is not asked. The command's own model seeds the pill.
+   */
+  modelPassed: boolean;
 }
 
 /** A whole line that is a chat id, as `create-chat` prints it (measured: the bare UUID). */
 const CHAT_ID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/im;
 
 /**
- * Confirm-changes and skip-approvals keep the session screen. Anything else,
- * and an explicit non-interactive flag, is one print turn. The screen prints
- * no conversation id. The print path does, on the stream-json init line.
+ * Confirm-changes, skip-approvals and plan keep the session screen. Anything
+ * else, and an explicit non-interactive flag, is one print turn. The screen
+ * prints no conversation id. The print path does, on the stream-json init line.
  */
 function cursorKeepsSessionScreen(permissionMode: PermissionMode, nonInteractive: boolean | undefined): boolean {
-  const interactive = permissionMode === 'default' || permissionMode === 'acceptEdits';
+  const interactive = permissionMode === 'default' || permissionMode === 'acceptEdits' || permissionMode === 'plan';
   return interactive && !nonInteractive;
 }
+
+/**
+ * Whether the command opens Cursor's session screen. Every resume does,
+ * whatever its mode: `buildCommand` returns a resume before `-p` and
+ * `--output-format stream-json` are added, so it prints no NDJSON.
+ */
+function cursorOpensSessionScreen(options: SpawnCommandOptions): boolean {
+  return cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive)
+    || Boolean(options.sessionId && options.resume);
+}
+
+/**
+ * Kangentic's hooks report this session: a session-screen start with an
+ * events file. A print run reports itself on stream-json instead, so it does
+ * not set the variable the hook commands test.
+ */
+function cursorHooksWired(options: SpawnCommandOptions): options is SpawnCommandOptions & { eventsOutputPath: string } {
+  return cursorOpensSessionScreen(options) && Boolean(options.eventsOutputPath);
+}
+
+/**
+ * `--model <id>` in a built command, its id unquoted. `buildCommand` puts the
+ * flag last, before only a print run's `--output-format stream-json`, so the
+ * match is anchored there: a prompt that mentions `--model` is never read.
+ */
+const MODEL_FLAG = /\s--model\s+(?:"([^"]*)"|'([^']*)'|([^\s"']+))(?:\s+--output-format\s+stream-json)?\s*$/;
 
 /**
  * `create-chat` reaches Cursor's servers (a probe left nothing on disk), so it
@@ -158,17 +196,19 @@ function isAboutPayload(value: unknown): value is { model: string } {
  * (https://cursor.com/cli) behind the generic AgentAdapter interface.
  *
  * Cursor CLI is simpler than Claude Code: no session resume via
- * caller-owned IDs, no structured hooks, and no settings merging.
- * Permissions are config-file based only (~/.cursor/cli-config.json).
+ * caller-owned IDs and no per-session settings file. Its hooks are the
+ * project's `.cursor/hooks.json` (hook-config.ts). Permissions are
+ * config-file based only (~/.cursor/cli-config.json).
  * A directory Cursor has not seen prints "Workspace Trust Required" and
  * exits, so every spawn except confirm-changes passes `--trust` (the same
  * flag summarize and answerFromContext already pass). Confirm-changes leaves
  * the prompt so the user can decide in the PTY.
  *
- * Three modes:
+ * Four modes:
  *   - Confirm changes: `agent "prompt"` - user confirms each change in the PTY
  *   - Skip approvals: `agent --trust --force "prompt"` - the same screen,
  *     commands run unless one is explicitly denied
+ *   - Plan: `agent --trust --mode plan "prompt"` - the same screen, planning
  *   - Non-interactive: `agent --trust -p "prompt" --output-format stream-json`
  *     - Full write access, emits NDJSON events with session_id on each line
  *     - Enables session ID capture via the init event
@@ -201,11 +241,17 @@ export class CursorAdapter implements AgentAdapter {
   readonly transcriptHasTimestamps = false;
   /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */
   private readonly mcpHolds = new SharedFolderHolds();
+  /** Folders whose `.cursor/hooks.json` carries Kangentic's hooks, and the sessions still using each. */
+  private readonly hookHolds = new SharedFolderHolds();
   /** Each live session's CLI, by its PTY session id, until the session ends. */
   private readonly sessionLaunches = new Map<string, CursorSessionLaunch>();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
     { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
+    // `--mode plan` (CLI parameters, https://cursor.com/docs/cli/reference/parameters;
+    // startup flag since the January 2026 changelog). Cursor's own plan review
+    // and Build stay in its screen: no plan exit reaches Kangentic.
+    { mode: 'plan', label: 'Plan (Read-Only)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
   ];
   // Default to non-interactive (`--output-format stream-json`). The init
@@ -265,7 +311,22 @@ export class CursorAdapter implements AgentAdapter {
     // PTY's cwd reaches it as its `/mnt` path.
     const place = options.cliTarget ?? null;
     const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.agentPath, shell)];
-    if (options.ptySessionId) this.sessionLaunches.set(options.ptySessionId, { cliPath: options.agentPath, target: place });
+    // Per-column model override, the `--model` id for a picker value. A resume
+    // returns before the flag is added, so only a fresh start passes it.
+    const modelId = options.model ? resolveCachedCursorModel(options.model, options.agentPath) : '';
+    // `modelPassed` is settled from the finished command below, so a resume,
+    // which returns early, keeps false.
+    const launch: CursorSessionLaunch = { cliPath: options.agentPath, target: place, modelPassed: false };
+    if (options.ptySessionId) this.sessionLaunches.set(options.ptySessionId, launch);
+
+    // Kangentic's activity hooks: the project's `.cursor/hooks.json`, read by
+    // every Cursor session in the folder, reporting only for a session that
+    // carries the variable `buildEnv` sets (hook-config.ts). A Cursor in a WSL
+    // distro runs them through the WSL hook transport, which needs no node there.
+    if (cursorHooksWired(options)) {
+      const wsl = place ? { place, sessionDirectory: path.dirname(options.eventsOutputPath) } : null;
+      if (writeCursorProjectHooks(options.cwd, { wsl })) this.hookHolds.retain(options.ptySessionId, options.cwd);
+    }
 
     // Kangentic's MCP server, on every start and resume: the project's
     // `.cursor/mcp.json` entry plus `--approve-mcps`, which loads the project's
@@ -282,20 +343,22 @@ export class CursorAdapter implements AgentAdapter {
       }
     }
 
-    // Three ways a session starts:
+    // Four ways a session starts:
     //   default            interactive screen, the user confirms each change
     //   acceptEdits        the same screen, with --force so commands run
     //                      unless one is explicitly denied
+    //   plan               the same screen in Cursor's plan mode
     //   anything else      one turn, then exit, as stream-json
     //
-    // A mode Cursor's own list does not offer (plan, dontAsk, auto) stays
-    // on the print path. Dropping stream-json there would leave the context
-    // bar on "Starting agent...", because the init event is the only
-    // documented place the model and session id arrive together.
-    // An explicit nonInteractive flag wins over both session screens.
+    // A mode Cursor's own list does not offer (dontAsk, auto) stays on the
+    // print path. Dropping stream-json there would leave the context bar on
+    // "Starting agent...", because the init event is the only documented
+    // place the model and session id arrive together.
+    // An explicit nonInteractive flag wins over every session screen.
     const sessionUi = cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
     const confirmSession = sessionUi && options.permissionMode === 'default';
     const forceSession = sessionUi && options.permissionMode === 'acceptEdits';
+    const planSession = sessionUi && options.permissionMode === 'plan';
 
     if (!confirmSession) {
       // A directory Cursor has not seen prints "Workspace Trust Required"
@@ -309,6 +372,14 @@ export class CursorAdapter implements AgentAdapter {
       // --force (alias --yolo) allows commands unless one is explicitly
       // denied, and keeps the session screen. -p would close that screen.
       parts.push('--force');
+    }
+    if (planSession) {
+      // `--mode plan`: "Design your approach before coding with clarifying
+      // questions" (https://cursor.com/docs/cli/overview, Modes). It rides a
+      // resume too, so a resumed plan session is still planning. `--trust`
+      // above works with the session screen since v2026.07.20 ("Previously
+      // `--trust` required headless mode"), as skip-approvals already relies on.
+      parts.push('--mode', 'plan');
     }
 
     if (options.sessionId) {
@@ -336,8 +407,6 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
-    // Per-column model override, the `--model` id for a picker value.
-    const modelId = options.model ? resolveCachedCursorModel(options.model, options.agentPath) : '';
     const modelArgs = modelId ? ['--model', quoteArg(modelId, shell)] : [];
 
     if (!sessionUi) {
@@ -354,7 +423,13 @@ export class CursorAdapter implements AgentAdapter {
       parts.push(...modelArgs);
     }
 
-    return parts.join(' ');
+    const command = parts.join(' ');
+    // The pill's seed is `--model` read back out of this command
+    // (`configuredModelFromCommand`, whose pattern needs the flag last). The
+    // `about` fetch is skipped only when that read finds it, so a miss falls
+    // back to `about` rather than leaving the pill on "Starting agent...".
+    launch.modelPassed = this.configuredModelFromCommand(command) !== null;
+    return command;
   }
 
   /**
@@ -404,13 +479,22 @@ export class CursorAdapter implements AgentAdapter {
    * entry's script (read on NAT networking, unused on mirrored).
    */
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
-    if (!cursorMcpWiringEnabled(options)) return null;
     const place = options.cliTarget ?? null;
-    return {
-      [CURSOR_MCP_URL_ENV]: options.mcpServerUrl,
-      [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken,
-      ...(place && options.eventsOutputPath ? mcpBridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
+    const env: Record<string, string> = {
+      // The events file the project's hook commands write to, on a session
+      // screen only: everything else leaves it unset and the hooks write nothing.
+      // A distro's commands only test it (their transport finds the session's
+      // folder itself), so it is a flag there, with no Windows path to cross.
+      ...(cursorHooksWired(options) ? { [CURSOR_HOOK_EVENTS_ENV]: place ? '1' : options.eventsOutputPath } : {}),
+      ...(cursorMcpWiringEnabled(options)
+        ? {
+            [CURSOR_MCP_URL_ENV]: options.mcpServerUrl,
+            [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken,
+            ...(place && options.eventsOutputPath ? mcpBridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
+          }
+        : {}),
     };
+    return Object.keys(env).length > 0 ? env : null;
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -418,31 +502,43 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: Cursor CLI has no hooks and no caller-owned session
-   * IDs. Its `agent-transcripts` JSONL feeds the conversation viewer (the
-   * transcript methods below), not live telemetry. Every runtime signal
-   * comes from the PTY stream: the NDJSON of `--output-format stream-json`
-   * (active by default - see `defaultPermission`), or the TUI status bar of
-   * an interactive session.
+   * Runtime strategy. Cursor takes no caller-owned session ids. Its
+   * `agent-transcripts` JSONL feeds the conversation viewer (the transcript
+   * methods below), not live telemetry. Two sources report a session, one per
+   * way it runs, so no tool call is counted twice:
    *
-   * - Activity: tool_call started/completed events from streamOutput
-   *   drive Thinking/Idle through the activity state machine, with PTY
-   *   silence-timer fallback for any interactive sessions.
-   * - Session ID: parsed from the same NDJSON init event that carries
-   *   the model:
-   *     {"type":"system","subtype":"init","session_id":"<uuid>",
-   *      "model":"<display>",...}
-   * - streamOutput: same init event populates SessionUsage.model so
+   * - A session screen (confirm-changes, skip-approvals, plan): the project's
+   *   `.cursor/hooks.json` (hook-config.ts), whose commands append to the
+   *   session's events file: tool start and end, prompt submit, subagents,
+   *   compaction, session start and end, and the `stop` hook's turn end.
+   *   Built from Cursor's hooks docs, not yet run against a real Cursor; the
+   *   PTY stays the fallback until a hook arrives (`hooksAndPty`).
+   * - A print run: the NDJSON of `--output-format stream-json` (the default
+   *   permission). Its tool_call started/completed events drive activity, and
+   *   its terminal `result` event is the turn end (stream-parser.ts).
+   *
+   * - Session ID: the NDJSON init event on the print path, and a
+   *   sessionStart hook's `session_id` on a session screen, for a start whose
+   *   `create-chat` gave none.
+   * - streamOutput: the init event populates SessionUsage.model so
    *   ContextBar can lift its "Starting agent..." spinner. Interactive
    *   TUI status (`Composer 2.5 · 7.8%`) is parsed from the same stream
    *   so the board card does not sit at 0% and the model pill is the
-   *   live TUI name, not the spawn-time `about` seed.
+   *   live TUI name, not the spawn-time seed.
    */
   readonly runtime: AdapterRuntimeStrategy = {
-    // Only terminal silence says a turn ended.
-    reportsTurnEnd: false,
-    activity: ActivityDetection.pty(),
+    // The `stop` hook (session screen) and the `result` event (print run)
+    // each reach the engine as an Idle event.
+    reportsTurnEnd: true,
+    activity: ActivityDetection.hooksAndPty(),
+    statusFile: {
+      // No status line: Cursor's `statusLine` is global-only config.
+      parseStatus: () => null,
+      parseEvent: parseCursorHookEvent,
+      isFullRewrite: false,
+    },
     sessionId: {
+      fromHook: cursorSessionIdFromHook,
       fromOutput(data: string): string | null {
         const initMatch = data.match(/"session_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/);
         if (initMatch) return initMatch[1];
@@ -457,8 +553,8 @@ export class CursorAdapter implements AgentAdapter {
   /**
    * Kick off an out-of-band model bootstrap when a session starts.
    * Cursor's `--output-format stream-json` requires `--print`, so
-   * interactive TUI spawns (`default` and `acceptEdits`) emit no
-   * NDJSON init event and the ContextBar spinner would otherwise hang
+   * session-screen spawns (`default`, `acceptEdits`, `plan`, and any resume)
+   * emit no NDJSON init event and the ContextBar spinner would otherwise hang
    * forever. `agent about --format json` is a documented, stable CLI
    * command that returns `{ "model": "<name>", ... }` in under a
    * second and works in every permission mode. It is a seed (no
@@ -474,7 +570,13 @@ export class CursorAdapter implements AgentAdapter {
    */
   attachSession(context: SessionContext): SessionAttachment {
     let disposed = false;
-    this.fetchAboutUsage(this.sessionLaunches.get(context.sessionId) ?? null)
+    const launch = this.sessionLaunches.get(context.sessionId) ?? null;
+    if (launch?.modelPassed) {
+      // `--model` already seeded the pill (`configuredModelFromCommand`), and
+      // `about` would replace it with the account's default model.
+      return { dispose: () => { this.sessionLaunches.delete(context.sessionId); } };
+    }
+    this.fetchAboutUsage(launch)
       .then((usage) => {
         if (disposed || !usage) return;
         context.applyUsage(usage);
@@ -512,14 +614,29 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   removeHooks(directory: string, sessionId?: string): void {
-    // No hooks, but the project's `.cursor/mcp.json` carries Kangentic's entry
-    // while a session uses the folder. Strip it only once the last session
-    // using the folder releases, so a sibling session keeps its server; a call
-    // with no session (the project-delete sweep, after every session is
-    // killed) strips it.
-    const folder = this.mcpHolds.release(sessionId, directory);
-    if (folder) removeCursorProjectMcpConfig(folder);
+    // The project's `.cursor/hooks.json` and `.cursor/mcp.json` carry
+    // Kangentic's entries while a session uses the folder. Strip each only once
+    // the last session holding it releases, so a sibling session keeps its
+    // hooks and server; a call with no session (the project-delete sweep, after
+    // every session is killed) strips both.
+    const hooksFolder = this.hookHolds.release(sessionId, directory);
+    if (hooksFolder) removeCursorProjectHooks(hooksFolder);
+    const mcpFolder = this.mcpHolds.release(sessionId, directory);
+    if (mcpFolder) removeCursorProjectMcpConfig(mcpFolder);
     if (sessionId) this.sessionLaunches.delete(sessionId);
+  }
+
+  /**
+   * The model a start passed with `--model`, so the pill names it before the
+   * agent reports its own. The display name is the one `--list-models` gave
+   * that id, or the id itself when no catalog is cached.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const match = command.match(MODEL_FLAG);
+    if (!match) return null;
+    const id = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+    if (!id) return null;
+    return { id, displayName: cachedCursorModelDisplayName(id) ?? id };
   }
 
   getExitSequence(): string[] {
@@ -727,7 +844,9 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Cursor CLI has no hooks or structured verification signals.
+    // No verifier until one is measured. The `beforeSubmitPrompt` hook now
+    // writes a `prompt` event on a session screen, a candidate source, but a
+    // verifier needs its flush measured against the real CLI first.
     // Callers fall back to time-based settle (paste) or time-settle (command-injection).
     return null;
   }

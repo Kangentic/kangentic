@@ -166,7 +166,31 @@ describe('CursorStreamParser', () => {
     expect(result?.events?.map((event) => event.type)).toEqual([
       EventType.ToolStart,
       EventType.ToolEnd,
+      EventType.Idle,
     ]);
+  });
+
+  // A print run's turn end: "The stream ends with a terminal `result` event on
+  // success" (https://cursor.com/docs/cli/reference/output-format). The
+  // adapter reports turn ends, and a print run has no hooks to report it.
+  it('ends the turn on the terminal result event', () => {
+    const parser = new CursorStreamParser();
+    parser.parseTelemetry(`${initLine}\n`);
+    expect(parser.parseTelemetry(`${resultLine}\n`)?.events).toEqual([
+      expect.objectContaining({ type: EventType.Idle }),
+    ]);
+  });
+
+  // A session screen's TUI text goes through the same parser. A result line
+  // with no init before it is the agent's own answer quoting one, not a run.
+  it('ends no turn on a result line that no init line opened', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry(`${resultLine}\n`)?.events).toBeUndefined();
+  });
+
+  it('ends no turn on a session screen\'s status bar', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('Composer 2.5 · 7.8%\n')?.events).toBeUndefined();
   });
 
   it('falls back to "tool" when the tool_call shape is unknown', () => {

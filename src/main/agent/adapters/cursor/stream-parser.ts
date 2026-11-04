@@ -51,7 +51,8 @@ interface TuiStatus {
  *   {"type":"tool_call","subtype":"started","call_id":"...","tool_call":{...}}
  *   {"type":"tool_call","subtype":"completed","call_id":"...","tool_call":{...}}
  *
- * Terminal result event (carries duration; optional cost surface):
+ * Terminal result event (carries duration; optional cost surface), which is
+ * also the print run's turn end, an Idle event:
  *   {"type":"result","subtype":"success","duration_ms":5234,...}
  *
  * Cursor uses a single `model` string (e.g. "Claude 4 Sonnet") with no
@@ -76,6 +77,14 @@ export class CursorStreamParser implements StreamOutputParser {
    * any point and a buffered carry-over keeps us safe.
    */
   private carry = '';
+  /**
+   * True once this stream's `system/init` line arrived, which a print run
+   * emits "once at the beginning of each session" (output-format docs). Only
+   * then is a `result` line the run's turn end: on a session screen the same
+   * parser reads TUI text, where a JSON line in the agent's own answer must
+   * not end a turn.
+   */
+  private sawInit = false;
   /** Last occupancy percent emitted from the TUI path, to skip identical redraws. */
   private lastTuiPercent: number | null = null;
   /** Last TUI model emitted with occupancy, to skip identical redraws and to catch a mid-session switch. */
@@ -124,6 +133,7 @@ export class CursorStreamParser implements StreamOutputParser {
       const subtype = entry.subtype;
 
       if (type === 'system' && subtype === 'init') {
+        this.sawInit = true;
         const model = entry.model;
         if (typeof model === 'string' && model.length > 0) {
           usage = { ...usage, model: reportedCursorModel(model) };
@@ -153,6 +163,14 @@ export class CursorStreamParser implements StreamOutputParser {
             ...usage,
             cost: { totalCostUsd: 0, totalDurationMs: durationMs },
           };
+        }
+        // The print run's turn end: "The stream ends with a terminal `result`
+        // event on success" (output-format docs). A session screen prints no
+        // NDJSON, so its turn end is the `stop` hook's alone, never both. A
+        // failed run exits without one, and its exit ends the session.
+        if (this.sawInit) {
+          events = events ?? [];
+          events.push({ ts: Date.now(), type: EventType.Idle });
         }
       }
     }
