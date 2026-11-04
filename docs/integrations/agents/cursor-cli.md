@@ -41,7 +41,7 @@ User confirms changes in the PTY. `permissionMode === 'default'`.
 agent --trust --force "prompt text"
 ```
 
-Selected when `permissionMode === 'acceptEdits'`. The session screen stays open. `--force` (alias `--yolo`) allows commands unless one is explicitly denied. `--trust` skips the workspace prompt. This mode prints no stream-json, so `agent about` seeds the model pill until the TUI status bar paints (`Composer 2.5 · 7.8%`). That bar is the live model and the occupancy percent, the same as confirm-changes. A resume is `agent --trust --force --resume="<chat-id>"`.
+Selected when `permissionMode === 'acceptEdits'`. The session screen stays open. `--force` (alias `--yolo`) allows commands unless one is explicitly denied. `--trust` skips the workspace prompt. This mode prints no stream-json, so `agent about` seeds the model pill (unless the start passed `--model`, see [Model seed](#model-seed)) until the TUI status bar paints (`Composer 2.5 · 7.8%`). That bar is the live model and the occupancy percent, the same as confirm-changes. A resume is `agent --trust --force --resume="<chat-id>"`.
 
 ### New Session (Interactive, plan)
 
@@ -65,7 +65,7 @@ mode", and skip-approvals already passes it to the session screen.
 agent --trust -p "prompt text" --output-format stream-json
 ```
 
-Selected when `nonInteractive` is set, and for every permission mode but `default`, `acceptEdits` and `plan`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `dontAsk` and `auto`, which it does not. Cursor has no flag for either: its `approvalMode: auto-review` lives only in the global `cli-config.json` ([Configuration](https://cursor.com/docs/cli/reference/configuration)), which Kangentic does not rewrite. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A non-interactive resume keeps `--trust` for the same reason.
+Selected when `nonInteractive` is set, and for every permission mode but `default`, `acceptEdits` and `plan`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `dontAsk` and `auto`, which it does not. Cursor has no flag for either: its `approvalMode: auto-review` lives only in the global `cli-config.json` ([Configuration](https://cursor.com/docs/cli/reference/configuration)), which Kangentic does not rewrite. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A resume keeps `--trust` too. Every resume opens the session screen whatever its mode, because `buildCommand` returns before `-p` is added.
 
 ### Resumed Session
 
@@ -73,7 +73,7 @@ Selected when `nonInteractive` is set, and for every permission mode but `defaul
 agent --resume="<chat-id>"
 ```
 
-A non-interactive resume is `agent --trust --resume="<chat-id>"`, a Skip Approvals resume is `agent --trust --force --resume="<chat-id>"`, and a plan resume is `agent --trust --mode plan --resume="<chat-id>"`. The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
+A resume from Non-Interactive mode is `agent --trust --resume="<chat-id>"` and opens the session screen, not a print run. A Skip Approvals resume is `agent --trust --force --resume="<chat-id>"`, and a plan resume is `agent --trust --mode plan --resume="<chat-id>"`. The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
 
 A resume carries no prompt. Nothing Cursor documents says a prompt rides `--resume=<id>`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic types a resume's message (a column's message, held messages) in once Cursor is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
