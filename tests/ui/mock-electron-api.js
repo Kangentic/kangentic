@@ -3935,6 +3935,7 @@
               { mode: 'plan', label: 'Plan (Read-Only Research)' },
               { mode: 'default', label: 'Default (Confirm Actions)' },
               { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
+              { mode: 'auto', label: 'Auto (Classifier Approves Safe Actions)' },
               { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
