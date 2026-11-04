@@ -15,6 +15,7 @@ sources:
   - resource: src/main/agent/shared/exec-version.ts
   - resource: src/main/pty/lifecycle/session-spawn-flow.ts
     title: the adaptCommandForShell call site
+  - resource: src/main/pty/spawn/typed-launch.ts
   - resource: src/main/agent/shared/cli-target.ts
   - resource: src/main/agent/shared/wsl-distro.ts
   - resource: src/main/agent/shared/wsl-hook-transport.ts
@@ -80,6 +81,41 @@ shell/ConPTY updates reshaping their startup bytes (pwsh 7.6 started emitting `\
 `\x1b[2J` inside its escape-only startup preamble, which broke every heuristic that keyed on
 those markers); see [Output streaming](../architecture/sessions/output-streaming.md#buffering-and-the-scrollback-ring) for the detection layer it pairs
 with.
+
+### A command too long to type
+
+A spawn types its command 100 ms after the shell starts, and it does not wait for a prompt: shell
+startup has no time bound, and detecting a prompt is the output heuristic the clear prelude exists
+to avoid. A shell in its startup files has not reached its line editor, so the tty is in canonical
+mode, where the kernel keeps one line up to its limit and drops the rest, the Enter included. The
+limit is 1024 bytes on macOS (`MAX_CANON`, see [macOS](macos.md#typed-lines-and-the-1024-byte-limit)) and
+about 4 KB on Linux, and a WSL shell runs a Linux tty. So a long command fails only when the shell
+is slow: the same 5,848-byte line never reached a stub agent when typed during a slow bash startup
+in WSL, and ran when typed after the prompt.
+
+`buildTypedLaunch` (`src/main/pty/spawn/typed-launch.ts`) keeps the typed line under
+`TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included). Past that, `performSpawn` writes
+the output of `adaptCommandForShell` to a launcher file in the session's
+`.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the clear
+prelude plus a statement that sources the file. The file runs in the same shell the typed line
+would have, so a shell's own functions, aliases and environment apply as before.
+
+| Shell | Typed after the prelude | File |
+|-------|------------------------|------|
+| bash, zsh, sh, dash, ksh, WSL | `. <path>` (dash has no `source`) | `launch.sh` |
+| fish | `source <path>` | `launch.fish` |
+| nushell | `source <path>`, a literal, because `source` is a parser keyword that reads the file while the line parses | `launch.nu` |
+| pwsh on macOS or Linux | `. <path>` | `launch.ps1` |
+
+A WSL shell gets the path through `toWslPath`. Native Windows shells and Git Bash on Windows type
+the whole command: a console has no such limit, and a sourced `.ps1` would meet the execution
+policy. A session with no output paths (a raw `SESSION_SPAWN`) has no folder to use and types the
+whole command, as does a spawn whose launcher write failed, which still works once the shell has
+reached its prompt.
+
+`tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
+startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of
+a command is not the agent getting it.
 
 ### npm `.cmd` shims under PowerShell and Git Bash
 

@@ -245,6 +245,100 @@ function makeInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInpu
 
 // ---- Tests ----
 
+describe('performSpawn - a command too long to type', () => {
+  // The launch that fails in the wild: a shell still in its startup files keeps
+  // only the first 1024 bytes of a typed line on macOS, Enter lost. What the
+  // choice is per shell is typed-launch.test.ts's; this pins that the spawn
+  // writes the file before it types and types what the choice says.
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+  const LONG_COMMAND = `agent --append-system-prompt '${'x'.repeat(1500)}'`;
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  let root: string;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-spawn-launcher-'));
+  });
+
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
+    fs.rmSync(root, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  /** The line typed once the spawn's 100 ms timer has run. */
+  async function typedLine(): Promise<string> {
+    await vi.waitFor(() => {
+      const write = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+      expect(write).toHaveBeenCalled();
+    });
+    return (ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+  }
+
+  it('writes the launcher, then types the line that sources it, and records the bytes', async () => {
+    const context = makeContext();
+    const sessionDirectory = path.join(root, 'sessions', 'session-1');
+    const statusOutputPath = path.join(sessionDirectory, 'status.json');
+    const launcherPath = path.join(sessionDirectory, 'launch.sh');
+    let launcherAtSpawn: string | null = null;
+    ptySpawnMock.mockImplementationOnce(() => {
+      launcherAtSpawn = fs.readFileSync(launcherPath, 'utf8');
+      return {
+        onData: vi.fn(),
+        onExit: vi.fn(),
+        write: vi.fn(),
+        kill: vi.fn(),
+        resize: vi.fn(),
+        pid: 999,
+      };
+    });
+
+    await performSpawn(makeInput({ command: LONG_COMMAND, statusOutputPath }), context);
+
+    expect(launcherAtSpawn).toBe(`${LONG_COMMAND}\n`);
+    const line = await typedLine();
+    expect(line.endsWith('launch.sh\r') || line.endsWith("launch.sh'\r")).toBe(true);
+    expect(line).not.toContain('--append-system-prompt');
+    const session = context.registry.get('input-session-id-0000-000000000000');
+    expect(session?.launcherUsed).toBe(true);
+    expect(session?.typedLineBytes).toBe(Buffer.byteLength(line));
+  });
+
+  it('types the whole command when the launcher cannot be written', async () => {
+    // A file where the session's folder should be fails mkdir.
+    const blocked = path.join(root, 'not-a-folder');
+    fs.writeFileSync(blocked, '');
+    const context = makeContext();
+
+    await performSpawn(
+      makeInput({ command: LONG_COMMAND, statusOutputPath: path.join(blocked, 'status.json') }),
+      context,
+    );
+
+    expect(await typedLine()).toBe(`${LONG_COMMAND}\r`);
+    expect(context.registry.get('input-session-id-0000-000000000000')?.launcherUsed).toBe(false);
+  });
+
+  it('types the whole command when the session has no output path to put a launcher beside', async () => {
+    await performSpawn(makeInput({ command: LONG_COMMAND }), makeContext());
+
+    expect(await typedLine()).toBe(`${LONG_COMMAND}\r`);
+  });
+
+  it('writes no file for a command within the budget', async () => {
+    const sessionDirectory = path.join(root, 'sessions', 'session-2');
+    fs.mkdirSync(sessionDirectory, { recursive: true });
+
+    await performSpawn(
+      makeInput({ command: 'claude --resume abc', statusOutputPath: path.join(sessionDirectory, 'status.json') }),
+      makeContext(),
+    );
+
+    expect(await typedLine()).toBe('claude --resume abc\r');
+    expect(fs.existsSync(path.join(sessionDirectory, 'launch.sh'))).toBe(false);
+  });
+});
+
 describe('performSpawn - KANGENTIC_EVENTS_PATH env injection', () => {
   // ptyModule.spawn is the vi.fn() from the module-level vi.mock('node-pty').
   // Accessing it via the named import lets us inspect .mock.calls across tests.

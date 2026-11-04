@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
@@ -20,7 +21,7 @@ import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hoo
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
-import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
+import { buildTypedLaunch, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -222,6 +223,45 @@ function adapterNameOf(parser: AgentParser): string | null {
  * All state lives in the SpawnFlowContext; this function is stateless
  * and can be unit-tested with mocks.
  */
+/**
+ * What `buildTypedLaunch` needs for this spawn. The session's folder comes from
+ * its output paths; a session with neither (a raw `SESSION_SPAWN`) has none.
+ */
+function typedLaunchInput(input: SpawnSessionInput, command: string, shell: string): TypedLaunchInput {
+  const outputPath = input.statusOutputPath || input.eventsOutputPath;
+  return {
+    command,
+    shell,
+    platform: process.platform,
+    sessionDirectory: outputPath ? path.dirname(outputPath) : null,
+  };
+}
+
+/**
+ * Write the launcher file `typedLaunch` sources. One that cannot be written falls
+ * back to typing the whole command, which still works once the shell has reached
+ * its prompt.
+ */
+async function writeLauncher(
+  typedLaunch: TypedLaunch,
+  launcher: NonNullable<TypedLaunch['launcher']>,
+  input: SpawnSessionInput,
+  command: string,
+  shell: string,
+  sessionId: string,
+): Promise<TypedLaunch> {
+  try {
+    await mkdir(path.dirname(launcher.filePath), { recursive: true });
+    // Owner-only: the file holds the task's prompt.
+    await writeFile(launcher.filePath, launcher.contents, { encoding: 'utf8', mode: 0o600 });
+    return typedLaunch;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    console.warn(`[SPAWN] Launcher file write failed (${code}) for session=${sessionId.slice(0, 8)}, typing the command`);
+    return buildTypedLaunch({ ...typedLaunchInput(input, command, shell), sessionDirectory: null });
+  }
+}
+
 export async function performSpawn(
   input: SpawnSessionInput,
   context: SpawnFlowContext,
@@ -395,6 +435,14 @@ export async function performSpawn(
     if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
   }
 
+  // What the shell gets typed. A launcher file that line sources has to exist
+  // before it is typed, so it is written here; a short command never waits.
+  let typedLaunch = input.command ? buildTypedLaunch(typedLaunchInput(input, input.command, shell)) : null;
+  if (input.command && typedLaunch?.launcher) {
+    typedLaunch = await writeLauncher(typedLaunch, typedLaunch.launcher, input, input.command, shell, id);
+    if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
+  }
+
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
@@ -511,6 +559,8 @@ export async function performSpawn(
     ...(input.agentSessionId ? { agentSessionId: input.agentSessionId } : {}),
     cliTarget: input.cliTarget ?? null,
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
+    typedLineBytes: typedLaunch?.typedLineBytes ?? null,
+    launcherUsed: typedLaunch !== null && typedLaunch.launcher !== null,
   };
 
   context.registry.set(id, session);
@@ -796,20 +846,19 @@ export async function performSpawn(
       traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
     }
   };
-  if (input.command || cwdFixupCommand) {
+  if (typedLaunch || cwdFixupCommand) {
     setTimeout(() => {
       if (cwdFixupCommand) {
         writeIfStillOwned(cwdFixupCommand + '\r');
       }
-      if (input.command) {
+      if (typedLaunch) {
         // Every command typed here launches an agent: a task's, a Command
         // Terminal's (which ends with its agent, so no usable shell is left)
         // or a workflow's. Each gets the shell's own clear prefixed onto the
         // typed line, so the shell erases its startup preamble and command
         // echo at execution time - see buildSpawnClearPrelude for why this
         // beats every marker heuristic.
-        const prelude = buildSpawnClearPrelude(shellName);
-        const cmd = prelude + adaptCommandForShell(input.command, shellName);
+        const cmd = typedLaunch.typedLine;
         if (cwdFixupCommand) {
           setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {
