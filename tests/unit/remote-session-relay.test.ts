@@ -461,23 +461,26 @@ describe('a session registered and released while another operation on its id is
     }
   });
 
-  it('keeps the second of two overlapping registers of one id, with its files', async () => {
+  it('makes the second of two overlapping registers wait for the first, so its newer files land last', async () => {
     const { host, relay } = makeRelay();
     const { registration, settingsPath } = registrationFor();
     host.state.holdWrites = true;
     const first = relay.register(registration);
     await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+    fs.writeFileSync(path.join(registration.localSessionDirectory, 'settings.json'), '{"version":2}');
     const second = relay.register(registration);
-    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
+    // Negative assertion: nothing can be polled for. Give a wrongly eager register time to write.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(host.writeGates).toHaveLength(1);
 
-    // The second finishes its push first, so the first's cleanup runs against paths the second now owns.
-    host.writeGates[1].release();
-    await second;
+    // The first's write lands and its cleanup runs, and only then does the second push.
     host.writeGates[0].release();
     await first;
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
+    host.writeGates[1].release();
+    await second;
 
-    // The first's cleanup ran against paths the second owns, and must not have removed them.
-    expect(host.written.get(settingsPath)).toBe('{"version":1}');
+    expect(host.written.get(settingsPath)).toBe('{"version":2}');
     expect(host.watching.has('s1')).toBe(true);
     expect(relay.has('s1')).toBe(true);
   });
@@ -489,10 +492,10 @@ describe('a session registered and released while another operation on its id is
     const first = relay.register(registration);
     await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
     const second = relay.register(registration);
-    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
 
     host.writeGates[0].release();
     await first;
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(2));
     await relay.release('s1');
     host.writeGates[1].release();
     await second;

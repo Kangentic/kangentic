@@ -92,10 +92,16 @@ export interface RemoteSessionRelayOptions {
   log?: (line: string) => void;
 }
 
+interface PendingRegistration {
+  released: boolean;
+  /** Resolves once this registration has finished, whichever way, cleanup included. */
+  settled: Promise<void>;
+}
+
 export class RemoteSessionRelay {
   private readonly sessions = new Map<string, Registered>();
   /** Registrations still pushing files, so a release that arrives meanwhile is kept, not lost. */
-  private readonly registering = new Map<string, { released: boolean }>();
+  private readonly registering = new Map<string, PendingRegistration>();
 
   constructor(private readonly options: RemoteSessionRelayOptions) {}
 
@@ -110,10 +116,26 @@ export class RemoteSessionRelay {
    * and no plan approval, so the spawn must fail and say why.
    */
   async register(registration: RemoteSessionRegistration): Promise<void> {
-    // A second registration of one id replaces the first rather than leaving its timer running.
-    await this.release(registration.sessionId);
-    const pending = { released: false };
-    this.registering.set(registration.sessionId, pending);
+    const { sessionId } = registration;
+    // A second registration of one id replaces the first. One still pushing is told to stop and waited
+    // for: both write the same host paths, and its write landing last would leave its files in place.
+    for (let earlier = this.registering.get(sessionId); earlier; earlier = this.registering.get(sessionId)) {
+      earlier.released = true;
+      await earlier.settled;
+    }
+    await this.release(sessionId);
+    let settle = (): void => undefined;
+    const pending: PendingRegistration = { released: false, settled: new Promise((resolve) => { settle = resolve; }) };
+    this.registering.set(sessionId, pending);
+    try {
+      await this.pushSession(registration, pending);
+    } finally {
+      this.registering.delete(sessionId);
+      settle();
+    }
+  }
+
+  private async pushSession(registration: RemoteSessionRegistration, pending: PendingRegistration): Promise<void> {
     let hostHooksDirectory = '';
     let localHooks: ReturnType<typeof wslHookPaths>;
     const pushedPaths: string[] = [];
@@ -147,19 +169,14 @@ export class RemoteSessionRelay {
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
     } catch (error) {
       // The spawn fails, so nothing releases a session that was never registered: what was pushed (the
-      // settings and the MCP config, which holds the token) is removed here, as a release would. A newer
-      // registration of this id has taken these paths over and keeps them.
-      if (pushedPaths.length > 0 && this.registering.get(registration.sessionId) === pending) {
+      // settings and the MCP config, which holds the token) is removed here, as a release would.
+      if (pushedPaths.length > 0) {
         await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
         await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
       }
       throw error;
-    } finally {
-      if (this.registering.get(registration.sessionId) === pending) this.registering.delete(registration.sessionId);
     }
     if (pending.released) {
-      // A newer registration of this id replaced this one: the same paths on the host are now its own.
-      if (this.registering.has(registration.sessionId) || this.sessions.has(registration.sessionId)) return;
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
       await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
@@ -183,13 +200,12 @@ export class RemoteSessionRelay {
 
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
   async release(sessionId: string): Promise<void> {
-    const pending = this.registering.get(sessionId);
-    if (pending) {
-      pending.released = true;
+    const entry = this.sessions.get(sessionId);
+    if (!entry) {
+      const pending = this.registering.get(sessionId);
+      if (pending) pending.released = true;
       return;
     }
-    const entry = this.sessions.get(sessionId);
-    if (!entry) return;
     // A repeat waits for the first: `register` must not push this id's files until the old ones are gone,
     // or the release still running deletes what it just wrote.
     entry.releaseDone ??= this.finishRelease(sessionId, entry);
