@@ -1,0 +1,12 @@
+{
+  "hookEventName": "stop_cancelled",
+  "sessionId": "00000000-0000-4000-8000-9a5a2922ec04",
+  "cwd": "C:\\Users\\dev\\repo",
+  "workspaceRoot": "C:/Users/dev/repo/",
+  "timestamp": "2026-11-03T12:00:00.000000000+00:00",
+  "promptId": "00000000-0000-4000-8000-9d73c3a38edb",
+  "permissionMode": "default",
+  "reason": "user_interrupt",
+  "cancelledBy": "user",
+  "lastAssistantMessage": "Reading the test suite"
+}

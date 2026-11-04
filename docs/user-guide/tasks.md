@@ -74,7 +74,7 @@ Before the first spawn, the task detail dialog also shows a slim **pre-spawn con
 
 The Model popover on both bars leads with the same **Latest** group when the agent offers aliases, then a collapsed **Specific versions** section.
 
-When an agent is already running, the same Model / Effort pills appear in the live context bar below the terminal. Picking a value there restarts the session: Kangentic suspends it and resumes it with the new `--model` or `--effort` launch flag, so the change interrupts the turn in progress. The Command Terminal's context bar is the exception and switches live.
+When an agent is already running, the same Model / Effort pills appear in the live context bar below the terminal. Picking a value there restarts the session: Kangentic suspends it and resumes it with the new `--model` or `--effort` launch flag, so the change interrupts the turn in progress. The Command Terminal's context bar is the exception and switches live. For Ollama a model change there clears the chat's history, because `/load` starts the new model with no messages (see [Ollama](../integrations/agents/ollama.md#command-terminal-live-swap)).
 
 ## Spawn an Agent
 

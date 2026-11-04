@@ -50,7 +50,10 @@ const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
 const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
 const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
 
-const PROJECTS_ROOT = path.join(os.homedir(), '.qwen', 'projects');
+// A home that does not exist: the scan's settings read then finds no
+// `advanced.runtimeOutputDir`, whatever a developer's own ~/.qwen sets.
+const QWEN_HOME = path.join(os.tmpdir(), 'kangentic-qwen-capability-discovery-home');
+const PROJECTS_ROOT = path.join(QWEN_HOME, 'projects');
 
 function setHelpOutput(stdout: string): void {
   const result = Promise.resolve({ stdout });
@@ -116,6 +119,9 @@ function setSessionStore(store: SessionTree | null): void {
 }
 
 beforeEach(() => {
+  // A developer's own shell may export either.
+  process.env.QWEN_HOME = QWEN_HOME;
+  delete process.env.QWEN_RUNTIME_DIR;
   execMock.mockReset();
   execFileMock.mockReset();
   setSessionStore(null);

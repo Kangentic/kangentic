@@ -12,7 +12,7 @@ sources:
 ---
 # Auto-name (summarize)
 
-Suggests a task title from the task description, and names a Command Terminal from its first prompt, via each adapter's optional `summarize?(prompt, cliPath, cwd, options)` method. Both run on the **Automation agent** (Settings > Workflows, `AppConfig.automation`), at its model and effort, never on the project's default agent: the project default was Opus at xhigh, the top tier for four to eight words. With no Automation agent, or one whose adapter has no `summarize` (Warp has no headless run; Aider, Ollama and Goose have headless answer runs but no summarize yet), naming is off: the renderer hides the button and never schedules the automatic rename, a Command Terminal keeps "Command Terminal N", and main's handler refuses the call. A Command Terminal the user renamed (`session:renameTransient`) is never named: the namer returns before it spends an agent call or a rate-limit slot on it. Renderer and main read the same predicate, `namingAgentReady` (`src/shared/answer-agent.ts`), and main resolves the agent through the resolver Condition checks use (`src/main/automations/automation-agent.ts`), so the detection cache and the effort rule exist once.
+Suggests a task title from the task description, and names a Command Terminal from its first prompt, via each adapter's optional `summarize?(prompt, cliPath, cwd, options)` method. Both run on the **Automation agent** (Settings > Workflows, `AppConfig.automation`), at its model and effort, never on the project's default agent: the project default was Opus at xhigh, the top tier for four to eight words. With no Automation agent, or one whose adapter has no `summarize` (Warp has no headless run; Aider and Ollama have headless answer runs but no summarize yet), naming is off: the renderer hides the button and never schedules the automatic rename, a Command Terminal keeps "Command Terminal N", and main's handler refuses the call. A Command Terminal the user renamed (`session:renameTransient`) is never named: the namer returns before it spends an agent call or a rate-limit slot on it. Renderer and main read the same predicate, `namingAgentReady` (`src/shared/answer-agent.ts`), and main resolves the agent through the resolver Condition checks use (`src/main/automations/automation-agent.ts`), so the detection cache and the effort rule exist once.
 
 ## Surfaces
 
@@ -24,7 +24,7 @@ Suggests a task title from the task description, and names a Command Terminal fr
 Implementations live next to each adapter. The run's `cwd` is the shared answer home (`ensureAnswerHomeDirectory`), never the project: a title needs nothing from the repository, and a project root loads the agent's instructions into every call. Two shapes:
 
 - **On the answer run.** Gemini, Copilot and OpenCode call their own `answerFromContext` with `buildSummarizePrompt` and clean the reply with `titleFromAnswer` (`src/main/agent/shared/auto-name.ts`). That run already carries the agent's read-only flags and removes the session it leaves, so naming gets both from one place. Each was measured turning the title prompt into a clean title there (2026-10-13: Gemini 3.6 s, OpenCode 7.1 s, Copilot 8.0 s). It runs under the answer run's 120 s bound rather than the title runner's 15 s.
-- **On the title runner.** The rest call `runCliPrintSummarize`, the title shape of the headless runner (`runCliPrint`, `src/main/agent/shared/cli-print.ts`). Each takes the model (and effort, where its answer run has one) and trust flags its own `answerFromContext` uses, plus those of that run's read-only and no-session flags that leave its mode alone. A mode change waits for a title measured in that mode: Antigravity's plan-mode answer run, given the title prompt, searched the web twice, tried a shell command and came back empty after 41 s and 36k tokens. Codex, Cursor, Grok, Qwen and Kimi could not be measured on the machine that tried (logged out, an outdated CLI, a provider error, no model set), so Cursor still runs with write tools and keeps its chat, Kimi still runs without plan mode, and Grok keeps its session file.
+- **On the title runner.** The rest call `runCliPrintSummarize`, the title shape of the headless runner (`runCliPrint`, `src/main/agent/shared/cli-print.ts`). Each takes the model (and effort, where its answer run has one) and trust flags its own `answerFromContext` uses, plus those of that run's read-only and no-session flags that leave its mode alone. A mode change waits for a title measured in that mode: Antigravity's plan-mode answer run, given the title prompt, searched the web twice, tried a shell command and came back empty after 41 s and 36k tokens. Codex, Cursor, Grok, Qwen and Kimi could not be measured on the machine that tried (logged out, an outdated CLI, a provider error, no model set), so Cursor still runs with write tools and keeps its chat, and Kimi's `-p` rejects `--plan` and keeps its session. Grok names its title run's session with `-s <uuid>` (a headless flag its 17-sessions.md documents) and removes that session's folder afterwards, built from the docs and not yet run against a Grok.
 
 | Agent | Invocation | Prompt delivery |
 |-------|-----------|-----------------|
@@ -33,16 +33,16 @@ Implementations live next to each adapter. The run's `cwd` is the shared answer 
 | Gemini | Its answer run: `gemini --skip-trust --output-format stream-json --approval-mode plan --session-id <uuid> [--model]`, the chat removed after | stdin (non-TTY headless) |
 | Qwen Code | `qwen --output-format text --chat-recording=false [--model]` | stdin (non-TTY headless) |
 | OpenCode | Its answer run: `opencode run --agent plan --format json --pure [--model]` on OpenCode 1. OpenCode 2 has no `--pure`, so it runs `--standalone` in its place, with the inline config denying `shell` and `edit`. The session is deleted after (with `--standalone` on V2) | stdin |
-| Kimi | `kimi --print --quiet [--model]` | stdin |
+| Kimi | `kimi [--model] --output-format stream-json -p <prompt>` | argument |
 | Cursor | `agent --trust --output-format text [--model] -p "<prompt>"` | positional arg |
-| Droid | `droid exec -o text [--model] "<prompt>"` | positional arg |
+| Droid | `droid exec -o text [--model] [-r] "<prompt>"` | positional arg |
 | Copilot | Its answer run: `copilot --silent --output-format json --stream off --session-id <uuid> --no-ask-user [--model] [--reasoning-effort]`, the session folder removed after | stdin |
-| Grok Build | `grok --output-format plain --deny Write --deny Edit --deny Bash --no-subagents --disable-web-search --no-memory [--model] [--reasoning-effort] -p "<prompt>"` | positional arg |
+| Grok Build | `grok --output-format plain --deny Write --deny Edit --deny Bash --no-subagents --disable-web-search --no-memory [--model] [--reasoning-effort] -s <uuid> -p "<prompt>"` (the `-s` session folder removed after) | positional arg |
 | Antigravity | `agy -p "<prompt>" --output-format json [--model] [--effort]` through a hidden PTY (`agy -p` hangs without a TTY, upstream #318); runs in a pre-trusted scratch cwd so it never touches the project workspace's `agy -c` mapping. It removes the conversation the run made and reports the result's `usage` | flag arg |
 | Warp | (no headless run) | n/a |
 | Aider | (headless answer run only; summarize not wired) | n/a |
 | Ollama | (headless answer run only; summarize not wired) | n/a |
-| Goose CLI | (headless answer run only; summarize not wired) | n/a |
+| Goose CLI | Its answer run: `goose run -i - --no-session -q [--model]` with `GOOSE_MODE=chat` (no tools). Built from Goose's docs, not run against an installed Goose | stdin |
 
 ## Configuration knobs
 

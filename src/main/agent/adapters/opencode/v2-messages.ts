@@ -51,7 +51,10 @@ export function openCodeV2MessageEntry(
       });
     }
   }
-  return { info: { id, role: 'assistant', time, ...(model ? { modelID: model } : {}) }, parts };
+  return {
+    info: { id, role: 'assistant', time, ...(model ? { modelID: model } : {}), ...(isRecord(data.tokens) ? { tokens: data.tokens } : {}) },
+    parts,
+  };
 }
 
 /** A `session_message` row as the database readers select it. */

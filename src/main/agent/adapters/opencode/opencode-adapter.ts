@@ -11,17 +11,21 @@ import {
   openCodeTranscriptSourcePath,
   parseOpenCodeTranscript,
   readOpenCodeTranscriptPage,
+  readOpenCodeTranscriptWindowAtPath,
 } from './transcript-parser';
 import { migrateOpenCodeProjectData } from './project-relocation';
+import { parseOpenCodeStatus } from './status-parser';
+import { readOpenCodeToolCountsAtPath, readOpenCodeToolResultTokensAtPath, readOpenCodeTranscriptUsageAtPath } from './transcript-usage';
+import { readOpenCodeSubagentUsageAtPath, statOpenCodeSubagentsAtPath } from './subagent-usage';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
-import { discoverOpenCodeCapabilities } from './capability-discovery';
+import { discoverOpenCodeCapabilities, discoverOpenCodeModels, type OpenCodeModelInventory } from './capability-discovery';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages } from './remote-client';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import { activityPluginRoot, installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
+import { activityPluginRoot, installsActivityPlugin, openCodeKangenticMcpEntry, openCodeModelFromCommand } from './command-builder';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
 import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions } from './distro-sessions';
 import { execCliForTarget, hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace, type SshCliPlace } from '../../shared/cli-target';
@@ -35,6 +39,9 @@ import type {
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedTranscript,
+  ParsedTranscriptWindow,
+  ParsedSubagentUsage,
+  SubagentTranscriptSignature,
   SummarizeOptions,
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
@@ -51,8 +58,19 @@ import type {
   AgentLiveTelemetryUnsupported,
   RemoteServerStatus,
   ResolvedExecutionTarget,
+  TranscriptToolCounts,
+  TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+/** What the transcript readers are asked with: the session, where it ran, and an optional time window. */
+interface OpenCodeTranscriptReadInput {
+  agentSessionId?: string | null;
+  cwd?: string | null;
+  sinceMs?: number | null;
+  untilMs?: number | null;
+  place?: CliPlace | null;
+}
 
 // Session-ID regexes hoisted to module scope so they compile once.
 // `fromOutput` is invoked on every PTY chunk during the pre-capture
@@ -155,10 +173,10 @@ export function openCodeAnswerConfig(server: KangenticMcpServer | null, openCode
  *    plugin is a separate file, copied into the project-shared
  *    `.opencode/plugins/` directory at spawn (held per session via
  *    `hookHolds` since concurrent sessions share the file).
- *  - No trust dialog and no per-mode permission flags. OpenCode 1.18.31's
- *    TUI has `--auto` (auto-approve what is not explicitly denied), which
- *    Kangentic does not pass; auto-approval is the user's choice, by that
- *    flag or `opencode.json`. Modes map only to `--agent` on a fresh spawn.
+ *  - No trust dialog. Modes map to `--agent` on a fresh spawn, and Build
+ *    (Auto-approve) adds the TUI's own `--auto` (auto-approve what is not
+ *    explicitly denied) on a CLI that has it (1.17.12 and later, and
+ *    OpenCode 2), on a resume too.
  *  - Remote execution: declares `remoteExecution` so a project can attach
  *    to a user-run `opencode serve` instead of spawning locally
  *    (`opencode attach <url> --dir <serverPath>`). See command-builder.ts
@@ -192,12 +210,17 @@ export class OpenCodeAdapter implements AgentAdapter {
   // storage compatibility (a swimlane setting set under Claude as
   // 'acceptEdits' continues to mean "Build" under OpenCode), but the
   // user-facing label is OpenCode's vocabulary. Historical values
-  // outside this list (`default`, `bypassPermissions`, `dontAsk`,
-  // `auto`) are still handled by mapPermissionModeToAgent for
-  // backward compat with mixed-agent projects.
+  // outside this list (`dontAsk`, `auto`) are still handled by
+  // mapPermissionModeToAgent for backward compat with mixed-agent projects.
+  //   Default -> no --agent (the user's own `default_agent` decides)
+  //   Build (Auto-approve) -> --agent build --auto, OpenCode's own flag for
+  //     "auto-approve permissions that are not explicitly denied" (1.17.12+
+  //     and OpenCode 2; an older CLI gets --agent build alone).
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan' },
+    { mode: 'default', label: 'Default Agent' },
     { mode: 'acceptEdits', label: 'Build' },
+    { mode: 'bypassPermissions', label: 'Build (Auto-approve)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
   /** An OpenCode installed in a WSL distro runs there (#286). */
@@ -212,16 +235,17 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif'];
 
   /**
-   * OpenCode reports no token usage to Kangentic: no statusline, no
-   * `sessionHistory` reader, and its plugin streams activity only. Without
-   * this the card and the context bar showed "Starting agent..." for the whole
-   * session, on OpenCode 1 and 2 alike (seen in a preview).
+   * A local session's plugin writes `status.json` (`parseOpenCodeStatus`), and
+   * the card and context bar show this label only until it names a model.
+   * Remote mode installs no plugin, so a remote session has no telemetry:
+   * without this it showed "Starting agent..." for the whole session (seen in a
+   * preview, back when no session had any).
    */
   readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
     unavailableLabel: 'Telemetry: TUI only',
     unavailableTitle:
-      'OpenCode does not stream live telemetry to Kangentic.\n'
-      + 'Its TUI shows the model, context and cost.',
+      'A local OpenCode session reports telemetry once its first turn starts. A remote one never does.\n'
+      + 'The TUI shows the model, context and cost.',
   };
 
   private readonly detector = new OpenCodeDetector();
@@ -300,7 +324,22 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.detector.invalidateCache();
     forgetDistroOpenCodeVersions();
     this.hostVersions.clear();
+    // The CLI at the path may be another one now, so its list is read again,
+    // but kept as the fallback a failed read answers with. A read in flight is
+    // dropped and not kept.
+    if (this.modelInventory) this.modelInventory = { ...this.modelInventory, stale: true };
+    this.pendingModelRead = null;
   }
+
+  /**
+   * The last `opencode models` read, per CLI path (`discoverCapabilities`).
+   * Null inventory: the read failed. Stale: a re-detection since, so the next
+   * ask reads again.
+   */
+  private modelInventory: { cliPath: string; inventory: OpenCodeModelInventory | null; stale: boolean } | null = null;
+
+  /** The `opencode models` read in flight, per CLI path, so concurrent asks share one run. */
+  private pendingModelRead: { cliPath: string; read: Promise<OpenCodeModelInventory | null> } | null = null;
 
   /**
    * The version of the CLI at `cliPath`: the cached detection's, or, when the
@@ -485,7 +524,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     reportsTurnEnd: true,
     activity: ActivityDetection.hooksAndPty(),
     statusFile: {
-      parseStatus: () => null,
+      // Each major's plugin rewrites `status.json` whole (model, context,
+      // tokens, cost): see `status-parser.ts`.
+      parseStatus: parseOpenCodeStatus,
       parseEvent: (line: string): SessionEvent | null => {
         try {
           return JSON.parse(line) as SessionEvent;
@@ -493,7 +534,7 @@ export class OpenCodeAdapter implements AgentAdapter {
           return null;
         }
       },
-      isFullRewrite: false,
+      isFullRewrite: true,
     },
     sessionId: {
       fromHook(hookContext: string): string | null {
@@ -661,6 +702,98 @@ export class OpenCodeAdapter implements AgentAdapter {
     return { entries, sourcePath: openCodeTranscriptSourcePath(), totalPosition };
   }
 
+  /**
+   * Lifetime tokens of a local session, summed over its assistant messages in
+   * `opencode.db` (`transcript-usage.ts`). A remote or distro session has no
+   * local row, so it answers null and the caller keeps the live snapshot.
+   */
+  async transcriptUsage(input: OpenCodeTranscriptReadInput): Promise<TranscriptUsage | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeTranscriptUsageAtPath(openCodeTranscriptSourcePath(), sessionId);
+  }
+
+  /**
+   * Distinct tool calls of a local session by name, within `sinceMs` and
+   * `untilMs` when given (`transcript-usage.ts`). Null for a remote or distro
+   * session, or one with no tool call.
+   */
+  async transcriptToolCounts(input: OpenCodeTranscriptReadInput): Promise<TranscriptToolCounts | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeToolCountsAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
+  }
+
+  /**
+   * Estimated result tokens per tool of a local session, within `sinceMs` and
+   * `untilMs` (`transcript-usage.ts`). Null for a remote or distro session,
+   * which has no local row, so the earlier-run fill moves on.
+   */
+  async transcriptToolResultTokens(input: OpenCodeTranscriptReadInput): Promise<Record<string, number> | null> {
+    const sessionId = this.localSessionId(input);
+    if (!sessionId) return null;
+    return readOpenCodeToolResultTokensAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
+  }
+
+  /**
+   * Both tool reads above keep to `sinceMs` and `untilMs` by the stored rows'
+   * `time_created`, so a resumed session's runs, which OpenCode keeps in one
+   * session, are read apart.
+   */
+  readonly scopesTranscriptReadsByTime = true;
+
+  /** The `task` tool that runs a subagent, by the name its calls carry in a transcript. */
+  readonly subagentSpawnToolName = 'task';
+
+  /**
+   * A staleness signature over a local session's subagent sessions
+   * (`subagent-usage.ts`): their count, stored size and newest update.
+   */
+  statSubagentTranscripts(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null {
+    if (!this.localSessionId({ agentSessionId, cwd, place })) return null;
+    return statOpenCodeSubagentsAtPath(openCodeTranscriptSourcePath(), agentSessionId);
+  }
+
+  /** Each subagent answer's tokens, from the session's `task` child sessions (`subagent-usage.ts`). */
+  async parseSubagentUsage(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage> {
+    const sourcePath = openCodeTranscriptSourcePath();
+    if (!this.localSessionId({ agentSessionId, cwd, place })) {
+      return { directoryPresent: false, complete: true, sourcePath, turns: [], spawnLinks: [] };
+    }
+    return readOpenCodeSubagentUsageAtPath(sourcePath, agentSessionId);
+  }
+
+  /**
+   * One window of a local session for the conversation indexer, in the
+   * transcript reader's position unit (`readOpenCodeTranscriptWindowAtPath`).
+   * A remote or distro session has no local database to walk, so it reads as
+   * empty and the indexer keeps what `parseTranscript` gave it.
+   */
+  async parseTranscriptWindow(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+    _attributedMessageIds?: Set<string>,
+    place?: CliPlace | null,
+  ): Promise<ParsedTranscriptWindow> {
+    const sourcePath = openCodeTranscriptSourcePath();
+    if (!this.localSessionId({ agentSessionId, cwd, place })) {
+      return { entries: [], sourcePath: null, nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };
+    }
+    return { ...readOpenCodeTranscriptWindowAtPath(sourcePath, agentSessionId, startByte, maxBytes), sourcePath };
+  }
+
+  /**
+   * The id of a session whose history is in this machine's `opencode.db`, or
+   * null for one with no id, a remote one, or one in a distro.
+   */
+  private localSessionId(input: OpenCodeTranscriptReadInput): string | null {
+    if (!input.agentSessionId || input.place) return null;
+    if (input.cwd && this.remoteTargetsByCwd.has(input.cwd)) return null;
+    return input.agentSessionId;
+  }
+
   /** One page of a local session's history for the Conversation viewer; a remote one does not page. */
   async readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest, place?: CliPlace | null): Promise<TranscriptPageReadResult> {
     // An export is the whole session, so a distro one does not page either.
@@ -668,9 +801,81 @@ export class OpenCodeAdapter implements AgentAdapter {
     return readOpenCodeTranscriptPage(openCodeTranscriptSourcePath(), agentSessionId, request);
   }
 
-  async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
-    return discoverOpenCodeCapabilities(cliPath, await this.versionFor(cliPath));
+  /**
+   * The model override flag, and on OpenCode 1 the models `opencode models
+   * --verbose` lists with the CLI's own names (`parseOpenCodeModels`). The list
+   * is kept per CLI path until a forced refresh (a model dropdown opening) or a
+   * re-detection, since each read starts the CLI's provider layer.
+   *
+   * The agent list waits on every adapter's discovery before it answers
+   * (`agent-list.ts`), so an unforced call starts the read and answers with
+   * the list it has (none on a first call), rather than holding every agent's
+   * row for the CLI's provider start. A forced call (an opening dropdown,
+   * which re-detects every CLI first) waits for a fresh read.
+   */
+  async discoverCapabilities(cliPath: string, forceRefresh = false): Promise<AgentCapabilities> {
+    const version = await this.versionFor(cliPath);
+    const capabilities = await discoverOpenCodeCapabilities(cliPath, version);
+    if (!capabilities.supportsModelOverride || isOpenCodeV2(version)) return capabilities;
+    const entry = this.modelInventory?.cliPath === cliPath ? this.modelInventory : undefined;
+    let inventory: OpenCodeModelInventory | null | undefined = entry?.inventory;
+    if (forceRefresh || !entry || entry.stale) {
+      const read = this.readModelInventory(cliPath, entry?.inventory);
+      if (forceRefresh) inventory = await read;
+      else void read;
+    }
+    if (!inventory) return capabilities;
+    return { ...capabilities, models: inventory.models, modelDisplayNames: inventory.displayNames };
   }
+
+  /**
+   * Read the CLI's models and keep them. A read that fails (a timeout, a
+   * provider error) keeps the last list read from this CLI, even one a
+   * re-detection marked stale, rather than emptying the picker. A call joins a
+   * read already in flight for the same path.
+   */
+  private readModelInventory(cliPath: string, fallback: OpenCodeModelInventory | null | undefined): Promise<OpenCodeModelInventory | null> {
+    if (this.pendingModelRead?.cliPath === cliPath) return this.pendingModelRead.read;
+    const read: Promise<OpenCodeModelInventory | null> = discoverOpenCodeModels(cliPath).then((fresh) => {
+      const inventory = fresh ?? fallback ?? null;
+      // A re-detection while this ran dropped it (`invalidateDetectionCache`):
+      // the CLI at this path may be another one now, so its list is not kept.
+      if (this.pendingModelRead?.read === read) this.modelInventory = { cliPath, inventory, stale: false };
+      return inventory;
+    }).finally(() => {
+      if (this.pendingModelRead?.read === read) this.pendingModelRead = null;
+    });
+    this.pendingModelRead = { cliPath, read };
+    return read;
+  }
+
+  /**
+   * The model a V1 command names with `--model provider/model`, labelled with
+   * the name `opencode models` gave it when the list has been read, else the
+   * id. An OpenCode 2 spawn names its model in `OPENCODE_CONFIG_CONTENT`, not
+   * on the command, so it gives null and the card waits for telemetry.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const id = openCodeModelFromCommand(command);
+    if (!id) return null;
+    return { id, displayName: this.modelDisplayName(id) ?? id };
+  }
+
+  /** The CLI's own name for a model id, from the last `opencode models` read. */
+  modelDisplayName(modelId: string): string | null {
+    return this.modelInventory?.inventory?.displayNames[modelId] ?? null;
+  }
+
+  /**
+   * OpenCode's file-writing tools and the input field naming the file: `edit`
+   * and `write` both take `filePath` (`packages/opencode/src/tool/edit.ts` and
+   * `write.ts` at v1.18.31; opencode.ai/docs/tools). `apply_patch` carries its
+   * paths inside `patchText`, so it has no path field to name.
+   */
+  readonly fileChangeTools = [
+    { tool: 'edit', pathField: 'filePath' },
+    { tool: 'write', pathField: 'filePath' },
+  ] as const;
 
   getInjectionSequence(_spec: SettingsChangeSpec): string[] {
     // OpenCode does not support live `/model` or `/effort` slash commands.

@@ -316,6 +316,187 @@ describe('StatusFileReader', () => {
     await vi.waitFor(() => expect(callbacks.onUsageParsed).toHaveBeenCalledWith('session-1', expectedUsage));
   });
 
+  it('reads each status write against the previous one for parseStatusEvents, and dispatches its events after the usage', async () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    const opened: SessionEvent = { ts: 1, type: EventType.Idle, detail: 'permission', waitKind: 'approval' };
+    const parseStatusEvents = vi.fn((raw: string, _previousRaw: string | null, _now: number): SessionEvent[] => (raw === '{"open":true}' ? [opened] : []));
+    const order: string[] = [];
+    callbacks.onUsageParsed = vi.fn(() => { order.push('usage'); });
+    callbacks.onEventsParsed = vi.fn(() => { order.push('events'); });
+    reader = new StatusFileReader(callbacks);
+    attachAfterReset({
+      sessionId: 'session-1',
+      statusOutputPath: statusPath,
+      eventsOutputPath: null,
+      statusFileHook: { ...makeStubStatusFileHook({ parseStatus: () => makeUsage(1) }), parseStatusEvents },
+    });
+    const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
+
+    fs.writeFileSync(statusPath, '{"open":false}');
+    privateReader.handleStatusChange('session-1');
+    await vi.waitFor(() => expect(parseStatusEvents).toHaveBeenCalledTimes(1));
+    expect(parseStatusEvents.mock.calls[0].slice(0, 2)).toEqual(['{"open":false}', null]);
+    expect(callbacks.onEventsParsed).not.toHaveBeenCalled();
+
+    fs.writeFileSync(statusPath, '{"open":true}');
+    privateReader.handleStatusChange('session-1');
+    await vi.waitFor(() => expect(callbacks.onEventsParsed).toHaveBeenCalledWith('session-1', [], [opened]));
+    expect(parseStatusEvents.mock.calls[1].slice(0, 2)).toEqual(['{"open":true}', '{"open":false}']);
+    expect(order).toEqual(['usage', 'usage', 'events']);
+  });
+
+  it('skips parseStatusEvents for an empty status read, which is no state to compare against', async () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    const parseStatusEvents = vi.fn((): SessionEvent[] => []);
+    const reads = watchStatusReads();
+    try {
+      attachAfterReset({
+        sessionId: 'session-1',
+        statusOutputPath: statusPath,
+        eventsOutputPath: null,
+        statusFileHook: { ...makeStubStatusFileHook({}), parseStatusEvents },
+      });
+      (reader as unknown as { handleStatusChange(sessionId: string): void }).handleStatusChange('session-1');
+      await reads.settled();
+      expect(reads.count()).toBeGreaterThan(0);
+      expect(parseStatusEvents).not.toHaveBeenCalled();
+    } finally {
+      reads.restore();
+    }
+  });
+
+  describe('parseStatusEvents baseline (the previous readable write)', () => {
+    const statusEvent: SessionEvent = { ts: 7, type: EventType.Idle, detail: 'permission', waitKind: 'approval' };
+
+    /** Attach a session whose hook carries `parseStatusEvents`, and return a driver for sequential writes. */
+    function attachWithStatusEvents(parseStatusEvents: StatusFileHook['parseStatusEvents']): {
+      writeAndRead(content: string): Promise<void>;
+    } {
+      const statusPath = path.join(tempDir, 'status.json');
+      attachAfterReset({
+        sessionId: 'session-1',
+        statusOutputPath: statusPath,
+        eventsOutputPath: null,
+        statusFileHook: { ...makeStubStatusFileHook({}), parseStatusEvents },
+      });
+      const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
+      return {
+        // One write, one read: awaits the read and the reader's own dispatch of it.
+        async writeAndRead(content: string): Promise<void> {
+          const reads = watchStatusReads();
+          try {
+            fs.writeFileSync(statusPath, content);
+            privateReader.handleStatusChange('session-1');
+            await reads.settled();
+          } finally {
+            reads.restore();
+          }
+        },
+      };
+    }
+
+    /** The previousRaw the adapter was handed with the first read of `raw`. */
+    function previousRawFor(parseStatusEvents: ReturnType<typeof vi.fn>, raw: string): string | null | undefined {
+      const call = parseStatusEvents.mock.calls.find((candidate) => candidate[0] === raw);
+      return call?.[1];
+    }
+
+    it('keeps the last readable write as the baseline across a torn write the adapter reports as null', async () => {
+      const parseStatusEvents = vi.fn((raw: string): SessionEvent[] | null => (raw === 'TORN' ? null : []));
+      const driver = attachWithStatusEvents(parseStatusEvents);
+
+      await driver.writeAndRead('WRITE-A');
+      await driver.writeAndRead('TORN');
+      await driver.writeAndRead('WRITE-B');
+
+      expect(parseStatusEvents.mock.calls.some((call) => call[0] === 'TORN')).toBe(true);
+      expect(previousRawFor(parseStatusEvents, 'WRITE-B')).toBe('WRITE-A');
+    });
+
+    it('keeps the last readable write as the baseline when the adapter throws on a write', async () => {
+      const parseStatusEvents = vi.fn((raw: string): SessionEvent[] | null => {
+        if (raw === 'BOOM') throw new Error('unreadable status');
+        return [];
+      });
+      const driver = attachWithStatusEvents(parseStatusEvents);
+
+      await driver.writeAndRead('WRITE-A');
+      await driver.writeAndRead('BOOM');
+      await driver.writeAndRead('WRITE-B');
+
+      expect(parseStatusEvents.mock.calls.some((call) => call[0] === 'BOOM')).toBe(true);
+      expect(previousRawFor(parseStatusEvents, 'WRITE-B')).toBe('WRITE-A');
+    });
+
+    it('logs a throwing adapter once, though it throws on every write', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const driver = attachWithStatusEvents(() => {
+          throw new Error('unreadable status');
+        });
+
+        await driver.writeAndRead('BOOM-1');
+        await driver.writeAndRead('BOOM-2');
+
+        const statusEventLogs = consoleError.mock.calls.filter((call) => String(call[0]).includes('Status events for session-1'));
+        expect(statusEventLogs).toHaveLength(1);
+      } finally {
+        consoleError.mockRestore();
+      }
+    });
+
+    it('keeps the last readable write as the baseline across an empty read, which the adapter is never asked about', async () => {
+      const parseStatusEvents = vi.fn((): SessionEvent[] | null => []);
+      const driver = attachWithStatusEvents(parseStatusEvents);
+
+      await driver.writeAndRead('WRITE-A');
+      await driver.writeAndRead('   \n');
+      await driver.writeAndRead('WRITE-B');
+
+      expect(parseStatusEvents.mock.calls.some((call) => (call[0] as string).trim().length === 0)).toBe(false);
+      expect(previousRawFor(parseStatusEvents, 'WRITE-B')).toBe('WRITE-A');
+    });
+
+    it('dispatches the events of a write that carries no usage (parseStatus null)', async () => {
+      const parseStatusEvents = vi.fn((): SessionEvent[] | null => [statusEvent]);
+      const driver = attachWithStatusEvents(parseStatusEvents);
+
+      await driver.writeAndRead('NO-USAGE');
+
+      expect(callbacks.onUsageParsed).not.toHaveBeenCalled();
+      expect(callbacks.onEventsParsed).toHaveBeenCalledWith('session-1', [], [statusEvent]);
+    });
+
+    it('logs and carries on when onEventsParsed throws on a status-derived event, and the next write still dispatches', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        let dispatches = 0;
+        callbacks.onEventsParsed = vi.fn(() => {
+          dispatches += 1;
+          if (dispatches === 1) throw new Error('consumer failed');
+        });
+        reader = new StatusFileReader(callbacks);
+        const parseStatusEvents = vi.fn((): SessionEvent[] | null => [statusEvent]);
+        const driver = attachWithStatusEvents(parseStatusEvents);
+
+        await driver.writeAndRead('WRITE-A');
+        await driver.writeAndRead('WRITE-B');
+
+        expect(callbacks.onEventsParsed).toHaveBeenCalledTimes(2);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Status events for session-1 failed to dispatch'), expect.any(Error));
+        // Let any stray rejection surface before asserting there was none.
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+        consoleError.mockRestore();
+      }
+    });
+  });
+
   it('skips dispatch when parseStatus returns null', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parseStatus = vi.fn((): SessionUsage | null => null);

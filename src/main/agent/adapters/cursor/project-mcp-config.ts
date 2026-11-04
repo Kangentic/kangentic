@@ -39,7 +39,8 @@ function configPathOf(directory: string): string {
   return path.join(directory, '.cursor', 'mcp.json');
 }
 
-function isJsonObject(value: unknown): value is JsonObject {
+/** A plain JSON object: not null, not an array. Shared with `hook-config.ts`. */
+export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

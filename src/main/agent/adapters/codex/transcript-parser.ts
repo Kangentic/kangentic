@@ -33,7 +33,11 @@ const UUIDS_NUMBER_LINES = true;
  *     rollouts almost always carry an empty summary plus `encrypted_content`
  *     (no plaintext), so only non-empty summaries become thinking blocks.
  *   - `function_call`: `{ name, arguments (JSON string), call_id }` -> tool_use.
- *   - `function_call_output`: `{ call_id, output (string) }` -> tool_result.
+ *   - `custom_tool_call`: `{ name, input (raw text), call_id }` -> tool_use
+ *     (every `apply_patch`).
+ *   - `local_shell_call` / `web_search_call`: `{ action }` -> tool_use.
+ *   - `function_call_output` / `custom_tool_call_output`: `{ call_id, output }`
+ *     -> tool_result.
  *
  * Model is tracked from `turn_context` entries (`payload.model`) and attached
  * to the assistant entries that follow.
@@ -196,7 +200,42 @@ function parseCodexRecord(
     return;
   }
 
-  if (payload.type === 'function_call_output') {
+  // A freeform tool's call: `input` is raw text, not JSON. Every `apply_patch`
+  // is one ("This is a FREEFORM tool, so do not wrap the patch in JSON",
+  // `codex-rs/core/src/tools/handlers/apply_patch_spec.rs` at rust-v0.163.0).
+  if (payload.type === 'custom_tool_call') {
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
+    const name = typeof payload.name === 'string' ? payload.name : 'tool';
+    const text = typeof payload.input === 'string' ? payload.input : stringifyOutput(payload.input);
+    const input = name === CODEX_PATCH_TOOL ? patchToolInput(text) : text;
+    entries.push({
+      kind: 'assistant',
+      uuid,
+      ts,
+      model: state.model,
+      blocks: [{ type: 'tool_use', id: callId, name, input }],
+    });
+    return;
+  }
+
+  // The shell tool of older models and the hosted web search
+  // (`ResponseItem::LocalShellCall` / `WebSearchCall`, `codex-rs/protocol/src/models.rs`
+  // at rust-v0.163.0). Each records what it did as `action`; a web search
+  // carries no `call_id` and has no output item.
+  if (payload.type === 'local_shell_call' || payload.type === 'web_search_call') {
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
+    const name = payload.type === 'local_shell_call' ? 'local_shell' : 'web_search';
+    entries.push({
+      kind: 'assistant',
+      uuid,
+      ts,
+      model: state.model,
+      blocks: [{ type: 'tool_use', id: callId, name, input: payload.action ?? {} }],
+    });
+    return;
+  }
+
+  if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
     const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
     entries.push({
       kind: 'tool_result',
@@ -343,10 +382,57 @@ function tryParseJson(value: string): unknown {
   }
 }
 
-/** A function_call_output `output` is usually a string; stringify other shapes. */
+/** Codex's file-editing tool, a FREEFORM tool whose input is the patch text. */
+export const CODEX_PATCH_TOOL = 'apply_patch';
+
+/**
+ * The input field that names the file an `apply_patch` call changes, for the
+ * memory index's change corpus (`AgentAdapter.fileChangeTools`).
+ */
+export const CODEX_PATCH_PATH_FIELD = 'file_path';
+
+/**
+ * The files a patch names, in order: each `*** Add File:`, `*** Update File:`,
+ * `*** Delete File:` header and a `*** Move to:` target. The grammar is the
+ * `apply_patch` tool's own (`add_hunk`, `delete_hunk`, `update_hunk` and
+ * `change_move` in codex-rs/core/assets/tools/apply_patch.lark at rust-v0.163.0,
+ * which apply_patch_spec.rs loads).
+ */
+export function patchFilePaths(patch: string): string[] {
+  const paths: string[] = [];
+  for (const match of patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/gm)) {
+    if (!paths.includes(match[1])) paths.push(match[1]);
+  }
+  return paths;
+}
+
+/**
+ * An `apply_patch` call's input as a `tool_use` carries it: the first file the
+ * patch names as `file_path`, ahead of the patch, so the memory index's change
+ * corpus finds Codex's edits the way it finds Claude's `Edit` (its chunker
+ * writes the input as JSON cut at 200 characters, so the path must come
+ * first). A patch that touches several files is recorded under its first. A
+ * patch naming no file stays the raw text.
+ */
+function patchToolInput(patch: string): string | { file_path: string; patch: string } {
+  const [firstPath] = patchFilePaths(patch);
+  return firstPath ? { file_path: firstPath, patch } : patch;
+}
+
+/**
+ * A tool output's text. `output` is a string or an array of content items
+ * (`FunctionCallOutputPayload`, `#[serde(untagged)]` in `codex-rs/protocol/src/models.rs`
+ * at rust-v0.163.0), whose text items are joined; any other shape is stringified.
+ */
 function stringifyOutput(value: unknown): string {
   if (typeof value === 'string') return value;
   if (value === undefined || value === null) return '';
+  if (Array.isArray(value) && value.some((item) => isRecord(item) && typeof item.text === 'string')) {
+    return value
+      .filter((item): item is Record<string, unknown> & { text: string } => isRecord(item) && typeof item.text === 'string')
+      .map((item) => item.text)
+      .join('\n');
+  }
   try {
     return JSON.stringify(value, null, 2);
   } catch {

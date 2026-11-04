@@ -3,21 +3,34 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CopilotDetector } from './detector';
 import { createCopilotAnswerReducer, extractCopilotAnswer } from './answer-stream';
-import { CopilotCommandBuilder } from './command-builder';
+import { CopilotCommandBuilder, KANGENTIC_MCP_SERVER_NAME, copilotModelFlagValue } from './command-builder';
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
-import { CopilotStreamParser } from './stream-parser';
+import { CopilotStreamParser, prettifyModelId } from './stream-parser';
+import { SESSION_CONFIG_DIR_NAME, locateCopilotEventsFile } from './session-state';
+import {
+  copilotTranscriptToolCounts,
+  copilotTranscriptUsage,
+  parseCopilotTranscript,
+  readCopilotTranscriptPage,
+} from './transcript-parser';
 import { migrateCopilotProjectData } from './project-relocation';
 import { discoverCopilotCapabilities } from './capability-discovery';
 import { COPILOT_HISTORY_FILE_NAME, createCopilotCommandInjectionVerifier, resolveCopilotHistoryPath } from './command-injection-verifier';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { sharedFolderKey } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
+import type {
+  AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions,
+  TranscriptPageReadRequest, TranscriptPageReadResult,
+} from '../../agent-adapter';
+import type {
+  AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities,
+  TranscriptToolCounts, TranscriptUsage,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
-import { cliPathForTarget, placeFromStored, resolveCliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
@@ -34,14 +47,24 @@ export const COPILOT_REMOTE_SESSION_FILES: readonly string[] = [
   'copilot-mcp.json',
 ];
 
+/** Where the transcript readers find a session's event log: a path, or the session to locate. */
+interface TranscriptSourceInput {
+  transcriptPath?: string | null;
+  agentSessionId?: string | null;
+  cwd?: string | null;
+  place?: CliPlace | null;
+}
+
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
  * and copilot-hook-manager behind the generic AgentAdapter interface.
  *
  * Copilot CLI (v1.0+) supports:
  * - statusLine config (same pattern as Claude Code)
- * - Hooks (preToolUse, postToolUse, agentStop, preCompact) in a per-session
- *   `<config home>/hooks/kangentic.json`
+ * - Hooks (tool, prompt, turn, subagent, session, compaction and notification
+ *   events) in a per-session `<config home>/hooks/kangentic.json`
+ * - The session event log, `session-state/<id>/events.jsonl`, read as the
+ *   transcript (transcript-parser.ts)
  * - Explicit session ID via --session-id <uuid> (new or resumed)
  * - Native --plan mode
  * - --yolo for full permission bypass
@@ -71,12 +94,17 @@ export class CopilotAdapter implements AgentAdapter {
   // measured on 1.0.100).
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
 
+  /**
+   * acceptEdits is `--allow-tool=write` and auto is Copilot's assisted
+   * permissions (command-builder.ts `mapPermissionMode`), both from GitHub's
+   * docs and not yet run against a real CLI.
+   */
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },
     { mode: 'dontAsk', label: 'Plan Non-Interactive (CI)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
-    { mode: 'acceptEdits', label: 'Allow All Tools' },
-    { mode: 'auto', label: 'Autopilot (Allow All Tools)' },
+    { mode: 'acceptEdits', label: 'Allow File Edits' },
+    { mode: 'auto', label: 'Assisted Approvals' },
     { mode: 'bypassPermissions', label: 'YOLO (Full Access)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
@@ -147,7 +175,7 @@ export class CopilotAdapter implements AgentAdapter {
     // Track the session's config dir for cleanup. The session layer releases
     // with removeHooks(<cwd>, <the session's id>).
     if (options.eventsOutputPath && options.ptySessionId) {
-      const configDir = path.resolve(path.dirname(options.eventsOutputPath), 'copilot-config');
+      const configDir = path.resolve(path.dirname(options.eventsOutputPath), SESSION_CONFIG_DIR_NAME);
       this.sessionConfigDirs.set(options.ptySessionId, { folder: options.cwd, configDir });
     }
     return command;
@@ -210,8 +238,10 @@ export class CopilotAdapter implements AgentAdapter {
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
     if (contextType === 'command-injection') {
       // MEASURED at 36-38ms, the fastest of any adapter and flat against a 32s
-      // turn. Copilot's HOOKS still do not fire on user-prompt submit - that
-      // part of the old comment was right - but it keeps
+      // turn. An earlier measurement found no hook firing on submit; GitHub's
+      // hooks reference lists `userPromptSubmitted`, now registered, and
+      // whether it fires was not checked against a real CLI. The verifier
+      // reads history either way: Copilot keeps
       // `command-history-state.json` in its config home, which does record
       // every submission. Slash commands included. A Kangentic session's home
       // is its own copilot-config folder (`--config-dir`), so the verifier
@@ -227,9 +257,8 @@ export class CopilotAdapter implements AgentAdapter {
         return [...sessionFiles, resolveCopilotHistoryPath(context.type === 'command-injection' ? placeFromStored(context.cliTarget) : null)];
       });
     }
-    // 'paste': hooks fire on tool/agent boundaries (preToolUse, postToolUse,
-    // agentStop, preCompact) but not on submit, so the paste engine's activity
-    // and data-floor backstops cover it.
+    // 'paste': no verifier; the paste engine's activity and data-floor
+    // backstops cover it.
     return null;
   }
 
@@ -271,13 +300,99 @@ export class CopilotAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
+  /**
+   * The session's event log, `<config home>/session-state/<id>/events.jsonl`
+   * (GitHub's config directory reference). Kangentic's sessions keep it in
+   * their own config home under `.kangentic/sessions/`, so those are searched
+   * before the user's own Copilot home. See session-state.ts.
+   */
   async locateSessionHistoryFile(
-    _agentSessionId: string,
-    _cwd: string,
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<string | null> {
-    // Copilot session history file location is not yet empirically verified.
-    // Activity events flow through the hooks pipeline (event-bridge JSONL).
+    return locateCopilotEventsFile(agentSessionId, cwd, place, reportedPath);
+  }
+
+  /**
+   * Never an answer. A resume reaches the session by id from any folder, but
+   * reopens it in the cwd its `workspace.yaml` saved (1.0.52+, see
+   * project-relocation.ts), so finding the log proves nothing about a renamed
+   * worktree. Null keeps `migrateResumeCwdIfRenamed` rewriting that cwd, as it
+   * did while `locateSessionHistoryFile` answered null; the rewrite touches
+   * only lines under the old path.
+   */
+  async locateResumeHistoryFile(): Promise<string | null> {
     return null;
+  }
+
+  /** The event log as transcript entries (transcript-parser.ts, built from the Copilot SDK's event schema). */
+  async parseTranscript(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedTranscript> {
+    const sourcePath = await locateCopilotEventsFile(agentSessionId, cwd, place, reportedPath);
+    if (!sourcePath) return { entries: [], sourcePath: null };
+    try {
+      return { entries: await parseCopilotTranscript(agentSessionId, sourcePath), sourcePath };
+    } catch (error) {
+      console.warn(`[copilot] could not parse the event log of session ${agentSessionId.slice(0, 8)}:`, error);
+      return { entries: [], sourcePath };
+    }
+  }
+
+  async readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<TranscriptPageReadResult> {
+    const sourcePath = await locateCopilotEventsFile(agentSessionId, cwd, place, reportedPath);
+    if (!sourcePath) return { status: 'unavailable', reason: 'file_missing' };
+    return readCopilotTranscriptPage(agentSessionId, sourcePath, request);
+  }
+
+  /** Tokens from the log's last `session.shutdown` (transcript-parser.ts). */
+  async transcriptUsage(input: TranscriptSourceInput): Promise<TranscriptUsage | null> {
+    const sourcePath = await this.transcriptSource(input);
+    return sourcePath ? copilotTranscriptUsage(sourcePath) : null;
+  }
+
+  /** Distinct tool calls in the log (transcript-parser.ts). Cannot scope by time. */
+  async transcriptToolCounts(input: TranscriptSourceInput & {
+    sinceMs?: number | null;
+    untilMs?: number | null;
+  }): Promise<TranscriptToolCounts | null> {
+    const sourcePath = await this.transcriptSource(input);
+    return sourcePath ? copilotTranscriptToolCounts(sourcePath) : null;
+  }
+
+  private async transcriptSource(input: TranscriptSourceInput): Promise<string | null> {
+    if (input.transcriptPath) return input.transcriptPath;
+    if (!input.agentSessionId || !input.cwd) return null;
+    return locateCopilotEventsFile(input.agentSessionId, input.cwd, input.place);
+  }
+
+  /**
+   * The `--model` the command was built with, labeled from its id the way the
+   * stream parser labels Copilot's own report (`prettifyModelId`, no table).
+   * GitHub's command reference: `--model=MODEL`, `auto` lets Copilot choose.
+   * Copilot's own telemetry replaces it once read.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const id = copilotModelFlagValue(command);
+    if (!id) return null;
+    return { id, displayName: prettifyModelId(id) };
+  }
+
+  /** A telemetry-learned model id, labeled as the stream parser labels it. */
+  modelDisplayName(modelId: string): string | null {
+    const trimmed = modelId.trim();
+    return trimmed ? prettifyModelId(trimmed) : null;
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
@@ -383,7 +498,7 @@ export class CopilotAdapter implements AgentAdapter {
       // handler's catch, which shows it as the answer's failure.
       fs.writeFileSync(configPath, JSON.stringify({
         mcpServers: {
-          kangentic: server.kind === 'stdio'
+          [KANGENTIC_MCP_SERVER_NAME]: server.kind === 'stdio'
             ? { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: server.token }, tools: ['*'] }
             : { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } },
         },
@@ -391,8 +506,8 @@ export class CopilotAdapter implements AgentAdapter {
       stopRelay = startRunMcpRelay(configDirectory, server);
       searchArgs.push(
         '--additional-mcp-config', `@${cliTarget ? cliPathForTarget(configPath, cliTarget) : configPath}`,
-        '--allow-tool', 'kangentic',
-        '--available-tools', 'kangentic',
+        '--allow-tool', KANGENTIC_MCP_SERVER_NAME,
+        '--available-tools', KANGENTIC_MCP_SERVER_NAME,
         '--disable-builtin-mcps',
       );
     }

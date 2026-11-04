@@ -72,10 +72,32 @@ async function spawnOnHost(adapter: CursorAdapter, workspace: FakeSshWorkspace):
 }
 
 describe('a Cursor session on a remote host', () => {
-  it('declares the CLI name and the one file it edits', () => {
+  it('declares the CLI name and the files it edits', () => {
     const adapter = new CursorAdapter();
     expect(adapter.remoteCliName).toBe('cursor-agent');
-    expect(adapter.remoteFiles()).toEqual({ home: [], project: ['.cursor/mcp.json'] });
+    expect(adapter.remoteFiles()).toEqual({
+      home: [],
+      project: ['.cursor/mcp.json', '.cursor/hooks.json', '.kangentic/cursor-wsl-hook.sh'],
+    });
+  });
+
+  it('puts the activity hooks on the host, running the folder\'s script copy there, and takes them out on release', async () => {
+    const workspace = await newWorkspace();
+    workspace.host.files.set(`${workspace.hostProject}/.cursor/hooks.json`, JSON.stringify({ version: 1, hooks: { stop: [{ command: 'echo mine' }] } }));
+    const adapter = new CursorAdapter();
+    await spawnOnHost(adapter, workspace);
+
+    const hooksPath = `${workspace.hostProject}/.cursor/hooks.json`;
+    const hooks = JSON.parse(workspace.host.files.get(hooksPath) ?? '{}') as { hooks: Record<string, Array<{ command: string }>> };
+    expect(hooks.hooks.stop.some((entry) => entry.command === 'echo mine')).toBe(true);
+    const ours = hooks.hooks.stop.find((entry) => entry.command !== 'echo mine');
+    expect(ours?.command).toContain(`${workspace.hostProject}/.kangentic/cursor-wsl-hook.sh`);
+    expect(workspace.host.files.has(`${workspace.hostProject}/.kangentic/cursor-wsl-hook.sh`)).toBe(true);
+    expect(workspace.host.modes.get(`${workspace.hostProject}/.kangentic/cursor-wsl-hook.sh`)).toBe(0o755);
+
+    adapter.removeHooks(workspace.projectFolder, SESSION_ID);
+    await settleHostFiles(SESSION_ID);
+    expect(JSON.parse(workspace.host.files.get(hooksPath) ?? '{}')).toEqual({ version: 1, hooks: { stop: [{ command: 'echo mine' }] } });
   });
 
   it('merges the static bridge entry into the user\'s file; the host paths and secrets ride the environment only', async () => {
@@ -88,6 +110,8 @@ describe('a Cursor session on a remote host', () => {
     expect(written.mcpServers.docs).toEqual(USER_MCP.mcpServers.docs);
     expect(written.mcpServers.kangentic).toEqual(CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY);
     expect(env).toEqual({
+      // The flag the hook commands test before they publish, as for a distro.
+      KANGENTIC_EVENTS_PATH_INTERACTIVE: '1',
       KANGENTIC_MCP_URL: MCP_URL,
       KANGENTIC_MCP_TOKEN: TOKEN,
       KANGENTIC_MCP_BRIDGE_SCRIPT: `${workspace.hostProject}/.kangentic/sessions/${SESSION_ID}/wsl-hooks/wsl-hook.sh`,

@@ -30,7 +30,6 @@ const DECLARED: Record<string, { source: 'hooks' | 'session-history'; launchHint
   gemini: { source: 'hooks', launchHint: true },
   copilot: { source: 'hooks', launchHint: true },
   grok: { source: 'hooks', launchHint: false },
-  kimi: { source: 'session-history', launchHint: false },
   codex: { source: 'session-history', launchHint: false },
 };
 

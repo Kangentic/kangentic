@@ -634,7 +634,7 @@ export async function performSpawn(
   }
 
   // Attach the status-file telemetry reader for sessions that provide
-  // status/events file paths (today only Claude). The reader owns the
+  // status/events file paths (every adapter that declares `statusFile`). The reader owns the
   // FileWatcher instances and dispatches parsed telemetry via the
   // generic SessionTelemetry primitives wired in StatusFileReader's
   // callbacks. The files were emptied before the spawn, above. When the

@@ -3,7 +3,26 @@ import path from 'node:path';
 import { escapePercentForCmd, isBareShellToken, POWERSHELL_CURLY_DOUBLE_QUOTE_CHARACTERS } from '../../../shared/shell-quote';
 import { toForwardSlash } from '../../../shared/paths';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
+import type { SessionEvent } from '../../../shared/types';
 import { resolveBridgeScript } from './bridge-utils';
+
+/**
+ * One events.jsonl line as the event bridge wrote it, or null for a blank
+ * line, malformed JSON, or anything but an object with a string `type` (an
+ * array has none). The `statusFile.parseEvent` of an adapter whose hooks write
+ * through the bridge and need no translation of their own (Droid, Goose).
+ */
+export function parseBridgeEventLine(line: string): SessionEvent | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || typeof (parsed as { type?: unknown }).type !== 'string') return null;
+    return parsed as SessionEvent;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The tool every browser policy spec points the agent at, which also marks a

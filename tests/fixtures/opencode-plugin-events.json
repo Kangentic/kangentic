@@ -105,5 +105,83 @@
   },
   "tool_after_bash": {
     "input": { "tool": "bash" }
+  },
+  "_README_subagents": "Shaped from @opencode-ai/sdk at v1.18.31 (packages/sdk/js/src/gen/types.gen.ts): the task tool's child session carries Session.parentID; message.updated carries an AssistantMessage with tokens and cost; chat.params input carries the Model (id, providerID, name, limit.context); tool.execute.before/after input is { tool, sessionID, callID }. Built from the types, not captured from a run.",
+  "event_child_session_created": {
+    "type": "session.created",
+    "properties": {
+      "info": { "id": "ses_child0000000000000000aa", "parentID": "ses_2349b5c91ffeKd6qajuUTR4clq", "projectID": "prj_1", "directory": "/repo", "title": "Explore the auth module" }
+    }
+  },
+  "event_child_session_idle": {
+    "type": "session.idle",
+    "properties": { "sessionID": "ses_child0000000000000000aa" }
+  },
+  "event_child_session_busy": {
+    "type": "session.status",
+    "properties": { "sessionID": "ses_child0000000000000000aa", "status": { "type": "busy" } }
+  },
+  "tool_before_task": {
+    "input": { "tool": "task", "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "callID": "call_task_1" },
+    "output": { "args": { "description": "Explore the auth module", "prompt": "Find where tokens are refreshed", "subagent_type": "explore" } }
+  },
+  "tool_after_task": {
+    "input": { "tool": "task", "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "callID": "call_task_1", "args": {} }
+  },
+  "tool_before_child_grep": {
+    "input": { "tool": "grep", "sessionID": "ses_child0000000000000000aa", "callID": "call_grep_1" },
+    "output": { "args": { "pattern": "refreshToken", "path": "/repo/src" } }
+  },
+  "tool_after_child_grep": {
+    "input": { "tool": "grep", "sessionID": "ses_child0000000000000000aa", "callID": "call_grep_1", "args": {} }
+  },
+  "chat_message_root": {
+    "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "agent": "build", "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-5" }, "messageID": "msg_user_1"
+  },
+  "chat_params_root": {
+    "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq",
+    "agent": "build",
+    "model": { "id": "claude-sonnet-4-5", "providerID": "anthropic", "name": "Claude Sonnet 4.5", "limit": { "context": 200000, "output": 64000 } },
+    "provider": {},
+    "message": {}
+  },
+  "event_message_updated_root_1": {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "msg_asst_1", "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "role": "assistant", "parentID": "msg_user_1",
+        "modelID": "claude-sonnet-4-5", "providerID": "anthropic", "mode": "build",
+        "time": { "created": 1717000001000 }, "cost": 0.012,
+        "tokens": { "input": 1200, "output": 300, "reasoning": 50, "cache": { "read": 8000, "write": 400 } }
+      }
+    }
+  },
+  "event_message_updated_root_2": {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "msg_asst_2", "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "role": "assistant", "parentID": "msg_user_1",
+        "modelID": "claude-sonnet-4-5", "providerID": "anthropic", "mode": "build",
+        "time": { "created": 1717000005000 }, "cost": 0.02,
+        "tokens": { "input": 600, "output": 900, "reasoning": 0, "cache": { "read": 9600, "write": 200 } }
+      }
+    }
+  },
+  "event_message_updated_child": {
+    "type": "message.updated",
+    "properties": {
+      "info": {
+        "id": "msg_child_asst_1", "sessionID": "ses_child0000000000000000aa", "role": "assistant", "parentID": "msg_child_user_1",
+        "modelID": "claude-haiku-4-5", "providerID": "anthropic", "mode": "explore",
+        "time": { "created": 1717000003000 }, "cost": 0.003,
+        "tokens": { "input": 50000, "output": 400, "reasoning": 0, "cache": { "read": 0, "write": 0 } }
+      }
+    }
+  },
+  "event_message_updated_user": {
+    "type": "message.updated",
+    "properties": {
+      "info": { "id": "msg_user_1", "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "role": "user", "time": { "created": 1717000000000 }, "agent": "build", "model": { "providerID": "anthropic", "modelID": "claude-sonnet-4-5" } }
+    }
   }
 }

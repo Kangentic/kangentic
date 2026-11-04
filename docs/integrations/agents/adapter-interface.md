@@ -28,7 +28,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [npm .cmd shims under PowerShell and Git Bash](../../platforms/shells-and-paths.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
-| `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
+| `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`); Goose holds its `.agents/plugins/kangentic-goose/` hook plugin the same way and strips it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which times the boot geometry re-assert. A heuristic, not proof the agent is up, so it does not lift the launch overlay - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd, place?, reportedPath?)` | Locate the agent's native session history file on disk, in the WSL distro's home when `place` names one. `reportedPath`, here and on every transcript method, is a path the agent itself reported for the conversation (a session row's `transcript_path`, a live session's usage `transcriptPath`). It may be stale or name another id, so an adapter that reads it checks both; adapters that find their files by id ignore it |
 
@@ -41,7 +41,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`, `'grok'`, `'antigravity'`, `'goose'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
-| `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`, or, for an adapter with `createSessionId` (Cursor's `create-chat`), asks the CLI for an ID before a fresh start. See `createSessionId` and `reportsLaunchSessionId` in [optional-properties.md](optional-properties.md). |
+| `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude, Qwen, Copilot and Gemini, among others), or when the caller's id names the conversation some other way (Aider: the id names its chat history file, see [Aider](aider.md#chat-history-and-resume)). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`, or, for an adapter with `createSessionId` (Cursor's `create-chat`), asks the CLI for an ID before a fresh start. See `createSessionId` and `reportsLaunchSessionId` in [optional-properties.md](optional-properties.md). |
 | `resumePromptDelivery` | `'command-line' \| 'typed' \| 'no-resume'` | How a message reaches the agent when it resumes a conversation: on the resume command, or typed in once the agent is ready. `no-resume` means the adapter never resumes, so every start is fresh and the message is its prompt or is typed after it. The Resume Prompt column below lists each agent's value (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)) |
 | `permissions` | `AgentPermissionEntry[]` | Supported permission modes with agent-specific labels |
 | `defaultPermission` | `PermissionMode` | Recommended default permission mode |
@@ -53,19 +53,19 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 |-------|---------|-----------|----------------|---------------|---------------|----------------|---------------|-------|
 | Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | `command-line` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
-| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
+| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--session-id <uuid>` (caller-owned, 0.41.0+) / `--resume <id>` | `command-line` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
 | Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `command-line` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
-| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | `typed` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
-| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | `typed` | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
-| Aider | `aider-adapter.ts` | `aider` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
-| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | Not wired | No |
-| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | `command-line` | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
-| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
-| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | `typed` | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`, `question.asked` and `permission.asked`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
+| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | `typed` | Partial (events.jsonl via `<cwd>/.cursor/hooks.json` on a session screen; stream-json on a print run; built from docs) | Yes (`.cursor/hooks.json` entries merged beside the user's) | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
+| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned; a resume brings `session-state/<id>` into its new config home) | `typed` | Partial (events.jsonl; the status line's input is undocumented, so its parser returns null) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | No (no documented pre-trust; `--trust-folder` is prompt-mode only and conflicts with `--session-id`) |
+| Aider | `aider-adapter.ts` | `aider` | `--chat-history-file <cwd>/.aider.chat.history.<id>.md --restore-chat-history` (caller-owned file name) | `command-line` | No (usage from the session's chat history markdown) | No | Not possible (CLI has no MCP client) | No |
+| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | `--mcp <sessionDir>/mcp.json` | No |
+| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <id>` (captured) | `typed` | Yes (`wire.jsonl`) | No | `<cwd>/.kimi-code/mcp.json` | No (`KIMI_CODE_TRUST_WORKSPACE=1` per process) |
+| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | Partial (events.jsonl via a per-session `--settings` file; turn ends stay on the PTY tracker) | Per-session `--settings` (hooks only) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
+| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | `typed` | Yes (plugin JSONL via `tool.execute.before/after`, `chat.message`, `experimental.session.compacting` and `event` `session.*` (child sessions as subagents), `question.asked` and `permission.asked`; the plugin also writes `status.json`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
 | Ollama | `ollama-adapter.ts` | `ollama` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
 | Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `typed` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
-| Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | `command-line` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
-| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | `command-line` | No (PTY-only) | No | Not wired | No |
+| Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | `command-line` | Yes (events.jsonl via `.agents/hooks.json`, plus status.json from a per-session status line when `--help` lists `--settings`) | Yes (`.agents/hooks.json`, named-hook merge; a per-session `--settings` file that carries the status line and the saved trust and guard keys) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
+| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | `command-line` | Yes (events.jsonl via the `.agents/plugins/kangentic-goose/` hook plugin; usage from `sessions.db`; built from Goose's docs) | No (wholly-owned plugin folder) | Not wired | No |
 
 The Resume Prompt column is `resumePromptDelivery`. A `command-line` agent's resume command
 carries the message (a column's message, a plan continuation, a handoff pointer, held messages).
@@ -73,7 +73,9 @@ A `typed` agent's CLI takes a prompt on a new session, but its help and docs nev
 runs on a resumed one, so Kangentic keeps the message off the command and types it in once the
 agent is ready. A `no-resume` agent has no session id to resume by, so every start is fresh.
 `tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's real resume command with a
-marked prompt and holds the value to what the builder does.
+marked prompt and holds the value to what the builder does. It checks the optional
+`freshPromptDelivery` the same way: every agent takes a fresh prompt on its command line except
+Kimi Code, whose prompt is always typed.
 
 ### First prompt typed (`firstPromptMayBeTyped`)
 
@@ -107,19 +109,20 @@ no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 1
 | Verdict | Agents | Why |
 |---|---|---|
 | Declared | Claude | Seen in a preview on 2.1.316: the promptless launch enters the alternate screen at its input box and the pasted task prompt is the first message. An unapproved project MCP server's approval screen comes first and outside the alternate screen, so the spawn relaunches that agent as before |
-| Not declared | Gemini, Droid, Kimi | The promptless launch never entered the alternate screen, so the spawn could never adopt it. Gemini drew its folder trust and Droid its sign-in on the main screen |
+| Not declared | Gemini, Droid | The promptless launch never entered the alternate screen, so the spawn could never adopt it. Gemini drew its folder trust and Droid its sign-in on the main screen |
+| Not declared yet | Kimi | Its first prompt is typed on every launch (`freshPromptDelivery`), but Kimi Code 2.x has not been run live to see where it draws its input box |
 | Not declared | Codex, OpenCode, Copilot, Grok, Antigravity, Qwen | Each entered the alternate screen within 2.3 s and drew its boot screens inside it: Codex's sign-in, OpenCode's update offer, a selection menu over Copilot's input box, Grok's data-sharing opt-in, Antigravity's sign-in and folder trust. Qwen showed none in the run, but draws nothing before the alternate screen, so its recorded update and MCP approval screens are inside it too. Being in the alternate screen does not mean the input box is up |
 | Not declared yet | Goose | Opens `goose session` with no prompt; not installed where the others were measured |
 | Not declared | Aider | `--message` sends one message and exits; without it Aider is an interactive chat, a different run |
-| Not declared | Cursor | Only its `default` permission mode is interactive; every other mode is a `stream-json` print run |
+| Not declared | Cursor | Only its `default`, `acceptEdits` and `plan` modes are interactive; every other mode is a `stream-json` print run, and a promptless interactive launch has not been measured |
 | Not declared | Ollama | A prompt is one turn that exits; without one `ollama run` opens a REPL |
 | Not declared | Oz (Warp) | `oz agent run` is a one-shot runner with no input box |
 
 `tests/unit/first-prompt-typed-parity.test.ts` holds every registered adapter to this table and
 builds each declared adapter's fresh command with no prompt.
 
-The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
-Qwen and Gemini are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each
+The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, OpenCode, Grok, Cursor,
+Qwen, Gemini and Oz are `'per-session'`; Droid, Antigravity and Kimi are `'shared-folder'`, because each
 writes the session's literal URL into a file in the working directory. Gemini moved to a fixed
 `settings.json` entry whose URL and token are `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}`
 (Grok's and Cursor's pattern) in task #859, measured on 0.64.0: an MCP request arrived on the path
@@ -131,7 +134,8 @@ on a dialog (see [Qwen's MCP approval gate](qwen-code.md#kangentic-mcp-server-an
 agent, which has not been run live. Cursor's interactive and print sessions use the same static
 `${env:...}` entry its answer path measured; the interactive path has not been run live yet.
 Goose's `streamable_http` extensions take `headers` with `${VAR}` (its source), but its CLI flag
-takes only a URL, and a config-file entry has not been run live, so it stays unwired.
+takes only a URL and a timeout (`parse_streamable_http_extension`), its plugins carry no MCP server,
+and its config file is global to every Goose run, so it stays unwired.
 Grok reads its project block only in a folder the user trusted in Grok, which Kangentic never
 decides for them.
 
@@ -167,7 +171,7 @@ below for what does.
 | Cursor CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 | Aider | `data.length > 0` | Aider writes output immediately (no TUI alternate screen) |
 | Oz CLI (Warp) | `data.length > 0` | `oz agent run` streams output, no alternate screen |
-| Kimi Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when its alternate-screen buffer takes over (verified empirically with kimi v1.37.0) |
+| Kimi Code | `\x1b[?25l` (cursor hide) | Full-screen TUI hides the cursor when it starts drawing (assumed; not yet checked against a real 2.x run) |
 | Droid | `\x1b[?25l` (cursor hide) | Ink-based TUI, same pattern as Claude (verified empirically) |
 | OpenCode | `\x1b[?25l` (cursor hide) | Full-screen TUI initializes alternate screen buffer with cursor hide on first frame |
 | Ollama | `data.length > 0` | Ollama streams output immediately (no alternate screen buffer) |
@@ -237,14 +241,14 @@ An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed 
 | Qwen Code | `Ctrl+C`, `/quit` | Same TUI shutdown as Gemini (fork) |
 | Cursor CLI | `Ctrl+C` | No graceful exit needed |
 | GitHub Copilot CLI | `Ctrl+C`, `/exit` | Same TUI exit pattern as Claude |
-| Aider | `Ctrl+C`, `/exit` | `/exit` lets Aider flush `.aider.chat.history.md` before termination |
+| Aider | `Ctrl+C`, `/exit` | `/exit` lets Aider flush its chat history file before termination |
 | Oz CLI (Warp) | `Ctrl+C` | No session resume mechanism |
-| Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
+| Kimi Code | `Esc`, 400 ms, `/exit` | Esc stops a running turn, and the docs' `/exit` quits. It skips Ctrl+C, whose first press on an idle prompt only arms a status-bar exit that any other key cancels. Built from the docs, not probed |
 | Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
 | OpenCode | `Ctrl+C` | Verified 2026-04-28: PTY exits in ~1s. `/exit` and `/quit` are not recognized slash commands. |
 | Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
 | Grok Build | `Ctrl+C`, `/quit` | `/quit` exits cleanly (probe-verified exit 0) and prints the conversation dump that transcript cleanup anchors on |
-| Antigravity CLI | `Ctrl+C`, `Ctrl+C` | First Ctrl+C prints "press ctrl+c again to exit" (or cancels a running turn); the second exits gracefully, printing the `agy --conversation=<uuid>` resume summary (the fromOutput capture source) and flushing `cache/last_conversations.json`. No `/quit` slash command exists |
+| Antigravity CLI | `Ctrl+C`, `Ctrl+C` | First Ctrl+C prints "press ctrl+c again to exit" (or cancels a running turn); the second exits gracefully, printing the `agy --conversation=<uuid>` resume summary (the fromOutput capture source) and flushing `cache/last_conversations.json`. Measured on 1.1.13. The CLI reference now lists `/exit` (alias `/quit`), unmeasured, so the pair stays |
 | Goose CLI | `Ctrl+C`, `/exit` | Goose's Ctrl+C is contextual: it clears the line if text is entered, interrupts the request if one is processing, and exits only when the line is already empty. A kill usually lands mid-turn, where Ctrl+C alone only interrupts, so the explicit `/exit` is what ends the session before the teardown grace expires |
 
 A sequence that ends in Enter can answer an open permission prompt: Claude's old `\x03` + `/exit\r` approved the pending tool, because the Enter landed on the highlighted Yes. `scripts/probe-agent-dialog-exit.js` checks the other agents for that, by typing each one's sequence into its own shell-command prompt. Measured 2026-10-19 on Windows:
@@ -261,19 +265,19 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 |-------|-------------|--------|
 | Claude Code | `~/.claude/projects/<slug>/<sessionId>.jsonl`, where the slug is the folder the conversation STARTED in | The reported path, then the cwd's slug, then each parent folder's slug, then every project folder by id (`claude/transcript-locator.ts`, see [Session history](session-history.md#where-a-claude-transcript-is)). A resume from another folder keeps writing the file it started in |
 | Codex CLI | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl` | The whole date tree, newest day first, with no wait (`findCodexTranscriptFile`). The attach-time `runtime.sessionHistory.locate` polls today's and yesterday's folders for a rollout the CLI is about to write |
-| Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` **or** `.jsonl` | Directory scan with polling. Both extensions are live (Gemini cut over on 2026-04-28); an anchored `\.json$` matches nothing on a current install |
-| Qwen Code | `~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
+| Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` **or** `.jsonl` | Directory scan with polling. Both extensions are live (Gemini cut over on 2026-04-28); an anchored `\.json$` matches nothing on a current install. A transcript read takes the reported path first, when the file is there and named for the id, because Gemini picks `<projectDir>` and the cwd only predicts it |
+| Qwen Code | `<runtime>/projects/<sanitized-cwd>/chats/<sessionId>.jsonl`, where `<runtime>` is `QWEN_RUNTIME_DIR`, then `advanced.runtimeOutputDir`, then `~/.qwen` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
 | Cursor CLI | `~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl` | Direct path. The slug replaces every non-alphanumeric character with `-`, collapses runs, and keeps the working directory's case. Returned only when the file exists. View conversation reads it: the `<user_query>` wrapper comes off, a leading `<timestamp>` tag is dropped, and no clock is shown. The command-injection verifier stays unwired ([Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified)) |
-| GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
-| Aider | `<cwd>/.aider.chat.history.md` | Direct path in the working directory, returned only when the file exists. One history file per project directory, with no session id in its name |
+| GitHub Copilot CLI | `<config home>/session-state/<sessionId>/events.jsonl` | The reported path, then the newest log in the project's Kangentic config homes (`.kangentic/sessions/*/copilot-config/`), then the user's Copilot home (`session-state.ts`). From GitHub's config directory reference, not yet run against a real CLI. `locateResumeHistoryFile` answers null, so a renamed worktree's saved cwd is always rewritten |
+| Aider | `<cwd>/.aider.chat.history.<agentSessionId>.md` | Direct path in the working directory, returned only when the file exists. The session's own file, named by the caller-owned id Kangentic hands Aider through `--chat-history-file`; a session with no id (a Command Terminal) keeps Aider's shared `<cwd>/.aider.chat.history.md` |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
-| Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
+| Kimi Code | `~/.kimi-code/sessions/<workspaceId>/<sessionId>/agents/main/wire.jsonl` (or under `$KIMI_CODE_HOME`) | `session_index.jsonl` names each session's folder, so the id finds it and no folder name is computed |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table, or `session_v2` for OpenCode 2) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
 | Droid | `~/.factory/sessions/<cwd-slug>/<sessionId>.jsonl` | Direct path construction, polled up to 10 times at 500 ms because Droid creates the file after the spawn returns |
 | Ollama | N/A | Returns null (no CLI-accessible session history) |
-| Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/updates.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). The attach-time `runtime.sessionHistory.locate` additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
+| Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/<sessionId>/chat_history.jsonl` | Deterministic path construction (session id is caller-owned via `-s`) plus a strict existence check, scoped to the given cwd (the `resume-cwd-migration` reachability gate depends on a cross-cwd match NOT counting). It names the transcript `parseTranscriptWindow` walks, so the index, archive and message trail offset the right file. The attach-time `runtime.sessionHistory.locate` tails `updates.jsonl` for telemetry instead, and additionally polls ~60s and falls back to a sessions-root scan for encoding mismatches |
 | Antigravity CLI | `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl` | Direct path computation from the conversation id, with a short existence poll (the transcript appears when the first turn starts) |
-| Goose CLI | N/A | Returns null (no transcript parsing; resume rides on the caller-supplied `--name`) |
+| Goose CLI | `<data dir>/sessions/sessions.db` (SQLite, shared by every session) | Returns null: no file is this session's own. The transcript methods read the database by the caller-supplied `--name` instead, and resume rides on that name |
 
 ## Prompt Templates
 

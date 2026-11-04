@@ -43,7 +43,7 @@ const BOOT_SCREEN_INSIDE_ALTERNATE_SCREEN = 'it enters the alternate screen with
 /** Each with the reason a prompt typed into its promptless launch is not the same first message. */
 const COMMAND_LINE_FIRST_PROMPT: Record<string, string> = {
   aider: '`--message` sends one message and exits; without it Aider is an interactive chat, a different run',
-  cursor: 'only its `default` permission mode is interactive; every other mode is a stream-json print run',
+  cursor: 'only its `default`, `acceptEdits` and `plan` modes are interactive; every other mode is a stream-json print run, and a promptless interactive launch has not been measured',
   ollama: 'a prompt is one turn that exits; without one `ollama run` opens a REPL',
   warp: '`oz agent run` is a one-shot runner with no input box',
   antigravity: `${BOOT_SCREEN_INSIDE_ALTERNATE_SCREEN} (its sign-in and folder trust)`,

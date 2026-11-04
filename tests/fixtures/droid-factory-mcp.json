@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "browser-driver": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "env": {
+        "PLAYWRIGHT_BROWSERS_PATH": "${PLAYWRIGHT_BROWSERS_PATH}"
+      }
+    },
+    "issue-tracker": {
+      "type": "http",
+      "url": "https://mcp.issues.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ISSUE_TRACKER_TOKEN}"
+      }
+    },
+    "kangentic": {
+      "type": "http",
+      "url": "http://127.0.0.1:47123/mcp/project-1",
+      "headers": {
+        "X-Kangentic-Token": "${KANGENTIC_MCP_TOKEN}"
+      }
+    }
+  }
+}

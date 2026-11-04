@@ -11,9 +11,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GooseAdapter } from '../../src/main/agent/adapters/goose';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { CliTarget } from '../../src/main/agent/shared/cli-target';
-import { pullHostFilesFor } from '../../src/main/remote/host-file-sync';
+import { settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
+import { hostJson, spawnOnHost } from './ssh-adapter-spawn-harness';
 
 let workspace: FakeSshWorkspace;
 let target: CliTarget;
@@ -43,14 +44,40 @@ function options(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOpti
 }
 
 describe('a Goose on a remote host', () => {
-  it('runs the host\'s own CLI by name and declares no host files', async () => {
+  it('runs the host\'s own CLI by name and declares the plugin and script its hooks use', () => {
     const adapter = new GooseAdapter();
 
     expect(adapter.remoteCliName).toBe('goose');
-    expect(adapter.remoteFiles).toBeUndefined();
-    expect(await pullHostFilesFor(adapter, workspace.projectFolder, target)).toBeNull();
-    await adapter.ensureTrust(workspace.projectFolder, target);
-    expect(workspace.host.writes).toEqual([]);
+    expect(adapter.remoteFiles()).toEqual({
+      home: [],
+      project: [
+        '.agents/plugins/kangentic-goose/plugin.json',
+        '.agents/plugins/kangentic-goose/hooks/hooks.json',
+        '.kangentic/goose-wsl-hook.sh',
+      ],
+    });
+  });
+
+  it('puts the activity plugin on the host with commands that run the folder\'s script there, and takes it out on release', async () => {
+    const adapter = new GooseAdapter();
+    await spawnOnHost(adapter, workspace, 'goose', { sessionId: 'session-abc' });
+
+    const hooksPath = `${workspace.hostProject}/.agents/plugins/kangentic-goose/hooks/hooks.json`;
+    expect(workspace.host.files.has(`${workspace.hostProject}/.agents/plugins/kangentic-goose/plugin.json`)).toBe(true);
+    const hooks = hostJson(workspace, hooksPath) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    const stopCommand = hooks.hooks.Stop[0].hooks[0].command;
+    expect(stopCommand).toContain(`${workspace.hostProject}/.kangentic/goose-wsl-hook.sh`);
+    expect(workspace.host.modes.get(`${workspace.hostProject}/.kangentic/goose-wsl-hook.sh`)).toBe(0o755);
+    for (const [hostPath, content] of workspace.host.files) {
+      for (const local of [workspace.projectFolder, workspace.mirrorHome]) {
+        expect(content, hostPath).not.toContain(local);
+        expect(content, hostPath).not.toContain(local.replace(/\\/g, '/'));
+      }
+    }
+
+    adapter.removeHooks(workspace.projectFolder, 'session-1');
+    await settleHostFiles('session-1');
+    expect(workspace.host.files.has(hooksPath)).toBe(false);
   });
 
   it('builds the run and resume forms with nothing of this computer in them', () => {

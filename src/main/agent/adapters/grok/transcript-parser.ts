@@ -5,7 +5,7 @@ import type {
   TranscriptToolCounts,
   PerToolStat,
 } from '../../../../shared/types';
-import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
+import type { ParsedTranscriptWindow, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
@@ -70,6 +70,32 @@ export async function parseGrokTranscript(
   return {
     entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES)),
     sourcePath: filePath,
+  };
+}
+
+/**
+ * One bounded byte window of `chat_history.jsonl`, for the walks that cover a
+ * whole conversation (`AgentAdapter.parseTranscriptWindow`: the conversation
+ * index, the transcript archive, the message trail). Stateless. The lines
+ * before the window are counted so every entry gets the uuid the tail parse and
+ * a history page give its line (`<sessionId>:<physical line>`), which is what a
+ * stored citation resolves against. Grok reports no usage per line, so the
+ * caller's attribution carry is untouched.
+ */
+export async function parseGrokTranscriptWindow(
+  agentSessionId: string,
+  filePath: string,
+  startByte: number,
+  maxBytes: number,
+): Promise<ParsedTranscriptWindow> {
+  const window = await readJsonlWindow(filePath, { startByte, maxBytes, countOmittedLines: UUIDS_NUMBER_LINES });
+  return {
+    entries: parseGrokLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount)),
+    sourcePath: filePath,
+    nextByteOffset: window.nextByteOffset,
+    totalBytes: window.totalBytes,
+    firstByteOffset: window.startByte,
+    endByte: window.endByte,
   };
 }
 

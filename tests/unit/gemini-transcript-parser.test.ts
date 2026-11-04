@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseGeminiTranscript, readGeminiTranscriptPage } from '../../src/main/agent/adapters/gemini/transcript-parser';
+import { parseGeminiTranscript, parseGeminiTranscriptWindow, readGeminiTranscriptPage } from '../../src/main/agent/adapters/gemini/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
 import type { TranscriptEntry } from '../../src/shared/types';
 import { expectPagesTile } from './helpers/history-page-tiling';
@@ -419,5 +419,213 @@ describe('parseGeminiTranscript', () => {
     // The whole file keeps the later emission at its own line, which is the
     // copy the viewer keeps when the same uuid arrives from two positions.
     expect(keepLaterCopies([...result.page.entries, ...tailEntries])).toEqual(whole);
+  });
+});
+
+/**
+ * The records Gemini CLI v0.66.0 writes besides messages, applied as its own
+ * loader applies them (`createJsonlRecordAccumulator` in chatRecordingService.ts):
+ * a tool result patched in after the call (`$patch.toolCalls`), a `/rewind`
+ * (`$rewindTo`), and `removeIds` / `orderIds`. Without them every tool result
+ * read empty and rewound turns stayed in the conversation.
+ */
+describe('parseGeminiTranscript: patch and rewind records (v0.66.0 format)', () => {
+  let tmpFile: string | null = null;
+  afterEach(() => {
+    if (tmpFile) {
+      try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch { /* ignore */ }
+      tmpFile = null;
+    }
+  });
+
+  const timestamp = '2026-10-01T09:00:00.000Z';
+  const header = JSON.stringify({ sessionId: SESSION_ID, projectHash: '4c1e9a07', startTime: timestamp, lastUpdated: timestamp, kind: 'main' });
+  const userLine = (id: string, text: string): string => JSON.stringify({ id, timestamp, type: 'user', content: [{ text }] });
+  /** A reply recorded with its call still running: no result yet. */
+  const pendingCallReply = (id: string, callId: string): string => JSON.stringify({
+    id, timestamp, type: 'gemini', model: 'gemini-3-pro-preview', content: 'Reading it.',
+    toolCalls: [{ id: callId, name: 'read_file', args: { file_path: 'pom.xml' }, status: 'executing', timestamp }],
+  });
+  const resultPatch = (messageId: string, callId: string, output: string): string => JSON.stringify({
+    $patch: { id: messageId, toolCalls: [{ id: callId, result: [{ functionResponse: { id: callId, name: 'read_file', response: { output } } }] }] },
+  });
+
+  it('shows no result for a call still running', async () => {
+    tmpFile = writeSessionFile([header, userLine('u1', 'Open pom.xml.'), pendingCallReply('g1', 'call-1')]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant']);
+  });
+
+  it('takes a tool result patched in after the call, under the message\'s own key', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      userLine('u1', 'Open pom.xml.'),
+      pendingCallReply('g1', 'call-1'),
+      resultPatch('g1', 'call-1', '<project/>'),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries.map((entry) => entry.kind)).toEqual(['user', 'assistant', 'tool_result']);
+    expect(entries[2]).toMatchObject({ kind: 'tool_result', uuid: 'g1', toolUseId: 'call-1', content: '<project/>' });
+  });
+
+  it('applies a result carried in a patch\'s updates[] and replaces content by id', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      pendingCallReply('g1', 'call-1'),
+      JSON.stringify({ $patch: {
+        updates: [
+          { id: 'g1', content: 'Read it.', toolCalls: [{ id: 'call-1', result: [{ functionResponse: { response: { output: 'done' } } }] }] },
+        ],
+      } }),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'text', text: 'Read it.' }, { type: 'tool_use', id: 'call-1' }] });
+    expect(entries[1]).toMatchObject({ kind: 'tool_result', toolUseId: 'call-1', content: 'done' });
+  });
+
+  it('drops the rewound message and everything after it', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      userLine('u1', 'First question.'),
+      JSON.stringify({ id: 'g1', timestamp, type: 'gemini', content: 'First answer.' }),
+      userLine('u2', 'Second question.'),
+      JSON.stringify({ id: 'g2', timestamp, type: 'gemini', content: 'Second answer.' }),
+      JSON.stringify({ $rewindTo: 'u2' }),
+      userLine('u3', 'Asked again.'),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries.map((entry) => entry.uuid)).toEqual(['u1', 'g1', 'u3']);
+  });
+
+  it('a rewind to a message the window does not hold drops everything kept before it', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      userLine('u1', 'Question.'),
+      JSON.stringify({ $rewindTo: 'earlier-message' }),
+      userLine('u2', 'After the rewind.'),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries.map((entry) => entry.uuid)).toEqual(['u2']);
+  });
+
+  it('removes messages named in removeIds and moves orderIds to the end', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      userLine('u1', 'One.'),
+      userLine('u2', 'Two.'),
+      userLine('u3', 'Three.'),
+      JSON.stringify({ $patch: { removeIds: ['u2'], orderIds: ['u1'] } }),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries.map((entry) => entry.uuid)).toEqual(['u3', 'u1']);
+  });
+
+  it('a page that holds only the patch shows the result there, keyed to dedupe with the message\'s', async () => {
+    const lines = [header, userLine('u1', 'Open pom.xml.'), pendingCallReply('g1', 'call-1'), resultPatch('g1', 'call-1', '<project/>')];
+    tmpFile = writeSessionFile(lines);
+    const starts = lineStartBytes(lines);
+    // A tail that opens on the patch line: the message it patches is in the earlier page.
+    setParseWindowBytesForTests(fs.statSync(tmpFile).size - starts[3] + 1);
+    let tail: TranscriptEntry[];
+    try {
+      tail = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    } finally {
+      setParseWindowBytesForTests();
+    }
+    const tailEntries = tail.filter((entry) => entry.kind !== 'system');
+    expect(tailEntries).toEqual([
+      expect.objectContaining({ kind: 'tool_result', uuid: 'g1', toolUseId: 'call-1', content: '<project/>', origin: { conversationId: SESSION_ID, position: starts[3] } }),
+    ]);
+  });
+
+  it('carries each reply\'s tokens as per-turn usage, cached input split from fresh', async () => {
+    tmpFile = writeSessionFile([
+      header,
+      JSON.stringify({
+        id: 'g1', timestamp, type: 'gemini', model: 'gemini-3-pro-preview', content: 'Answer.',
+        tokens: { input: 1200, output: 80, cached: 1000, thoughts: 40, tool: 0, total: 1320 },
+      }),
+    ]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).toMatchObject({
+      kind: 'assistant',
+      usage: { inputTokens: 200, outputTokens: 120, cacheCreationInputTokens: 0, cacheReadInputTokens: 1000 },
+    });
+  });
+
+  it('a reply with no token record carries no usage', async () => {
+    tmpFile = writeSessionFile([header, JSON.stringify({ id: 'g1', timestamp, type: 'gemini', content: 'Answer.' })]);
+    const entries = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    expect(entries[0]).not.toHaveProperty('usage');
+  });
+});
+
+/**
+ * The bounded window the conversation indexer walks the whole file with, and
+ * the message trail and turn-end reply read from. Without it the index holds
+ * only a large Gemini chat's newest 16 MB.
+ */
+describe('parseGeminiTranscriptWindow', () => {
+  let tmpFile: string | null = null;
+  afterEach(() => {
+    if (tmpFile) {
+      try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch { /* ignore */ }
+      tmpFile = null;
+    }
+  });
+
+  const timestamp = '2026-10-01T09:00:00.000Z';
+  function conversationLines(turns: number): string[] {
+    const lines = [JSON.stringify({ sessionId: SESSION_ID, projectHash: '4c1e9a07', startTime: timestamp, lastUpdated: timestamp, kind: 'main' })];
+    for (let turn = 1; turn <= turns; turn += 1) {
+      // Every fourth prompt has no id, so its uuid is its line number.
+      const id = turn % 4 === 0 ? {} : { id: `user-${turn}` };
+      lines.push(JSON.stringify({ ...id, timestamp, type: 'user', content: [{ text: `question ${turn} ${'q'.repeat(60)}` }] }));
+      lines.push(JSON.stringify({ id: `gemini-${turn}`, timestamp, type: 'gemini', content: `answer ${turn}`, tokens: { input: 10 * turn, output: turn, cached: 0, total: 11 * turn } }));
+    }
+    return lines;
+  }
+
+  /** Walk from byte 0 the way the indexer does, until the offset stops advancing. */
+  async function walk(filePath: string, windowBytes: number): Promise<TranscriptEntry[]> {
+    const collected: TranscriptEntry[] = [];
+    let offset = 0;
+    for (let guard = 0; guard < 1000; guard += 1) {
+      const window = await parseGeminiTranscriptWindow(SESSION_ID, filePath, offset, windowBytes);
+      collected.push(...window.entries);
+      if (window.nextByteOffset <= offset || window.nextByteOffset >= window.totalBytes) break;
+      offset = window.nextByteOffset;
+    }
+    return collected;
+  }
+
+  it('walks the whole file in windows to the same entries a whole parse gives, line-named uuids included', async () => {
+    tmpFile = writeSessionFile(conversationLines(20));
+    const whole = await parseGeminiTranscript(SESSION_ID, tmpFile);
+    const walked = await walk(tmpFile, 600);
+    expect(walked.map((entry) => entry.uuid)).toEqual(whole.map((entry) => entry.uuid));
+    // An id-less prompt deep in the file keeps its line-numbered uuid in a later window.
+    expect(walked.some((entry) => entry.uuid === `${SESSION_ID}:7`)).toBe(true);
+    expect(walked.filter((entry) => entry.kind === 'assistant').every((entry) => entry.kind === 'assistant' && entry.usage !== undefined)).toBe(true);
+  });
+
+  it('reads only what was appended from a later offset', async () => {
+    const lines = conversationLines(3);
+    tmpFile = writeSessionFile(lines);
+    const size = fs.statSync(tmpFile).size;
+    fs.appendFileSync(tmpFile, `${JSON.stringify({ id: 'gemini-late', timestamp, type: 'gemini', content: 'appended answer' })}\n`);
+    // A trail read steps back one byte so its drop consumes the closing newline.
+    const window = await parseGeminiTranscriptWindow(SESSION_ID, tmpFile, size - 1, 64 * 1024);
+    expect(window.entries.map((entry) => entry.uuid)).toEqual(['gemini-late']);
+    expect(window.nextByteOffset).toBe(window.totalBytes);
+  });
+
+  it('parses a legacy single document whole at byte 0, and nothing after', async () => {
+    tmpFile = writeFixture([JSON.stringify({ messages: [{ id: 'u1', type: 'user', content: [{ text: 'legacy prompt' }] }] })]);
+    const first = await parseGeminiTranscriptWindow(SESSION_ID, tmpFile, 0, 64);
+    expect(first.entries).toEqual([expect.objectContaining({ uuid: 'u1' })]);
+    expect(first.nextByteOffset).toBe(first.totalBytes);
+    const later = await parseGeminiTranscriptWindow(SESSION_ID, tmpFile, 10, 64);
+    expect(later.entries).toEqual([]);
   });
 });

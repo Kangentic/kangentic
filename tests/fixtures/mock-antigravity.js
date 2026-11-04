@@ -47,7 +47,7 @@ for (let i = 0; i < args.length; i++) {
     if (args[i + 1]) { prompt = args[i + 1]; i++; }
     continue;
   }
-  if (a === '--mode' || a === '--model' || a === '--effort' || a === '--output-format') {
+  if (a === '--mode' || a === '--model' || a === '--effort' || a === '--output-format' || a === '--settings') {
     if (args[i + 1] && !args[i + 1].startsWith('-')) i++;
     continue;
   }

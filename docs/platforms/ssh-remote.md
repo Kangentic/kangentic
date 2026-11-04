@@ -108,7 +108,7 @@ A probe an agent's CLI answers (its hook trust, a chat id, a model list) runs on
 
 ## Agents
 
-All 14 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run with its real CLI.** Each is covered by unit tests against a fake host, and each one's mock CLI has run on a real sshd in a Docker container through the real app. That run added the host over ssh with a password, made a remote project, and started tasks for all 14 agents (eight at once in one host folder). It confirmed, for the agents that start there:
+All 15 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run with its real CLI.** Each is covered by unit tests against a fake host. The mock CLIs of the first 14 have run on a real sshd in a Docker container through the real app (Kimi Code joined after that run, so it has only the unit tests). That run added the host over ssh with a password, made a remote project, and started tasks for 14 agents (eight at once in one host folder). It confirmed, for the agents that start there:
 
 - the agent runs on the host under the host program's own Node, and its trust, settings and MCP files are written there with hook paths of the host;
 - a file the user already had (`.gemini/settings.json`, `.cursor/mcp.json`, `~/.gemini/trustedFolders.json`) keeps its own entries beside Kangentic's;

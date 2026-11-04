@@ -3,6 +3,8 @@
  *
  * These tests exercise pure logic without any Electron, DOM, or IPC dependencies.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { adaptCommandForShell, quoteArg } from '../../src/shared/paths';
 import {
@@ -86,6 +88,7 @@ vi.mock('../../src/main/agent/shared/exec-version', () => ({
 
 // Import after mocks are set up
 const { AiderAdapter } = await import('../../src/main/agent/adapters/aider');
+const { aiderAnswerUsage } = await import('../../src/main/agent/adapters/aider/aider-adapter');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -220,9 +223,11 @@ describe('AiderAdapter', () => {
       const noYesPermissionModes: PermissionMode[] = ['default', 'plan', 'dontAsk', 'acceptEdits', 'auto'];
 
       for (const mode of yesPermissionModes) {
-        it(`adds --yes for ${mode}`, () => {
+        it(`adds --yes-always for ${mode}`, () => {
+          // aider/args.py defines `--yes-always` and no `--yes` alias.
           const command = adapter.buildCommand(makeOptions({ permissionMode: mode }));
-          expect(command).toContain('--yes');
+          expect(command.split(' ')).toContain('--yes-always');
+          expect(command.split(' ')).not.toContain('--yes');
         });
       }
 
@@ -257,31 +262,90 @@ describe('AiderAdapter', () => {
       });
     });
 
-    // ── Ignored options ──────────────────────────────────────────────────
+    // ── Session history and resume ───────────────────────────────────────
+    //
+    // Aider has no session id; Kangentic names each session's history file
+    // with the id it mints (`--chat-history-file`) and resumes by restoring it
+    // (`--restore-chat-history`), https://aider.chat/docs/config/options.html.
 
-    it('adds --restore-chat-history when resume is true', () => {
-      const command = adapter.buildCommand(makeOptions({ resume: true }));
-      expect(command).toContain('--restore-chat-history');
+    const SESSION_ID = '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00';
+
+    it("names the session's own history file by its id, by absolute path", () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, shell: 'bash' }));
+      const expectedPath = path.join('/projects/my-app', `.aider.chat.history.${SESSION_ID}.md`).replace(/\\/g, '/');
+      expect(command).toContain(`--chat-history-file ${quoteArg(expectedPath, 'bash')}`);
     });
 
-    it('omits --restore-chat-history when resume is false', () => {
-      const command = adapter.buildCommand(makeOptions({ resume: false }));
-      expect(command).not.toContain('--restore-chat-history');
-    });
-
-    it('omits --restore-chat-history when resume is absent', () => {
+    it("keeps Aider's default history file for a session with no id", () => {
       const command = adapter.buildCommand(makeOptions());
-      expect(command).not.toContain('--restore-chat-history');
+      expect(command).not.toContain('--chat-history-file');
     });
 
-    it('does not use --resume or --session-id (Aider has no session IDs)', () => {
-      const command = adapter.buildCommand(makeOptions({
-        sessionId: 'session-123',
-        resume: true,
-      }));
+    it('restores the history on resume', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: true }));
+      expect(command).toContain('--restore-chat-history');
+      expect(command).toContain(`.aider.chat.history.${SESSION_ID}.md`);
+    });
+
+    it('omits --restore-chat-history when resume is false or absent', () => {
+      expect(adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: false }))).not.toContain('--restore-chat-history');
+      expect(adapter.buildCommand(makeOptions())).not.toContain('--restore-chat-history');
+    });
+
+    it("carries a resume's message on --message with the restored history, never typed", () => {
+      // A typed message waits only for the PTY to go quiet, and Aider is quiet
+      // at a confirm prompt that would take it as an answer.
+      const command = adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: true, prompt: 'Continue', shell: 'bash' }));
+      expect(command).toContain('--restore-chat-history');
+      expect(command).toContain('--message Continue');
+      expect(adapter.resumePromptDelivery).toBe('command-line');
+    });
+
+    it('opens a resume with no message interactive', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: true }));
+      expect(command).toContain('--restore-chat-history');
+      expect(command).not.toContain('--message');
+    });
+
+    it('declares a caller-owned id and no Aider resume flag of its own', () => {
+      expect(adapter.supportsCallerSessionId).toBe(true);
+      const command = adapter.buildCommand(makeOptions({ sessionId: SESSION_ID, resume: true }));
       expect(command).not.toContain('--resume');
       expect(command).not.toContain('--session-id');
-      expect(command).not.toContain('session-123');
+    });
+
+    it("locates the session's own history file, and Aider's default with no id", async () => {
+      mockExistsSyncReturnValue = true;
+      expect(await adapter.locateSessionHistoryFile(SESSION_ID, '/projects/my-app'))
+        .toBe(path.join('/projects/my-app', `.aider.chat.history.${SESSION_ID}.md`));
+      expect(await adapter.locateSessionHistoryFile('', '/projects/my-app'))
+        .toBe(path.join('/projects/my-app', '.aider.chat.history.md'));
+    });
+
+    // ── Model and effort ─────────────────────────────────────────────────
+
+    it('passes the column model and effort as --model and --reasoning-effort', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'gpt-5', effort: 'high', shell: 'bash' }));
+      expect(command).toContain('--model gpt-5');
+      expect(command).toContain('--reasoning-effort high');
+    });
+
+    it('omits both flags when neither is set', () => {
+      const command = adapter.buildCommand(makeOptions());
+      expect(command).not.toContain('--model');
+      expect(command).not.toContain('--reasoning-effort');
+    });
+
+    it('puts --model ahead of the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'gpt-5', prompt: 'use --model other', shell: 'bash' }));
+      expect(command).toContain('--model gpt-5');
+      expect(command.indexOf('--model gpt-5')).toBeLessThan(command.indexOf('--message'));
+    });
+
+    it('puts --reasoning-effort ahead of the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ effort: 'low', prompt: 'use --reasoning-effort high', shell: 'bash' }));
+      expect(command).toContain('--reasoning-effort low');
+      expect(command.indexOf('--reasoning-effort low')).toBeLessThan(command.indexOf('--message'));
     });
 
     it('ignores nonInteractive flag', () => {
@@ -468,6 +532,79 @@ describe('AiderAdapter', () => {
     });
   });
 
+  // ── Model seed and live swap ─────────────────────────────────────────────
+
+  describe('configuredModelFromCommand', () => {
+    it("reads the builder's --model, on every quoting", () => {
+      for (const shell of ['bash', 'pwsh']) {
+        const command = adapter.buildCommand(makeOptions({ model: 'openrouter/anthropic/claude-sonnet-4-5', shell }));
+        expect(adapter.configuredModelFromCommand(command), shell)
+          .toEqual({ id: 'openrouter/anthropic/claude-sonnet-4-5', displayName: 'Sonnet 4.5' });
+      }
+    });
+
+    it('shows a non-Anthropic name as written, without its provider', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'openai/gpt-5', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'openai/gpt-5', displayName: 'gpt-5' });
+    });
+
+    it('never reads a --model out of the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: 'run it with --model other', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toBeNull();
+    });
+
+    it('reads a double-quoted, single-quoted and unquoted id from a command string', () => {
+      expect(adapter.configuredModelFromCommand('aider --model "openrouter/x-y" --message hi'))
+        .toEqual({ id: 'openrouter/x-y', displayName: 'x-y' });
+      expect(adapter.configuredModelFromCommand("aider --model 'x/y' --message hi"))
+        .toEqual({ id: 'x/y', displayName: 'y' });
+      expect(adapter.configuredModelFromCommand('aider --model gpt-5 --message hi'))
+        .toEqual({ id: 'gpt-5', displayName: 'gpt-5' });
+    });
+
+    it('reads --model as the last flag when there is no --message', () => {
+      expect(adapter.configuredModelFromCommand('aider --no-auto-commits --model gpt-5'))
+        .toEqual({ id: 'gpt-5', displayName: 'gpt-5' });
+    });
+
+    it('returns null when the command has no --model', () => {
+      expect(adapter.configuredModelFromCommand('aider --message hi')).toBeNull();
+    });
+  });
+
+  describe('getInjectionSequence', () => {
+    it('switches the model and the reasoning effort with their slash commands', () => {
+      expect(adapter.getInjectionSequence({ model: 'gpt-5', modelChanged: true, effort: 'low', effortChanged: true }))
+        .toEqual(['/model gpt-5', '/reasoning-effort low']);
+    });
+
+    it('writes nothing for an unchanged or empty field', () => {
+      expect(adapter.getInjectionSequence({ model: 'gpt-5', modelChanged: false, effort: null, effortChanged: true })).toEqual([]);
+    });
+
+    it('switches only the effort when only the effort changed', () => {
+      expect(adapter.getInjectionSequence({ modelChanged: true, model: null, effortChanged: true, effort: 'low' }))
+        .toEqual(['/reasoning-effort low']);
+    });
+
+    it('switches only the model when only the model changed', () => {
+      expect(adapter.getInjectionSequence({ model: 'gpt-5', modelChanged: true, effort: 'low', effortChanged: false }))
+        .toEqual(['/model gpt-5']);
+    });
+
+    it('drops a model carrying a control character, so it cannot submit a second command', () => {
+      expect(adapter.getInjectionSequence({ model: 'gpt-4o\r/run echo hi', modelChanged: true, effort: null, effortChanged: false }))
+        .toEqual([]);
+      expect(adapter.getInjectionSequence({ model: 'gpt-4o\r/run echo hi', modelChanged: true, effort: 'low', effortChanged: true }))
+        .toEqual(['/reasoning-effort low']);
+    });
+
+    it('drops an effort carrying a control character', () => {
+      expect(adapter.getInjectionSequence({ model: 'gpt-5', modelChanged: true, effort: 'low\n/run echo hi', effortChanged: true }))
+        .toEqual(['/model gpt-5']);
+    });
+  });
+
   // ── Exit sequence ────────────────────────────────────────────────────────
 
   describe('getExitSequence', () => {
@@ -590,5 +727,75 @@ describe('agent-display-name - aider entry', () => {
 
   it('agentInstallUrl returns the Aider homepage URL for "aider"', () => {
     expect(agentInstallUrl('aider')).toBe('https://aider.chat');
+  });
+});
+
+// -- flags against the real help ---------------------------------------------
+
+describe('every flag buildCommand emits is one the real Aider 0.86.2 help lists', () => {
+  // Derived from the command the builder returns, so a flag added to it without
+  // a check against the CLI fails here. The hand-kept list in
+  // aider-capability-discovery.test.ts cannot notice a flag it does not name.
+  const help = fs.readFileSync(path.resolve(__dirname, '../fixtures/aider-help-0.86.2.txt'), 'utf-8');
+  const ALL_OPTIONS = {
+    sessionId: '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00',
+    resume: true,
+    prompt: 'do the thing',
+    model: 'some-model',
+    effort: 'high',
+    shell: 'bash',
+    eventsOutputPath: EVENTS_PATH,
+  };
+
+  it.each<PermissionMode>(['plan', 'default', 'acceptEdits', 'bypassPermissions'])('in %s mode with every option set', (permissionMode) => {
+    const command = new AiderAdapter().buildCommand(makeOptions({ ...ALL_OPTIONS, permissionMode }));
+    // Quoted values are single-quoted or bare here; none of them starts with `--`.
+    const flags = command.split(/\s+/).filter((token) => token.startsWith('--'));
+    expect(flags).toEqual(expect.arrayContaining(['--chat-history-file', '--restore-chat-history', '--model', '--reasoning-effort', '--message', '--notifications-command']));
+    for (const flag of flags) {
+      const escaped = flag.replace(/-/g, '\\-');
+      expect(help, flag).toMatch(new RegExp(`(?:^|[\\s\\[,|])${escaped}(?=[\\s\\],|])`, 'm'));
+    }
+  });
+});
+
+// -- aiderAnswerUsage --------------------------------------------------------
+
+describe('aiderAnswerUsage', () => {
+  it('reads a single-line Tokens and Cost report', () => {
+    const stdout = [
+      'Aider v0.86.1',
+      'Model: gpt-4o with diff edit format',
+      'The answer.',
+      '',
+      'Tokens: 12k sent, 40 received. Cost: $0.02 message, $0.07 session.',
+    ].join('\n');
+    expect(aiderAnswerUsage(stdout)).toEqual({
+      model: 'gpt-4o',
+      inputTokens: 12000,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      outputTokens: 40,
+      costUsd: 0.02,
+    });
+  });
+
+  it('reads the model from a plain Model banner line', () => {
+    const stdout = 'Model: gpt-4o with diff edit format\nThe answer.\nTokens: 500 sent, 20 received.';
+    expect(aiderAnswerUsage(stdout)?.model).toBe('gpt-4o');
+  });
+
+  it('reports a null model when the banner announces none', () => {
+    const stdout = 'Aider v0.86.1\nThe answer.\nTokens: 500 sent, 20 received.';
+    expect(aiderAnswerUsage(stdout)?.model).toBeNull();
+  });
+
+  it('reports a null cost for a Tokens report with no Cost', () => {
+    const usage = aiderAnswerUsage('The answer.\nTokens: 500 sent, 20 received.');
+    expect(usage).toMatchObject({ inputTokens: 500, outputTokens: 20, costUsd: null });
+  });
+
+  it('returns null when there is no Tokens report', () => {
+    expect(aiderAnswerUsage('Aider v0.86.1\nJust an answer.')).toBeNull();
   });
 });

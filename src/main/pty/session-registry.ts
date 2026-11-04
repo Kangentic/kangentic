@@ -120,7 +120,7 @@ export interface ManagedSession {
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at
-   *  spawn for caller-owned-ID adapters (Claude, Kimi, Qwen); set later by the
+   *  spawn for caller-owned-ID adapters (Claude, Qwen); set later by the
    *  capture pipeline for adapters that emit it over the PTY or via hooks
    *  (OpenCode, Codex, Gemini, Droid). Null until captured. */
   agentSessionId?: string | null;

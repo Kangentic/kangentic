@@ -1,206 +1,122 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteArg } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import type { PermissionMode } from '../../../../shared/types';
 import type { SpawnCommandOptions } from '../../agent-adapter';
+import { kimiKangenticMcpEntry, writeKimiProjectMcpConfig } from './mcp-config';
 
 /**
- * Build the shell command string for `kimi` invocations.
+ * Build the shell command that starts Kimi Code CLI's interactive session.
  *
- * Flag set was captured empirically from `kimi --help` (v1.37.0):
- *   --version / -V               version + exit
- *   --work-dir / -w <DIR>        working directory
- *   --add-dir <DIR>              additional workspace dirs (repeatable)
- *   --session / -S / --resume / -r <ID>   resume session (or pick if no ID)
- *   --continue / -C              resume previous session in work_dir
- *   --config <TEXT>              inline TOML/JSON
- *   --config-file <FILE>         config file path
- *   --model / -m <NAME>          LLM model
- *   --thinking / --no-thinking   thinking mode
- *   --yolo / --yes / -y          auto-approve
- *   --plan                       start in plan mode
- *   --prompt / --command / -p / -c <TEXT>   user prompt
- *   --print                      non-interactive (implicitly adds --yolo)
- *   --output-format <text|stream-json>      with --print
- *   --input-format  <text|stream-json>      with --print + stdin
- *   --final-message              with --print, only print final assistant msg
- *   --quiet                      alias for --print --output-format text --final-message
- *   --wire                       Wire JSON-RPC server (experimental)
- *   --mcp-config-file <FILE>     MCP config file (repeatable, used here)
- *   --mcp-config <TEXT>          MCP config JSON (repeatable)
- *   --skills-dir <DIR>           custom skills dirs (repeatable)
- *   --max-steps-per-turn <N>     loop control
- *   --max-retries-per-step <N>   loop control
- *   --max-ralph-iterations <N>   loop control
+ * Flags from `en/reference/kimi-command.md` and
+ * `apps/kimi-code/src/cli/options.ts` (Kimi Code CLI 2.4.1, read 2026-11-03):
  *
- * Subcommands (login/logout/term/acp/info/export/mcp/plugin/vis/web) are
- * orthogonal to the spawn flow and are not assembled here.
+ *   -S, --session [id]   resume that session (it never creates one with a chosen id)
+ *   -c, --continue       continue the working directory's previous session
+ *   -m, --model <alias>  a model alias from `config.toml`
+ *   -y, --yolo           "Ask When Needed" permission mode
+ *   --auto               "Never Ask" permission mode
+ *   --plan               start in Plan mode
  *
- * Empirical notes:
- *   - `--print --output-format stream-json` does NOT take `--quiet`
- *     (validated: kimi rejects "Quiet mode implies output-format text").
- *   - Resume via `-r <uuid>` *appends* to the same `wire.jsonl`. The
- *     parser must therefore use append-mode byte-cursor tracking.
- *   - `--print` implicitly enables `--yolo`, so passing both is benign
- *     but redundant.
+ * There is no working-directory flag (the CLI uses its process cwd, which the
+ * PTY sets) and no way to start the session with a prompt: a positional
+ * argument fails with "unknown command", and `-p` runs one prompt and exits.
+ * So the builder never puts a prompt on the command line, and the adapter
+ * declares `freshPromptDelivery` and `resumePromptDelivery` as `'typed'`: the
+ * engine types the prompt in once the TUI is ready. `--continue` conflicts
+ * with `--session`, and `--yolo` with `--auto`.
+ *
+ * Built from the docs and source, not yet checked against a real run.
  */
 export interface KimiCommandOptions extends Omit<SpawnCommandOptions, 'agentPath'> {
   kimiPath: string;
   /**
    * When true and no `sessionId` is supplied, emit `--continue` so Kimi
-   * resumes the most recent session for `cwd`. Ignored when `sessionId`
-   * is set (the explicit ID always wins). Drives the "Resume last
-   * session" affordance for cases where the DB session record is lost
-   * or the user has an active Kimi session from outside Kangentic.
-   *
-   * Currently only reachable via direct `KimiCommandBuilder` calls.
-   * `KimiAdapter.buildCommand` spreads `SpawnCommandOptions`, which does
-   * not yet expose this field; engine-layer plumbing (adding the option
-   * to the shared spawn options + threading it from the action handler)
-   * lands as a follow-up.
+   * resumes the working directory's most recent session. Ignored when
+   * `sessionId` is set (the explicit id always wins).
    */
   useContinueFallback?: boolean;
 }
 
 /**
- * Map Kangentic's PermissionMode to Kimi's flag set.
+ * Map Kangentic's permission mode to Kimi Code's flags
+ * (`en/guides/interaction.md`, "The three permission modes"):
  *
- *   plan               → --plan (read-only mode)
- *   bypassPermissions  → --yolo (auto-approve all)
- *   default / acceptEdits / dontAsk / auto → no flag (interactive confirms)
+ *   plan               -> --plan  (read-only Plan mode)
+ *   default            -> no flag ("Always Ask", the CLI's `manual` default)
+ *   auto               -> --yolo  ("Ask When Needed": still asks for sensitive
+ *                                  files, dangerous commands and a plan exit)
+ *   bypassPermissions  -> --auto  ("Never Ask": only a plan waits for review)
  *
- * Aider/Cursor/Warp use the same coarse mapping. Kimi has no per-tool
- * granularity exposed via flags - the only knobs are --yolo and --plan.
+ * Kimi Code has no accept-edits or deny-unless-allowed mode, so the adapter
+ * does not offer acceptEdits or dontAsk; a stored one maps to no flag. A
+ * resume passes the mode again, which overrides the one stored in the session
+ * (since 0.14.2).
  */
-function mapPermissionMode(mode: PermissionMode): string[] {
+export function kimiPermissionFlags(mode: PermissionMode): string[] {
   switch (mode) {
     case 'plan':
       return ['--plan'];
-    case 'bypassPermissions':
-      return ['--yolo'];
-    case 'default':
-    case 'dontAsk':
-    case 'acceptEdits':
     case 'auto':
+      return ['--yolo'];
+    case 'bypassPermissions':
+      return ['--auto'];
+    case 'default':
+    case 'acceptEdits':
+    case 'dontAsk':
       return [];
   }
+}
+
+/** Whether a session's Kangentic MCP entry is written (`kangenticMcp: 'shared-folder'`). */
+export function kimiMcpWiringEnabled(
+  options: Pick<KimiCommandOptions, 'mcpServerEnabled' | 'mcpServerUrl' | 'mcpServerToken'>,
+): options is typeof options & { mcpServerUrl: string; mcpServerToken: string } {
+  return options.mcpServerEnabled !== false && Boolean(options.mcpServerUrl) && Boolean(options.mcpServerToken);
 }
 
 export class KimiCommandBuilder {
   buildKimiCommand(options: KimiCommandOptions): string {
     const { shell } = options;
-    const parts: string[] = [quoteArg(options.kimiPath, shell)];
+    // A Kimi Code installed in a WSL distro is started by the path the distro sees.
+    const place = options.cliTarget ?? null;
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.kimiPath, shell)];
 
-    // Working directory: Kimi accepts -w / --work-dir. We pass it
-    // explicitly so spawning from a different cwd still operates on
-    // the task directory. Forward-slash normalize so PowerShell and
-    // bash both parse the path correctly.
-    parts.push('-w', quoteArg(toForwardSlash(options.cwd), shell));
-
-    // Session resumption. Kimi exposes both `--continue` (resume the
-    // previous session for the work_dir) and `--session <id>` /
-    // `-r <id>` (resume a specific session by UUID). For both initial
-    // creation (caller-owned UUID via Session.create(work_dir,
-    // session_id=...)) and resume, Kimi accepts the same `--session
-    // <uuid>` form, so the resume flag is irrelevant to the argv shape.
-    //
-    // Precedence:
-    //   1. `sessionId` (caller-owned UUID) → `--session <uuid>`. Always
-    //      preferred when set: unambiguous across reorderings of
-    //      `kimi.json` and survives the user starting another Kimi
-    //      session in the same directory between Kangentic spawns.
-    //   2. `useContinueFallback` (no sessionId) → `--continue`. Escape
-    //      hatch for "resume latest session in this work_dir" - useful
-    //      when the DB record is lost or the user wants to attach to a
-    //      session started by a manual `kimi` invocation.
-    //   3. Neither → no resume flag, Kimi starts a fresh session.
     if (options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
     } else if (options.useContinueFallback) {
       parts.push('--continue');
     }
 
-    // Permission mapping (--yolo / --plan / nothing).
-    parts.push(...mapPermissionMode(options.permissionMode));
+    parts.push(...kimiPermissionFlags(options.permissionMode));
 
-    // Per-column model override
     if (options.model && options.model.trim().length > 0) {
       parts.push('--model', quoteArg(options.model.trim(), shell));
     }
 
-    // Non-interactive print mode produces stream-json which we feed
-    // into the wire-parser pipeline. Without this flag the agent
-    // expects an interactive TTY.
-    if (options.nonInteractive) {
-      parts.push('--print', '--output-format', 'stream-json');
-    }
-
-    // MCP: Kangentic's in-process MCP HTTP server is exposed by URL.
-    // We write a minimal fastmcp-compatible config to <sessionDir>/mcp.json
-    // and pass `--mcp-config-file <FILE>`. Inline JSON via `--mcp-config
-    // <TEXT>` is fragile across shells (quote escaping is shell-specific
-    // and easy to get wrong); a file path goes through quoteArg cleanly
-    // on every platform. Schema follows fastmcp/Anthropic MCP convention:
-    //   { "mcpServers": { "<name>": { "url": "...", "headers": {...} } } }
-    if (options.mcpServerEnabled && options.mcpServerUrl) {
-      if (!options.statusOutputPath) {
-        // All production spawn paths populate statusOutputPath via
-        // sessionOutputPaths(). Reaching this branch means a caller
-        // built spawn options manually and forgot it - the session
-        // would silently lose MCP wiring otherwise.
-        console.warn(
-          '[kimi command-builder] mcpServerEnabled is true but statusOutputPath is missing - skipping MCP config wiring',
-        );
-      } else if (!options.mcpServerToken) {
-        // The server answers every request without the token with a 401, so a
-        // config with no header would point Kimi at a server it can never use.
-        // Skip the wiring, as Codex does without its token.
-        console.warn(
-          '[kimi command-builder] mcpServerEnabled is true but mcpServerToken is missing - skipping MCP config wiring',
-        );
-      } else {
-        const mcpConfig = {
-          mcpServers: {
-            kangentic: {
-              url: options.mcpServerUrl,
-              headers: { 'X-Kangentic-Token': options.mcpServerToken },
-            },
-          },
-        };
-        const sessionDir = path.dirname(options.statusOutputPath);
-        try {
-          fs.mkdirSync(sessionDir, { recursive: true });
-        } catch (err) {
-          console.error(`[kimi command-builder] Failed to create session directory: ${sessionDir}`, err);
-          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
-        }
-        const mcpConfigPath = path.join(sessionDir, 'mcp.json');
-        // sync-write-ok: this must throw, not degrade - the path below is
-        // passed straight to --mcp-config-file, so a swallowed failure would
-        // spawn Kimi pointed at a config file that does not exist. The spawn
-        // preamble already reports and notifies (notifySpawnBlocked) on throw.
-        fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-        parts.push('--mcp-config-file', quoteArg(toForwardSlash(mcpConfigPath), shell));
-      }
-    }
-
-    // Prompt delivery: `--prompt <TEXT>` (alias of `-p`, `-c`, `--command`),
-    // "User prompt to the agent". It keeps the session interactive; only
-    // `--print` above makes it non-interactive (`kimi --help`). It rides a
-    // resume too (`--session <id>`). Aider/Codex append a positional arg, but
-    // Kimi's grammar is a typed --prompt option, so we use the flag form.
-    if (options.prompt) {
-      const needsDoubleQuoteReplacement = shell
-        ? !isUnixLikeShell(shell)
-        : process.platform === 'win32';
-      const safePrompt = needsDoubleQuoteReplacement
-        ? options.prompt.replace(/"/g, "'")
-        : options.prompt;
-      parts.push('--prompt', quoteArg(safePrompt, shell, { multiline: true }));
-    }
+    this.writeMcpConfig(options);
 
     return parts.join(' ');
+  }
+
+  /**
+   * Write Kangentic's server into the working folder's `.kimi-code/mcp.json`
+   * (see `mcp-config.ts`). The bridge for a distro on NAT networking is
+   * prepared in the session's own directory, beside its status file.
+   */
+  writeMcpConfig(options: KimiCommandOptions): void {
+    if (!kimiMcpWiringEnabled(options)) return;
+    if (!options.statusOutputPath) {
+      console.warn('[kimi command-builder] mcpServerEnabled is true but statusOutputPath is missing - skipping MCP config wiring');
+      return;
+    }
+    const entry = kimiKangenticMcpEntry({
+      url: options.mcpServerUrl,
+      token: options.mcpServerToken,
+      place: options.cliTarget ?? null,
+      sessionDirectory: path.dirname(options.statusOutputPath),
+    });
+    writeKimiProjectMcpConfig(options.cwd, entry);
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

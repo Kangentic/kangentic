@@ -125,7 +125,7 @@ PermissionMode values:
 - `auto` -- `--permission-mode auto` (classifier-based auto-approval)
 - `bypassPermissions` -- `--dangerously-skip-permissions` (no prompts at all)
 
-All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI only exposes Interactive and Non-Interactive; Oz CLI exposes Plan, Default, and Auto via Warp agent profiles).
+All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI exposes Interactive (Confirm Changes), Interactive (Skip Approvals), Plan (Read-Only) and Non-Interactive (Full Access); Oz CLI exposes only Default, since the user's Warp agent profile decides its permissions).
 
 ## Remote Execution
 
@@ -230,7 +230,7 @@ something is listening on.
 | `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |
 | `contextBar.showContextFraction` | boolean | `true` | Show the context window usage percentage |
 | `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
-| `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window, and only the windows its plan has). A window disappears once its reset time passes, and the bars hide when none is left. Hidden for adapters that do not report rate limits. |
+| `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window, and only the windows its plan has). A window disappears once its reset time passes, and the bars hide when none is left. A pill shows only its own agent's windows, so Antigravity's quota never appears on a Claude session. Hidden for adapters that do not report rate limits. |
 
 The model and effort pills are intentionally NOT toggleable. They double as in-place picker triggers (clicking them opens a popover whose pick restarts the task's session with the new model or effort; a Command Terminal switches live), so a "hide" toggle would silently disable that feature. They render whenever a session reports a model.
 
@@ -372,6 +372,6 @@ Not every id in `settings-registry.ts` is a key in this file. These four rows wr
 
 The other ids that are not keys fall into three groups:
 
-- **A row that writes other keys.** Each `notifications.on*` row is one dropdown that writes the event's key under both `notifications.desktop` and `notifications.toasts`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `keybindings`.
+- **A row that writes other keys.** Each `notifications.on*` row is one dropdown that writes the event's key under both `notifications.desktop` and `notifications.toasts`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `hotkeyOverrides`.
 - **A row stored outside this file.** `project.defaultAgent`, `project.defaultModel` and `project.defaultEffort` are columns on the project's row in the global database.
 - **An action, a notice or a card.** `browser.clearStorage`, `mobileBridge.pairing`, `mobileBridge.devices`, `mobileBridge.getApp`, `developer.crashReports` and `developer.devTriggers` store nothing in `AppConfig`. `workflows.agentCard` and `automation.agentCard` name a card, and its rows write `workflows.*` and `automation.*`.

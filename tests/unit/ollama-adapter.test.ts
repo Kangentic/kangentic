@@ -25,13 +25,85 @@ let mockExecVersionShouldFail = false;
 let mockExistsSyncReturnValue = true;
 let execVersionCallCount = 0;
 
-// Capability discovery: `ollama list` via node:child_process.
+// Capability discovery: `ollama list` and `ollama run --help` via node:child_process.
 let mockListStdout = '';
 let mockListShouldFail = false;
+let mockHelpStdout = '';
+let mockHelpShouldFail = false;
+
+/**
+ * `ollama run --help` at v0.40.14, the flag block of
+ * https://github.com/ollama/ollama/blob/v0.40.14/cmd/cmd.go as cobra prints it.
+ *
+ * Reconstructed, not captured: the binary was never run. The flag usage
+ * strings were checked byte for byte against the signed v0.40.14
+ * `ollama.exe` (from the release's ollama-windows-amd64.zip, signer Ollama
+ * Inc.), which carries "Enable thinking mode: true/false or high/medium/low
+ * for supported models", "Hide thinking output (if provided)" and "Show
+ * timings for response". The column layout and the stream the help goes to
+ * (stdout, which readCliOutput reads) are cobra's and are still unconfirmed
+ * until a real `ollama run --help` is captured into tests/fixtures/.
+ */
+const RUN_HELP_V0_40_14 = [
+  'Run a model',
+  '',
+  'Usage:',
+  '  ollama run MODEL [PROMPT] [flags]',
+  '',
+  'Flags:',
+  '      --dimensions int     Truncate output embeddings to specified dimension (embedding models only)',
+  '      --format string      Response format (e.g. json)',
+  '  -h, --help               help for run',
+  '      --hidethinking       Hide thinking output (if provided)',
+  '      --insecure           Use an insecure registry',
+  '      --keepalive string   Duration to keep a model loaded (e.g. 5m)',
+  '      --nowordwrap         Don\'t wrap words to the next line automatically',
+  '      --think string[="true"]   Enable thinking mode: true/false or high/medium/low for supported models',
+  '      --verbose            Show timings for response',
+  '',
+].join('\n');
+/** The same help with the `--think` line removed (a CLI before 0.9.0). */
+const RUN_HELP_WITHOUT_THINK = RUN_HELP_V0_40_14.split('\n').filter((line) => !line.includes('--think')).join('\n');
 // Records which node:child_process function capability-discovery.ts last invoked.
 // Lets platform-routing tests distinguish exec (win32 shell path) from execFile
 // (non-win32 direct path) without spawning a real process.
 let lastChildProcessCall: 'exec' | 'execFile' | null = null;
+// Every command string / arg list the child_process mock was asked to run, in order.
+let childProcessInvocations: string[] = [];
+
+// WSL routing: a CLI path under `\\wsl.localhost\` resolves to a target, and
+// the target's exec is recorded here instead of spawning wsl.exe.
+const WSL_PATH_PREFIX = '\\\\wsl.localhost\\';
+const WSL_LINUX_CLI_PATH = '/usr/bin/ollama';
+let execCliForTargetCalls: string[][] = [];
+// Every runCliPrintAnswer call the adapter makes (the answer run's CLI args).
+let answerRunCalls: Array<{ args: string[] }> = [];
+
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    resolveCliTarget: async (cliPath: string | null | undefined) => {
+      if (!cliPath || !cliPath.startsWith(WSL_PATH_PREFIX)) return null;
+      return { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: WSL_LINUX_CLI_PATH, facts: {} };
+    },
+    execCliForTarget: async (_target: unknown, args: string[]) => {
+      execCliForTargetCalls.push(args);
+      return { stdout: args.includes('--help') ? mockHelpStdout : mockListStdout, stderr: '' };
+    },
+  };
+});
+
+vi.mock('../../src/main/agent/shared/cli-answer', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-answer')>();
+  return {
+    ...original,
+    runCliPrintAnswer: async (options: { args: string[] }) => {
+      answerRunCalls.push({ args: options.args });
+      return 'answered';
+    },
+  };
+});
 
 vi.mock('which', () => ({
   default: async () => {
@@ -68,8 +140,15 @@ vi.mock('node:child_process', () => {
   const promisifyCustom = Symbol.for('nodejs.util.promisify.custom');
   const makeExec = (callType: 'exec' | 'execFile') => {
     const execStub = (): void => {};
-    (execStub as unknown as Record<symbol, unknown>)[promisifyCustom] = async () => {
+    (execStub as unknown as Record<symbol, unknown>)[promisifyCustom] = async (command: string, args?: unknown) => {
       lastChildProcessCall = callType;
+      // exec gets one command string; execFile gets the file and an args array.
+      const invocation = Array.isArray(args) ? args.join(' ') : command;
+      childProcessInvocations.push(invocation);
+      if (invocation.includes('--help')) {
+        if (mockHelpShouldFail) throw new Error('ollama run --help failed');
+        return { stdout: mockHelpStdout, stderr: '' };
+      }
       if (mockListShouldFail) throw new Error('ollama list failed');
       return { stdout: mockListStdout, stderr: '' };
     };
@@ -79,7 +158,7 @@ vi.mock('node:child_process', () => {
 });
 
 // Import after mocks are set up
-const { OllamaAdapter, DEFAULT_OLLAMA_MODEL, parseOllamaModelList } = await import(
+const { OllamaAdapter, DEFAULT_OLLAMA_MODEL, parseOllamaModelList, parseOllamaThinkLevels } = await import(
   '../../src/main/agent/adapters/ollama'
 );
 
@@ -110,7 +189,12 @@ describe('OllamaAdapter', () => {
     execVersionCallCount = 0;
     mockListStdout = '';
     mockListShouldFail = false;
+    mockHelpStdout = RUN_HELP_V0_40_14;
+    mockHelpShouldFail = false;
     lastChildProcessCall = null;
+    childProcessInvocations = [];
+    execCliForTargetCalls = [];
+    answerRunCalls = [];
   });
 
   // ── Identity ─────────────────────────────────────────────────────────────
@@ -225,6 +309,51 @@ describe('OllamaAdapter', () => {
       expect(command.indexOf('- fix the bug')).toBeGreaterThan(guardIndex);
     });
 
+    // ── Effort (--think) ─────────────────────────────────────────────────
+
+    it('passes effort as --think=<level> after the model and before the prompt guard', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'qwen3:8b', effort: 'high', prompt: 'Explain closures', shell: 'bash' }));
+      const head = `${quoteArg('/usr/bin/ollama', 'bash')} run ${quoteArg('qwen3:8b', 'bash')} ${quoteArg('--think=high', 'bash')} -- `;
+      expect(command.startsWith(head)).toBe(true);
+      // The `=` form: `--think high` would make `high` a positional (pflag NoOptDefVal).
+      expect(command).not.toMatch(/--think\s+high/);
+      expect(command.indexOf('Explain closures')).toBeGreaterThan(command.indexOf(' -- '));
+    });
+
+    it('passes --think to a no-prompt REPL launch too', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'qwen3:8b', effort: 'low', shell: 'bash' }));
+      expect(command).toBe(`${quoteArg('/usr/bin/ollama', 'bash')} run ${quoteArg('qwen3:8b', 'bash')} ${quoteArg('--think=low', 'bash')}`);
+    });
+
+    it('drops a level this CLI did not report, once discovery has run (a Claude xhigh left on the column)', async () => {
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      const command = adapter.buildCommand(makeOptions({ effort: 'xhigh', prompt: 'hi', shell: 'bash' }));
+      expect(command).not.toContain('--think');
+      expect(command).toContain('hi');
+      expect(adapter.buildCommand(makeOptions({ effort: 'medium', shell: 'bash' }))).toContain('--think=medium');
+    });
+
+    it('passes no level to a CLI that reported none (before 0.9.0)', async () => {
+      mockHelpStdout = RUN_HELP_WITHOUT_THINK;
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(adapter.buildCommand(makeOptions({ effort: 'high', shell: 'bash' }))).not.toContain('--think');
+    });
+
+    it('judges levels per CLI path, and passes a level through before that path is discovered', async () => {
+      await adapter.discoverCapabilities('/opt/other/ollama');
+      expect(adapter.buildCommand(makeOptions({ effort: 'xhigh', shell: 'bash' }))).toContain('--think=xhigh');
+    });
+
+    it('drops an effort whose case differs from the reported lowercase levels (current behavior)', async () => {
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(adapter.buildCommand(makeOptions({ effort: 'High', shell: 'bash' }))).not.toContain('--think');
+    });
+
+    it('passes no --think when no effort is set', () => {
+      expect(adapter.buildCommand(makeOptions({ prompt: 'hi', shell: 'bash' }))).not.toContain('--think');
+      expect(adapter.buildCommand(makeOptions({ effort: '  ', shell: 'bash' }))).not.toContain('--think');
+    });
+
     // ── Shell quoting ────────────────────────────────────────────────────
 
     describe('shell quoting', () => {
@@ -294,6 +423,24 @@ describe('OllamaAdapter', () => {
       mockListStdout = 'NAME    ID    SIZE    MODIFIED\n';
       const capabilities = await adapter.discoverCapabilities('/usr/bin/ollama');
       expect(capabilities.supportsModelOverride).toBe(true);
+    });
+
+    it('reports the --think levels `ollama run --help` names as effort levels', async () => {
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(capabilities.effortLevels).toEqual(['high', 'medium', 'low']);
+    });
+
+    it('reports no effort levels when `ollama run --help` fails, without losing the model list', async () => {
+      mockHelpShouldFail = true;
+      mockListStdout = 'NAME  ID  SIZE  MODIFIED\nqwen3:8b  abc  5 GB  now\n';
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(capabilities.effortLevels).toEqual([]);
+      expect(capabilities.models).toEqual(['qwen3:8b']);
+    });
+
+    it('reports no effort levels for a CLI without --think (before 0.9.0)', async () => {
+      mockHelpStdout = RUN_HELP_WITHOUT_THINK;
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/ollama');
       expect(capabilities.effortLevels).toEqual([]);
     });
 
@@ -315,13 +462,13 @@ describe('OllamaAdapter', () => {
     });
 
     // ── Platform-specific exec routing ───────────────────────────────────
-    // capability-discovery.ts:readModelListOutput uses exec (shell invocation)
+    // capability-discovery.ts:readCliOutput uses exec (shell invocation)
     // on win32 so that .cmd/.exe shims are resolved by the shell, and execFile
     // (direct invocation) on every other platform. These tests cover both arms
     // by stubbing process.platform, which is read at call time (not module load
     // time), so the stub is safe even though execAsync/execFileAsync are bound
     // at module evaluation.
-    describe('platform-specific exec routing in readModelListOutput', () => {
+    describe('platform-specific exec routing in readCliOutput', () => {
       let savedPlatformDescriptor: PropertyDescriptor | undefined;
 
       beforeEach(() => {
@@ -346,6 +493,46 @@ describe('OllamaAdapter', () => {
         await adapter.discoverCapabilities('/usr/bin/ollama');
         expect(lastChildProcessCall).toBe('execFile');
       });
+    });
+  });
+
+  // ── parseOllamaThinkLevels (pure) ──────────────────────────────────────────
+
+  describe('parseOllamaThinkLevels', () => {
+    it('reads the levels from the v0.40.14 --think line, dropping the true/false switch', () => {
+      expect(parseOllamaThinkLevels(RUN_HELP_V0_40_14)).toEqual(['high', 'medium', 'low']);
+    });
+
+    it('takes whatever levels a later CLI lists, with no level list of its own', () => {
+      const help = '      --think string   Enable thinking mode: true/false or max/high/medium/low for supported models\n';
+      expect(parseOllamaThinkLevels(help)).toEqual(['max', 'high', 'medium', 'low']);
+    });
+
+    it('returns no levels for help without a --think line, or empty help', () => {
+      expect(parseOllamaThinkLevels('      --verbose   Show timings for response\n')).toEqual([]);
+      expect(parseOllamaThinkLevels('')).toEqual([]);
+    });
+
+    it('does not read --hidethinking as the --think line', () => {
+      expect(parseOllamaThinkLevels('      --hidethinking   Hide thinking output (if provided)\n')).toEqual([]);
+    });
+
+    it('lowercases and dedups levels named in more than one slash group on the --think line', () => {
+      const help = '      --think string   Enable thinking: true/false or High/medium, or medium/low\n';
+      expect(parseOllamaThinkLevels(help)).toEqual(['high', 'medium', 'low']);
+    });
+
+    it('parses a --think line that has no `string` type token', () => {
+      const help = '      --think   Enable thinking: true/false or high/low\n';
+      expect(parseOllamaThinkLevels(help)).toEqual(['high', 'low']);
+    });
+
+    it('does not read --thinking or --think-budget lines, even with slash lists', () => {
+      const help = [
+        '      --thinking string   Mode: high/medium/low',
+        '      --think-budget int   Budget: small/large',
+      ].join('\n');
+      expect(parseOllamaThinkLevels(help)).toEqual([]);
     });
   });
 
@@ -438,6 +625,263 @@ describe('OllamaAdapter', () => {
 
     it('returns false for empty string', () => {
       expect(adapter.detectFirstOutput('')).toBe(false);
+    });
+  });
+
+  // ── configuredModelFromCommand ───────────────────────────────────────────
+
+  describe('configuredModelFromCommand', () => {
+    it('reads the model from the command buildCommand builds, for every shell', () => {
+      for (const shell of ['bash', 'powershell', 'cmd', 'fish']) {
+        const command = adapter.buildCommand(makeOptions({ model: 'qwen2.5-coder:7b', effort: 'high', prompt: 'fix it', shell }));
+        expect(adapter.configuredModelFromCommand(command), shell).toEqual({ id: 'qwen2.5-coder:7b', displayName: 'qwen2.5-coder:7b' });
+        expect(command, shell).toContain(quoteArg('--think=high', shell));
+      }
+    });
+
+    it('reads a double-quoted and a single-quoted model', () => {
+      expect(adapter.configuredModelFromCommand('ollama run "my model" hi')?.id).toBe('my model');
+      expect(adapter.configuredModelFromCommand("ollama run 'my model'")?.id).toBe('my model');
+    });
+
+    it('reads the model after an executable path holding an apostrophe and a space', () => {
+      for (const shell of ['/bin/bash', 'fish']) {
+        const command = adapter.buildCommand(makeOptions({
+          agentPath: "/home/dev/o'brien tools/ollama",
+          model: 'qwen3:8b',
+          shell,
+        }));
+        expect(adapter.configuredModelFromCommand(command)?.id, shell).toBe('qwen3:8b');
+      }
+    });
+
+    it('reads the default model when no override is set', () => {
+      const command = adapter.buildCommand(makeOptions({ shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)?.id).toBe(DEFAULT_OLLAMA_MODEL);
+    });
+
+    it('skips a quoted executable path that contains spaces', () => {
+      const command = adapter.buildCommand(makeOptions({
+        agentPath: 'C:\\Users\\dev\\AppData\\Local\\Programs\\Ollama App\\ollama.exe',
+        model: 'gemma3:4b',
+        shell: 'powershell',
+      }));
+      expect(adapter.configuredModelFromCommand(command)?.id).toBe('gemma3:4b');
+    });
+
+    it('never seeds a model from the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'llama3.2', prompt: 'please run mistral for me', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)?.id).toBe('llama3.2');
+    });
+
+    it('returns null for a command that is not an ollama run', () => {
+      expect(adapter.configuredModelFromCommand('/usr/bin/ollama list')).toBeNull();
+      expect(adapter.configuredModelFromCommand('')).toBeNull();
+    });
+  });
+
+  // ── Think-level discovery, routing, cache key and answer-run gate ────────────
+
+  describe('think levels: discovery isolation, parsing, routing, cache key', () => {
+    let savedPlatformDescriptor: PropertyDescriptor | undefined;
+    const stubPlatform = (platform: NodeJS.Platform): void => {
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    };
+
+    beforeEach(() => {
+      savedPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    });
+
+    afterEach(() => {
+      if (savedPlatformDescriptor !== undefined) {
+        Object.defineProperty(process, 'platform', savedPlatformDescriptor);
+      }
+    });
+
+    it('keeps the effort levels when `ollama list` fails (each read has its own fallback)', async () => {
+      mockListShouldFail = true;
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(capabilities.effortLevels).toEqual(['high', 'medium', 'low']);
+      expect(capabilities.models).toBeUndefined();
+    });
+
+    it('runs the help read as `run --help` through the win32 shell exec', async () => {
+      stubPlatform('win32');
+      await adapter.discoverCapabilities('C:\\Users\\dev\\AppData\\Roaming\\npm\\ollama.cmd');
+      const helpCommands = childProcessInvocations.filter((command) => command.includes('--help'));
+      expect(helpCommands).toHaveLength(1);
+      expect(helpCommands[0].endsWith('run --help')).toBe(true);
+    });
+
+    it('asks a WSL target for `list` and `run --help` as separate reads', async () => {
+      mockListStdout = 'NAME  ID  SIZE  MODIFIED\nqwen3:8b  abc  5 GB  now\n';
+      const capabilities = await adapter.discoverCapabilities('\\\\wsl.localhost\\Ubuntu\\usr\\bin\\ollama');
+      expect(execCliForTargetCalls).toContainEqual(['list']);
+      expect(execCliForTargetCalls).toContainEqual(['run', '--help']);
+      expect(childProcessInvocations).toEqual([]);
+      expect(capabilities.effortLevels).toEqual(['high', 'medium', 'low']);
+      expect(capabilities.models).toEqual(['qwen3:8b']);
+    });
+
+    it('configuredModelFromCommand returns null when the token after `run` is a flag', () => {
+      expect(adapter.configuredModelFromCommand('ollama run --think=high llama3.2')).toBeNull();
+    });
+
+    it('configuredModelFromCommand reads the model from a command built for a WSL target', () => {
+      const cliTarget = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: '/home/dev/.local/bin/ollama',
+        facts: {},
+      } as unknown as SpawnCommandOptions['cliTarget'];
+      const command = adapter.buildCommand(makeOptions({
+        agentPath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\ollama',
+        cliTarget,
+        model: 'qwen3:8b',
+        shell: 'bash',
+      }));
+      expect(command).toContain('/home/dev/.local/bin/ollama');
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'qwen3:8b', displayName: 'qwen3:8b' });
+    });
+
+    it('applies levels discovered for a .cmd path to a .ps1 spelling of it on win32', async () => {
+      stubPlatform('win32');
+      await adapter.discoverCapabilities('C:\\Users\\dev\\AppData\\Roaming\\npm\\ollama.cmd');
+      const ps1Path = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\OLLAMA.ps1';
+      expect(adapter.buildCommand(makeOptions({ agentPath: ps1Path, effort: 'xhigh', shell: 'bash' }))).not.toContain('--think');
+      expect(adapter.buildCommand(makeOptions({ agentPath: ps1Path, effort: 'high', shell: 'bash' }))).toContain('--think=high');
+    });
+
+    it('judges a WSL spawn by the levels discovered for its Windows-side path, not the distro path it executes', async () => {
+      const uncPath = '\\\\wsl.localhost\\Ubuntu\\usr\\bin\\ollama';
+      const cliTarget = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: WSL_LINUX_CLI_PATH,
+        facts: {},
+      } as unknown as SpawnCommandOptions['cliTarget'];
+      await adapter.discoverCapabilities(uncPath);
+      const dropped = adapter.buildCommand(makeOptions({ agentPath: uncPath, cliTarget, effort: 'xhigh', shell: 'bash' }));
+      expect(dropped).toContain(WSL_LINUX_CLI_PATH);
+      expect(dropped).not.toContain('--think');
+      expect(adapter.buildCommand(makeOptions({ agentPath: uncPath, cliTarget, effort: 'high', shell: 'bash' })))
+        .toContain(quoteArg('--think=high', 'bash'));
+    });
+
+    it('trims a padded effort before judging it against the reported levels', async () => {
+      expect(adapter.buildCommand(makeOptions({ effort: ' high ', shell: 'bash' }))).toContain(quoteArg('--think=high', 'bash'));
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      expect(adapter.buildCommand(makeOptions({ effort: ' high ', shell: 'bash' }))).toContain(quoteArg('--think=high', 'bash'));
+    });
+
+    it('does not lend one CLI path\'s levels to another whose help read failed', async () => {
+      await adapter.discoverCapabilities('/usr/bin/ollama');
+      mockHelpShouldFail = true;
+      const capabilities = await adapter.discoverCapabilities('/opt/other/ollama');
+      expect(capabilities.effortLevels).toEqual([]);
+    });
+
+    describe('a failed help read versus an answered one', () => {
+      const cliPath = '/usr/bin/ollama';
+
+      it('keeps the levels an earlier read reported when a later help read fails', async () => {
+        await adapter.discoverCapabilities(cliPath);
+        mockHelpShouldFail = true;
+        const capabilities = await adapter.discoverCapabilities(cliPath);
+        expect(capabilities.effortLevels).toEqual(['high', 'medium', 'low']);
+        expect(adapter.buildCommand(makeOptions({ effort: 'high', shell: 'bash' }))).toContain(quoteArg('--think=high', 'bash'));
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).toContain('--hidethinking');
+      });
+
+      it('has no cache when the very first help read fails: hides thinking and passes a level through', async () => {
+        mockHelpShouldFail = true;
+        const capabilities = await adapter.discoverCapabilities(cliPath);
+        expect(capabilities.effortLevels).toEqual([]);
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).toContain('--hidethinking');
+        expect(adapter.buildCommand(makeOptions({ effort: 'xhigh', shell: 'bash' }))).toContain(quoteArg('--think=xhigh', 'bash'));
+      });
+
+      it('overwrites the cache when an answered help read names no --think line', async () => {
+        await adapter.discoverCapabilities(cliPath);
+        mockHelpStdout = RUN_HELP_WITHOUT_THINK;
+        const capabilities = await adapter.discoverCapabilities(cliPath);
+        expect(capabilities.effortLevels).toEqual([]);
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).not.toContain('--hidethinking');
+        expect(adapter.buildCommand(makeOptions({ effort: 'high', shell: 'bash' }))).not.toContain('--think');
+      });
+
+      it('looks up the answer run by shim-family key on win32 (.cmd discovered, .ps1 asked)', async () => {
+        stubPlatform('win32');
+        mockHelpStdout = RUN_HELP_WITHOUT_THINK;
+        await adapter.discoverCapabilities('C:\\Users\\dev\\npm\\ollama.cmd');
+        await adapter.answerFromContext('q', 'C:\\Users\\dev\\npm\\OLLAMA.ps1', 'C:\\projects\\my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).not.toContain('--hidethinking');
+      });
+    });
+
+    describe('answerFromContext --hidethinking gate', () => {
+      const cliPath = '/usr/bin/ollama';
+
+      it('passes --hidethinking before any discovery has run', async () => {
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).toContain('--hidethinking');
+      });
+
+      it('leaves --hidethinking and --think out once discovery reported no levels', async () => {
+        mockHelpStdout = RUN_HELP_WITHOUT_THINK;
+        await adapter.discoverCapabilities(cliPath);
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        const args = answerRunCalls[0].args;
+        expect(args).not.toContain('--hidethinking');
+        expect(args.some((arg) => arg.startsWith('--think='))).toBe(false);
+      });
+
+      it('passes --hidethinking after discovery reported levels', async () => {
+        await adapter.discoverCapabilities(cliPath);
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b');
+        expect(answerRunCalls[0].args).toContain('--hidethinking');
+      });
+
+      it('passes --think=<level> for an effort, and nothing for a whitespace-only effort', async () => {
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b', { effort: ' high ' });
+        expect(answerRunCalls[0].args).toContain('--think=high');
+        await adapter.answerFromContext('q', cliPath, '/projects/my-app', 'qwen3:8b', { effort: '  ' });
+        expect(answerRunCalls[1].args.some((arg) => arg.startsWith('--think='))).toBe(false);
+      });
+    });
+  });
+
+  // ── Live telemetry ───────────────────────────────────────────────────────
+
+  it('declares that it has no live telemetry channel', () => {
+    expect(adapter.liveTelemetryUnsupported.unavailableLabel.length).toBeGreaterThan(0);
+    expect(adapter.liveTelemetryUnsupported.unavailableTitle).toContain('Ollama');
+  });
+
+  // ── getInjectionSequence (Command Terminal live swap) ──────────────────────
+
+  describe('getInjectionSequence', () => {
+    it('loads the new model before setting its thinking level', () => {
+      expect(adapter.getInjectionSequence({ model: 'qwen3:8b', modelChanged: true, effort: 'high', effortChanged: true }))
+        .toEqual(['/load qwen3:8b', '/set think high']);
+    });
+
+    it('types only what changed', () => {
+      expect(adapter.getInjectionSequence({ model: 'qwen3:8b', modelChanged: false, effort: 'low', effortChanged: true }))
+        .toEqual(['/set think low']);
+      expect(adapter.getInjectionSequence({ model: 'qwen3:8b', modelChanged: true, effort: 'low', effortChanged: false }))
+        .toEqual(['/load qwen3:8b']);
+    });
+
+    it('types nothing for empty-string model and effort even when flagged changed', () => {
+      expect(adapter.getInjectionSequence({ model: '', modelChanged: true, effort: '', effortChanged: true })).toEqual([]);
+    });
+
+    it('types nothing for a cleared override', () => {
+      expect(adapter.getInjectionSequence({ model: null, modelChanged: true, effort: null, effortChanged: true })).toEqual([]);
     });
   });
 

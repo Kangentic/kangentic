@@ -211,6 +211,9 @@ const mockAdapter = {
   // Claude's: a resume carries its prompt on the command line. The
   // resume-prompt-delivery describe below sets 'typed' and resets it.
   resumePromptDelivery: 'command-line' as AgentAdapter['resumePromptDelivery'],
+  // Undefined (a fresh launch carries its prompt); the freshPromptDelivery
+  // describe sets 'typed' and resets it.
+  freshPromptDelivery: undefined as AgentAdapter['freshPromptDelivery'],
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -1632,6 +1635,81 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
 
     expect(capturedOptions?.prompt).toBeUndefined();
     expect(outcome.unsentPrompt).toBeNull();
+  });
+
+  describe('a fresh spawn on an adapter whose CLI takes no starting prompt (freshPromptDelivery)', () => {
+    // Kimi Code 2.x opens its interactive session with no prompt: a positional
+    // argument fails, and `-p` runs one prompt and exits. A fresh spawn's prompt
+    // is the opening, so it comes back as `typedOpening`, which the caller sends
+    // first. `unsentPrompt` would not do: the board caller reads that as a
+    // column message left unsent, and a task template in it was never typed.
+    async function freshSpawnWith(prompt: string | undefined, skipPromptTemplate = true) {
+      sessionManager = makeSessionManager();
+      // No session record, so the spawn is fresh.
+      const { engine } = makeEngine({ sessionManager, sessionRepo: makeSessionRepo(), projectPath });
+      return engine.resumeSuspendedSession(
+        makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+        null, skipPromptTemplate, prompt, undefined, 'claude',
+      );
+    }
+
+    afterEach(() => {
+      mockAdapter.freshPromptDelivery = undefined;
+    });
+
+    it('carries the fresh prompt on the command line by default', async () => {
+      const outcome = await freshSpawnWith('Fix the login flow');
+
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toBe('Fix the login flow');
+      expect(outcome.unsentPrompt).toBeNull();
+      expect(outcome.typedOpening ?? null).toBeNull();
+      expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+    });
+
+    it('keeps the fresh prompt off, hands it back as the opening and opens idle when the adapter types it', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+
+      const outcome = await freshSpawnWith('Fix the login flow');
+
+      expect(capturedOptions?.resume).toBe(false);
+      expect(capturedOptions?.prompt).toBeUndefined();
+      expect(outcome.typedOpening).toBe('Fix the login flow');
+      expect(outcome.unsentPrompt).toBeNull();
+      expect(sessionManager.markIdleAuthoritative).toHaveBeenCalledWith('pty-session-1');
+    });
+
+    it('hands back the task template as the opening, and a message it left out as unsent', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+
+      const outcome = await freshSpawnWith('/code-review', false);
+
+      expect(capturedOptions?.prompt).toBeUndefined();
+      expect(outcome.typedOpening).toContain('Fix login flow');
+      expect(outcome.unsentPrompt).toBe('/code-review');
+    });
+
+    it('hands back nothing for a typed fresh spawn with no prompt', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+
+      const outcome = await freshSpawnWith(undefined);
+
+      expect(capturedOptions?.prompt).toBeUndefined();
+      expect(outcome.unsentPrompt).toBeNull();
+      expect(outcome.typedOpening ?? null).toBeNull();
+      expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+    });
+
+    it('still keeps a typed adapter\'s resume prompt on the resume path', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+      mockAdapter.resumePromptDelivery = 'typed';
+
+      const outcome = await resumeWith('Review the diff');
+
+      expect(capturedOptions?.resume).toBe(true);
+      expect(outcome.unsentPrompt).toBe('Review the diff');
+      expect(outcome.typedOpening ?? null).toBeNull();
+    });
   });
 });
 

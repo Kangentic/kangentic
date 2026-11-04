@@ -8,6 +8,7 @@ import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '.
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
 import type { AgentJobChoice } from '../../../../shared/answer-agent';
+import { effortLevelsForModel } from '../../../../shared/effort-levels';
 import type { AgentDetectionInfo } from '../../../../shared/types';
 
 /** What the rows write: any of the three, null clearing it. */
@@ -63,7 +64,13 @@ export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, 
     [capableAgents, choice.agent],
   );
   const chosenName = chosen?.name ?? null;
-  const { models, effortLevels, supportsModelOverride } = useAgentCapabilityResolution(chosenName);
+  const { info, models, supportsModelOverride } = useAgentCapabilityResolution(chosenName);
+  // The chosen model's own levels when the CLI reports them per model (Droid),
+  // else the agent's: the same rule the run applies before passing a level.
+  const effortLevels = useMemo(
+    () => effortLevelsForModel(info?.capabilities, choice.model),
+    [info, choice.model],
+  );
   const contextWindows = useModelContextWindows(chosenName);
   const displayNames = useModelDisplayNames(chosenName);
   // The floating aliases (Claude's `haiku`), listed as Latest like every other

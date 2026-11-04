@@ -44,7 +44,8 @@ This subsystem aims to be near-100% accurate: notification fires within seconds 
    └─────────────────────────────────┬────────────────────────────────┘
                                      │
                 ┌────────────────────▼─────────────────────┐
-                │  StatusFileReader (watches events.jsonl) │
+                │  StatusFileReader (events.jsonl; status  │
+                │  .json via parseStatusEvents)            │
                 │  → SessionTelemetry.ingestEvents(events) │
                 └────────────────────┬─────────────────────┘
                                      │
@@ -101,7 +102,7 @@ Surrounding infrastructure:
 | `src/main/activity-engine/open-work-ledger.ts` | What each session still has open (tool calls, background shells, background subagents), from its hook events and closed only by a real end (see [Open work](#open-work)) |
 | `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
 | `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, run time paired by `toolId`, calls that waited on the user, cost, tokens) and the per-session usage cache. Stamps each reported rate-limit window with its reset generation before caching it, and brings sibling caches up when a reset opens. A report that leaves a window out keeps the session's last value for it (an idle Claude status carried only the seven-day window, measured), so the cache a renderer reload rebuilds its rate-limit snapshot from still holds both |
-| `src/main/activity-engine/rate-limit-ledger.ts` | Per-session rate-limit history that stamps each window's reset `generation`, so a free usage reset (usage falls, `resetsAt` stays) replaces stale sibling reports |
+| `src/main/activity-engine/rate-limit-ledger.ts` | Per-session rate-limit history that stamps each window's reset `generation`, so a free usage reset (usage falls, `resetsAt` stays) replaces stale sibling reports; and `withRateLimitAgent`, which stamps each window with the agent whose session reported it, so each agent's pill draws only its own |
 | `src/main/activity-engine/pr-command-detector.ts` | PR command pattern detector |
 | `src/main/activity-engine/push-command-detector.ts` | `git push` destination capture: remembers the branch a Bash push named on ToolStart, reports it on that call's ToolEnd (paired by `toolId`) as the task's `pushed_branch` PR anchor; parser in `src/main/git/push-command.ts` |
 | `src/main/activity-engine/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
@@ -222,8 +223,9 @@ had the same gap before the kind existed. The rules in `updatePermissionFlag` cl
 
 - The awaited tool (`permissionAwaitedToolId`) is the newest pending entry the event's `tool`
   names, and the stack top only when the event names none or names no pending call. Claude, Qwen
-  and the appended Codex and Antigravity waits carry `tool`. The usage accumulator credits the waited call by the
-  same rule.
+  and the appended Codex, Antigravity and Grok hook waits carry `tool`, except Antigravity's status-derived approval wait, which names none and so awaits the newest call in flight; Grok's `permission_prompt`
+  wait, which comes from a notification and not from a tool start, does not. The usage
+  accumulator credits the waited call by the same rule.
 - The other pending ids at that moment are the wait's siblings (`permissionSiblingToolIds`,
   engine-internal). A depth-0 ToolEnd of a sibling leaves the wait open and drops that id.
 - Another call's depth-0 ToolStart or ToolEnd clears the wait only when the engine cannot tell it
@@ -298,8 +300,8 @@ Each adapter declares one strategy via its `runtime.activity` field (constructed
 | Kind | Hooks fire? | PTY fallback? | Used by | Semantics |
 |------|-------------|---------------|---------|-----------|
 | `hooks` | Yes (sole source of truth) | No | Claude Code | Activity state is driven exclusively by hook deliveries. PTY traffic is ignored for state transitions. |
-| `pty` | No | Yes | Aider, Cursor, Warp, Droid, Ollama, Goose (today) | No hook protocol in use. For most of these the CLI has none; Goose is the exception, having a hook system that this adapter does not wire yet (see `docs/integrations/agents/goose-cli.md`). The PTY tracker emits `forceIdle` after a silence window, optionally short-circuited by an adapter-supplied `detectIdle(data)` regex that matches the agent's input prompt. |
-| `hooks_and_pty` | Yes (primary) | Yes (fallback) | Gemini, Qwen, OpenCode, Copilot, Grok, Antigravity, Codex, Kimi | Hooks are authoritative when they fire (Kimi has none: its `runtime.sessionHistory` wire.jsonl is the structured source, and its first read suppresses the PTY tracker; Codex's rollout opts out of that suppression with `suppressesPtyFallback: false`, so a session whose hooks Codex did not confirm keeps the tracker); the PTY tracker is auto-suppressed on the first hook event and re-engages only if hooks stop arriving. For Grok the fallback is load-bearing by design: its project hooks are folder-trust-gated and silently skipped in an untrusted directory, so the PTY tracker carries activity until trust lands. Antigravity's hook events are `prompt` (PreInvocation), `tool_end` (PostToolUse), and `idle` (Stop); its hooks never fire in `-p` print mode, where the PTY fallback (silence timer + the `? for shortcuts` idle-footer regex) carries detection. |
+| `pty` | No (Droid: log and wait events only) | Yes | Aider, Warp, Droid, Ollama | No hook protocol drives the state. For most of these the CLI has none; Droid's hooks report tool calls, permission waits, the session id and compactions but no turn end, so its tracker is never suppressed (see `docs/integrations/agents/droid.md`). The PTY tracker emits `forceIdle` after a silence window, optionally short-circuited by an adapter-supplied `detectIdle(data)` regex that matches the agent's input prompt. |
+| `hooks_and_pty` | Yes (primary) | Yes (fallback) | Gemini, Qwen, OpenCode, Copilot, Grok, Antigravity, Codex, Kimi, Goose, Cursor | Goose's hook plugin runs its commands with `sh -c`, so on Windows its spawn appends Git for Windows' `bin` folder to PATH when no `sh` is there; with no Git for Windows its hooks never fire and the PTY tracker carries activity (see `docs/integrations/agents/goose-cli.md`). Hooks are authoritative when they fire (Kimi has none: its `runtime.sessionHistory` wire.jsonl is the structured source, and its first read suppresses the PTY tracker; Codex's rollout opts out of that suppression with `suppressesPtyFallback: false`, so a session whose hooks Codex did not confirm keeps the tracker); the PTY tracker is auto-suppressed on the first hook event and re-engages only if hooks stop arriving. For Grok the fallback is load-bearing by design: its project hooks are folder-trust-gated and silently skipped in an untrusted directory, so the PTY tracker carries activity until trust lands. Antigravity's hook events are `session_start` (SessionStart, log-only), `prompt` (PreInvocation), `tool_start` (PreToolUse, every tool, not wired for an agy in a WSL distro), `tool_end` (PostToolUse), and `idle` (Stop), plus an approval wait and plan-mode changes its status line reports (`statusFile.parseStatusEvents`); its hooks never fire in `-p` print mode, where the PTY fallback (silence timer + the `? for shortcuts` idle-footer regex) carries detection. Cursor's project hooks report only a session screen; a print run reports on its stream-json instead (`docs/integrations/agents/cursor-cli.md`). |
 
 Both `pty` and `hooks_and_pty` may pass an optional `detectIdle(data: string) => boolean` for instant idle detection from the input-prompt regex. Without it, idle is inferred from a silence timer.
 

@@ -1,7 +1,7 @@
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
-import { readJsonlWindow } from '../../shared/history-scan';
+import { countNewlinesBefore, readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { qwenChatsDir } from './session-history-parser';
@@ -14,7 +14,7 @@ const UUIDS_NUMBER_LINES = true;
  * Parse Qwen Code's native session JSONL into agent-agnostic
  * `TranscriptEntry[]` for the MCP `get_transcript` structured format.
  *
- * Path: `~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` (see
+ * Path: `<runtime>/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` (see
  * `qwenChatsDir`). Append-only JSONL; each line is one event:
  *   - `type: 'user'`   -> `message: { role: 'user', parts: [...] }`
  *   - `type: 'assistant'` -> `message: { role: 'model', parts: [...] }`,
@@ -51,6 +51,49 @@ export async function parseQwenTranscript(
   // history from (`readQwenTranscriptPage`), with the line count the uuids need.
   return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES));
 }
+
+/**
+ * Parse ONE bounded byte window of a Qwen transcript
+ * (`AgentAdapter.parseTranscriptWindow`), for the conversation indexer's walk
+ * of the whole file. Retains nothing between calls, and needs no
+ * `attributedMessageIds` carry: each assistant record holds one API
+ * response's usage, so no turn's tokens span two lines.
+ *
+ * Every record Qwen writes carries its own `uuid` (`ChatRecord.uuid` in
+ * https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts,
+ * and every line of the 0.15.3 fixture), so a window rarely needs a line count. Only when one
+ * holds a record without one are the lines before it counted, so that
+ * record's fallback uuid (`<sessionId>:<line>`) is the one the tail and the
+ * pages mint. Without that, the turn-usage ledger would key one turn twice.
+ */
+export async function parseQwenTranscriptWindow(
+  agentSessionId: string,
+  filePath: string,
+  startByte: number,
+  maxBytes: number,
+): Promise<{ entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number; firstByteOffset: number; endByte: number }> {
+  const window = await readJsonlWindow(filePath, { startByte, maxBytes });
+  let lines = splitJsonlLines(window.text, window.startByte, 0);
+  if (lines.some((line) => line.text.length > 0 && !RECORD_UUID_PATTERN.test(line.text))) {
+    const omittedLineCount = await countNewlinesBefore(filePath, window.startByte);
+    lines = splitJsonlLines(window.text, window.startByte, omittedLineCount);
+  }
+  return {
+    entries: parseQwenLines(agentSessionId, lines),
+    nextByteOffset: window.nextByteOffset,
+    totalBytes: window.totalBytes,
+    firstByteOffset: window.startByte,
+    endByte: window.endByte,
+  };
+}
+
+/**
+ * A record line naming its own non-empty `uuid`. Qwen writes `uuid` as each
+ * record's first key, so the match is anchored there: a `"uuid"` nested in a
+ * tool's args or response must not pass for the record's own. A record whose
+ * uuid sits elsewhere only costs the line count.
+ */
+const RECORD_UUID_PATTERN = /^\{\s*"uuid"\s*:\s*"[^"]/;
 
 /**
  * One page of a Qwen transcript's history for the Conversation viewer
@@ -93,7 +136,13 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
   if (!isRecord(raw)) return;
 
   const type = raw.type;
-  if (type !== 'user' && type !== 'assistant') return; // skip system/ui_telemetry
+  // `tool_result` is its own record type in current Qwen (`ChatRecord.type`
+  // is `user | assistant | tool_result | system`, and `recordToolResult`
+  // writes `functionResponse` parts:
+  // https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts).
+  // Older writers put the same parts in a `user` record, which is still read.
+  // `system` (ui_telemetry and the rest) is skipped.
+  if (type !== 'user' && type !== 'assistant' && type !== 'tool_result') return;
   const message = raw.message;
   if (!isRecord(message)) return;
   const parts = message.parts;
@@ -111,7 +160,7 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
     : `${agentSessionId}:${lineNumber}`;
   const ts = parseTimestamp(raw.timestamp);
 
-  if (type === 'user') {
+  if (type === 'user' || type === 'tool_result') {
     const textParts: string[] = [];
     for (const part of parts) {
       if (!isRecord(part)) continue;
@@ -122,14 +171,16 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
           uuid,
           ts,
           toolUseId: typeof response.id === 'string' ? response.id : '',
-          content: stringifyResponse(response.response),
+          content: qwenFunctionResponseText(response.response),
         });
       } else if (typeof part.text === 'string') {
         textParts.push(part.text);
       }
     }
+    // A tool result's text parts are the tool's output, not something the
+    // user typed.
     const text = textParts.join('').trim();
-    if (text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
+    if (type === 'user' && text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
     return;
   }
 
@@ -152,7 +203,55 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
       if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
     }
   }
-  if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+  if (blocks.length > 0) {
+    const usage = qwenTurnUsage(raw.usageMetadata);
+    entries.push({ kind: 'assistant', uuid, ts, model, blocks, ...(usage ? { usage } : {}) });
+  }
+}
+
+/**
+ * One assistant record's tokens in Kangentic's per-turn shape, or undefined
+ * when the record carries no usage.
+ *
+ * Qwen writes `usageMetadata` once per API response on each assistant record
+ * (`recordAssistantTurn`,
+ * https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts),
+ * in the GenAI shape:
+ * - `promptTokenCount` includes the cached part, `cachedContentTokenCount`, so
+ *   fresh input is the difference and the cached part is a cache read.
+ * - Output follows Qwen's own rule (`outputTokenCount`,
+ *   https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/telemetry/gen-ai-usage.ts): an
+ *   OpenAI-compatible provider counts reasoning inside
+ *   `candidatesTokenCount`, Gemini reports it apart in `thoughtsTokenCount`.
+ *   `totalTokenCount - promptTokenCount` decides when it falls between the
+ *   two conventions; otherwise the candidates count stands, which never
+ *   counts reasoning twice.
+ * Qwen reports no cache writes. Built from Qwen's source. No real record held
+ * a nonzero `thoughtsTokenCount` (qwen-code.md), so the reasoning branch has
+ * not met real data.
+ */
+export function qwenTurnUsage(value: unknown): TranscriptTurnUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const prompt = nonNegative(value.promptTokenCount);
+  const cached = nonNegative(value.cachedContentTokenCount);
+  const candidates = nonNegative(value.candidatesTokenCount);
+  const thoughts = nonNegative(value.thoughtsTokenCount);
+  const total = nonNegative(value.totalTokenCount);
+  if (prompt === 0 && cached === 0 && candidates === 0 && thoughts === 0) return undefined;
+  const derivedOutput = total - prompt;
+  const outputTokens = total > 0 && derivedOutput >= candidates && derivedOutput <= candidates + thoughts
+    ? derivedOutput
+    : candidates;
+  return {
+    inputTokens: Math.max(0, prompt - cached),
+    outputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: cached,
+  };
+}
+
+function nonNegative(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 /**
@@ -176,7 +275,7 @@ function parseTimestamp(value: unknown): number {
 }
 
 /** Stringify a functionResponse `response` (often `{ output }` or a string). */
-function stringifyResponse(value: unknown): string {
+export function qwenFunctionResponseText(value: unknown): string {
   if (typeof value === 'string') return value;
   if (isRecord(value) && typeof value.output === 'string') return value.output;
   if (value === undefined || value === null) return '';

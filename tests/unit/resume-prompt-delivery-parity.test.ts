@@ -22,6 +22,26 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
+import { textLeftToType } from '../../src/main/transition-engine/resume-prompt-delivery';
+
+// A resume's own consumers read this, and a fresh typed start can hand back both
+// pieces, so dropping either would lose a task's template or a column's message.
+describe('textLeftToType', () => {
+  it('joins the opening and the column message, opening first', () => {
+    expect(textLeftToType({ typedOpening: 'Fix the bug', unsentPrompt: '/review' })).toBe('Fix the bug\n\n/review');
+  });
+
+  it('returns whichever one a start has', () => {
+    expect(textLeftToType({ typedOpening: 'Fix the bug', unsentPrompt: null })).toBe('Fix the bug');
+    expect(textLeftToType({ unsentPrompt: '/review' })).toBe('/review');
+  });
+
+  it('returns null when nothing is left, or only white space', () => {
+    expect(textLeftToType(undefined)).toBeNull();
+    expect(textLeftToType({ typedOpening: null, unsentPrompt: null })).toBeNull();
+    expect(textLeftToType({ typedOpening: '  ', unsentPrompt: '\n' })).toBeNull();
+  });
+});
 
 const PROMPT_MARKER = 'resume_prompt_marker_4b7e';
 const SESSION_ID = '0f9c7d42-5b1e-4c3a-9a77-2d1f8e6b4c10';
@@ -87,6 +107,39 @@ describe('resumePromptDelivery declarations match the real builders', () => {
         expect(command, `${adapterName} says its resume carries the prompt, but the command drops it`).toContain(PROMPT_MARKER);
       } else {
         expect(command, `${adapterName} carries the prompt on resume but says it is typed`).not.toContain(PROMPT_MARKER);
+      }
+    });
+  });
+});
+
+/**
+ * The same check for a FRESH session's first prompt (`freshPromptDelivery`).
+ * The engine keeps it off the command line only for an adapter that says
+ * `'typed'`, so a builder that drops it while saying `'command-line'` loses the
+ * task's opening prompt, and one that carries it while saying `'typed'` sends
+ * it twice.
+ */
+function freshOptions(): SpawnCommandOptions {
+  return { ...resumeOptions(), sessionId: undefined, resume: false };
+}
+
+describe('freshPromptDelivery declarations match the real builders', () => {
+  it('leaves most adapters on the command line', () => {
+    const carrying = adapterNames.filter((name) => (agentRegistry.getOrThrow(name).freshPromptDelivery ?? 'command-line') === 'command-line');
+    expect(carrying.length).toBeGreaterThan(10);
+  });
+
+  describe.each(adapterNames)('%s', (adapterName) => {
+    const adapter = agentRegistry.getOrThrow(adapterName);
+
+    it('builds a fresh command that carries the prompt exactly when it says so', () => {
+      const delivery = adapter.freshPromptDelivery ?? 'command-line';
+      expect(['command-line', 'typed']).toContain(delivery);
+      const command = adapter.buildCommand(freshOptions());
+      if (delivery === 'command-line') {
+        expect(command, `${adapterName} says a fresh launch carries the prompt, but the command drops it`).toContain(PROMPT_MARKER);
+      } else {
+        expect(command, `${adapterName} carries the fresh prompt but says it is typed`).not.toContain(PROMPT_MARKER);
       }
     });
   });

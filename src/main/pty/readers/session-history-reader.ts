@@ -56,7 +56,19 @@ export interface SessionHistoryAttachOptions {
    * read the whole file.
    */
   startAtEnd?: boolean;
+  /**
+   * Keep locating a file that does not exist yet for as long as this returns
+   * true, instead of falling back after the hook's own `locate` gives up. Set
+   * for a conversation a SessionStart hook moved to (a `/clear`): Qwen creates
+   * its chat file with the first record, the user's next prompt, which can come
+   * at any point in the session's life. A PTY exit leaves the reader attached
+   * (`detachOnPtyExit`), so this is what ends the wait there.
+   */
+  waitForFile?: () => boolean;
 }
+
+/** The pause between two `locate` rounds of a `waitForFile` attach. */
+const WAIT_FOR_FILE_RETRY_MS = 1_000;
 
 interface WatcherState {
   watcher: FileWatcher;
@@ -118,14 +130,14 @@ export function dispatchSessionHistoryResult(
 export class SessionHistoryReader {
   private states = new Map<string, WatcherState>();
   /**
-   * Session IDs for which attach() has been called but not yet
-   * completed (the async locate() is still in flight). detach() adds
-   * to this set as a cancellation signal so an in-flight attach can
-   * bail cleanly before installing a watcher.
+   * Sessions with an attach() in flight (the async locate() and the first
+   * read), each with that call's token. detach() drops the entry, which
+   * cancels the call: it checks its token after every await and bails once
+   * it no longer owns the entry. An attach() after that detach starts clean
+   * instead of returning early behind the cancelled one, which is how a moved
+   * conversation's detach-then-attach works while the first attach still runs.
    */
-  private pending = new Set<string>();
-  /** Session IDs that detach() cancelled during an in-flight attach. */
-  private cancelled = new Set<string>();
+  private pending = new Map<string, symbol>();
 
   constructor(private readonly callbacks: SessionHistoryReaderCallbacks) {}
 
@@ -143,18 +155,25 @@ export class SessionHistoryReader {
     const { sessionId, agentSessionId, cwd, hook, agentName } = options;
     if (this.states.has(sessionId) || this.pending.has(sessionId)) return;
 
-    this.pending.add(sessionId);
+    const token = Symbol(sessionId);
+    this.pending.set(sessionId, token);
+    // False once a detach cancelled this attach (and maybe a newer one began).
+    const isCurrent = (): boolean => this.pending.get(sessionId) === token;
     try {
       let resolvedPath: string | null;
-      try {
-        resolvedPath = await hook.locate({ agentSessionId, cwd, cliTarget: options.cliTarget ?? null });
-      } catch (err) {
-        console.warn(`[session-history] locate threw for session=${sessionId.slice(0, 8)}:`, err);
-        return;
+      for (;;) {
+        try {
+          resolvedPath = await hook.locate({ agentSessionId, cwd, cliTarget: options.cliTarget ?? null });
+        } catch (err) {
+          console.warn(`[session-history] locate threw for session=${sessionId.slice(0, 8)}:`, err);
+          return;
+        }
+        // Detach may have been called while we were awaiting locate.
+        if (!isCurrent()) return;
+        if (resolvedPath || !options.waitForFile?.()) break;
+        await new Promise((resolve) => setTimeout(resolve, WAIT_FOR_FILE_RETRY_MS));
+        if (!isCurrent()) return;
       }
-
-      // Detach may have been called while we were awaiting locate.
-      if (this.cancelled.has(sessionId)) return;
 
       if (!resolvedPath) {
         console.log(`[session-history] no history file found for session=${sessionId.slice(0, 8)} agent=${agentName ?? 'unknown'} - falling back to PTY activity tracker`);
@@ -190,7 +209,7 @@ export class SessionHistoryReader {
         filePath: resolvedPath,
         cursor: initialCursor,
         handoffDone: false,
-        parse: hook.parse,
+        parse: hook.createParse?.() ?? hook.parse,
         isFullRewrite: hook.isFullRewrite,
         startedAtEnd: startAtEnd,
         deferEofInit,
@@ -198,7 +217,7 @@ export class SessionHistoryReader {
       };
 
       // The stat above awaited too: a detach meanwhile cancels the attach.
-      if (this.cancelled.has(sessionId)) return;
+      if (!isCurrent()) return;
       state.watcher = new FileWatcher({
         filePath: resolvedPath,
         onChange: () => this.scheduleChange(sessionId, state, 'history:change'),
@@ -211,8 +230,8 @@ export class SessionHistoryReader {
       this.scheduleChange(sessionId, state, 'history:initial');
       await state.chain;
     } finally {
-      this.pending.delete(sessionId);
-      this.cancelled.delete(sessionId);
+      // A newer attach after a detach owns the entry now; leave it alone.
+      if (isCurrent()) this.pending.delete(sessionId);
     }
   }
 
@@ -222,10 +241,8 @@ export class SessionHistoryReader {
    * already been detached. Signals in-flight attach calls to bail.
    */
   detach(sessionId: string): void {
-    // Signal any in-flight attach for this session to bail.
-    if (this.pending.has(sessionId)) {
-      this.cancelled.add(sessionId);
-    }
+    // Cancel any in-flight attach: it bails once it no longer owns its entry.
+    this.pending.delete(sessionId);
     const state = this.states.get(sessionId);
     if (!state) return;
     state.watcher.close();
@@ -242,7 +259,6 @@ export class SessionHistoryReader {
     }
     this.states.clear();
     this.pending.clear();
-    this.cancelled.clear();
   }
 
   /**
@@ -327,6 +343,9 @@ export class SessionHistoryReader {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
+        // A detached tail's queued read can land after a newer attach began, and
+        // its file going away says nothing about the file the session tails now.
+        if (this.states.get(sessionId) !== state) return;
         console.warn(`[session-history] ${state.filePath} disappeared for session=${sessionId.slice(0, 8)}, closing watcher`);
         this.detach(sessionId);
       } else {

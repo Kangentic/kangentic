@@ -1250,15 +1250,16 @@ test.describe('Settings Panel', () => {
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan (Read-Only)',
-        'Default (Confirm Actions)',
-        'YOLO (Skip Confirmations)',
+        'Always Ask',
+        'Ask When Needed (YOLO)',
+        'Never Ask (Auto)',
       ]);
 
       // The Kimi adapter declares "default" as its defaultPermission. After
       // switching the agent, the permission mode should be set to "default"
       // - shown here as its label, since the Combobox displays the resolved
       // option's label, not its raw value.
-      await expect(permInput).toHaveValue('Default (Confirm Actions)');
+      await expect(permInput).toHaveValue('Always Ask');
     } finally {
       // Restore to Claude so later tests are unaffected.
       await agentInput.click();
@@ -1285,8 +1286,8 @@ test.describe('Settings Panel', () => {
       const permRow = page.locator('div:has(> input[data-testid="agent-permission-mode"])');
       const permInput = page.locator('input[data-testid="agent-permission-mode"]');
 
-      // OpenCode exposes exactly 2 modes: Plan and Build (trimmed from the
-      // original 4-entry Claude-shaped list). Verify exact order and no extras.
+      // OpenCode exposes its own modes: Plan, its default agent, Build, and
+      // Build with `--auto`. Verify exact order and no extras.
       await expect.poll(async () => {
         await permInput.click();
         const texts = await page.locator('[data-combobox-option]').allTextContents();
@@ -1295,7 +1296,9 @@ test.describe('Settings Panel', () => {
         return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan',
+        'Default Agent',
         'Build',
+        'Build (Auto-approve)',
       ]);
 
       // The OpenCode adapter declares "acceptEdits" as its defaultPermission.

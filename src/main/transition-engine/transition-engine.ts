@@ -149,8 +149,13 @@ interface ResolvedLaunch {
   bypassAvailable: boolean;
   shell: string;
   commandOptions: SpawnCommandOptions;
-  /** A resume's prompt kept off the command line, to be typed in (`resumePromptRidesCommandLine`). */
-  resumePromptKeptOff: boolean;
+  /**
+   * The prompt kept off the command line, to be typed in: a resume's that
+   * cannot ride it (`resumePromptRidesCommandLine`), handed back as
+   * `unsentPrompt`, or a fresh spawn's on an adapter whose CLI takes no starting
+   * prompt (`freshPromptDelivery: 'typed'`), handed back as `typedOpening`.
+   */
+  promptKeptOff: boolean;
   /** `launchKeyOf` for this launch, which an adoption compares. */
   launchKey: string;
   /**
@@ -222,13 +227,14 @@ export interface SpawnOutcome {
    */
   unsentPrompt: string | null;
   /**
-   * Set when the spawn adopted an agent launched while the task's worktree ran
-   * its setup script (`SpawnOverrides.earlyAgent`): the opening prompt that
-   * agent's command line could not carry, since it launched before the prompt
-   * was ready. The caller types it in, and waits for it to land, before it
-   * sends the agent anything else. It is the spawn's whole command-line prompt,
-   * so the caller treats it exactly as a prompt that rode the command line.
-   * Null or absent otherwise.
+   * The opening prompt a fresh session's command line could not carry. Set when
+   * the spawn adopted an agent launched while the task's worktree ran its setup
+   * script (`SpawnOverrides.earlyAgent`), before the prompt was ready, and on a
+   * fresh spawn of an adapter whose CLI takes no starting prompt
+   * (`freshPromptDelivery: 'typed'`). The caller types it in, and waits for it
+   * to land, before it sends the agent anything else. It is the spawn's whole
+   * command-line prompt, so the caller treats it exactly as a prompt that rode
+   * the command line. Null or absent otherwise.
    */
   typedOpening?: string | null;
 }
@@ -674,11 +680,14 @@ export class TransitionEngine {
     // detail, not what the user wrote.
     let launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
     // A resume's prompt rides its command line only where it arrives whole
-    // (resume-prompt-delivery.ts). Otherwise it is kept off the command line
-    // and handed back in `unsentPrompt`, and the caller types it in.
-    const resumePromptKeptOff = input.canResume && input.prompt !== undefined && input.prompt.trim() !== ''
-      && !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: input.prompt, launchStrategy: launch.strategy, shell });
-    if (resumePromptKeptOff) launch = { ...launch, prompt: undefined };
+    // (resume-prompt-delivery.ts), and a fresh spawn's only where the CLI takes
+    // a starting prompt (`freshPromptDelivery`). Otherwise it is kept off the
+    // command line and handed back, and the caller types it in.
+    const promptText = input.prompt?.trim() ? input.prompt : null;
+    const promptKeptOff = promptText !== null && (input.canResume
+      ? !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: promptText, launchStrategy: launch.strategy, shell })
+      : adapter.freshPromptDelivery === 'typed');
+    if (promptKeptOff) launch = { ...launch, prompt: undefined };
     const executionTarget = resolveExecutionTarget(input.agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     const commandOptions: SpawnCommandOptions = {
@@ -717,7 +726,7 @@ export class TransitionEngine {
       bypassAvailable,
       shell,
       commandOptions,
-      resumePromptKeptOff,
+      promptKeptOff,
       launchKey: launchKeyOf(input.agentName, commandOptions),
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
     };
@@ -1009,7 +1018,7 @@ export class TransitionEngine {
     }
 
     const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
-    const { statusOutputPath, eventsOutputPath, shell, resumePromptKeptOff } = launch;
+    const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
     const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
     if (hostFiles) {
       // Remembered before the push: a push that fails partway has already written some files, and the
@@ -1095,16 +1104,21 @@ export class TransitionEngine {
     // first turn is a summary for the user, so it runs no turn-end rows.
     if (recapOnly) markRecapSession(session.id);
     if (expiredNotice) this.services.onConversationExpired?.(expiredNotice);
-    // A resume whose prompt was kept off its command line opens idle, and the
+    // A spawn whose prompt was kept off its command line opens idle, and the
     // caller types the prompt in once the agent is ready. Claude's resume
     // reloads its context with no hook, which the status heartbeat would read as
     // thinking for 30 s, holding that delivery back; the restart path asserts
-    // idle for the same reason. Any real turn hook clears it.
-    if (resumePromptKeptOff) this.sessionManager.markIdleAuthoritative(session.id);
-    const unsentPrompt = resumePromptKeptOff
-      ? prompt ?? null
-      : (templateTookSlot ? resumePrompt ?? null : null);
-    return { startOver, recapOnly, unsentPrompt };
+    // idle for the same reason. A fresh spawn whose prompt waits to be typed has
+    // no turn running either. Any real turn hook clears it.
+    if (promptKeptOff) this.sessionManager.markIdleAuthoritative(session.id);
+    const carriedMessage = templateTookSlot ? resumePrompt ?? null : null;
+    // A fresh spawn's prompt is the session's opening, whatever it holds (the
+    // task template, a column's message), so it goes as an adopted early agent's
+    // does: typed first, then treated as a prompt that rode the command line.
+    if (promptKeptOff && !canResume) {
+      return { startOver, recapOnly, unsentPrompt: carriedMessage, typedOpening: prompt ?? null };
+    }
+    return { startOver, recapOnly, unsentPrompt: promptKeptOff ? prompt ?? null : carriedMessage };
   }
 
   /**

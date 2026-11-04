@@ -200,3 +200,185 @@ describe('the OpenCode 2 activity plugin', () => {
     expect(written).toEqual(['session_start', 'prompt', 'tool_start', 'tool_end', 'idle']);
   });
 });
+
+/**
+ * Subagents, compaction and telemetry, from the 2.2.5 event schema
+ * (`packages/schema/src/session-event.ts`, `token-usage.ts`, `model.ts`): a
+ * child session's `session.created` carries `parentID`; `session.step.started`
+ * carries the `Model.Ref` and `session.step.ended` the step's `cost` and
+ * `tokens`. Built from the schema, not from a captured run.
+ */
+describe('createV2SessionTracker', () => {
+  const CHILD = 'ses_child0000000000000000000';
+  interface Tracker {
+    onEvent(event: unknown, now?: number): Array<Record<string, unknown>>;
+    toolStart(hookEvent: unknown, now?: number): Record<string, unknown>;
+    toolEnd(hookEvent: unknown, now?: number): Record<string, unknown>;
+    takeStatusChange(): boolean;
+    status(): Record<string, unknown> | null;
+  }
+  async function createTracker(): Promise<Tracker> {
+    const plugin = await loadPlugin() as unknown as { helpers: { createV2SessionTracker(): Tracker } };
+    return plugin.helpers.createV2SessionTracker();
+  }
+  const types = (lines: Array<Record<string, unknown>>) => lines.map(({ ts: _ts, hookContext: _hookContext, ...rest }) => rest);
+
+  it('reads a child session as a subagent, never as the task\'s own start or idle', async () => {
+    const tracker = await createTracker();
+    const lines = [
+      { type: 'session.execution.started', data: { sessionID: SESSION } },
+      { type: 'session.created', data: { sessionID: CHILD, parentID: SESSION, projectID: 'prj', title: 'Explore' } },
+      { type: 'session.execution.started', data: { sessionID: CHILD } },
+      { type: 'session.execution.succeeded', data: { sessionID: CHILD } },
+      { type: 'session.execution.succeeded', data: { sessionID: SESSION } },
+    ].flatMap((event) => tracker.onEvent(event, 1));
+    expect(types(lines)).toEqual([
+      { type: 'session_start' },
+      { type: 'prompt' },
+      { type: 'subagent_start', subagentId: CHILD },
+      { type: 'subagent_stop', subagentId: CHILD },
+      { type: 'idle' },
+    ]);
+    expect(tracker.toolStart({ tool: 'grep', sessionID: CHILD, input: { pattern: 'x' } }, 1)).toMatchObject({ type: 'tool_start', subagentId: CHILD });
+  });
+
+  it('stops a subagent still open before the root\'s turn ends, and keeps a subagent\'s wait', async () => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1);
+    expect(types(tracker.onEvent({ type: 'question.asked', data: { sessionID: CHILD } }, 1)))
+      .toEqual([{ type: 'idle', detail: 'permission', waitKind: 'question' }]);
+    expect(types(tracker.onEvent({ type: 'session.execution.interrupted', data: { sessionID: SESSION } }, 1))).toEqual([
+      { type: 'session_start' },
+      { type: 'subagent_stop', subagentId: CHILD },
+      { type: 'interrupted' },
+    ]);
+  });
+
+  it.each([
+    ['permission.asked', 'approval'],
+    ['question.asked', 'question'],
+  ])('keeps a subagent open through the root\'s %s wait, and stops it when the root\'s turn ends', async (askedType, waitKind) => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.execution.started', data: { sessionID: SESSION } }, 1);
+    expect(types(tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1)))
+      .toEqual([{ type: 'subagent_start', subagentId: CHILD }]);
+
+    // The root waits on the user while its subagent still runs: the wait is not the turn's end.
+    expect(types(tracker.onEvent({ type: askedType, data: { sessionID: SESSION } }, 1)))
+      .toEqual([{ type: 'idle', detail: 'permission', waitKind }]);
+
+    expect(types(tracker.onEvent({ type: 'session.execution.succeeded', data: { sessionID: SESSION } }, 1))).toEqual([
+      { type: 'subagent_stop', subagentId: CHILD },
+      { type: 'idle' },
+    ]);
+  });
+
+  it('writes a compaction of the root', async () => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.execution.started', data: { sessionID: SESSION } }, 1);
+    expect(types(tracker.onEvent({ type: 'session.compaction.started', data: { sessionID: SESSION, reason: 'auto' } }, 1)))
+      .toEqual([{ type: 'compact' }]);
+  });
+
+  it('keeps telemetry from the root\'s steps, and cost from every session', async () => {
+    const tracker = await createTracker();
+    expect(tracker.status()).toBeNull();
+    const step = (sessionID: string, messageID: string, cost: number, input: number) => ({
+      type: 'session.step.ended',
+      data: { sessionID, assistantMessageID: messageID, finish: 'stop', cost, tokens: { input, output: 10, reasoning: 2, cache: { read: 100, write: 5 } } },
+    });
+    tracker.onEvent({ type: 'session.step.started', data: { sessionID: SESSION, assistantMessageID: 'msg_1', agent: 'build', model: { id: 'claude-sonnet-4-5', providerID: 'anthropic' }, started: 1 } }, 1);
+    tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1);
+    tracker.onEvent(step(SESSION, 'msg_1', 0.01, 300), 1);
+    tracker.onEvent(step(CHILD, 'msg_c1', 0.002, 9000), 1);
+    tracker.onEvent(step(SESSION, 'msg_2', 0.02, 400), 1);
+    expect(tracker.takeStatusChange()).toBe(true);
+    expect(tracker.status()).toEqual({
+      kangenticOpenCodeStatus: 1,
+      model: { id: 'anthropic/claude-sonnet-4-5' },
+      contextLimit: 0,
+      context: { input: 400, output: 10, reasoning: 2, cacheRead: 100, cacheWrite: 5 },
+      totals: { input: 700, output: 20, reasoning: 4, cacheRead: 200, cacheWrite: 10 },
+      costUsd: expect.closeTo(0.032, 10),
+    });
+  });
+
+  it('adds a compaction\'s cost whether it ended or failed, and counts a failed step like an ended one', async () => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.step.started', data: { sessionID: SESSION, assistantMessageID: 'msg_1', model: { id: 'm', providerID: 'p' } } }, 1);
+    tracker.onEvent({ type: 'session.compaction.ended', data: { sessionID: SESSION, cost: 0.1 } }, 1);
+    tracker.onEvent({ type: 'session.compaction.failed', data: { sessionID: SESSION, cost: 0.2 } }, 1);
+    tracker.onEvent({
+      type: 'session.step.failed',
+      data: { sessionID: SESSION, assistantMessageID: 'msg_1', cost: 0.4, tokens: { input: 30, output: 4, reasoning: 0, cache: { read: 0, write: 0 } } },
+    }, 1);
+    const status = tracker.status() as { costUsd: number; totals: { input: number }; context: { input: number } };
+    expect(status.costUsd).toBeCloseTo(0.7, 10);
+    expect(status.totals.input).toBe(30);
+    expect(status.context.input).toBe(30);
+  });
+
+  it('keeps the root\'s shown model when a child\'s step starts, and carries the child id on its tool end', async () => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.step.started', data: { sessionID: SESSION, assistantMessageID: 'msg_1', model: { id: 'big', providerID: 'p' } } }, 1);
+    tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1);
+    tracker.onEvent({ type: 'session.step.started', data: { sessionID: CHILD, assistantMessageID: 'msg_c', model: { id: 'small', providerID: 'p' } } }, 1);
+    expect(tracker.status()).toMatchObject({ model: { id: 'p/big' } });
+    expect(tracker.toolEnd({ tool: 'grep', sessionID: CHILD }, 1)).toMatchObject({ type: 'tool_end', subagentId: CHILD });
+    expect(tracker.toolEnd({ tool: 'grep', sessionID: SESSION }, 1)).not.toHaveProperty('subagentId');
+  });
+
+  it('starts a continued child again after it stopped, and stops it on a failed or interrupted run', async () => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1);
+    tracker.onEvent({ type: 'session.execution.succeeded', data: { sessionID: CHILD } }, 1);
+    for (const endType of ['session.execution.failed', 'session.execution.interrupted']) {
+      expect(types(tracker.onEvent({ type: 'session.execution.started', data: { sessionID: CHILD } }, 1)))
+        .toEqual([{ type: 'subagent_start', subagentId: CHILD }]);
+      expect(types(tracker.onEvent({ type: endType, data: { sessionID: CHILD } }, 1)))
+        .toEqual([{ type: 'subagent_stop', subagentId: CHILD }]);
+    }
+  });
+
+  it('opens a never-seen session with its start before the compaction', async () => {
+    const tracker = await createTracker();
+    const lines = tracker.onEvent({ type: 'session.compaction.started', data: { sessionID: SESSION, reason: 'auto' } }, 1);
+    expect(types(lines)).toEqual([{ type: 'session_start' }, { type: 'compact' }]);
+    expect(JSON.parse(lines[0].hookContext as string)).toEqual({ sessionID: SESSION });
+  });
+
+  it('reports a status change for a new step model only, not for the same model again', async () => {
+    const tracker = await createTracker();
+    const started = (id: string) => ({ type: 'session.step.started', data: { sessionID: SESSION, assistantMessageID: 'msg_1', model: { id, providerID: 'p' } } });
+    tracker.onEvent(started('one'), 1);
+    expect(tracker.takeStatusChange()).toBe(true);
+    tracker.onEvent(started('one'), 1);
+    expect(tracker.takeStatusChange()).toBe(false);
+    tracker.onEvent(started('two'), 1);
+    expect(tracker.takeStatusChange()).toBe(true);
+  });
+
+  it('writes status.json beside the events file from the subscription', async () => {
+    const plugin = await loadPlugin();
+    const events = [
+      { type: 'session.step.started', data: { sessionID: SESSION, assistantMessageID: 'msg_1', agent: 'build', model: { id: 'gpt-5', providerID: 'openai' }, started: 1 } },
+      { type: 'session.step.ended', data: { sessionID: SESSION, assistantMessageID: 'msg_1', finish: 'stop', cost: 0.5, tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } } } },
+    ];
+    let delivered: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => { delivered = resolve; });
+    const ctx = {
+      event: {
+        subscribe: () => (async function* () {
+          for (const event of events) yield event;
+          delivered();
+        })(),
+      },
+      tool: { hook: async () => undefined },
+    };
+    const cleanup = await plugin.setup(ctx);
+    await done;
+    await vi.waitFor(() => expect(fs.existsSync(path.join(directory, 'status.json'))).toBe(true));
+    cleanup?.();
+    expect(JSON.parse(fs.readFileSync(path.join(directory, 'status.json'), 'utf-8')).model).toEqual({ id: 'openai/gpt-5' });
+  });
+});

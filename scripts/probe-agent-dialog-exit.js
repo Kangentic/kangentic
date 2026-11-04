@@ -79,7 +79,7 @@ function trustedFoldersEditor(configDirName) {
 
 const AGENTS = {
   // Each in a mode that asks before a shell command: Gemini's and Qwen's "Default (Confirm
-  // Actions)", Copilot's "Default" (its acceptEdits passes --allow-all-tools).
+  // Actions)", Copilot's "Default" (Copilot's own default, which asks before a shell command).
   gemini: { sequence: ['\x03', '/quit\r'], trustDir: '.gemini', command: (prompt) => `& gemini '${prompt}'` },
   qwen: { sequence: ['\x03', '/quit\r'], trustDir: '.qwen', command: (prompt) => `& qwen '${prompt}'` },
   copilot: { sequence: ['\x03', '/exit\r'], command: (prompt) => `& copilot -i '${prompt}'` },

@@ -98,13 +98,16 @@ const WSL_AGENTS = agentRegistry.list()
   .filter((adapter): adapter is NonNullable<typeof adapter> => adapter?.supportsWslCli === true);
 
 /**
- * Adapters whose capability discovery asks the CLI nothing, by design. Droid is
- * TUI-first: `discoverDroidCapabilities` returns a fixed
- * `supportsModelOverride: false` (model and effort stay in the TUI, see
- * `.claude/rules/cli-features-over-custom-layers.md`), so there is no CLI run
- * to put in a distro. Any other adapter must run at least one probe.
+ * Adapters whose capability discovery asks the CLI nothing, by design. Warp
+ * declares `supportsModelOverride: true` from Oz's docs (`oz agent run
+ * --model`) and lists no models, since `oz model list` has no documented
+ * output format. Goose returns a fixed `supportsModelOverride: true` too: it
+ * takes `--model` on every run but has no command that lists models, so the
+ * field is free-form and there is nothing to ask the CLI. Droid used to be
+ * here: it now reads its model list from `droid exec --help`. Any other
+ * adapter must run at least one probe.
  */
-const DISCOVERY_RUNS_NOTHING = new Set<string>(['droid']);
+const DISCOVERY_RUNS_NOTHING = new Set<string>(['warp', 'goose']);
 
 function expectStartedInDistro(linuxCliPath: string): void {
   expect(started.length).toBeGreaterThan(0);

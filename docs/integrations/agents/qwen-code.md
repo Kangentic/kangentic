@@ -11,6 +11,11 @@ sources:
   - resource: src/main/agent/adapters/qwen-code/trust-manager.ts
   - resource: src/main/agent/adapters/qwen-code/qwen-home.ts
   - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
+  - resource: src/main/agent/adapters/qwen-code/transcript-parser.ts
+  - resource: src/main/agent/adapters/qwen-code/transcript-metrics.ts
+  - resource: src/main/agent/adapters/qwen-code/subagent-usage.ts
+  - resource: src/main/agent/adapters/qwen-code/conversation-gone.ts
+  - resource: src/main/agent/adapters/qwen-code/status-parser.ts
 ---
 # Qwen Code
 
@@ -50,10 +55,13 @@ qwen --resume <sessionId>
 |------|------|-----------|
 | `plan` / `dontAsk` | `--approval-mode plan` | Plan (Read-Only Research) |
 | `default` | (no flag) | Default (Confirm Actions) |
-| `acceptEdits` / `auto` | `--approval-mode auto-edit` | Auto Edit (Auto-Approve Edits) |
+| `acceptEdits` | `--approval-mode auto-edit` | Auto Edit (Auto-Approve Edits) |
+| `auto` | `--approval-mode auto` on 0.16.0 and later, else `auto-edit` | Auto (Classifier Approves Safe Actions) |
 | `bypassPermissions` | `--approval-mode yolo` | YOLO (Auto-Approve All) |
 
 The fork swapped Gemini's `auto_edit` (underscore) flag value for `auto-edit` (hyphen). The unit tests guard against the underscore form regressing.
+
+Qwen has its own `auto` mode, in which an LLM classifier approves safe shell commands, network calls and out-of-workspace edits and blocks risky ones. Its yargs `choices` gain `auto` in v0.16.0 and do not have it in v0.15.6 ([config.ts at v0.16.0](https://github.com/QwenLM/qwen-code/blob/v0.16.0/packages/cli/src/config/config.ts), [approval mode docs](https://qwenlm.github.io/qwen-code-docs/en/users/features/approval-mode/)). A value outside `choices` stops Qwen from starting, so an older Qwen, or one whose version was not detected, runs `auto` as `auto-edit` (`supportsAutoApprovalMode`). That is the opposite default to `--mcp-config`, where an unknown version takes the flag. Qwen has no mode that denies what was not pre-approved, so `dontAsk` keeps plan, the nearest mode that never prompts.
 
 ## Hooks
 
@@ -66,15 +74,19 @@ SessionStart, SessionEnd and Notification ever fired. Each event now maps as Cla
 
 | Qwen event | Kangentic event |
 |------------|-----------------|
-| `PreToolUse` | `tool_start` (tool, `tool_use_id`, file path or command) |
-| `PostToolUse` | `tool_end` (fires only for a result with no error) |
-| `PostToolUseFailure` | `tool_end`, or `interrupted` when `is_interrupt` is true |
-| `UserPromptSubmit` / `Stop` | `prompt` / `idle`, both with the session's plan mode |
+| `PreToolUse` | `tool_start` (tool, `tool_use_id`, the subagent's `agent_id`, file path, command, query, pattern, URL or description), marked a subagent launch for `agent` and `task` |
+| `PostToolUse` | `tool_end` (fires only for a result with no error), with `agent_id` |
+| `PostToolUseFailure` | `tool_end`, or `interrupted` when `is_interrupt` is true, with `agent_id` |
+| `UserPromptSubmit` / `Stop` | `prompt` / `idle`, both with the session's plan mode; a Command Terminal's prompt also carries `submitted_prompt`, else `prompt`, for its namer |
 | `StopFailure` | `turn_failed` (an API error or loop detection ended the turn) |
 | `PermissionRequest` | `idle` with detail `permission`, naming the tool, with its kind (`waitKind`): `ask_user_question` is a question, every other tool (the plan exit included) an approval |
 | `SubagentStart` / `SubagentStop` | `subagent_start` / `subagent_stop`, with `agent_type` in `detail` and `agent_id` as the subagent id |
 | `PreCompact` | `compact` |
-| `Notification`, `SessionStart`, `SessionEnd` | the same-named events |
+| `Notification`, `SessionStart`, `SessionEnd` | the same-named events (a `Notification`, `idle_prompt` included, stays log-only) |
+
+Every payload carries `agent_id` only when the event fires inside a subagent ([hooks.md at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/docs/users/features/hooks.md)), so the tool events carry it as Claude's do: a subagent's tool end cannot drain a main-agent tool of the same name. The `agent` tool (and `task`, its legacy alias, per `tool-names.ts`) is marked as a subagent launch, so only that call's own approval lets its `subagent_start` close the prompt it waited on. On 0.25.2's order the call is pending when the prompt opens and the mark pairs them. On 0.25.3's reverse order it does nothing.
+
+`idle_prompt` is not an idle hint, unlike Claude's "waiting for your input". Qwen fires it each time its streaming state passes through Idle (`useAttentionNotifications.ts`), and the live 0.25.2 session sent it right after almost every `PreToolUse`, mid-turn (`notification-idle-prompt-mid-turn.json`). The source alone reads like a turn-end signal; the capture shows it is not one.
 
 A live 0.25.2 session fires `PreToolUse` and then `PermissionRequest`, the same order as Claude
 (Qwen's own payload timestamps put the shell tool's `PreToolUse` 344 ms before its
@@ -145,7 +157,7 @@ strips it when the folder's last session ends. An undetected version takes the f
 
 Qwen inherits Gemini's folder-trust store: `~/.qwen/trustedFolders.json` maps absolute forward-slashed paths to `TRUST_FOLDER`, `TRUST_PARENT`, or `DO_NOT_TRUST`. Kangentic only ever writes `TRUST_FOLDER`; the other two are user decisions it detects and leaves alone.
 
-Every `~/.qwen` path on this page is Qwen's global directory, `$QWEN_HOME` when set (`qwenHomeDir`, `qwen-home.ts`), the variable Qwen's settings docs name for moving it. The trust write and removal, the chats, the model scan and the relocation pass all use it, so Kangentic writes trust where Qwen reads it. A leading `~` is expanded. A relative value is left out: Qwen resolves one against its own working directory, which a global reader does not have.
+Every `~/.qwen` path on this page is Qwen's global directory, `$QWEN_HOME` when set (`qwenHomeDir`, `qwen-home.ts`), the variable Qwen's settings docs name for moving it. The trust write and removal and the settings read use it, so Kangentic writes trust where Qwen reads it. A leading `~` is expanded. A relative value is left out: Qwen resolves one against its own working directory, which a global reader does not have. The chats, the subagent transcripts and `tmp/` live under the runtime directory instead (see [Session History](#session-history)), which is `~/.qwen` unless the user moved it.
 
 Two things differ from the Gemini implementation:
 
@@ -161,8 +173,16 @@ The second difference is what makes cleanup load-bearing here. `QwenAdapter.onWo
 Native chat session JSONL file:
 
 ```
-~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl
+<runtime>/projects/<sanitized-cwd>/chats/<sessionId>.jsonl
 ```
+
+`<runtime>` is Qwen's runtime directory (`qwenRuntimeDir`, `qwen-home.ts`), resolved in Qwen's own order (`Storage.getRuntimeBaseDir` in [storage.ts at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/config/storage.ts)):
+
+1. `QWEN_RUNTIME_DIR`
+2. `advanced.runtimeOutputDir`, from the workspace's `.qwen/settings.json` and then the user's, resolved against the workspace
+3. `QWEN_HOME`, else `~/.qwen`
+
+Reading `QWEN_HOME` alone would leave a user with either override no history, transcript, verifier or model list. A settings file that is not plain JSON (Qwen accepts comments) is skipped. A Qwen in a WSL distro reads the distro shell's own `QWEN_RUNTIME_DIR`, which `WSL_ENV_KEYS` (`wsl-distro.ts`) collects, and its settings.
 
 `<sanitized-cwd>` is the cwd lowercased (on Windows) with every non-alphanumeric character replaced
 by `-`, so `C:\Users\dev\proj` becomes `c--users-dev-proj`. The filename is exactly the session UUID
@@ -177,9 +197,90 @@ The parser walks the `messages[]` array backwards to find the most recent assist
 
 Context window size is read straight off the event: Qwen records a real `contextWindowSize` on every assistant event, so there is no lookup table to maintain. A missing field (older builds) falls through to the `0` sentinel, and the renderer hides the progress bar and shows only the model name.
 
+## Transcript, usage and subagents
+
+`transcript-parser.ts`, `transcript-metrics.ts`, `subagent-usage.ts`
+
+Record shapes come from `ChatRecord` in [chatRecordingService.ts at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts). `type` is `user`, `assistant`, `tool_result` or `system`, and every record carries `uuid` and a `timestamp`:
+
+- **Tool results.** `recordToolResult` writes a `tool_result` record whose `message.parts` hold the `functionResponse`. The parser reads it, and the same parts in a `user` record, where older writers put them. A parser that read only `user` and `assistant` would show no Qwen tool result in the Conversation viewer.
+- **Per-turn usage.** `recordAssistantTurn` writes one API response's `usageMetadata` on each assistant record, and the parser puts it on the entry (`usage`) for the turn-usage ledger:
+  - Fresh input is `promptTokenCount - cachedContentTokenCount`, and the cached part is a cache read.
+  - Output follows Qwen's own rule (`outputTokenCount` in `telemetry/gen-ai-usage.ts`). An OpenAI-compatible provider counts reasoning inside `candidatesTokenCount`; Gemini reports it apart in `thoughtsTokenCount`. `totalTokenCount - promptTokenCount` decides when it falls between the two, and otherwise the candidates count stands, so reasoning is never counted twice.
+  - `system` ui_telemetry records repeat the counts and are never read.
+- **Lifetime readers.**
+  - `transcriptUsage` sums every assistant record once, with the full input side (cache included, as Claude's lifetime input counts it).
+  - `transcriptToolCounts` and `transcriptToolResultTokens` share the append cursor Claude's readers use (`shared/tool-call-cursor.ts`), with Qwen's own line reader. They count distinct `functionCall` ids, size each `functionResponse` at characters/4, and scope a read to one run by the records' timestamps.
+  - A `--resume` appends to the same file, so `scopesTranscriptReadsByTime` is true.
+- **`parseTranscriptWindow`.** Reads the chat window by window for the conversation indexer. Lines before a window are counted only when it holds a record with no `uuid`, so a fallback uuid matches the tail's and the pages'.
+- **Subagents.** Each subagent writes its own transcript ([agent-transcript.ts at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/agents/agent-transcript.ts)):
+  - Its files are `<runtime>/projects/<slug>/subagents/<sessionId>/agent-<id>.jsonl` with a `.meta.json` sidecar. The parent's `agent` result has its calls stripped, so these files are the only record of a subagent's spend.
+  - `statSubagentTranscripts` signs the `.jsonl` files and leaves out the transient `.jsonl.stream`.
+  - `parseSubagentUsage` records one turn per assistant record with usage. The sidecar supplies `agentType`, `model`, and `toolUseId` (the parent's `agent` call), and depth follows its `parentAgentId` chain, since Qwen says its own `depth` is never trusted raw. Spawn links come from `agent`/`task` calls, and `subagentSpawnToolName` is `agent`.
+- **File changes.** `fileChangeTools` names `edit` and its legacy alias `replace`, plus `write_file` by `file_path` and `notebook_edit` by `notebook_path` (`edit.ts`, `write-file.ts`, `tool-names.ts` at v0.26.6).
+- **Model on the card.** `configuredModelFromCommand` reads the spawn's `--model` with the raw id as its label. Qwen serves many providers' ids, and `humanizeModelId` would turn `gpt-4.1` into "Gpt 4.1", so there is no `modelDisplayName` either.
+
+## Following `/clear`
+
+`/clear` and `/branch` start a new session id (`config.startNewSession()` in [clearCommand.ts at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/ui/commands/clearCommand.ts)), and an in-TUI `/resume` loads another. Each fires SessionStart with its `source` (`SessionStartSource` in [hooks/types.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/hooks/types.ts)).
+
+Qwen writes no status file, so the SessionStart hook is the only signal of a move. Without it, the session record would keep the conversation the terminal started with, and a pause and resume would reopen the conversation the user had cleared away.
+
+- `statusFile.parseSessionStart` reads `clear`, `branch`, `resume` and `compact` as moves and `startup` as a launch. A payload carrying `agent_id` fired inside a subagent and reads as nothing, as does a `session_id` holding a path separator or `..`, since the id names the chat file.
+- `runtime.sessionId.followsSessionStartMoves` lets such a hook switch the session's id by itself, through the same chain that records any captured id.
+- The session manager re-points the history tail at the new conversation's chat, unless the session already ended. Qwen creates a chat with its first record, the next prompt, so that attach keeps locating for as long as the session runs (`waitForFile` in `session-history-reader.ts`) where a spawn's attach gives up after about 5 s. Until that prompt the card keeps the old conversation's usage. A detach while the first attach is still locating cancels it, and the new attach starts clean.
+
+Built from Qwen's source: the live 0.25.2 capture holds only a `startup` SessionStart.
+
+## Resume of a deleted chat
+
+`conversation-gone.ts`
+
+`qwen --resume <uuid>` with no saved chat exits 1 with "No saved session found with ID <id>" ([config.ts at v0.26.6](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/config/config.ts)). It does not start fresh, so `proveConversationGone` proves the chat gone and the resume starts a new conversation from a recap.
+
+The proof is Claude's, over Qwen's layout:
+
+1. The SessionStart hook's reported `transcript_path` must be missing. That path follows any runtime override Kangentic does not know about.
+2. The reader's path must be missing too.
+3. The `projects` folder above it must be readable.
+4. No other project folder may hold `chats/<id>.jsonl`.
+
+Anything short of that resumes as before.
+
+## Built from documentation, not checked against the real CLI
+
+No signed-in Qwen was available, so these were built from Qwen's docs and source at the versions named, and have not met a real Qwen session:
+
+| Behavior | Source |
+|----------|--------|
+| `--approval-mode auto` from 0.16.0 | [config.ts at v0.15.6](https://github.com/QwenLM/qwen-code/blob/v0.15.6/packages/cli/src/config/config.ts) and [at v0.16.0](https://github.com/QwenLM/qwen-code/blob/v0.16.0/packages/cli/src/config/config.ts); [approval mode docs](https://qwenlm.github.io/qwen-code-docs/en/users/features/approval-mode/) |
+| `agent_id` on tool events, the `agent`/`task` launch mark, `submitted_prompt`/`prompt` capture | [hooks/types.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/hooks/types.ts), [hooks.md](https://github.com/QwenLM/qwen-code/blob/v0.26.6/docs/users/features/hooks.md), [tool-names.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/tool-names.ts), all v0.26.6 |
+| The runtime directory (`QWEN_RUNTIME_DIR`, `advanced.runtimeOutputDir`) | [storage.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/config/storage.ts), [config.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/config/config.ts), v0.26.6 |
+| `tool_result` records, per-turn usage, the lifetime and tool-call readers, `parseTranscriptWindow` | [chatRecordingService.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/services/chatRecordingService.ts), [gen-ai-usage.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/telemetry/gen-ai-usage.ts), v0.26.6, and the 0.15.3 fixture |
+| `fileChangeTools`, `subagentSpawnToolName` | [edit.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/edit.ts), [write-file.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/write-file.ts), [tool-names.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/tool-names.ts), v0.26.6 |
+| `statSubagentTranscripts`, `parseSubagentUsage` | [agent-transcript.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/agents/agent-transcript.ts) and [agent/agent.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/agent/agent.ts) (`toolUseId: this.callId`, and [turn.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/core/turn.ts) makes `callId` the model's `functionCall.id`, so the sidecar, the chat and the spawn links name the same call), v0.26.6 |
+| `proveConversationGone` | [config.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/config/config.ts), v0.26.6 |
+| Following `/clear` (`parseSessionStart`, `followsSessionStartMoves`) | [clearCommand.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/ui/commands/clearCommand.ts), [hooks/types.ts](https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/hooks/types.ts), v0.26.6 |
+
+The lifetime, tool-call and subagent readers were run once by hand over a developer's real chats, 0.15.3 to 0.25.3. Across the 24 chats with usage, every API response outside a subagent matches an assistant record's usage exactly, so the lifetime totals equal Qwen's own `qwen-code.api_response` telemetry less its subagent responses. Three chats held tool results and one a subagent folder: the tool and subagent readers returned plausible totals, every key they read is in the real records, and a sidecar's `toolUseId` is in its parent chat. No record held a nonzero `thoughtsTokenCount`, so that branch of `qwenTurnUsage` has not met real data. No real record is committed, so the repository cannot repeat that run.
+
+The transcript and subagent readers replay `tests/fixtures/qwen-0.25.2-session/`. Its content is invented, but its structure is hand-written to match a real 0.25.2 session with a subagent: every key a reader uses, usage on the thought record before a tool call, `tool_result` records, `ui_telemetry` lines of the kinds each file holds (`qwen-code.*` in a chat, `tool_lifecycle` in a subagent's), and a sidecar whose `depth` counts from 0. A sanitized copy of the real capture would replace it, but committing one carries a developer's local Qwen data into a public repository, so that needs an explicit go-ahead.
+
+Not built from docs, because their contract asks for a measurement of the real CLI first:
+
+- `pastedImageNativeExtensions`: `pasted-image-paths.ts` lists `png|jpe?g|gif|webp|bmp`
+- the paste verifier, and escalation for the command-injection verifier
+- `answerCapabilities` streaming and search, and `openAnswerSession` (`--input-format stream-json`)
+- `supportsReadOnlyLaunch`
+- `supportsPlanAutoApproval`
+- `hungTurn`
+- `consoleCloseIsGraceful`
+- `describeStartupFailure` for "No saved session found with ID"
+- `firstPromptMayBeTyped`
+
 ## WSL
 
-A Qwen installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Qwen's Linux path in a `wsl -d <distro>` shell. Its `.qwen/settings.json` hooks call the WSL hook transport's script (`wsl-hook.sh event <type> <directives>`) in place of the node bridge, with the same events and directives, since a distro may have no node, and the background shell hint goes through the transport's `reply`. The file is shared by every session in the folder, so the commands name the folder's copy of the script, `<cwd>/.kangentic/qwen-wsl-hook.sh`, which finds the session's own folder through `KANGENTIC_WSL_HOOK_DIR`. Naming one session's script would break every other session's hooks once that session's folder was removed. Qwen passes each hook its payload on stdin and closes it, which the script's `event` mode reads, so these commands keep stdin (unlike Aider's notification command). `--mcp-config` names the session's `mcp.json` in the distro's form. On mirrored networking the distro reaches this machine's loopback and the entry is the `httpUrl` one. On NAT networking it is the transport's stdio bridge, `{"command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": <token>}}`, in the same session file. Trust, the chats and the model scan read the distro's Qwen directory (its own `QWEN_HOME`, else `~/.qwen`), keyed by the `/mnt` cwd with Linux case, so the slug keeps capitals. A removed worktree's trust entry goes from the distro's file while the distro runs. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Qwen installed in a distro: the `qwen` on this machine's Ubuntu is the Windows one through interop.
+A Qwen installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Qwen's Linux path in a `wsl -d <distro>` shell. Its `.qwen/settings.json` hooks call the WSL hook transport's script (`wsl-hook.sh event <type> <directives>`) in place of the node bridge, with the same events and directives, since a distro may have no node, and the background shell hint goes through the transport's `reply`. The file is shared by every session in the folder, so the commands name the folder's copy of the script, `<cwd>/.kangentic/qwen-wsl-hook.sh`, which finds the session's own folder through `KANGENTIC_WSL_HOOK_DIR`. Naming one session's script would break every other session's hooks once that session's folder was removed. Qwen passes each hook its payload on stdin and closes it, which the script's `event` mode reads, so these commands keep stdin (unlike Aider's notification command). `--mcp-config` names the session's `mcp.json` in the distro's form. On mirrored networking the distro reaches this machine's loopback and the entry is the `httpUrl` one. On NAT networking it is the transport's stdio bridge, `{"command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": <token>}}`, in the same session file. Trust reads the distro's Qwen directory (its own `QWEN_HOME`, else `~/.qwen`). The chats and the model scan read the distro's runtime directory (its own `QWEN_RUNTIME_DIR`, else its settings' `advanced.runtimeOutputDir`, else that Qwen directory), keyed by the `/mnt` cwd with Linux case, so the slug keeps capitals. A removed worktree's trust entry goes from the distro's file while the distro runs. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Qwen installed in a distro: the `qwen` on this machine's Ubuntu is the Windows one through interop.
 
 ## SSH
 
@@ -191,9 +292,11 @@ A Qwen on a remote host over SSH (#913) runs as `qwen`, found by the host's logi
 
 ## Session ID Capture
 
-Caller-owned via `--session-id <uuid>`, mirroring Claude. `supportsCallerSessionId` is `true`. Empirically verified against Qwen 0.15.3: real qwen accepts a UUID and writes its JSONL at exactly `~/.qwen/projects/<sanitized-cwd>/chats/<our-uuid>.jsonl`. `--session-id` and `--resume` are mutex (yargs enforces). The runtime keeps `fromHook` and `fromOutput` capture paths as belt-and-suspenders for forks that pre-empt the caller's UUID.
+Caller-owned via `--session-id <uuid>`, mirroring Claude. `supportsCallerSessionId` is `true`. Empirically verified against Qwen 0.15.3: real qwen accepts a UUID and writes its JSONL at exactly `<runtime>/projects/<sanitized-cwd>/chats/<our-uuid>.jsonl` (`~/.qwen` with no override). `--session-id` and `--resume` are mutex (yargs enforces). The runtime keeps `fromHook` and `fromOutput` capture paths as belt-and-suspenders for forks that pre-empt the caller's UUID.
 
 ## Limitations / Out of Scope
 
-- **No statusLine telemetry:** Qwen Code (like Gemini) has no `status.json` token-streaming feature, so context window % is sourced from the session history file rather than a real-time hook.
+- **No statusLine telemetry, by decision.** Qwen has had a Claude-style `ui.statusLine` since v0.14.3 ([status-line.md](https://github.com/QwenLM/qwen-code/blob/v0.26.6/docs/users/features/status-line.md)), and Kangentic does not wire it. The session history tail already gives the model, context and tokens. The payload has no cost and no model id, and its session id is what [Following `/clear`](#following-clear) gets from the SessionStart hook. Wiring it would also replace the user's own Qwen status line with an empty one, and would need a status path in the session's environment plus an `env:` sentinel in `status-bridge.js`, since the setting sits in the folder-shared `.qwen/settings.json`.
+- **No effort control.** Qwen's only effort control is `/effort`, which writes `model.reasoningEffort` to the user's settings, and there is no launch flag. A per-column effort would rewrite the user's own default.
+- **No cost or rate limits.** No Qwen output carries either.
 - **OpenAI gpt-5 family unsupported (upstream bug):** Qwen Code 0.15.3's bundled `cli.js` sends `max_tokens` in OpenAI requests and never `max_completion_tokens`. OpenAI's gpt-5 family (e.g. gpt-5, gpt-5-mini, gpt-5-nano, gpt-5.1, and any gpt-5.x / gpt-5.x-codex variant) requires `max_completion_tokens` and rejects `max_tokens` with HTTP 400. Picking any gpt-5 variant via `/model` in the Qwen TUI surfaces `[API Error: 400 Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.]`. Workarounds until upstream patches: stay on the gpt-4.1 family for OpenAI, or use the Anthropic provider (Opus 4.7, Sonnet 4.6, Haiku 4.5) which is fully supported. Kangentic cannot work around this - the adapter is a pure CLI wrapper with no request-parameter interception. Tracked upstream at https://github.com/QwenLM/qwen-code (search issues for `max_completion_tokens`).

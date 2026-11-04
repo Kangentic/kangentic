@@ -3040,6 +3040,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('Escape mid-move puts the panel back where it started, saves nothing and leaves the panel open', async () => {
+      // A press, a drag, an Escape and two settles: on a loaded CI runner (this file's
+      // shard) it ran past the 15 s default on both attempts, so it gets the room its
+      // neighbours have.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openPanelSettled(page);
@@ -3655,6 +3659,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('a panel grown from the minimum, where the floor evened the terminals, grows them evenly whatever the seam held before', async () => {
+      // Two terminals, a seam drag and a panel drag: on a loaded CI runner (this file's
+      // shard) it ran past the 15 s default on both attempts, so it gets the room its
+      // neighbours have.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
@@ -3876,9 +3884,27 @@ test.describe('Command Terminal', () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first, second } = await openTwoReady(page);
+        // What opening the terminals sent is behind us, so the shrink's refits are counted from here.
+        await settleResizes(page);
+        const frameWidths = () => page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+          .map((frame) => Math.round(frame.getBoundingClientRect().width)));
+        const widthsBefore = await frameWidths();
         await dragPanelEdgeTo(page, 'e', { x: 10 });
         await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
         await stillTerminals(page, [first, second]);
+        await expectNoFrameHold(page);
+        await settleFrames(page, 10);
+        // Each terminal the shrink narrowed refits once, after its frame hold ends. A quiet gap
+        // cannot tell that refit from none, and one that landed after it ran into the grow
+        // below as a resize mid-drag (a loaded CI runner), so wait for the refit itself.
+        const widthsAfter = await frameWidths();
+        for (const [index, sessionId] of [first, second].entries()) {
+          if (Math.abs(widthsAfter[index] - widthsBefore[index]) <= 8) continue;
+          await expect.poll(async () => (await resizesOf(page, sessionId)).length, {
+            message: `terminal ${index + 1} refit after the shrink, ${widthsBefore[index]} to ${widthsAfter[index]}px`,
+            timeout: 8000,
+          }).toBeGreaterThanOrEqual(1);
+        }
         await settleResizes(page);
         await expectNoFrameHold(page);
 
@@ -5436,9 +5462,12 @@ test.describe('Command Terminal', () => {
       }); } },
     ]) {
       test(`when main ${refusal.outcome} the window, the panel comes back with its terminal, and a toast says so`, async () => {
-        // Run first in its shard, so it pays Vite's cold compile of the whole renderer: 12.1 s and 12.6 s on a
-        // green main run against the default 15 s, and any new renderer module tipped it over.
-        test.setTimeout(30_000);
+        // Launches a fresh browser and starts a terminal, whose own waits (the page, the lane)
+        // allow 15 s each. On CI's loaded UI shard 4 these two were its first tests, and the
+        // 15 s default ended both at 15.3 to 16.4 s, on the first run and the retry, on two
+        // separate CI runs, while they pass in 5.3 s locally. The Expand tests above take 45 s
+        // for the same reason.
+        test.setTimeout(45000);
         const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: false }));
         try {
           await openPanelWithOneTerminal(page);

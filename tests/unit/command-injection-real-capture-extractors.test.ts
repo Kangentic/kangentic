@@ -26,7 +26,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { extractCodexUserTurn } from '../../src/main/agent/adapters/codex/command-injection-verifier';
 import { extractQwenUserTurn } from '../../src/main/agent/adapters/qwen-code/command-injection-verifier';
-import { extractKimiUserTurn } from '../../src/main/agent/adapters/kimi/command-injection-verifier';
 import { extractLastAiderUserPrompt } from '../../src/main/agent/adapters/aider/command-injection-verifier';
 import type { UserTurnRecord } from '../../src/main/agent/shared/submitted-text-verifier';
 
@@ -127,25 +126,6 @@ describe('Qwen, against a real chats capture', () => {
     );
     expect(turns).toHaveLength(1);
     expect(turns[0].timestampMs).not.toBeNull();
-  });
-});
-
-describe('Kimi, against a real wire capture', () => {
-  it('recovers the submitted text and scales unix SECONDS to milliseconds', () => {
-    const turns = collectUserTurns(
-      readFixtureLines('kimi', 'wire-real.jsonl'),
-      extractKimiUserTurn,
-    );
-
-    expect(turns.map((turn) => turn.text)).toEqual(['hello', 'hello']);
-
-    // Kimi is the only adapter whose timestamps are unix seconds. Unscaled,
-    // every record reads as ~1970 and lands far below the `sentAt` watermark,
-    // so the scan bails at the first record and nothing ever confirms.
-    for (const turn of turns) {
-      const year = new Date(turn.timestampMs as number).getUTCFullYear();
-      expect(year).toBeGreaterThan(2020);
-    }
   });
 });
 

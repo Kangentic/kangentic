@@ -82,6 +82,7 @@ function makeSessionManager() {
   return {
     spawn: vi.fn(async (options: { id: string; command: string }) => ({ id: options.id, status: 'running' })),
     getShell: vi.fn(async () => 'bash'),
+    markIdleAuthoritative: vi.fn(),
   };
 }
 
@@ -103,6 +104,7 @@ const mockAdapter = {
   locateSessionHistoryFile: vi.fn(async (): Promise<string | null> => null),
   proveConversationGone: undefined as AgentAdapter['proveConversationGone'],
   resumePromptDelivery: 'command-line' as AgentAdapter['resumePromptDelivery'],
+  freshPromptDelivery: undefined as AgentAdapter['freshPromptDelivery'],
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -292,7 +294,50 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
     fs.rmSync(projectPath, { recursive: true, force: true });
     mockAdapter.runtime = undefined;
     mockAdapter.proveConversationGone = undefined;
+    mockAdapter.freshPromptDelivery = undefined;
     resetRecapSessionsForTests();
+  });
+
+  describe('an adapter whose CLI takes no starting prompt (freshPromptDelivery: typed)', () => {
+    // Kimi Code opens with no prompt, so the recap that is the whole start of an
+    // expired main session must come back for the caller to type. Without it a
+    // resumed session with a deleted conversation sat idle with nothing typed.
+    it('keeps the main session\'s recap off the command line and returns it as the typed opening, recap only', async () => {
+      // What the command line carries on an adapter that takes a starting prompt.
+      const carrying = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+      const carriedOutcome = await carrying.engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, '/code-review', undefined, 'claude',
+      );
+      const recapOnCommandLine = capturedOptions?.prompt;
+      expect(recapOnCommandLine).toBeTruthy();
+      expect(carriedOutcome.typedOpening ?? null).toBeNull();
+
+      capturedOptions = undefined;
+      mockAdapter.freshPromptDelivery = 'typed';
+      const typed = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+      const outcome = await typed.engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, false, '/code-review', undefined, 'claude',
+      );
+
+      expect(capturedOptions?.prompt).toBeUndefined();
+      expect(outcome).toMatchObject({ startOver: 'expired', recapOnly: true, typedOpening: recapOnCommandLine });
+      // The column's message is withheld on a recap-only start, so nothing is left over.
+      expect(outcome.unsentPrompt).toBeNull();
+    });
+
+    it('returns an isolated column\'s recap and its own prompt as the typed opening, not recap only', async () => {
+      mockAdapter.freshPromptDelivery = 'typed';
+      const { engine } = makeEngine({ sessionRepo: resumableRepo(ISOLATED_LANE_ID), projectPath });
+
+      const outcome = await engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, true, '/code-review', undefined, 'claude',
+        undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
+      );
+
+      expect(capturedOptions?.prompt).toBeUndefined();
+      expect(outcome).toMatchObject({ startOver: 'expired', recapOnly: false });
+      expect(outcome.typedOpening).toContain('/code-review');
+    });
   });
 
   describe('which sessions are marked as having opened on the recap', () => {

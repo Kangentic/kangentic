@@ -18,6 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { AgentTool, EventType } from '../../src/shared/types';
 import { buildHooks, QwenHookEvent } from '../../src/main/agent/adapters/qwen-code';
+import type { QwenBuildHooksOptions } from '../../src/main/agent/adapters/qwen-code/hook-manager';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -34,8 +35,8 @@ afterEach(() => {
 });
 
 /** The event type and directives of the Kangentic entry Qwen's buildHooks writes for `hookEvent`. */
-function wiringOf(hookEvent: QwenHookEvent): { eventType: string; directives: string[] } {
-  const hooks = buildHooks('/mock/.kangentic/event-bridge.js', '/mock/.kangentic/events.jsonl', {});
+function wiringOf(hookEvent: QwenHookEvent, options: QwenBuildHooksOptions = {}): { eventType: string; directives: string[] } {
+  const hooks = buildHooks('/mock/.kangentic/event-bridge.js', '/mock/.kangentic/events.jsonl', {}, options);
   const entries = hooks[hookEvent];
   // `node "<bridge>" "<events>" <eventType> <directive> ...`, with no spaces in the paths.
   const tokens = entries[entries.length - 1].hooks[0].command.split(' ');
@@ -43,8 +44,8 @@ function wiringOf(hookEvent: QwenHookEvent): { eventType: string; directives: st
 }
 
 /** Run the bridge the way Qwen runs the hook for `hookEvent`, and return the event it appended. */
-function runHook(hookEvent: QwenHookEvent, payload: Record<string, unknown>): Record<string, unknown> {
-  const { eventType, directives } = wiringOf(hookEvent);
+function runHook(hookEvent: QwenHookEvent, payload: Record<string, unknown>, options: QwenBuildHooksOptions = {}): Record<string, unknown> {
+  const { eventType, directives } = wiringOf(hookEvent, options);
   execFileSync(process.execPath, [BRIDGE, outputFile, eventType, ...directives], {
     input: JSON.stringify(payload),
     timeout: 5000,
@@ -219,6 +220,81 @@ describe('Qwen tool and turn hooks', () => {
     expect(event.planMode).toBeUndefined();
   });
 
+  // `agent` starts a subagent (`task` is its legacy alias): only such a call's
+  // own approval may let a subagent_start close the prompt it waited on.
+  it('marks a call to the agent tool, and its legacy alias, as a subagent launch', () => {
+    for (const toolName of ['agent', 'task']) {
+      const event = runHook(QwenHookEvent.PreToolUse, {
+        ...baseInput('PreToolUse', 'default'),
+        tool_name: toolName,
+        tool_input: { description: 'Find the config loader', prompt: 'Find it', subagent_type: 'general-purpose' },
+        tool_use_id: `toolu_${toolName}`,
+      });
+      expect(event).toMatchObject({ type: EventType.ToolStart, tool: toolName, launchesSubagent: true, detail: 'Find the config loader' });
+      fs.rmSync(outputFile, { force: true });
+    }
+    const shell = runHook(QwenHookEvent.PreToolUse, {
+      ...baseInput('PreToolUse', 'default'),
+      tool_name: 'grep_search',
+      tool_input: { pattern: 'loadConfig' },
+      tool_use_id: 'toolu_grep',
+    });
+    expect(shell.launchesSubagent).toBeUndefined();
+    expect(shell.detail).toBe('loadConfig');
+  });
+
+  // A subagent's tool end carries `agent_id`, so the engine can tell it from a
+  // main-agent tool of the same name (extractSubagentId on both end events).
+  it('PostToolUse and PostToolUseFailure carry the subagent id of the agent_id in the payload', () => {
+    const toolEnd = {
+      ...baseInput('PostToolUse', 'default'),
+      agent_id: 'agent-3f2a',
+      tool_name: 'glob',
+      tool_input: { pattern: '**/*.ts' },
+      tool_response: { llmContent: 'a.ts', returnDisplay: 'a.ts' },
+      tool_use_id: 'toolu_sub_post',
+    };
+    expect(runHook(QwenHookEvent.PostToolUse, toolEnd)).toMatchObject({
+      type: EventType.ToolEnd,
+      tool: 'glob',
+      toolId: 'toolu_sub_post',
+      subagentId: 'agent-3f2a',
+    });
+
+    fs.rmSync(outputFile, { force: true });
+    const failure = {
+      ...baseInput('PostToolUseFailure', 'default'),
+      agent_id: 'agent-9c1d',
+      tool_name: 'glob',
+      tool_input: { pattern: '**/*.ts' },
+      error: 'Search failed',
+      is_interrupt: false,
+      tool_use_id: 'toolu_sub_failure',
+    };
+    expect(runHook(QwenHookEvent.PostToolUseFailure, failure)).toMatchObject({
+      type: EventType.ToolEnd,
+      tool: 'glob',
+      toolId: 'toolu_sub_failure',
+      subagentId: 'agent-9c1d',
+    });
+
+    // The main agent's end carries none.
+    fs.rmSync(outputFile, { force: true });
+    const { agent_id: _omitted, ...mainAgentEnd } = toolEnd;
+    expect(_omitted).toBe('agent-3f2a');
+    expect(runHook(QwenHookEvent.PostToolUse, mainAgentEnd).subagentId).toBeUndefined();
+  });
+
+  it('a tool_input.url is the tool detail, ahead of a description', () => {
+    const event = runHook(QwenHookEvent.PreToolUse, {
+      ...baseInput('PreToolUse', 'default'),
+      tool_name: 'web_fetch',
+      tool_input: { url: 'https://example.com/docs', description: 'Read the docs page' },
+      tool_use_id: 'toolu_fetch',
+    });
+    expect(event).toMatchObject({ type: EventType.ToolStart, tool: 'web_fetch', detail: 'https://example.com/docs' });
+  });
+
   it('StopFailure fails the turn with the error type', () => {
     const event = runHook(QwenHookEvent.StopFailure, {
       ...baseInput('StopFailure', 'default'),
@@ -279,6 +355,22 @@ describe('Qwen live 0.25.2 payloads (tests/fixtures/qwen-hooks/)', () => {
       .toMatchObject({ type: EventType.Idle, planMode: false });
   });
 
+  // A Command Terminal start (capturePromptText) names the terminal from its
+  // first prompt; a task spawn keeps no prompt text in its events.
+  it('carries the prompt text only when the spawn asks for it', () => {
+    const payload = livePayload('user-prompt-submit-main.json');
+    expect(typeof payload.prompt).toBe('string');
+    expect(replay(QwenHookEvent.UserPromptSubmit, 'user-prompt-submit-main.json').detail).toBeUndefined();
+    fs.rmSync(outputFile, { force: true });
+    expect(runHook(QwenHookEvent.UserPromptSubmit, payload, { capturePromptText: true }))
+      .toMatchObject({ type: EventType.Prompt, detail: payload.prompt, planMode: false });
+    fs.rmSync(outputFile, { force: true });
+    // `submitted_prompt`, the user's own text at a submission boundary
+    // (hooks.md, v0.26.6), wins over `prompt` when both are there.
+    expect(runHook(QwenHookEvent.UserPromptSubmit, { ...payload, submitted_prompt: 'Rename the loader' }, { capturePromptText: true }).detail)
+      .toBe('Rename the loader');
+  });
+
   it('the empty prompt Qwen submits after each tool result is a prompt in the same mode', () => {
     expect(livePayload('user-prompt-submit-continuation.json').prompt).toBe('');
     expect(replay(QwenHookEvent.UserPromptSubmit, 'user-prompt-submit-continuation.json'))
@@ -302,8 +394,11 @@ describe('Qwen live 0.25.2 payloads (tests/fixtures/qwen-hooks/)', () => {
     expect(subagentToolStart.agent_id).toBe(subagentStart.agent_id);
     expect(subagentStop.agent_id).toBe(subagentStart.agent_id);
 
+    // The subagent's tool carries its agent id, so its end cannot drain a
+    // main-agent tool of the same name; the main agent's carries none.
     expect(replay(QwenHookEvent.PreToolUse, 'subagent-pre-tool-use.json'))
-      .toMatchObject({ type: EventType.ToolStart, tool: 'glob', toolId: subagentToolStart.tool_use_id });
+      .toMatchObject({ type: EventType.ToolStart, tool: 'glob', toolId: subagentToolStart.tool_use_id, subagentId: subagentStart.agent_id });
+    expect(replay(QwenHookEvent.PreToolUse, 'pre-tool-use-shell.json').subagentId).toBeUndefined();
 
     // The engine counts the subagent by its id, so the main agent's Stop
     // while a background one runs is no turn end (activity-engine-turn-ended).

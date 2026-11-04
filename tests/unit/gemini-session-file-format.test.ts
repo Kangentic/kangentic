@@ -13,11 +13,12 @@
  * found nothing at all for current Gemini, which also disables live telemetry
  * (usage + activity) for every Gemini session.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { GeminiSessionHistoryParser, clearDiscoveredSessionPaths } from '../../src/main/agent/adapters/gemini/session-history-parser';
+import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 
 let homeDir: string;
 let cwd: string;
@@ -82,6 +83,24 @@ describe('GeminiSessionHistoryParser.locate', () => {
     );
     const found = await GeminiSessionHistoryParser.locate({ agentSessionId: SESSION_ID, cwd });
     expect(found).toBe(expected);
+  });
+
+  it('at spawn waits for a chat file Gemini writes after it boots, where a plain locate gives up', async () => {
+    // With the id chosen at launch the reader attaches at spawn, and a capture
+    // arriving later is dropped, so this wait is the only one. Gemini 0.66.0
+    // writes the file in its recording service's initialize, after the boot.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const spawnLocate = new GeminiAdapter().runtime.sessionHistory!.locate({ agentSessionId: SESSION_ID, cwd });
+      const plainLocate = GeminiSessionHistoryParser.locate({ agentSessionId: SESSION_ID, cwd });
+      await vi.advanceTimersByTimeAsync(6_000);
+      await expect(plainLocate).resolves.toBeNull();
+      const expected = writeJsonlSession('session-2026-08-08T16-48-4d1a59b9.jsonl', new Date().toISOString());
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(spawnLocate).resolves.toBe(expected);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('still finds a legacy .json session file', async () => {
@@ -165,6 +184,33 @@ describe('GeminiSessionHistoryParser.captureSessionIdFromFilesystem', () => {
     } | null)?.contextWindow;
     expect(contextWindow?.totalInputTokens).toBe(1200);
     expect(contextWindow?.totalOutputTokens).toBe(300);
+  });
+
+  it('reads the model and tokens from a reply a /rewind left, not one it dropped', () => {
+    // v0.66.0's `/rewind` appends `$rewindTo: <id>`, and the CLI's loader drops
+    // that message and everything after it (chatRecordingService.ts).
+    const header = JSON.stringify({ sessionId: SESSION_ID, startTime: new Date().toISOString() });
+    const kept = JSON.stringify({ id: 'g1', type: 'gemini', model: 'gemini-2.5-pro', tokens: { input: 100, output: 10 } });
+    const rewound = JSON.stringify({ id: 'g2', type: 'gemini', model: 'gemini-3-pro-preview', tokens: { input: 900, output: 90 } });
+    const result = GeminiSessionHistoryParser.parse(
+      [header, kept, rewound, JSON.stringify({ $rewindTo: 'g2' })].join('\n'),
+      'full',
+    );
+    const usage = result.usage as unknown as { model: { id: string; displayName: string }; contextWindow: { totalInputTokens: number } };
+    expect(usage.model).toEqual({ id: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro' });
+    expect(usage.contextWindow.totalInputTokens).toBe(100);
+  });
+
+  it('skips a reply a patch removed', () => {
+    const header = JSON.stringify({ sessionId: SESSION_ID, startTime: new Date().toISOString() });
+    const first = JSON.stringify({ id: 'g1', type: 'gemini', model: 'gemini-2.5-pro', tokens: { input: 100, output: 10 } });
+    const second = JSON.stringify({ id: 'g2', type: 'gemini', model: 'gemini-2.5-flash', tokens: { input: 200, output: 20 } });
+    const result = GeminiSessionHistoryParser.parse(
+      [header, first, second, JSON.stringify({ $patch: { removeIds: ['g2'] } })].join('\n'),
+      'full',
+    );
+    const usage = result.usage as unknown as { model: { id: string } };
+    expect(usage.model.id).toBe('gemini-2.5-pro');
   });
 
   it('survives a torn final line from a write in flight', () => {

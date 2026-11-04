@@ -105,8 +105,14 @@ interface SessionTelemetryCallbacks {
    * worktree. Optional: only the production wiring cares.
    */
   onBranchPushed?(sessionId: string, branch: string): void;
-  /** Called when the agent reports its own session_id (from status.json). */
-  onAgentSessionId?(sessionId: string, agentReportedId: string): void;
+  /**
+   * Called when the agent reports its own session_id (from status.json, a
+   * hook, or its output). `conversationMoved` is set when a SessionStart hook
+   * moved the live conversation to this id with no status write behind it
+   * (`runtime.sessionId.followsSessionStartMoves`), so the listener re-points
+   * what it tails at the new conversation.
+   */
+  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean }): void;
   /**
    * A SessionStart named the CLI's own background session: did the session's
    * conversation `fromAgentSessionId` move there, rather than a copy start
@@ -855,12 +861,24 @@ export class SessionTelemetry {
    * `captureHookSessionIds`, it is not a one-shot capture.
    */
   noteSessionStartHooks(sessionId: string, rawLines: string[]): void {
-    const statusFile = this.sessionParsers.get(sessionId)?.runtime?.statusFile;
+    const runtime = this.sessionParsers.get(sessionId)?.runtime;
+    const statusFile = runtime?.statusFile;
     if (!statusFile?.parseSessionStart) return;
     for (const line of rawLines) {
       const sessionStart = sessionStartOfLine(statusFile, line);
       if (!sessionStart?.movesConversation) continue;
       const currentId = this.lastReportedAgentSessionIds.get(sessionId);
+      // An agent with no status channel to carry the move: the hook itself
+      // switches the session's id. Only a change of a known id: the first
+      // SessionStart seeds it (`captureHookSessionIds`), and a resume or a
+      // compaction names the same id again.
+      if (runtime?.sessionId?.followsSessionStartMoves) {
+        if (currentId !== undefined && currentId !== sessionStart.agentSessionId) {
+          this.recordReportedId(sessionId, sessionStart.agentSessionId);
+          this.callbacks.onAgentSessionId?.(sessionId, sessionStart.agentSessionId, { conversationMoved: true });
+        }
+        continue;
+      }
       // A background session's hook reads the same whether the conversation
       // moved there (Claude's /bg) or a copy started beside it (/fork), and a
       // copy must not take the terminal's place. Its write stays held until

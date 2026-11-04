@@ -4,11 +4,42 @@ import {
   isRateLimitWindowExpired,
   liveRateLimitWindows,
   mergeRateLimitSnapshot,
+  rateLimitWindowsForAgent,
   rateLimitWindowsShortestFirst,
+  sessionRateLimitAgent,
   type RateLimitSnapshot,
 } from '../../src/renderer/utils/rate-limit-window';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
 import type { RateLimitWindow } from '../../src/shared/types';
+
+describe('rateLimitWindowsForAgent', () => {
+  const claudeWeek: RateLimitWindow = { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 40, resetsAt: 0, agent: 'claude' };
+  const agyQuota: RateLimitWindow = { id: 'antigravity-quota-gemini-weekly', label: 'gemini-weekly', iconKind: 'period', usedPercentage: 6, resetsAt: 0, agent: 'antigravity' };
+  const unstamped: RateLimitWindow = { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 10, resetsAt: 0 };
+
+  it('shows an agent its own windows and never another agent\'s', () => {
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], 'claude')).toEqual([claudeWeek]);
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], 'antigravity')).toEqual([agyQuota]);
+  });
+
+  it('shows a window with no stamp to every agent (reports from before the stamp, fixtures)', () => {
+    expect(rateLimitWindowsForAgent([unstamped, agyQuota], 'claude')).toEqual([unstamped]);
+  });
+
+  it('shows every window when no agent is known, so the pill does not go empty', () => {
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], null)).toEqual([claudeWeek, agyQuota]);
+    expect(rateLimitWindowsForAgent([claudeWeek, agyQuota], undefined)).toEqual([claudeWeek, agyQuota]);
+  });
+
+  it('reads the agent off the session\'s own stamped windows ahead of the fallback', () => {
+    // A task with no agent falls back to the project default, which may have
+    // changed since this session started.
+    expect(sessionRateLimitAgent([unstamped, agyQuota], 'claude')).toBe('antigravity');
+    expect(sessionRateLimitAgent([unstamped], 'claude')).toBe('claude');
+    expect(sessionRateLimitAgent(undefined, 'claude')).toBe('claude');
+    expect(sessionRateLimitAgent(undefined, null)).toBeNull();
+  });
+});
 
 // All cases pass `nowMs` explicitly, so the helper is fully deterministic and
 // these assertions carry no wall-clock or platform dependence.

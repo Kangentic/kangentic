@@ -55,10 +55,16 @@ export interface QwenCommandOptions {
   model?: string;
   effort?: string;
   /**
-   * The detected `qwen --version`, or null when detection has not run. Only
-   * picks how Kangentic's MCP server is delivered (see `supportsMcpConfigFlag`).
+   * The detected `qwen --version`, or null when detection has not run. Picks
+   * how Kangentic's MCP server is delivered (`supportsMcpConfigFlag`) and
+   * whether `auto` reaches Qwen as its own mode (`supportsAutoApprovalMode`).
    */
   cliVersion?: string | null;
+  /**
+   * Carry the submitted prompt's text in the Prompt event's detail
+   * (`CommandOptions.capturePromptText`), for the Command Terminal's namer.
+   */
+  capturePromptText?: boolean;
   /**
    * A Qwen installed in a WSL distro (`CommandOptions.cliTarget`): named by the
    * path the distro sees, its hooks run the WSL hook transport's script instead
@@ -92,11 +98,38 @@ const MCP_CONFIG_FLAG_MIN_MINOR = 16;
  * later) has it, and the settings fallback is what that gate stops on.
  */
 export function supportsMcpConfigFlag(cliVersion: string | null | undefined): boolean {
+  return isAtLeastMinor(cliVersion, MCP_CONFIG_FLAG_MIN_MINOR, true);
+}
+
+/**
+ * The first Qwen Code minor release whose `--approval-mode` takes `auto` (an
+ * LLM classifier approves safe actions and blocks risky ones). Its yargs
+ * `choices` are `plan, default, auto-edit, yolo` in v0.15.6's
+ * `packages/cli/src/config/config.ts` and gain `auto` in v0.16.0's
+ * (https://github.com/QwenLM/qwen-code/blob/v0.16.0/packages/cli/src/config/config.ts,
+ * docs: https://qwenlm.github.io/qwen-code-docs/en/users/features/approval-mode/).
+ */
+const AUTO_APPROVAL_MODE_MIN_MINOR = 16;
+
+/**
+ * True when this Qwen's `--approval-mode` takes `auto`. Unlike the MCP flag,
+ * an unknown version does NOT take it: a value outside yargs' `choices` stops
+ * Qwen from starting, while the `auto-edit` fallback only asks before shell
+ * commands. Built from Qwen's source, not yet run against a real Qwen.
+ */
+export function supportsAutoApprovalMode(cliVersion: string | null | undefined): boolean {
+  return isAtLeastMinor(cliVersion, AUTO_APPROVAL_MODE_MIN_MINOR, false);
+}
+
+/**
+ * True when a `0.x` Qwen is at `0.<minMinor>` or later, or any 1.0+ release.
+ * `whenUnknown` answers a missing or unparsable version, which each gate
+ * decides for itself.
+ */
+function isAtLeastMinor(cliVersion: string | null | undefined, minMinor: number, whenUnknown: boolean): boolean {
   const match = cliVersion ? /^v?(\d+)\.(\d+)/.exec(cliVersion.trim()) : null;
-  if (!match) return true;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return major > 0 || minor >= MCP_CONFIG_FLAG_MIN_MINOR;
+  if (!match) return whenUnknown;
+  return Number(match[1]) > 0 || Number(match[2]) >= minMinor;
 }
 
 /**
@@ -132,18 +165,22 @@ export class QwenCommandBuilder {
     }
 
     // Permission mode mapping to Qwen Code --approval-mode flags.
-    // Qwen Code choices (verified against packages/cli/src/config/config.ts):
-    //   'plan' | 'default' | 'auto-edit' | 'yolo'
+    // Qwen Code choices (packages/cli/src/config/config.ts):
+    //   'plan' | 'default' | 'auto-edit' | 'auto' (0.16.0 and later) | 'yolo'
     //
     // Note the HYPHEN in 'auto-edit' - this is the canonical fork delta
-    // from gemini-cli (which uses 'auto_edit' with an underscore).
+    // from gemini-cli (which uses 'auto_edit' with an underscore). Qwen has
+    // no deny-unlisted mode, so `dontAsk` takes plan, the nearest mode that
+    // never prompts.
     switch (options.permissionMode) {
       case 'plan':
       case 'dontAsk':
         parts.push('--approval-mode', 'plan');
         break;
-      case 'acceptEdits':
       case 'auto':
+        parts.push('--approval-mode', supportsAutoApprovalMode(options.cliVersion) ? 'auto' : 'auto-edit');
+        break;
+      case 'acceptEdits':
         parts.push('--approval-mode', 'auto-edit');
         break;
       case 'bypassPermissions':
@@ -364,6 +401,7 @@ export class QwenCommandBuilder {
       merged.hooks = buildHooks('', '', baseSettings.hooks || {}, {
         backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, folderHooks, place),
         eventCommand: (eventType, ...directives) => wslHookEventCommand(folderHooks, place, eventType, ...directives),
+        capturePromptText: options.capturePromptText === true,
       });
     } else if (eventsPath) {
       // On Windows a hook command reaches node through an escaped cmd line, and
@@ -391,7 +429,10 @@ export class QwenCommandBuilder {
           : shippedHintBridgePath();
         backgroundShellHintCommand = backgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, QWEN_HOOK_SHELL, hintBridge);
       }
-      merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {}, { backgroundShellHintCommand });
+      merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {}, {
+        backgroundShellHintCommand,
+        capturePromptText: options.capturePromptText === true,
+      });
     }
 
     const userMcpServers = baseSettings.mcpServers;

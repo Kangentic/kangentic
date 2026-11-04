@@ -92,7 +92,7 @@ const rows: DetectorRow[] = [
   { adapter: 'antigravity (a tool answering on the same name)', create: () => new AntigravityDetector(), binary: 'agy', raw: 'agy: command not recognised\n', version: null },
   { adapter: 'warp', create: () => new WarpDetector(), binary: 'oz', raw: 'Warp version: Some("v0.2026.04.08.08.36.stable_02")\n', version: 'v0.2026.04.08.08.36.stable_02' },
   { adapter: 'aider', create: () => new AiderAdapter(), binary: 'aider', raw: 'aider 0.86.1\n', version: '0.86.1' },
-  { adapter: 'kimi', create: () => new KimiAdapter(), binary: 'kimi', raw: 'kimi, version 1.37.0\n', version: '1.37.0' },
+  { adapter: 'kimi', create: () => new KimiAdapter(), binary: 'kimi', raw: '2.4.1\n', version: '2.4.1' },
   // The unambiguous name is looked up first (the shared `agent` shim comes second).
   { adapter: 'cursor', create: () => new CursorAdapter(), binary: 'cursor-agent', raw: '2026.04.29-c83a488\n', version: '2026.04.29-c83a488' },
   { adapter: 'cursor (grok answering on the shared shim)', create: () => new CursorAdapter(), binary: 'cursor-agent', raw: 'grok 1.0.0 (3cd0d0cbce) [stable]\n', version: null },

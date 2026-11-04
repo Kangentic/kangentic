@@ -1,13 +1,18 @@
 ---
 type: Reference
 title: Gemini CLI
-description: Gemini CLI's shared .gemini/settings.json with per-session holds that strip Kangentic hooks when the last session leaves, the httpUrl MCP entry of environment references, plan exit read from AfterTool text, ToolPermission notifications as permission idle, and trustedFolders.json entries.
+description: Gemini CLI's shared .gemini/settings.json with per-session holds that strip Kangentic hooks when the last session leaves, the httpUrl MCP entry of environment references, chosen session ids, plan exit read from AfterTool text, ToolPermission notifications as permission idle, chat-file patches and rewinds, usage and tool counts, model labels, trustedFolders.json entries, and its parity with Claude Code.
 tags: [agents, adapter, gemini]
 sources:
   - resource: src/main/agent/adapters/gemini/gemini-adapter.ts
   - resource: src/main/agent/adapters/gemini/detector.ts
   - resource: src/main/agent/adapters/gemini/command-builder.ts
   - resource: src/main/agent/adapters/gemini/hook-manager.ts
+  - resource: src/main/agent/adapters/gemini/transcript-parser.ts
+  - resource: src/main/agent/adapters/gemini/transcript-usage.ts
+  - resource: src/main/agent/adapters/gemini/model-display-name.ts
+  - resource: src/main/agent/adapters/gemini/conversation-gone.ts
+  - resource: src/main/agent/adapters/gemini/subagent-usage.ts
   - resource: src/main/agent/adapters/gemini/trust-manager.ts
   - resource: src/main/agent/adapters/gemini/gemini-home.ts
   - resource: src/main/agent/shared/shared-folder-holds.ts
@@ -27,16 +32,22 @@ Detection follows the same pattern: check `config.agent.cliPaths.gemini`, fall b
 ### New Session
 
 ```
-gemini --approval-mode <mode> "prompt text"
+gemini --approval-mode <mode> --session-id <uuid> "prompt text"
 ```
 
-Gemini creates sessions implicitly (no `--session-id` equivalent).
+The session starts under the id Kangentic chose (`supportsCallerSessionId`), so the reader of its chat file attaches at spawn and nothing has to be captured. The CLI describes the flag as "Start a new session with a manually provided UUID" and accepts letters, digits, `-` and `_` ([config.ts at v0.66.0](https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/cli/src/config/config.ts)). It shipped in v0.41.0 (PR #26060). The parser is strict, so an older Gemini exits on the unknown flag; the answer run already passed `--session-id`, so it already needed 0.41.0. `runtime.sessionId` still reads an id from the session file, the SessionStart hook and the shutdown banner, and `SessionIdManager` drops any capture once the chosen id is known.
 
 ### Resumed Session
 
 ```
-gemini --resume <sessionId>
+gemini --resume <sessionId> "prompt text"
 ```
+
+The resumed session runs the prompt as its next turn (`resumePromptDelivery` is `command-line`). Never both flags: the CLI rejects the pair ("The flags --resume, --session-id, and --session-file are mutually exclusive").
+
+### Readable directories
+
+A workflow agent's other projects reach Gemini as one `--include-directories <path>` each (`supportsReadableDirectories`), before the prompt. The option takes one value per flag (`nargs: 1`), so the positional prompt after it is never read as a directory, and a Gemini in a WSL distro gets each path's `/mnt` form. Gemini's read tools need no approval in its default policy ([file system tools](https://geminicli.com/docs/tools/file-system/): only `write_file` and `replace` do). The [configuration reference](https://geminicli.com/docs/reference/configuration/) says 5 directories at most, but the v0.66.0 parser has no cap and no check, so every directory is passed.
 
 ## Permission Modes
 
@@ -84,6 +95,33 @@ stand in the way:
 - Nothing would write the marker the [plan approval gate](../../architecture/activity/event-types.md#plan-approval-gate)
   pairs with the plan exit.
 
+## Model switch and model labels
+
+A Command Terminal's live model swap types `/model set <id>`. A bare `/model <id>` does not switch: at v0.66.0 the parent command forwards to `manage`, which opens the model dialog and ignores the argument ([modelCommand.ts](https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/cli/src/ui/commands/modelCommand.ts), [commands reference](https://geminicli.com/docs/reference/commands/), Oct 9, 2026). Without `--persist` the user's saved default is untouched.
+
+Labels come from the id alone (`geminiModelDisplayName`, `model-display-name.ts`), in Gemini's own word order: `gemini-3-flash-preview` reads "Gemini 3 Flash Preview" and `gemini-2.5-pro` "Gemini 2.5 Pro". The shared `humanizeModelId` follows Anthropic's scheme and would move the version to the end. The live telemetry, `modelDisplayName` and `configuredModelFromCommand` all use it. `configuredModelFromCommand` walks the built command's words from the start and reads only the builder's own flags, because Gemini's positional prompt follows them with no `--`: a task text containing `--model x` never seeds a model the session did not run.
+
+## Chat file records
+
+Gemini 0.66.0 writes more than messages to `~/.gemini/tmp/<project>/chats/session-*.jsonl` ([chatRecordingTypes.ts](https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/core/src/services/chatRecordingTypes.ts)):
+
+- A message appended again under the same `id` replaces the earlier copy in its first place.
+- `$patch` sets a message's `content` and its tool calls' `result` by call id, on the patch itself or in each of `updates[]`. A tool's result arrives this way after its call was recorded. `removeIds` deletes messages, and `orderIds` moves the listed ones to the end.
+- `$rewindTo: <id>` (written by `/rewind`, or Esc twice) drops that message and everything after it, or everything when the id is unknown.
+
+`parseTranscript` and `readTranscriptPage` apply these as the CLI's own loader does ([`createJsonlRecordAccumulator`](https://github.com/google-gemini/gemini-cli/blob/v0.66.0/packages/core/src/services/chatRecordingService.ts)), within each window they read. A patch for a message an earlier window holds yields that message's results at the patch line, under the message's uuid, so `transcriptEntryKey` (uuid plus call id) dedupes it with any copy the message carries. A rewind whose target is not in the window drops everything the window kept before it, which is the CLI's rule and also right for a tail: the target sits earlier. A page of older history read on its own still shows turns a later rewind dropped. A call with no result, no `resultDisplay` and no finished status yields no result entry, where it used to yield an empty one. Each reply's entry carries `usage` for the turn-usage ledger: fresh input is `input` less `cached` (the Gemini API counts the cached part inside `promptTokenCount`), cache reads are `cached`, output is `output` plus `thoughts`, and there is no cache write. The live telemetry reader applies `$rewindTo`, `removeIds` and `orderIds` too.
+
+## Usage and tool counts
+
+`transcript-usage.ts` reads the chat file through one resumable cursor per path, which keeps a few numbers per message and per call and reads only bytes appended since its last read. Resuming a conversation appends to the same file, so:
+
+- `transcriptUsage` sums each message id's last `tokens` over the whole file: input is `input` (the full input side, cached included), output is `output` plus `thoughts`. Rewinds are not applied, because a rewound turn was still billed.
+- `transcriptToolCounts` counts distinct `toolCalls[].id` by tool name, and `transcriptToolResultTokens` estimates each result at four characters a token, results patched in included. Both take a call's own `timestamp` (else its message's) for the run window, so the adapter declares `scopesTranscriptReadsByTime`.
+
+A legacy `.json` session is one pretty-printed document, so it is read whole on any change.
+
+`fileChangeTools` names `write_file` and `replace`, both by `file_path` ([file system tools](https://geminicli.com/docs/tools/file-system/), Apr 10, 2026).
+
 ## Settings Merge
 
 Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (event-bridge hooks and / or the Kangentic MCP server entry) directly to `.gemini/settings.json` in the CWD.
@@ -118,3 +156,42 @@ Two things make this work that are easy to miss:
 
 - **Folder trust is load-bearing.** Gemini disables every configured MCP server in an untrusted folder (`gemini mcp list` reports "MCP servers are configured but disabled because this folder is untrusted", and user-level servers are suppressed too), so the entry would be silently inert. `GeminiAdapter.ensureTrust` pre-populates `~/.gemini/trustedFolders.json` via `trust-manager.ts`. Unlike the Qwen equivalent it does **not** gate on `security.folderTrust.enabled`, because Gemini 0.54.4 enforces trust with that flag unset. It never overrides a user's `TRUST_PARENT` or `DO_NOT_TRUST`, at the path itself or on any ancestor, so a `DO_NOT_TRUST` on the repo suppresses approval for every worktree Kangentic creates beneath it (the same deny rule Codex applies to its project root). It also skips the write when an ancestor is already trusted, so a worktree under an already-trusted repo adds no key at all. When no ancestor is trusted, though, it does record one `TRUST_FOLDER` per task worktree, exactly like Codex - which is why `GeminiAdapter.onWorktreeRemoved` drops that entry again when Kangentic deletes the worktree (`removeWorktreeTrust`). Without it the file grows by a dead entry per task forever, the accumulation that reached 473 entries in Codex's `config.toml`. Removal only ever takes an entry Kangentic could have written itself: a `TRUST_PARENT` or `DO_NOT_TRUST` at that path is a user decision and survives, so a later worktree at the same path still honors it. Ancestor matching folds case only on Windows, since POSIX paths are case-sensitive.
 - **No token is on disk.** The file holds only the `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}` references (the values travel in the session environment), but its hook entries still land in `.gemini/settings.json`, which is project-shared and may be intentionally committed, so it cannot be blanket-gitignored like `.kangentic/`. `removeHooks` strips the entry when the folder's last session ends. For the untracked case this is now self-enforcing: when Kangentic creates the file (it did not exist before the spawn), the builder seeds `.gemini/settings.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see [Antigravity](antigravity.md)), so the file never shows as untracked and cannot ride a `git add -A` into history. A pre-existing file keeps its normal git visibility (the created-by-us carve-out), and ignore rules never affect tracked files - so the rule stands: do not commit `.gemini/settings.json` while a Kangentic-spawned Gemini session is running.
+
+## Parity with Claude Code
+
+Compared member by member with the Claude adapter in 2026-11, against Gemini CLI's docs and its source at v0.66.0. The docs site says Gemini CLI "was replaced by Antigravity CLI on June 18th, 2026", so every citation is pinned to that tag or to a dated docs page.
+
+**Run against the real CLI.** A headless `gemini --session-id <uuid> -p` on 0.66.0 (Windows, 2026-11-03) started under the chosen id and named its chat `session-<time>-<first 8 of the id>.jsonl`, so `supportsCallerSessionId` holds. The API answered 503 to every retry, and the CLI then wrote `$rewindTo: <the prompt's id>` to drop the unanswered prompt. That file is `tests/fixtures/gemini-real-rewind.jsonl`, replayed by `gemini-real-rewind.test.ts`.
+
+**Still not captured: a real tool result.** No real chat file yet holds a `$patch` tool result or a reply's `tokens.cached` and `thoughts`, so those readers rest on the v0.66.0 source alone. A second attempt the same day (a headless run asking for one `read_file`) got no reply: `gemini-2.5-flash` answered 404 ("no longer available to new users"), and the `flash` alias, then `gemini-3.8-flash`, answered 429 for the free tier's 20 requests a day. Both runs wrote only the prompt and a `$rewindTo`, the shape the fixture above already holds. To finish this: in a scratch folder holding one small file, run `gemini --skip-trust --approval-mode plan --session-id <uuid> --model flash -p "Use your read_file tool to read notes.txt, then reply with only the word it contains."`. Then copy its chat file from `~/.gemini/tmp/<folder>/chats/` into `tests/fixtures/` with home paths replaced, and replay it through `parseGeminiTranscript`, `parseGeminiTranscriptWindow` and `geminiTranscriptUsage`.
+
+**Built from documentation, not yet run against the real CLI.** Each comes from the CLI's published docs or source, and each needs a live check:
+
+- `/model set <id>` for the live model swap.
+- `$patch`, `removeIds` and `orderIds` in the transcript and the live telemetry, `$rewindTo` in the live telemetry (the transcript readers replay the real rewind above), and per-turn `usage`.
+- `transcriptUsage`, `transcriptToolCounts`, `transcriptToolResultTokens` and `scopesTranscriptReadsByTime`.
+- `configuredModelFromCommand` and `modelDisplayName`.
+- `fileChangeTools`.
+- `--include-directories` (`supportsReadableDirectories`).
+- `parseTranscriptWindow`, which lets the indexer walk the whole chat, the message trail read what was appended, and a turn end's reply read from its anchor. Patches and rewinds apply within each window. It needs no usage carry: a reply's uuid is its message id, and the ledger upserts by uuid, so a later window's copy updates the same row. It counts the lines before a window only when the window holds a message with no id, the one case whose uuid is its line number.
+- `proveConversationGone`. The resume guard already reads the SessionStart hook's `transcript_path` (every hook carries it) from the session's events file. The proof wants that chat missing, the reader's folder holding no file for the id, and no project's `chats` folder under Gemini's `tmp` holding one. Files are matched by the id's first eight characters, as Gemini names them, so a shared prefix keeps the conversation resumable.
+- `statSubagentTranscripts` and `parseSubagentUsage`. Gemini 0.66.0 writes a subagent's chat to `chats/<parent id>/<subagent id>.jsonl` with `kind: 'subagent'`, and its replies carry `tokens`. Each reply becomes one ledger row at depth 1. Gemini records neither the subagent's type nor the call that started it, so `agentType` and `parentToolUseId` are null and there are no spawn links.
+
+**Needs a live probe.** These members' own entries say a measurement comes first, or the docs leave the behavior open:
+
+- `getSubmissionVerifier` and `canEscalateOnVerificationFailure`: `BeforeAgent` exists and the chat file records the user turn, but the flush latency is unmeasured.
+- `supportsPlanAutoApproval` and `mayApprovePlanTool`: Gemini has no permission hook; its Notification cannot answer a prompt.
+- `supportsReadOnlyLaunch`: the Policy Engine (`--policy`) or `tools.core` might restrict the tools, if the user's own settings cannot outrank them.
+- `hungTurn`, `consoleCloseIsGraceful` and the exit sequence: `\x03` then `/quit\r` may approve an open confirmation dialog, the failure Claude's old sequence had.
+- `describeStartupFailure`: a `--resume` of a chat that `general.sessionRetention` deleted after 30 days fails, but a recognizer needs wording seen on a real card.
+- `openAnswerSession`: only `--experimental-acp` (JSON-RPC over stdio) keeps a process warm.
+- `pastedImageReferenceTemplate` (an `@path` reference) and `firstPromptMayBeTyped`.
+
+**Not supported by the CLI:**
+
+- The `dontAsk` and `auto` permission modes. `--approval-mode` takes `default`, `auto_edit`, `yolo` and `plan` only.
+- Effort: no flag and no slash command.
+- A model list: no flag lists models, so discovery stays the history scan.
+- Context window, cost and rate limits: there is no status line, and the chat file and hooks carry tokens only.
+- Subagent, interrupt and turn-failure hook events. The [hooks reference](https://geminicli.com/docs/hooks/reference/) lists none.
+- `subagentSpawnToolName`: Gemini exposes each subagent as a tool of its own name, so there is no single spawning tool to name, and no record links a subagent's chat to the call that started it.

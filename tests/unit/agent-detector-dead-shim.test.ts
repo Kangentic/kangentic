@@ -449,6 +449,69 @@ describe('describeProbeError - the non-numeric-code branches', () => {
     expect(failureLine).toContain('its --version probe failed (ENOENT)');
   });
 
+  it('retries a timed-out launch probe with the same launch and the longer timeout', async () => {
+    whichState.matches = [plainCmdPath];
+    const launch = { file: 'C:\\Tools\\cli.exe', env: { SOME_MODE: '1' } };
+    execVersionMock.mockImplementation(async (_candidatePath: string, timeout?: number) => {
+      if (timeout === undefined) {
+        throw Object.assign(new Error('Command timed out'), { killed: true, signal: 'SIGTERM' });
+      }
+      return { stdout: '2.0.0\n', stderr: '' };
+    });
+    const detector = new AgentDetector({
+      binaryName: 'gemini',
+      parseVersion: (raw) => raw.trim() || null,
+      versionArgs: ['dump-debug-info'],
+      versionLaunch: () => launch,
+    });
+
+    const result = await detector.detect();
+
+    expect(result).toEqual({ found: true, path: plainCmdPath, version: '2.0.0' });
+    expect(execVersionMock).toHaveBeenCalledTimes(2);
+    expect(execVersionMock.mock.calls[0]).toEqual([plainCmdPath, undefined, ['dump-debug-info'], launch]);
+    expect(execVersionMock.mock.calls[1][1]).toBeGreaterThan(5000);
+    expect(execVersionMock.mock.calls[1][2]).toEqual(['dump-debug-info']);
+    expect(execVersionMock.mock.calls[1][3]).toBe(launch);
+  });
+
+  it('passes undefined args with the launch when the config sets a launch but no versionArgs', async () => {
+    whichState.matches = [plainCmdPath];
+    const launch = { file: 'C:\\Tools\\cli.exe' };
+    execVersionMock.mockImplementation(async () => ({ stdout: '3.1.4\n', stderr: '' }));
+    const detector = new AgentDetector({
+      binaryName: 'gemini',
+      parseVersion: (raw) => raw.trim() || null,
+      versionLaunch: () => launch,
+    });
+
+    await detector.detect();
+
+    expect(execVersionMock).toHaveBeenCalledTimes(1);
+    expect(execVersionMock.mock.calls[0]).toEqual([plainCmdPath, undefined, undefined, launch]);
+  });
+
+  it('keeps the plain call shapes when versionLaunch returns null', async () => {
+    whichState.matches = [plainCmdPath];
+    execVersionMock.mockImplementation(async () => ({ stdout: '3.1.4\n', stderr: '' }));
+
+    await new AgentDetector({
+      binaryName: 'gemini',
+      parseVersion: (raw) => raw.trim() || null,
+      versionLaunch: () => null,
+    }).detect();
+    expect(execVersionMock.mock.calls[0]).toEqual([plainCmdPath]);
+
+    execVersionMock.mockClear();
+    await new AgentDetector({
+      binaryName: 'gemini',
+      parseVersion: (raw) => raw.trim() || null,
+      versionArgs: ['-V'],
+      versionLaunch: () => null,
+    }).detect();
+    expect(execVersionMock.mock.calls[0]).toEqual([plainCmdPath, undefined, ['-V']]);
+  });
+
   it('falls through to the error message when neither a code, a signal, nor killed is set', async () => {
     whichState.matches = [plainCmdPath, liveShimPath];
     execVersionMock.mockImplementation(async (candidatePath: string) => {

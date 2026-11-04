@@ -30,9 +30,10 @@ import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane }
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
+import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
-import { deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import { awaitQueuedSessionStart, deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
 import { isWorktreeCreationInFlight } from '../../git/worktree-creation-registry';
 import {
@@ -630,7 +631,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // The resume could not carry the pointer to the source agent's history on
       // its command line (`SpawnOutcome.unsentPrompt`), so it is typed in, ahead
       // of the column's message, in the same delivery.
-      handoffUnsentPrompt = handoffOutcome?.unsentPrompt ?? null;
+      handoffUnsentPrompt = textLeftToType(handoffOutcome);
     } catch (error) {
       if (isAbortError(error)) throw error;
       console.error('[spawnAgent] Failed to start handoff session:', error);
@@ -821,6 +822,57 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     }
   };
 
+  let queuedOpening: Promise<boolean> | null = null;
+
+  /**
+   * Type in the opening prompt a spawn's command line could not carry
+   * (`SpawnOutcome.typedOpening`), and wait for it, exactly as everything waits
+   * behind a prompt that rode the command line. An agent left with no first
+   * prompt sits idle, so a failure is said, as a column message that did not
+   * run is said; a cancel is the user's own move. Resolves whether it landed.
+   *
+   * A session the concurrency cap queued has no PTY to type into, and its
+   * command, which has no prompt, is what the queue runs. Its opening waits for
+   * the promotion in the background, since the queue can outlast a task lock by
+   * hours and a caller with no signal could not be cancelled out of the wait.
+   * This then resolves true at once and `queuedOpening` holds the real answer,
+   * for what depends on the opening landing. Rows after it do not wait for it.
+   */
+  const deliverTypedOpening = async (typedOpening: string): Promise<boolean> => {
+    const sessionId = tasks.getById(task.id)?.session_id;
+    if (!sessionId) return false;
+    const typeOpening = async (): Promise<boolean> => {
+      const notSent = await deliverOpeningPromptAndWait(context, {
+        taskId: task.id,
+        sessionId,
+        prompt: typedOpening,
+        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
+        signal,
+      });
+      if (notSent === null) return true;
+      reportAutoCommandOutcome(context, tasks, task, {
+        taskId: task.id,
+        sessionId,
+        commands: [OPENING_PROMPT_LABEL],
+        outcome: notSent.outcome,
+        unconfirmedCommands: [OPENING_PROMPT_LABEL],
+        discardedDraft: null,
+        interruptedTurn: false,
+        escalated: false,
+        reason: notSent.reason,
+      }, options.projectId);
+      return false;
+    };
+    if (context.sessionManager.getSession(sessionId)?.status !== 'queued') return typeOpening();
+    queuedOpening = awaitQueuedSessionStart(context, sessionId, signal)
+      .then((started) => (started ? typeOpening() : false))
+      .catch((error) => {
+        console.error(`[spawnAgent] Task ${task.id.slice(0, 8)}: the queued opening prompt failed:`, error);
+        return false;
+      });
+    return true;
+  };
+
   const startAgent = async (pendingPrompt?: string): Promise<AgentStartReport | void> => {
     const beforeSpawn = tasks.getById(task.id);
     if (!beforeSpawn || beforeSpawn.session_id) return legacyStartReport ?? undefined;
@@ -922,39 +974,11 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         },
       );
       startedAgentInGroup = true;
-      // The spawn adopted the early agent, whose command line could not carry
-      // the prompt: it goes in now, and everything below waits for it, exactly
-      // as everything waits behind a prompt that rode the command line.
+      // The spawn's command line could not carry its prompt (an adopted early
+      // agent, a CLI with no starting prompt): it goes in now, and everything
+      // below waits for it.
       const typedOpening = outcome?.typedOpening ?? null;
-      let typedOpeningLanded = true;
-      const adoptedSessionId = typedOpening !== null ? tasks.getById(task.id)?.session_id : null;
-      if (typedOpening !== null && adoptedSessionId) {
-        const notSent = await deliverOpeningPromptAndWait(context, {
-          taskId: task.id,
-          sessionId: adoptedSessionId,
-          prompt: typedOpening,
-          verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
-          signal,
-        });
-        typedOpeningLanded = notSent === null;
-        // An agent left with no first prompt sits idle; say so, as a column
-        // message that did not run is said. A cancel is the user's own move.
-        if (notSent !== null) {
-          reportAutoCommandOutcome(context, tasks, task, {
-            taskId: task.id,
-            sessionId: adoptedSessionId,
-            commands: [OPENING_PROMPT_LABEL],
-            outcome: notSent.outcome,
-            unconfirmedCommands: [OPENING_PROMPT_LABEL],
-            discardedDraft: null,
-            interruptedTurn: false,
-            escalated: false,
-            reason: notSent.reason,
-          }, options.projectId);
-        }
-      } else if (typedOpening !== null) {
-        typedOpeningLanded = false;
-      }
+      const typedOpeningLanded = typedOpening === null || await deliverTypedOpening(typedOpening);
       // The agent deleted the conversation this move would have resumed, so
       // the task started over from a recap that asks the agent to summarize and
       // wait. The column's messages, the one in the prompt slot included, are
@@ -1026,6 +1050,15 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           // They were in the opening prompt typed into an adopted agent, and it
           // did not land: back on hold for the next start.
           heldClaim.release({ flush: true });
+          heldHandedOff = true;
+        } else if (heldInPrompt && unsentPrompt === null && queuedOpening !== null) {
+          // They are in an opening that waits for the queue, so they settle from
+          // it. Unlike a queued command's prompt, the promotion delivers nothing.
+          const claim = heldClaim;
+          void queuedOpening.then((landed) => {
+            if (landed) claim.commit(startedSessionId);
+            else claim.release({ flush: true });
+          });
           heldHandedOff = true;
         } else if (heldInPrompt && unsentPrompt === null) {
           // They rode the command line (or the opening typed in its place);
@@ -1176,6 +1209,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           resolveSpawnOverrides(task, toLane, project),
         );
         startedAgentInGroup = true;
+        if (outcome?.typedOpening) await deliverTypedOpening(outcome.typedOpening);
         if (outcome?.recapOnly) legacyStartReport = { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
       },
       showNotification: (input) => showAutomationNotification(context, input),

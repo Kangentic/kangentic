@@ -65,7 +65,7 @@ export function registerBackgroundShellTools(
     'kangentic_mark_background_service',
     {
       // The second-to-last sentence is the only guidance an agent with no
-      // launch hint gets (Grok, Kimi, Codex: their CLIs cannot add context at
+      // launch hint gets (Grok, Codex: their CLIs cannot add context at
       // a launch), so it says when to call, not only what a call does (task #859).
       description:
         'Mark background shells you started as services meant to keep running after your turn, such as a dev server or a watcher, rather than work you are waiting on. Kangentic shows your task as working, and holds the column\'s turn-end automations, until every background shell you started exits; a marked shell no longer counts, and it keeps running. Do not mark a build or test run you are waiting for. '

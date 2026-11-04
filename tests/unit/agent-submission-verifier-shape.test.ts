@@ -73,7 +73,7 @@ const ADAPTER_CLASSES = [
     name: 'aider', importPath: '../../src/main/agent/adapters/aider/aider-adapter', className: 'AiderAdapter',
     commandInjection: 'verifier', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: false,
-    reason: 'markdown format known from a real fixture; not installed here, so unmeasured',
+    reason: 'markdown format known from a real fixture; the per-session file (--chat-history-file) is built from docs; not installed here, so unmeasured',
   },
   {
     name: 'cursor', importPath: '../../src/main/agent/adapters/cursor/cursor-adapter', className: 'CursorAdapter',
@@ -89,9 +89,9 @@ const ADAPTER_CLASSES = [
   },
   {
     name: 'kimi', importPath: '../../src/main/agent/adapters/kimi/kimi-adapter', className: 'KimiAdapter',
-    commandInjection: 'verifier', escalates: false,
+    commandInjection: 'null', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: true,
-    reason: 'wire.jsonl shape pinned against real captures; never reached a usable TUI, so unmeasured',
+    reason: 'Kimi Code 2.x wire flush on submit is unmeasured: no real run yet',
   },
   {
     name: 'warp', importPath: '../../src/main/agent/adapters/warp/warp-adapter', className: 'WarpAdapter',
@@ -121,7 +121,7 @@ const ADAPTER_CLASSES = [
     name: 'goose', importPath: '../../src/main/agent/adapters/goose/goose-adapter', className: 'GooseAdapter',
     commandInjection: 'null', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: true,
-    reason: 'the adapter parses no history at all, so there is nothing to verify against. Goose DOES have hooks and a session store, so this null is a "not wired yet", and wiring either one needs the flush measurement before a verifier lands here',
+    reason: 'the adapter reads its hooks and its session database (user turns are `messages` rows), built from Goose docs and source without a live Goose, so a verifier needs the flush-on-submit measurement first; this null is "not measured yet", not "nothing to verify against"',
   },
 ] as const;
 
@@ -276,12 +276,12 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       //
       // Losing the `false` declaration (Aider or Copilot regressing back to
       // the default) makes the shared wrapper short-circuit before their
-      // verifier ever runs, because neither has a captured agent_session_id
-      // to gate on (Aider keeps one history file per project directory;
-      // Copilot's history is a single global file with no session id in it
-      // at all). A short-circuited verifier is worse than no verifier: the
-      // burst still retries and then reports `failed` instead of staying
-      // silently `unconfirmed`.
+      // verifier ever runs whenever no agent_session_id is at hand (an Aider
+      // session with no id writes Aider's shared per-directory history file,
+      // which `cwd` alone identifies; Copilot's history is a single global
+      // file with no session id in it at all). A short-circuited verifier is
+      // worse than no verifier: the burst still retries and then reports
+      // `failed` instead of staying silently `unconfirmed`.
       //
       // Gaining an unwarranted `false` on any other adapter lets its verifier
       // run before a session id is resolved, scanning without one and reading

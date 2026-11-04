@@ -61,6 +61,7 @@
  *                       session's transcript directory and its writes
  *                       contaminate the latency (docs/architecture/automations/command-injection-measurements.md)
  */
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -193,9 +194,10 @@ const AGENTS = {
   kimi: {
     binary: 'kimi',
     buildArgs: () => [],
-    sessionRoots: () => [path.join(home, '.kimi', 'sessions')],
+    // Expects an absolute KIMI_CODE_HOME; the adapter's kimiCodeHome() also takes `~`.
+    sessionRoots: () => [path.join(process.env.KIMI_CODE_HOME || path.join(home, '.kimi-code'), 'sessions')],
     filePattern: /^wire\.jsonl$/,
-    note: 'sessions/<workDirHash>/<uuid>/wire.jsonl; timestamps are unix SECONDS',
+    note: 'sessions/<workDirKey>/<id>/agents/main/wire.jsonl',
   },
   droid: {
     binary: 'droid',
@@ -411,7 +413,18 @@ function buildEnv({ offline }) {
   return env;
 }
 
+/**
+ * Kimi's entry starts it with no arguments, and on the archived kimi-cli 1.52 that downloads and
+ * runs the Kimi Code installer. So only a CLI that prints a bare version gets that far.
+ */
+function refuseArchivedKimi(env) {
+  const [file, args] = process.platform === 'win32' ? ['cmd.exe', ['/c', 'kimi', '--version']] : ['kimi', ['--version']];
+  const version = execFileSync(file, args, { encoding: 'utf-8', env, timeout: 20000 }).trim();
+  if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`kimi on PATH is not Kimi Code: ${version.split('\n')[0]}`);
+}
+
 function spawnAgent(agent, workspace, env) {
+  if (agent.binary === 'kimi') refuseArchivedKimi(env);
   const args = agent.buildArgs();
   const options = { cwd: workspace, env, cols: 120, rows: 40, name: 'xterm-256color' };
   if (process.platform === 'win32') {

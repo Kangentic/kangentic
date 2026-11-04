@@ -1,0 +1,7 @@
+{"sessionId":"7c3f9a12-4b5e-4d6a-9f21-0e8b7d6c5a43","projectHash":"0000000000000000000000000000000000000000000000000000000000000000","startTime":"2026-11-04T01:39:10.934Z","lastUpdated":"2026-11-04T01:39:10.934Z","kind":"main"}
+{"id":"d04923d38bb0f6017037e74183378ef4","timestamp":"2026-11-04T01:39:10.935Z","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Tuesday, November 3, 2026 (formatted according to the user's locale).\nMy operating system is: win32\nThe project's temporary directory is: C:\\Users\\dev\\.gemini\\tmp\\gemini-capture\n- **Workspace Directories:**\n  - C:\\Users\\dev\\projects\\gemini-capture\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\nC:\\Users\\dev\\projects\\gemini-capture\\\n└───notes.txt\n\n\n</session_context>"}]}
+{"$set":{"lastUpdated":"2026-11-04T01:39:10.938Z"}}
+{"id":"b4526785-9d5f-4215-9107-fd461b0539ba","timestamp":"2026-11-04T01:39:14.101Z","type":"user","content":[{"text":"Use your file reading tool to read notes.txt in the current directory, then reply with its first word only."}]}
+{"$set":{"lastUpdated":"2026-11-04T01:39:14.102Z"}}
+{"$rewindTo":"b4526785-9d5f-4215-9107-fd461b0539ba"}
+{"$set":{"lastUpdated":"2026-11-04T01:44:42.950Z"}}

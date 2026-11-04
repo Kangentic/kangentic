@@ -26,21 +26,71 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // `discoverCapabilities` reads `--help` on OpenCode 1 only. The exec seam records
 // each help read (and answers with a help text that has no --model flag) while a
 // test arms it; unarmed, every call goes to the real function.
-const helpReads = vi.hoisted(() => ({ armed: false, calls: [] as string[] }));
+// A test can set `helpText` (a help with `--model`) and `modelsOutput` (what
+// `opencode models --verbose` prints); each read is recorded with its arguments.
+const helpReads = vi.hoisted(() => ({
+  armed: false,
+  calls: [] as string[],
+  helpText: 'opencode [project]\n\nOptions:\n  --help  show help\n',
+  modelsOutput: '',
+  // While set, the `opencode models` answer waits on it, so a test holds a read in flight.
+  modelsGate: null as Promise<void> | null,
+}));
 vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
+  const answer = async (commandLine: string) => {
+    const isModelsRead = commandLine.includes('models');
+    if (isModelsRead && helpReads.modelsGate) await helpReads.modelsGate;
+    return { stdout: isModelsRead ? helpReads.modelsOutput : helpReads.helpText, stderr: '' };
+  };
   return {
     ...actual,
     execAsync: (...args: Parameters<typeof actual.execAsync>) => {
       if (!helpReads.armed) return actual.execAsync(...args);
       helpReads.calls.push(String(args[0]));
-      return Promise.resolve({ stdout: 'opencode [project]\n\nOptions:\n  --help  show help\n', stderr: '' });
+      return answer(String(args[0]));
     },
     execFileAsync: (...args: Parameters<typeof actual.execFileAsync>) => {
       if (!helpReads.armed) return actual.execFileAsync(...args);
-      helpReads.calls.push(String(args[0]));
-      return Promise.resolve({ stdout: 'opencode [project]\n\nOptions:\n  --help  show help\n', stderr: '' });
+      const commandLine = `${String(args[0])} ${(Array.isArray(args[1]) ? args[1] : []).join(' ')}`;
+      helpReads.calls.push(commandLine);
+      return answer(commandLine);
     },
+  };
+});
+
+// The two windowed tool reads are stubbed, so a test sees the window the adapter hands
+// them without opening the machine's real OpenCode database.
+const toolReads = vi.hoisted(() => ({
+  counts: vi.fn((..._args: unknown[]): null => null),
+  resultTokens: vi.fn((..._args: unknown[]): null => null),
+  usage: vi.fn((..._args: unknown[]): unknown => null),
+  subagentStat: vi.fn((..._args: unknown[]): unknown => null),
+  subagentUsage: vi.fn((..._args: unknown[]): unknown => null),
+  transcriptWindow: vi.fn((..._args: unknown[]): unknown => null),
+}));
+vi.mock('../../src/main/agent/adapters/opencode/transcript-usage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/transcript-usage')>();
+  return {
+    ...actual,
+    readOpenCodeToolCountsAtPath: (...args: unknown[]) => toolReads.counts(...args),
+    readOpenCodeToolResultTokensAtPath: (...args: unknown[]) => toolReads.resultTokens(...args),
+    readOpenCodeTranscriptUsageAtPath: (...args: unknown[]) => toolReads.usage(...args),
+  };
+});
+vi.mock('../../src/main/agent/adapters/opencode/subagent-usage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/subagent-usage')>();
+  return {
+    ...actual,
+    statOpenCodeSubagentsAtPath: (...args: unknown[]) => toolReads.subagentStat(...args),
+    readOpenCodeSubagentUsageAtPath: (...args: unknown[]) => toolReads.subagentUsage(...args),
+  };
+});
+vi.mock('../../src/main/agent/adapters/opencode/transcript-parser', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/adapters/opencode/transcript-parser')>();
+  return {
+    ...actual,
+    readOpenCodeTranscriptWindowAtPath: (...args: unknown[]) => toolReads.transcriptWindow(...args),
   };
 });
 
@@ -60,9 +110,10 @@ import {
   OpenCodeDetector,
   OpenCodeCommandBuilder,
 } from '../../src/main/agent/adapters/opencode';
+import { openCodeTranscriptSourcePath } from '../../src/main/agent/adapters/opencode/transcript-parser';
 import { isOpenCodeV2, openCodeMajorVersion } from '../../src/main/agent/adapters/opencode/version';
 import { isDistroOpenCodeV2 } from '../../src/main/agent/adapters/opencode/distro-sessions';
-import type { CliTarget } from '../../src/main/agent/shared/cli-target';
+import type { CliPlace, CliTarget } from '../../src/main/agent/shared/cli-target';
 import { loadBetterSqlite3 } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
@@ -98,16 +149,15 @@ describe('OpenCode Adapter', () => {
       expect(adapter.supportsCallerSessionId).toBe(false);
     });
 
-    it('declares only OpenCode-native permission options (Plan and Build)', () => {
-      // OpenCode's autonomy is expressed through agents, not the
-      // Claude-shaped 4-mode union. The dropdown should only offer
-      // OpenCode's native vocabulary so users do not pick modes
-      // (default / bypassPermissions / dontAsk / auto) that have no
-      // distinct OpenCode meaning.
+    it('declares the permission options OpenCode itself has: its agents, the default agent, and --auto', () => {
+      // OpenCode's autonomy is its agents plus the TUI's `--auto` flag. Modes
+      // with no OpenCode meaning (dontAsk, auto) are not offered.
       const entries = adapter.permissions.map((entry) => ({ mode: entry.mode, label: entry.label }));
       expect(entries).toEqual([
         { mode: 'plan', label: 'Plan' },
+        { mode: 'default', label: 'Default Agent' },
         { mode: 'acceptEdits', label: 'Build' },
+        { mode: 'bypassPermissions', label: 'Build (Auto-approve)' },
       ]);
     });
 
@@ -160,6 +210,26 @@ describe('OpenCode Adapter', () => {
       }
     });
 
+    describe('bypassPermissions and --auto', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('passes --auto with --agent build when the cached version supports it', () => {
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'bypassPermissions', prompt: 'go' }));
+        expect(command).toContain('--agent build');
+        expect(command).toContain('--auto');
+      });
+
+      it('omits --auto on a version without it, keeping --agent build', () => {
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.17.11');
+        const command = adapter.buildCommand(makeOptions({ permissionMode: 'bypassPermissions', prompt: 'go' }));
+        expect(command).toContain('--agent build');
+        expect(command).not.toContain('--auto');
+      });
+    });
+
     describe('--agent flag (permission mode → OpenCode primary agent)', () => {
       // Agent names "plan" and "build" have no whitespace, so quoteArg
       // emits them bare on every platform. Asserting on the literal
@@ -190,6 +260,45 @@ describe('OpenCode Adapter', () => {
           const command = adapter.buildCommand(makeOptions({ permissionMode, prompt: 'go' }));
           expect(command).not.toContain('--agent');
         }
+      });
+    });
+
+    describe('--auto (Build (Auto-approve), OpenCode 1.17.12 and later, and OpenCode 2)', () => {
+      const builder = new OpenCodeCommandBuilder();
+      const base = { opencodePath: '/usr/bin/opencode', taskId: 'task-001', cwd: '/home/dev/project' };
+
+      it('passes --auto with --agent build on a CLI that has the flag', () => {
+        for (const cliVersion of ['1.17.12', '1.18.31', '1.20.0']) {
+          const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'bypassPermissions', prompt: 'fix the bug', cliVersion });
+          expect(command).toBe(`/usr/bin/opencode --auto --agent build --prompt ${q('fix the bug')}`);
+        }
+      });
+
+      it('passes --agent build alone on an older or unread version, which would reject the flag', () => {
+        for (const cliVersion of ['1.17.11', '1.14.25', null, 'dev build']) {
+          const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'bypassPermissions', prompt: 'fix the bug', cliVersion });
+          expect(command).toBe(`/usr/bin/opencode --agent build --prompt ${q('fix the bug')}`);
+        }
+      });
+
+      it('passes --auto on a resume too, since it is a flag on the TUI process', () => {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'bypassPermissions', resume: true, sessionId: 'ses_abc123def456', cliVersion: '1.18.31' });
+        expect(command).toBe('/usr/bin/opencode --auto --session ses_abc123def456');
+      });
+
+      it('passes --auto on OpenCode 2 beside --standalone', () => {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'bypassPermissions', prompt: 'fix the bug', cliVersion: 'v2.2.5' });
+        expect(command).toBe(`/usr/bin/opencode --standalone --auto --prompt ${q('fix the bug')}`);
+      });
+
+      it('never passes --auto for any other mode, or to attach', () => {
+        for (const permissionMode of ['plan', 'default', 'acceptEdits', 'dontAsk', 'auto'] as PermissionMode[]) {
+          const command = builder.buildOpenCodeCommand({ ...base, permissionMode, prompt: 'go', cliVersion: '1.18.31' });
+          expect(command).not.toContain('--auto');
+        }
+        const executionTarget = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' as const }, workingDirectory: '/srv/project' };
+        const attach = builder.buildOpenCodeCommand({ ...base, permissionMode: 'bypassPermissions', executionTarget, cliVersion: '1.18.31' });
+        expect(attach).not.toContain('--auto');
       });
     });
   });
@@ -605,6 +714,324 @@ describe('OpenCode Adapter', () => {
       await adapter.discoverCapabilities('/opt/opencode2/bin/opencode');
 
       expect(detectSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('models from `opencode models --verbose` (OpenCode 1)', () => {
+    const MODELS = ['anthropic/claude-sonnet-4-5', '{', '  "name": "Claude Sonnet 4.5"', '}', 'openai/gpt-5', '{', '  "name": "GPT-5"', '}', ''].join('\n');
+
+    beforeEach(() => {
+      helpReads.armed = true;
+      helpReads.helpText = '  -m, --model         model to use in the format of provider/model\n';
+      helpReads.modelsOutput = MODELS;
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+    });
+
+    afterEach(() => {
+      helpReads.armed = false;
+      helpReads.calls.length = 0;
+      helpReads.helpText = 'opencode [project]\n\nOptions:\n  --help  show help\n';
+      helpReads.modelsOutput = '';
+      helpReads.modelsGate = null;
+      vi.restoreAllMocks();
+    });
+
+    const modelReads = (): number => helpReads.calls.filter((call) => call.includes('models')).length;
+
+    /** Holds every `opencode models` answer until the returned function is called. */
+    const holdModelReads = (): (() => void) => {
+      let release: () => void = () => undefined;
+      helpReads.modelsGate = new Promise<void>((resolve) => { release = resolve; });
+      return release;
+    };
+
+    /** Lets the promise chains a finished read leaves behind settle. */
+    const settle = async (): Promise<void> => {
+      for (let turn = 0; turn < 5; turn++) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    };
+
+    it('shares one read between a forced and an unforced call issued together', async () => {
+      const release = holdModelReads();
+      const both = Promise.all([
+        adapter.discoverCapabilities('/usr/bin/opencode', true),
+        adapter.discoverCapabilities('/usr/bin/opencode'),
+      ]);
+      await vi.waitFor(() => expect(modelReads()).toBe(1));
+      await settle();
+      release();
+      const [forced, unforced] = await both;
+      expect(modelReads()).toBe(1);
+      expect(forced.models).toEqual(['anthropic/claude-sonnet-4-5', 'openai/gpt-5']);
+      expect(unforced.models).toBeUndefined();
+    });
+
+    it('does not keep a read that a re-detection overtook', async () => {
+      const release = holdModelReads();
+      const inFlight = adapter.discoverCapabilities('/usr/bin/opencode', true);
+      await vi.waitFor(() => expect(modelReads()).toBe(1));
+      adapter.invalidateDetectionCache();
+      release();
+      await inFlight;
+      await settle();
+      expect(adapter.modelDisplayName('openai/gpt-5')).toBeNull();
+      await adapter.discoverCapabilities('/usr/bin/opencode');
+      await vi.waitFor(() => expect(modelReads()).toBe(2));
+    });
+
+    it('remembers a failed first read, so an unforced call does not read again but a forced one does', async () => {
+      helpReads.modelsOutput = '';
+      await adapter.discoverCapabilities('/usr/bin/opencode');
+      await vi.waitFor(() => expect(modelReads()).toBe(1));
+      await settle();
+      await adapter.discoverCapabilities('/usr/bin/opencode');
+      await settle();
+      expect(modelReads()).toBe(1);
+      helpReads.modelsOutput = MODELS;
+      const forced = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(modelReads()).toBe(2);
+      expect(forced.models).toEqual(['anthropic/claude-sonnet-4-5', 'openai/gpt-5']);
+    });
+
+    it('reports no models key when a forced read fails and no list was ever read', async () => {
+      helpReads.modelsOutput = '';
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(capabilities).toEqual({ supportsModelOverride: true, effortLevels: [] });
+      expect('models' in capabilities).toBe(false);
+    });
+
+    it('does not answer one CLI path with the list read from another', async () => {
+      await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      const other = await adapter.discoverCapabilities('/opt/bin/opencode');
+      expect(other.models).toBeUndefined();
+      await vi.waitFor(() => expect(modelReads()).toBe(2));
+    });
+
+    it('reads the model from a POSIX single-quoted or PowerShell-quoted command', () => {
+      expect(adapter.configuredModelFromCommand("/usr/bin/opencode --model 'anthropic/claude-sonnet-4-5' --prompt 'go'")?.id).toBe('anthropic/claude-sonnet-4-5');
+      expect(adapter.configuredModelFromCommand('& "C:\\opencode.cmd" --model "openai/gpt-5" --prompt "x"')?.id).toBe('openai/gpt-5');
+    });
+
+    it('starts the first read without holding the agent list, and lists the models once it is in', async () => {
+      // Unforced, with no list yet: the answer comes without one, and the read runs on.
+      expect(await adapter.discoverCapabilities('/usr/bin/opencode')).toEqual({ supportsModelOverride: true, effortLevels: [] });
+      await vi.waitFor(() => expect(adapter.modelDisplayName('openai/gpt-5')).toBe('GPT-5'));
+      expect((await adapter.discoverCapabilities('/usr/bin/opencode')).models).toEqual(['anthropic/claude-sonnet-4-5', 'openai/gpt-5']);
+      expect(modelReads()).toBe(1);
+    });
+
+    it('lists the models with the CLI\'s names, read once until a forced refresh', async () => {
+      const capabilities = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(capabilities).toEqual({
+        supportsModelOverride: true,
+        effortLevels: [],
+        models: ['anthropic/claude-sonnet-4-5', 'openai/gpt-5'],
+        modelDisplayNames: { 'anthropic/claude-sonnet-4-5': 'Claude Sonnet 4.5', 'openai/gpt-5': 'GPT-5' },
+      });
+      await adapter.discoverCapabilities('/usr/bin/opencode');
+      expect(modelReads()).toBe(1);
+      await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(modelReads()).toBe(2);
+      adapter.invalidateDetectionCache();
+      await adapter.discoverCapabilities('/usr/bin/opencode');
+      await vi.waitFor(() => expect(modelReads()).toBe(3));
+    });
+
+    it('keeps the last list when a forced refresh reads nothing', async () => {
+      await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      helpReads.modelsOutput = '';
+      const refreshed = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(refreshed.models).toEqual(['anthropic/claude-sonnet-4-5', 'openai/gpt-5']);
+      expect(modelReads()).toBe(2);
+    });
+
+    it('does not join a read in flight for one CLI path with a call for another path', async () => {
+      const release = holdModelReads();
+      const first = adapter.discoverCapabilities('/usr/bin/opencode', true);
+      await vi.waitFor(() => expect(modelReads()).toBe(1));
+      const second = adapter.discoverCapabilities('/opt/bin/opencode', true);
+      await vi.waitFor(() => expect(modelReads()).toBe(2));
+      release();
+      await Promise.all([first, second]);
+    });
+
+    describe('a dropdown refresh after a re-detection', () => {
+      const BOTH_MODELS = ['anthropic/claude-sonnet-4-5', 'openai/gpt-5'];
+
+      it('answers a forced call with the last list when the new read fails, after reading again', async () => {
+        await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        adapter.invalidateDetectionCache();
+        helpReads.modelsOutput = '';
+        const refreshed = await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        expect(refreshed.models).toEqual(BOTH_MODELS);
+        expect(modelReads()).toBe(2);
+      });
+
+      it('answers an unforced call with the last list at once and reads again', async () => {
+        await adapter.discoverCapabilities('/usr/bin/opencode', true);
+        adapter.invalidateDetectionCache();
+        const unforced = await adapter.discoverCapabilities('/usr/bin/opencode');
+        expect(unforced.models).toEqual(BOTH_MODELS);
+        await vi.waitFor(() => expect(modelReads()).toBe(2));
+      });
+
+      it('answers an unforced call with no models when no list was ever read', async () => {
+        adapter.invalidateDetectionCache();
+        const capabilities = await adapter.discoverCapabilities('/usr/bin/opencode');
+        expect('models' in capabilities).toBe(false);
+      });
+    });
+
+    it('asks for no list when the help has no --model, or on OpenCode 2', async () => {
+      helpReads.helpText = 'opencode [project]\n';
+      expect(await adapter.discoverCapabilities('/usr/bin/opencode')).toEqual({ supportsModelOverride: false, effortLevels: [] });
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+      expect(await adapter.discoverCapabilities('/usr/bin/opencode')).toEqual({ supportsModelOverride: true, effortLevels: [] });
+      expect(modelReads()).toBe(0);
+    });
+
+    it('seeds the card with the --model a V1 command names, by the CLI\'s name once the list was read', async () => {
+      const command = adapter.buildCommand(makeOptions({ model: 'anthropic/claude-sonnet-4-5', prompt: 'go' }));
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'anthropic/claude-sonnet-4-5', displayName: 'anthropic/claude-sonnet-4-5' });
+      await adapter.discoverCapabilities('/usr/bin/opencode', true);
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'anthropic/claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' });
+      expect(adapter.modelDisplayName('openai/gpt-5')).toBe('GPT-5');
+      expect(adapter.modelDisplayName('openai/unknown')).toBeNull();
+    });
+
+    it('seeds nothing for a command with no --model, such as an OpenCode 2 spawn', () => {
+      expect(adapter.configuredModelFromCommand('/usr/bin/opencode --standalone --prompt \'use --model x in the text\'')).toBeNull();
+      expect(adapter.configuredModelFromCommand('/usr/bin/opencode --agent build')).toBeNull();
+      expect(adapter.configuredModelFromCommand('"C:\\opencode.cmd" --model "openai/gpt 5" --prompt x')?.id).toBe('openai/gpt 5');
+    });
+  });
+
+  describe('transcript usage and tool counts', () => {
+    beforeEach(() => {
+      for (const reader of Object.values(toolReads)) reader.mockReset();
+      toolReads.counts.mockReturnValue(null);
+      toolReads.resultTokens.mockReturnValue(null);
+      toolReads.usage.mockReturnValue(null);
+      toolReads.subagentStat.mockReturnValue(null);
+      toolReads.subagentUsage.mockReturnValue(null);
+      toolReads.transcriptWindow.mockReturnValue(null);
+    });
+
+    it('answers null for a session with no id, a distro session, or a remote one, without reading', async () => {
+      const distroPlace: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: '/home/dev/.opencode/bin/opencode',
+        facts: {
+          distro: 'Ubuntu',
+          homeLinux: '/home/dev',
+          homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+          uncRoot: '\\\\wsl.localhost\\Ubuntu',
+          interactivePath: '/usr/bin',
+          env: {},
+          networkingMode: 'nat',
+        },
+      };
+      expect(await adapter.transcriptUsage({ agentSessionId: null, cwd: '/x' })).toBeNull();
+      expect(await adapter.transcriptUsage({ agentSessionId: 'ses_x', cwd: '/x', place: distroPlace })).toBeNull();
+      expect(await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/x', place: distroPlace })).toBeNull();
+      adapter.buildCommand(makeOptions({ cwd: '/srv/remote-cwd', executionTarget: { url: 'http://10.0.0.5:4096', auth: { kind: 'none' }, workingDirectory: '/srv' } }));
+      expect(await adapter.transcriptUsage({ agentSessionId: 'ses_x', cwd: '/srv/remote-cwd' })).toBeNull();
+      expect(await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/srv/remote-cwd' })).toBeNull();
+      expect(await adapter.transcriptToolCounts({ agentSessionId: null, cwd: '/x' })).toBeNull();
+      expect(toolReads.usage).not.toHaveBeenCalled();
+      expect(toolReads.counts).not.toHaveBeenCalled();
+
+      // A local session does reach both readers, so the nulls above are not coincidence.
+      await adapter.transcriptUsage({ agentSessionId: 'ses_x', cwd: '/x' });
+      await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/x' });
+      expect(toolReads.usage).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x');
+      expect(toolReads.counts).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x', { sinceMs: undefined, untilMs: undefined });
+    });
+
+    it('hands a local session to the usage, subagent and window readers and returns what they read', async () => {
+      const usage = { inputTokens: 1 };
+      const signature = { count: 2, size: 3, newestUpdate: 4 };
+      const subagentUsage = { directoryPresent: true, complete: true, sourcePath: '/db', turns: [], spawnLinks: [] };
+      const window = { entries: [], nextByteOffset: 9, totalBytes: 10, firstByteOffset: 5, endByte: 9, sourcePath: '/reader-path' };
+      toolReads.usage.mockReturnValueOnce(usage);
+      toolReads.subagentStat.mockReturnValueOnce(signature);
+      toolReads.subagentUsage.mockReturnValueOnce(subagentUsage);
+      toolReads.transcriptWindow.mockReturnValueOnce(window);
+
+      expect(await adapter.transcriptUsage({ agentSessionId: 'ses_loc', cwd: '/x' })).toBe(usage);
+      expect(toolReads.usage).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      expect(adapter.statSubagentTranscripts('ses_loc', '/x')).toBe(signature);
+      expect(toolReads.subagentStat).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      expect(await adapter.parseSubagentUsage('ses_loc', '/x')).toBe(subagentUsage);
+      expect(toolReads.subagentUsage).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc');
+
+      const parsed = await adapter.parseTranscriptWindow('ses_loc', '/x', 5, 1000);
+      expect(toolReads.transcriptWindow).toHaveBeenLastCalledWith(openCodeTranscriptSourcePath(), 'ses_loc', 5, 1000);
+      expect(parsed).toEqual({ ...window, sourcePath: openCodeTranscriptSourcePath() });
+    });
+
+    describe('local reads and the non-local shapes', () => {
+      const distroPlace: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        linuxCliPath: '/home/dev/.opencode/bin/opencode',
+        facts: {
+          distro: 'Ubuntu',
+          homeLinux: '/home/dev',
+          homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+          uncRoot: '\\\\wsl.localhost\\Ubuntu',
+          interactivePath: '/usr/bin',
+          env: {},
+          networkingMode: 'nat',
+        },
+      };
+      const remoteCwd = '/srv/remote-cwd-reads';
+
+      beforeEach(() => {
+        toolReads.counts.mockClear();
+        toolReads.resultTokens.mockClear();
+        adapter.buildCommand(makeOptions({ cwd: remoteCwd, executionTarget: { url: 'http://10.0.0.5:4096', auth: { kind: 'none' }, workingDirectory: '/srv' } }));
+      });
+
+      it('hands a local session\'s time window to both tool reads', async () => {
+        await adapter.transcriptToolCounts({ agentSessionId: 'ses_x', cwd: '/x', sinceMs: 100, untilMs: 200 });
+        await adapter.transcriptToolResultTokens({ agentSessionId: 'ses_x', cwd: '/x', sinceMs: 100, untilMs: 200 });
+        expect(toolReads.counts).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x', { sinceMs: 100, untilMs: 200 });
+        expect(toolReads.resultTokens).toHaveBeenCalledWith(openCodeTranscriptSourcePath(), 'ses_x', { sinceMs: 100, untilMs: 200 });
+      });
+
+      it('answers tool result tokens with null for a remote or distro session, without reading', async () => {
+        expect(await adapter.transcriptToolResultTokens({ agentSessionId: 'ses_x', cwd: remoteCwd })).toBeNull();
+        expect(await adapter.transcriptToolResultTokens({ agentSessionId: 'ses_x', cwd: '/x', place: distroPlace })).toBeNull();
+        expect(await adapter.transcriptToolResultTokens({ agentSessionId: null, cwd: '/x' })).toBeNull();
+        expect(toolReads.resultTokens).not.toHaveBeenCalled();
+      });
+
+      it('has no subagent signature for a remote or distro session', () => {
+        expect(adapter.statSubagentTranscripts('ses_x', remoteCwd)).toBeNull();
+        expect(adapter.statSubagentTranscripts('ses_x', '/x', distroPlace)).toBeNull();
+      });
+
+      it('reads subagent usage as complete and empty for a remote or distro session', async () => {
+        const expected = { directoryPresent: false, complete: true, sourcePath: openCodeTranscriptSourcePath(), turns: [], spawnLinks: [] };
+        expect(await adapter.parseSubagentUsage('ses_x', remoteCwd)).toEqual(expected);
+        expect(await adapter.parseSubagentUsage('ses_x', '/x', distroPlace)).toEqual(expected);
+      });
+
+      it('reads a transcript window as empty, at the offset it was asked from, for a remote or distro session', async () => {
+        const expected = { entries: [], sourcePath: null, nextByteOffset: 50, totalBytes: 0, firstByteOffset: 50, endByte: 50 };
+        expect(await adapter.parseTranscriptWindow('ses_x', remoteCwd, 50, 1000)).toEqual(expected);
+        expect(await adapter.parseTranscriptWindow('ses_x', '/x', 50, 1000, undefined, distroPlace)).toEqual(expected);
+      });
+    });
+
+    it('names edit and write as the file-changing tools, by filePath', () => {
+      expect(adapter.fileChangeTools).toEqual([
+        { tool: 'edit', pathField: 'filePath' },
+        { tool: 'write', pathField: 'filePath' },
+      ]);
     });
   });
 

@@ -180,6 +180,17 @@ export interface AgentCapabilities {
   /** Effort/reasoning levels accepted by the CLI's `--effort` (or equivalent) flag. */
   effortLevels?: string[];
   /**
+   * Effort levels per model id, for a CLI whose levels depend on the model
+   * (Droid: `droid exec --help` lists each model's own). A model listed here
+   * takes its own levels in place of `effortLevels`. A path that passes a
+   * level for a known model (the headless answer, summary and automation
+   * runs, and the settings rows that choose for them) reads it through
+   * `effortLevelsForModel` (`src/shared/effort-levels.ts`). The agent-wide
+   * pickers and checks read `effortLevels`, which such a CLI leaves empty: its
+   * interactive session takes no effort flag.
+   */
+  effortLevelsByModel?: Record<string, string[]>;
+  /**
    * True when the CLI accepts a model override flag (e.g. Claude `--model <alias>`).
    * Set independently of `models`: when true and `models` has entries, the
    * renderer shows a dropdown; when true and `models` is empty/undefined, the
@@ -1511,9 +1522,9 @@ export interface Session {
   isolatedSwimlaneId?: string | null;
   /**
    * Agent-reported session ID (the value passed to `--resume`). Known at spawn
-   * for caller-owned-ID adapters (Claude, Kimi, Qwen); set by the capture
-   * pipeline once the agent emits it over the PTY or via hooks (OpenCode,
-   * Codex, Gemini, Droid). Null until captured. Mirrors the persisted
+   * for caller-owned-ID adapters (Claude, Qwen); set by the capture pipeline
+   * once the agent emits it over the PTY or via hooks (OpenCode, Codex,
+   * Gemini, Droid). Null until captured. Mirrors the persisted
    * SessionRecord.agent_session_id for the live session.
    */
   agentSessionId: string | null;
@@ -2274,7 +2285,7 @@ export const EventType = {
    * (a named shell), or the command text before that (anonymous). Emitted only
    * for an adapter that declares `AgentAdapter.backgroundCommands`: Claude's
    * own hook remaps, the event bridge's `appendBackgroundLaunch` directive for
-   * the others, and the Codex rollout and Kimi wire parsers. See
+   * the others, and the Codex rollout parser. See
    * `docs/architecture/activity/background-shells.md` for the hold and every way it releases.
    */
   BackgroundShellStart: 'background_shell_start',
@@ -2606,8 +2617,21 @@ export type SubmissionVerifier = (context: SubmissionContext) => Promise<boolean
 // === Session Usage (Claude Code Status Line) ===
 
 export interface RateLimitWindow {
-  /** Stable adapter-defined key, e.g. 'five-hour', 'seven-day'. Used as React key. */
+  /**
+   * Stable adapter-defined key, e.g. 'five-hour', 'seven-day'. Used as React
+   * key. Unique across agents: main's `RateLimitLedger` and the renderer's
+   * snapshot merge both key windows by it, so an adapter that adds windows
+   * prefixes its ids (Antigravity's `antigravity-quota-<bucket>`).
+   */
   id: string;
+  /**
+   * The adapter whose session reported the window (`AgentAdapter.name`),
+   * stamped by main as the report arrives, never by an adapter. The pill
+   * shows an agent only its own windows: limits are account-wide per
+   * provider, not across them. Absent on windows from before the stamp
+   * existed and on fixtures, which every agent's pill shows.
+   */
+  agent?: string;
   /** Human-readable label, e.g. '5h session', '7d weekly'. Used in tooltips and aria-label. */
   label: string;
   /** Renderer maps this to a Lucide icon. Kept as a small enum so the renderer stays in charge of visual vocabulary. */
@@ -6772,8 +6796,9 @@ export interface AdapterRuntimeStrategy {
 
   /**
    * How the agent's real CLI session ID is captured for resume support.
-   * Omit entirely for agents that don't support resume (e.g. Aider) or
-   * that use caller-owned IDs via --session-id (e.g. Claude Code).
+   * Omit entirely for agents that don't support resume (e.g. Ollama) or
+   * that use caller-owned IDs (e.g. Claude Code's --session-id, Aider's
+   * --chat-history-file).
    */
   readonly sessionId?: {
     /** Parse session ID from hook stdin JSON. Fires once on session_start
@@ -6801,6 +6826,16 @@ export interface AdapterRuntimeStrategy {
       /** Where the CLI runs when it is not this machine (a WSL distro): it writes its files there. */
       cliTarget?: StoredCliTarget | null;
     }): Promise<string | null>;
+    /**
+     * True when a SessionStart hook that moves the conversation to another id
+     * (`statusFile.parseSessionStart`: a `/clear`, a branch, a `/resume` inside
+     * the TUI) switches the session's id by itself. For an agent whose
+     * `parseStatus` reports no id, so no status write can carry the move:
+     * without it, the session record keeps the conversation it started with
+     * and a later resume reopens that one. The history tail follows the new
+     * id too. Qwen declares it.
+     */
+    readonly followsSessionStartMoves?: boolean;
   };
 
   /**
@@ -6813,7 +6848,7 @@ export interface AdapterRuntimeStrategy {
    * authoritative telemetry is the hook-driven `statusFile` pipeline,
    * and the transcript reader is detached on the first status.json
    * parse (via StatusFileReaderCallbacks.onFirstStatus). Omit entirely
-   * for agents with no such file (Aider has no equivalent).
+   * for agents with no such file (Ollama has no equivalent).
    */
   readonly sessionHistory?: {
     /**
@@ -6851,6 +6886,13 @@ export interface AdapterRuntimeStrategy {
     parse(content: string, mode: 'full' | 'append'): SessionHistoryParseResult;
 
     /**
+     * Make a `parse` for one session, called once per watched file, for a
+     * format that needs memory across chunks (Kimi: a `tool.result` names only
+     * its call id). Omitted, the watcher uses `parse`, and each chunk stands alone.
+     */
+    createParse?(): (content: string, mode: 'full' | 'append') => SessionHistoryParseResult;
+
+    /**
      * True for whole-file-rewrite agents (Gemini rewrites session.json
      * on every message). False for append-only JSONL (Codex appends).
      * Tells the watcher whether to track a byte cursor or always
@@ -6875,8 +6917,8 @@ export interface AdapterRuntimeStrategy {
    * real-time telemetry. Used by agents that emit telemetry through
    * Kangentic-injected hooks (event-bridge.js + status-bridge.js)
    * which write to per-session `status.json` and `events.jsonl` files
-   * under `.kangentic/sessions/<sessionId>/`. Today only Claude Code
-   * uses this pipeline; other agents rely on `sessionHistory` instead.
+   * under `.kangentic/sessions/<sessionId>/`. Agents with no such hooks
+   * rely on `sessionHistory` instead.
    *
    * Per-session file paths are caller-supplied (set on the spawn
    * options) since they are runtime values, not static adapter
@@ -6904,6 +6946,23 @@ export interface AdapterRuntimeStrategy {
      * separate byte cursor regardless of this flag.
      */
     readonly isFullRewrite: boolean;
+
+    /**
+     * Activity events a status write reports that no hook does, read from
+     * this write against the session's previous one (null for its first), at
+     * `now` (epoch ms). The reader dispatches them like events-file lines,
+     * after the write's usage. An adapter reports only an edge (a state that
+     * began with this write), never a level, because the CLI rewrites the
+     * file on every state change and a repeat would re-raise a cleared wait.
+     * Antigravity reports a tool approval dialog opening
+     * (`tool_confirmation_pending`) and a change of plan mode (`cycle_mode`, on
+     * a log-only `config_change` carrying `planMode`), neither of which its
+     * hooks can see. Null when `raw` is not a readable state (a torn write):
+     * the reader then keeps the previous write as the comparison, so the next
+     * whole write is not mistaken for an edge. Omitted when a status write
+     * carries usage only.
+     */
+    parseStatusEvents?(raw: string, previousRaw: string | null, now: number): SessionEvent[] | null;
 
     /**
      * Read a SessionStart hook's payload (the `hookContext` of a
@@ -7463,7 +7522,7 @@ export interface SpawnSessionInput {
    * Caller-owned agent session UUID. Set when the adapter declares
    * `supportsCallerSessionId = true` and the spawn pipeline pre-generates
    * a UUID before invoking the CLI (e.g. Claude `--session-id`, Qwen
-   * `--session-id`, Kimi `--session`). Lets the spawn flow trigger
+   * `--session-id`). Lets the spawn flow trigger
    * `notifyAgentSessionId` immediately so `sessionHistoryReader.attach`
    * fires without waiting for capture pathways to round-trip. Null/undefined
    * for adapters that auto-generate IDs (Codex, Gemini, Droid).

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import type { SubmissionContext, SubmissionVerifier } from '../../../../shared/types';
 import { readTranscriptTailLines } from '../../shared/transcript-tail-cache';
+import { aiderHistoryPath } from './history-paths';
 
 /**
  * Aider's `command-injection` verifier. CONFIRM-ONLY.
@@ -9,13 +9,16 @@ import { readTranscriptTailLines } from '../../shared/transcript-tail-cache';
  * Aider is the odd one out and does NOT use the shared submitted-text scan,
  * because its history format cannot support it safely.
  *
- * `.aider.chat.history.md` is plain markdown, ONE FILE PER PROJECT DIRECTORY,
- * appended to forever, and it carries no per-entry timestamp - only a
- * `# aider chat started at ...` banner per session. The shared scan bounds
- * itself with a `sentAt` watermark read off each record; with no such
- * timestamp, every historical entry would look eligible, so an auto_command
- * that had ever been run before in the same project would confirm instantly
- * from a months-old entry without anything being submitted at all.
+ * The chat history is plain markdown, appended to, and it carries no
+ * per-entry timestamp - only a `# aider chat started at ...` banner per run. A
+ * task session writes its own file (`.aider.chat.history.<id>.md`, see
+ * `history-paths.ts`), which a resume keeps appending to; a session with no
+ * id writes Aider's default `.aider.chat.history.md`, ONE FILE PER PROJECT
+ * DIRECTORY, appended to forever. The shared scan bounds itself with a
+ * `sentAt` watermark read off each record; with no such timestamp, every
+ * historical entry would look eligible, so an auto_command that had been run
+ * before in the same file would confirm instantly from an old entry without
+ * anything being submitted at all.
  *
  * Two guards replace the missing timestamp:
  *
@@ -32,11 +35,6 @@ import { readTranscriptTailLines } from '../../shared/transcript-tail-cache';
 
 /** Clock-skew tolerance, matching the shared scan. */
 const SENT_AT_TOLERANCE_MS = 50;
-
-/** Aider writes its per-project chat log at the root of the working directory. */
-export function resolveAiderHistoryPath(cwd: string): string {
-  return path.join(cwd, '.aider.chat.history.md');
-}
 
 /**
  * Return the final user block, or null when the file ends on assistant output.
@@ -65,11 +63,12 @@ export function extractLastAiderUserPrompt(lines: string[]): string | null {
 export function createAiderCommandInjectionVerifier(): SubmissionVerifier {
   return async (context: SubmissionContext): Promise<boolean> => {
     if (context.type !== 'command-injection') return false;
-    // Aider has no session id and one shared file per directory, so `cwd` alone
-    // identifies the history. A missing `agentSessionId` is expected here.
+    // A session's id names its history file; with none, `cwd` alone identifies
+    // the shared default file. A missing `agentSessionId` is expected here.
     if (!context.cwd) return false;
 
-    const filePath = resolveAiderHistoryPath(context.cwd);
+    // The session's own file when it has an id, else Aider's default file.
+    const filePath = aiderHistoryPath(context.cwd, context.agentSessionId);
     const sentAt = context.sentAt ?? Date.now();
 
     // Guard 1: nothing written since Enter means nothing landed. This also

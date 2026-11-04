@@ -23,6 +23,7 @@ const ENVIRONMENT_OUTPUT = [
   'HOME=/home/dev',
   'PATH=/home/dev/.nvm/versions/node/v24.22.1/bin:/home/dev/.local/bin:/usr/bin',
   'CODEX_HOME=/home/dev/.config/codex',
+  'QWEN_RUNTIME_DIR=/home/dev/.qwen-runtime',
   'SOME_SERVICE_SECRET=do-not-keep-this',
   'MULTILINE=first',
   'second line=not a key we want',
@@ -44,9 +45,14 @@ describe('parseInteractiveEnvironment', () => {
     expect(captured.get('CODEX_HOME')).toBe('/home/dev/.config/codex');
   });
 
+  it('collects QWEN_RUNTIME_DIR so a distro-side Qwen finds its chat files', () => {
+    const captured = parseInteractiveEnvironment(ENVIRONMENT_OUTPUT);
+    expect(captured.get('QWEN_RUNTIME_DIR')).toBe('/home/dev/.qwen-runtime');
+  });
+
   it('keeps nothing else the shell holds', () => {
     const captured = parseInteractiveEnvironment(ENVIRONMENT_OUTPUT);
-    expect([...captured.keys()].sort()).toEqual(['CODEX_HOME', 'HOME', 'PATH']);
+    expect([...captured.keys()].sort()).toEqual(['CODEX_HOME', 'HOME', 'PATH', 'QWEN_RUNTIME_DIR']);
     expect([...captured.values()].join(' ')).not.toContain('do-not-keep-this');
   });
 
@@ -96,7 +102,7 @@ describe('resolveWslDistroFacts', () => {
       homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
       uncRoot: '\\\\wsl.localhost\\Ubuntu',
       interactivePath: '/home/dev/.nvm/versions/node/v24.22.1/bin:/home/dev/.local/bin:/usr/bin',
-      env: { CODEX_HOME: '/home/dev/.config/codex' },
+      env: { CODEX_HOME: '/home/dev/.config/codex', QWEN_RUNTIME_DIR: '/home/dev/.qwen-runtime' },
       networkingMode: 'nat',
     });
     expect(calls).toHaveLength(2);

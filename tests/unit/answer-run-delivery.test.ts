@@ -69,7 +69,7 @@ import {
   extractAntigravityStreamResponse,
   formatAntigravityUserMessage,
 } from '../../src/main/agent/adapters/antigravity/antigravity-adapter';
-import { AiderAdapter, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
+import { AiderAdapter, aiderAnswerUsage, extractAiderAnswer } from '../../src/main/agent/adapters/aider/aider-adapter';
 import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama/ollama-adapter';
 import {
@@ -281,6 +281,13 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model']);
   });
 
+  it('Codex passes the chosen effort as its config override, one argv item, unquoted', async () => {
+    answerSpy.mockClear();
+    await new CodexAdapter().answerFromContext('THE PROMPT', '/bin/agent', '/scratch', 'some-model', { effort: 'low' });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.args).toEqual(['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'some-model', '-c', 'model_reasoning_effort=low']);
+  });
+
   it('Gemini streams in plan mode, past the folder-trust check, under a session id it can remove', async () => {
     const options = await optionsFor(new GeminiAdapter());
     const sessionIdIndex = options.args.indexOf('--session-id');
@@ -295,9 +302,10 @@ describe('answer run flags and prompt delivery', () => {
     expect(options.args).toEqual(['--output-format', 'text', '--approval-mode', 'plan', '--chat-recording=false', '--model', 'some-model']);
   });
 
-  it('Kimi uses its own plan flag, not Claude\'s', async () => {
-    const options = await optionsFor(new KimiAdapter());
-    expect(options.args).toEqual(['--quiet', '--plan', '--model', 'some-model']);
+  it('Kimi Code has no answer run: -p reads its prompt only from argv, and an answer prompt runs past a Windows command line', () => {
+    const adapter = new KimiAdapter();
+    expect(adapter.answerFromContext).toBeUndefined();
+    expect(adapter.answerCapabilities).toBeUndefined();
   });
 
   it('Antigravity sends one stream-json message on stdin in plan mode', async () => {
@@ -335,10 +343,65 @@ describe('answer run flags and prompt delivery', () => {
 
   it('Aider asks without editing, from a message file, outside git', async () => {
     const options = await optionsFor(new AiderAdapter());
-    expect(options.args).toEqual(expect.arrayContaining(['--chat-mode', 'ask', '--no-git', '--no-auto-commits', '--yes']));
+    // `--yes-always` is the flag aider/args.py defines; `--yes` was only an
+    // argparse prefix of it.
+    expect(options.args).toEqual(expect.arrayContaining(['--chat-mode', 'ask', '--no-git', '--no-auto-commits', '--yes-always']));
+    expect(options.args).not.toContain('--yes');
     expect(options.args.slice(-2)).toEqual(['--model', 'some-model']);
     expect(options.promptVia).toBe('file');
     expect(options.promptFileFlag).toBe('--message-file');
+  });
+
+  it('every flag Aider\'s answer run sends is one the real 0.86.2 help lists', async () => {
+    // Derived from the args the run actually passes, so a flag added there
+    // without a check against the CLI fails here. The hand-kept list in
+    // aider-capability-discovery.test.ts cannot notice a flag it does not name.
+    const help = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'aider-help-0.86.2.txt'), 'utf-8');
+    const options = await optionsFor(new AiderAdapter());
+    const flags = options.args.filter((argument) => argument.startsWith('--'));
+    expect(flags.length).toBeGreaterThan(10);
+    for (const flag of flags) {
+      const escaped = flag.replace(/-/g, '\\-');
+      expect(help, flag).toMatch(new RegExp(`(?:^|[\\s\\[,|])${escaped}(?=[\\s\\],|])`, 'm'));
+    }
+  });
+
+  it('Aider hands what the run cost to onUsage, read from its banner and token report', async () => {
+    // Shaped to base_coder.py's announcement and `calculate_and_show_tokens_and_cost`;
+    // both cache fields put the Cost half on its own line. Aider is not
+    // installed where this was written.
+    const stdout = [
+      'Aider v0.86.1',
+      'Main model: anthropic/claude-sonnet-4-5-20250929 with ask edit format, infinite output',
+      'Weak model: anthropic/claude-haiku-4-5-20251001',
+      '',
+      'Two tasks changed the renderer.',
+      '',
+      'Tokens: 12k sent, 1.5k cache write, 3.1k cache hit, 40 received.',
+      'Cost: $0.0123 message, $0.0123 session.',
+    ].join('\n');
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new AiderAdapter().answerFromContext('THE PROMPT', '/bin/aider', '/scratch', null, { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.extractRaw?.(stdout)).toBe('Two tasks changed the renderer.');
+    expect(onUsage).toHaveBeenCalledWith({
+      model: 'anthropic/claude-sonnet-4-5-20250929',
+      inputTokens: 12_000,
+      cacheCreationInputTokens: 1_500,
+      cacheReadInputTokens: 3_100,
+      outputTokens: 40,
+      costUsd: 0.0123,
+    });
+  });
+
+  it('Aider reports no usage when the run printed no token report', async () => {
+    const onUsage = vi.fn();
+    answerSpy.mockClear();
+    await new AiderAdapter().answerFromContext('THE PROMPT', '/bin/aider', '/scratch', null, { onUsage });
+    const options = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(options.extractRaw?.('Aider v0.86.1\n\nAn answer.\n')).toBe('An answer.');
+    expect(onUsage).not.toHaveBeenCalled();
   });
 
   it('Goose reads instructions from stdin in chat mode, which has no tools', async () => {
@@ -349,8 +412,16 @@ describe('answer run flags and prompt delivery', () => {
 
   it('Ollama runs the chosen model with the prompt piped, and refuses to guess one', async () => {
     const options = await optionsFor(new OllamaAdapter());
-    expect(options.args).toEqual(['run', 'some-model']);
+    // --hidethinking: a thinking model otherwise prints its reasoning to
+    // stdout, and the runner would return it as part of the answer.
+    expect(options.args).toEqual(['run', 'some-model', '--hidethinking']);
     expect(options.promptVia ?? 'stdin').toBe('stdin');
+
+    // An effort is the `=` form of --think: a spaced level would be read as a positional.
+    answerSpy.mockClear();
+    await new OllamaAdapter().answerFromContext('THE PROMPT', '/bin/ollama', '/scratch', 'some-model', { effort: 'high' });
+    const withEffort = (answerSpy.mock.calls[0] as unknown as [RunCliPrintOptions])[0];
+    expect(withEffort.args).toEqual(['run', 'some-model', '--hidethinking', '--think=high']);
 
     answerSpy.mockClear();
     await expect(new OllamaAdapter().answerFromContext('THE PROMPT', '/bin/ollama', '/scratch', null))
@@ -574,6 +645,8 @@ describe('answer extraction', () => {
     expect(JSON.parse(line).message.content[0].text).toBe('first line\nsecond line');
   });
 
+  // Aider publishes no stdout of an answer run, so the Aider cases below stay
+  // shaped to its source. The last one replays a published history run instead.
   it('strips Aider\'s status lines around the answer', () => {
     const stdout = [
       'Aider v0.86.1',
@@ -606,5 +679,54 @@ describe('answer extraction', () => {
       'Tokens: 12k sent, 3.1k cache hit, 40 received. Cost: $0.01 message, $0.01 session.',
     ].join('\n');
     expect(extractAiderAnswer(stdout)).toBe(answer);
+  });
+
+  it('trims a token report whose Cost half is on a line of its own', () => {
+    // base_coder.py joins the two halves with a newline when both cache fields
+    // are present; the old trim kept that Cost line as part of the answer.
+    const stdout = [
+      'Aider v0.86.1',
+      '',
+      'Two tasks changed the renderer.',
+      '',
+      'Tokens: 12k sent, 1.5k cache write, 3.1k cache hit, 40 received.',
+      'Cost: $0.01 message, $0.01 session.',
+    ].join('\n');
+    expect(extractAiderAnswer(stdout)).toBe('Two tasks changed the renderer.');
+  });
+
+  it('keeps an answer that ends on a Cost line of its own words', () => {
+    const answer = 'Spend so far:\nCost: $0.10 message, $0.20 session.';
+    expect(extractAiderAnswer(`Aider v0.86.1\n\n${answer}\n`)).toBe(answer);
+  });
+
+  it('reads a published Aider run with the history\'s quoting taken off', () => {
+    // The last run of aider-published-chat-history.md, a `--msg /ask` (see its
+    // .source.md). `tool_output` writes the same text to stdout and to the
+    // history, so these are stdout's lines, less the logged command line and
+    // the `####` lines Aider writes only to the history. A history is not a
+    // stdout capture: Aider publishes no such capture.
+    const history = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'aider-published-chat-history.md'), 'utf-8');
+    const stdout = history
+      .slice(history.lastIndexOf('# aider chat started at'))
+      .split('\n')
+      .filter((line) => !line.startsWith('#') && !line.startsWith('> /home/dev'))
+      .map((line) => line.replace(/^> /, ''))
+      .join('\n');
+    expect(extractAiderAnswer(stdout)).toMatch(/^Je vais bien, merci de demander ! .* pourriez avoir\.$/);
+    expect(aiderAnswerUsage(stdout)).toEqual({
+      model: 'claude-3-5-sonnet-20240620',
+      inputTokens: 66,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      outputTokens: 38,
+      costUsd: 0.00077,
+    });
+  });
+
+  it('takes an older Models line for banner, as Aider\'s published history writes it', () => {
+    const stdout = 'Models: gpt-4o with diff edit format, weak model gpt-4o-mini\nThe answer.\nTokens: 500 sent, 20 received.';
+    expect(extractAiderAnswer(stdout)).toBe('The answer.');
+    expect(aiderAnswerUsage(stdout)?.model).toBe('gpt-4o');
   });
 });

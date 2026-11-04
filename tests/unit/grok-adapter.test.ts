@@ -4,9 +4,13 @@
  * Every empirical constant asserted here (version banner, session-store
  * encoding, updates.jsonl shapes, cost tick unit, hook payload fields) was
  * measured against grok 1.0.0 (3cd0d0cbce) - see the adapter files and
- * scripts/probe-grok.js for the provenance.
+ * scripts/probe-grok.js for the provenance. The exceptions were built from
+ * Grok's docs and are not measurements: the `grok-docs-1.0.45-*` hook
+ * fixtures and their describe block, the `/model` and `/effort` live swap,
+ * and the cache-backed `modelDisplayName`.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +21,9 @@ import type { GrokCommandOptions } from '../../src/main/agent/adapters/grok/comm
 import { parseGrokVersion, GrokDetector } from '../../src/main/agent/adapters/grok/detector';
 import { buildGrokHooks, writeHooksFile, removeHooksFile } from '../../src/main/agent/adapters/grok/hook-manager';
 import { writeMcpConfig, removeMcpConfig } from '../../src/main/agent/adapters/grok/mcp-config';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import {
+  grokChatHistoryPath,
   grokSessionDir,
   grokUpdatesJsonlPath,
   cwdToSessionsDirName,
@@ -43,6 +49,7 @@ import { cleanGrokTranscript } from '../../src/main/agent/adapters/grok/transcri
 import { discoverGrokCapabilities, clearGrokCapabilityMemo } from '../../src/main/agent/adapters/grok/capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, normalizeForCompare, removeWorktreeTrust } from '../../src/main/agent/adapters/grok/trust-manager';
 import { migrateGrokProjectData } from '../../src/main/agent/adapters/grok/project-relocation';
+import { EventType } from '../../src/shared/types';
 import type { PermissionMode } from '../../src/shared/types';
 import { toForwardSlash } from '../../src/shared/paths';
 import {
@@ -144,8 +151,50 @@ describe('GrokAdapter identity', () => {
     expect(adapter.getSubmissionVerifier('paste')).toBeNull();
   });
 
-  it('falls back to respawn for model/effort changes (no unverifiable live injection)', () => {
-    expect(adapter.getInjectionSequence({ model: 'grok-4.6', modelChanged: true, effort: 'high', effortChanged: true })).toEqual([]);
+  // The Command Terminal's live swap, through grok's own `/model` and `/effort`
+  // (04-slash-commands.md shipped with 1.0.0). Built from the docs.
+  it('swaps a live model and effort with /model <id> then /effort <level>', () => {
+    expect(adapter.getInjectionSequence({ model: 'grok-4.6', modelChanged: true, effort: 'high', effortChanged: true }))
+      .toEqual(['/model grok-4.6', '/effort high']);
+  });
+
+  it('types only the setting that changed, and nothing for a cleared value', () => {
+    expect(adapter.getInjectionSequence({ model: 'grok-4.6', modelChanged: true, effort: 'high', effortChanged: false }))
+      .toEqual(['/model grok-4.6']);
+    expect(adapter.getInjectionSequence({ model: 'grok-4.6', modelChanged: false, effort: 'low', effortChanged: true }))
+      .toEqual(['/effort low']);
+    expect(adapter.getInjectionSequence({ model: null, modelChanged: true, effort: null, effortChanged: true })).toEqual([]);
+    expect(adapter.getInjectionSequence({ model: 'grok-4.6', modelChanged: false, effort: 'high', effortChanged: false })).toEqual([]);
+  });
+
+  it('skips a model or effort that is not one plain token, so it cannot type a second command', () => {
+    for (const badModel of ['grok 4', 'grok-4\r/quit']) {
+      expect(adapter.getInjectionSequence({ model: badModel, modelChanged: true, effort: null, effortChanged: false }))
+        .toEqual([]);
+    }
+    expect(adapter.getInjectionSequence({ model: null, modelChanged: false, effort: 'high\n/quit', effortChanged: true }))
+      .toEqual([]);
+    // A valid effort beside an invalid model still goes through alone.
+    expect(adapter.getInjectionSequence({ model: 'grok 4', modelChanged: true, effort: 'high', effortChanged: true }))
+      .toEqual(['/effort high']);
+    // Shell and TUI metacharacters are not part of a plain token either.
+    for (const badModel of ['grok;rm', '$(x)', 'grok`x`', 'grok|x']) {
+      expect(adapter.getInjectionSequence({ model: badModel, modelChanged: true, effort: null, effortChanged: false }))
+        .toEqual([]);
+    }
+    // Every character class the guard allows, in one id.
+    expect(adapter.getInjectionSequence({ model: 'org/model_1:tag@2+x.y-z', modelChanged: true, effort: null, effortChanged: false }))
+      .toEqual(['/model org/model_1:tag@2+x.y-z']);
+  });
+
+  it('names a learned model id from the models cache, and leaves an unknown one to the raw id', () => {
+    const home = useTempGrokHome();
+    fs.writeFileSync(path.join(home, 'models_cache.json'), JSON.stringify({
+      models: { 'grok-4.6-hidden': { info: { id: 'grok-4.6-hidden', name: 'Grok 4.6 Preview', hidden: true } } },
+    }));
+    expect(adapter.modelDisplayName('grok-4.6-hidden')).toBe('Grok 4.6 Preview');
+    // Null, never the id echoed back. The list keeps a raw id for a miss.
+    expect(adapter.modelDisplayName('grok-unknown')).toBeNull();
   });
 
   it('seeds the board card model from the built command', () => {
@@ -426,7 +475,7 @@ describe('buildGrokHooks', () => {
   it('wires every lifecycle event through the env-sentinel bridge command', () => {
     const expectedEvents = [
       'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'UserPromptSubmit', 'Stop',
-      'StopFailure', 'SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop',
+      'StopFailure', 'StopCancelled', 'SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop',
       'PermissionDenied', 'Notification', 'PreCompact',
     ];
     expect(Object.keys(hooks).sort()).toEqual([...expectedEvents].sort());
@@ -550,7 +599,7 @@ describe('buildGrokHooks', () => {
       kind: 'extractDetail', payload: { fields: ['toolName', 'message'] },
     });
 
-    const notificationTokens = hooks.Notification[0].hooks[0].command.split(' ');
+    const notificationTokens = hooks.Notification[1].hooks[0].command.split(' ');
     expect(notificationTokens[3]).toBe('notification');
     expect(decodeDirective(notificationTokens[4])).toEqual({
       kind: 'extractDetail', payload: { fields: ['message', 'notification', 'text'] },
@@ -559,6 +608,118 @@ describe('buildGrokHooks', () => {
     const preCompactTokens = hooks.PreCompact[0].hooks[0].command.split(' ');
     expect(preCompactTokens[3]).toBe('compact');
     expect(preCompactTokens).toHaveLength(4);
+  });
+});
+
+/**
+ * The hook entries built from Grok's docs, not from a capture (the 1.0.0 here
+ * is too old for xAI's API). Each payload is a `grok-docs-1.0.45-*` fixture
+ * shaped to 10-hooks.md on main (1.0.45) and 19-plan-mode.md shipped with
+ * 1.0.0, run through the REAL event bridge with the directives
+ * `buildGrokHooks` emits, so a directive that does not do what its comment
+ * says fails here. Values the docs leave open (the subagent cancel's
+ * `reason`, the notification text) are illustrative and decide nothing.
+ */
+describe('grok hooks built from the docs, through the real event bridge', () => {
+  const EVENT_BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
+  const FIXTURES = path.resolve(__dirname, '../fixtures/grok-hooks');
+  const hooks = buildGrokHooks('/bridge/event-bridge.js');
+  let scratch: string;
+  let outputFile: string;
+
+  beforeEach(() => {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-docs-hooks-'));
+    outputFile = path.join(scratch, 'events.jsonl');
+  });
+
+  afterEach(() => {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  function fixture(file: string): Record<string, unknown> {
+    return JSON.parse(fs.readFileSync(path.join(FIXTURES, file), 'utf-8'));
+  }
+
+  /** Every line one hook command's event type and directives write for `payload`. */
+  function runHook(command: string, payload: Record<string, unknown>): Array<Record<string, unknown>> {
+    // Command shape: node "<bridge>" "env:KANGENTIC_EVENTS_PATH" <type> <directives...>
+    const [eventType, ...directives] = command.split(' ').slice(3);
+    fs.rmSync(outputFile, { force: true });
+    execFileSync(process.execPath, [EVENT_BRIDGE, outputFile, eventType, ...directives], {
+      input: JSON.stringify(payload),
+      timeout: 5000,
+    });
+    if (!fs.existsSync(outputFile)) return [];
+    return fs.readFileSync(outputFile, 'utf-8').trim().split('\n').map((line) => JSON.parse(line));
+  }
+
+  /** The lines every entry Grok runs for one event writes, in entry order. */
+  function runEvent(entries: Array<{ hooks: Array<{ command: string }> }>, payload: Record<string, unknown>): Array<Record<string, unknown>> {
+    return entries.flatMap((entry) => entry.hooks.flatMap((hook) => runHook(hook.command, payload)));
+  }
+
+  function typesOf(lines: Array<Record<string, unknown>>): unknown[] {
+    return lines.map((line) => line.type);
+  }
+
+  it('reports a cancelled main-agent turn as an interrupt, with its reason', () => {
+    const lines = runEvent(hooks.StopCancelled, fixture('grok-docs-1.0.45-stop-cancelled-user-interrupt.json'));
+    expect(lines).toEqual([expect.objectContaining({ type: EventType.Interrupted, detail: 'user_interrupt' })]);
+  });
+
+  it("logs a subagent's cancelled turn, which must not end the session's turn", () => {
+    const lines = runEvent(hooks.StopCancelled, fixture('grok-docs-1.0.45-stop-cancelled-subagent.json'));
+    expect(lines).toEqual([expect.objectContaining({ type: EventType.Notification, detail: 'explore' })]);
+  });
+
+  it('turns a permission_prompt notification into an approval wait, beside its log line', () => {
+    const lines = runEvent(hooks.Notification, fixture('grok-docs-1.0.45-notification-permission-prompt.json'));
+    // The wait first: Grok runs the entries in order, and the log can lag.
+    expect(lines).toEqual([
+      expect.objectContaining({ type: EventType.Idle, detail: 'permission', waitKind: 'approval' }),
+      expect.objectContaining({ type: EventType.Notification, detail: 'Grok wants to run a command' }),
+    ]);
+  });
+
+  it('turns an idle_prompt notification into an idle hint, and opens no wait', () => {
+    const lines = runEvent(hooks.Notification, fixture('grok-docs-1.0.45-notification-idle-prompt.json'));
+    expect(lines).toEqual([expect.objectContaining({ type: EventType.IdleHint })]);
+  });
+
+  it('only logs any other notification type', () => {
+    const lines = runEvent(hooks.Notification, fixture('grok-docs-1.0.45-notification-task-complete.json'));
+    expect(lines).toEqual([expect.objectContaining({ type: EventType.Notification, detail: 'Task complete' })]);
+  });
+
+  it('opens a question wait after ask_user_question starts', () => {
+    const lines = runEvent(hooks.PreToolUse, fixture('grok-docs-1.0.45-pre-tool-use-ask-user-question.json'));
+    expect(lines).toEqual([
+      expect.objectContaining({ type: EventType.ToolStart, tool: 'ask_user_question', toolId: 'call_docs_question' }),
+      expect.objectContaining({ type: EventType.Idle, detail: 'permission', tool: 'ask_user_question', waitKind: 'question' }),
+    ]);
+  });
+
+  it('opens an approval wait after exit_plan_mode starts, and never reports it as a plan exit', () => {
+    const lines = runEvent(hooks.PreToolUse, fixture('grok-docs-1.0.45-pre-tool-use-exit-plan-mode.json'));
+    expect(lines).toEqual([
+      expect.objectContaining({ type: EventType.ToolStart, tool: 'exit_plan_mode' }),
+      expect.objectContaining({ type: EventType.Idle, detail: 'permission', tool: 'exit_plan_mode', waitKind: 'approval' }),
+    ]);
+  });
+
+  it('opens no wait for any other tool', () => {
+    const lines = runEvent(hooks.PreToolUse, { toolName: 'read_file', toolUseId: 'tool-1', toolInput: { target_file: 'a.ts' } });
+    expect(typesOf(lines)).toEqual([EventType.ToolStart]);
+  });
+
+  it("reports plan mode from permissionMode at a prompt and a turn end, and skips a subagent's", () => {
+    const stop = fixture('grok-1.0.0-stop-with-background-tasks.json');
+    expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'plan' })[0]).toMatchObject({ type: EventType.Idle, planMode: true });
+    expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'default' })[0]).toMatchObject({ planMode: false });
+    expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'plan' })[0]).toMatchObject({ type: EventType.Prompt, planMode: true });
+    expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'default' })[0]).toMatchObject({ type: EventType.Prompt, planMode: false });
+    expect(runEvent(hooks.Stop, { ...stop, permissionMode: 'plan', subagentType: 'plan' })[0]).not.toHaveProperty('planMode');
+    expect(runEvent(hooks.UserPromptSubmit, { permissionMode: 'plan', subagentType: 'explore' })[0]).not.toHaveProperty('planMode');
   });
 });
 
@@ -1125,6 +1286,34 @@ describe('parseGrokTranscript', () => {
     expect(entries[3].origin).toEqual({ conversationId: SESSION_ID, position: expect.any(Number) });
   });
 
+  it('yields a spawn link for a spawn_subagent tool call, through the adapter\'s declared spawn tool', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/spawn-link-project';
+    const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const records = [
+      { type: 'user', content: { type: 'text', text: '<user_query>\nsplit the work\n</user_query>' } },
+      {
+        type: 'assistant',
+        content: 'Delegating.',
+        tool_calls: [
+          { id: 'call-read', name: 'read_file', arguments: '{"target_file":"a.ts"}' },
+          { id: 'call-spawn', name: 'spawn_subagent', arguments: '{"prompt":"look into it"}' },
+        ],
+      },
+    ];
+    fs.writeFileSync(
+      path.join(sessionDir, 'chat_history.jsonl'),
+      records.map((record) => JSON.stringify(record)).join('\n'),
+    );
+
+    const { entries } = await parseGrokTranscript(SESSION_ID, cwd);
+    const { extractTurnSpawnLinks } = await import('../../src/main/retrieval/conversation/conversation-usage-store');
+    const links = extractTurnSpawnLinks(entries, new GrokAdapter().subagentSpawnToolName);
+
+    expect(links).toEqual([{ toolUseId: 'call-spawn', turnUuid: `${SESSION_ID}:1` }]);
+  });
+
   it('returns empty on a missing file', async () => {
     useTempGrokHome();
     const { entries, sourcePath } = await parseGrokTranscript(SESSION_ID, '/nowhere');
@@ -1279,6 +1468,83 @@ describe('parseGrokTranscript', () => {
       expect(whole.some((entry) => entry.kind === 'assistant' && entry.blocks[0]?.type === 'thinking')).toBe(true);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  // The index and the archive walk a conversation window by window. Every
+  // window must mint the entries, uuids included, a whole-file parse mints for
+  // its lines: the uuids are the citation anchors, and they number lines.
+  it('walks the whole file in windows that mint the same entries as a whole-file parse', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/window-project';
+    const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    let text = `${JSON.stringify({ type: 'system', content: 'You are Grok.' })}\n`;
+    for (let turn = 0; turn < 12; turn += 1) {
+      if (turn % 3 === 0) {
+        text += `${JSON.stringify({ type: 'user', synthetic_reason: 'system_reminder', content: { type: 'text', text: 'injected context' } })}\n`;
+      }
+      text += `${JSON.stringify({ type: 'user', content: { type: 'text', text: `<user_query>\nquestion ${turn} ${'é漢'.repeat(turn % 4)}\n</user_query>` } })}\n`;
+      text += `${JSON.stringify({ type: 'assistant', content: `answer ${turn}`, model_id: 'grok-4.6' })}\n`;
+    }
+    fs.writeFileSync(path.join(sessionDir, 'chat_history.jsonl'), text);
+    const adapter = new GrokAdapter();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'));
+    try {
+      const whole = (await parseGrokTranscript(SESSION_ID, cwd)).entries;
+      const walked: typeof whole = [];
+      let offset = 0;
+      // The windows tile the file: each starts where the last one's lines ended.
+      let previousEndByte = 0;
+      let totalBytes = -1;
+      for (let windowIndex = 0; windowIndex < 200; windowIndex += 1) {
+        const window = await adapter.parseTranscriptWindow(SESSION_ID, cwd, offset, 300);
+        expect(window.sourcePath).toBe(await adapter.locateSessionHistoryFile(SESSION_ID, cwd));
+        expect(window.firstByteOffset).toBe(previousEndByte);
+        previousEndByte = window.endByte;
+        totalBytes = window.totalBytes;
+        walked.push(...window.entries);
+        if (window.nextByteOffset <= offset || window.nextByteOffset >= window.totalBytes) break;
+        offset = window.nextByteOffset;
+      }
+      expect(whole.length).toBeGreaterThan(20);
+      expect(walked).toEqual(whole);
+      expect(previousEndByte).toBe(totalBytes);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A Grok installed in a WSL distro keeps its sessions under the distro's home.
+  it('reads the window from the session folder of the place the CLI runs in', async () => {
+    useTempGrokHome();
+    const distroShare = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-wsl-share-'));
+    try {
+      const place: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: {
+          distro: 'Ubuntu',
+          homeLinux: '/home/dev',
+          homeUnc: path.join(distroShare, 'home', 'dev'),
+          uncRoot: distroShare,
+          interactivePath: '',
+          env: {},
+          networkingMode: 'unknown',
+        },
+      };
+      const cwd = '/home/dev/wsl-project';
+      const chatHistoryPath = grokChatHistoryPath(cwd, SESSION_ID, place);
+      expect(chatHistoryPath.startsWith(distroShare)).toBe(true);
+      fs.mkdirSync(path.dirname(chatHistoryPath), { recursive: true });
+      fs.writeFileSync(chatHistoryPath, `${JSON.stringify({ type: 'assistant', content: 'from the distro', model_id: 'grok-4.6' })}\n`);
+
+      const window = await new GrokAdapter().parseTranscriptWindow(SESSION_ID, cwd, 0, 4096, undefined, place);
+      expect(window.sourcePath).toBe(chatHistoryPath);
+      expect(window.entries).toHaveLength(1);
+    } finally {
+      fs.rmSync(distroShare, { recursive: true, force: true });
     }
   });
 });
@@ -2169,16 +2435,20 @@ describe('GrokAdapter.locateSessionHistoryFile (strict cwd-scoped probe)', () =>
   // resume-cwd-migration's reachability gate depend on this probe answering
   // ONLY for the exact (cwd, sessionId) pair, never a scan hit under a
   // different cwd's encoded directory.
-  it('returns the path when updates.jsonl exists at the cwd-scoped encoded path', async () => {
+  // It names chat_history.jsonl, the file parseTranscriptWindow walks: the
+  // index, the archive and the message trail size and offset what this returns.
+  it('returns chat_history.jsonl when it exists at the cwd-scoped encoded path', async () => {
     const home = useTempGrokHome();
     const adapter = new GrokAdapter();
     const cwd = '/home/dev/probe-project';
     const updatesPath = grokUpdatesJsonlPath(cwd, SESSION_ID);
+    const chatHistoryPath = path.join(path.dirname(updatesPath), 'chat_history.jsonl');
     fs.mkdirSync(path.dirname(updatesPath), { recursive: true });
     fs.writeFileSync(updatesPath, '');
+    fs.writeFileSync(chatHistoryPath, '');
 
     const located = await adapter.locateSessionHistoryFile(SESSION_ID, cwd);
-    expect(located).toBe(updatesPath);
+    expect(located).toBe(chatHistoryPath);
     expect(located).toContain(home);
   });
 
@@ -2194,9 +2464,23 @@ describe('GrokAdapter.locateSessionHistoryFile (strict cwd-scoped probe)', () =>
     const foreignUpdatesPath = grokUpdatesJsonlPath(foreignCwd, SESSION_ID);
     fs.mkdirSync(path.dirname(foreignUpdatesPath), { recursive: true });
     fs.writeFileSync(foreignUpdatesPath, '');
+    fs.writeFileSync(path.join(path.dirname(foreignUpdatesPath), 'chat_history.jsonl'), '');
 
     const located = await adapter.locateSessionHistoryFile(SESSION_ID, '/home/dev/probe-project');
     expect(located).toBeNull();
+  });
+
+  it('returns null for a session folder that holds updates.jsonl but no chat_history.jsonl yet', async () => {
+    // Before a session's first turn only updates.jsonl exists. The window
+    // walkers read chat_history.jsonl, so there is nothing to locate yet.
+    useTempGrokHome();
+    const adapter = new GrokAdapter();
+    const cwd = '/home/dev/probe-project';
+    const updatesPath = grokUpdatesJsonlPath(cwd, SESSION_ID);
+    fs.mkdirSync(path.dirname(updatesPath), { recursive: true });
+    fs.writeFileSync(updatesPath, '');
+
+    expect(await adapter.locateSessionHistoryFile(SESSION_ID, cwd)).toBeNull();
   });
 });
 

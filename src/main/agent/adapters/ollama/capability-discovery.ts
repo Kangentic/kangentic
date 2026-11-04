@@ -1,6 +1,7 @@
 /**
  * Ollama capability discovery: enumerate locally installed models via
- * `ollama list` so the renderer can populate the model-picker dropdown.
+ * `ollama list` so the renderer can populate the model-picker dropdown, and
+ * read the thinking levels `ollama run --think` accepts from its own help.
  *
  * `ollama run` always accepts a positional model argument, so model override
  * is always supported. The discovered list is the set of already-pulled
@@ -15,33 +16,62 @@ import type { AgentCapabilities } from '../../../../shared/types';
 
 
 const LIST_TIMEOUT_MS = 5000;
+const HELP_TIMEOUT_MS = 5000;
 
 /**
- * Run `<cliPath> list` and capture stdout.
+ * Run `<cliPath> <args>` and capture stdout.
  * On Windows, use a shell invocation (handles `.cmd` / `.exe` shims); on
  * Unix, use direct execFile. An Ollama installed in a WSL distro is asked
- * there, so it lists the models of the distro's own daemon.
+ * there, so it reports the distro's own install and daemon. The Windows
+ * branch joins `args` into a cmd line unquoted, so every arg must be a fixed
+ * literal token with no space or shell character (`list`, `run`, `--help`).
  */
-async function readModelListOutput(cliPath: string, knownTarget?: CliTarget | null): Promise<string> {
+async function readCliOutput(cliPath: string, args: string[], timeoutMs: number, knownTarget?: CliTarget | null): Promise<string> {
   // A target the caller already has (a CLI on an SSH host) is asked there, through the host's helper.
   const target = knownTarget ?? await resolveCliTarget(cliPath, true);
   if (target) {
-    const { stdout } = await execCliForTarget(target, ['list'], { timeout: LIST_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    const { stdout } = await execCliForTarget(target, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 });
     return stdout;
   }
   if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} list`, {
-      timeout: LIST_TIMEOUT_MS,
+    const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} ${args.join(' ')}`, {
+      timeout: timeoutMs,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     });
     return stdout;
   }
-  const { stdout } = await execFileAsync(cliPath, ['list'], {
-    timeout: LIST_TIMEOUT_MS,
+  const { stdout } = await execFileAsync(cliPath, args, {
+    timeout: timeoutMs,
     maxBuffer: 1024 * 1024,
   });
   return stdout;
+}
+
+/**
+ * Parse the thinking levels out of `ollama run --help`.
+ *
+ * Ollama 0.40.14 registers the flag as
+ *   --think string   Enable thinking mode: true/false or high/medium/low for supported models
+ * (https://github.com/ollama/ollama/blob/v0.40.14/cmd/cmd.go). The levels are
+ * every slash-separated word list on that line except the `true`/`false`
+ * switch, in the CLI's own order. A CLI without the flag (before 0.9.0, when
+ * thinking shipped) or help that reads differently yields no levels, so the
+ * Effort row stays hidden rather than offering a guess. Pure, for unit tests.
+ */
+export function parseOllamaThinkLevels(helpText: string): string[] {
+  // `(?![\w-])` ends the name, so a `--think-...` or `--thinking` flag is not this line.
+  const thinkLine = helpText.split('\n').find((line) => /^\s*--think(?![\w-])/.test(line));
+  if (!thinkLine) return [];
+  const levels: string[] = [];
+  for (const group of thinkLine.match(/[a-z]+(?:\/[a-z]+)+/gi) ?? []) {
+    for (const word of group.split('/')) {
+      const level = word.toLowerCase();
+      if (level === 'true' || level === 'false' || levels.includes(level)) continue;
+      levels.push(level);
+    }
+  }
+  return levels;
 }
 
 /**
@@ -70,25 +100,39 @@ export function parseOllamaModelList(stdout: string): string[] {
   return Array.from(models).sort();
 }
 
+export interface OllamaDiscovery {
+  capabilities: AgentCapabilities;
+  /**
+   * The `--think` levels `ollama run --help` named, or null when that read
+   * failed. An empty list is an answer (this CLI has no `--think` flag); null
+   * is not, so the adapter keeps whatever an earlier read reported.
+   */
+  thinkLevels: string[] | null;
+}
+
 /**
- * Discover Ollama capabilities: model override is always supported, and the
- * model list comes from `ollama list`.
+ * Discover Ollama capabilities: model override is always supported, the
+ * model list comes from `ollama list`, and the effort levels are the
+ * `--think` levels `ollama run --help` names.
  *
- * Best-effort: never throws. On any failure (daemon down, CLI missing,
- * unparseable output) it returns `{ supportsModelOverride: true }` with no
- * model list, so the renderer falls back to a free-form model text input.
+ * Best-effort: never throws. A failed `ollama list` (daemon down, CLI
+ * missing, unparseable output) leaves no model list, so the renderer falls
+ * back to a free-form model text input. A failed `run --help` reports
+ * `thinkLevels: null` with empty `effortLevels`, and the adapter offers the
+ * levels an earlier read of that CLI reported in their place.
  */
-export async function discoverOllamaCapabilities(cliPath: string, target?: CliTarget | null): Promise<AgentCapabilities> {
-  let models: string[] = [];
-  try {
-    models = parseOllamaModelList(await readModelListOutput(cliPath, target));
-  } catch {
-    // `ollama list` failed - fall back to free-form model input.
-  }
+export async function discoverOllama(cliPath: string, target?: CliTarget | null): Promise<OllamaDiscovery> {
+  const [models, thinkLevels] = await Promise.all([
+    readCliOutput(cliPath, ['list'], LIST_TIMEOUT_MS, target).then(parseOllamaModelList, () => [] as string[]),
+    // `run --help` is answered by the CLI itself, so it works with the daemon down.
+    readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS, target).then(parseOllamaThinkLevels, () => null),
+  ]);
   return {
-    supportsModelOverride: true,
-    models: models.length > 0 ? models : undefined,
-    // Ollama has no effort / reasoning levels.
-    effortLevels: [],
+    capabilities: {
+      supportsModelOverride: true,
+      models: models.length > 0 ? models : undefined,
+      effortLevels: thinkLevels ?? [],
+    },
+    thinkLevels,
   };
 }

@@ -8,7 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { OllamaAdapter } from '../../src/main/agent/adapters/ollama';
-import { discoverOllamaCapabilities } from '../../src/main/agent/adapters/ollama/capability-discovery';
+import { discoverOllama } from '../../src/main/agent/adapters/ollama/capability-discovery';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { CliTarget } from '../../src/main/agent/shared/cli-target';
 import { pullHostFilesFor } from '../../src/main/remote/host-file-sync';
@@ -69,15 +69,16 @@ describe('an Ollama on a remote host', () => {
       ...(request.args[0] === 'list' ? {} : { code: 1 }),
     }));
 
-    const capabilities = await discoverOllamaCapabilities('ollama', target);
+    const { capabilities } = await discoverOllama('ollama', target);
 
     expect(capabilities.models).toEqual(['gemma2:2b', 'llama3.2:latest']);
-    expect(workspace.host.commands.map((request) => [request.file, ...request.args])).toEqual([['ollama', 'list']]);
+    // Both reads (the model list and the thinking levels) run on the host.
+    expect(workspace.host.commands.map((request) => [request.file, ...request.args])).toEqual([['ollama', 'list'], ['ollama', 'run', '--help']]);
   });
 
   it('falls back to a free-form model input when the host\'s Ollama cannot be asked', async () => {
     // No answer registered: the fake host reports the program as not installed.
-    const capabilities = await discoverOllamaCapabilities('ollama', target);
+    const { capabilities } = await discoverOllama('ollama', target);
 
     expect(capabilities.supportsModelOverride).toBe(true);
     expect(capabilities.models).toBeUndefined();

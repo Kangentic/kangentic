@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code';
 import { qwenChatsDir } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
-import { qwenHomeDir } from '../../src/main/agent/adapters/qwen-code/qwen-home';
+import { qwenHomeDir, qwenRuntimeDir } from '../../src/main/agent/adapters/qwen-code/qwen-home';
 import { ensureWorktreeTrust, removeWorktreeTrust } from '../../src/main/agent/adapters/qwen-code/trust-manager';
 import { cliPathForTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { parseWslHookRecord, prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
@@ -122,6 +122,32 @@ describe('Qwen\'s own files for a Qwen in a WSL distro', () => {
     );
     expect(qwenHomeDir(targetOn('nat', '\\\\wsl.localhost\\Ubuntu\\home\\dev', { QWEN_HOME: '~/qwen-alt' }))).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev\\qwen-alt');
     expect(qwenHomeDir(targetOn('nat', '\\\\wsl.localhost\\Ubuntu\\home\\dev', { QWEN_HOME: '/opt/qwen' }))).toBe('\\\\wsl.localhost\\Ubuntu\\opt\\qwen');
+  });
+
+  // The distro's QWEN_RUNTIME_DIR moves its chats away from its QWEN_HOME, and
+  // trust stays where QWEN_HOME puts it.
+  it('reads the chats under the distro\'s QWEN_RUNTIME_DIR when its shell sets one', () => {
+    const target = targetOn('nat', '\\\\wsl.localhost\\Ubuntu\\home\\dev', { QWEN_RUNTIME_DIR: '/srv/qwen-runtime', QWEN_HOME: '/opt/qwen' });
+    expect(qwenChatsDir('C:\\Users\\dev\\Proj', target)).toBe(
+      path.join('\\\\wsl.localhost\\Ubuntu\\srv\\qwen-runtime', 'projects', '-mnt-c-Users-dev-Proj', 'chats'),
+    );
+    expect(qwenRuntimeDir(null, targetOn('nat', '\\\\wsl.localhost\\Ubuntu\\home\\dev', { QWEN_RUNTIME_DIR: '~/rt' }))).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev\\rt');
+    expect(qwenHomeDir(target)).toBe('\\\\wsl.localhost\\Ubuntu\\opt\\qwen');
+  });
+
+  // With no QWEN_RUNTIME_DIR, the distro's own settings.json can still move the
+  // chats, and its value is a Linux path read in the distro, not on the host.
+  it('reads advanced.runtimeOutputDir from the distro\'s settings.json, absolute or under ~', () => {
+    const distroHome = makeDirectory('kangentic-qwen-wsl-home-');
+    const target = targetOn('nat', distroHome);
+    fs.mkdirSync(path.join(distroHome, '.qwen'));
+    const settingsFile = path.join(distroHome, '.qwen', 'settings.json');
+
+    fs.writeFileSync(settingsFile, JSON.stringify({ advanced: { runtimeOutputDir: '/srv/qwen-out' } }));
+    expect(qwenRuntimeDir(null, target)).toBe('\\\\wsl.localhost\\Ubuntu\\srv\\qwen-out');
+
+    fs.writeFileSync(settingsFile, JSON.stringify({ advanced: { runtimeOutputDir: '~/qwen-out' } }));
+    expect(qwenRuntimeDir(null, target)).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev\\qwen-out');
   });
 
   it('trust is written and removed in the distro\'s file, keyed by the /mnt path, and only with that place', async () => {

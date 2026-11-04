@@ -17,6 +17,7 @@ sources:
   - resource: src/main/agent/adapters/gemini/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/transcript-locator.ts
+  - resource: src/main/agent/shared/run-transcript-path.ts
   - resource: src/main/agent/adapters/claude/transcript-parser.ts
     title: claudeProjectSlug, locateClaudeTranscriptFile
   - resource: src/main/agent/adapters/codex/transcript-parser.ts
@@ -56,14 +57,14 @@ Runtime flow:
 1. An agent adapter declares a `sessionHistory` block in its `runtime` strategy (`src/shared/types.ts` - `AdapterRuntimeStrategy.sessionHistory`).
 2. On PTY spawn, the adapter's full runtime strategy is stored on `ManagedSession.agentParser` - SessionManager does nothing session-history-specific.
 3. The agent's session ID is captured via one of four paths (whichever fires first):
-   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Kimi, and Grok.
+   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Grok, and Gemini (whose spawn-time `locate` waits up to 30 s, since its chat file appears only once the CLI has booted).
    - `runtime.sessionId.fromHook` (Gemini hook stdin)
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
 
    See [Adapter types and capability discovery](adapter-types.md#adapterruntimestrategy) for the full table.
-4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless.
-5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
+4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless. A `detach()` cancels an attach still in flight (each attach holds a token, and the detach drops it), so an `attach()` right after it starts clean: that is how a conversation a SessionStart moved to (`followsSessionStartMoves`) gets its tail.
+5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read. A null locate falls back to the PTY tracker, except for an attach with `waitForFile` (a moved conversation, whose file appears with its first prompt), which repeats the hook's locate, with a 1 s pause between rounds, for as long as the session runs.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
 7. The resulting `SessionHistoryParseResult` flows through `dispatchSessionHistoryResult()` into the generic callback primitives (`onUsageUpdate`, `onEvents`, `onActivity`, `onFirstTelemetry`) that SessionManager wired to SessionTelemetry at construction time.
 8. On the first successful dispatch, `onFirstTelemetry` fires, which calls into `SessionTelemetry`'s PTY-tracker suppression - PtyActivityTracker stops contributing activity signals for the rest of the session. An adapter whose history file carries only part of the activity picture sets `sessionHistory.suppressesPtyFallback: false` (Codex, whose rollout reports background commands, interrupts and failed turns beside its hooks), and neither the first read nor a turn-initiating event it reports turns the tracker off.
@@ -80,7 +81,7 @@ The PtyActivityTracker keeps running in parallel until suppressed, so the boot w
 |-------|------|-----------|
 | `usage` | `SessionUsage \| null` | Updated usage snapshot. Null when this parse pass didn't touch model or tokens. The reader's callback merges it into the existing `usageCache` entry via `SessionTelemetry.setSessionUsage`. |
 | `events` | `SessionEvent[]` | New events to append to the session event log. Empty array when there are none. The reader pushes them through `SessionTelemetry.ingestEvents`, which runs each event through the activity engine plus the per-event detectors (PTY suppression, ExitPlanMode, PR command). |
-| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Gemini's whole-file rewrite) rather than relying on the event stream alone. Codex and Kimi return `null`: their turn starts and ends are events (a Stop hook, a wire `TurnEnd` Idle event), because a forced idle ends no turn for `onTurnEnded` and clears background shells. Null when events alone imply the transition. |
+| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Gemini's whole-file rewrite) rather than relying on the event stream alone. Codex and Kimi return `null`: their turn starts and ends are events (a Stop hook, a wire `turn.ended` Idle event), because a forced idle ends no turn for `onTurnEnded` and clears background shells. Null when events alone imply the transition. |
 
 All three fields are optional in the sense that any combination is valid - parsers can return partial results (e.g. a token-only update yields `usage` populated and `events: []`).
 
@@ -109,8 +110,9 @@ Each line has top-level `timestamp`, `type`, and `payload` fields.
 |---|---|---|
 | `session_meta` | `payload.id`, `payload.cwd`, `payload.cli_version` | First line of the file. UUID matches filename suffix. Not actively parsed today (we already have the UUID from the PTY scraper). |
 | `task_started` | `payload.model_context_window` | Sets `SessionUsage.contextWindow.contextWindowSize`. No activity effect: the turn's start is the UserPromptSubmit hook's. |
-| `turn_context` | `payload.model` | Sets `SessionUsage.model.id` and `.displayName`. Emitted on every turn, so respects mid-session `/model` changes. |
-| `token_count` | `payload.info.total_token_usage.{input_tokens,cached_input_tokens,output_tokens}` | Sets `SessionUsage.contextWindow.{totalInputTokens,cacheTokens,totalOutputTokens}`. |
+| `turn_context` | `payload.model`, `payload.effort` | Sets `SessionUsage.model.id`, `.displayName` and `.effort`, marked `reportedByAgent` (the rollout is Codex's own record, not the spawn's `--model` seed). Emitted on every turn, so respects mid-session `/model` changes. |
+| `token_count` | `payload.info.last_token_usage.{input_tokens,cached_input_tokens,output_tokens}`, `payload.info.model_context_window` | Sets `SessionUsage.contextWindow.{usedTokens,totalInputTokens,cacheTokens,totalOutputTokens}` from the last response, not the running `total_token_usage`, which grows past the window. |
+| `token_usage_record` | `payload.usage.{input_tokens,cached_input_tokens,output_tokens}`, `payload.thread_id`, `payload.session_id` | Codex 0.163 writes one per model response (`codex-rs/history/src/rollout_payload.rs`), and may write `token_count` far less often. Same fields as `last_token_usage`. A record whose `thread_id` is not its `session_id` is another thread's and is skipped. |
 | `task_complete` | `payload.error` | No activity effect: turn ends come from the Stop hook. A `task_complete` that carries an `error` (a failed model request, which fires no Stop) emits `TurnFailed`. |
 | `turn_aborted` | (none) | Emits `Interrupted`. An Esc interrupt fires no hook. |
 | `response_item` with `payload.type: "function_call"` | `payload.call_id`, `payload.name`, `payload.arguments` | Emits nothing: the PreToolUse hook reports the tool, with its id. The parser remembers the call (bounded, by `call_id`) so its output, which arrives in a later read, can be paired with it. |
@@ -166,6 +168,13 @@ A header line, then some mixture of `$set` patch lines carrying a whole `message
 standalone message lines. Gemini **re-emits the same message `id` while a reply streams**, so
 `collectGeminiMessages` deduplicates by `id`, last write wins. Without that dedupe a streaming reply
 appears many times over.
+
+Gemini 0.66.0 also writes `{"$rewindTo":"<id>"}` on `/rewind` and `{"$patch":{...}}` records
+(chatRecordingTypes.ts at that tag). `collectGeminiMessages` applies the rewind as the CLI's loader
+does, dropping that message and everything after it (everything, when the id is unknown), and
+drops the messages a patch names in `removeIds`, so the live model and tokens never come from a
+turn the user rewound. Built from the CLI's source. A real 0.66.0 rewind is replayed through the
+transcript readers (`gemini-real-rewind.test.ts`), not yet through this one.
 
 ```jsonl
 {"sessionId":"<uuid>","projectHash":"<sha256>","startTime":"<iso>","kind":"main"}
@@ -296,7 +305,7 @@ The `<projectSlug>` is computed by `claudeProjectSlug()` (exported from `transcr
 
 ## Claude status-file pipeline (`runtime.statusFile`)
 
-The hook-based telemetry source is declared on the adapter as Claude's only live telemetry pipeline:
+The hook-based telemetry source is declared on the adapter. Claude's is shown here; Antigravity declares the same pipeline, fed by a per-session status line (see [Antigravity](antigravity.md#live-telemetry)):
 
 ```ts
 readonly runtime: AdapterRuntimeStrategy = {
@@ -315,13 +324,16 @@ readonly runtime: AdapterRuntimeStrategy = {
 };
 ```
 
-`StatusFileReader` (`src/main/pty/readers/status-file-reader.ts`) reads `session.agentParser?.runtime?.statusFile` at attach time and dispatches through the hook's `parseStatus` / `parseEvent` methods. It contains no Claude-specific parsing code - swap the hook and the same reader serves any future adapter that wants to ride the same pipeline.
+`StatusFileReader` (`src/main/pty/readers/status-file-reader.ts`) reads `session.agentParser?.runtime?.statusFile` at attach time and dispatches through the hook's `parseStatus` / `parseEvent` methods. It contains no Claude-specific parsing code - swap the hook and the same reader serves any future adapter that wants to ride the same pipeline. A hook that declares `parseStatusEvents` also gets each non-empty status write read against the session's previous one, and the events it returns are dispatched after the write's usage through the same `onEventsParsed` callback as events-file lines (Antigravity's approval wait and plan mode, see [Antigravity](antigravity.md#live-telemetry)).
 
 | Field | Semantics |
 |-------|-----------|
 | `parseStatus(raw)` | Decode the rewritten contents of `status.json` into a `SessionUsage`. Returns null for partial or malformed content. |
 | `parseEvent(line)` | Decode a single appended line from `events.jsonl` into a `SessionEvent`. Returns null for blank/invalid lines. |
 | `isFullRewrite` | True for `status.json` (whole-file rewrite on every update). The events file is always append-only, tracked by a separate byte cursor regardless of this flag. |
+| `parseStatusEvents?(raw, previousRaw, now)` | Optional. Activity events a status write reports that no hook does, read against the session's previous readable write. Returns null for an unreadable write, so the reader keeps its last readable baseline. Antigravity's approval wait and plan mode. |
+| `parseSessionStart?(hookContext)` | Optional. Reads a SessionStart hook's payload: the id it names and whether it moved the conversation (see [Mid-session fork reconcile](#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)). |
+| `confirmsBackgroundMove?(options)` | Optional. Whether a SessionStart into the CLI's own background session moved the terminal's conversation there (Claude's `/bg`). |
 
 **File paths** (`status.json`, `events.jsonl` under `.kangentic/sessions/<sessionId>/`) are caller-supplied at spawn time on `SpawnSessionInput.statusOutputPath` / `eventsOutputPath`. They are runtime values, not static adapter metadata.
 
@@ -334,10 +346,10 @@ readonly runtime: AdapterRuntimeStrategy = {
 The sections above describe the **history file** each adapter reads for live telemetry and for
 the `get_transcript` MCP feature, located by `adapter.locateSessionHistoryFile(agentSessionId,
 cwd)`. That is a separate question from **what `--resume` actually reads** to restore a
-conversation. The two are usually the same file, but not always: Copilot returns `null` from
-`locateSessionHistoryFile` (no telemetry history file wired), and Cursor's locator returns the
-`agent-transcripts` JSONL its `--resume` never reads, yet both persist resumable session state
-elsewhere on disk. So do not assume "history file" equals "resume file" - this section records the
+conversation. The two are usually the same file, but not always: Copilot's locator returns the
+`events.jsonl` inside the session folder its resume reads, but the resume also needs the rest of
+that folder in its own config home, and Cursor's locator returns the `agent-transcripts` JSONL its
+`--resume` never reads, yet it persists resumable session state elsewhere on disk. So do not assume "history file" equals "resume file" - this section records the
 resume side, audited separately.
 
 **How this was audited:** empirically, from (a) the on-disk session stores that real CLI runs
@@ -355,25 +367,25 @@ behavior below is the resume contract.
 |---|---|---|---|---|---|---|
 | Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
-| Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
+| Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<project>/chats/session-<time>-<first 8 of id>.jsonl` (legacy `.json`) | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |
-| Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
+| Kimi | `kimi --session <id>` | `~/.kimi-code/sessions/<workspaceId>/<id>/agents/main/wire.jsonl` | `session_index.jsonl` by id | yes | yes | typed once the TUI is ready (no prompt on an interactive launch) |
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
 | OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
-| Copilot | `copilot --session-id <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) | typed once the TUI is ready |
+| Copilot | `copilot --session-id <id> --config-dir <session home>` | `<config home>/session-state/<id>/` (+ `session-store.db`); each Kangentic session has its own home, so a resume first brings the folder over from the session's earlier home | session id (per config home) | no | yes (its `events.jsonl`) | typed once the TUI is ready |
 | Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (the locator returns the `agent-transcripts` JSONL under `~/.cursor/projects/<slug>/`, which resume itself does not read) | typed once the CLI is ready |
-| Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) | n/a: no id to resume by, so the engine never resumes it |
+| Aider | `aider --chat-history-file <file> --restore-chat-history` | `<cwd>/.aider.chat.history.<id>.md`, a file Kangentic names per session | caller-owned file name in the cwd | yes | yes | on the command line, `--message` (one reply, then Aider exits) |
 | Warp | (no resume) | none | n/a | n/a | n/a | n/a |
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes | typed once the TUI is ready |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a | n/a |
 | Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) | on the command line, `-i` (`-p` non-interactive) |
-| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) | on the command line, `-t` |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; the shared `sessions.db` is read by name instead) | on the command line, `-t` |
 
 Reading the table by class:
 
 - **cwd-keyed per-session file that `--resume` reads:** Gemini, Qwen, Kimi, Droid, Grok. The
-  resume target is a file under a directory derived from the cwd (basename, slug, `md5`, or
-  Grok's `encodeURIComponent`), so moving the project to a path with a different cwd-derived key,
+  resume target is a file under a directory derived from the cwd (basename, slug, a `sha256`
+  prefix, or Grok's `encodeURIComponent`), so moving the project to a path with a different cwd-derived key,
   or deleting that file, makes the stored id unresolvable. These rows come from each relocation
   module's model of its CLI, not from a measured resume in another folder; Droid's and Grok's are
   the least certain.
@@ -392,11 +404,14 @@ Reading the table by class:
   per-cwd `~/.cursor/projects/<slug>/` directory holds trust metadata and the `agent-transcripts`
   JSONL the conversation viewer reads, while the conversation `--resume` restores lives in
   `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
-  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent and
-  Kangentic reads no transcript file (`locateSessionHistoryFile` returns null).
-- **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
-  `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
-  downgrade.
+  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent.
+  Kangentic reads that store's SQLite database by the same name for the transcript and usage, and
+  `locateSessionHistoryFile` returns null because the database is shared by every session.
+- **caller-named file in the cwd, no CLI session id:** Aider. Kangentic names each session's
+  history `.aider.chat.history.<id>.md` with `--chat-history-file`, and `--restore-chat-history`
+  reloads it. The file sits in the working directory, so it moves with the project, and a deleted
+  worktree takes it along. Built from Aider's options reference and not yet run against a real
+  Aider (see [Aider](aider.md#chat-history-and-resume)).
 - **no resume at all:** Warp and Ollama. The `oz` one-shot runner streams and exits, and
   `ollama run` has no CLI-level session ids.
 
@@ -418,7 +433,8 @@ it is over the 6,000-character cap. See [How the resume prompt arrives](../../ar
 > needs the adapter's own proof (`AgentAdapter.proveConversationGone`): for Claude, the reported
 > file and the one every reader would open (the locator's, which looks past the cwd) both ENOENT,
 > the projects folder above readable, and no project folder
-> holding the file. Absence of evidence is never evidence, so a missing report leaves today's
+> holding the file; for Gemini, the hook-reported chat missing and no project's `chats` folder
+> under Gemini's `tmp` holding a file for the id. Absence of evidence is never evidence, so a missing report leaves today's
 > behavior untouched, which is exactly what keeps the mocked resumes below passing. A wrong
 > verdict costs a new conversation, never data: the old record is kept and the new one opens on a
 > recap. See [A resume the CLI cannot serve starts fresh instead](../../architecture/sessions/resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead). The
@@ -442,7 +458,7 @@ empirical findings killed it:
    long-path edge, transient filesystem hiccup, or future change to a CLI's storage layout would
    silently turn a recoverable resume into a fresh session - worse than the visible "No
    conversation found" it was meant to replace. The cwd-keyed agents above each have a *more*
-   fragile locator than Claude's (Gemini basename collisions, Kimi `md5(cwd)`, Droid/Qwen slugs),
+   fragile locator than Claude's (Gemini basename collisions, Droid/Qwen slugs),
    so extending the guard to them would multiply that risk, not reduce it.
 
 The actual root cause of the #255 bug was unrelated to a missing transcript: when Kangentic was
@@ -537,9 +553,10 @@ never touched again. The facts this design rests on:
   from stored id" means a move, never routine resume noise.
 
 Kangentic tracks the move at two layers. Neither branches on an agent name. Both ride the
-generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which only
-Claude's does today (Copilot's and Grok's `statusFile` declarations carry only the events
-channel), and `parseSessionStart`, which reads the hook. An adapter without `parseSessionStart`
+generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which
+Claude's, Antigravity's and OpenCode's do today (every other `statusFile` declaration carries only
+the events channel, since its `parseStatus` returns null), and `parseSessionStart`, which reads the
+hook. Antigravity's parser reports no session id, so it declares no `parseSessionStart`. An adapter without `parseSessionStart`
 follows every status id change, as before.
 
 1. **Live reconcile.** `SessionTelemetry.processStatusUpdate`'s agent-session-id capture is
@@ -560,7 +577,13 @@ follows every status id change, as before.
    rewrite `sessions.agent_session_id` in place. The PTY-output and hook capture channels stay
    strictly **one-shot** (multi-shot output capture would reintroduce the OpenCode
    stale-flag-echo poisoning bug), and any capture closes them, so only the status file may
-   later revise the id.
+   later revise the id. The one exception is an adapter with no status id that declares
+   `runtime.sessionId.followsSessionStartMoves` (Qwen): there a SessionStart that moves the
+   conversation to a different id switches it directly, through the same `recoverStaleSessionId`
+   chain, and the session manager re-points the history tail at the new conversation's file. Qwen
+   writes a cleared conversation's chat only at its next prompt, so that attach keeps locating for
+   as long as the session runs. Until that prompt the card keeps the old conversation's usage,
+   while the id, and so the next resume, already follow the move.
 2. **Resume-time reconcile.** `reconcileResumeAgentSessionId`
    (`src/main/transition-engine/resume-id-reconcile.ts`), run at both resume chokepoints
    (`executeSpawnAgent` before `migrateResumeCwdIfRenamed`, and `prepareAgentSpawn` for startup
@@ -748,7 +771,7 @@ Gaps that remain in how Kangentic handles a Claude background session
 
 ### First-session race
 
-If a task completes in less than ~1 second (before the PTY scraper captures the session UUID), the history file watcher never starts and the card never shows telemetry. See the backlog task "Zero-latency telemetry pill for Codex/Gemini" for a potential pre-snapshot + claim-registry design that eliminates this window.
+If a task completes in less than ~1 second (before the PTY scraper captures the session UUID), the history file watcher never starts and the card never shows telemetry. See the backlog task "Zero-latency telemetry pill for Codex/Gemini" for a potential pre-snapshot + claim-registry design that eliminates this window. Gemini no longer has the race: it starts under the id the spawn chose (`--session-id`), so its reader attaches at spawn.
 
 ## Adding a new agent with a session history file
 

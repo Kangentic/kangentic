@@ -48,10 +48,9 @@ export interface PreparedSpawn {
   statusOutputPath: string;
   eventsOutputPath: string;
   /**
-   * Adapter-specific env vars to merge into the PTY spawn env. Populated
-   * from `adapter.buildEnv?.(...)` for adapters that wire MCP via env
-   * (OpenCode `OPENCODE_CONFIG_CONTENT`). Null for adapters that wire MCP
-   * via CLI flag or settings file.
+   * Adapter-specific env vars to merge into the PTY spawn env, from
+   * `adapter.buildEnv?.(...)`: MCP wiring (OpenCode `OPENCODE_CONFIG_CONTENT`)
+   * or a hook's events path (Cursor). Null when the adapter sets none.
    */
   extraEnv: Record<string, string> | null;
   /**
@@ -295,16 +294,20 @@ export async function prepareAgentSpawn(input: {
       );
       // Startup carries no column message and no task template on any
       // session, main or isolated, so the recap is the whole prompt for both:
-      // there is nothing else for the agent to act on.
-      prompt = await buildExpiredConversationRecap({
-        task,
-        agentDisplayName: adapter.displayName,
-        previousAgentSessionId: resumedAgentSessionId,
-        lastActiveAt: expiredLastActiveAt,
-        cwd,
-        baseBranch: task.base_branch || input.boardDefaultBaseBranch || config.git?.defaultBaseBranch || 'main',
-        mode: 'whole-prompt',
-      }, input.recapSources);
+      // there is nothing else for the agent to act on. A CLI that takes no
+      // starting prompt gets none: this path types nothing, and a prompt here
+      // would seed a turn that never starts. It opens idle for the user.
+      if (adapter.freshPromptDelivery !== 'typed') {
+        prompt = await buildExpiredConversationRecap({
+          task,
+          agentDisplayName: adapter.displayName,
+          previousAgentSessionId: resumedAgentSessionId,
+          lastActiveAt: expiredLastActiveAt,
+          cwd,
+          baseBranch: task.base_branch || input.boardDefaultBaseBranch || config.git?.defaultBaseBranch || 'main',
+          mode: 'whole-prompt',
+        }, input.recapSources);
+      }
     }
   }
   // Same id rule as the board spawn. This path's command carries no

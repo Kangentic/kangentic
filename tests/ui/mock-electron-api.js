@@ -3921,9 +3921,9 @@
           {
             name: 'gemini', displayName: 'Gemini CLI', found: false, path: null, version: null,
             permissions: [
-              { mode: 'plan', label: 'Plan (Read-Only)' },
-              { mode: 'default', label: 'Default (Interactive)' },
-              { mode: 'acceptEdits', label: 'Auto-Edit' },
+              { mode: 'plan', label: 'Plan (Read-Only Research)' },
+              { mode: 'default', label: 'Default (Confirm Actions)' },
+              { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
               { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
@@ -3938,6 +3938,7 @@
               { mode: 'plan', label: 'Plan (Read-Only Research)' },
               { mode: 'default', label: 'Default (Confirm Actions)' },
               { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
+              { mode: 'auto', label: 'Auto (Classifier Approves Safe Actions)' },
               { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
@@ -3948,19 +3949,23 @@
           {
             name: 'aider', displayName: 'Aider', found: false, path: null, version: null,
             permissions: [
-              { mode: 'default', label: 'Interactive (Confirm)' },
-              { mode: 'bypassPermissions', label: 'Auto-Approve (--yes)' },
+              { mode: 'plan', label: 'Ask (Read-Only Questions)' },
+              { mode: 'default', label: 'Code (Confirm Changes)' },
+              { mode: 'acceptEdits', label: 'Architect (Two-Model Design)' },
+              { mode: 'bypassPermissions', label: 'Auto Yes (Skip Confirmations)' },
             ],
             defaultPermission: 'bypassPermissions',
           },
           {
             name: 'cursor', displayName: 'Cursor CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with CursorAdapter.permissions and defaultPermission in src/main/agent/adapters/cursor/cursor-adapter.ts
             permissions: [
               { mode: 'default', label: 'Interactive (Confirm Changes)' },
               { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
+              { mode: 'plan', label: 'Plan (Read-Only)' },
               { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
             ],
-            defaultPermission: 'default',
+            defaultPermission: 'bypassPermissions',
             supportsSummarize: true,
             // An interactive session prints no id, so `create-chat` names one before launch.
             kangenticMcp: 'per-session',
@@ -3968,12 +3973,20 @@
           },
           {
             name: 'warp', displayName: 'Oz CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with WarpAdapter.permissions and WarpAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/warp/warp-adapter.ts
             permissions: [
-              { mode: 'plan', label: 'Plan Only (Read-Only)' },
-              { mode: 'default', label: 'Default' },
-              { mode: 'bypassPermissions', label: 'Auto (Skip Confirmations)' },
+              { mode: 'default', label: 'Default (set by your Warp agent profile)' },
             ],
             defaultPermission: 'default',
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: false,
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: none',
+              unavailableTitle:
+                'Oz CLI does not report live telemetry to Kangentic.\n' +
+                'Its own output in the terminal shows what the run did.',
+            },
           },
           {
             name: 'copilot', displayName: 'GitHub Copilot CLI', found: false, path: null, version: null,
@@ -3981,8 +3994,8 @@
               { mode: 'plan', label: 'Plan (Read-Only)' },
               { mode: 'dontAsk', label: 'Plan Non-Interactive (CI)' },
               { mode: 'default', label: 'Default (Confirm Actions)' },
-              { mode: 'acceptEdits', label: 'Allow All Tools' },
-              { mode: 'auto', label: 'Autopilot (Allow All Tools)' },
+              { mode: 'acceptEdits', label: 'Allow File Edits' },
+              { mode: 'auto', label: 'Assisted Approvals' },
               { mode: 'bypassPermissions', label: 'YOLO (Full Access)' },
             ],
             defaultPermission: 'acceptEdits',
@@ -3995,22 +4008,32 @@
             // KEEP IN SYNC with KimiAdapter.permissions in src/main/agent/adapters/kimi/kimi-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Read-Only)' },
-              { mode: 'default', label: 'Default (Confirm Actions)' },
-              { mode: 'bypassPermissions', label: 'YOLO (Skip Confirmations)' },
+              { mode: 'default', label: 'Always Ask' },
+              { mode: 'auto', label: 'Ask When Needed (YOLO)' },
+              { mode: 'bypassPermissions', label: 'Never Ask (Auto)' },
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
-            kangenticMcp: 'per-session',
-            supportsWorkflowAgent: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
           },
           {
             name: 'opencode', displayName: 'OpenCode', found: false, path: null, version: null,
             // KEEP IN SYNC with OpenCodeAdapter.permissions in src/main/agent/adapters/opencode/opencode-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan' },
+              { mode: 'default', label: 'Default Agent' },
               { mode: 'acceptEdits', label: 'Build' },
+              { mode: 'bypassPermissions', label: 'Build (Auto-approve)' },
             ],
             defaultPermission: 'acceptEdits',
+            // KEEP IN SYNC with OpenCodeAdapter.liveTelemetryUnsupported
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: TUI only',
+              unavailableTitle:
+                'A local OpenCode session reports telemetry once its first turn starts. A remote one never does.\n' +
+                'The TUI shows the model, context and cost.',
+            },
             supportsSummarize: true,
             kangenticMcp: 'per-session',
             supportsWorkflowAgent: true,
@@ -4030,7 +4053,11 @@
             // KEEP IN SYNC with DroidAdapter.permissions and DroidAdapter.liveTelemetryUnsupported
             // in src/main/agent/adapters/droid/droid-adapter.ts
             permissions: [
-              { mode: 'default', label: 'Default (use Droid TUI controls)' },
+              { mode: 'plan', label: 'Spec Mode (Plan First)' },
+              { mode: 'default', label: 'Default (Ask for Each Action)' },
+              { mode: 'acceptEdits', label: 'Auto Low (Safe Edits)' },
+              { mode: 'auto', label: 'Auto Medium (Local Development)' },
+              { mode: 'bypassPermissions', label: 'Auto High (Push and Deploy)' },
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
@@ -4046,11 +4073,16 @@
           },
           {
             name: 'ollama', displayName: 'Ollama', found: false, path: null, version: null,
-            // KEEP IN SYNC with OllamaAdapter.permissions in src/main/agent/adapters/ollama/ollama-adapter.ts
+            // KEEP IN SYNC with OllamaAdapter.permissions and OllamaAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/ollama/ollama-adapter.ts
             permissions: [
               { mode: 'default', label: 'Chat' },
             ],
             defaultPermission: 'default',
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: none',
+              unavailableTitle: 'Ollama does not report live telemetry to Kangentic.',
+            },
           },
           {
             name: 'grok', displayName: 'Grok Build', found: false, path: null, version: null,
@@ -4082,21 +4114,33 @@
             // in src/main/agent/adapters/antigravity/antigravity-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Read-Only Research)' },
-              { mode: 'default', label: 'Default (Request Review)' },
+              { mode: 'default', label: 'Default (Saved Agent Mode)' },
               { mode: 'acceptEdits', label: 'Accept Edits (Auto-Approve Edits)' },
+              { mode: 'auto', label: 'Auto (Sandbox + Review)' },
               { mode: 'bypassPermissions', label: 'Skip Permissions (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
+            // KEEP IN SYNC with AntigravityAdapter.reportsRateLimits (its status line's quota buckets).
+            reportsRateLimits: true,
             liveTelemetryUnsupported: {
               unavailableLabel: 'Telemetry: TUI only',
               unavailableTitle:
-                'Antigravity does not stream live telemetry to Kangentic.\n' +
-                'The agy TUI footer shows the active model and effort; per-thought\n' +
-                'token counts appear inline in its output.',
+                'This Antigravity session has not reported live telemetry to Kangentic.\n' +
+                'Older agy versions cannot; the agy TUI footer shows the active\n' +
+                'model and effort.',
             },
           },
           {
             name: 'goose', displayName: 'Goose CLI', found: false, path: null, version: null,
+            supportsSummarize: true,
+            // KEEP IN SYNC with GooseAdapter (src/main/agent/adapters/goose/goose-adapter.ts):
+            // pastedImageReferenceTemplate, supportsWslCli, answerFromContext and its
+            // answerCapabilities, and discoverCapabilities' free-form model override.
+            pastedImageReferenceTemplate: 'Read this image: {path} ',
+            supportsWslCli: true,
+            supportsAnswerFromContext: true,
+            answerCapabilities: { streaming: false, search: false, model: true, effort: false },
+            capabilities: { supportsModelOverride: true },
             // KEEP IN SYNC with GooseAdapter.permissions in src/main/agent/adapters/goose/goose-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Chat Only, No File Access)' },

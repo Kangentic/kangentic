@@ -34,11 +34,26 @@ vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
   };
 });
 
+// Target resolution and the target-side help run are stubbed so a WSL target can be fed in;
+// each defaults to the real function, so every other test sees this machine.
+vi.mock('../../src/main/agent/shared/cli-target', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...actual,
+    resolveCliTarget: vi.fn(actual.resolveCliTarget),
+    execCliForTarget: vi.fn(actual.execCliForTarget),
+  };
+});
+
 import { execFile, exec } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCodexCapabilities } from '../../src/main/agent/adapters/codex/capability-discovery';
 import { listMostRecentDirs, listMostRecentFiles, readHeadBytes } from '../../src/main/agent/shared/history-scan';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
+
+const resolveCliTargetMock = resolveCliTarget as unknown as ReturnType<typeof vi.fn>;
+const execCliForTargetMock = execCliForTarget as unknown as ReturnType<typeof vi.fn>;
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -139,10 +154,63 @@ describe('discoverCodexCapabilities', () => {
     expect(capabilities.supportsModelOverride).toBe(false);
   });
 
-  it('returns empty effortLevels (Codex effort is config-only)', async () => {
+  it('returns no effort levels when there is no model list to read them from', async () => {
     setHelpOutput('  -m, --model <MODEL>  Model the agent should use\n');
     const capabilities = await discoverCodexCapabilities('/usr/bin/codex');
     expect(capabilities.effortLevels).toEqual([]);
+  });
+
+  describe('Codex model/list (model-catalog.ts)', () => {
+    const CATALOG = {
+      models: ['model-a', 'model-b'],
+      displayNames: { 'model-a': 'Model A' },
+      effortLevels: ['low', 'medium', 'high'],
+      effortsByModel: { 'model-a': ['low', 'medium', 'high'], 'model-b': ['medium'] },
+    };
+
+    it('lists the CLI models first in its order, then models only the rollouts name, with names and efforts', async () => {
+      setHelpOutput('  -m, --model <MODEL>  Model\n');
+      setSessionStore({
+        '2026': { '05': { '03': {
+          'rollout-A.jsonl': `${JSON.stringify({ type: 'turn_context', payload: { model: 'model-old' } })}\n${JSON.stringify({ type: 'turn_context', payload: { model: 'model-b' } })}\n`,
+        } } },
+      });
+      const capabilities = await discoverCodexCapabilities('/usr/bin/codex', async () => CATALOG);
+      expect(capabilities.models).toEqual(['model-a', 'model-b', 'model-old']);
+      expect(capabilities.modelDisplayNames).toEqual({ 'model-a': 'Model A' });
+      expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high']);
+    });
+
+    it('answers as before, rollout models and no efforts, when the read fails or times out', async () => {
+      setHelpOutput('  -m, --model <MODEL>  Model\n');
+      setSessionStore({
+        '2026': { '05': { '03': { 'rollout-A.jsonl': `${JSON.stringify({ type: 'turn_context', payload: { model: 'model-old' } })}\n` } } },
+      });
+      for (const readCatalog of [async () => null, async () => { throw new Error('offline'); }]) {
+        const capabilities = await discoverCodexCapabilities('/usr/bin/codex', readCatalog);
+        expect(capabilities.models).toEqual(['model-old']);
+        expect(capabilities.modelDisplayNames).toBeUndefined();
+        expect(capabilities.effortLevels).toEqual([]);
+      }
+    });
+
+    it('reads the model list for the target it resolved, not for this machine', async () => {
+      const wslTarget = { kind: 'wsl', distro: 'Ubuntu', facts: {}, linuxCliPath: '/usr/bin/codex' } as unknown as CliTarget;
+      resolveCliTargetMock.mockResolvedValueOnce(wslTarget);
+      execCliForTargetMock.mockResolvedValueOnce({ stdout: 'Usage: codex [options]\n' });
+      const targetsRead: Array<CliTarget | null> = [];
+      await discoverCodexCapabilities('/usr/bin/codex', async (target) => { targetsRead.push(target); return CATALOG; });
+      expect(targetsRead).toHaveLength(1);
+      expect(targetsRead[0]).toBe(wslTarget);
+    });
+
+    it('offers no models without the --model flag, but still reports the efforts', async () => {
+      setHelpOutput('Usage: codex [options]\n');
+      const capabilities = await discoverCodexCapabilities('/usr/bin/codex', async () => CATALOG);
+      expect(capabilities.supportsModelOverride).toBe(false);
+      expect(capabilities.models).toBeUndefined();
+      expect(capabilities.effortLevels).toEqual(['low', 'medium', 'high']);
+    });
   });
 
   it('returns empty capabilities when help invocation throws', async () => {

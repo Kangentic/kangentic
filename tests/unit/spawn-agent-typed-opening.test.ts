@@ -19,6 +19,7 @@
  * Harness follows spawn-agent-continuation-prompt.test.ts: the real spawnAgent
  * with injected engine, repos and context fakes.
  */
+import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane } from '../../src/shared/types';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
@@ -89,8 +90,10 @@ function makeHandle(): EarlyAgentHandle & { discard: ReturnType<typeof vi.fn> } 
  * `startAgent` and then to `deliverToAgent`. `typedOpening` is what the engine
  * reports it could not put on the adopted agent's command line.
  */
-function makeDeps(args: { columnMessage: string | null; typedOpening: string | null }) {
+function makeDeps(args: { columnMessage: string | null; typedOpening: string | null; legacyStartRow?: boolean }) {
   const events: string[] = [];
+  // The session manager's push events, which a queued session's promotion rides.
+  const sessionEvents = new EventEmitter();
   let sessionStarted = false;
   const tasks = {
     getById: vi.fn(() => makeTask({ session_id: sessionStarted ? ADOPTED_SESSION_ID : null })),
@@ -109,14 +112,24 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
       runOptions: {
         startAgent: (pendingPrompt?: string) => Promise<void>;
         deliverToAgent: (message: string, mode: 'immediate' | 'deferred') => Promise<void>;
+        legacySpawnAgent: (legacyConfig: Record<string, never>) => Promise<void>;
       },
     ) => {
+      if (args.legacyStartRow) {
+        // A column whose automation list holds a legacy Start agent row.
+        await runOptions.legacySpawnAgent({});
+        return { outcomes: [], failures: [], startedAgent: true };
+      }
       if (!args.columnMessage) return { outcomes: [], failures: [], startedAgent: false };
       await runOptions.startAgent(args.columnMessage);
       await runOptions.deliverToAgent(args.columnMessage, 'immediate');
       return { outcomes: [], failures: [], startedAgent: true };
     }),
     resumeSuspendedSession: vi.fn(async () => {
+      sessionStarted = true;
+      return { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: args.typedOpening };
+    }),
+    runLegacySpawnAgent: vi.fn(async () => {
       sessionStarted = true;
       return { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: args.typedOpening };
     }),
@@ -134,6 +147,8 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
     terminalSubmitScheduler: { scheduleKeystrokes, hasPending: vi.fn(() => false) },
     terminalSubmit: { submitContent },
     sessionManager: {
+      on: sessionEvents.on.bind(sessionEvents),
+      off: sessionEvents.off.bind(sessionEvents),
       awaitAgentReady: vi.fn(async () => true),
       getSession: vi.fn(() => ({ id: ADOPTED_SESSION_ID, status: 'running' })),
     },
@@ -146,7 +161,7 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
   const autoCommandNotices = (): unknown[] => sendToRenderer.mock.calls
     .filter(([channel]) => channel === IPC.TASK_AUTO_COMMAND_RESULT)
     .map(([, notice]) => notice);
-  return { tasks, sessionRepo, engine, context, events, scheduleKeystrokes, submitContent, autoCommandNotices };
+  return { tasks, sessionRepo, engine, context, events, scheduleKeystrokes, submitContent, autoCommandNotices, sessionEvents };
 }
 
 async function runSpawn(
@@ -307,6 +322,106 @@ describe('spawnAgent when the typed opening does not land', () => {
   });
 });
 
+describe('spawnAgent when the typed opening landed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+  });
+
+  it('reports nothing: a landed opening is no failure to tell the user about', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+
+    await runSpawn(deps, makeHandle(), false);
+
+    expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything());
+    expect(deps.autoCommandNotices()).toEqual([]);
+    expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+  });
+});
+
+describe('spawnAgent when the concurrency cap queued the session', () => {
+  // A queued session has no PTY to type into, so the opening waits for the
+  // promotion in the background and the spawn resolves at once with nothing typed.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+  });
+
+  it('resolves with nothing typed, then types once the session is promoted to running', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), false);
+
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'running' });
+    deps.sessionEvents.emit('session-changed', ADOPTED_SESSION_ID, { status: 'running' });
+
+    await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything()));
+    expect(deps.autoCommandNotices()).toEqual([]);
+  });
+
+  it('never types, and reports nothing, when the queued session ends instead', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), false);
+    deps.sessionEvents.emit('exit', ADOPTED_SESSION_ID, 0);
+
+    // The wait ended (its listeners came off), so typing would have started by now.
+    await vi.waitFor(() => expect(deps.sessionEvents.listenerCount('session-changed')).toBe(0));
+    // Negative assertion: one macrotask lets every pending microtask chain run first.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+    expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+  });
+
+  it('never types when the task moves on (the signal aborts) while queued', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+    const moveOn = new AbortController();
+
+    await runSpawn(deps, makeHandle(), false, { signal: moveOn.signal });
+    moveOn.abort();
+
+    await vi.waitFor(() => expect(deps.sessionEvents.listenerCount('session-changed')).toBe(0));
+    // Negative assertion: one macrotask lets every pending microtask chain run first.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+  });
+});
+
+describe('spawnAgent through a legacy Start agent row', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+  });
+
+  it('types the opening a CLI with no starting prompt left off its command line', async () => {
+    // Removing `if (outcome?.typedOpening) await deliverTypedOpening(...)` from the
+    // row's callback leaves the started agent idle with no first prompt.
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT, legacyStartRow: true });
+
+    await runSpawn(deps, undefined as never, false);
+
+    expect(deps.engine.runLegacySpawnAgent).toHaveBeenCalledTimes(1);
+    expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything());
+  });
+
+  it('types nothing when the row\'s start left no opening to type', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: null, legacyStartRow: true });
+
+    await runSpawn(deps, undefined as never, false);
+
+    expect(deps.engine.runLegacySpawnAgent).toHaveBeenCalledTimes(1);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+});
+
 describe('spawnAgent with held messages folded into the typed opening', () => {
   const HELD_TEXT = '1. Check the migration.\n\n2. Rebase before you push.';
   // Held messages are the whole opening on a promptless spawn that has its slot open.
@@ -344,6 +459,40 @@ describe('spawnAgent with held messages folded into the typed opening', () => {
     expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, HELD_TEXT, expect.anything());
     expect(claim.commit).toHaveBeenCalledWith(ADOPTED_SESSION_ID);
     expect(claim.release).not.toHaveBeenCalled();
+  });
+
+  it('settles a queued opening\'s held messages only once it is typed, not at the promotion', async () => {
+    const claim = makeHeldClaim(HELD_TEXT);
+    vi.mocked(claimHeldMessages).mockReturnValue(claim);
+    const deps = makeDeps({ columnMessage: null, typedOpening: HELD_TEXT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), SKIP_PROMPT_TEMPLATE, HELD_SPAWN_OPTIONS);
+
+    expect(claim.commit).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'running' });
+    deps.sessionEvents.emit('session-changed', ADOPTED_SESSION_ID, { status: 'running' });
+
+    await vi.waitFor(() => expect(claim.commit).toHaveBeenCalledWith(ADOPTED_SESSION_ID));
+    expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, HELD_TEXT, expect.anything());
+    expect(claim.release).not.toHaveBeenCalled();
+  });
+
+  it('puts a queued opening\'s held messages back on hold when the session ends in the queue', async () => {
+    const claim = makeHeldClaim(HELD_TEXT);
+    vi.mocked(claimHeldMessages).mockReturnValue(claim);
+    const deps = makeDeps({ columnMessage: null, typedOpening: HELD_TEXT });
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+
+    await runSpawn(deps, makeHandle(), SKIP_PROMPT_TEMPLATE, HELD_SPAWN_OPTIONS);
+    deps.sessionEvents.emit('exit', ADOPTED_SESSION_ID, 0);
+
+    // Committing would mark messages no agent ever saw as delivered.
+    await vi.waitFor(() => expect(claim.release).toHaveBeenCalledWith({ flush: true }));
+    expect(claim.commit).not.toHaveBeenCalled();
+    expect(deps.submitContent).not.toHaveBeenCalled();
   });
 });
 

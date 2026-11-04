@@ -1,1227 +1,326 @@
 /**
- * Unit tests for the Kimi wire.jsonl parser.
- *
- * Drives the parser with three fixtures:
- *
- *   1. wire-real.jsonl - captured from a real `kimi --print` run on this
- *      machine (no LLM auth, so only metadata + TurnBegin/TurnEnd events).
- *      Pins the empirical envelope shape so a future Kimi release can't
- *      silently break the parser by reformatting the JSONL header.
- *
- *   2. wire-rich.jsonl - synthesized to exercise StatusUpdate, ToolCall,
- *      ToolResult, StepBegin, and full token-usage parsing per the
- *      upstream schema in docs/en/customization/wire-mode.md (wire
- *      protocol 1.9).
- *
- *   3. wire-subagent.jsonl - synthesized capture of a turn that delegates
- *      to the `Agent` tool, exercising the `SubagentEvent` envelope and
- *      its nested-Event lifecycle. Mirrors the upstream Pydantic schema
- *      in `src/kimi_cli/wire/types.py` and the runner emission site at
- *      `src/kimi_cli/subagents/runner.py:419-426`. Replace with a real
- *      capture once Moonshot credentials are wired into the dev loop.
+ * The Kimi Code wire parser (protocol 1.5). Fixtures are shaped to the CLI's
+ * own `packages/agent-core-v2/docs/wire-manifest.d.ts` and `loopEventFold.ts`
+ * at 2.4.1; no real capture exists yet, so these pin our reading of the source.
+ * What a user loses if this breaks: the board's activity, the plan exit move,
+ * and the On agent turn end automations for every Kimi task.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import {
-  parseWireJsonl,
-  truncateForActivityLog,
-  KIMI_TOOL_FALLBACK_NAME,
-  KIMI_BTW_SUBAGENT_NAME,
-  KIMI_SUBAGENT_FALLBACK_NAME,
-} from '../../src/main/agent/adapters/kimi/wire-parser';
-import { Activity, EventType, IdleReason } from '../../src/shared/types';
-import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import { parseWireJsonl, parseRecordTime, contentPartsText } from '../../src/main/agent/adapters/kimi/wire-parser';
+import { KimiSessionHistoryParser } from '../../src/main/agent/adapters/kimi/session-history-parser';
 import { HOOK_DETAIL_CAP } from '../../src/main/git/push-command';
+import { Activity, AgentTool, EventType, IdleReason } from '../../src/shared/types';
 
-const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'kimi');
+const TIME = 1_792_000_000_000;
 
-function loadFixture(name: string): string {
-  return fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf-8');
+function line(type: string, payload: Record<string, unknown> = {}): string {
+  return JSON.stringify({ type, agentId: 'main', ...payload, time: TIME });
 }
 
-describe('parseWireJsonl', () => {
-  describe('against the real captured wire.jsonl (TurnBegin/End only)', () => {
-    const content = loadFixture('wire-real.jsonl');
+function loop(event: Record<string, unknown>): string {
+  return line('context.append_loop_event', { event });
+}
 
-    it('skips the metadata header line without throwing', () => {
-      const result = parseWireJsonl(content, 'append');
-      // Real fixture is TurnBegin "hello" / TurnEnd / TurnBegin "hello" / TurnEnd.
-      // Each TurnBegin extracts the user_input text into a Prompt event and
-      // each TurnEnd is an Idle event; the metadata header line itself is
-      // silently skipped (no error, no event).
-      expect(result.events.map((event) => event.type)).toEqual([
-        EventType.Prompt, EventType.Idle, EventType.Prompt, EventType.Idle,
-      ]);
-      const prompts = result.events.filter((event) => event.type === EventType.Prompt);
-      expect(prompts.every((event) => event.detail === 'hello')).toBe(true);
-    });
+function parse(...lines: string[]) {
+  return parseWireJsonl(lines.join('\n') + '\n', 'append');
+}
 
-    it('ends the turn with an Idle event and forces no activity when the chunk ends with TurnEnd', () => {
-      // A forced idle runs the engine's forceIdle, which ends no turn for
-      // onTurnEnded and drops every background shell (task #859). The Idle
-      // event ends the turn the way a Stop hook does.
-      const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBeNull();
-      const idle = result.events[result.events.length - 1];
-      expect(idle.type).toBe(EventType.Idle);
-      expect(idle.detail).toBeUndefined();
-    });
+describe('parseWireJsonl: turns', () => {
+  it('skips the metadata line and a malformed one', () => {
+    const result = parse('{"type":"metadata","protocol_version":"1.5","created_at":1}', '{not json');
+    expect(result.events).toEqual([]);
+    expect(result.activity).toBeNull();
+  });
 
-    it('emits no usage when no StatusUpdate is present', () => {
-      const result = parseWireJsonl(content, 'append');
-      expect(result.usage).toBeNull();
+  it('turns turn.prompt into a Prompt with its text, and thinking', () => {
+    const result = parse(line('turn.prompt', { input: [{ type: 'text', text: 'Fix it' }], origin: 'user', turnId: 1 }));
+    expect(result.activity).toBe(Activity.Thinking);
+    expect(result.events).toEqual([{ ts: TIME, type: EventType.Prompt, detail: 'Fix it' }]);
+  });
+
+  it('reads turn.steer as a prompt too', () => {
+    expect(parse(line('turn.steer', { input: [{ type: 'text', text: 'and this' }] })).events[0]).toMatchObject({ type: EventType.Prompt, detail: 'and this' });
+  });
+
+  it('ends a completed turn with an Idle event and forces no activity', () => {
+    const result = parse(line('turn.ended', { turnId: 1, reason: 'completed' }));
+    expect(result.activity).toBeNull();
+    expect(result.events).toEqual([{ ts: TIME, type: EventType.Idle }]);
+  });
+
+  it('reports a cancelled turn as interrupted', () => {
+    expect(parse(line('turn.ended', { reason: 'cancelled' })).events[0].type).toBe(EventType.Interrupted);
+  });
+
+  it('reports a failed turn with its error', () => {
+    const result = parse(line('turn.ended', { reason: 'failed', error: { code: 'x', message: 'boom', name: 'RateLimitError', retryable: false } }));
+    expect(result.events[0]).toMatchObject({ type: EventType.TurnFailed, detail: 'RateLimitError' });
+  });
+
+  it('reports a retried step as retrying, with the error name', () => {
+    const result = parse(line('turn.step.retrying', { errorName: 'OverloadedError', nextAttempt: 2, maxAttempts: 3 }));
+    expect(result.events[0]).toMatchObject({ type: EventType.TurnRetrying, detail: 'OverloadedError' });
+  });
+
+  it('starts thinking on a step begin, with no event', () => {
+    const result = parse(loop({ type: 'step.begin', uuid: 'step-1' }));
+    expect(result.activity).toBe(Activity.Thinking);
+    expect(result.events).toEqual([]);
+  });
+});
+
+describe('parseWireJsonl: tools', () => {
+  it('reads a Bash call by its command, and any other by its name', () => {
+    const result = parse(
+      loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c1', name: 'Bash', args: { command: 'git push origin main' } }),
+      loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c2', name: 'Read', args: { path: 'a.ts' } }),
+    );
+    expect(result.events).toEqual([
+      { ts: TIME, type: EventType.ToolStart, tool: AgentTool.Bash, toolId: 'c1', detail: 'git push origin main' },
+      { ts: TIME, type: EventType.ToolStart, tool: AgentTool.Bash, toolId: 'c2', detail: 'Read' },
+    ]);
+  });
+
+  it('ends a tool ok or with an error', () => {
+    const result = parse(
+      loop({ type: 'tool.result', toolCallId: 'c1', result: { output: 'done' } }),
+      loop({ type: 'tool.result', toolCallId: 'c2', result: { output: 'nope', isError: true } }),
+    );
+    expect(result.events.map((event) => event.detail)).toEqual(['ok', 'error']);
+    expect(result.events.every((event) => event.type === EventType.ToolEnd)).toBe(true);
+  });
+
+  // The engine pairs an end with its start by name, so a start named Read with
+  // an end named Bash would leave the tool open in the usage ledger.
+  it('with a session\'s memory, names a tool on both ends across chunks and forgets it after', () => {
+    const openToolNames = new Map<string, string>();
+    const start = parseWireJsonl(loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c2', name: 'Read', args: { path: 'a.ts' } }), 'append', { openToolNames });
+    expect(start.events[0]).toMatchObject({ type: EventType.ToolStart, tool: 'Read', toolId: 'c2' });
+    const end = parseWireJsonl(loop({ type: 'tool.result', toolCallId: 'c2', result: { output: 'text' } }), 'append', { openToolNames });
+    expect(end.events[0]).toMatchObject({ type: EventType.ToolEnd, tool: 'Read', toolId: 'c2' });
+    expect(openToolNames.size).toBe(0);
+  });
+
+  it('with a session\'s memory, keeps a shell command a Bash call and tags an end it never saw start', () => {
+    const openToolNames = new Map<string, string>();
+    const shell = parseWireJsonl(loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c1', name: 'Bash', args: { command: 'git push' } }), 'append', { openToolNames });
+    expect(shell.events[0]).toMatchObject({ tool: AgentTool.Bash, detail: 'git push' });
+    const orphan = parseWireJsonl(loop({ type: 'tool.result', toolCallId: 'unseen', result: { output: 'text' } }), 'append', { openToolNames });
+    expect(orphan.events[0].tool).toBe(AgentTool.Bash);
+  });
+
+  it('reports no background shell: the adapter does not declare backgroundCommands', () => {
+    const result = parse(
+      loop({ type: 'tool.result', toolCallId: 'c1', result: { output: 'task_id: bash-abc123\npid: 42\nstatus: running\n' } }),
+      line('task.terminated', { info: { kind: 'process', detached: true, taskId: 'bash-abc123', status: 'completed' } }),
+    );
+    expect(result.events.map((event) => event.type)).toEqual([EventType.ToolEnd]);
+  });
+});
+
+describe('parseWireJsonl: the plan exit', () => {
+  const approved = 'Exited plan mode. Plan mode deactivated. All tools are now available.\n## Approved Plan:\nDo the thing';
+
+  it('names the plan exit on an approved result, with the call in an earlier chunk', () => {
+    const start = parse(loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'p1', name: 'ExitPlanMode', args: {} }));
+    expect(start.events[0]).toMatchObject({ type: EventType.ToolStart, detail: 'ExitPlanMode' });
+    const end = parse(loop({ type: 'tool.result', toolCallId: 'p1', result: { output: approved } }));
+    expect(end.events[0]).toMatchObject({ type: EventType.ToolEnd, tool: AgentTool.ExitPlanMode, toolId: 'p1' });
+  });
+
+  // An ExitPlanMode end means approved, so a session's memory must not put that
+  // name on a rejected plan's end.
+  it('with a session\'s memory, still does not call a rejected plan an exit', () => {
+    const openToolNames = new Map<string, string>();
+    parseWireJsonl(loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'p1', name: 'ExitPlanMode', args: {} }), 'append', { openToolNames });
+    const end = parseWireJsonl(loop({ type: 'tool.result', toolCallId: 'p1', result: { output: 'Plan rejected by user.', isError: true } }), 'append', { openToolNames });
+    expect(end.events[0].tool).toBe(AgentTool.Bash);
+  });
+
+  it.each([
+    ['rejected', 'Plan rejected by user. Plan mode remains active.', true],
+    ['rejected and exited', 'Plan rejected by user. Plan mode deactivated.', true],
+    ['revised', 'User requested revisions. Plan mode remains active.', false],
+    ['dismissed', 'Plan approval dismissed. Plan mode remains active.', false],
+  ])('does not call a %s plan an exit', (_name, output, isError) => {
+    const result = parse(loop({ type: 'tool.result', toolCallId: 'p1', result: { output, isError } }));
+    expect(result.events[0].tool).toBe(AgentTool.Bash);
+  });
+
+  it('holds the plan review as an approval wait', () => {
+    const result = parse(line('interaction.request', { id: 'i1', kind: 'approval', toolCallId: 'p1', request: {} }));
+    expect(result.activity).toBeNull();
+    expect(result.events[0]).toMatchObject({ type: EventType.Idle, detail: IdleReason.Permission, waitKind: 'approval' });
+  });
+});
+
+describe('parseWireJsonl: waits, subagents and compaction', () => {
+  it('tells a question wait from an approval, and goes back to thinking when it resolves', () => {
+    expect(parse(line('interaction.request', { kind: 'question', request: {} })).events[0]).toMatchObject({ waitKind: 'question' });
+    expect(parse(line('interaction.resolved', { id: 'i1', response: {} })).activity).toBe(Activity.Thinking);
+  });
+
+  it('ignores a user_tool interaction, which waits on no person', () => {
+    expect(parse(line('interaction.request', { kind: 'user_tool', request: {} })).events).toEqual([]);
+  });
+
+  it('pairs a subagent start and stop by id', () => {
+    const result = parse(
+      line('subagent.spawned', { subagentId: 'a1', subagentName: 'explore', parentToolCallId: 'c1', runInBackground: false }),
+      line('subagent.completed', { subagentId: 'a1', resultSummary: 'ok' }),
+      line('subagent.failed', { subagentId: 'a2', error: 'x' }),
+      line('subagent.cancelled', { subagentId: 'a3' }),
+    );
+    expect(result.events[0]).toMatchObject({ type: EventType.SubagentStart, detail: 'explore', subagentId: 'a1' });
+    expect(result.events.slice(1).map((event) => [event.type, event.subagentId])).toEqual([
+      [EventType.SubagentStop, 'a1'],
+      [EventType.SubagentStop, 'a2'],
+      [EventType.SubagentStop, 'a3'],
+    ]);
+    // An empty detail is an inner-loop stop to the engine, which would not count it.
+    expect(result.events.slice(1).every((event) => event.detail !== '')).toBe(true);
+  });
+
+  it('reports compaction', () => {
+    const result = parse(line('full_compaction.begin', { source: 'auto' }));
+    expect(result.activity).toBe(Activity.Thinking);
+    expect(result.events[0].type).toBe(EventType.Compact);
+  });
+});
+
+describe('parseWireJsonl: usage and model', () => {
+  it('reports a step\'s tokens and the context from the token count', () => {
+    const { usage } = parse(
+      line('token_counting.measured', { length: 3, tokens: 2000 }),
+      loop({ type: 'step.end', uuid: 's', usage: { inputOther: 100, output: 50, inputCacheRead: 30, inputCacheCreation: 20 } }),
+    );
+    expect(usage?.contextWindow).toEqual({ usedTokens: 2000, totalInputTokens: 150, totalOutputTokens: 50, cacheTokens: 50 });
+  });
+
+  it('derives the percentage only with a window from the config, never a guess', () => {
+    const lines = [line('llm.request', { model: 'k3', modelAlias: 'kimi-code/k3', provider: 'p', kind: 'loop' }), line('token_counting.turn_recorded', { tokens: 1000, length: 1, turnId: 1 })];
+    expect(parse(...lines).usage?.contextWindow).toEqual({ usedTokens: 1000 });
+    const withWindow = parseWireJsonl(lines.join('\n'), 'append', { contextWindowForAlias: () => 4000, displayNameForAlias: () => 'K3' });
+    expect(withWindow.usage?.contextWindow).toEqual({ usedTokens: 1000, contextWindowSize: 4000, usedPercentage: 25 });
+    expect(withWindow.usage?.model).toEqual({ id: 'kimi-code/k3', displayName: 'K3', reportedByAgent: true });
+  });
+
+  it('falls back to the provider model id when no request named an alias', () => {
+    const { usage } = parse(line('usage.record', { model: 'kimi-k3', usage: { inputOther: 1, output: 1 } }));
+    expect(usage?.model).toEqual({ id: 'kimi-k3', displayName: 'kimi-k3', reportedByAgent: true });
+  });
+
+  it('reports no usage for a chunk with none, so the merge keeps what it has', () => {
+    expect(parse(line('turn.ended', { reason: 'completed' })).usage).toBeNull();
+  });
+});
+
+describe('KimiSessionHistoryParser.createParse: one session\'s memory', () => {
+  const readCall = loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c1', name: 'Read', args: { path: 'a.ts' } });
+  const readResult = loop({ type: 'tool.result', toolCallId: 'c1', result: { output: 'text' } });
+
+  it('tags a result in a later chunk with the tool its call named', () => {
+    const parseChunk = KimiSessionHistoryParser.createParse();
+    expect(parseChunk(readCall + '\n', 'append').events[0]).toMatchObject({ type: EventType.ToolStart, tool: 'Read' });
+    expect(parseChunk(readResult + '\n', 'append').events[0]).toMatchObject({ type: EventType.ToolEnd, tool: 'Read', toolId: 'c1' });
+  });
+
+  it('keeps one session\'s open call from another session\'s parser', () => {
+    const first = KimiSessionHistoryParser.createParse();
+    const second = KimiSessionHistoryParser.createParse();
+    first(readCall + '\n', 'append');
+    expect(second(readResult + '\n', 'append').events[0].tool).toBe(AgentTool.Bash);
+  });
+
+  it('forgets open calls when a turn ends, so a late result reads as a Bash end', () => {
+    const parseChunk = KimiSessionHistoryParser.createParse();
+    parseChunk(readCall + '\n', 'append');
+    parseChunk(line('turn.ended', { reason: 'cancelled' }) + '\n', 'append');
+    expect(parseChunk(readResult + '\n', 'append').events[0].tool).toBe(AgentTool.Bash);
+  });
+});
+
+describe('parseWireJsonl: a shell command in the ToolStart detail', () => {
+  const bashCall = (args: unknown) => loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c1', name: 'Bash', args });
+
+  it.each([
+    ['far over the cap', HOOK_DETAIL_CAP * 3, HOOK_DETAIL_CAP],
+    ['one over the cap', HOOK_DETAIL_CAP + 1, HOOK_DETAIL_CAP],
+    ['exactly the cap', HOOK_DETAIL_CAP, HOOK_DETAIL_CAP],
+    ['short', 12, 12],
+  ])('keeps a command %s to at most the cap', (_name, commandLength, expectedLength) => {
+    const command = 'a'.repeat(commandLength - 1) + 'z';
+    const detail = parse(bashCall({ command })).events[0].detail ?? '';
+    expect(detail.length).toBe(expectedLength);
+    // The head is kept, the tail is what the cap drops.
+    expect(command.startsWith(detail.slice(0, 5))).toBe(true);
+    expect(detail.endsWith('z')).toBe(commandLength <= HOOK_DETAIL_CAP);
+  });
+
+  it('reads args that arrive as a JSON string', () => {
+    expect(parse(bashCall('{"command":"git push origin main"}')).events[0].detail).toBe('git push origin main');
+  });
+
+  it('falls back to the tool name when the args string is not JSON', () => {
+    expect(parse(bashCall('{not json')).events[0].detail).toBe('Bash');
+  });
+
+  it('falls back to the tool name when the command is blank', () => {
+    expect(parse(bashCall({ command: '   ' })).events[0].detail).toBe('Bash');
+  });
+});
+
+describe('parseWireJsonl: input shapes and small records', () => {
+  it('reads a file written with CRLF line ends', () => {
+    const content = [line('turn.prompt', { input: [{ type: 'text', text: 'hi' }] }), line('turn.ended', { reason: 'completed' })].join('\r\n') + '\r\n';
+    const result = parseWireJsonl(content, 'full');
+    expect(result.events.map((event) => event.type)).toEqual([EventType.Prompt, EventType.Idle]);
+    expect(result.events[0].detail).toBe('hi');
+  });
+
+  it('reports an interrupted step as a notice, with its reason', () => {
+    expect(parse(line('turn.step.interrupted', { reason: 'user_cancel' })).events).toEqual([
+      { ts: TIME, type: EventType.Notification, detail: 'step interrupted: user_cancel' },
+    ]);
+    expect(parse(line('turn.step.interrupted')).events[0].detail).toBe('step interrupted: interrupted');
+  });
+
+  it('reports plan mode on and off as notices', () => {
+    expect(parse(line('plan_mode.enter')).events).toEqual([{ ts: TIME, type: EventType.Notification, detail: 'plan mode on' }]);
+    expect(parse(line('plan_mode.exit')).events).toEqual([{ ts: TIME, type: EventType.Notification, detail: 'plan mode off' }]);
+  });
+
+  it('names a tool call with no name "tool", and a subagent with no name "subagent"', () => {
+    expect(parse(loop({ type: 'tool.call', stepUuid: 's', toolCallId: 'c1', args: {} })).events[0].detail).toBe('tool');
+    expect(parse(line('subagent.spawned', { subagentId: 'a1' })).events[0]).toMatchObject({
+      type: EventType.SubagentStart,
+      detail: 'subagent',
+      subagentId: 'a1',
     });
   });
 
-  describe('against the synthesized rich fixture', () => {
-    const content = loadFixture('wire-rich.jsonl');
-
-    it('parses both ToolCall events as ToolStart entries, a Shell call carrying its command', () => {
-      const result = parseWireJsonl(content, 'append');
-      const toolStarts = result.events.filter((event) => event.type === EventType.ToolStart);
-      expect(toolStarts).toHaveLength(2);
-      expect(toolStarts[0].detail).toBe('ls');
-      expect(toolStarts[1].detail).toBe('ReadFile');
-    });
-
-    it('parses both ToolResult events as ToolEnd entries with error flag', () => {
-      const result = parseWireJsonl(content, 'append');
-      const toolEnds = result.events.filter((event) => event.type === EventType.ToolEnd);
-      expect(toolEnds).toHaveLength(2);
-      expect(toolEnds[0].detail).toBe('ok');
-      expect(toolEnds[1].detail).toBe('error');
-    });
-
-    it('converts unix-seconds timestamps to epoch milliseconds', () => {
-      const result = parseWireJsonl(content, 'append');
-      const firstToolStart = result.events.find((event) => event.type === EventType.ToolStart);
-      // 1776824399.500 seconds -> 1776824399500 ms (rounded).
-      expect(firstToolStart?.ts).toBe(1776824399500);
-    });
-
-    it('captures the final StatusUpdate context_usage as last-wins', () => {
-      const result = parseWireJsonl(content, 'append');
-      // 0.18 ratio → 18%.
-      expect(result.usage?.contextWindow.usedPercentage).toBeCloseTo(18, 1);
-    });
-
-    it('captures context_tokens and max_context_tokens', () => {
-      const result = parseWireJsonl(content, 'append');
-      expect(result.usage?.contextWindow.usedTokens).toBe(36864);
-      expect(result.usage?.contextWindow.contextWindowSize).toBe(200000);
-    });
-
-    it('aggregates token_usage into totalInputTokens (input_other + cache_read + cache_creation)', () => {
-      const result = parseWireJsonl(content, 'append');
-      // Last StatusUpdate: input_other=1200, cache_read=2048, cache_creation=0.
-      expect(result.usage?.contextWindow.totalInputTokens).toBe(3248);
-    });
-
-    it('carries totalOutputTokens through as last-wins', () => {
-      const result = parseWireJsonl(content, 'append');
-      expect(result.usage?.contextWindow.totalOutputTokens).toBe(280);
-    });
-
-    it('captures cacheTokens as the sum of cache_read + cache_creation', () => {
-      const result = parseWireJsonl(content, 'append');
-      // Last StatusUpdate: cache_read=2048, cache_creation=0.
-      expect(result.usage?.contextWindow.cacheTokens).toBe(2048);
-    });
-
-    it('forces no activity when the rich chunk ends with TurnEnd', () => {
-      const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events[result.events.length - 1].type).toBe(EventType.Idle);
-    });
+  it('ends a blocked turn as Idle, like a completed one', () => {
+    const result = parse(line('turn.ended', { reason: 'blocked' }));
+    expect(result.events).toEqual([{ ts: TIME, type: EventType.Idle }]);
+    expect(result.activity).toBeNull();
   });
 
-  describe('event ordering', () => {
-    it('preserves the chronological order of Prompt + ToolStart/ToolEnd pairs', () => {
-      const content = loadFixture('wire-rich.jsonl');
-      const result = parseWireJsonl(content, 'append');
-      const ordered = result.events.map((event) => `${event.type}:${event.detail}`);
-      // The rich fixture begins with TurnBegin (user_input: "list files"),
-      // which now emits a Prompt event ahead of the tool pairs.
-      expect(ordered).toEqual([
-        'prompt:list files',
-        'tool_start:ls',
-        'tool_end:ok',
-        'tool_start:ReadFile',
-        'tool_end:error',
-        'idle:undefined',
-      ]);
-    });
+  it('reads an approved plan whose output starts with whitespace as the plan exit', () => {
+    const output = '\n  Exited plan mode. Plan mode deactivated.\n## Approved Plan:\nDo it';
+    const result = parse(loop({ type: 'tool.result', toolCallId: 'p1', result: { output } }));
+    expect(result.events[0]).toMatchObject({ type: EventType.ToolEnd, tool: AgentTool.ExitPlanMode });
+  });
+});
+
+describe('record helpers', () => {
+  it('reads a record time in ms, and scales one in seconds', () => {
+    expect(parseRecordTime(TIME)).toBe(TIME);
+    expect(parseRecordTime(1_792_000_000.5)).toBe(1_792_000_000_500);
   });
 
-  describe('partial chunks (append-mode incremental parsing)', () => {
-    it('settles on Thinking when the chunk only contains TurnBegin', () => {
-      const partial = '{"timestamp": 1.0, "message": {"type": "TurnBegin", "payload": {}}}\n';
-      const result = parseWireJsonl(partial, 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-    });
-
-    it('settles on Thinking when the chunk only contains StepBegin', () => {
-      const partial = '{"timestamp": 1.0, "message": {"type": "StepBegin", "payload": {}}}\n';
-      const result = parseWireJsonl(partial, 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-    });
-
-    it('forces no activity when the chunk contains StepInterrupted, whose Interrupted event ends the turn', () => {
-      const partial = '{"timestamp": 1.0, "message": {"type": "StepInterrupted", "payload": {}}}\n';
-      const result = parseWireJsonl(partial, 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events.map((event) => event.type)).toEqual([EventType.Interrupted]);
-    });
-
-    it('returns activity null on a chunk with no transitional events', () => {
-      const partial = '{"timestamp": 1.0, "message": {"type": "ContentPart", "payload": {"type": "text", "text": "x"}}}\n';
-      const result = parseWireJsonl(partial, 'append');
-      expect(result.activity).toBeNull();
-    });
-  });
-
-  describe('defensive parsing', () => {
-    it('skips malformed JSON lines without throwing', () => {
-      const mixed = [
-        '{"type": "metadata", "protocol_version": "1.9"}',
-        'this is not json',
-        '{"timestamp": 1.0, "message": {"type": "TurnBegin", "payload": {}}}',
-        '{"timestamp": 2.0, "message": {"type": "TurnEnd", "payload": {}}}',
-      ].join('\n');
-      const result = parseWireJsonl(mixed, 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events.map((event) => event.type)).toEqual([EventType.Idle]);
-    });
-
-    it('skips lines whose message envelope is missing a recognized type', () => {
-      const content = '{"timestamp": 1.0, "message": {"type": "FutureUnknownEvent", "payload": {}}}\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.events).toEqual([]);
-      expect(result.activity).toBeNull();
-      expect(result.usage).toBeNull();
-    });
-
-    it('returns a fully-empty result for an empty body', () => {
-      const result = parseWireJsonl('', 'append');
-      expect(result).toEqual({ usage: null, events: [], activity: null });
-    });
-
-    it('handles CRLF line endings', () => {
-      const content = '{"type": "metadata", "protocol_version": "1.9"}\r\n'
-        + '{"timestamp": 1.0, "message": {"type": "TurnBegin", "payload": {}}}\r\n'
-        + '{"timestamp": 2.0, "message": {"type": "TurnEnd", "payload": {}}}\r\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events.map((event) => event.type)).toEqual([EventType.Idle]);
-    });
-  });
-
-  describe('defensive ToolCall / ToolResult handling', () => {
-    it('falls back to payload.type when ToolCall payload has no function.name', () => {
-      // When the upstream Kimi release sends a ToolCall without a nested
-      // function.name, the parser falls back to payload.type (e.g. "function")
-      // as the detail field so the ToolStart event is still emitted.
-      const content = JSON.stringify({
-        timestamp: 1776824399.5,
-        message: {
-          type: 'ToolCall',
-          payload: {
-            // No `function` property at all.
-            type: 'function',
-            call_id: 'call-abc',
-          },
-        },
-      }) + '\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe(EventType.ToolStart);
-      // detail should be the fallback payload.type value.
-      expect(result.events[0].detail).toBe('function');
-    });
-
-    it('falls back to "tool" when ToolCall payload has no function.name and no payload.type', () => {
-      const content = JSON.stringify({
-        timestamp: 1776824399.5,
-        message: {
-          type: 'ToolCall',
-          payload: {
-            call_id: 'call-xyz',
-            // Neither function nor type field.
-          },
-        },
-      }) + '\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe(EventType.ToolStart);
-      expect(result.events[0].detail).toBe(KIMI_TOOL_FALLBACK_NAME);
-    });
-
-    it('emits a ToolEnd event with detail "ok" when ToolResult has no return_value', () => {
-      // A ToolResult payload missing return_value entirely must still produce
-      // a ToolEnd event. The isError check falls to false when return_value is
-      // absent (undefined is not a Record), so detail must be "ok".
-      const content = JSON.stringify({
-        timestamp: 1776824400.0,
-        message: {
-          type: 'ToolResult',
-          payload: {
-            call_id: 'call-abc',
-            // return_value intentionally absent.
-          },
-        },
-      }) + '\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe(EventType.ToolEnd);
-      expect(result.events[0].detail).toBe('ok');
-    });
-
-    it('emits a ToolEnd event with detail "ok" when ToolResult return_value is a non-Record (e.g. string)', () => {
-      // If return_value is a plain string instead of a Record, the isError check
-      // must safely short-circuit and emit "ok", not throw.
-      const content = JSON.stringify({
-        timestamp: 1776824400.5,
-        message: {
-          type: 'ToolResult',
-          payload: {
-            call_id: 'call-abc',
-            return_value: 'success output',
-          },
-        },
-      }) + '\n';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe(EventType.ToolEnd);
-      expect(result.events[0].detail).toBe('ok');
-    });
-  });
-
-  describe('Shell ToolCall detail cap', () => {
-    // A Shell ToolCall's command is the ToolStart's detail, capped the way a
-    // hook's detail is (the event bridge's FIELD_CAP, HOOK_DETAIL_CAP): the
-    // event cache keeps the detail and the command detectors scan it per event,
-    // so a pasted script must not ride through whole.
-    function shellToolCall(command: string): string {
-      return JSON.stringify({
-        timestamp: 1776824399.5,
-        message: {
-          type: 'ToolCall',
-          payload: {
-            type: 'function',
-            id: 'call-cap',
-            function: { name: 'Shell', arguments: JSON.stringify({ command }) },
-          },
-        },
-      }) + '\n';
-    }
-
-    function toolStartDetail(command: string): string | undefined {
-      const toolStarts = parseWireJsonl(shellToolCall(command), 'append').events.filter((event) => event.type === EventType.ToolStart);
-      expect(toolStarts).toHaveLength(1);
-      return toolStarts[0].detail;
-    }
-
-    // The comparisons are booleans so a failure does not print 2000 characters.
-    it('cuts a command longer than the cap to exactly its first HOOK_DETAIL_CAP characters', () => {
-      const head = 'a'.repeat(HOOK_DETAIL_CAP);
-      const detail = toolStartDetail(`${head}${'b'.repeat(500)}`);
-      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
-      expect(detail === head).toBe(true);
-    });
-
-    it('cuts at the cap even when the command is one character over', () => {
-      const head = 'a'.repeat(HOOK_DETAIL_CAP);
-      const detail = toolStartDetail(`${head}b`);
-      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
-      expect(detail === head).toBe(true);
-    });
-
-    it('leaves a command of exactly the cap length whole', () => {
-      const command = 'a'.repeat(HOOK_DETAIL_CAP);
-      const detail = toolStartDetail(command);
-      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
-      expect(detail === command).toBe(true);
-    });
-
-    it('leaves a short command unchanged', () => {
-      expect(toolStartDetail('node server.js --port 3000')).toBe('node server.js --port 3000');
-    });
-  });
-
-  describe('derived percentage fallback', () => {
-    it('derives usedPercentage from tokens when context_usage is absent', () => {
-      const content = '{"timestamp": 1.0, "message": {"type": "StatusUpdate", "payload": {'
-        + '"context_tokens": 50000, "max_context_tokens": 200000}}}';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.usage?.contextWindow.usedPercentage).toBeCloseTo(25, 1);
-    });
-
-    it('omits usedPercentage entirely when neither ratio nor token math is possible', () => {
-      const content = '{"timestamp": 1.0, "message": {"type": "StatusUpdate", "payload": {'
-        + '"token_usage": {"input_other": 100, "output": 50, "input_cache_read": 0, "input_cache_creation": 0}}}}';
-      const result = parseWireJsonl(content, 'append');
-      expect(result.usage?.contextWindow.usedPercentage).toBeUndefined();
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────
-  // Full wire-protocol coverage (every documented Event + Request type).
-  // Schema source: docs/en/customization/wire-mode.md (wire protocol 1.9).
-  // ────────────────────────────────────────────────────────────────────
-
-  /** Build one wire-envelope JSONL line. */
-  function envelope(messageType: string, payload: object, timestamp = 1_000_000.0): string {
-    return JSON.stringify({ timestamp, message: { type: messageType, payload } });
-  }
-
-  describe('TurnBegin user_input variants', () => {
-    it('extracts a string user_input directly into the Prompt detail', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', { user_input: 'hello world' }), 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0]).toMatchObject({
-        type: EventType.Prompt,
-        detail: 'hello world',
-      });
-    });
-
-    it('joins multiple TextPart parts in a ContentPart[] user_input', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', {
-        user_input: [
-          { type: 'text', text: 'part one' },
-          { type: 'text', text: 'part two' },
-        ],
-      }), 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].detail).toBe('part one part two');
-    });
-
-    it('skips ThinkPart and media parts when extracting prompt text', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', {
-        user_input: [
-          { type: 'think', think: 'reasoning content' },
-          { type: 'image_url', image_url: { url: 'data:image/png;base64,...' } },
-          { type: 'text', text: 'real prompt' },
-        ],
-      }), 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].detail).toBe('real prompt');
-    });
-
-    it('emits no Prompt event when user_input is empty/whitespace', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', { user_input: '   \n' }), 'append');
-      expect(result.events).toHaveLength(0);
-      // Activity transition still fires.
-      expect(result.activity).toBe(Activity.Thinking);
-    });
-
-    it('emits no Prompt event when ContentPart[] has no text parts', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', {
-        user_input: [
-          { type: 'think', think: 'thoughts' },
-          { type: 'image_url', image_url: { url: 'x' } },
-        ],
-      }), 'append');
-      expect(result.events).toHaveLength(0);
-    });
-
-    it('handles a missing user_input field defensively', () => {
-      const result = parseWireJsonl(envelope('TurnBegin', {}), 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      expect(result.events).toHaveLength(0);
-    });
-  });
-
-  describe('CompactionBegin / CompactionEnd', () => {
-    it('CompactionBegin emits a Compact event and sets activity to Thinking', () => {
-      const result = parseWireJsonl(envelope('CompactionBegin', {}), 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      expect(result.events).toEqual([
-        expect.objectContaining({ type: EventType.Compact }),
-      ]);
-    });
-
-    it('CompactionEnd preserves prior activity and emits no event', () => {
-      // Run a chunk that goes Thinking → CompactionBegin → CompactionEnd.
-      // Final activity should remain Thinking (last *transition* was Begin).
-      const content = [
-        envelope('TurnBegin', { user_input: 'x' }, 1.0),
-        envelope('CompactionBegin', {}, 1.1),
-        envelope('CompactionEnd', {}, 1.2),
-      ].join('\n');
-      const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      // Events: Prompt (from TurnBegin), Compact (from CompactionBegin).
-      // CompactionEnd contributes nothing.
-      expect(result.events.map((event) => event.type)).toEqual([
-        EventType.Prompt,
-        EventType.Compact,
-      ]);
-    });
-  });
-
-  describe('StepInterrupted', () => {
-    it('emits an Interrupted event and forces no activity', () => {
-      const result = parseWireJsonl(envelope('StepInterrupted', {}), 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events).toEqual([
-        expect.objectContaining({ type: EventType.Interrupted }),
-      ]);
-    });
-  });
-
-  describe('SteerInput (mid-turn user steering)', () => {
-    it('emits a Prompt event and re-asserts Thinking activity', () => {
-      const content = [
-        envelope('TurnEnd', {}, 1.0),
-        envelope('SteerInput', { user_input: 'change direction' }, 2.0),
-      ].join('\n');
-      const result = parseWireJsonl(content, 'append');
-      // SteerInput is the last transition; TurnEnd before it forces nothing.
-      expect(result.activity).toBe(Activity.Thinking);
-      const promptEvents = result.events.filter((event) => event.type === EventType.Prompt);
-      expect(promptEvents).toHaveLength(1);
-      expect(promptEvents[0].detail).toBe('change direction');
-    });
-  });
-
-  describe('ContentPart and ToolCallPart (streaming fragments)', () => {
-    it('ContentPart does not emit an event or change activity', () => {
-      const result = parseWireJsonl(
-        envelope('ContentPart', { type: 'text', text: 'streamed partial...' }),
-        'append',
-      );
-      expect(result.events).toEqual([]);
-      expect(result.activity).toBeNull();
-    });
-
-    it('ToolCallPart does not emit an event or change activity', () => {
-      const result = parseWireJsonl(
-        envelope('ToolCallPart', { arguments_part: '{"foo":' }),
-        'append',
-      );
-      expect(result.events).toEqual([]);
-      expect(result.activity).toBeNull();
-    });
-  });
-
-  describe('Approval / Question flow (Requests)', () => {
-    it('ApprovalRequest emits an approval wait (Idle with IdleReason.Permission) and forces no activity', () => {
-      const result = parseWireJsonl(envelope('ApprovalRequest', {
-        id: 'req-1',
-        tool_call_id: 'tc-1',
-        sender: 'agent',
-        action: 'edit_file',
-        description: 'Modify package.json',
-      }), 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.Idle,
-          detail: IdleReason.Permission,
-          waitKind: 'approval',
-        }),
-      ]);
-    });
-
-    it('QuestionRequest emits the same wait, tagged as a question', () => {
-      const result = parseWireJsonl(envelope('QuestionRequest', {
-        id: 'q-1',
-        tool_call_id: 'tc-2',
-        questions: [{ question: 'Pick a framework', options: [{ label: 'React' }] }],
-      }), 'append');
-      expect(result.activity).toBeNull();
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.Idle,
-          detail: IdleReason.Permission,
-          waitKind: 'question',
-        }),
-      ]);
-    });
-
-    it('ApprovalResponse flips activity back to Thinking and notes the response', () => {
-      const result = parseWireJsonl(envelope('ApprovalResponse', {
-        request_id: 'req-1',
-        response: 'approve',
-      }), 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      const notification = result.events.find((event) => event.type === EventType.Notification);
-      expect(notification?.detail).toBe('approve');
-    });
-
-    it('ApprovalResponse with reject still resumes activity (the agent unblocks either way)', () => {
-      const result = parseWireJsonl(envelope('ApprovalResponse', {
-        request_id: 'req-1',
-        response: 'reject',
-        feedback: 'too risky',
-      }), 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-      expect(result.events[0].detail).toBe('reject');
-    });
-
-    it('ApprovalRequest → ApprovalResponse settles on Thinking (response is most recent)', () => {
-      const content = [
-        envelope('ApprovalRequest', { id: 'r1', tool_call_id: 't1', sender: 'a', action: 'x', description: 'y' }, 1.0),
-        envelope('ApprovalResponse', { request_id: 'r1', response: 'approve' }, 2.0),
-      ].join('\n');
-      const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBe(Activity.Thinking);
-    });
-  });
-
-  describe('Subagent / BtwBegin / BtwEnd', () => {
-    it('SubagentEvent emits a Notification with subagent_type', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        parent_tool_call_id: 'tc-parent',
-        agent_id: 'sub-1',
-        subagent_type: 'researcher',
-        event: { type: 'started', payload: {} },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('researcher');
-    });
-
-    it('SubagentEvent falls back to agent_id when subagent_type is missing', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        agent_id: 'sub-42',
-        event: { type: 'tick', payload: {} },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('sub-42');
-    });
-
-    it('SubagentEvent falls back to a stable sentinel when neither subagent_type nor agent_id present', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        event: { type: 'tick', payload: {} },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe(KIMI_SUBAGENT_FALLBACK_NAME);
-    });
-
-    it('BtwBegin emits SubagentStart with the "btw" sentinel', () => {
-      const result = parseWireJsonl(envelope('BtwBegin', {
-        id: 'btw-1',
-        question: 'What does this regex match?',
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStart,
-          detail: KIMI_BTW_SUBAGENT_NAME,
-        }),
-      ]);
-    });
-
-    it('BtwEnd emits SubagentStop with the "btw" sentinel', () => {
-      const result = parseWireJsonl(envelope('BtwEnd', {
-        id: 'btw-1',
-        response: 'matches uppercase letters',
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStop,
-          detail: KIMI_BTW_SUBAGENT_NAME,
-        }),
-      ]);
-    });
-  });
-
-  // ────────────────────────────────────────────────────────────────────
-  // SubagentEvent inner-event lifecycle decoding.
-  //
-  // The runner wraps every wire Event a subagent emits inside a
-  // SubagentEvent envelope (src/kimi_cli/subagents/runner.py:419-426).
-  // The inner `event` is itself a full wire Event union, so TurnBegin /
-  // TurnEnd are the natural lifecycle markers. The parser maps those to
-  // SubagentStart / SubagentStop and falls back to Notification for
-  // every other inner type so non-lifecycle chatter (StatusUpdate,
-  // ToolCall, ContentPart, ...) still surfaces in the activity log.
-  // ────────────────────────────────────────────────────────────────────
-
-  describe('SubagentEvent inner lifecycle decoding', () => {
-    it('emits SubagentStart when inner event.type === "TurnBegin"', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        parent_tool_call_id: 'tc-1',
-        agent_id: 'sub-1',
-        subagent_type: 'explore',
-        event: { type: 'TurnBegin', payload: { user_input: 'list files' } },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStart,
-          detail: 'explore',
-        }),
-      ]);
-    });
-
-    it('emits SubagentStop when inner event.type === "TurnEnd"', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        parent_tool_call_id: 'tc-1',
-        agent_id: 'sub-1',
-        subagent_type: 'explore',
-        event: { type: 'TurnEnd', payload: {} },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStop,
-          detail: 'explore',
-        }),
-      ]);
-    });
-
-    it('uses agent_id as detail when subagent_type is missing on a TurnBegin lifecycle event', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        agent_id: 'sub-42',
-        event: { type: 'TurnBegin', payload: {} },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStart,
-          detail: 'sub-42',
-        }),
-      ]);
-    });
-
-    it('falls back to KIMI_SUBAGENT_FALLBACK_NAME when both subagent_type and agent_id are absent', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        event: { type: 'TurnEnd', payload: {} },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.SubagentStop,
-          detail: KIMI_SUBAGENT_FALLBACK_NAME,
-        }),
-      ]);
-    });
-
-    it('routes inner StatusUpdate to Notification (non-lifecycle inner type)', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        agent_id: 'sub-1',
-        subagent_type: 'coder',
-        event: {
-          type: 'StatusUpdate',
-          payload: { context_usage: 0.1, context_tokens: 1000, max_context_tokens: 200000 },
-        },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.Notification,
-          detail: 'coder',
-        }),
-      ]);
-    });
-
-    it('routes inner ToolCall to Notification (non-lifecycle inner type)', () => {
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        subagent_type: 'coder',
-        event: {
-          type: 'ToolCall',
-          payload: { type: 'function', function: { name: 'Shell', arguments: '{}' } },
-        },
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.Notification,
-          detail: 'coder',
-        }),
-      ]);
-    });
-
-    it('routes inner events with malformed envelopes to Notification (defensive)', () => {
-      // Inner `event` is missing entirely - the envelope still produces
-      // a Notification keyed by subagent_type. Robust against future
-      // protocol bumps that ship optional or malformed inner payloads.
-      const result = parseWireJsonl(envelope('SubagentEvent', {
-        subagent_type: 'plan',
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.Notification,
-          detail: 'plan',
-        }),
-      ]);
-    });
-
-    it('routes scalar event field values (number, string, null) to Notification (extractInnerEventType returns null)', () => {
-      // extractInnerEventType guards against non-Record values (scalars,
-      // null, arrays). Each of these must fall through to the Notification
-      // branch so the Activity log row is still emitted rather than silently
-      // dropped. This completes the defensive-parsing matrix for the `event`
-      // field alongside the "missing event" test above.
-      const scalarCases: unknown[] = [42, 'TurnBegin', null, ['TurnBegin']];
-      for (const scalarEvent of scalarCases) {
-        const content = JSON.stringify({
-          timestamp: 1_000_000.0,
-          message: {
-            type: 'SubagentEvent',
-            payload: {
-              subagent_type: 'explorer',
-              event: scalarEvent,
-            },
-          },
-        });
-        const result = parseWireJsonl(content, 'append');
-        expect(result.events).toHaveLength(1);
-        expect(result.events[0].type).toBe(EventType.Notification);
-        expect(result.events[0].detail).toBe('explorer');
-      }
-    });
-
-    it('drives the wire-subagent.jsonl fixture into the expected lifecycle sequence', () => {
-      const content = loadFixture('wire-subagent.jsonl');
-      const result = parseWireJsonl(content, 'append');
-      // The outer TurnEnd ends the turn as an Idle event, forcing nothing.
-      expect(result.activity).toBeNull();
-      // Events: parent Prompt, parent ToolStart(Agent), then the wrapped
-      // subagent lifecycle (SubagentStart, two Notifications for the
-      // mid-run StatusUpdate + ToolCall chatter, SubagentStop), the
-      // parent ToolEnd, and the parent's Idle.
-      const ordered = result.events.map((event) => `${event.type}:${event.detail}`);
-      expect(ordered).toEqual([
-        'prompt:delegate exploration',
-        'tool_start:Agent',
-        'subagent_start:explore',
-        'notification:explore',
-        'notification:explore',
-        'subagent_stop:explore',
-        'tool_end:ok',
-        'idle:undefined',
-      ]);
-    });
-  });
-
-  describe('Plan / hook telemetry', () => {
-    it('PlanDisplay emits a Notification with file_path and truncated content', () => {
-      const result = parseWireJsonl(envelope('PlanDisplay', {
-        content: '# Plan\n- step 1',
-        file_path: '/projects/foo/PLAN.md',
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('/projects/foo/PLAN.md: # Plan - step 1');
-    });
-
-    it('PlanDisplay falls back to "plan" when file_path is missing', () => {
-      const result = parseWireJsonl(envelope('PlanDisplay', {
-        content: '# inline plan',
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('plan: # inline plan');
-    });
-
-    it('PlanDisplay truncates long content to 200 chars with ellipsis', () => {
-      const longContent = 'a'.repeat(500);
-      const result = parseWireJsonl(envelope('PlanDisplay', {
-        content: longContent,
-        file_path: 'PLAN.md',
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBeDefined();
-      const detail = notif!.detail!;
-      expect(detail.startsWith('PLAN.md: ')).toBe(true);
-      expect(detail.endsWith('...')).toBe(true);
-      // Detail = "PLAN.md: " (9 chars) + truncated content (<= 200 chars).
-      expect(detail.length).toBeLessThanOrEqual('PLAN.md: '.length + 200);
-    });
-
-    it('PlanDisplay omits the trailing colon when content is empty', () => {
-      const result = parseWireJsonl(envelope('PlanDisplay', {
-        content: '   ',
-        file_path: '/foo/PLAN.md',
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('/foo/PLAN.md');
-    });
-
-    it('HookTriggered formats detail as "<event>:<target>"', () => {
-      const result = parseWireJsonl(envelope('HookTriggered', {
-        event: 'pre_tool_use',
-        target: 'Shell',
-        hook_count: 2,
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell');
-    });
-
-    it('HookResolved formats detail as "<event>:<action>" with reason in parens when present', () => {
-      const result = parseWireJsonl(envelope('HookResolved', {
-        event: 'pre_tool_use',
-        target: 'Shell',
-        action: 'block',
-        reason: 'rm -rf forbidden',
-        duration_ms: 12,
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:block (rm -rf forbidden)');
-    });
-
-    it('HookResolved omits the parens block when reason is missing', () => {
-      const result = parseWireJsonl(envelope('HookResolved', {
-        event: 'pre_tool_use',
-        target: 'Shell',
-        action: 'allow',
-        duration_ms: 0,
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:allow');
-    });
-
-    it('HookRequest appends the user_input prompt text to the detail', () => {
-      // input_data on `on_user_input` carries the actual prompt text. The
-      // detail should surface it after the `<event>:<target>` head so the
-      // Activity log shows what the hook is firing against, not just that
-      // it fired.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-1',
-        subscription_id: 'sub-1',
-        event: 'on_user_input',
-        target: 'all',
-        input_data: { user_input: 'hi' },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('on_user_input:all: hi');
-    });
-
-    it('HookRequest extracts a tool name from a tool-hook input_data', () => {
-      // pre_tool_use / post_tool_use payloads carry the tool name under
-      // tool_name (or function.name on older protocols). Surface the name
-      // so the Activity log row tells the developer *which* tool the hook
-      // is gating.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-2',
-        subscription_id: 'sub-2',
-        event: 'pre_tool_use',
-        target: 'Shell',
-        input_data: {
-          tool_name: 'Shell',
-          tool_input: { command: 'ls -la' },
-        },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
-    });
-
-    it('HookRequest falls back to bare <event>:<target> when input_data is missing', () => {
-      // Back-compat with the prior shape: a payload with no input_data
-      // still produces a Notification, just without the suffix.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-3',
-        subscription_id: 'sub-3',
-        event: 'on_session_start',
-        target: 'all',
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('on_session_start:all');
-    });
-
-    it('HookRequest falls back to bare head when input_data is empty', () => {
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-4',
-        subscription_id: 'sub-4',
-        event: 'on_user_input',
-        target: 'all',
-        input_data: {},
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('on_user_input:all');
-    });
-
-    it('HookRequest surfaces the first short string field when no user_input or tool name is present', () => {
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-5',
-        subscription_id: 'sub-5',
-        event: 'on_file_change',
-        target: 'all',
-        input_data: { path: 'src/main.ts' },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('on_file_change:all: path=src/main.ts');
-    });
-
-    it('HookRequest detail is truncated to 200 chars on oversized input_data', () => {
-      const longPrompt = 'x'.repeat(5000);
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-6',
-        subscription_id: 'sub-6',
-        event: 'on_user_input',
-        target: 'all',
-        input_data: { user_input: longPrompt },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBeDefined();
-      expect(notif?.detail?.length ?? 0).toBeLessThanOrEqual(200);
-      expect(notif?.detail).toMatch(/^on_user_input:all: /);
-    });
-
-    it('HookRequest extracts tool name from the name field when tool_name is absent', () => {
-      // Some hook payloads use `name` instead of `tool_name`. The fallback
-      // chain should surface it so the Activity log still shows the tool.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-7',
-        subscription_id: 'sub-7',
-        event: 'pre_tool_use',
-        target: 'Shell',
-        input_data: { name: 'Shell' },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
-    });
-
-    it('HookRequest extracts tool name from function.name when tool_name and name are absent', () => {
-      // OpenAI-style payloads nest the tool identifier under `function.name`.
-      // The fallback chain must walk one level deep.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-8',
-        subscription_id: 'sub-8',
-        event: 'pre_tool_use',
-        target: 'Shell',
-        input_data: { function: { name: 'Shell' } },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
-    });
-
-    it('HookRequest extracts tool name from tool_call.function.name when shallower fields are absent', () => {
-      // Anthropic tool_call envelope nests the identifier two levels deep.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-9',
-        subscription_id: 'sub-9',
-        event: 'pre_tool_use',
-        target: 'Shell',
-        input_data: { tool_call: { function: { name: 'Shell' } } },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
-    });
-
-    it('HookRequest extracts tool name from tool_call.name when tool_call.function is absent', () => {
-      // Deepest rung of the fallback chain: flat name inside tool_call.
-      const result = parseWireJsonl(envelope('HookRequest', {
-        id: 'hreq-10',
-        subscription_id: 'sub-10',
-        event: 'pre_tool_use',
-        target: 'Shell',
-        input_data: { tool_call: { name: 'Shell' } },
-      }), 'append');
-      const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
-    });
-  });
-
-  describe('truncateForActivityLog', () => {
-    it('returns raw slice with no ellipsis when max is 3', () => {
-      // The max <= 3 guard prevents the "..." suffix from consuming the
-      // entire budget. A 3-char max has no room for a 3-char suffix, so
-      // the function returns a bare slice to avoid returning "..." alone.
-      expect(truncateForActivityLog('hello world', 3)).toBe('hel');
-    });
-
-    it('returns raw slice with no ellipsis when max is 1', () => {
-      expect(truncateForActivityLog('hello world', 1)).toBe('h');
-    });
-
-    it('appends ellipsis and respects budget when max is 4 or above', () => {
-      // 4-char budget: 1 char of content + "..."
-      expect(truncateForActivityLog('hello world', 4)).toBe('h...');
-    });
-
-    it('does not truncate when the value fits within max', () => {
-      expect(truncateForActivityLog('hi', 10)).toBe('hi');
-    });
-
-    it('collapses internal whitespace before measuring length', () => {
-      // Newlines are replaced with spaces; leading/trailing whitespace is
-      // stripped before the length check. The final string should be
-      // flattened even when it fits within max.
-      expect(truncateForActivityLog('line one\nline two', 50)).toBe('line one line two');
-    });
-  });
-
-  describe('ToolCallRequest (bidirectional tool call)', () => {
-    it('emits ToolStart so activity tracking sees an in-flight tool', () => {
-      const result = parseWireJsonl(envelope('ToolCallRequest', {
-        id: 'tcr-1',
-        name: 'WriteFile',
-        arguments: '{"path":"foo"}',
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.ToolStart,
-          detail: 'WriteFile',
-        }),
-      ]);
-    });
-
-    it('falls back to KIMI_TOOL_FALLBACK_NAME when name is missing', () => {
-      const result = parseWireJsonl(envelope('ToolCallRequest', {
-        id: 'tcr-2',
-      }), 'append');
-      expect(result.events).toEqual([
-        expect.objectContaining({
-          type: EventType.ToolStart,
-          detail: KIMI_TOOL_FALLBACK_NAME,
-        }),
-      ]);
-    });
-  });
-
-  describe('background tasks (captured from kimi 1.37.0, task #859)', () => {
-    // A turn that starts `node server.js` in the background, runs a foreground
-    // command, stops the first task with TaskStop, and starts a flagged launch;
-    // then the task.killed notification and two follow-up turns Kimi started
-    // itself.
-    const content = loadFixture('wire-background-tasks.jsonl');
-    const result = parseWireJsonl(content, 'append');
-
-    it('reports a background launch as a named start in place of the tool end, keyed by the call id', () => {
-      const launch = result.events.find((event) => event.type === EventType.BackgroundShellStart);
-      expect(launch).toMatchObject({ toolId: 'call_probe_1', detail: 'bash-tkkk1arw' });
-      const toolEndIds = result.events.filter((event) => event.type === EventType.ToolEnd).map((event) => event.toolId);
-      expect(toolEndIds).toEqual(['call_probe_2', 'call_probe_3']);
-    });
-
-    it('carries a Shell launch command on its start, so the flag memo can key on the call id', () => {
-      const flaggedStart = result.events.find((event) => event.type === EventType.ToolStart && event.toolId === 'call_probe_4');
-      expect(flaggedStart?.detail).toBe('node server.js --kangentic-no-activity-hold');
-    });
-
-    it('ends a task on its TaskStop result and again on its task.* notification', () => {
-      const ends = result.events.filter((event) => event.type === EventType.BackgroundShellEnd).map((event) => event.detail);
-      expect(ends).toEqual(['bash-tkkk1arw', 'bash-tkkk1arw']);
-    });
-
-    it('reads a TaskStop result, whose display block names the task, as no launch', () => {
-      const starts = result.events.filter((event) => event.type === EventType.BackgroundShellStart).map((event) => event.detail);
-      expect(starts).toEqual(['bash-tkkk1arw', 'bash-n2672x0l']);
-    });
-
-    it('drops a background block whose task id is not id-shaped', () => {
-      const shapeless = parseWireJsonl(envelope('ToolResult', {
-        tool_call_id: 'call-x',
-        return_value: { is_error: false, message: 'Background task started.', display: [{ type: 'background_task', task_id: 'not an id' }] },
-      }), 'append');
-      expect(shapeless.events.map((event) => event.type)).toEqual([EventType.ToolEnd]);
-    });
-
-    it('drives the engine: the launch holds until its stop, the flagged launch never holds, and each TurnEnd ends a turn', () => {
-      const turnEnds: number[] = [];
-      const engine = new ActivityEngine(
-        { onActivityChange: () => {}, onSyntheticEvent: () => {}, onTurnEnded: (_sessionId, _startedAt, workSerial) => turnEnds.push(workSerial) },
-        { bgShellEscapeHatchMs: 600_000, bgShellOnlyGraceMs: 600_000, staleThinkingTimeoutMs: 600_000, idleStabilityWindowMs: 0 },
-      );
-      try {
-        engine.initSession('kimi-session');
-        const firstTurnEnd = result.events.findIndex((event) => event.type === EventType.Idle);
-        const launchIndex = result.events.findIndex((event) => event.type === EventType.BackgroundShellStart);
-        for (const event of result.events.slice(0, launchIndex + 1)) engine.processEvent('kimi-session', event);
-        // The task holds while it runs, and its tool is no longer pending.
-        expect([...engine.getState('kimi-session')!.activeBackgroundShellIds]).toEqual(['bash-tkkk1arw']);
-        expect(engine.getState('kimi-session')?.pendingToolCount).toBe(0);
-
-        for (const event of result.events.slice(launchIndex + 1, firstTurnEnd + 1)) engine.processEvent('kimi-session', event);
-        const afterTurn = engine.getState('kimi-session')!;
-        expect(afterTurn.activeBackgroundShellIds.size).toBe(0);
-        expect(afterTurn.anonymousBackgroundShellCount).toBe(0);
-        expect([...afterTurn.exemptBackgroundShellIds]).toEqual(['bash-n2672x0l']);
-        expect(afterTurn.activity).toBe('idle');
-
-        for (const event of result.events.slice(firstTurnEnd + 1)) engine.processEvent('kimi-session', event);
-        // Red before task #859: TurnEnd was a forced idle, which ends no turn.
-        expect(turnEnds).toHaveLength(3);
-        expect(engine.getState('kimi-session')?.activity).toBe('idle');
-      } finally {
-        engine.dispose();
-      }
-    });
-  });
-
-  describe('Full lifecycle replay (every dispatch type in one chunk)', () => {
-    /**
-     * Synthesizes a realistic session covering every documented wire
-     * message type in roughly the order they would fire on a turn that
-     * involves: a user prompt, a step that calls a tool, a hook firing,
-     * a sub-agent (Brain Truster) being consulted, a permission prompt
-     * being resolved, a context compaction, mid-turn steering, a plan
-     * display, and finally turn end.
-     *
-     * Asserts the parser produces events in the expected shape and
-     * ends on the final TurnEnd's Idle event.
-     */
-    it('produces a coherent SessionHistoryParseResult covering every message type', () => {
-      const lines = [
-        envelope('TurnBegin', { user_input: 'fix the bug' }, 1.0),
-        envelope('StepBegin', { n: 1 }, 1.05),
-        envelope('StatusUpdate', {
-          context_usage: 0.05, context_tokens: 10000, max_context_tokens: 200000,
-          token_usage: { input_other: 500, output: 100, input_cache_read: 0, input_cache_creation: 0 },
-        }, 1.1),
-        envelope('ContentPart', { type: 'text', text: 'I will start by ' }, 1.15),
-        envelope('ToolCall', {
-          type: 'function', id: 'tc-1',
-          function: { name: 'Shell', arguments: '{"command":"ls"}' },
-        }, 1.2),
-        envelope('ToolCallPart', { arguments_part: '"--all"' }, 1.21),
-        envelope('ApprovalRequest', {
-          id: 'a-1', tool_call_id: 'tc-1', sender: 'agent', action: 'shell', description: 'ls',
-        }, 1.25),
-        envelope('ApprovalResponse', { request_id: 'a-1', response: 'approve' }, 1.3),
-        envelope('ToolResult', {
-          tool_call_id: 'tc-1',
-          return_value: { is_error: false, output: 'ok', message: '', display: [] },
-        }, 1.35),
-        envelope('HookTriggered', { event: 'post_tool_use', target: 'Shell', hook_count: 1 }, 1.4),
-        envelope('HookResolved', {
-          event: 'post_tool_use', target: 'Shell', action: 'allow', reason: '', duration_ms: 5,
-        }, 1.45),
-        envelope('BtwBegin', { id: 'btw-1', question: 'review?' }, 1.5),
-        envelope('BtwEnd', { id: 'btw-1', response: 'looks good' }, 1.55),
-        envelope('SubagentEvent', { subagent_type: 'reviewer', event: { type: 'finished', payload: {} } }, 1.6),
-        envelope('CompactionBegin', {}, 1.65),
-        envelope('CompactionEnd', {}, 1.7),
-        envelope('SteerInput', { user_input: 'also write tests' }, 1.75),
-        envelope('PlanDisplay', { content: '# plan', file_path: 'PLAN.md' }, 1.8),
-        envelope('QuestionRequest', { id: 'q-1', tool_call_id: 'tc-1', questions: [{ question: 'continue?', options: [{ label: 'yes' }] }] }, 1.85),
-        envelope('StepInterrupted', {}, 1.9),
-        envelope('TurnEnd', {}, 1.95),
-      ];
-      const content = lines.join('\n');
-      const result = parseWireJsonl(content, 'append');
-
-      // TurnEnd is the last transition, and its Idle event ends the turn,
-      // so the chunk forces no activity.
-      expect(result.activity).toBeNull();
-
-      // Pluck event types in order to verify the dispatch firing.
-      const eventTypes = result.events.map((event) => event.type);
-      // Prompt (TurnBegin), ToolStart (ToolCall), Idle (ApprovalRequest),
-      // Notification (ApprovalResponse), ToolEnd (ToolResult),
-      // Notification (HookTriggered), Notification (HookResolved),
-      // SubagentStart (BtwBegin), SubagentStop (BtwEnd),
-      // Notification (SubagentEvent), Compact (CompactionBegin),
-      // Prompt (SteerInput), Notification (PlanDisplay),
-      // Idle (QuestionRequest), Interrupted (StepInterrupted), Idle (TurnEnd).
-      expect(eventTypes).toEqual([
-        EventType.Prompt,
-        EventType.ToolStart,
-        EventType.Idle,
-        EventType.Notification,
-        EventType.ToolEnd,
-        EventType.Notification,
-        EventType.Notification,
-        EventType.SubagentStart,
-        EventType.SubagentStop,
-        EventType.Notification,
-        EventType.Compact,
-        EventType.Prompt,
-        EventType.Notification,
-        EventType.Idle,
-        EventType.Interrupted,
-        EventType.Idle,
-      ]);
-
-      // Usage was captured from the StatusUpdate.
-      expect(result.usage?.contextWindow.contextWindowSize).toBe(200000);
-      expect(result.usage?.contextWindow.usedTokens).toBe(10000);
-    });
+  it('joins text parts and skips the rest', () => {
+    expect(contentPartsText([{ type: 'think', think: 'hm' }, { type: 'text', text: 'a' }, { type: 'text', text: 'b' }])).toBe('a\nb');
+    expect(contentPartsText('plain')).toBe('plain');
+    expect(contentPartsText([])).toBeNull();
   });
 });

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { AntigravityDetector } from './detector';
-import { AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
+import { AGY_SESSION_SETTINGS_FILE, AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
 import { removeHooks as removeAntigravityHooks } from './hook-manager';
 import { ensureWorkspaceTrust, removeWorkspaceTrust } from './trust-manager';
 import { migrateAntigravityProjectData } from './project-relocation';
@@ -19,13 +19,23 @@ import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-na
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
-import { placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
-import { antigravityAnswerEvents, antigravityConversationId, antigravityStreamUsage, removeAntigravityConversation } from './answer-stream';
+import { parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
+import {
+  antigravityAnswerEvents,
+  antigravityStreamConversationId,
+  antigravityStreamUsage,
+  isAntigravityResultLine,
+  removeAntigravityConversation,
+} from './answer-stream';
 import type {
   AgentAdapter,
   AgentInfo,
   AnswerFromContextOptions,
+  AnswerSession,
+  AnswerSessionInput,
   ParsedTranscript,
+  SettingsChangeSpec,
   SpawnCommandOptions,
   SummarizeOptions,
   TranscriptPageReadRequest,
@@ -58,13 +68,17 @@ const PRINT_CONVERSATION_RE = new RegExp(`"conversation_id"\\s*:\\s*"(${CONVERSA
 const HOOK_CONVERSATION_RE = new RegExp(`"conversationId"\\s*:\\s*"(${CONVERSATION_UUID})"`);
 
 /**
- * Google Antigravity CLI (`agy`) adapter. Every behavior below was verified
- * against a real agy 1.1.13 install (2026-08-16, the E1/E2/E3 rig runs):
- * hooks, trust, MCP-via-workspace-plugin, `--conversation` resume, the
- * brain-dir transcript, print mode, and the double-Ctrl+C exit. Antigravity
- * shares `~/.gemini` with the Gemini CLI but keeps its own subtree, its own
- * trust store, and a different hook/MCP schema - hence a sibling adapter
- * rather than a Gemini variant.
+ * Google Antigravity CLI (`agy`) adapter. Verified against a real agy 1.1.13
+ * install (2026-08-16, the E1/E2/E3 rig runs): hooks, trust,
+ * MCP-via-workspace-plugin, `--conversation` resume, the brain-dir
+ * transcript, print mode, and the double-Ctrl+C exit. Built later from agy's
+ * documentation and its 1.4.12 `--help`, and not yet run against a real agy:
+ * the per-session status line, SessionStart and every-tool PreToolUse hooks,
+ * `--mode auto`, help-derived effort levels, the live `/model` and `/effort`
+ * swap, and the warm answer session (docs/integrations/agents/antigravity.md
+ * lists each with its source). Antigravity shares `~/.gemini` with the Gemini
+ * CLI but keeps its own subtree, its own trust store, and a different hook/MCP
+ * schema - hence a sibling adapter rather than a Gemini variant.
  */
 export class AntigravityAdapter implements AgentAdapter {
   readonly name = 'antigravity';
@@ -84,23 +98,43 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /** On a remote host over SSH the CLI is `agy` from the host's own login PATH (#913). */
   readonly remoteCliName = 'agy';
-  // Mapped onto agy's native autonomy flags in the command builder
-  // (--mode plan / --mode accept-edits / --dangerously-skip-permissions;
-  // no flag = agy's own "request-review" default).
+  // Mapped onto agy's native modes in the command builder
+  // (https://antigravity.google/docs/cli/modes): --mode plan / accept-edits /
+  // auto, and --dangerously-skip-permissions. No flag leaves agy in the mode
+  // its own settings save, `auto` where the sandbox and the account allow it.
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
-    { mode: 'default', label: 'Default (Request Review)' },
+    { mode: 'default', label: 'Default (Saved Agent Mode)' },
     { mode: 'acceptEdits', label: 'Accept Edits (Auto-Approve Edits)' },
+    { mode: 'auto', label: 'Auto (Sandbox + Review)' },
     { mode: 'bypassPermissions', label: 'Skip Permissions (Auto-Approve All)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+  /**
+   * The status line's `quota` buckets are account-wide plan quotas
+   * (statusline doc), reported as rate-limit windows by `parseStatus`. Main
+   * stamps them with this agent, so the pill shows them only on agy sessions.
+   */
+  readonly reportsRateLimits = true;
+  /**
+   * The tools that change a file, each by the argument naming it. The names are
+   * the hooks reference's tool list (https://antigravity.google/docs/hooks);
+   * `TargetFile` is the argument agy's `write_to_file` call carries in its
+   * transcript (measured on 1.1.13) and the one the hook detail reads first.
+   */
+  readonly fileChangeTools = [
+    { tool: 'write_to_file', pathField: 'TargetFile' },
+    { tool: 'replace_file_content', pathField: 'TargetFile' },
+    { tool: 'multi_replace_file_content', pathField: 'TargetFile' },
+  ] as const;
 
   private readonly detector = new AntigravityDetector();
   private readonly commandBuilder = new AntigravityCommandBuilder();
   // Sessions holding `.agents/hooks.json` and the MCP plugin dir per folder.
-  // agy has no per-spawn settings flag, so both are shared across concurrent
-  // sessions in one cwd; removeHooks() only strips them when the folder's
-  // last session releases. See SharedFolderHolds.
+  // agy reads hooks and MCP servers only from the folder (`--settings` takes
+  // settings.json keys, which carry neither), so both are shared across
+  // concurrent sessions in one cwd; removeHooks() only strips them when the
+  // folder's last session releases. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
 
   /**
@@ -115,6 +149,15 @@ export class AntigravityAdapter implements AgentAdapter {
       project: ['.agents/hooks.json', '.agents/plugins/kangentic/plugin.json', mcpConfig],
       private: [mcpConfig],
     };
+  }
+
+  /**
+   * The per-session settings file `--settings` names (the status line that reports live telemetry). It
+   * sits in the session's folder here, so the relay sends it to the same place on the host; a spawn
+   * that wrote none sends nothing.
+   */
+  remoteSessionFiles(): readonly string[] {
+    return [AGY_SESSION_SETTINGS_FILE];
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
@@ -194,7 +237,8 @@ export class AntigravityAdapter implements AgentAdapter {
    * a running turn), the second exits gracefully - flushing
    * `last_conversations.json` and printing the shutdown summary whose
    * `agy --conversation=<uuid>` line the fromOutput scraper reads. Verified
-   * against 1.1.13; agy has no /quit slash command.
+   * against 1.1.13. The CLI reference now lists `/exit` (alias `/quit`), but
+   * typed keys are safe only where measured, so the measured pair stays.
    */
   getExitSequence(): string[] {
     return ['\x03', '\x03'];
@@ -236,6 +280,13 @@ export class AntigravityAdapter implements AgentAdapter {
   ): Promise<TranscriptPageReadResult> {
     return readAntigravityTranscriptPage(agentSessionId, antigravityTranscriptPath(agentSessionId, place ?? null), request);
   }
+
+  // No `parseTranscriptWindow`: the conversation indexer resumes a windowed
+  // walk from a stored byte offset and chunks every window's entries, which
+  // assumes an append-only file. agy writes steps out of order and more than
+  // once (last write wins) and rewrites the transcript on compaction
+  // (CHANGELOG 1.1.13), so a walk would index a re-emitted step twice and
+  // resume into a rewritten file. The bounded tail parse stays the reader.
 
   /**
    * Cumulative tool-call counts read off the brain-dir transcript, so a
@@ -396,16 +447,7 @@ export class AntigravityAdapter implements AgentAdapter {
       return await runCliPrintAnswer({
         cliPath,
         cliTarget,
-        // The model and effort flags are OMITTED when none is chosen: passing an
-        // empty value is an error.
-        args: [
-          '--mode', 'plan',
-          '--input-format', 'stream-json',
-          '--output-format', 'stream-json',
-          ...(model ? ['--model', model] : []),
-          ...(options?.effort ? ['--effort', options.effort] : []),
-          '--print=',
-        ],
+        args: antigravityAnswerArgs(model, options?.effort),
         prompt: formatAntigravityUserMessage(prompt),
         cwd,
         // The result event also carries the run's usage, reported before the
@@ -419,7 +461,7 @@ export class AntigravityAdapter implements AgentAdapter {
         // deltas carry far more than the answer text.
         outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
         onChunk: forwardStreamLines((line) => {
-          conversationId ??= antigravityConversationId(line);
+          conversationId ??= antigravityStreamConversationId(line);
           if (onEvent) for (const event of antigravityAnswerEvents(line)) onEvent(event);
         }),
       });
@@ -429,34 +471,102 @@ export class AntigravityAdapter implements AgentAdapter {
   }
 
   /**
-   * No live token/context channel exists: the interactive transcript and the
-   * hook payloads carry no usage (verified 1.1.13), and print-mode usage
-   * does not apply to interactive sessions. The model pill is still seeded
-   * from a `--model` override via configuredModelFromCommand.
+   * The same run as `answerFromContext`, kept open for a Knowledge Graph chat.
+   * The headless doc (https://antigravity.google/docs/cli/headless) says one
+   * `--input-format stream-json` process runs a full turn per stdin message,
+   * ends each with its own `result` event, keeps one `conversation_id` for the
+   * session, and exits once stdin closes. Same flags as the one-shot run, so
+   * the same read-only `--mode plan`. Built from the documentation; the
+   * one-shot run is the measured one.
+   *
+   * The session's conversation is removed once its process is gone, as the
+   * one-shot run's is. Its id is read off every stdout line, the `init` event
+   * that arrives before any turn included, so a prewarmed session nobody asks
+   * leaves nothing behind either.
+   */
+  openAnswerSession(input: AnswerSessionInput): AnswerSession {
+    // An agy installed in a WSL distro runs there. Opened synchronously, so
+    // from the distro facts its detection already read; a distro path whose
+    // facts are not read yet throws, and the pool answers with a fresh run.
+    const cliTarget = peekCliTarget(input.cliPath, true);
+    if (!cliTarget && parseWslCliPath(input.cliPath)) {
+      throw new Error(`The WSL distro facts for ${input.cliPath} are not read yet`);
+    }
+    let conversationId: string | null = null;
+    const session = openStdinJsonSession({
+      cliPath: input.cliPath,
+      cliTarget,
+      args: antigravityAnswerArgs(input.model, input.effort),
+      cwd: input.cwd,
+      formatTurn: (prompt) => formatAntigravityUserMessage(prompt).trimEnd(),
+      // Every line, the start-up `init` included, which arrives before any
+      // turn: a session that is never asked still names its conversation.
+      onLine: (line) => {
+        conversationId ??= antigravityStreamConversationId(line);
+      },
+      createReducer: () => antigravityAnswerEvents,
+      isTurnEnd: isAntigravityResultLine,
+      extractAnswer: extractAntigravityStreamResponse,
+    });
+    void session.exited.then(async () => {
+      if (conversationId) await removeAntigravityConversation(conversationId, cliTarget);
+    });
+    return session;
+  }
+
+  /**
+   * The Command Terminal's live swap: `/model <name>` switches by "name, slug
+   * or label" (CHANGELOG 1.1.22) and `/effort <level>` sets the level
+   * (https://antigravity.google/docs/cli/commands/effort, CHANGELOG 1.1.5).
+   * Model first, as Claude orders it, so the level lands on a model that has
+   * it. Both also save the choice as agy's default for later sessions. A level
+   * the model lacks is refused by agy's TUI with the levels it does support.
+   */
+  getInjectionSequence(spec: SettingsChangeSpec): string[] {
+    const sequence: string[] = [];
+    if (spec.modelChanged && spec.model) sequence.push(`/model ${spec.model}`);
+    if (spec.effortChanged && spec.effort) sequence.push(`/effort ${spec.effort}`);
+    return sequence;
+  }
+
+  /**
+   * The fallback for a session that never reports usage. Live usage comes
+   * from the per-session status line (`--settings`, status-parser.ts), which
+   * only an agy whose `--help` lists `--settings` gets. An older agy has no
+   * channel at all: neither the interactive transcript nor the hook payloads
+   * carry usage (verified 1.1.13). The renderer shows this label only while no
+   * model name is known, so a session whose status line reports hides it, and
+   * one seeded from a `--model` override (configuredModelFromCommand) never
+   * shows it.
    */
   readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
     unavailableLabel: 'Telemetry: TUI only',
     unavailableTitle:
-      'Antigravity does not stream live telemetry to Kangentic.\n'
-      + 'The agy TUI footer shows the active model and effort; per-thought\n'
-      + 'token counts appear inline in its output.',
+      'This Antigravity session has not reported live telemetry to Kangentic.\n'
+      + 'Older agy versions cannot; the agy TUI footer shows the active\n'
+      + 'model and effort.',
   };
 
   /**
    * Runtime strategy - how agy exposes activity and session ids.
    *
-   * - statusFile: the hook -> event-bridge -> events.jsonl pipeline
-   *   (parseStatus is always null; agy has no usage channel).
+   * - statusFile: the per-session status line -> status-bridge.js ->
+   *   status.json, rewritten whole on every run (parseStatus maps the
+   *   documented payload; an agy without `--settings` never writes it), and
+   *   the hook -> event-bridge -> events.jsonl pipeline.
    * - Activity: hooks primary (PreInvocation -> prompt starts a turn,
-   *   Stop -> idle ends it; Stop's payload carries `fullyIdle: true`), PTY
+   *   PreToolUse / PostToolUse bracket each tool, Stop -> idle ends it;
+   *   Stop's payload carries `fullyIdle`), PTY
    *   silence fallback for print-mode spawns where hooks do not fire
    *   (verified) and for the no-space-free-path case where hook wiring is
    *   skipped. detectIdle matches the idle footer's "? for shortcuts",
    *   which never paints while a turn runs (the running footer shows
    *   "esc to cancel" instead).
    * - sessionId.fromHook: every hook payload carries `conversationId`
-   *   (camelCase protojson); delivered via the PreInvocation entry's
-   *   captureHookContext directive since agy has no once-per-session hook.
+   *   (camelCase protojson). A new conversation's SessionStart delivers it
+   *   before the first turn; the PreInvocation entry's captureHookContext
+   *   covers a resumed conversation, which fires no SessionStart. The status
+   *   line's `conversation_id` is deliberately not reported (status-parser.ts).
    * - sessionId.fromOutput: the graceful-shutdown summary prints
    *   `agy --conversation=<uuid>`, and a print-mode run emits
    *   `"conversation_id":"<uuid>"` in its JSON result. The suspend-time
@@ -468,7 +578,8 @@ export class AntigravityAdapter implements AgentAdapter {
     statusFile: {
       parseStatus: AntigravityStatusParser.parseStatus,
       parseEvent: AntigravityStatusParser.parseEvent,
-      isFullRewrite: false,
+      parseStatusEvents: AntigravityStatusParser.parseStatusEvents,
+      isFullRewrite: true,
     },
     // Its turn-end hook reaches the engine as an Idle event.
     reportsTurnEnd: true,
@@ -556,6 +667,25 @@ export function antigravityModelDisplayName(slug: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The flags of every answer run, the one-shot and the warm session alike, so
+ * the two cannot drift apart: read-only `--mode plan`, one stream-json user
+ * message per stdin line, stream-json out, and `--print=` (print mode with an
+ * empty inline prompt, since the prompt arrives on stdin). The model and
+ * effort flags are OMITTED when none is chosen: passing an empty value is an
+ * error.
+ */
+export function antigravityAnswerArgs(model?: string | null, effort?: string | null): string[] {
+  return [
+    '--mode', 'plan',
+    '--input-format', 'stream-json',
+    '--output-format', 'stream-json',
+    ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
+    '--print=',
+  ];
 }
 
 /**

@@ -438,11 +438,49 @@ describe('GeminiCommandBuilder', () => {
       expect(command).toContain('abc-123');
     });
 
-    it('new session (resume=false) produces no session flag', () => {
+    it('new session with a caller id starts under it with --session-id', () => {
       const command = buildCommand({ resume: false, sessionId: 'abc-123' });
+      expect(command).toContain('--session-id abc-123');
+      expect(command).not.toContain('--resume');
+    });
+
+    it('a resume never also passes --session-id (the CLI rejects the pair)', () => {
+      const command = buildCommand({ resume: true, sessionId: 'abc-123' });
+      expect(command).toContain('--resume abc-123');
+      expect(command).not.toContain('--session-id');
+    });
+
+    it('a new session with no id passes no session flag', () => {
+      const command = buildCommand({ resume: false });
       expect(command).not.toContain('--resume');
       expect(command).not.toContain('--session-id');
-      expect(command).not.toContain('abc-123');
+    });
+
+    it('the session id comes before the positional prompt', () => {
+      const command = buildCommand({ sessionId: 'abc-123', prompt: 'Fix the bug' });
+      expect(command.indexOf('--session-id')).toBeLessThan(command.indexOf(quoteArg('Fix the bug')));
+    });
+  });
+
+  describe('readable directories', () => {
+    it('passes one --include-directories per directory, before the prompt', () => {
+      const command = buildCommand({
+        readableDirectories: ['/other/project-a', '/other/project b'],
+        prompt: 'Plan the work',
+      });
+      expect(command).toContain(`--include-directories ${quoteArg('/other/project-a')}`);
+      expect(command).toContain(`--include-directories ${quoteArg('/other/project b')}`);
+      expect(command.lastIndexOf('--include-directories')).toBeLessThan(command.indexOf(quoteArg('Plan the work')));
+    });
+
+    it('passes every directory, past the five the configuration docs name', () => {
+      const directories = ['/a', '/b', '/c', '/d', '/e', '/f'];
+      const command = buildCommand({ readableDirectories: directories });
+      expect(command.split('--include-directories').length - 1).toBe(6);
+    });
+
+    it('passes none when there are none', () => {
+      expect(buildCommand({ readableDirectories: [] })).not.toContain('--include-directories');
     });
 
     it('resume without sessionId produces no flag', () => {

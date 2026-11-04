@@ -67,21 +67,25 @@ function testHookConfig(): void {
     assert(fs.existsSync(configFile), 'config.json created');
 
     const config = JSON.parse(fs.readFileSync(configFile, 'utf-8'));
-    assert(config.hooks !== undefined, 'hooks key present');
-    assert(config.hooks.preToolUse !== undefined, 'preToolUse hook defined');
-    assert(config.hooks.postToolUse !== undefined, 'postToolUse hook defined');
-    assert(config.hooks.agentStop !== undefined, 'agentStop hook defined');
-    assert(config.hooks.preCompact !== undefined, 'preCompact hook defined');
+    // Hooks live in hooks/kangentic.json; config.json never carries them
+    // (1.0.8 through 1.0.92 read both, so hooks in both fired twice).
+    assert(config.hooks === undefined, 'config.json carries no hooks');
+    const hooksFile = path.join(configDir, 'hooks', 'kangentic.json');
+    assert(fs.existsSync(hooksFile), 'hooks/kangentic.json created');
+    const hooks = JSON.parse(fs.readFileSync(hooksFile, 'utf-8')).hooks;
+    assert(hooks.preToolUse !== undefined, 'preToolUse hook defined');
+    assert(hooks.postToolUse !== undefined, 'postToolUse hook defined');
+    assert(hooks.agentStop !== undefined, 'agentStop hook defined');
+    assert(hooks.preCompact !== undefined, 'preCompact hook defined');
 
     // Verify hooks are arrays (empirically verified against Copilot CLI v1.0.24)
-    assert(Array.isArray(config.hooks.preToolUse), 'preToolUse is an array');
-    assert(config.hooks.preToolUse.length === 1, 'preToolUse has one entry');
+    assert(Array.isArray(hooks.preToolUse), 'preToolUse is an array');
+    assert(hooks.preToolUse.length === 1, 'preToolUse has one entry');
 
     // Verify hooks reference event-bridge
-    const preToolCommand = config.hooks.preToolUse[0].command;
+    const preToolCommand = hooks.preToolUse[0].command;
     assert(preToolCommand.includes('event-bridge'), 'preToolUse references event-bridge');
     assert(preToolCommand.includes('tool_start'), 'preToolUse maps to tool_start');
-    assert(preToolCommand.includes('tool:toolName'), 'preToolUse extracts toolName (camelCase)');
 
     // Verify statusLine
     assert(config.statusLine !== undefined, 'statusLine present');
@@ -131,9 +135,9 @@ function testCommandBuilding(): void {
       shell: 'bash',
     });
     assert(newCommand.includes('/usr/bin/copilot'), 'new: binary path present');
-    assert(newCommand.includes('--allow-all-tools'), 'new: acceptEdits maps to --allow-all-tools');
+    assert(newCommand.includes('--allow-tool=write'), 'new: acceptEdits maps to --allow-tool=write');
     assert(newCommand.includes('--config-dir'), 'new: --config-dir present');
-    assert(newCommand.includes('-i'), 'new: -i flag for interactive prompt');
+    assert(newCommand.includes(' -i '), 'new: -i flag for interactive prompt');
     assert(newCommand.includes('Fix the login bug'), 'new: prompt text present');
 
     // Test resume
@@ -146,9 +150,10 @@ function testCommandBuilding(): void {
       resume: true,
       shell: 'bash',
     });
-    assert(resumeCommand.includes('--resume'), 'resume: --resume flag present');
+    // `--session-id` starts or resumes; 1.0.97 refuses `--resume` for an unseen id.
+    assert(resumeCommand.includes('--session-id'), 'resume: --session-id flag present');
     assert(resumeCommand.includes('abc-123-def'), 'resume: session ID present');
-    assert(!resumeCommand.includes('-i'), 'resume: no -i flag (no prompt on resume)');
+    assert(!resumeCommand.includes(' -i '), 'resume: no -i flag (no prompt on resume)');
 
     // Test new session with caller UUID
     const callerUuidCommand = builder.buildCopilotCommand({
@@ -160,7 +165,7 @@ function testCommandBuilding(): void {
       sessionId: 'new-uuid-456',
       shell: 'bash',
     });
-    assert(callerUuidCommand.includes('--resume'), 'caller-uuid: --resume flag for new UUID');
+    assert(callerUuidCommand.includes('--session-id'), 'caller-uuid: --session-id flag for new UUID');
     assert(callerUuidCommand.includes('new-uuid-456'), 'caller-uuid: UUID present');
 
     // Test all permission modes
@@ -168,8 +173,9 @@ function testCommandBuilding(): void {
       { mode: 'plan', expectedFlag: '--plan' },
       { mode: 'dontAsk', expectedFlag: '--no-ask-user' },
       { mode: 'default', expectedFlag: '' },
-      { mode: 'acceptEdits', expectedFlag: '--allow-all-tools' },
-      { mode: 'auto', expectedFlag: '--allow-all-tools' },
+      { mode: 'acceptEdits', expectedFlag: '--allow-tool=write' },
+      // Interactive: assisted permissions ride the session's settings.json.
+      { mode: 'auto', expectedFlag: '' },
       { mode: 'bypassPermissions', expectedFlag: '--yolo' },
     ];
     for (const { mode, expectedFlag } of permissionModes) {
@@ -198,9 +204,9 @@ function testCommandBuilding(): void {
       nonInteractive: true,
       shell: 'bash',
     });
-    assert(nonInteractiveCommand.includes('-p'), 'non-interactive: -p flag present');
+    assert(nonInteractiveCommand.includes(' -p '), 'non-interactive: -p flag present');
     assert(nonInteractiveCommand.includes('Check syntax'), 'non-interactive: prompt present');
-    assert(!nonInteractiveCommand.includes('-i'), 'non-interactive: no -i flag');
+    assert(!nonInteractiveCommand.includes(' -i '), 'non-interactive: no -i flag');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

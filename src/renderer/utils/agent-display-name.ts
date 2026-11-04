@@ -68,7 +68,7 @@ const AGENT_META: Record<string, AgentMeta> = {
   kimi: {
     display: 'Kimi Code',
     short: 'Kimi',
-    installUrl: 'https://github.com/MoonshotAI/kimi-cli',
+    installUrl: 'https://github.com/MoonshotAI/kimi-code',
     loginCommand: 'kimi login',
   },
   droid: {

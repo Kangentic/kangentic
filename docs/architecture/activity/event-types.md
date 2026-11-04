@@ -14,10 +14,12 @@ sources:
   - resource: src/main/activity-engine/engine/event-handlers.ts
   - resource: src/main/activity-engine/engine/predicate.ts
   - resource: src/main/pty/turn-settled.ts
+  - resource: src/main/pty/readers/status-file-reader.ts
+  - resource: src/main/agent/adapters/antigravity/status-parser.ts
 ---
 # Activity event types
 
-The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_approved` are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent` and `tool_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
+The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_approved` are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent` and `tool_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. One more source skips the file: an adapter's `statusFile.parseStatusEvents` turns a `status.json` write into events (Antigravity's approval `idle` and plan-mode `config_change`), which `StatusFileReader` dispatches straight to the engine. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
 
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
@@ -25,15 +27,15 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `ToolStart` | `tool_start` | `thinking` | Agent began invoking a tool. `launchesSubagent: true` marks a call that starts a subagent (the adapter's `markSubagentLaunch` directive; Claude names `Agent` and `Task`), so a `subagent_start` closes a permission prompt only when that call was the one awaited (see [Permission flag](predicate.md#permission-flag)). A stale bridge copy never sets it |
 | `ToolEnd` | `tool_end` | log-only | Tool returned; counters update and `lastSignalAt` refreshes (a `PostToolUse` hook proves the agent is alive, so `tool_end` is NOT in the engine's `LOG_ONLY_EVENTS` set), but the activity state does not change |
 | `Idle` | `idle` | `idle` | Agent finished its turn (Stop hook, prompt-regex, or silence timer). With `detail: 'permission'` it is instead a wait on the user, and its optional `waitKind` (`question` or `approval`) says which (see [The kind of a wait](activity-engine.md#the-kind-of-a-wait)) |
-| `Interrupted` | `interrupted` | `idle` | The user stopped the turn: Esc while a tool runs, or Ctrl+C; clears counters and commits idle. Esc BETWEEN tool calls fires no hook at all, so that turn ends through `idle_hint` instead (see "Turn ends" below) |
+| `Interrupted` | `interrupted` | `idle` | The user stopped the turn: Esc while a tool runs, or Ctrl+C (Grok's `StopCancelled` hook also reports a declined permission prompt or a max-turns stop this way); clears counters and commits idle. Esc BETWEEN tool calls fires no hook at all, so that turn ends through `idle_hint` instead (see "Turn ends" below) |
 | `TurnFailed` | `turn_failed` | `idle` | Turn aborted by a TERMINAL service/API error (Claude's `StopFailure` hook, which fires instead of `Stop`); `detail` carries the error type (e.g. `authentication_error`). Routed through the Interrupted bypass: clears counters and commits idle immediately (see "Aborted-turn recovery") |
-| `TurnRetrying` | `turn_retrying` | conditional idle | `StopFailure` fired for a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error), classified at the source (like `IdleHint`). Holds the session `thinking` through a live retry (preserving `subagentDepth` and deferring to the stale-thinking or stuck-subagent watchdog); idles immediately if the turn had already wound down or ended (see "Aborted-turn recovery") |
+| `TurnRetrying` | `turn_retrying` | none (the engine decides) | Maps to `null` in `EventTypeActivity`, since it has no single static state. `StopFailure` fired for a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error), classified at the source (like `IdleHint`). Holds the session `thinking` through a live retry (preserving `subagentDepth` and deferring to the stale-thinking or stuck-subagent watchdog); idles immediately if the turn had already wound down or ended (see "Aborted-turn recovery") |
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
 | `SessionEnd` | `session_end` | log-only | Session ended (CLI process exited) |
 | `SubagentStart` | `subagent_start` | `thinking` | Main agent spawned a child agent. Clears a pending permission prompt only when the awaited call carries `launchesSubagent` |
 | `SubagentStop` | `subagent_stop` | log-only | Subagent returned; depth counter decrements - EXCEPT an empty-string `detail` ("") which is a spurious inner-loop stop, and a stop whose `subagentId` has already stopped, which is a duplicate. Both are ignored (see [Subagent depth](predicate.md#subagent-depth)) |
 | `Notification` | `notification` | log-only | Informational notification from the agent |
-| `IdleHint` | `idle_hint` | conditional idle | "Waiting for your input" notification, classified at the source. Ends the turn only when no other holder remains; otherwise log-only (see "Idle hints" below) |
+| `IdleHint` | `idle_hint` | none (the engine decides) | Maps to `null` in `EventTypeActivity`, since it has no single static state. "Waiting for your input" notification, classified at the source. Ends the turn only when no other holder remains; otherwise log-only (see "Idle hints" below) |
 | `Compact` | `compact` | `thinking` | Context-window compaction in progress. Starts a turn only when one is active: a compaction with no turn active (the CLI compacting an idle session, or one held only by background work) changes no state and moves no `workSerial` |
 | `TeammateIdle` | `teammate_idle` | log-only | Cross-agent teammate signaled idle |
 | `TaskCompleted` | `task_completed` | log-only | Agent declared the task finished |
@@ -117,14 +119,16 @@ The engine treats `idle_hint` as **conditionally** turn-ending (`idleHintEndsTur
 
 **Why the substring is deliberately narrow.** A scan of 221 real Claude sessions surfaced exactly four distinct notification texts: "Claude is waiting for your input" (794x), "Claude Code needs your approval for the plan" (109x), "Claude Code needs your attention" (43x), and "Claude needs your permission[ to use X]" (51x). Only the first fires for a pure turn-end whose `Stop` hook can be dropped. The other three each fire ~6s AFTER a `PermissionRequest` (tool permission, ExitPlanMode plan approval, or AskUserQuestion) has already driven the engine to the `permission` state, so they are correctly left log-only - reclassifying any of them would conflate `permission` with `idle`. The negative cases are pinned with the real strings in `tests/unit/event-bridge-remap.test.ts`.
 
-Only the Claude adapter wires this today, because Claude is the only agent for which we have captured evidence (a real session) of both the notification text and the dropped-Stop failure mode (a turn fully delegated to a subagent). The engine path is generic: any adapter that classifies a notification into `idle_hint` gets the same behavior.
+Claude is the only agent for which we have captured evidence (a real session) of both the notification text and the dropped-Stop failure mode (a turn fully delegated to a subagent), so its substring match is the only one built from a capture. Grok also wires it, by field and not by text: its `Notification` hook retypes a payload whose `notificationType` is `idle_prompt` (built from Grok's docs, not yet captured; see [Grok Build](../../integrations/agents/grok-build.md#built-from-documentation)). The engine path is generic: any adapter that classifies a notification into `idle_hint` gets the same behavior.
 
 To extend it to another hook-based agent, capture a real session that exhibits the stall, read the notification's extracted `detail`, then add a `setTypeWhenDetailContains('<observed substring>', EventType.IdleHint)` directive (built via the typed builder in that adapter's hook-manager, never hand-authored) to that adapter's Notification hook. Do not guess the string. Current status of the other agents:
 
 - **Gemini** maps `AfterAgent` to the `idle` stop-equivalent and `Notification` to `notification` (one whose `notification_type` is `ToolPermission` also to the permission `idle`), so it could be susceptible. But it wires no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm its notification text. Wire only after capturing evidence.
 - **Qwen Code** does not share Gemini's hook shape: its events use Claude's names (`Stop` -> `idle`). Its "Qwen Code is waiting for your input" notification (`notification_type: idle_prompt`) cannot be an idle hint. A live 0.25.2 session sends it mid-turn, right after almost every `PreToolUse`, so it says nothing about the turn ending. It stays a log-only `notification`, pinned by `tests/unit/qwen-hook-bridge.test.ts`.
-- **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
-- **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
+- **Kimi** does not need this: its wire protocol emits an explicit `turn.ended -> Idle`, and none of its `Notification`-mapped records mean "waiting for input."
+- **Codex / OpenCode** wire no Notification hook, so the pattern cannot apply.
+- **Copilot** wires a `notification` hook, but it maps only `elicitation_dialog` and `permission_prompt` to a question or approval wait ([Questions and approvals](../../integrations/agents/copilot-cli.md#questions-and-approvals)), never to the idle hint.
+- **Grok Build** is wired, unlike Qwen's mid-turn `idle_prompt`: Grok's docs say `idle_prompt` "fires on any turn end" and about a minute after the session settles, and the engine ends a turn on it only when no tool, subagent, shell or wait still holds one. No Grok session has been captured, so the timing is the docs' claim.
 
 ## Turn ends (`onTurnEnded`)
 
@@ -177,7 +181,8 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   Planning's (kangentic-mobile #119). So an adapter can report the session's mode on its events, as
   the boolean `SessionEvent.planMode` that the `extractPlanMode` directive sets. Claude's
   `UserPromptSubmit` and `Stop` hooks carry `permission_mode`. A payload that carries `agent_id`
-  fired inside a subagent, which can run in its own mode, so it reports nothing. `SessionTelemetry`
+  fired inside a subagent, which can run in its own mode, so it reports nothing. Grok's carry
+  `permissionMode`, and a subagent's carries `subagentType` (built from Grok's docs). Antigravity's hooks carry no mode: its status line's `cycle_mode` reaches the same field through `statusFile.parseStatusEvents`, which raises a log-only `config_change` with `planMode` when plan-ness changes (built from its status line docs). `SessionTelemetry`
   keeps each session's changes in a `PlanModeTrail` (`plan-mode-trail.ts`), stamped with the app's
   clock at ingest rather than `event.ts`, which is the agent host's.
   `SessionManager.hadLeftPlanModeBy(sessionId, atMs)` is true when the session reported plan mode
@@ -192,8 +197,7 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   work since. The turn-end runner and the workflow step ask it before acting on a check's answer, so
   a turn the user began meanwhile stops them even after it failed or was interrupted back to idle
   with no turn end of its own. It is not `turnStartedAt` because `forceThinking` re-stamps that: a
-  PTY-tracked agent's trailing paint after its turn end (Kimi's tracker is never suppressed) would
-  read as a new turn every time. Only an agent's own hook or wire events move the serial.
+  PTY-tracked agent's trailing paint after its turn end would read as a new turn every time. Only an agent's own hook or wire events move the serial.
 - **`onTurnStarted(sessionId, turnStartedAt, cause)`** fires at each of the three stamps, with its
   `TurnStartCause` (`'seed'`, `'idle'` or `'plan-approval'`). `SessionManager` uses it to key the turn's
   `transcriptAnchor`, the transcript byte offset the turn end's reply is read from. The anchor is
@@ -205,8 +209,9 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   transcript instead. See
   [Automation triggers](../automations/triggers.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
-  Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode and Kimi (whose
-  wire protocol emits `TurnEnd`); false for agents whose only signal is
+  Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode, Goose (its Stop
+  hook), Kimi (whose wire protocol emits `turn.ended`) and Cursor (its `stop` hook on a session screen,
+  its stream-json `result` event on a print run); false for agents whose only signal is
   terminal silence, where a quiet compile and a finished turn look the same.
 - Pinned by `tests/unit/activity-engine-turn-ended.test.ts` and two replay fixtures:
   `session-030-code-review-background-subagents` (#529's pass #76: 12 Stops, 3 turn ends, because

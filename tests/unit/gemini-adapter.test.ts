@@ -463,14 +463,17 @@ describe('GeminiAdapter - getInjectionSequence', () => {
     adapter = new GeminiAdapter();
   });
 
-  it('emits /model <name> when modelChanged is true', () => {
+  it('emits /model set <name> when modelChanged is true', () => {
+    // A bare `/model <name>` opens Gemini's model dialog and ignores the name
+    // (modelCommand.ts at v0.66.0); `set` switches it. No `--persist`, so the
+    // user's saved default is left alone.
     const sequence = adapter.getInjectionSequence({
       model: 'gemini-2.5-pro',
       modelChanged: true,
       effort: null,
       effortChanged: false,
     });
-    expect(sequence).toEqual(['/model gemini-2.5-pro']);
+    expect(sequence).toEqual(['/model set gemini-2.5-pro']);
   });
 
   it('returns empty array when only effortChanged (Gemini has no effort concept)', () => {
@@ -490,7 +493,7 @@ describe('GeminiAdapter - getInjectionSequence', () => {
       effort: 'high',
       effortChanged: true,
     });
-    expect(sequence).toEqual(['/model gemini-2.0-flash']);
+    expect(sequence).toEqual(['/model set gemini-2.0-flash']);
   });
 
   it('returns empty array when neither field changed', () => {

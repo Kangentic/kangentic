@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import which from 'which';
 
 // Mock os.homedir() to redirect ~/.gemini/antigravity-cli/* to a temp dir.
 let tmpHome: string;
@@ -46,6 +47,7 @@ import {
   type AntigravityHooksFile,
 } from '../../src/main/agent/adapters/antigravity/hook-manager';
 import { migrateAntigravityProjectData } from '../../src/main/agent/adapters/antigravity/project-relocation';
+import { transformHookEvent, hookReplyFrom } from '../../src/main/agent/event-bridge';
 import { normalizeForCompare } from '../../src/main/agent/adapters/antigravity/trust-manager';
 
 let tmpRoot: string;
@@ -91,9 +93,10 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('buildHooks', () => {
-  it('wires PreInvocation, PostToolUse, Stop and the question PreToolUse, but never PostInvocation', () => {
+  it('wires SessionStart, PreInvocation, PreToolUse, PostToolUse and Stop, but never PostInvocation', () => {
     const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
     const entry = merged[KANGENTIC_HOOK_NAME];
+    expect(entry.SessionStart).toHaveLength(1);
     expect(entry.PreInvocation).toHaveLength(1);
     expect(entry.PostToolUse).toHaveLength(1);
     expect(entry.Stop).toHaveLength(1);
@@ -101,29 +104,53 @@ describe('buildHooks', () => {
     expect(entry.PostInvocation).toBeUndefined();
   });
 
-  it('hooks PreToolUse for ask_question alone, and always answers allow (#452)', () => {
-    // A reply with no `decision` is a DENY to agy (observed: `{}` put the model
-    // in a tool-denied retry loop), so the entry must carry the allow reply, and
-    // matching any other tool would put every call through it.
+  it('maps SessionStart to session_start with no directive (the bridge captures its payload itself)', () => {
     const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {})[KANGENTIC_HOOK_NAME];
-    expect(entry.PreToolUse!.map((group) => group.matcher)).toEqual([AGY_QUESTION_TOOL]);
+    expect(entry.SessionStart![0].command).toBe('node ../bridge.cjs ../.kangentic/events.jsonl session_start');
+  });
+
+  it('starts every tool on PreToolUse, waits only on ask_question, and always answers allow (#452)', () => {
+    // A reply with no `decision` is a DENY to agy (observed: `{}` put the model
+    // in a tool-denied retry loop), so the every-tool entry must carry the allow
+    // reply. The bridge runs (and the reply) are pinned against agy 1.3.4's
+    // captured payloads in event-bridge-wait-kind.test.ts.
+    const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse!.map((group) => group.matcher)).toEqual(['*']);
     const command = entry.PreToolUse![0].hooks[0].command;
     expect(command).toContain(' tool_start ');
     expect(command).toContain('appendPermissionWaitForTool:');
     expect(command).toContain('replyJson:');
+    const waitToken = command.split(' ').find((token) => token.startsWith('appendPermissionWaitForTool:'))!;
+    const wait = JSON.parse(Buffer.from(waitToken.slice(waitToken.indexOf(':') + 1), 'base64').toString('utf8')) as { tool: string };
+    expect(wait.tool).toBe(AGY_QUESTION_TOOL);
   });
 
-  it('wires no question PreToolUse for a WSL agy, whose hook transport carries no reply', () => {
+  it('starts a run_command call with its command line as the detail, through the real bridge transform', () => {
+    // agy 1.3.4's captured PreToolUse stdin for a run_command call.
+    const payload = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'antigravity-hooks', 'agy-1.3.4-pre-tool-use-run-command.json'), 'utf-8');
+    const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    const directives = entry.PreToolUse![0].hooks[0].command.split(' ').slice(4);
+    const lines = transformHookEvent({ eventType: 'tool_start', directives, input: payload, now: 1, logError: () => undefined })
+      .map((line: string) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toEqual([
+      expect.objectContaining({ type: 'tool_start', tool: 'run_command', detail: 'echo kangentic-probe > agy-probe.txt' }),
+    ]);
+    expect(hookReplyFrom(directives)).toBe('{"decision":"allow"}');
+  });
+
+  it('wires no PreToolUse for a WSL agy, whose hook transport carries no reply, but keeps SessionStart', () => {
     const eventCommand = (eventType: string, ...directives: string[]): string => ['sh', 'hook.sh', 'event', eventType, ...directives].join(' ');
     const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {}, eventCommand)[KANGENTIC_HOOK_NAME];
     expect(entry.PreToolUse).toBeUndefined();
     expect(entry.Stop).toHaveLength(1);
+    expect(entry.SessionStart![0].command).toBe('sh hook.sh event session_start');
   });
 
   it('emits unquoted, space-free command tokens (agy keeps quote chars literal)', () => {
     const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
     const entry = merged[KANGENTIC_HOOK_NAME];
     const commands = [
+      entry.SessionStart![0].command,
       entry.PreInvocation![0].command,
       entry.PreToolUse![0].hooks[0].command,
       entry.PostToolUse![0].hooks[0].command,
@@ -189,10 +216,72 @@ describe('buildHooks', () => {
       fields: ['TargetFile', 'CommandLine', 'DirectoryPath', 'AbsolutePath', 'Query'],
     });
 
+    // PreToolUse reads the same tool name and detail as PostToolUse.
+    const preToolUseTokens = entry.PreToolUse![0].hooks[0].command.split(' ');
+    expect(decodeDirective(preToolUseTokens[4])).toEqual(decodedToolPath);
+    expect(decodeDirective(preToolUseTokens[5])).toEqual(decodedDetailPath);
+
     const preInvocationTokens = entry.PreInvocation![0].command.split(' ');
     const decodedCapture = decodeDirective(preInvocationTokens[4]);
     expect(decodedCapture.kind).toBe('captureHookContext');
     expect(decodedCapture.payload).toEqual({});
+  });
+});
+
+describe('buildHooks with no node to run the PreToolUse hook', () => {
+  // agy denies a tool whose PreToolUse handler never answers, so a machine with
+  // no node would have every tool denied. The lookup keeps a hit for the
+  // process, so each case loads hook-manager afresh.
+  async function freshHookManager(): Promise<typeof import('../../src/main/agent/adapters/antigravity/hook-manager')> {
+    vi.resetModules();
+    return import('../../src/main/agent/adapters/antigravity/hook-manager');
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('leaves PreToolUse out, warns, and keeps the hooks whose failure harms nothing', async () => {
+    vi.spyOn(which, 'sync').mockReturnValue(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const entry = hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse).toBeUndefined();
+    expect(entry.SessionStart).toHaveLength(1);
+    expect(entry.PreInvocation).toHaveLength(1);
+    expect(entry.PostToolUse).toHaveLength(1);
+    expect(entry.Stop).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('No node on PATH'));
+  });
+
+  it('keeps the every-tool entry, with no warning, when node resolves', async () => {
+    vi.spyOn(which, 'sync').mockReturnValue('/usr/bin/node');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const entry = hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse?.map((group) => group.matcher)).toEqual(['*']);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('asks again after a miss, so a node installed later counts, and keeps a hit', async () => {
+    const nodeLookup = vi.spyOn(which, 'sync').mockReturnValueOnce(null).mockReturnValueOnce('/usr/bin/node');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    const build = () => hookManager.buildHooks('../bridge.cjs', '../events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(build().PreToolUse).toBeUndefined();
+    expect(build().PreToolUse).toHaveLength(1);
+    expect(build().PreToolUse).toHaveLength(1);
+    expect(nodeLookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('never asks about node for an agy in a WSL distro, which runs no node hook', async () => {
+    const nodeLookup = vi.spyOn(which, 'sync').mockReturnValue(null);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookManager = await freshHookManager();
+    hookManager.buildHooks('script', 'script', {}, (eventType) => `transport ${eventType}`);
+    expect(nodeLookup).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 
@@ -234,6 +323,23 @@ describe('filterOurHooks', () => {
       },
     };
     expect(filterOurHooks(root)).toEqual({});
+  });
+
+  it('strips a Kangentic SessionStart handler from a user entry and keeps the user\'s own', () => {
+    const root: AntigravityHooksFile = {
+      mine: {
+        SessionStart: [
+          { type: 'command', command: './init-env.sh' },
+          { type: 'command', command: 'node event-bridge.cjs ../.kangentic/e.jsonl session_start' },
+        ],
+      },
+      allOurs: {
+        SessionStart: [{ type: 'command', command: 'node event-bridge.cjs ../.kangentic/e.jsonl session_start' }],
+      },
+    };
+    const kept = filterOurHooks(root);
+    expect(Object.keys(kept)).toEqual(['mine']);
+    expect(kept.mine.SessionStart).toEqual([{ type: 'command', command: './init-env.sh' }]);
   });
 
   it('leaves a handler-less user entry untouched (nothing to fingerprint)', () => {

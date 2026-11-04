@@ -144,11 +144,12 @@ export interface SubagentSpawnLink {
  * transcript's mtime and size do not move while a subagent runs: the subagent
  * side needs its own signature or a fan-out's turns are never seen as stale.
  *
- * Shaped around a per-SESSION directory, which is a Claude fact rather than a
- * general one: Codex writes each thread's rollout into a date directory and
- * Gemini writes every session, main and subagent alike, into one per-project
- * `chats/` directory. Signing either would invalidate on any unrelated session's
- * change. Widening this is part of adding a second agent, not a detail of it.
+ * Shaped around a per-SESSION directory. Claude has one, and so does Gemini
+ * CLI (0.66.0 nests a subagent's chat under its parent's id,
+ * `chats/<parent id>/<subagent id>.jsonl`). Codex does not: it writes each
+ * thread's rollout into a date directory, and signing that would invalidate on
+ * any unrelated session's change. Widening this is part of adding such an
+ * agent, not a detail of it.
  */
 export interface SubagentTranscriptSignature {
   fileCount: number;
@@ -477,6 +478,25 @@ export interface AgentAdapter {
    * each adapter's real resume command and holds this value to what it does.
    */
   readonly resumePromptDelivery: 'command-line' | 'typed' | 'no-resume';
+
+  /**
+   * How a FRESH session's first prompt reaches this agent.
+   *
+   * - `'command-line'` (the default when omitted): the launch command carries
+   *   it, so the builder must pass `options.prompt` on a fresh spawn.
+   * - `'typed'`: the CLI's interactive session takes no starting prompt (Kimi
+   *   Code 2.x rejects a positional argument, and its `-p` runs one prompt and
+   *   exits). The engine keeps the prompt off the command line and hands it
+   *   back (`SpawnOutcome.typedOpening`), and the caller types it in once the
+   *   agent is ready, ahead of anything else it sends, as for an agent adopted
+   *   from a worktree's setup script. Startup recovery types nothing, so it
+   *   opens such an agent with no recap, and a workflow's agent cannot be one
+   *   (`canBeWorkflowAgent`).
+   *
+   * `tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's
+   * real fresh command with a marked prompt and holds this value to it.
+   */
+  readonly freshPromptDelivery?: 'command-line' | 'typed';
 
   /**
    * Whether a FRESH launch with no prompt opens the agent's interactive input,
@@ -879,7 +899,7 @@ export interface AgentAdapter {
    * Locate the agent's native session history file on disk for a given
    * session ID and working directory. Returns an absolute path to the
    * file (e.g. Claude's JSONL, Codex's rollout JSONL, Gemini's chat JSON),
-   * or null if the agent has no session history files (Aider) or the file
+   * or null if the agent has no session history files (Ollama) or the file
    * cannot be found.
    *
    * `place`, here and on every transcript method below, is where the session's
@@ -1005,8 +1025,8 @@ export interface AgentAdapter {
    * A single parse method (rather than a locate+parse pair) is used because
    * some agents (OpenCode) read from a shared SQLite database keyed by
    * session id, not a per-session file. Adapters whose native history cannot
-   * be parsed into a conversation (Aider's cumulative markdown, agents whose
-   * history location is unknown) omit this; `get_transcript` then reports that
+   * be parsed into a conversation (agents whose history location is unknown)
+   * omit this; `get_transcript` then reports that
    * the structured format is unsupported and points at `format: "raw"`.
    */
   parseTranscript?(
@@ -1185,7 +1205,7 @@ export interface AgentAdapter {
    * else locate the file from `agentSessionId` + `cwd`. Must NOT throw on a
    * missing/partial transcript: return null so the caller falls back to the
    * live snapshot. Implemented only by adapters whose CLI writes a parseable,
-   * append-across-resume transcript (Claude today).
+   * append-across-resume transcript (Claude, Grok and Aider today).
    */
   transcriptUsage?(input: {
     transcriptPath?: string | null;
@@ -1277,7 +1297,7 @@ export interface AgentAdapter {
    *   - 'command-injection': returns a JSONL-polling verifier that exact-matches
    *     the slash command in the session transcript.
    *
-   * Example (Codex, Copilot, OpenCode, Qwen, Kimi, Aider):
+   * Example (Codex, Copilot, OpenCode, Qwen, Aider):
    *   - 'paste': returns null, same reasoning as Claude.
    *   - 'command-injection': returns a verifier that exact-matches the
    *     SUBMITTED TEXT in that agent's own history, rather than Claude's
@@ -1392,9 +1412,10 @@ export interface AgentAdapter {
    *
    * Two adapters declare `false`, for different reasons:
    *
-   *   - Aider has NO session id at all (no `sessionIdCapture` in its runtime),
-   *     because it keeps a single `.aider.chat.history.md` per project
-   *     directory. `cwd` alone identifies its history.
+   *   - Aider has no session id of its own. A task session's history is the
+   *     file its caller-owned id names, but a session with no id (a Command
+   *     Terminal) writes Aider's shared `.aider.chat.history.md`, which `cwd`
+   *     alone identifies.
    *   - Copilot HAS a session id, but its prompt history is a single GLOBAL
    *     `~/.copilot/command-history-state.json` covering every session and
    *     project, so neither the id nor `cwd` helps locate it.
@@ -1526,8 +1547,9 @@ export interface AgentAdapter {
    * `--print` (or equivalent) mode to turn a free-form description into a short
    * task title. Used by the task title suggestion and the Command Terminal
    * namer, both of which run it on the Automation agent. Adapters that lack a
-   * non-interactive print mode (Aider) omit this; the renderer hides the "Name
-   * from prompt" affordances unless the Automation agent has it.
+   * non-interactive print mode (Warp), or whose run has not been measured to
+   * title cleanly (Aider), omit this; the renderer hides the "Name from prompt"
+   * affordances unless the Automation agent has it.
    *
    * `cwd` is the shared answer home (`answer-run-directory.ts`), never the
    * project: a title needs nothing from the repository, and a project root

@@ -3,13 +3,16 @@ import * as path from 'node:path';
 import { replacePathPrefix } from '../../../../shared/paths';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
 import { copilotHomeDir } from './copilot-home';
+import { kangenticConfigHomes, projectSessionsDir, sessionStateRoot } from './session-state';
 
 /**
  * Migrate GitHub Copilot CLI's per-session working directory when a Kangentic
  * project is relocated.
  *
- * Copilot persists each session under `~/.copilot/session-state/<uuid>/` with a
- * `workspace.yaml` recording `cwd` and `git_root`. `copilot --session-id <id>`
+ * Copilot persists each session under a config home's `session-state/<uuid>/`
+ * (the user's `~/.copilot`, and each Kangentic session's own `copilot-config`,
+ * see `sessionStateRoots`) with a `workspace.yaml` recording `cwd` and
+ * `git_root`. `copilot --session-id <id>`
  * (and `--resume <id>`) still attaches by id after a move, but v1.0.52+ restores the session in its
  * SAVED working directory, so a stale `cwd` makes resume reopen a dead path.
  * Rewriting the `cwd` / `git_root` lines in each affected `workspace.yaml`
@@ -26,23 +29,38 @@ export async function migrateCopilotProjectData(oldProjectPath: string, newProje
   const oldResolved = path.resolve(oldProjectPath);
   const newResolved = path.resolve(newProjectPath);
 
-  const sessionStateRoot = path.join(copilotHomeDir(), 'session-state');
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(sessionStateRoot, { withFileTypes: true });
-  } catch {
-    return; // No session-state directory: nothing to migrate.
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const workspaceYaml = path.join(sessionStateRoot, entry.name, 'workspace.yaml');
+  for (const stateRoot of sessionStateRoots(newResolved)) {
+    let entries: fs.Dirent[];
     try {
-      rewriteWorkspaceYaml(workspaceYaml, oldResolved, newResolved);
-    } catch (err) {
-      console.warn(`[COPILOT_RELOCATE] Failed to migrate ${workspaceYaml}:`, err);
+      entries = fs.readdirSync(stateRoot, { withFileTypes: true });
+    } catch {
+      continue; // No session-state directory here: nothing to migrate.
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const workspaceYaml = path.join(stateRoot, entry.name, 'workspace.yaml');
+      try {
+        rewriteWorkspaceYaml(workspaceYaml, oldResolved, newResolved);
+      } catch (error) {
+        console.warn(`[COPILOT_RELOCATE] Failed to migrate ${workspaceYaml}:`, error);
+      }
     }
   }
+}
+
+/**
+ * Every `session-state/` a session of this project may be in: the user's own
+ * Copilot home, and the config home of each Kangentic session of the project.
+ * Kangentic passes every session its own home
+ * (`.kangentic/sessions/<record>/copilot-config`), and GitHub's config
+ * directory reference says that home replaces `~/.copilot` whole, session
+ * state included, so the user's home alone held none of Kangentic's sessions.
+ * The project's `.kangentic/` has already moved with it, so its new path is
+ * read.
+ */
+function sessionStateRoots(newResolved: string): string[] {
+  return [copilotHomeDir(), ...kangenticConfigHomes(projectSessionsDir(newResolved))].map(sessionStateRoot);
 }
 
 // `cwd: <value>` / `git_root: <value>` scalar lines, capturing indent, key,

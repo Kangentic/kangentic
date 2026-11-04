@@ -15,6 +15,7 @@ import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
 import { AntigravityAdapter } from '../../src/main/agent/adapters/antigravity/antigravity-adapter';
+import { GooseAdapter } from '../../src/main/agent/adapters/goose/goose-adapter';
 
 describe('scopesTranscriptReadsByTime on the real adapters', () => {
   // Reverting `readonly scopesTranscriptReadsByTime = true;` in
@@ -32,6 +33,50 @@ describe('scopesTranscriptReadsByTime on the real adapters', () => {
     expect(adapter, 'claude_agent must resolve to a registered adapter').toBeDefined();
     expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
     expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+  });
+
+  // Every Goose message row carries created_timestamp, and its tool counts and
+  // result tokens read only [sinceMs, untilMs), so a resumed session's earlier
+  // runs are not counted onto the latest run's record.
+  it('GooseAdapter declares true, a real boolean and not merely a truthy value', () => {
+    expect(new GooseAdapter().scopesTranscriptReadsByTime).toBe(true);
+  });
+
+  it('the registered Goose adapter carries it, and the earlier-run fill can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('goose_agent');
+    expect(adapter, 'goose_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+  });
+
+  // Qwen's cursor filters calls by each record's timestamp, as Claude's does
+  // (qwen-code/transcript-metrics.ts), and a `--resume` appends to one file.
+  it('the registered Qwen adapter declares true, with the token reader the earlier-run fill needs', () => {
+    const adapter = agentRegistry.getBySessionType('qwen_agent');
+    expect(adapter, 'qwen_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
+  });
+
+  // Gemini appends every --resume to one chat file too, and its cursor
+  // (gemini/transcript-usage.ts) filters calls by their own timestamps.
+  it('the registered Gemini adapter declares it and can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('gemini_agent');
+    expect(adapter, 'gemini_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
+  });
+
+  // Codex appends every resume to the same rollout, and its counts and result
+  // tokens filter calls by each line's timestamp (codex/transcript-usage.ts).
+  it('the registered Codex adapter declares it, and the earlier-run fill can reach its token reader', () => {
+    const adapter = agentRegistry.getBySessionType('codex_agent');
+    expect(adapter, 'codex_agent must resolve to a registered adapter').toBeDefined();
+    expect(adapter?.scopesTranscriptReadsByTime).toBe(true);
+    expect(typeof adapter?.transcriptToolResultTokens).toBe('function');
+    expect(typeof adapter?.transcriptToolCounts).toBe('function');
   });
 
   // Grok and Antigravity count tool calls over the whole transcript and ignore

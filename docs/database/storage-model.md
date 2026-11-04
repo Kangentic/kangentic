@@ -242,12 +242,16 @@ there is no background reclaim.
 New projects are seeded with 7 default swimlanes:
 
 1. **To Do** (role: `todo`)
-2. **Planning**
+2. **Planning** (`permission_mode = 'plan'`, `plan_exit_target_id` = Executing)
 3. **Executing**
 4. **Code Review**
 5. **Testing**
 6. **Merge**
 7. **Done** (role: `done`, seeded `is_archived = 1`)
+
+Planning through Merge are seeded `auto_spawn = 1`, so a task moved into any of them starts an
+agent; To Do and Done are seeded `auto_spawn = 0`. Every lane seeds `auto_command` as null and no
+automations (`DEFAULT_SWIMLANES` in `src/main/db/migrations/default-data.ts`).
 
 Done is the one lane seeded archived, and that is structural rather than a user choice: the board
 renders it as the collapsed `DoneSwimlane` instead of a normal column, and `apply-config.ts` forces

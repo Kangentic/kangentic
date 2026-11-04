@@ -26,6 +26,7 @@ vi.mock('../../src/main/agent/shared/bridge-utils', () => ({
 }));
 
 import { buildHooks } from '../../src/main/agent/adapters/copilot';
+import type { CopilotSessionHookOptions } from '../../src/main/agent/adapters/copilot/hook-manager';
 import { AgentTool } from '../../src/shared/types';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
@@ -46,10 +47,16 @@ afterEach(() => {
  * Run the bridge exactly as Copilot's hook for `event` would: same event type,
  * same directives, with `payload` on stdin. Returns the event it wrote.
  */
-function runCopilotHook(event: string, payload: Record<string, unknown>): Record<string, unknown> {
+function runCopilotHook(
+  event: string,
+  payload: Record<string, unknown>,
+  hookOptions: CopilotSessionHookOptions = {},
+): Record<string, unknown> {
   // `node "<bridge>" "<events>" <eventType> <directive>...`; the mock paths
   // carry no spaces, so token 3 is the event type and the rest are directives.
-  const tokens = buildHooks('/mock/.kangentic/events.jsonl')[event][0].command.split(' ');
+  const tokens = buildHooks('/mock/.kangentic/events.jsonl', hookOptions)[event][0].command.split(' ');
+  // One event per call, so a test may run several hooks in a row.
+  fs.rmSync(outputFile, { force: true });
   execFileSync(process.execPath, [BRIDGE, outputFile, tokens[3], ...tokens.slice(4)], {
     input: JSON.stringify(payload),
     timeout: 5000,
@@ -138,6 +145,105 @@ describe('Copilot hooks through the real event bridge (1.0.97 payload shapes)', 
       toolResult: { resultType: 'success', textResultForLlm: 'Plan approved! Exited plan mode.' },
     });
     expect(emitted).toMatchObject({ type: 'tool_end', tool: 'create' });
+  });
+});
+
+/**
+ * Payloads shaped from GitHub's hooks reference
+ * (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference,
+ * camelCase inputs), not captured from a running CLI.
+ */
+describe('Copilot hooks through the real event bridge (hooks reference shapes)', () => {
+  it('postToolUseFailure ends the failed call', () => {
+    const emitted = runCopilotHook('postToolUseFailure', {
+      ...SESSION_FIELDS,
+      toolName: 'powershell',
+      toolArgs: { command: 'npm run missing' },
+      error: { message: 'Command failed with exit code 1' },
+    });
+    expect(emitted).toMatchObject({ type: 'tool_end', tool: 'powershell' });
+    expect(emitted.detail).toBeUndefined();
+  });
+
+  it('a tool inside a subagent carries the subagent id', () => {
+    const emitted = runCopilotHook('preToolUse', {
+      ...SESSION_FIELDS,
+      toolName: 'view',
+      toolArgs: { path: 'README.md' },
+      agentId: 'agent-7',
+      agentType: 'explore',
+      parentAgentId: 'root',
+    });
+    expect(emitted).toMatchObject({ type: 'tool_start', tool: 'view', subagentId: 'agent-7' });
+  });
+
+  it.each(['postToolUse', 'postToolUseFailure'])('%s inside a subagent carries the subagent id', (event) => {
+    const emitted = runCopilotHook(event, {
+      ...SESSION_FIELDS,
+      toolName: 'view',
+      toolArgs: { path: 'README.md' },
+      agentId: 'agent-7',
+      agentType: 'explore',
+      parentAgentId: 'root',
+    });
+    expect(emitted).toMatchObject({ type: 'tool_end', tool: 'view', subagentId: 'agent-7' });
+  });
+
+  it('puts the prompt text on the Prompt event alone when the session asks for it', () => {
+    const payload = { ...SESSION_FIELDS, prompt: 'Add a README', source: 'startup', toolName: 'view', toolArgs: {} };
+    const options = { capturePromptText: true };
+    expect(runCopilotHook('userPromptSubmitted', payload, options)).toMatchObject({ type: 'prompt', detail: 'Add a README' });
+
+    const sessionStarted = runCopilotHook('sessionStart', payload, options);
+    expect(sessionStarted).toMatchObject({ type: 'session_start', detail: 'startup' });
+
+    const toolStarted = runCopilotHook('preToolUse', payload, options);
+    expect(toolStarted).toMatchObject({ type: 'tool_start', tool: 'view' });
+    expect(toolStarted.detail).toBeUndefined();
+  });
+
+  it('userPromptSubmitted starts the turn without the prompt text', () => {
+    const emitted = runCopilotHook('userPromptSubmitted', { ...SESSION_FIELDS, prompt: 'Add a README' });
+    expect(emitted).toMatchObject({ type: 'prompt' });
+    expect(emitted.detail).toBeUndefined();
+  });
+
+  it('userPromptSubmitted carries the prompt text when the session asks for it', () => {
+    expect(runCopilotHook('userPromptSubmitted', { ...SESSION_FIELDS, prompt: 'Add a README' }, { capturePromptText: true }))
+      .toMatchObject({ type: 'prompt', detail: 'Add a README' });
+  });
+
+  it('sessionStart reports its source', () => {
+    expect(runCopilotHook('sessionStart', { ...SESSION_FIELDS, source: 'resume' }))
+      .toMatchObject({ type: 'session_start', detail: 'resume' });
+  });
+
+  it('sessionEnd reports its reason', () => {
+    expect(runCopilotHook('sessionEnd', { ...SESSION_FIELDS, reason: 'user_exit' }))
+      .toMatchObject({ type: 'session_end', detail: 'user_exit' });
+  });
+
+  it('subagentStart names the subagent with no id', () => {
+    const started = runCopilotHook('subagentStart', {
+      ...SESSION_FIELDS,
+      transcriptPath: '/mock/events.jsonl',
+      agentName: 'explore',
+      agentDisplayName: 'Explore',
+    });
+    expect(started).toMatchObject({ type: 'subagent_start', detail: 'explore' });
+    expect(started.subagentId).toBeUndefined();
+  });
+
+  it('subagentStop names the subagent and carries its id', () => {
+    expect(runCopilotHook('subagentStop', {
+      ...SESSION_FIELDS,
+      transcriptPath: '/mock/events.jsonl',
+      agentId: 'agent-7',
+      agentType: 'explore',
+      agentName: 'explore',
+      response: 'Found it.',
+      stopReason: 'end_turn',
+    })).toMatchObject({ type: 'subagent_stop', detail: 'explore', subagentId: 'agent-7' });
   });
 });
 

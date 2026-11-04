@@ -227,8 +227,9 @@ cheaper model can be enough. Measured on Claude, Haiku 5.5 at `low` answered a c
 question and a "most expensive" question right in every run, as Sonnet did. It was a second faster
 and cost about a twentieth as much. It also invents more in task summaries (below), and the one
 model does both jobs. Every agent that has a headless read-only mode can answer; Warp
-cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
-at `low`, which answers fastest. A higher level is worth trying on a question that counts or
+cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels for the chosen model, and starts
+at `low`, which answers fastest. Ollama's starts unset, because a thinking level fails the run on a
+model that cannot think. A higher level is worth trying on a question that counts or
 compares across many tasks and comes back wrong. In one measurement Claude's `max` got right a
 count that `low` got wrong, at about ten times the wait. A later replay through the app's own Ask
 call got it right at every level, so `low` is the place to start. Effort is for answers only: summaries always write at the recommended level, where a higher

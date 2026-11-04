@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowUp, ArrowDown, Loader2, Clock, Calendar, Wrench, Hourglass, ChevronDown, Gauge } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { i18n } from '@lingui/core';
@@ -9,7 +9,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/progress-color';
-import { liveRateLimitWindows, rateLimitWindowsShortestFirst, windowElapsedPercentage } from '../../utils/rate-limit-window';
+import { liveRateLimitWindows, rateLimitWindowsForAgent, rateLimitWindowsShortestFirst, sessionRateLimitAgent, windowElapsedPercentage } from '../../utils/rate-limit-window';
 import { formatTokenCount, isContextWindowKnown, isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatMonthDayTime, formatTimeAgo } from '../../lib/datetime';
@@ -287,6 +287,12 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   // branches below.
   const task = useBoardStore((s) => s.tasks.find((t) => t.id === session?.taskId));
   const taskAgent = task?.agent ?? agentFallback;
+  // The shared snapshot holds every agent's windows; this agent draws its own.
+  const rateLimitAgent = sessionRateLimitAgent(usage?.rateLimits, taskAgent);
+  const agentRateLimits = useMemo(
+    () => (latestRateLimits ? rateLimitWindowsForAgent(latestRateLimits.rateLimits, rateLimitAgent) : []),
+    [latestRateLimits, rateLimitAgent],
+  );
   // The agent's own list entry - not agentDisplayName's separate hardcoded map - so the
   // version pill can never name one agent while showing another's version number.
   const taskAgentDisplayName = useConfigStore(
@@ -470,7 +476,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   // its own. When no session anywhere has reported yet (`latestRateLimits` null) the
   // pill stays hidden. Agents with no rate-limit telemetry never show it.
   const showRateLimits = agentReportsRateLimits
-    && !!latestRateLimits && latestRateLimits.rateLimits.length > 0
+    && !!latestRateLimits && agentRateLimits.length > 0
     && contextBarConfig.showRateLimits;
   const taskAgentVersionNumber = parseAgentVersion(taskAgentVersion);
   // Raw, as the pill and its name have always printed it.
@@ -510,7 +516,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
     ),
     'rate-limits': showRateLimits && latestRateLimits && (
       <RateLimitsPill
-        rateLimits={latestRateLimits.rateLimits}
+        rateLimits={agentRateLimits}
         capturedAt={latestRateLimits.capturedAt}
         sessionId={sessionId}
       />
@@ -673,7 +679,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       )}
       {showRateLimits && latestRateLimits && (
         <RateLimitsPill
-          rateLimits={latestRateLimits.rateLimits}
+          rateLimits={agentRateLimits}
           capturedAt={latestRateLimits.capturedAt}
           sessionId={sessionId}
           rowFold={{ className: foldClass('rate-limits'), attributes: foldAttributes('rate-limits') }}

@@ -81,12 +81,16 @@ describe('an Aider on a remote host', () => {
     expect(fs.existsSync(wslHookPaths(sessionDirectory()).script)).toBe(true);
   });
 
-  it('starts fresh each time and restores the chat history by the host\'s own file when resumed', () => {
+  it('keeps the conversation in a history file named by the session, by its path on the host, and restores it when resumed', () => {
     const adapter = new AiderAdapter();
+    const historyOnHost = `${workspace.hostProject}/.aider.chat.history.aider-session-7.md`;
 
-    expect(adapter.supportsCallerSessionId).toBe(false);
-    expect(build(adapter, { resume: true, prompt: undefined })).toContain('--restore-chat-history');
-    expect(build(adapter, { prompt: undefined })).not.toContain('--restore-chat-history');
+    expect(adapter.supportsCallerSessionId).toBe(true);
+    const resumed = build(adapter, { resume: true, sessionId: 'aider-session-7', prompt: undefined });
+    expect(resumed).toContain(`--chat-history-file ${quoteArg(historyOnHost, SHELL)}`);
+    expect(resumed).toContain('--restore-chat-history');
+    expect(resumed).not.toContain(toForwardSlash(workspace.projectFolder));
+    expect(build(adapter, { sessionId: 'aider-session-7', prompt: undefined })).not.toContain('--restore-chat-history');
   });
 
   it('finds no chat history in this computer\'s shell folder, and the verifier answers no without throwing', async () => {

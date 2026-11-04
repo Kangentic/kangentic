@@ -55,6 +55,21 @@ describe('Aider in a WSL distro', () => {
     expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
   });
 
+  it("hands the session's history file to the distro by the path it sees", () => {
+    // The parity test passes no session id, so it never sees this path.
+    const command = new AiderAdapter().buildCommand({
+      agentPath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\aider',
+      taskId: 'task-1',
+      cwd: 'C:\\Users\\dev\\project',
+      sessionId: '3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00',
+      permissionMode: 'default',
+      shell: 'wsl -d Ubuntu',
+      cliTarget: TARGET,
+    });
+    expect(command).toContain('--chat-history-file /mnt/c/Users/dev/project/.aider.chat.history.3f1c2b7e-1d2a-4c55-9a7e-0b5e1c9d8f00.md');
+    expect(command).not.toMatch(/[A-Za-z]:[\\/]/);
+  });
+
   it('keeps the node bridge command on this machine', () => {
     const sessionDirectory = makeSessionDirectory();
     const command = new AiderAdapter().buildCommand({

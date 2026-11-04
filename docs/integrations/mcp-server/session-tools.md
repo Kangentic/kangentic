@@ -32,7 +32,7 @@ A resume is a new record that reports the conversation's running total, so each 
 
 ## kangentic_get_session_history
 
-Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSON) from the most recent session. Large files are truncated to the most recent portion.
+Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSONL, or its legacy `.json`) from the most recent session. Large files are truncated to the most recent portion.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -60,7 +60,7 @@ Structured output is shaped by three agent-agnostic levers, applied to the parse
 - `search`: case-insensitive substring; return only entries whose content (including a tool result inlined under its owning tool call) contains the term.
 - `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_search` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.
 
-A very large transcript is bounded twice, at two different layers, and the two notices mean different things. The parser reads at most `MAX_PARSE_SOURCE_BYTES` (16MB) from the END of the native history file, because reading an unbounded one whole is what OOM'd the main process; when it does, the omission is announced in-band as a `system` entry with subtype `truncated` ("Earlier N MB of this conversation are not shown"). That is a READ bound and it is the same for every caller. The `maxChars` budget below is a separate RESPONSE bound applied afterwards. A single huge transcript can carry both notices at once. `kangentic_search`'s conversation index is unaffected for Claude, whose adapter implements `parseTranscriptWindow` and walks the whole file in bounded windows. For every other agent the indexer falls back to `parseTranscript`, so above `MAX_PARSE_SOURCE_BYTES` search coverage is bounded at the same point the reader's is, not the full history.
+A very large transcript is bounded twice, at two different layers, and the two notices mean different things. The parser reads at most `MAX_PARSE_SOURCE_BYTES` (16MB) from the END of the native history file, because reading an unbounded one whole is what OOM'd the main process; when it does, the omission is announced in-band as a `system` entry with subtype `truncated` ("Earlier N MB of this conversation are not shown"). That is a READ bound and it is the same for every caller. The `maxChars` budget below is a separate RESPONSE bound applied afterwards. A single huge transcript can carry both notices at once. `kangentic_search`'s conversation index is unaffected for Claude and Gemini, whose adapters implement `parseTranscriptWindow` and walk the whole file in bounded windows. For every other agent the indexer falls back to `parseTranscript`, so above `MAX_PARSE_SOURCE_BYTES` search coverage is bounded at the same point the reader's is, not the full history.
 
 Output is bounded by a character budget (default ~50,000 chars; raise via `maxChars`, hard ceiling 500,000). When the result exceeds the budget it keeps the **most recent** entries and prepends a `[Truncated: N earlier entries omitted ...]` note. `view`/`tail`/`search` apply to `structured` only; the `maxChars` budget also caps `raw` scrollback (keeping the most recent portion). In `structured`, any single span (a message's text, a thinking block, a tool result) longer than 20,000 characters is cut there with a `[truncated N chars]` marker, the same clamp the Conversation viewer applies, so one huge tool output never fills the budget alone.
 
@@ -68,11 +68,10 @@ Structured-format support by agent:
 
 | Agent | Structured | Raw |
 |-------|------------|-----|
-| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity, Cursor | native parser | yes |
-| Aider | no (no per-session native history) | yes |
-| Warp, Copilot | no (history location unknown) | yes |
+| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity, Cursor, Copilot, Goose | native parser (Copilot's built from the Copilot SDK's event reference, not yet run against a real log; Goose's from its documented session database, not yet run against a real Goose) | yes |
+| Aider | the session's own chat history markdown; none for a session with no id (a Command Terminal) | yes |
+| Warp | no (history location unknown) | yes |
 | Ollama | no (no per-session history for `ollama run`) | yes |
-| Goose | no (adapter parses no transcript) | yes |
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -174,7 +173,7 @@ Returns `total` (matching the filter), `returned` (after `tail`), and the `messa
 
 Mark background shells the calling agent started as services meant to keep running after its turn, such as a dev server or a watcher. A background shell keeps its task showing as working, and holds the column's On agent turn end automations, until it exits, because the agent may be waiting on it. A marked shell stops counting. It keeps running, and Kangentic still tracks it until it exits.
 
-For Claude, Qwen, Gemini and Copilot, a post-tool hook names this tool beside every background launch whose command does not carry `--kangentic-no-activity-hold`, so the agent decides when it knows the answer. Grok, Kimi and Codex have no hook that can add to the model's context at a launch, so their agents learn of it from this description, which therefore says when to call it (as soon as a service starts in the background) and that `--kangentic-no-activity-hold` in the command does the same at launch. Whether a real model acts on the description alone was not measured: the probes ran against a scripted stand-in for each model API. See "Opting a background shell out of the hold" in [Background shells](../../architecture/activity/background-shells.md#opting-a-background-shell-out-of-the-hold), and [Background commands](../agents/background-commands.md#background-commands) for each agent.
+For Claude, Qwen, Gemini and Copilot, a post-tool hook names this tool beside every background launch whose command does not carry `--kangentic-no-activity-hold`, so the agent decides when it knows the answer. Grok and Codex have no hook that can add to the model's context at a launch, so their agents learn of it from this description, which therefore says when to call it (as soon as a service starts in the background) and that `--kangentic-no-activity-hold` in the command does the same at launch. Whether a real model acts on the description alone was not measured: the probes ran against a scripted stand-in for each model API. See "Opting a background shell out of the hold" in [Background shells](../../architecture/activity/background-shells.md#opting-a-background-shell-out-of-the-hold), and [Background commands](../agents/background-commands.md#background-commands) for each agent.
 
 The tool acts only on the session in the caller URL (`/mcp/<projectId>/<callerSessionId>`), so an agent can mark only its own shells. It is registered only for a connection that names a task's session whose agent reports its background commands (`AgentAdapter.backgroundCommands`, read onto the session row at spawn as `reportsBackgroundCommands`). An agent that does not report them never starts a hold, so a mark from it could only park an id. A Command Terminal, a client outside Kangentic, a workflow's own agent and a Knowledge Graph answer run never see it either. A call from a session that is no longer running changes nothing.
 
@@ -186,7 +185,7 @@ Returns one line per id: `marked` (it was holding the session and no longer does
 
 ## kangentic_get_session_files
 
-Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSON). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
+Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

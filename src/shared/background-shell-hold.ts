@@ -27,8 +27,8 @@
  *    plain `tool_start` for any other tool. `updateCounters` matches it there.
  *    For the agents whose post-tool hook reports the launch with no tool id
  *    (Gemini, Copilot), the event bridge reads it from the command and sets
- *    `noActivityHold` on the start itself; Kimi's and Codex's history parsers
- *    carry it the same ways (task #859). Commands Kangentic writes for the
+ *    `noActivityHold` on the start itself; Codex's history parser carries it
+ *    the same ways (task #859). Commands Kangentic writes for the
  *    agent (`/preview`'s watcher) carry it.
  *
  * 2. After launch, with the `MARK_BACKGROUND_SERVICE_TOOL` MCP tool, naming the

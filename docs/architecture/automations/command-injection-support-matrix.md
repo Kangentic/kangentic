@@ -8,7 +8,6 @@ sources:
   - resource: src/main/agent/shared/transcript-tail-cache.ts
   - resource: src/main/agent/adapters/codex/command-injection-verifier.ts
   - resource: src/main/agent/adapters/qwen-code/command-injection-verifier.ts
-  - resource: src/main/agent/adapters/kimi/command-injection-verifier.ts
   - resource: src/main/agent/adapters/grok/command-injection-verifier.ts
   - resource: src/main/agent/adapters/aider/command-injection-verifier.ts
   - resource: src/main/agent/adapters/opencode/command-injection-verifier.ts
@@ -32,16 +31,16 @@ There are three tiers, and the line between the first two is a safety property, 
 | Copilot | `null` | verifier | confirm-only | 38ms worst, the fastest measured. Lacks a real capture of `command-history-state.json` to pin its exact-match extractor against |
 | OpenCode | `null` | verifier (SQL) | confirm-only | 95ms worst via a read-only query (OpenCode 1's `message`/`part`, then OpenCode 2's `session_message` user rows; the V2 read is unmeasured). Has a KNOWN wrong answer for remote sessions, below; declines SLASH commands, same as Codex |
 | Qwen | `null` | verifier | confirm-only | 696ms worst, slash included. Builds its path from a CAPTURED session id and has never run against a live Qwen session in-app |
-| Kimi | `null` | verifier | confirm-only | `wire.jsonl` shape pinned to real captures. Unmeasured: never reached a usable TUI |
 | Grok Build | `null` | verifier | confirm-only | 313ms/32ms flush-on-submit measured live; extractor unwraps the stored `<user_query>` wrapper and skips `synthetic_reason` records. Lacks the in-app proof, and `chat_history.jsonl` records carry NO timestamps so the scan cannot bound a `sentAt` window - a byte-identical PRIOR submission could false-confirm, harmless for confirm-only, disqualifying for escalation. Declines SLASH commands (TUI palette, never a recorded turn) |
-| Aider | `null` | verifier | confirm-only | markdown shape from a real fixture. Unmeasured: not installed on the measuring machine |
+| Aider | `null` | verifier | confirm-only | markdown shape from a real fixture; reads the session's own `.aider.chat.history.<id>.md` (built from Aider's options reference, not run). Unmeasured: not installed on the measuring machine |
 | Antigravity | `null` | verifier (`submitted` semantics) | confirm-only | 84ms worst against the brain-dir transcript (`USER_INPUT` steps, `<USER_REQUEST>` unwrapped, whole-second timestamps with a 5s tolerance). Lacks the in-app confirmation proof; declines SLASH commands (rejected client-side, never recorded) |
 | Gemini | `null` | `null` | none | measured turn-end flushed and highly variable |
 | Droid | `null` | `null` | none | measured unreliable: 564ms best, 3202ms worst |
+| Kimi | `null` | `null` | none | Kimi Code 2.x's wire flush on submit is unmeasured: no real run yet. The 1.x verifier read a format 2.x does not write |
 | Cursor | `null` | `null` | none | measured turn-end flushed: appends land within ~40ms of the turn ending |
 | Warp | `null` | `null` | none | no history file accessible via CLI |
 | Ollama | `null` | `null` | none | `ollama run` keeps no session history |
-| Goose | `null` | `null` | none | `getSubmissionVerifier` returns null for every context; no transcript is parsed |
+| Goose | `null` | `null` | none | user turns are `messages` rows in its `sessions.db`, which the adapter reads for the transcript, but the flush-on-submit timing is unmeasured (Goose not installed on the measuring machine) |
 
 ### Why escalation takes two proofs, and measurement is only the first
 
@@ -57,9 +56,9 @@ The harness answers one question: *does the CLI write the record fast enough?* I
 
 Both of those produce a **permanent** false negative rather than an intermittent one, so they would escalate *every* auto_command the adapter ever receives. That is why the second proof is a run inside the app, and why an adapter stays confirm-only until it has one, even with a clean measurement.
 
-The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot, OpenCode, Grok, and Antigravity do not, and adding one is the cheapest single contribution toward graduating any of them.
+The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, and Aider have such a capture; Copilot, OpenCode, Grok, and Antigravity do not, and adding one is the cheapest single contribution toward graduating any of them.
 
-Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. So does a `resumePromptDelivery` other than `command-line` (Copilot, Grok, OpenCode and Cursor are `typed`, Aider is `no-resume`): the restart would type the command again rather than carry it. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
+Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. So does a `resumePromptDelivery` other than `command-line` (Copilot, Grok, OpenCode and Cursor are `typed`): the restart would type the command again rather than carry it. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
 
 ### Graduating an adapter (the contributor recipe)
 
@@ -76,7 +75,7 @@ To force the negative case, or to avoid spending a turn at all, point `agent.cli
 
 **3. Add a real capture, if the adapter has none.** Sanitize one of that agent's own history files into `tests/fixtures/` and extend `tests/unit/command-injection-real-capture-extractors.test.ts`. This is what proves the CLI does not wrap or decorate the stored text, and it is the cheapest single contribution for Copilot or OpenCode.
 
-**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part. Dropping it lets an adapter escalate only if its `resumePromptDelivery` is `command-line`; a `typed` or `no-resume` one (Copilot, Grok, OpenCode, Cursor, Aider, Ollama, Warp) still stops at `failed`.
+**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part. Dropping it lets an adapter escalate only if its `resumePromptDelivery` is `command-line`; a `typed` or `no-resume` one (Copilot, Grok, OpenCode, Cursor, Ollama, Warp) still stops at `failed`.
 
 Any subset of this is worth a PR. Step 1 alone puts numbers in the table; step 3 alone strengthens an adapter without touching its tier. And if an adapter simply misbehaves for you, the useful bug report is the agent, the task's `auto_command_state`, and whether the session was local or remote.
 
@@ -96,12 +95,10 @@ Each confirm-only adapter carries a guard standing in for what could not be meas
 
 - **OpenCode remote sessions are reported `failed` however well they were delivered.** A remote session keeps no local row, so the query finds nothing on every poll. `locateSessionHistoryFile` guards this case via `remoteTargetsByCwd`, but `getSubmissionVerifier` receives only a context type and has no `cwd` to check it with; and once running, the verifier's boolean contract cannot distinguish "cannot observe" from "observed absence" - both must return false so the caller keeps polling through the normal post-spawn gap. Escalation being off is the containment: a spurious notice instead of a restart on every delivery. Widening the verifier contract is the real fix and is not attempted here.
 - **Copilot's history is GLOBAL** across every session and project, with no timestamps and no session id, so a concurrent injection from another task can push our entry down the list. The verifier accepts a match from the newest few entries rather than strictly `[0]`, which biases the residual error toward a harmless false POSITIVE instead of a false negative. That mitigation is reasoning, not measurement.
-- **Aider** has no per-entry timestamps and one file per project, appended forever, so a previously-run auto_command would otherwise confirm from a months-old entry. It requires the FILE's mtime to be at/after `sentAt` AND matches only the LAST user block. It is also the one adapter with NO session id at all, so it declares `requiresAgentSessionIdForVerification() === false`; without that the shared wrapper short-circuits on the missing id and the verifier can never confirm, which is worse than having none (the burst still retries, then reports `failed` where it would have stayed silently `unconfirmed`).
-- **Kimi** records `timestamp` in unix SECONDS; it is scaled to milliseconds, without which every record reads ~56 years stale and nothing would ever confirm.
+- **Aider** has no per-entry timestamps, and its history is appended to: a task session's own `.aider.chat.history.<id>.md` across its resumes, and Aider's shared per-directory `.aider.chat.history.md` forever for a session with no id. A previously-run auto_command would otherwise confirm from an old entry. It requires the FILE's mtime to be at/after `sentAt` AND matches only the LAST user block. Aider has no session id of its own (the id is caller-owned and only names the file), and a session with no id still has a file `cwd` identifies, so it declares `requiresAgentSessionIdForVerification() === false`; without that the shared wrapper would short-circuit on a missing id, which is worse than having no verifier (the burst still retries, then reports `failed` where it would have stayed silently `unconfirmed`).
 
 **Unmeasured is a real verdict, distinct from a measured "no".** Two adapters have no number yet, and neither has been shown to flush late:
 
-- **Kimi** never reached a usable TUI (it hung past the harness's four-minute per-probe ceiling on a single trial).
 - **Aider** is not installed on the measuring machine.
 
 OpenCode used to sit here too, and how it left is the instructive part: nothing about OpenCode changed, the INSTRUMENT did. Its storage is a SQLite database, so a byte scan of the page file proved nothing either way; once the harness gained a read-only query mode it measured 64-95ms. Treat "unmeasured" as a statement about the harness as much as about the agent.

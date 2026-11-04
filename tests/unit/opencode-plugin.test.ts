@@ -14,6 +14,7 @@ const {
   extractToolStartEvent,
   extractToolEndEvent,
   extractWaitEvent,
+  createSessionTracker,
 } = KangenticActivity.helpers;
 
 const fixturePath = path.join(__dirname, '..', 'fixtures', 'opencode-plugin-events.json');
@@ -23,6 +24,11 @@ const FIXED_TIMESTAMP = 1717000000000;
 
 interface PluginHooks {
   event: (payload: { event: unknown }) => Promise<void>;
+  'chat.message': (input: unknown) => Promise<void>;
+  'chat.params': (input: unknown) => Promise<void>;
+  'experimental.session.compacting': (input: unknown) => Promise<void>;
+  'tool.execute.before': (input: unknown, output: unknown) => Promise<void>;
+  'tool.execute.after': (input: unknown) => Promise<void>;
 }
 
 interface PluginModule {
@@ -205,6 +211,328 @@ describe('opencode-plugin', () => {
       await hooks.event({ event: fixtures.event_session_unknown });
 
       expect(readEvents()).toEqual([]);
+    });
+
+    it('writes the prompt, the subagent around its tools, and one root idle, in order', async () => {
+      const hooks = await loadHooks();
+
+      await hooks.event({ event: fixtures.event_session_created });
+      await hooks['chat.message'](fixtures.chat_message_root);
+      await hooks['tool.execute.before'](fixtures.tool_before_task.input, fixtures.tool_before_task.output);
+      await hooks.event({ event: fixtures.event_child_session_created });
+      await hooks['chat.message']({ ...fixtures.chat_message_root, sessionID: 'ses_child0000000000000000aa', agent: 'explore' });
+      await hooks['tool.execute.before'](fixtures.tool_before_child_grep.input, fixtures.tool_before_child_grep.output);
+      await hooks['tool.execute.after'](fixtures.tool_after_child_grep.input);
+      await hooks.event({ event: fixtures.event_child_session_idle });
+      await hooks['tool.execute.after'](fixtures.tool_after_task.input);
+      await hooks.event({ event: fixtures.event_session_idle });
+
+      expect(readEvents().map((line) => {
+        const { ts: _ts, hookContext: _hookContext, detail: _detail, ...rest } = line as Record<string, unknown>;
+        return rest;
+      })).toEqual([
+        { type: 'session_start' },
+        { type: 'prompt' },
+        { type: 'tool_start', tool: 'task', toolId: 'call_task_1' },
+        { type: 'subagent_start', subagentId: 'ses_child0000000000000000aa' },
+        { type: 'tool_start', tool: 'grep', toolId: 'call_grep_1', subagentId: 'ses_child0000000000000000aa' },
+        { type: 'tool_end', tool: 'grep', toolId: 'call_grep_1', subagentId: 'ses_child0000000000000000aa' },
+        { type: 'subagent_stop', subagentId: 'ses_child0000000000000000aa' },
+        { type: 'tool_end', tool: 'task', toolId: 'call_task_1' },
+        { type: 'idle' },
+      ]);
+    });
+
+    it('keeps status.json beside events.jsonl, rewritten whole as messages update', async () => {
+      const hooks = await loadHooks();
+      const statusPath = path.join(eventsDirectory, 'status.json');
+
+      await hooks['chat.params'](fixtures.chat_params_root);
+      await hooks.event({ event: fixtures.event_message_updated_root_1 });
+      expect(JSON.parse(fs.readFileSync(statusPath, 'utf-8')).context.input).toBe(1200);
+
+      await hooks.event({ event: fixtures.event_message_updated_root_2 });
+      const status = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+      expect(status.context).toEqual({ input: 600, output: 900, reasoning: 0, cacheRead: 9600, cacheWrite: 200 });
+      // Written in place, as the reader's watch on the file expects.
+      expect(fs.readdirSync(eventsDirectory).sort()).toEqual(['status.json']);
+    });
+
+    it('writes a compact line when the compacting hook fires, for the root session only', async () => {
+      const hooks = await loadHooks();
+      await hooks.event({ event: fixtures.event_child_session_created });
+
+      await hooks['experimental.session.compacting']({ sessionID: 'ses_child0000000000000000aa' });
+      expect(readEvents().filter((line) => (line as { type: string }).type === 'compact')).toEqual([]);
+
+      await hooks['experimental.session.compacting']({ sessionID: 'ses_2349b5c91ffeKd6qajuUTR4clq' });
+      expect(readEvents().filter((line) => (line as { type: string }).type === 'compact')).toEqual([
+        { ts: expect.any(Number), type: 'compact' },
+      ]);
+    });
+
+    it('writes status.json from chat.params alone, and rewrites it only when something changed', async () => {
+      const hooks = await loadHooks();
+      const statusPath = path.join(eventsDirectory, 'status.json');
+
+      await hooks['chat.params'](fixtures.chat_params_root);
+      const status = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+      expect(status.model).toEqual({ id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' });
+      expect(status.contextLimit).toBe(200000);
+
+      // Nothing changed: neither the same params again nor an idle may recreate the file.
+      fs.rmSync(statusPath);
+      await hooks['chat.params'](fixtures.chat_params_root);
+      await hooks.event({ event: fixtures.event_session_idle });
+      expect(fs.existsSync(statusPath)).toBe(false);
+
+      // A changed number does rewrite it.
+      await hooks.event({ event: fixtures.event_message_updated_root_1 });
+      expect(fs.existsSync(statusPath)).toBe(true);
+    });
+  });
+
+  describe('createSessionTracker', () => {
+    it('reads a child session (parentID) as a subagent, never as the task\'s own start or idle', () => {
+      const tracker = createSessionTracker();
+      expect(tracker.onEvent(fixtures.event_session_created, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'session_start', hookContext: JSON.stringify({ sessionID: 'ses_2349b5c91ffeKd6qajuUTR4clq' }) },
+      ]);
+      expect(tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'subagent_start', subagentId: 'ses_child0000000000000000aa' },
+      ]);
+      expect(tracker.onEvent(fixtures.event_child_session_idle, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'subagent_stop', subagentId: 'ses_child0000000000000000aa' },
+      ]);
+      // A second idle of the same child stops nothing.
+      expect(tracker.onEvent(fixtures.event_child_session_idle, FIXED_TIMESTAMP)).toEqual([]);
+    });
+
+    it('starts a continued child again when it turns busy, with no second session.created', () => {
+      const tracker = createSessionTracker();
+      tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP);
+      tracker.onEvent(fixtures.event_child_session_idle, FIXED_TIMESTAMP);
+      expect(tracker.onEvent(fixtures.event_child_session_busy, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'subagent_start', subagentId: 'ses_child0000000000000000aa' },
+      ]);
+      // A busy root is nothing to report.
+      expect(tracker.onEvent({ type: 'session.status', properties: { sessionID: 'ses_2349b5c91ffeKd6qajuUTR4clq', status: { type: 'busy' } } }, FIXED_TIMESTAMP)).toEqual([]);
+    });
+
+    it('stops every subagent still open before the root\'s idle', () => {
+      const tracker = createSessionTracker();
+      tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP);
+      expect(tracker.onEvent(fixtures.event_session_idle, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'subagent_stop', subagentId: 'ses_child0000000000000000aa' },
+        { ts: FIXED_TIMESTAMP, type: 'idle' },
+      ]);
+    });
+
+    it('writes a prompt and a compaction for the root session only', () => {
+      const tracker = createSessionTracker();
+      tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP);
+      expect(tracker.onChatMessage(fixtures.chat_message_root, FIXED_TIMESTAMP)).toEqual({ ts: FIXED_TIMESTAMP, type: 'prompt' });
+      expect(tracker.onChatMessage({ sessionID: 'ses_child0000000000000000aa' }, FIXED_TIMESTAMP)).toBeNull();
+      expect(tracker.onCompacting({ sessionID: 'ses_2349b5c91ffeKd6qajuUTR4clq' }, FIXED_TIMESTAMP)).toEqual({ ts: FIXED_TIMESTAMP, type: 'compact' });
+      expect(tracker.onCompacting({ sessionID: 'ses_child0000000000000000aa' }, FIXED_TIMESTAMP)).toBeNull();
+    });
+
+    it('pairs a tool\'s start and end by OpenCode\'s callID', () => {
+      const tracker = createSessionTracker();
+      expect(tracker.onToolBefore(fixtures.tool_before_task.input, fixtures.tool_before_task.output, FIXED_TIMESTAMP))
+        .toMatchObject({ type: 'tool_start', tool: 'task', toolId: 'call_task_1' });
+      expect(tracker.onToolAfter(fixtures.tool_after_task.input, FIXED_TIMESTAMP))
+        .toEqual({ ts: FIXED_TIMESTAMP, type: 'tool_end', tool: 'task', toolId: 'call_task_1' });
+    });
+
+    it('a subagent\'s finished turn no longer ends the task\'s turn', () => {
+      // Before the tracker, a child's session.idle was written as the task's idle,
+      // which cleared the running `task` tool and read as the turn's end.
+      const engine = new ActivityEngine({ onActivityChange() { /* unused */ } }, { idleStabilityWindowMs: 0 });
+      const sessionId = 'opencode-subagent-session';
+      engine.initSession(sessionId);
+      const tracker = createSessionTracker();
+      const feed = (lines: Array<SessionEvent | null>): void => {
+        for (const line of lines) if (line) engine.processEvent(sessionId, line);
+      };
+
+      feed([tracker.onChatMessage(fixtures.chat_message_root, FIXED_TIMESTAMP) as SessionEvent]);
+      feed([tracker.onToolBefore(fixtures.tool_before_task.input, fixtures.tool_before_task.output, FIXED_TIMESTAMP + 1) as SessionEvent]);
+      feed(tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP + 2) as SessionEvent[]);
+      feed(tracker.onEvent(fixtures.event_child_session_idle, FIXED_TIMESTAMP + 3) as SessionEvent[]);
+      expect(engine.getState(sessionId)?.activity).toBe('thinking');
+
+      feed([tracker.onToolAfter(fixtures.tool_after_task.input, FIXED_TIMESTAMP + 4) as SessionEvent]);
+      feed(tracker.onEvent(fixtures.event_session_idle, FIXED_TIMESTAMP + 5) as SessionEvent[]);
+      expect(engine.getState(sessionId)?.activity).toBe('idle');
+      engine.dispose();
+    });
+
+    it('knows a child from session.updated carrying parentID, and a child\'s error and waits are written', () => {
+      const tracker = createSessionTracker();
+      const childId = 'ses_child0000000000000000bb';
+      // Learned from session.updated: no start line yet, and it is no root session_start.
+      expect(tracker.onEvent({ type: 'session.updated', properties: { info: { id: childId, parentID: 'ses_2349b5c91ffeKd6qajuUTR4clq' } } }, FIXED_TIMESTAMP)).toEqual([]);
+      expect(tracker.onChatMessage({ sessionID: childId }, FIXED_TIMESTAMP)).toBeNull();
+      expect(tracker.onToolBefore({ tool: 'grep', sessionID: childId }, { args: {} }, FIXED_TIMESTAMP)).toMatchObject({ subagentId: childId });
+
+      tracker.onEvent({ type: 'session.status', properties: { sessionID: childId, status: { type: 'busy' } } }, FIXED_TIMESTAMP);
+      // A subagent's wait on the user is written whichever session asked.
+      expect(tracker.onEvent({ type: 'question.asked', properties: { sessionID: childId } }, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'idle', detail: 'permission', waitKind: 'question' },
+      ]);
+      expect(tracker.onEvent({ type: 'permission.asked', properties: { sessionID: childId } }, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'idle', detail: 'permission', waitKind: 'approval' },
+      ]);
+      expect(tracker.onEvent({ type: 'session.error', properties: { sessionID: childId } }, FIXED_TIMESTAMP)).toEqual([
+        { ts: FIXED_TIMESTAMP, type: 'subagent_stop', subagentId: childId },
+      ]);
+    });
+
+    describe('status()', () => {
+      function rootAnswer(messageId: string, created: number, modelID: string, input: number) {
+        return {
+          type: 'message.updated',
+          properties: {
+            info: {
+              id: messageId, sessionID: 'ses_2349b5c91ffeKd6qajuUTR4clq', role: 'assistant', providerID: 'anthropic', modelID,
+              time: { created }, cost: 0,
+              tokens: { input, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        };
+      }
+
+      it('keeps the context on the previous answer when a newer one opens with every token count 0', () => {
+        const tracker = createSessionTracker();
+        tracker.onEvent(rootAnswer('msg_a', 1000, 'model-a', 500), FIXED_TIMESTAMP);
+        tracker.onEvent(rootAnswer('msg_b', 2000, 'model-b', 0), FIXED_TIMESTAMP);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-b' });
+        expect(tracker.status()?.context.input).toBe(500);
+
+        tracker.onEvent(rootAnswer('msg_b', 2000, 'model-b', 700), FIXED_TIMESTAMP);
+        expect(tracker.status()?.context.input).toBe(700);
+      });
+
+      it('does not move the model or context back when an older answer is sent again', () => {
+        const tracker = createSessionTracker();
+        tracker.onEvent(rootAnswer('msg_a', 1000, 'model-a', 500), FIXED_TIMESTAMP);
+        tracker.onEvent(rootAnswer('msg_b', 2000, 'model-b', 700), FIXED_TIMESTAMP);
+        tracker.onEvent(rootAnswer('msg_a', 1000, 'model-a', 900), FIXED_TIMESTAMP);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-b' });
+        expect(tracker.status()?.context.input).toBe(700);
+        // The older answer's numbers still count toward the totals.
+        expect(tracker.status()?.totals.input).toBe(1600);
+      });
+
+      it('reports no change for a repeated answer or a repeated chat.params, and a change for a new number', () => {
+        const tracker = createSessionTracker();
+        tracker.onChatParams(fixtures.chat_params_root);
+        tracker.onEvent(fixtures.event_message_updated_root_1, FIXED_TIMESTAMP);
+        expect(tracker.takeStatusChange()).toBe(true);
+
+        tracker.onEvent(structuredClone(fixtures.event_message_updated_root_1), FIXED_TIMESTAMP);
+        tracker.onChatParams(structuredClone(fixtures.chat_params_root));
+        expect(tracker.takeStatusChange()).toBe(false);
+
+        const costlier = structuredClone(fixtures.event_message_updated_root_1);
+        costlier.properties.info.cost = 0.5;
+        tracker.onEvent(costlier, FIXED_TIMESTAMP);
+        expect(tracker.takeStatusChange()).toBe(true);
+
+        const larger = structuredClone(fixtures.chat_params_root);
+        larger.model.limit.context = 400000;
+        tracker.onChatParams(larger);
+        expect(tracker.takeStatusChange()).toBe(true);
+      });
+
+      it('is null until a model is known', () => {
+        expect(createSessionTracker().status()).toBeNull();
+      });
+
+      it('takes the model from chat.params, the context from the root\'s newest answer, and cost from every session', () => {
+        const tracker = createSessionTracker();
+        tracker.onEvent(fixtures.event_child_session_created, FIXED_TIMESTAMP);
+        tracker.onChatParams(fixtures.chat_params_root);
+        for (const event of [fixtures.event_message_updated_user, fixtures.event_message_updated_root_1, fixtures.event_message_updated_child, fixtures.event_message_updated_root_2]) {
+          tracker.onEvent(event, FIXED_TIMESTAMP);
+        }
+        const status = tracker.status();
+        expect(status).toEqual({
+          kangenticOpenCodeStatus: 1,
+          model: { id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+          contextLimit: 200000,
+          context: { input: 600, output: 900, reasoning: 0, cacheRead: 9600, cacheWrite: 200 },
+          totals: { input: 1800, output: 1200, reasoning: 50, cacheRead: 17600, cacheWrite: 600 },
+          costUsd: expect.closeTo(0.035, 10),
+        });
+      });
+
+      it('counts a message streamed twice once, at its latest numbers', () => {
+        const tracker = createSessionTracker();
+        tracker.onEvent(fixtures.event_message_updated_root_1, FIXED_TIMESTAMP);
+        const grown = structuredClone(fixtures.event_message_updated_root_1);
+        grown.properties.info.tokens.output = 700;
+        tracker.onEvent(grown, FIXED_TIMESTAMP);
+        expect(tracker.status()?.totals.output).toBe(700);
+        // No chat.params seen (a resumed session's first answer): the answer names the model.
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/claude-sonnet-4-5' });
+        expect(tracker.status()?.contextLimit).toBe(0);
+      });
+
+      it('shows the model the newest answer came from, not the last chat.params', () => {
+        // A hidden agent (title, summary) may request another model; until that
+        // model answers in the session, the card keeps the one that did.
+        const tracker = createSessionTracker();
+        tracker.onChatParams(fixtures.chat_params_root);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' });
+        tracker.onEvent(fixtures.event_message_updated_root_1, FIXED_TIMESTAMP);
+        tracker.onChatParams({
+          ...fixtures.chat_params_root,
+          model: { id: 'claude-haiku-4-5', providerID: 'anthropic', name: 'Claude Haiku 4.5', limit: { context: 100000, output: 8000 } },
+        });
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/claude-sonnet-4-5', name: 'Claude Sonnet 4.5' });
+        expect(tracker.status()?.contextLimit).toBe(200000);
+
+        // The switched model answering moves the card to it, named and sized by its own chat.params.
+        const switched = structuredClone(fixtures.event_message_updated_root_2);
+        switched.properties.info.modelID = 'claude-haiku-4-5';
+        tracker.onEvent(switched, FIXED_TIMESTAMP);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/claude-haiku-4-5', name: 'Claude Haiku 4.5' });
+        expect(tracker.status()?.contextLimit).toBe(100000);
+      });
+
+      it('registers a child\'s model name and size without showing it, until a root answer names that model', () => {
+        const tracker = createSessionTracker();
+        const rootId = 'ses_2349b5c91ffeKd6qajuUTR4clq';
+        const childId = 'ses_child0000000000000000cc';
+        const paramsFor = (sessionID: string, id: string, name: string, context: number) => ({
+          sessionID,
+          model: { providerID: 'anthropic', id, name, limit: { context } },
+        });
+        tracker.onEvent({ type: 'session.created', properties: { info: { id: childId, parentID: rootId } } }, FIXED_TIMESTAMP);
+
+        tracker.onChatParams(paramsFor(rootId, 'model-a', 'Model A', 200000));
+        expect(tracker.takeStatusChange()).toBe(true);
+        tracker.onChatParams(paramsFor(childId, 'model-b', 'Model B', 100000));
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-a', name: 'Model A' });
+        expect(tracker.status()?.contextLimit).toBe(200000);
+
+        // The root's answer from model B shows it, with the name and size the child's params registered.
+        tracker.onEvent(rootAnswer('msg_b', 2000, 'model-b', 300), FIXED_TIMESTAMP);
+        expect(tracker.status()?.model).toEqual({ id: 'anthropic/model-b', name: 'Model B' });
+        expect(tracker.status()?.contextLimit).toBe(100000);
+      });
+
+      it('says when it changed, once', () => {
+        const tracker = createSessionTracker();
+        expect(tracker.takeStatusChange()).toBe(false);
+        tracker.onEvent(fixtures.event_message_updated_root_1, FIXED_TIMESTAMP);
+        expect(tracker.takeStatusChange()).toBe(true);
+        expect(tracker.takeStatusChange()).toBe(false);
+        tracker.onEvent(fixtures.event_session_idle, FIXED_TIMESTAMP);
+        expect(tracker.takeStatusChange()).toBe(false);
+      });
     });
   });
 

@@ -53,6 +53,21 @@ vi.mock('../../src/main/agent/shared/exec-version', () => ({
   },
 }));
 
+// Capture the answer run so summarize is checked without a real Goose.
+interface AnswerRun { args: string[]; env?: Record<string, string>; prompt: string }
+let lastAnswerRun: AnswerRun | null = null;
+let mockAnswer = '';
+vi.mock('../../src/main/agent/shared/cli-answer', () => ({
+  runCliPrintAnswer: async (input: AnswerRun) => {
+    lastAnswerRun = input;
+    return mockAnswer;
+  },
+}));
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>(),
+  resolveCliTarget: async () => null,
+}));
+
 // Import after mocks are set up.
 const { GooseAdapter } = await import('../../src/main/agent/adapters/goose');
 
@@ -99,6 +114,38 @@ describe('GooseAdapter', () => {
     expect(adapter.supportsCallerSessionId).toBe(true);
   });
 
+  it('declares Goose\'s write and edit tools as the file-changing tools, keyed on their path field', () => {
+    expect(adapter.fileChangeTools).toEqual([
+      { tool: 'write', pathField: 'path' },
+      { tool: 'edit', pathField: 'path' },
+    ]);
+  });
+
+  it('names a pasted image in an instruction Goose\'s read_image tool can follow', () => {
+    expect(adapter.pastedImageReferenceTemplate).toBe('Read this image: {path} ');
+  });
+
+  it('scopes its transcript reads by time', () => {
+    expect(adapter.scopesTranscriptReadsByTime).toBe(true);
+  });
+
+  describe('transcript reads for a Goose in a WSL distro, or with no session id', () => {
+    const place = { distro: 'Ubuntu', linuxCliPath: '/usr/bin/goose' } as Parameters<typeof adapter.parseTranscript>[2];
+
+    it('does not page a distro Goose\'s history', async () => {
+      await expect(adapter.readTranscriptPage(
+        'name-1', '/projects/my-app', { direction: 'before', maxBytes: 200 }, place,
+      )).resolves.toEqual({ status: 'unavailable', reason: 'unsupported_agent' });
+    });
+
+    it('reads no tool counts or result tokens for a distro Goose, or without a session id', async () => {
+      await expect(adapter.transcriptToolCounts({ agentSessionId: 'name-1', place })).resolves.toBeNull();
+      await expect(adapter.transcriptToolResultTokens({ agentSessionId: 'name-1', place })).resolves.toBeNull();
+      await expect(adapter.transcriptToolCounts({ agentSessionId: null })).resolves.toBeNull();
+      await expect(adapter.transcriptToolResultTokens({})).resolves.toBeNull();
+    });
+  });
+
   it('has default permission mode "default"', () => {
     expect(adapter.defaultPermission).toBe('default');
   });
@@ -124,8 +171,18 @@ describe('GooseAdapter', () => {
     expect(adapter.permissions.map((entry) => entry.mode)).not.toContain('acceptEdits');
   });
 
-  it('uses PTY-only activity detection at runtime (no hooks)', () => {
-    expect(adapter.runtime.activity).toEqual(ActivityDetection.pty());
+  it('reads its hook events with the PTY timer as the fallback, and reports turn ends', () => {
+    expect(adapter.runtime.activity).toEqual(ActivityDetection.hooksAndPty());
+    expect(adapter.runtime.reportsTurnEnd).toBe(true);
+    expect(adapter.runtime.statusFile?.parseEvent('{"ts":1,"type":"idle"}')).toEqual({ ts: 1, type: 'idle' });
+    expect(adapter.runtime.statusFile?.parseEvent('not json')).toBeNull();
+    expect(adapter.runtime.statusFile?.parseEvent('{"ts":1}')).toBeNull();
+  });
+
+  it('reads a hook event line only when it is a JSON object', () => {
+    for (const line of ['null', '[]', '"x"']) {
+      expect(adapter.runtime.statusFile?.parseEvent(line), line).toBeNull();
+    }
   });
 
   // -- Detection --------------------------------------------------------------
@@ -290,6 +347,22 @@ describe('GooseAdapter', () => {
       expect(command.split(' ')).toContain('-s');
     });
 
+    it('passes a column model with --model ahead of the prompt', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug', sessionId: 'abc-123', model: 'gpt-4o', shell: 'bash' }));
+      expect(command).toContain('--model gpt-4o');
+      expect(command.indexOf('--model')).toBeLessThan(command.indexOf(' -t '));
+    });
+
+    it('passes --model on a promptless session too', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: 'abc-123', resume: true, model: 'gpt-4o', shell: 'bash' }));
+      expect(command).toBe(`${quoteArg('/usr/bin/goose', 'bash')} session -r -n abc-123 --model gpt-4o`);
+    });
+
+    it('passes no --model when the column names none or only whitespace', () => {
+      expect(adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }))).not.toContain('--model');
+      expect(adapter.buildCommand(makeOptions({ prompt: 'Fix the bug', model: '  ' }))).not.toContain('--model');
+    });
+
     it('omits --name when no session id is present', () => {
       const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }));
       expect(command).not.toContain('-n');
@@ -381,6 +454,25 @@ describe('GooseAdapter', () => {
   // -- buildEnv (permission mode -> GOOSE_MODE) -------------------------------
 
   describe('buildEnv', () => {
+    // Run as Linux unless a test says otherwise, so the exact-env assertions do
+    // not depend on the host's real PATH (win32 appends Git's bin folder to it).
+    let savedPlatformDescriptor: PropertyDescriptor | undefined;
+    const savedEnvironment = process.env;
+    const gitShellPath = 'C:\\Program Files\\Git\\bin\\sh.exe';
+
+    beforeEach(() => {
+      savedPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    });
+
+    afterEach(() => {
+      if (savedPlatformDescriptor !== undefined) {
+        Object.defineProperty(process, 'platform', savedPlatformDescriptor);
+      }
+      process.env = savedEnvironment;
+      installedPaths.delete(gitShellPath);
+    });
+
     const expected: Record<PermissionMode, string> = {
       plan: 'chat',
       dontAsk: 'chat',
@@ -423,6 +515,103 @@ describe('GooseAdapter', () => {
         permissionMode: 'someRetiredMode' as PermissionMode,
       }));
       expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+    });
+
+    it('hands the hook commands this session\'s events file through Goose\'s own variable', () => {
+      const env = adapter.buildEnv(makeOptions({ eventsOutputPath: '/sessions/s1/events.jsonl' }));
+      expect(env).toEqual({ GOOSE_MODE: 'smart_approve', KANGENTIC_GOOSE_EVENTS_PATH: '/sessions/s1/events.jsonl' });
+    });
+
+    it('passes no events path to a Goose in a WSL distro, whose hooks publish through the transport', () => {
+      const env = adapter.buildEnv(makeOptions({
+        eventsOutputPath: '/sessions/s1/events.jsonl',
+        cliTarget: { distro: 'Ubuntu', linuxCliPath: '/usr/bin/goose' } as SpawnCommandOptions['cliTarget'],
+      }));
+      expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+    });
+
+    describe('on Windows, where Goose runs its hooks with sh', () => {
+      beforeEach(() => {
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+        // A plain object, so the PATH key's spelling is the one set here on any host.
+        process.env = { Path: 'C:\\Windows\\System32', ProgramFiles: 'C:\\Program Files' } as NodeJS.ProcessEnv;
+        installedPaths.add(gitShellPath);
+      });
+
+      it('appends Git for Windows\' bin folder to PATH when sh is not on it', () => {
+        const env = adapter.buildEnv(makeOptions({ eventsOutputPath: 'C:\\sessions\\s1\\events.jsonl' }));
+        expect(env).toEqual({
+          GOOSE_MODE: 'smart_approve',
+          KANGENTIC_GOOSE_EVENTS_PATH: 'C:\\sessions\\s1\\events.jsonl',
+          Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\bin',
+        });
+      });
+
+      it('sets only GOOSE_MODE with no events file, even where Git\'s sh would be found', () => {
+        const env = adapter.buildEnv(makeOptions());
+        expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+        expect(Object.keys(env ?? {})).toEqual(['GOOSE_MODE']);
+      });
+
+      it('sets neither the events path nor PATH for a Goose in a WSL distro', () => {
+        const env = adapter.buildEnv(makeOptions({
+          eventsOutputPath: 'C:\\sessions\\s1\\events.jsonl',
+          cliTarget: { distro: 'Ubuntu', linuxCliPath: '/usr/bin/goose' } as SpawnCommandOptions['cliTarget'],
+        }));
+        expect(env).toEqual({ GOOSE_MODE: 'smart_approve' });
+      });
+    });
+  });
+
+  // -- Model ------------------------------------------------------------------
+
+  describe('model', () => {
+    it('offers a free-form Model field with no list', async () => {
+      await expect(adapter.discoverCapabilities('/usr/bin/goose')).resolves.toEqual({ supportsModelOverride: true });
+    });
+
+    it('reads the configured model back out of the command it built, for every shell quoting', () => {
+      for (const shell of ['bash', 'powershell', 'cmd']) {
+        const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug', sessionId: 'abc-123', model: 'claude-sonnet-4-5', shell }));
+        expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'claude-sonnet-4-5', displayName: 'claude-sonnet-4-5' });
+      }
+    });
+
+    it('reads the model off a promptless resume command', () => {
+      const command = adapter.buildCommand(makeOptions({ sessionId: 'abc-123', resume: true, model: 'gpt-4o', shell: 'bash' }));
+      expect(command).not.toContain(' -t ');
+      expect(adapter.configuredModelFromCommand(command)).toEqual({ id: 'gpt-4o', displayName: 'gpt-4o' });
+    });
+
+    it('reads the inner text of a quoted model that holds a space, in either quote form', () => {
+      expect(adapter.configuredModelFromCommand('goose session --model "my model" -n abc')).toEqual({ id: 'my model', displayName: 'my model' });
+      expect(adapter.configuredModelFromCommand("goose session --model 'my model' -n abc")).toEqual({ id: 'my model', displayName: 'my model' });
+      for (const shell of ['bash', 'powershell', 'cmd']) {
+        const command = adapter.buildCommand(makeOptions({ sessionId: 'abc-123', model: 'my model', shell }));
+        expect(adapter.configuredModelFromCommand(command), shell).toEqual({ id: 'my model', displayName: 'my model' });
+      }
+    });
+
+    it('reads no model from a command without --model', () => {
+      expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ sessionId: 'abc-123', resume: true, shell: 'bash' })))).toBeNull();
+    });
+
+    it('never reads a --model that only the prompt mentions', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: 'run it with --model gpt-4o please', shell: 'bash' }));
+      expect(adapter.configuredModelFromCommand(command)).toBeNull();
+    });
+  });
+
+  // -- summarize --------------------------------------------------------------
+
+  describe('summarize', () => {
+    it('titles a prompt on the read-only answer run, with the automation model', async () => {
+      mockAnswer = '  "Fix login redirect"\n';
+      const title = await adapter.summarize('Users land on a blank page after login', '/usr/bin/goose', '/answer-home', { model: 'gpt-4o' });
+      expect(title).toBe('Fix login redirect');
+      expect(lastAnswerRun?.args).toEqual(['run', '-i', '-', '--no-session', '-q', '--model', 'gpt-4o']);
+      expect(lastAnswerRun?.env).toEqual({ GOOSE_MODE: 'chat' });
+      expect(lastAnswerRun?.prompt).toContain('Users land on a blank page after login');
     });
   });
 

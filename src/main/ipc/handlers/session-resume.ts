@@ -38,6 +38,8 @@ import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
+import { forgetRecapSession } from '../../automations/turn-end/recap-turns';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
@@ -363,13 +365,29 @@ export function resumeTaskSession(
                     deliverOpeningRemainder(context, {
                       taskId,
                       sessionId: resumedSessionId,
-                      unsentPrompt: outcome?.unsentPrompt ?? null,
+                      unsentPrompt: textLeftToType(outcome),
                       held,
                       heldInPrompt: held !== null && !opening.heldAfterTurn,
                       heldAfterTurn: opening.heldAfterTurn,
                       verifier: resolveInjectionVerifier(tasks.getById(taskId)?.agent ?? null, sessionRepo, taskId),
                     });
                     heldHandedOff = true;
+                  } else if (resumedSessionId && outcome?.typedOpening) {
+                    // The recap is that start's whole opening, and a CLI with no
+                    // starting prompt takes it typed. It goes alone: the held
+                    // messages stay withheld. If it fails, no recap turn is coming.
+                    deliverOpeningRemainder(context, {
+                      taskId,
+                      sessionId: resumedSessionId,
+                      unsentPrompt: outcome.typedOpening,
+                      held: null,
+                      heldInPrompt: false,
+                      heldAfterTurn: false,
+                      verifier: resolveInjectionVerifier(tasks.getById(taskId)?.agent ?? null, sessionRepo, taskId),
+                      onReport: (report) => {
+                        if (report.outcome !== 'confirmed' && report.outcome !== 'unconfirmed') forgetRecapSession(resumedSessionId, true);
+                      },
+                    });
                   }
                 } finally {
                   if (held && !heldHandedOff) held.release();

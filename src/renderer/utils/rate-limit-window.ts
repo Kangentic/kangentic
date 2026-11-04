@@ -38,6 +38,29 @@ export function liveRateLimitWindows(rateLimitWindows: RateLimitWindow[], nowMs:
 }
 
 /**
+ * The windows of the snapshot that belong to `agent`: those main stamped with
+ * that agent, and those stamped with none (reports from before the stamp, and
+ * fixtures). Rate limits are account-wide per provider, never across them, so
+ * one agent's pill must not draw another's windows. With no agent to go by, it
+ * returns them all: a pill that cannot say whose it is still shows what the
+ * session reported, rather than going empty.
+ */
+export function rateLimitWindowsForAgent(rateLimitWindows: RateLimitWindow[], agent: string | null | undefined): RateLimitWindow[] {
+  if (!agent) return rateLimitWindows;
+  return rateLimitWindows.filter((rateLimitWindow) => rateLimitWindow.agent === undefined || rateLimitWindow.agent === agent);
+}
+
+/**
+ * The agent whose windows a session's pill draws: the one main stamped on the
+ * session's own reports, else `fallback`. The stamp comes first because a task
+ * with no agent of its own falls back to the project default, which can have
+ * changed since this session started.
+ */
+export function sessionRateLimitAgent(sessionWindows: RateLimitWindow[] | undefined, fallback: string | null | undefined): string | null | undefined {
+  return sessionWindows?.find((rateLimitWindow) => rateLimitWindow.agent !== undefined)?.agent ?? fallback;
+}
+
+/**
  * The windows in the order the pill draws them: shortest `windowDurationSeconds`
  * first, then the windows with no fixed duration in their snapshot order. The
  * merge keeps a held window's position and appends a new id, so a 5h window that

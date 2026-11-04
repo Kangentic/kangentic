@@ -228,15 +228,14 @@ const SESSIONS_ROOTS: Record<string, SessionRootSpec | undefined> = {
   gemini: { root: path.join(os.homedir(), '.gemini', 'tmp'), expectModels: true },
   qwen: { root: path.join(os.homedir(), '.qwen', 'projects'), expectModels: true },
   cursor: { root: path.join(os.homedir(), '.cursor', 'sessions'), expectModels: true },
-  // Kimi's wire.jsonl format only embeds the model on specific event
-  // types (TurnEnd / StatusUpdate variants); test fixtures and
-  // mid-session captures legitimately lack it. Keep the parser warmed
+  // Kimi's wire.jsonl names the model only on `llm.request` and
+  // `usage.record`, so a short session can lack it. Keep the parser warmed
   // up but do not fail the probe when sessions exist without models.
-  kimi: { root: path.join(os.homedir(), '.kimi', 'sessions'), expectModels: false },
+  kimi: { root: path.join(os.homedir(), '.kimi-code', 'sessions'), expectModels: false },
   copilot: { root: path.join(os.homedir(), '.copilot'), expectModels: true },
   opencode: undefined, // session storage path varies; skip scan check
   droid: { root: path.join(os.homedir(), '.factory', 'sessions'), expectModels: true },
-  aider: undefined, // .aider.chat.history.md lives per-project, not global
+  aider: undefined, // chat history files live in the project, not a global root
   warp: undefined, // no per-user session store
   // Grok's model list comes from its own `~/.grok/models_cache.json` (the
   // same source its /model picker uses), which the CLI writes on first use -

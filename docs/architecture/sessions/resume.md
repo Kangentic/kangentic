@@ -9,6 +9,7 @@ sources:
   - resource: src/main/transition-engine/expired-recap-sources.ts
   - resource: src/main/agent/shared/expired-conversation-recap.ts
   - resource: src/main/agent/adapters/claude/conversation-gone.ts
+  - resource: src/main/agent/shared/project-folders.ts
   - resource: src/main/ipc/helpers/pending-conversation-expired.ts
   - resource: src/main/ipc/handlers/session-resume.ts
   - resource: src/shared/session-resume-eligibility.ts
@@ -136,10 +137,18 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
   a permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
   two levels above the reported path readable (a WSL session's Linux path stops here); and no
   project folder under it, a symlinked or junctioned one included, holding `<id>.jsonl` (measured at
-  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes.
+  16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes. The folder
+  listing and that scan are `agent/shared/project-folders.ts`, which Qwen's proof uses too.
   Claude's own retention sweep does not race it: in Claude Code 2.1.300 it is background
   housekeeping, first run 5 s after launch and at most once a day, while `--resume` resolves its
   file at launch.
+  Gemini's (`adapters/gemini/conversation-gone.ts`) reads the path its SessionStart hook reported
+  (`transcript_path`, from the session's events file): absolute, in a `chats` folder under
+  Gemini's `tmp`, named `session-<time>-<first 8 of the id>.jsonl` (or the legacy `.json`) and
+  failing with ENOENT; the reader's own folder holding no file for the id; and `tmp` readable with
+  no project's `chats` folder holding one. Gemini deletes chats past
+  `general.sessionRetention.maxAge` (30 days by default). Built from its docs and source, not yet
+  run against an expired chat.
 - **`unknown`** is everything else, and resumes exactly as before. Mocked CLIs write no status and
   no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
 
@@ -174,8 +183,9 @@ that wait once.
   re-stamps the turn's start when thinking resumes. A turn the user starts with a prompt after an
   interrupted recap runs its rows, unless the prompt lands inside the engine's interrupt settle
   (about 3 s after a Ctrl+C between tool calls, which fires no hook), where it still counts as the
-  recap's turn. Startup recovery's recap is the whole prompt on every session,
-  so its first turn is skipped the same way. That pass therefore starts each expired task working:
+  recap's turn. Startup recovery's recap is the whole prompt on every session whose CLI takes a
+  starting prompt, so its first turn is skipped the same way. An agent with
+  `freshPromptDelivery: 'typed'` (Kimi Code) opens with no recap. That pass therefore starts each expired task working:
   one summary turn per task, paid in model tokens with nobody watching, which is the price of the
   task saying where it stands when the user next opens it.
 - **On an isolated column set to keep its own conversation** (isolated plus `create_or_resume`,
@@ -431,15 +441,25 @@ resume, so each adapter declares `AgentAdapter.resumePromptDelivery`:
 
 - `command-line`: the resume command carries the prompt (`claude --resume <id> -- "..."`,
   `codex resume <id> "..."`) and nothing is typed. Claude, Codex, Gemini, Qwen Code, Antigravity,
-  Kimi, Droid and Goose.
+  Droid, Goose and Aider. Aider's resume restores the session's own history file
+  (`--restore-chat-history`) and carries the message on `--message`, which replies once and exits,
+  as a fresh Aider start does.
 - `typed`: the CLI takes no prompt with a resume, or does not document that it does. Copilot,
   Grok, OpenCode and Cursor each take a prompt on a new session, but nothing they document says it
-  runs on a resumed one.
-- `no-resume`: the adapter has no session id to resume by, so every start is fresh. Aider, Ollama
-  and Warp's oz.
+  runs on a resumed one. Kimi Code's interactive session takes no prompt on any launch.
+- `no-resume`: the adapter has no session id to resume by, so every start is fresh. Ollama and
+  Warp's oz.
 
 `tests/unit/resume-prompt-delivery-parity.test.ts` builds each real adapter's resume command with
 a marked prompt and holds the declaration to what the builder does.
+
+A fresh session has the same question, answered by the optional
+`AgentAdapter.freshPromptDelivery`. Omitted or `command-line`, the launch carries its prompt. Set
+to `typed` (Kimi Code), the engine keeps the whole prompt off the command line and returns it as
+`SpawnOutcome.typedOpening`, the field an adopted early agent uses, and the caller types it in
+before it sends the agent anything else. That spawn opens idle (`markIdleAuthoritative`), since no
+turn runs until the prompt lands. Startup recovery types nothing, so it opens such an agent with
+no recap. A workflow's agent cannot be one (`canBeWorkflowAgent`).
 
 The engine decides per spawn with `resumePromptRidesCommandLine`
 (`src/main/transition-engine/resume-prompt-delivery.ts`). The prompt rides only when all four hold:

@@ -10,8 +10,34 @@ import { cliPathForTarget, resolveCliTarget, type CliPlace } from '../../shared/
 import { prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
+import { aiderHistoryPath } from './history-paths';
+import { discoverAiderCapabilities } from './capability-discovery';
+import { aiderTranscriptUsage, parseAiderTranscript } from './transcript-parser';
+import {
+  aiderModelDisplayName,
+  isBareCostLine,
+  parseCostReport,
+  parseModelAnnouncement,
+  parseTokensReport,
+} from './chat-history-markdown';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  AnswerFromContextOptions,
+  ParsedTranscript,
+  SettingsChangeSpec,
+  SpawnCommandOptions,
+} from '../../agent-adapter';
+import type {
+  AgentCallUsage,
+  AgentCapabilities,
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  SubmissionContextType,
+  SubmissionVerifier,
+  TranscriptUsage,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
 /**
@@ -19,6 +45,9 @@ import { ActivityDetection } from '../../../../shared/types';
  * A backslash is live there too, but both paths are forward-slashed first.
  */
 const LIVE_IN_DOUBLE_QUOTES = /["$`]/;
+
+/** Any C0 control character or DEL, none of which belongs in a typed command. */
+const CONTROL_CHARACTER = /[\x00-\x1f\x7f]/;
 
 /**
  * The idle command Aider runs through its own shell (`subprocess.run` with
@@ -83,17 +112,36 @@ function buildWslNotificationsCommand(eventsOutputPath: string, place: CliPlace)
  * Aider CLI adapter - integrates the Aider AI pair programming tool
  * (https://aider.chat) behind the generic AgentAdapter interface.
  *
- * Aider is simpler than Claude Code: no session resume, no structured
- * status/event output, no trust mechanism, no hooks, and no settings
- * merging. Detection and command building are inlined.
+ * Aider has no session ids of its own, and no hooks, MCP client, trust
+ * mechanism or settings merge. What it does have, and what this adapter builds on, is a markdown
+ * chat history whose path the caller chooses and which a later run can
+ * restore. Each Kangentic session gets its own history file (see
+ * `history-paths.ts`), which carries the conversation, the model and the
+ * tokens and cost of every message. Everything here is built from Aider's
+ * published options and source (v0.86.1). Every flag it sends is checked
+ * against a real `aider --help` capture (0.86.2), and its history readers
+ * replay excerpts of the history Aider publishes in its own repository. No
+ * Aider session has been run against it.
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = 'aider';
   readonly displayName = 'Aider';
   readonly sessionType = 'aider_agent';
-  readonly supportsCallerSessionId = false;
-  /** Aider keeps no session id Kangentic can resume, so every start is fresh. */
-  readonly resumePromptDelivery = 'no-resume' as const;
+  /**
+   * The engine mints the id, and it names the session's history file
+   * (`--chat-history-file`). Aider never sees it as an id.
+   */
+  readonly supportsCallerSessionId = true;
+  /**
+   * A resume restores the history (`--restore-chat-history`) and carries its
+   * message on `--message`, which replies once and exits ("process reply then
+   * exit (disables chat mode)", https://aider.chat/docs/config/options.html),
+   * the same one-shot run a fresh start makes. Not `typed`: a typed message
+   * waits only for the PTY to go quiet, and Aider sits quiet at a confirm prompt
+   * (`(Y)es/(N)o`), which would take the message as its answer. A resume with
+   * no message opens the restored conversation interactive.
+   */
+  readonly resumePromptDelivery = 'command-line' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Ask (Read-Only Questions)' },
     { mode: 'default', label: 'Code (Confirm Changes)' },
@@ -113,9 +161,7 @@ export class AiderAdapter implements AgentAdapter {
   // computer's empty shell folder and find nothing, so live cost and tokens are not shown there.
   readonly remoteCliName = 'aider';
 
-  // Aider uses the shared AgentDetector via composition (keeps the
-  // single-file layout while deduplicating detection logic across
-  // all four adapters).
+  // Detection is the shared AgentDetector, by composition.
   private readonly detector = new AgentDetector({
     binaryName: 'aider',
     // Aider is most commonly installed via `pip install --user`, which puts
@@ -144,7 +190,23 @@ export class AiderAdapter implements AgentAdapter {
     const place = options.cliTarget ?? null;
     const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.agentPath, shell)];
 
-    // --message with shell-safe quoting (only when prompt is provided)
+    // The column's model and effort, ahead of the prompt so
+    // configuredModelFromCommand never reads a `--model` out of task text.
+    // `--model MODEL` and `--reasoning-effort VALUE`:
+    // https://aider.chat/docs/config/options.html (Aider v0.86.1).
+    if (options.model) parts.push('--model', quoteArg(options.model, shell));
+    if (options.effort) parts.push('--reasoning-effort', quoteArg(options.effort, shell));
+
+    // The session's own chat history (`--chat-history-file`), by absolute path
+    // in the form the CLI opens it: a WSL Aider gets the distro's path. A
+    // session with no id keeps Aider's default file.
+    if (options.sessionId) {
+      const historyPath = cliPathForTarget(aiderHistoryPath(options.cwd, options.sessionId), place);
+      parts.push('--chat-history-file', quoteArg(historyPath, shell));
+    }
+
+    // --message with shell-safe quoting, on a fresh start and on a resume
+    // (`resumePromptDelivery`): either way one reply, then Aider exits.
     if (options.prompt) {
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
@@ -163,9 +225,11 @@ export class AiderAdapter implements AgentAdapter {
       parts.push('--architect');
     }
 
-    // Auto-approve: --yes skips all confirmation prompts
+    // Auto-approve: `--yes-always` "Always say yes to every confirmation". The
+    // flag has no `--yes` alias in aider/args.py; `--yes` only worked as an
+    // argparse prefix abbreviation.
     if (options.permissionMode === 'bypassPermissions') {
-      parts.push('--yes');
+      parts.push('--yes-always');
     }
 
     // Prevent Aider from auto-committing (Kangentic manages git)
@@ -176,9 +240,9 @@ export class AiderAdapter implements AgentAdapter {
     // which adds noise in Kangentic-managed sessions.
     parts.push('--no-suggest-shell-commands');
 
-    // Restore previous chat context when resuming a task.
-    // This isn't session resume (Aider has no session IDs), but it
-    // reloads .aider.chat.history.md so the agent remembers prior work.
+    // Resume: `--restore-chat-history` "Restore the previous chat history
+    // messages" from the history file above, which holds only this
+    // conversation (https://aider.chat/docs/config/options.html).
     if (options.resume) {
       parts.push('--restore-chat-history');
     }
@@ -206,13 +270,18 @@ export class AiderAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: Aider has no hooks and no native session IDs.
+   * Runtime strategy: Aider has no hooks and no session ids of its own; the
+   * id is caller-owned.
    *
    * - Activity: PTY-only. Idle is detected via prompt regex matching
-   *   Aider's mode-specific prompts at end of output.
-   * - Session ID: omitted - Aider has no resume mechanism.
-   * - Session history: parsed from .aider.chat.history.md to extract
-   *   session cost and token counts for the session usage card.
+   *   Aider's mode-specific prompts at end of output. The notifications
+   *   command is not a turn-end signal: Aider rings it at the first wait after
+   *   each LLM response, which can be a confirm prompt mid-turn (aider/io.py
+   *   `ring_bell`, called from `get_input`, `confirm_ask` and `prompt_ask`).
+   * - Session ID: omitted. The id is caller-owned (`supportsCallerSessionId`),
+   *   so the history reader attaches at spawn with it.
+   * - Session history: the session's own chat history markdown, for the
+   *   model, tokens and cost on the usage card.
    *
    * Prompt format (from aider/io.py get_input): `{edit_format}> `
    * where edit_format varies by mode:
@@ -241,7 +310,7 @@ export class AiderAdapter implements AgentAdapter {
 
   getExitSequence(): string[] {
     // Ctrl+C to interrupt, then /exit for graceful shutdown so Aider
-    // can flush .aider.chat.history.md before termination.
+    // can flush its chat history file before termination.
     return ['\x03', '/exit\r'];
   }
 
@@ -255,11 +324,63 @@ export class AiderAdapter implements AgentAdapter {
     return AiderSessionHistoryParser.locate({ agentSessionId, cwd });
   }
 
+  /** The session's chat history as a conversation (see `transcript-parser.ts`). */
+  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
+    return parseAiderTranscript(agentSessionId, cwd);
+  }
+
+  /** The history records each run's start only, never a time per message. */
+  readonly transcriptHasTimestamps = false;
+
+  /** Every `Tokens:` report in the session's history, added up. */
+  async transcriptUsage(input: { agentSessionId?: string | null; cwd?: string | null }): Promise<TranscriptUsage | null> {
+    if (!input.agentSessionId || !input.cwd) return null;
+    return aiderTranscriptUsage(input.agentSessionId, input.cwd);
+  }
+
+  /** Whether `--model` is in `aider --help` (see `capability-discovery.ts`). */
+  async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
+    return discoverAiderCapabilities(cliPath, forceRefresh);
+  }
+
+  /**
+   * The `--model` the builder put on the command, so the card names the model
+   * before Aider's announcement reaches the history. Only the region before
+   * `--message` is read, so a prompt quoting `--model` is never taken for it.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const messageFlag = command.search(/\s--message\s/);
+    const flagRegion = messageFlag === -1 ? command : command.slice(0, messageFlag);
+    const match = flagRegion.match(/\s--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const id = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+    if (!id) return null;
+    return { id, displayName: aiderModelDisplayName(id) };
+  }
+
+  /**
+   * A Command Terminal's live swap: `/model <name>` "Switch the Main Model to a
+   * new LLM" and `/reasoning-effort <level>` "Set the reasoning effort level"
+   * (https://aider.chat/docs/usage/commands.html, Aider v0.86.1).
+   *
+   * A value carrying a control character is dropped: a `\r` would end the
+   * command line and submit the rest as another Aider input, such as `/run`.
+   */
+  getInjectionSequence(spec: SettingsChangeSpec): string[] {
+    const sequence: string[] = [];
+    if (spec.modelChanged && spec.model && !CONTROL_CHARACTER.test(spec.model)) {
+      sequence.push(`/model ${spec.model}`);
+    }
+    if (spec.effortChanged && spec.effort && !CONTROL_CHARACTER.test(spec.effort)) {
+      sequence.push(`/reasoning-effort ${spec.effort}`);
+    }
+    return sequence;
+  }
+
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
     if (contextType === 'command-injection') {
-      // CONFIRM-ONLY. `.aider.chat.history.md` has no per-entry timestamps and
-      // is shared per project directory, so the verifier guards on the FILE's
-      // mtime and only accepts the LAST user block - see the module comment.
+      // CONFIRM-ONLY. The chat history has no per-entry timestamps, so the
+      // verifier guards on the FILE's mtime and only accepts the LAST user
+      // block - see the module comment.
       return createAiderCommandInjectionVerifier();
     }
     // 'paste': Aider exposes no hook or structured signal; the paste engine's
@@ -277,9 +398,9 @@ export class AiderAdapter implements AgentAdapter {
   }
 
   /**
-   * Aider has no session id at all - `runtime` declares no `sessionIdCapture`,
-   * because it keeps ONE `.aider.chat.history.md` per project directory rather
-   * than a per-session transcript. `cwd` alone identifies its history.
+   * A task session's history is the file its id names; a session with no id
+   * (a Command Terminal) writes Aider's shared default file, which `cwd` alone
+   * identifies. The verifier reads whichever applies, so it needs no id.
    */
   requiresAgentSessionIdForVerification(): boolean {
     return false;
@@ -296,9 +417,12 @@ export class AiderAdapter implements AgentAdapter {
    *
    * The rest keeps a headless run from stopping to ask something it cannot
    * answer, or touching anything: `--no-git` (the scratch directory is not a
-   * repository, and Aider would otherwise offer to create one), `--yes` for any
-   * other confirmation, `--no-auto-commits`, no update check, no model
+   * repository, and Aider would otherwise offer to create one), `--yes-always`
+   * for any other confirmation, `--no-auto-commits`, no update check, no model
    * warnings, and plain unstreamed output.
+   *
+   * What the run cost goes to `options.onUsage`, read from the `Tokens:` and
+   * `Cost:` report Aider prints after the answer (`aiderAnswerUsage`).
    *
    * Its history files go in the run directory, not the working directory: the
    * working directory is the answer home every question shares, and Aider
@@ -337,7 +461,7 @@ export class AiderAdapter implements AgentAdapter {
         '--chat-mode', 'ask',
         '--no-git',
         '--no-auto-commits',
-        '--yes',
+        '--yes-always',
         '--no-pretty',
         '--no-stream',
         '--no-check-update',
@@ -353,7 +477,14 @@ export class AiderAdapter implements AgentAdapter {
       promptVia: 'file',
       promptFileFlag: '--message-file',
       promptDirectory: runDirectory,
-      extractRaw: extractAiderAnswer,
+      extractRaw: (stdout) => {
+        const onUsage = options?.onUsage;
+        if (onUsage) {
+          const usage = aiderAnswerUsage(stdout);
+          if (usage) onUsage(usage);
+        }
+        return extractAiderAnswer(stdout);
+      },
     });
   }
 }
@@ -362,9 +493,38 @@ export class AiderAdapter implements AgentAdapter {
  * The lines Aider prints before an answer: its version banner, the model and
  * repo summary, and any startup notice.
  */
-const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odel: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
+const AIDER_BANNER_LINE = /^(?:Aider v\d|(?:Main |Editor )?[Mm]odels?: .+ with .+ format|Weak model:|Git repo:|Repo-map:|Added .* to the chat|Warning:|Use \/help|https:\/\/aider\.chat)/;
 /** The line Aider prints after one: `Tokens: 2.3k sent, 145 received. Cost: ...`. */
 const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
+
+/** Where an answer run's stdout splits into banner, answer and usage report. */
+interface AiderAnswerLayout {
+  lines: string[];
+  /** First answer line; everything before it is banner. */
+  start: number;
+  /** One past the last answer line; everything from it on is the usage report. */
+  end: number;
+}
+
+function layoutAiderAnswer(stdout: string): AiderAnswerLayout {
+  const lines = stdout.split(/\r?\n/);
+  let start = 0;
+  while (start < lines.length && (lines[start].trim() === '' || AIDER_BANNER_LINE.test(lines[start].trim()))) start += 1;
+  let end = lines.length;
+  while (end > start) {
+    const last = lines[end - 1].trim();
+    // A bare `Cost:` line is the report's second half only right after its first.
+    const previousIsTokensReport = end - 2 >= start && AIDER_TOKENS_LINE.test(lines[end - 2].trim());
+    if (last === '' || AIDER_TOKENS_LINE.test(last)) {
+      end -= 1;
+    } else if (isBareCostLine(last) && previousIsTokensReport) {
+      end -= 2;
+    } else {
+      break;
+    }
+  }
+  return { lines, start, end };
+}
 
 /**
  * The answer between Aider's banner and its token line. Only the ends are
@@ -372,10 +532,31 @@ const AIDER_TOKENS_LINE = /^Tokens: .* sent, .* received/;
  * three sessions", and an answer about task costs writes lines like that.
  */
 export function extractAiderAnswer(stdout: string): string {
-  const lines = stdout.split(/\r?\n/);
-  let start = 0;
-  while (start < lines.length && (lines[start].trim() === '' || AIDER_BANNER_LINE.test(lines[start].trim()))) start += 1;
-  let end = lines.length;
-  while (end > start && (lines[end - 1].trim() === '' || AIDER_TOKENS_LINE.test(lines[end - 1].trim()))) end -= 1;
+  const { lines, start, end } = layoutAiderAnswer(stdout);
   return lines.slice(start, end).join('\n').trim();
+}
+
+/**
+ * What an answer run cost, from the lines Aider printed around the answer: the
+ * banner's `Model:` announcement and the trailing `Tokens:` / `Cost:` report
+ * (formats in `chat-history-markdown.ts`). `sent` is reported as input tokens,
+ * as Aider reports it: the prompt tokens of the call, which may include cached
+ * ones. Null when no `Tokens:` report was printed.
+ */
+export function aiderAnswerUsage(stdout: string): AgentCallUsage | null {
+  const { lines, start, end } = layoutAiderAnswer(stdout);
+  let model: string | null = null;
+  for (const line of lines.slice(0, start)) model = parseModelAnnouncement(line) ?? model;
+  const report = lines.slice(end).map((line) => line.trim()).filter(Boolean).join(' ');
+  const tokens = parseTokensReport(report);
+  if (!tokens) return null;
+  const cost = parseCostReport(report);
+  return {
+    model,
+    inputTokens: tokens.sent,
+    cacheCreationInputTokens: tokens.cacheWrite,
+    cacheReadInputTokens: tokens.cacheHit,
+    outputTokens: tokens.received,
+    costUsd: cost ? cost.messageUsd : null,
+  };
 }

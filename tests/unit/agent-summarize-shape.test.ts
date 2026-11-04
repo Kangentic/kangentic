@@ -118,14 +118,16 @@ describe('Adapter summarize() invocation shapes', () => {
   // and those of the answer run's read-only and no-session flags that leave its
   // mode alone. A mode change waits for a title measured in that mode.
   const GROK_DENY = ['--deny', 'Write', '--deny', 'Edit', '--deny', 'Bash', '--no-subagents', '--disable-web-search', '--no-memory'];
+  // Grok names its title run's session itself (`-s`), a fresh UUID each run.
+  const GROK_SESSION_UUID = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   type Summarizer = { summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null }) => Promise<string> };
-  const summarizers: Array<[string, () => Promise<Summarizer>, string[]]> = [
-    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1']],
-    ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--print', '--quiet', '--model', 'm1']],
+  const summarizers: Array<[string, () => Promise<Summarizer>, unknown[]]> = [
+    ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1', '-c', 'model_reasoning_effort=low']],
+    ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--model', 'm1', '--output-format', 'stream-json', '-p']],
     ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--chat-recording=false', '--model', 'm1']],
-    ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1']],
+    ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1', '-r', 'low']],
     ['cursor', async () => new (await import('../../src/main/agent/adapters/cursor/cursor-adapter')).CursorAdapter(), ['--trust', '--output-format', 'text', '--model', 'm1', '-p']],
-    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', ...GROK_DENY, '--model', 'm1', '--reasoning-effort', 'low', '-p']],
+    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', ...GROK_DENY, '--model', 'm1', '--reasoning-effort', 'low', '-s', GROK_SESSION_UUID, '-p']],
   ];
   it.each(summarizers)('%s passes the chosen model as its answer run does', async (_name, create, expectedArgs) => {
     const adapter = await create();
@@ -135,13 +137,34 @@ describe('Adapter summarize() invocation shapes', () => {
     expect(call.cwd).toBe('/answer-home');
   });
 
-  it('Kimi uses --print --quiet via stdin', async () => {
+  it('Kimi Code takes its prompt as the argument of -p, which reads no stdin', async () => {
     const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
     const adapter = new KimiAdapter();
     await adapter.summarize('add docstrings', '/usr/bin/kimi', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--print', '--quiet']);
-    expect(call.promptVia).toBeUndefined();
+    expect(call.args).toEqual(['--output-format', 'stream-json', '-p']);
+    expect(call.promptVia).toBe('arg');
+  });
+
+  // cmd.exe ends a command at the first line break, and the npm shim for the CLI runs through it.
+  it('Kimi Code sends a multi-line description as one line, since its prompt rides the command line', async () => {
+    const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
+    await new KimiAdapter().summarize('first line\nsecond line\r\n   third line', '/usr/bin/kimi', '/cwd');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    expect(call.prompt).not.toMatch(/[\r\n]/);
+    expect(call.prompt).toContain('first line second line third line');
+  });
+
+  it('Kimi Code reads the title from the last assistant line of its stream-json run', async () => {
+    const { KimiAdapter } = await import('../../src/main/agent/adapters/kimi/kimi-adapter');
+    await new KimiAdapter().summarize('add docstrings', '/usr/bin/kimi', '/cwd');
+    const call = runCliPrintSummarizeMock.mock.calls[0][0];
+    const stdout = [
+      JSON.stringify({ role: 'assistant', content: 'draft title' }),
+      JSON.stringify({ role: 'tool', content: 'tool output' }),
+      JSON.stringify({ role: 'assistant', content: [{ type: 'text', text: 'Add docstrings' }] }),
+    ].join('\n');
+    expect(call.extractRaw(stdout)).toBe('Add docstrings');
   });
 
   it('Codex uses exec --skip-git-repo-check, read-only and kept out of its sessions, via stdin', async () => {
@@ -185,8 +208,49 @@ describe('Adapter summarize() invocation shapes', () => {
     const adapter = new GrokAdapter();
     await adapter.summarize('triage crash report', '/usr/bin/grok', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--output-format', 'plain', ...GROK_DENY, '-p']);
+    expect(call.args).toEqual(['--output-format', 'plain', ...GROK_DENY, '-s', GROK_SESSION_UUID, '-p']);
     expect(call.promptVia).toBe('arg');
+  });
+
+  // A headless run keeps its session in ~/.grok/sessions like any other. The
+  // run names it with -s, so the folder to remove is known before the run
+  // starts, and a sibling session in the same folder is left alone. A timed-out
+  // or crashed run leaves its folder too, so the cleanup runs on that path as
+  // well, and the run's error still reaches the caller.
+  it.each([
+    ['returns', false],
+    ['fails', true],
+  ])('Grok removes the session its title run named when the run %s, and only that one', async (_outcome, runFails) => {
+    const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-summarize-home-'));
+    const originalGrokHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
+      const { grokSessionDir } = await import('../../src/main/agent/adapters/grok/session-paths');
+      const answerHome = path.join(grokHome, 'answer-home');
+      const siblingSession = grokSessionDir(answerHome, '00000000-0000-4000-8000-000000000001', null);
+      fs.mkdirSync(siblingSession, { recursive: true });
+      let titleSession = '';
+      runCliPrintSummarizeMock.mockImplementationOnce(async (input: { args: string[] }) => {
+        titleSession = grokSessionDir(answerHome, input.args[input.args.indexOf('-s') + 1], null);
+        fs.mkdirSync(titleSession, { recursive: true });
+        fs.writeFileSync(path.join(titleSession, 'updates.jsonl'), '{}\n');
+        if (runFails) throw new Error('timed out');
+        return 'Mocked Title';
+      });
+
+      const summarized = new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome);
+      if (runFails) await expect(summarized).rejects.toThrow('timed out');
+      else await expect(summarized).resolves.toBe('Mocked Title');
+
+      expect(titleSession).not.toBe('');
+      expect(fs.existsSync(titleSession)).toBe(false);
+      expect(fs.existsSync(siblingSession)).toBe(true);
+    } finally {
+      if (originalGrokHome === undefined) delete process.env.GROK_HOME;
+      else process.env.GROK_HOME = originalGrokHome;
+      fs.rmSync(grokHome, { recursive: true, force: true });
+    }
   });
 
   it('all adapters with summarize wrap the prompt via buildSummarizePrompt', async () => {

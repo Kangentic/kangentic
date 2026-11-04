@@ -3,6 +3,7 @@ import path from 'node:path';
 import { locateClaudeTranscriptFile } from './transcript-parser';
 import { touchBounded } from '../../shared/bounded-lru';
 import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { listProjectFolders, PROJECT_SCAN_BATCH } from '../../shared/project-folders';
 
 /**
  * Where a Claude conversation's transcript is, wherever Claude wrote it.
@@ -32,9 +33,6 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  *
  * The cache is per process (main and the retrieval worker each keep one).
  */
-
-/** Project folders listed or statted at once. */
-export const PROJECT_SCAN_BATCH = 32;
 
 /** How long a conversation the full scan did not find is not searched for again. */
 const MISS_RETRY_MS = 30_000;
@@ -138,30 +136,6 @@ export async function findClaudeResumeTranscriptFile(query: ClaudeTranscriptQuer
   return firstAncestorHit(query);
 }
 
-/**
- * Every folder under a projects folder that could hold a transcript:
- * directories, and links that may lead to one. Null when the projects folder
- * is not a directory this process can read.
- */
-export async function listClaudeProjectFolders(projectsRoot: string): Promise<string[] | null> {
-  let entries: fs.Dirent[];
-  try {
-    const rootStat = await fs.promises.stat(projectsRoot);
-    if (!rootStat.isDirectory()) return null;
-    entries = await fs.promises.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  const folders: string[] = [];
-  for (const entry of entries) {
-    const folderPath = path.join(projectsRoot, entry.name);
-    if (entry.isDirectory() || (entry.isSymbolicLink() && await mayBeFolder(folderPath))) {
-      folders.push(folderPath);
-    }
-  }
-  return folders;
-}
-
 /** The paths a query names before any search, and the key a search for it is remembered by. */
 function startingPoints(query: ClaudeTranscriptQuery): { reported: string | null; derived: string; key: string } {
   const place = query.place ?? null;
@@ -244,7 +218,7 @@ function projectTranscripts(projectsRoot: string): Promise<ProjectTranscripts | 
 }
 
 async function listProjectTranscripts(projectsRoot: string): Promise<ProjectTranscripts | null> {
-  const folders = await listClaudeProjectFolders(projectsRoot);
+  const folders = await listProjectFolders(projectsRoot);
   if (!folders) return null;
   const transcripts: ProjectTranscripts = new Map();
   for (let start = 0; start < folders.length; start += PROJECT_SCAN_BATCH) {
@@ -343,18 +317,5 @@ async function modifiedAt(filePath: string): Promise<number | null> {
     return (await fs.promises.stat(filePath)).mtimeMs;
   } catch {
     return null;
-  }
-}
-
-/**
- * False only for a link whose target is a file, which can hold no transcript.
- * A link to a folder, a dangling link and an unreadable one stay in the scan:
- * a stat inside them answers for itself.
- */
-async function mayBeFolder(linkPath: string): Promise<boolean> {
-  try {
-    return (await fs.promises.stat(linkPath)).isDirectory();
-  } catch {
-    return true;
   }
 }

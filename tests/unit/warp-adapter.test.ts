@@ -3,10 +3,14 @@
  *
  * These tests exercise pure logic without any Electron, DOM, or IPC dependencies.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+import type { VersionLaunch } from '../../src/main/agent/shared/exec-version';
 import {
   agentDisplayName,
   agentShortName,
@@ -20,6 +24,7 @@ let mockWhichResult: string | Error = '/usr/bin/oz';
 let mockVersionResult: string | null = 'v0.2026.04.08.08.36.stable_02';
 let execCallCount = 0;
 let lastVersionArgs: readonly string[] | undefined;
+let lastVersionLaunch: VersionLaunch | null | undefined;
 
 vi.mock('which', () => ({
   default: async () => {
@@ -42,9 +47,10 @@ vi.mock('node:fs', async (importOriginal) => {
 // The shared version probe, so no real process is spawned. A null version is
 // output with no version line, which the parser rejects.
 vi.mock('../../src/main/agent/shared/exec-version', () => ({
-  execVersion: async (_candidatePath: string, _timeout?: number, args?: readonly string[]) => {
+  execVersion: async (_candidatePath: string, _timeout?: number, args?: readonly string[], launch?: VersionLaunch | null) => {
     execCallCount++;
     lastVersionArgs = args;
+    lastVersionLaunch = launch;
     return {
       stdout: mockVersionResult === null ? 'gpu_power_preference: HighPerformance\n' : `Warp version: Some("${mockVersionResult}")\n`,
       stderr: '',
@@ -227,19 +233,216 @@ describe('WarpAdapter', () => {
 
     // ── Permission mode mapping ──────────────────────────────────────────
 
-    describe('permission mode mapping', () => {
+    describe('permission modes', () => {
       const allModes: PermissionMode[] = ['default', 'plan', 'dontAsk', 'acceptEdits', 'auto', 'bypassPermissions'];
 
-      for (const mode of allModes) {
-        it(`adds no permission flags for ${mode} (Warp uses profiles)`, () => {
-          const command = adapter.buildCommand(makeOptions({ permissionMode: mode }));
-          // Warp does not map permission modes to CLI flags
-          expect(command).not.toContain('--yes');
-          expect(command).not.toContain('--auto');
-          expect(command).not.toContain('--sandbox');
-          expect(command).not.toContain('--ask-for-approval');
+      // Warp keeps autonomy in agent profiles, so no mode may change the
+      // command; a mode that did would be a Kangentic layer over the profile.
+      it('builds the same command for every mode (Warp uses profiles)', () => {
+        const baseline = adapter.buildCommand(makeOptions({ permissionMode: 'default', prompt: 'Fix the bug' }));
+        for (const mode of allModes) {
+          expect(adapter.buildCommand(makeOptions({ permissionMode: mode, prompt: 'Fix the bug' }))).toBe(baseline);
+        }
+      });
+
+      // Red-green: Oz used to offer "Plan Only (Read-Only)" and "Auto" entries
+      // that mapped to no flag, so a plan column ran with full permissions.
+      it('offers only the default entry its Warp profile decides', () => {
+        expect(adapter.permissions.map((entry) => entry.mode)).toEqual(['default']);
+      });
+    });
+
+    // ── Model ────────────────────────────────────────────────────────────
+
+    describe('model', () => {
+      it('passes --model before the end-of-options guard', () => {
+        const command = adapter.buildCommand(makeOptions({ model: 'model-id-1', prompt: 'Fix the bug', shell: 'bash' }));
+        expect(command).toContain('--model model-id-1');
+        expect(command.indexOf('--model')).toBeLessThan(command.indexOf('-- --prompt'));
+      });
+
+      it('omits --model when no model is set or it is blank', () => {
+        expect(adapter.buildCommand(makeOptions())).not.toContain('--model');
+        expect(adapter.buildCommand(makeOptions({ model: '   ' }))).not.toContain('--model');
+      });
+
+      it('declares the model override without asking the CLI for a list', async () => {
+        await expect(adapter.discoverCapabilities('/usr/bin/oz')).resolves.toEqual({ supportsModelOverride: true });
+      });
+
+      const distroTarget: NonNullable<SpawnCommandOptions['cliTarget']> = {
+        kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/oz',
+        facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' },
+      };
+
+      /** Every shell family the adapter quotes for, each with the options it needs. */
+      const shellCases: Array<{ shell: string; extra: Partial<SpawnCommandOptions> }> = [
+        { shell: 'bash', extra: {} },
+        { shell: 'powershell', extra: {} },
+        { shell: 'cmd', extra: {} },
+        { shell: 'wsl -d Ubuntu', extra: { cliTarget: distroTarget } },
+      ];
+
+      it('seeds the configured model from the command it built, for bash, PowerShell, cmd and a WSL distro', () => {
+        for (const { shell, extra } of shellCases) {
+          const command = adapter.buildCommand(makeOptions({ model: 'model-id-1', prompt: 'Fix the bug', shell, ...extra }));
+          expect(adapter.configuredModelFromCommand(command), shell).toEqual({ id: 'model-id-1', displayName: 'model-id-1' });
+        }
+      });
+
+      it('reads no model from a prompt that mentions --model', () => {
+        for (const { shell, extra } of shellCases) {
+          const command = adapter.buildCommand(makeOptions({ prompt: 'Run it with --model other-id please', shell, ...extra }));
+          expect(adapter.configuredModelFromCommand(command), shell).toBeNull();
+        }
+      });
+
+      it('round-trips a model id that needs quoting', () => {
+        for (const shell of ['bash', 'powershell', 'cmd']) {
+          const command = adapter.buildCommand(makeOptions({ model: 'my model id', prompt: 'Fix the bug', shell }));
+          expect(adapter.configuredModelFromCommand(command), shell).toEqual({ id: 'my model id', displayName: 'my model id' });
+        }
+      });
+
+      // Red-green: the guard was once found by the first " -- " in the command,
+      // so a quoted folder holding " -- " ended the flag region before --model.
+      it('seeds the model when the working folder holds " -- "', () => {
+        const cases = [
+          { shell: 'bash', cwd: '/p/my -- app' },
+          { shell: 'powershell', cwd: 'C:\\p\\my -- app' },
+        ];
+        for (const { shell, cwd } of cases) {
+          const command = adapter.buildCommand(makeOptions({ cwd, model: 'model-id-1', prompt: 'Fix the bug', shell }));
+          expect(adapter.configuredModelFromCommand(command), shell).toEqual({ id: 'model-id-1', displayName: 'model-id-1' });
+        }
+      });
+
+      it('returns null for a command with no --model', () => {
+        expect(adapter.configuredModelFromCommand(adapter.buildCommand(makeOptions({ shell: 'bash' })))).toBeNull();
+      });
+    });
+
+    // ── Kangentic MCP server ─────────────────────────────────────────────
+
+    describe('Kangentic MCP server', () => {
+      const mcpUrl = 'http://127.0.0.1:65530/mcp/project-1/session-1';
+      const mcpToken = 'token-for-test-4f1a';
+      let sessionFolder: string;
+
+      beforeEach(() => {
+        sessionFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-warp-mcp-'));
+      });
+
+      afterEach(() => {
+        fs.rmSync(sessionFolder, { recursive: true, force: true });
+      });
+
+      function mcpOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
+        return makeOptions({
+          shell: 'bash',
+          prompt: 'Fix the bug',
+          statusOutputPath: path.join(sessionFolder, 'status.json'),
+          eventsOutputPath: path.join(sessionFolder, 'events.jsonl'),
+          mcpServerEnabled: true,
+          mcpServerUrl: mcpUrl,
+          mcpServerToken: mcpToken,
+          ...overrides,
         });
       }
+
+      function readMcpConfig(): Record<string, Record<string, unknown>> {
+        return JSON.parse(fs.readFileSync(path.join(sessionFolder, 'mcp.json'), 'utf-8'));
+      }
+
+      it('writes the documented url + headers entry and names the file with --mcp before the guard', () => {
+        const command = adapter.buildCommand(mcpOptions());
+        expect(readMcpConfig()).toEqual({
+          kangentic: { url: mcpUrl, headers: { 'X-Kangentic-Token': mcpToken } },
+        });
+        const configPath = path.join(sessionFolder, 'mcp.json');
+        expect(command).toContain(`--mcp ${quoteArg(configPath, 'bash')}`);
+        expect(command.indexOf('--mcp')).toBeLessThan(command.indexOf('-- --prompt'));
+      });
+
+      it('keeps the token and the URL off the command line', () => {
+        const command = adapter.buildCommand(mcpOptions());
+        expect(command).not.toContain(mcpToken);
+        expect(command).not.toContain(mcpUrl);
+      });
+
+      it('writes nothing and passes no --mcp when the server is off or has no URL', () => {
+        for (const overrides of [{ mcpServerEnabled: false }, { mcpServerUrl: undefined }, { mcpServerToken: undefined }]) {
+          const command = adapter.buildCommand(mcpOptions(overrides));
+          expect(command).not.toContain('--mcp');
+          // readdirSync, not existsSync: this file mocks existsSync to true.
+          expect(fs.readdirSync(sessionFolder)).toEqual([]);
+        }
+      });
+
+      it('passes no --mcp when the build has no session directory', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          const command = adapter.buildCommand(mcpOptions({ statusOutputPath: undefined, eventsOutputPath: undefined }));
+          expect(command).not.toContain('--mcp');
+          expect(warnSpy).toHaveBeenCalledTimes(1);
+          expect(String(warnSpy.mock.calls[0][0])).toContain('[warp]');
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      // Red-green for the mkdirSync: without it the write throws ENOENT.
+      it('creates a session directory that does not exist yet and writes mcp.json there', () => {
+        const nestedFolder = path.join(sessionFolder, 'nested', 'session-folder');
+        const command = adapter.buildCommand(mcpOptions({
+          statusOutputPath: path.join(nestedFolder, 'status.json'),
+          eventsOutputPath: undefined,
+        }));
+        const configPath = path.join(nestedFolder, 'mcp.json');
+        expect(JSON.parse(fs.readFileSync(configPath, 'utf-8'))).toEqual({
+          kangentic: { url: mcpUrl, headers: { 'X-Kangentic-Token': mcpToken } },
+        });
+        expect(command).toContain(`--mcp ${quoteArg(configPath, 'bash')}`);
+      });
+
+      // Red-green for the `?? options.eventsOutputPath` fallback: with only the
+      // events file known, mcp.json still lands beside it.
+      it('writes mcp.json beside the events file when no status file path is set', () => {
+        const command = adapter.buildCommand(mcpOptions({ statusOutputPath: undefined }));
+        expect(readMcpConfig()).toEqual({
+          kangentic: { url: mcpUrl, headers: { 'X-Kangentic-Token': mcpToken } },
+        });
+        expect(command).toContain(`--mcp ${quoteArg(path.join(sessionFolder, 'mcp.json'), 'bash')}`);
+      });
+
+      const wslTarget = (networkingMode: 'nat' | 'mirrored'): NonNullable<SpawnCommandOptions['cliTarget']> => ({
+        kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/oz',
+        facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode },
+      });
+
+      it('hands an oz in a WSL distro on NAT networking the bridge as a stdio server, token in its env', () => {
+        const command = adapter.buildCommand(mcpOptions({ shell: 'wsl -d Ubuntu', cliTarget: wslTarget('nat') }));
+        const entry = readMcpConfig().kangentic;
+        expect(entry.url).toBeUndefined();
+        expect(typeof entry.command).toBe('string');
+        expect(Array.isArray(entry.args)).toBe(true);
+        expect(Object.values(entry.env as Record<string, string>)).toEqual([mcpToken]);
+        expect(command).not.toContain(mcpToken);
+        // The file path reaches the distro in its own form, never a drive path.
+        expect(command).toMatch(/--mcp \S*\/mcp\.json/);
+        expect(command).not.toMatch(/--mcp \S*\\/);
+      });
+
+      it('hands an oz in a WSL distro on mirrored networking the URL itself', () => {
+        adapter.buildCommand(mcpOptions({ shell: 'wsl -d Ubuntu', cliTarget: wslTarget('mirrored') }));
+        expect(readMcpConfig().kangentic).toEqual({ url: mcpUrl, headers: { 'X-Kangentic-Token': mcpToken } });
+      });
+    });
+
+    // ── Telemetry ────────────────────────────────────────────────────────
+
+    it('declares that it streams no live telemetry, so the card shows a label instead of a spinner', () => {
+      expect(adapter.liveTelemetryUnsupported?.unavailableLabel).toBeTruthy();
     });
 
     // ── Shell quoting ────────────────────────────────────────────────────
@@ -377,6 +580,131 @@ describe('parseWarpVersion', async () => {
 
   it('handles None version (CLI not properly initialized)', () => {
     expect(parseWarpVersion('Warp version: None\n')).toBeNull();
+  });
+});
+
+// ── The Windows version probe (oz.cmd runs a GUI-subsystem warp.exe) ─────────
+
+describe('warpVersionLaunch', async () => {
+  const { parseWarpCliShim, parseWarpVersion, warpVersionLaunch } = await import('../../src/main/agent/adapters/warp/version-detector');
+  const { AgentDetector } = await import('../../src/main/agent/shared/agent-detector');
+
+  // The shim Warp v0.2026.04.08.08.36.stable_02 installs, with the install
+  // folder made generic.
+  const installedShim = '@echo off\r\nset "WARP_CLI_MODE=1"\r\n"C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\warp.exe" %*\r\n';
+  let shimFolder: string;
+
+  beforeEach(() => {
+    shimFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-warp-shim-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(shimFolder, { recursive: true, force: true });
+  });
+
+  it('reads the program and the variables out of the installed shim', () => {
+    expect(parseWarpCliShim(installedShim, 'C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\bin')).toEqual({
+      file: 'C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\warp.exe',
+      env: { WARP_CLI_MODE: '1' },
+    });
+  });
+
+  it('resolves %~dp0 against the shim folder', () => {
+    const launch = parseWarpCliShim('@echo off\nset "WARP_CLI_MODE=1"\n"%~dp0..\\warp.exe" %*\n', 'C:\\Users\\dev\\Warp\\bin');
+    expect(launch?.file).toBe('C:\\Users\\dev\\Warp\\warp.exe');
+  });
+
+  it('reads nothing from a script that runs no .exe with %*', () => {
+    expect(parseWarpCliShim('@echo off\nnode "%~dp0oz.js" %*\n', shimFolder)).toBeNull();
+  });
+
+  // Red-green: through cmd, oz.cmd printed nothing and Oz was never found on
+  // Windows. The probe now starts the warp.exe the shim names.
+  it('starts the warp.exe an oz.cmd names, directly, on Windows', () => {
+    const shimPath = path.join(shimFolder, 'oz.CMD');
+    fs.writeFileSync(shimPath, installedShim);
+    expect(warpVersionLaunch(shimPath, 'win32')).toEqual({
+      file: 'C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\warp.exe',
+      env: { WARP_CLI_MODE: '1' },
+    });
+  });
+
+  it('starts a configured warp.exe directly with WARP_CLI_MODE', () => {
+    expect(warpVersionLaunch('C:\\Tools\\Warp\\warp.exe', 'win32')).toEqual({ file: 'C:\\Tools\\Warp\\warp.exe', env: { WARP_CLI_MODE: '1' } });
+  });
+
+  it('probes the path as found off Windows, and for an unreadable shim', () => {
+    expect(warpVersionLaunch('/usr/bin/oz', 'linux')).toBeNull();
+    expect(warpVersionLaunch('/usr/local/bin/oz', 'darwin')).toBeNull();
+    expect(warpVersionLaunch(path.join(shimFolder, 'missing.cmd'), 'win32')).toBeNull();
+  });
+
+  describe('parseWarpCliShim details', () => {
+    const shimFolderWindows = 'C:\\Users\\dev\\Warp\\bin';
+
+    it('takes the first .exe line when two are present', () => {
+      const text = '"C:\\Users\\dev\\Warp\\first.exe" %*\r\n"C:\\Users\\dev\\Warp\\second.exe" %*\r\n';
+      expect(parseWarpCliShim(text, shimFolderWindows)?.file).toBe('C:\\Users\\dev\\Warp\\first.exe');
+    });
+
+    it('does not double the separator when the shim folder already ends in one', () => {
+      const launch = parseWarpCliShim('"%~dp0warp.exe" %*\n', `${shimFolderWindows}\\`);
+      expect(launch?.file).toBe('C:\\Users\\dev\\Warp\\bin\\warp.exe');
+    });
+
+    it('reads an unquoted set line into the environment', () => {
+      const launch = parseWarpCliShim('set WARP_CLI_MODE=1\n"C:\\Users\\dev\\Warp\\warp.exe" %*\n', shimFolderWindows);
+      expect(launch?.env).toEqual({ WARP_CLI_MODE: '1' });
+    });
+
+    it("resolves %NAME% from the shim's own set variable, ignoring case", () => {
+      const text = 'set "WarpHome=C:\\Users\\dev\\Warp"\n"%WARPHOME%\\warp.exe" %*\n';
+      expect(parseWarpCliShim(text, shimFolderWindows, {})?.file).toBe('C:\\Users\\dev\\Warp\\warp.exe');
+    });
+
+    it('resolves %NAME% from the passed environment, ignoring case', () => {
+      const launch = parseWarpCliShim('"%localappdata%\\Programs\\Warp\\warp.exe" %*\n', shimFolderWindows, { LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' });
+      expect(launch?.file).toBe('C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\warp.exe');
+    });
+
+    it('returns null for a %NAME% nothing sets', () => {
+      expect(parseWarpCliShim('"%NOT_SET_ANYWHERE%\\warp.exe" %*\n', shimFolderWindows, {})).toBeNull();
+    });
+
+    it('returns null for a relative program path', () => {
+      expect(parseWarpCliShim('"warp.exe" %*\n', shimFolderWindows, {})).toBeNull();
+    });
+  });
+
+  describe('warpVersionLaunch shim files', () => {
+    const exePath = 'C:\\Users\\dev\\AppData\\Local\\Programs\\Warp\\warp.exe';
+
+    it('treats a .bat shim like a .cmd shim', () => {
+      const shimPath = path.join(shimFolder, 'oz.bat');
+      fs.writeFileSync(shimPath, installedShim);
+      expect(warpVersionLaunch(shimPath, 'win32')).toEqual({ file: exePath, env: { WARP_CLI_MODE: '1' } });
+    });
+
+    it('does not read a shim larger than 64 KiB', () => {
+      const shimPath = path.join(shimFolder, 'oz.cmd');
+      fs.writeFileSync(shimPath, installedShim + 'rem padding\r\n'.repeat(6000));
+      expect(fs.statSync(shimPath).size).toBeGreaterThan(64 * 1024);
+      expect(warpVersionLaunch(shimPath, 'win32')).toBeNull();
+    });
+  });
+
+  it('the shared detector hands a versionLaunch program to the probe', async () => {
+    const launch = { file: 'C:\\Tools\\cli.exe', env: { SOME_MODE: '1' } };
+    const detector = new AgentDetector({
+      binaryName: 'cli',
+      versionArgs: ['dump-debug-info'],
+      parseVersion: parseWarpVersion,
+      versionLaunch: () => launch,
+    });
+    const result = await detector.detect('/custom/cli');
+    expect(result.found).toBe(true);
+    expect(lastVersionArgs).toEqual(['dump-debug-info']);
+    expect(lastVersionLaunch).toBe(launch);
   });
 });
 

@@ -82,6 +82,22 @@ describe('hand-built OpenCode 2 records', () => {
     });
   });
 
+  it('puts an assistant record\'s tokens on its entry as per-turn usage, and none when it has no tokens', () => {
+    const entries = mapOpenCodeRemoteEntries(openCodeV2RowEntries([
+      rowOf('msg_t1', 'assistant', {
+        time: { created: 5 },
+        content: [{ type: 'text', text: 'Answer.' }],
+        tokens: { input: 100, output: 20, reasoning: 5, total: 1135, cache: { read: 1000, write: 10 } },
+      }),
+      rowOf('msg_t2', 'assistant', { time: { created: 6 }, content: [{ type: 'text', text: 'No usage.' }] }),
+    ]));
+    const usages = entries.map((entry) => (entry.kind === 'assistant' ? entry.usage : 'not assistant'));
+    expect(usages).toEqual([
+      { inputTokens: 100, outputTokens: 25, cacheCreationInputTokens: 10, cacheReadInputTokens: 1000 },
+      undefined,
+    ]);
+  });
+
   it('joins two text content blocks of a tool result with a newline', () => {
     const entries = mapOpenCodeRemoteEntries(openCodeV2RowEntries([
       rowOf('msg_b', 'assistant', {

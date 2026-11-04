@@ -4,7 +4,8 @@ import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-
 import { droidTranscriptFilePath, parseDroidTranscript, readDroidTranscriptPage } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
-import { parseDroidHookEvent } from './hook-manager';
+import { parseDroidSessionIdFromHook } from './hook-manager';
+import { parseBridgeEventLine } from '../../shared/hook-utils';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
@@ -17,6 +18,7 @@ import type {
   SettingsChangeSpec,
   ParsedTranscript,
   SummarizeOptions,
+  AnswerFromContextOptions,
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
 } from '../../agent-adapter';
@@ -30,6 +32,14 @@ import type {
   AgentCapabilities,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+/**
+ * `droid exec`'s model and effort flags for a headless run: `--model <id>` and
+ * `-r <level>` (0.218.0's `droid exec --help`), each omitted when unset.
+ */
+export function droidExecModelArgs(model?: string | null, effort?: string | null): string[] {
+  return [...(model ? ['--model', model] : []), ...(effort ? ['-r', effort] : [])];
+}
 
 /**
  * Factory Droid CLI adapter.
@@ -51,22 +61,29 @@ import { ActivityDetection } from '../../../../shared/types';
  * Hooks via `--settings <path>` did NOT fire on Droid 0.109, and do on
  * 0.218.0 (measured in `droid exec`). Activity stays PTY-driven (silence
  * timer + cursor-hide first-output, as for Aider/Cursor/Warp); the hooks
- * Kangentic passes (`hook-manager.ts`) only add the tool calls and the waits
- * on the user, so a Droid that ignores them runs exactly as before.
+ * Kangentic passes (`hook-manager.ts`) add the tool calls, the waits on the
+ * user, the session id and the session's lifecycle, so a Droid that ignores
+ * them runs exactly as before.
+ *
+ * The permission modes, the hook events beyond those measured, the browser
+ * policy, WSL hooks and the model list were built from Factory's docs and
+ * 0.218.0's `--help` (2026-11-03), not run against a signed-in TUI. See
+ * docs/integrations/agents/droid.md, "Built from documentation".
  */
 export class DroidAdapter implements AgentAdapter {
   readonly name = 'droid';
   readonly displayName = 'Droid';
   readonly sessionType = 'droid_agent';
   /**
-   * False: Droid generates session UUIDs internally. We capture the
-   * UUID after spawn from `~/.factory/sessions/<cwd-slug>/<id>.jsonl`
-   * (see runtime.sessionId.fromFilesystem).
+   * False: Droid generates session UUIDs internally. Kangentic reads the
+   * UUID after spawn from the SessionStart hook (`runtime.sessionId.fromHook`),
+   * or from `~/.factory/sessions/<cwd-slug>/<id>.jsonl` when no hook reports
+   * one (`runtime.sessionId.fromFilesystem`).
    */
   readonly supportsCallerSessionId = false;
   /** The resume command carries the prompt as its positional argument. */
   readonly resumePromptDelivery = 'command-line' as const;
-  // Its session files (`runtime.sessionId.fromFilesystem`).
+  // The SessionStart hook, else its session files (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // The literal URL goes into the folder's `.factory/mcp.json`.
   readonly kangenticMcp = 'shared-folder' as const;
@@ -74,22 +91,35 @@ export class DroidAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /**
    * On a remote host over SSH the CLI is `droid` from the host's own login PATH (#913). Activity there
-   * is PTY-driven only: the hooks settings file (`droid-settings.json`) is written for a local Droid
-   * alone, and no session id is captured, so a session on a host resumes as a fresh start.
+   * is PTY-driven only: the hooks settings file (`droid-settings.json`) is written for a local or WSL
+   * Droid alone, and no session id is captured, so a session on a host resumes as a fresh start.
    */
   readonly remoteCliName = 'droid';
   /**
-   * Droid's interactive TUI handles permission/autonomy decisions
-   * in-band: shift+tab cycles low/medium/high autonomy, and `/model`
-   * + Ctrl+D pins the default model. Kangentic intentionally does
-   * not duplicate that UX with side overrides -- a single "Default"
-   * permission entry surfaces in the selector and the user controls
-   * everything from the TUI.
+   * The launch modes Droid's own flags give (`droidPermissionFlags`):
+   * `--use-spec` and `--auto low|medium|high`, from 0.218.0's `droid --help`.
+   * The TUI still changes either mid-session (Shift+Tab, Ctrl+L). Interactive
+   * Droid has no flag that skips every prompt, so no entry promises one.
    */
   readonly permissions: AgentPermissionEntry[] = [
-    { mode: 'default', label: 'Default (use Droid TUI controls)' },
+    { mode: 'plan', label: 'Spec Mode (Plan First)' },
+    { mode: 'default', label: 'Default (Ask for Each Action)' },
+    { mode: 'acceptEdits', label: 'Auto Low (Safe Edits)' },
+    { mode: 'auto', label: 'Auto Medium (Local Development)' },
+    { mode: 'bypassPermissions', label: 'Auto High (Push and Deploy)' },
   ];
   readonly defaultPermission: PermissionMode = 'default';
+  /**
+   * Droid's file tools all name their file in `tool_input.file_path`: Factory's
+   * hooks guides match `Create|Edit|ApplyPatch` and read that field
+   * (https://docs.factory.com/harness/hooks.md). Not seen in a captured
+   * transcript, whose fixture holds only a `Read` call.
+   */
+  readonly fileChangeTools = [
+    { tool: 'Create', pathField: 'file_path' },
+    { tool: 'Edit', pathField: 'file_path' },
+    { tool: 'ApplyPatch', pathField: 'file_path' },
+  ] as const;
 
   private readonly detector = new DroidDetector();
   private readonly commandBuilder = new DroidCommandBuilder();
@@ -145,8 +175,10 @@ export class DroidAdapter implements AgentAdapter {
    * cursor-hide marks the first usable output.
    *
    * The hooks passed in a per-session `--settings` file (never the user's
-   * `~/.factory/settings.json`) report tool calls and the waits on the
-   * user through `statusFile.parseEvent`. The activity kind stays `pty`:
+   * `~/.factory/settings.json`) report tool calls, the waits on the user and
+   * the session's lifecycle through `statusFile.parseEvent`, and the session
+   * id through `sessionId.fromHook` (`hook-manager.ts` lists each event). The
+   * activity kind stays `pty`:
    * hook events never suppress a `pty` agent's tracker, so its silence
    * fallback keeps ending turns, and a wait (`permission`) is left alone by
    * the silence timer, which fires only while the session is thinking.
@@ -158,13 +190,17 @@ export class DroidAdapter implements AgentAdapter {
     statusFile: {
       // Droid writes no status line; the events file is the hooks'.
       parseStatus: () => null,
-      parseEvent: parseDroidHookEvent,
+      parseEvent: parseBridgeEventLine,
       isFullRewrite: false,
     },
     sessionId: {
-      // The TUI does not print the session UUID in stdout, so the
-      // only reliable capture path is the JSONL file Droid writes
-      // synchronously at session start.
+      // The SessionStart hook names the session itself (`session_id`, every
+      // Droid hook's payload), so a second Droid started in the same folder
+      // cannot hand this session its id.
+      fromHook: parseDroidSessionIdFromHook,
+      // The fallback when no hook reports one (a WSL distro whose transport
+      // failed, a Droid that ignores `--settings`): the JSONL file Droid
+      // writes at session start. The first id to arrive wins.
       fromFilesystem: captureSessionIdFromFilesystem,
     },
   };
@@ -250,10 +286,11 @@ export class DroidAdapter implements AgentAdapter {
     return readDroidTranscriptPage(agentSessionId, droidTranscriptFilePath(agentSessionId, cwd, place ?? null), request);
   }
 
-  async discoverCapabilities(_cliPath: string): Promise<AgentCapabilities> {
-    // Droid is TUI-first. Model/effort selection stays in the TUI.
-    // Return supportsModelOverride: false to hide the dropdowns.
-    return discoverDroidCapabilities(_cliPath);
+  async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
+    // The models `droid exec --help` lists, for the headless runs that take
+    // `--model`. The column pickers stay hidden: interactive `droid` 0.218.0
+    // has no `--model` flag.
+    return discoverDroidCapabilities(cliPath, forceRefresh);
   }
 
   getInjectionSequence(_spec: SettingsChangeSpec): string[] {
@@ -267,7 +304,7 @@ export class DroidAdapter implements AgentAdapter {
     // explicit alignment with documented usage).
     return runCliPrintSummarize({
       cliPath,
-      args: ['exec', '-o', 'text', ...(options?.model ? ['--model', options.model] : [])],
+      args: ['exec', '-o', 'text', ...droidExecModelArgs(options?.model, options?.effort)],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
@@ -276,7 +313,13 @@ export class DroidAdapter implements AgentAdapter {
     });
   }
 
-  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: false };
+  /**
+   * `effort`: `droid exec -r, --reasoning-effort <level>` (0.218.0's `--help`),
+   * whose levels are each model's own (`effortLevelsByModel`); the caller passes
+   * only a level the chosen model lists. No `defaultEffort`: an unset level
+   * passes no flag, and Droid uses the model's own default.
+   */
+  readonly answerCapabilities = { streaming: false, search: false, model: true, effort: true };
 
   /**
    * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
@@ -297,14 +340,15 @@ export class DroidAdapter implements AgentAdapter {
     cliPath: string,
     cwd: string,
     model?: string | null,
+    options?: AnswerFromContextOptions,
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
       // A Droid installed in a WSL distro runs there.
       cliTarget: await resolveCliTarget(cliPath, true),
-      // The model flag is OMITTED when none is chosen: passing an
-      // empty value is an error.
-      args: ['exec', '-o', 'text', ...(model ? ['--model', model] : [])],
+      // The model and effort flags are OMITTED when none is chosen: passing
+      // an empty value is an error.
+      args: ['exec', '-o', 'text', ...droidExecModelArgs(model, options?.effort)],
       prompt,
       cwd,
     });

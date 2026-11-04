@@ -9,7 +9,7 @@
  * adapter reads built on them. This file pins the edges that file leaves open:
  * the newest copy across folders, the 32-folder batch, one listing shared by
  * many lookups, the cache after a deleted find, the reported path's shape and
- * its WSL mapping, `listClaudeProjectFolders`, and `peek` and `resume`.
+ * its WSL mapping, the shared `listProjectFolders`, and `peek` and `resume`.
  *
  * Every case runs against a temp home (`os.homedir` spied) and writes only under
  * `os.tmpdir()`, so the real `~/.claude` never decides one. Time is the spied
@@ -20,13 +20,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  PROJECT_SCAN_BATCH,
   clearClaudeTranscriptLocatorCacheForTests,
   findClaudeResumeTranscriptFile,
   findClaudeTranscriptFile,
-  listClaudeProjectFolders,
   peekClaudeTranscriptFile,
 } from '../../src/main/agent/adapters/claude/transcript-locator';
+import { listProjectFolders, PROJECT_SCAN_BATCH } from '../../src/main/agent/shared/project-folders';
 import { claudeProjectSlug, locateClaudeTranscriptFile } from '../../src/main/agent/adapters/claude/transcript-parser';
 import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 
@@ -535,7 +534,7 @@ function canCreateLinks(kind: LinkKind): boolean {
 const canLinkDirectories = canCreateLinks('directory');
 const canLinkFiles = canCreateLinks('file');
 
-describe('listClaudeProjectFolders', () => {
+describe('listProjectFolders', () => {
   let root: string;
 
   beforeEach(() => {
@@ -543,19 +542,19 @@ describe('listClaudeProjectFolders', () => {
   });
 
   it('returns null for a projects folder that does not exist', async () => {
-    await expect(listClaudeProjectFolders(root)).resolves.toBeNull();
+    await expect(listProjectFolders(root)).resolves.toBeNull();
   });
 
   it('returns null when the projects folder is a file', async () => {
     writeFile(root);
-    await expect(listClaudeProjectFolders(root)).resolves.toBeNull();
+    await expect(listProjectFolders(root)).resolves.toBeNull();
   });
 
   it('includes a directory and leaves out a loose file', async () => {
     fs.mkdirSync(path.join(root, 'a-folder'), { recursive: true });
     writeFile(path.join(root, 'notes.txt'));
 
-    await expect(listClaudeProjectFolders(root)).resolves.toEqual([path.join(root, 'a-folder')]);
+    await expect(listProjectFolders(root)).resolves.toEqual([path.join(root, 'a-folder')]);
   });
 
   it.skipIf(!canLinkDirectories)('includes a link to a directory', async () => {
@@ -565,7 +564,7 @@ describe('listClaudeProjectFolders', () => {
     const link = path.join(root, 'linked-folder');
     expect(tryCreateLink(target, link, 'directory')).toBe(true);
 
-    await expect(listClaudeProjectFolders(root)).resolves.toEqual([link]);
+    await expect(listProjectFolders(root)).resolves.toEqual([link]);
   });
 
   it.skipIf(!canLinkFiles)('leaves out a link to a file, which can hold no transcript', async () => {
@@ -574,6 +573,6 @@ describe('listClaudeProjectFolders', () => {
     fs.mkdirSync(path.join(root, 'a-folder'), { recursive: true });
     expect(tryCreateLink(target, path.join(root, 'linked-file'), 'file')).toBe(true);
 
-    await expect(listClaudeProjectFolders(root)).resolves.toEqual([path.join(root, 'a-folder')]);
+    await expect(listProjectFolders(root)).resolves.toEqual([path.join(root, 'a-folder')]);
   });
 });
