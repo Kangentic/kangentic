@@ -184,6 +184,7 @@ and Copilot status-line builders. On macOS and Linux every CLI uses `sh -c` or `
 | grok 1.0.0 | `pwsh -NoProfile -NonInteractive -Command` | None | `sh -c` for a command with shell metacharacters | Yes | Windows probed; POSIX from its hooks guide |
 | Qwen Code 0.21.7 | `%ComSpec% /d /s /c <command>`, with escaped arguments; Git Bash `-c` only when Qwen inherits an MSYS `MSYSTEM` | None written | `bash -c` | Yes | Probed on 0.21.7; the same spawn read in the 0.25.2 source |
 | Codex 0.163.0 | A sh or PowerShell command line: quotes survive, `%NAME%` stays as written, `$HOME` is expanded | None | Not probed | No | Probed in `exec` and the TUI (task #859). The command is bare tokens anyway, because it sits in a TOML literal string passed through the user's shell |
+| Goose 1.57.0 | `sh -c`, with no Windows branch (`Command::new("sh")`), so it needs `sh.exe` on PATH. The spawn appends Git for Windows' `bin` folder when none is there | None | `sh -c` | Only `${PLUGIN_ROOT}`, which Goose expands in the command itself | Read from `crates/goose/src/hooks/mod.rs`; not run against a real Goose |
 
 The probe was a hook that recorded its parent process's command line and the argv it received for a
 path holding `$OS`, `${OS}`, `%OS%`, a backtick, `&`, `'`, a space and curly double quotes, quoted
@@ -191,7 +192,7 @@ each candidate way, in one real session per CLI.
 
 The adapters declare three shells:
 
-- `sh-or-powershell` (Claude's hooks, plan approval hook and status line; Copilot's hooks; Gemini;
+- `sh-or-powershell` (Claude's hooks, plan approval hook and status line; Copilot's hooks; Goose's hooks; Gemini;
   grok; every CLI on macOS and Linux). Each path is double-quoted, with each run of `$`, backtick,
   `\`, `"` and curly double quote in single quotes between the double-quoted runs:
   `C:"/work/"'$'"client/x.js"`. Characters side by side share one pair (`'$$'`), because PowerShell
