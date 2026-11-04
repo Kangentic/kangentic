@@ -40,10 +40,10 @@ The session starts under the id Kangentic chose (`supportsCallerSessionId`), so 
 ### Resumed Session
 
 ```
-gemini --resume <sessionId>
+gemini --resume <sessionId> "prompt text"
 ```
 
-Never both flags: the CLI rejects the pair ("The flags --resume, --session-id, and --session-file are mutually exclusive").
+The resumed session runs the prompt as its next turn (`resumePromptDelivery` is `command-line`). Never both flags: the CLI rejects the pair ("The flags --resume, --session-id, and --session-file are mutually exclusive").
 
 ### Readable directories
 

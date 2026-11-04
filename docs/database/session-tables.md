@@ -235,7 +235,7 @@ Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim un
 
 ### Main-thread and subagent rows
 
-`subagent_id` is the discriminator. It is NULL for a main-thread (driver) turn and set for a turn a Task-tool subagent ran, along with `agent_type` (`review-finder`, `test-builder`, `Explore`, ...), `spawn_depth`, and `parent_tool_use_id` (the tool-use id of the call that spawned it). Every row written before subagent capture existed is a main-thread turn, so NULL is also the right historical value.
+`subagent_id` is the discriminator. It is NULL for a main-thread (driver) turn and set for a turn a Task-tool subagent ran, along with `agent_type` (`review-finder`, `test-builder`, `Explore`, ...), `spawn_depth`, and `parent_tool_use_id` (the tool-use id of the call that spawned it). Every row written before subagent capture existed is a main-thread turn, so NULL is also the right historical value. Gemini's subagent rows are depth 1 with `agent_type`, `parent_tool_use_id` and spawn links all NULL, because Gemini records neither the subagent's type nor the call that started it.
 
 `parent_tool_use_id` is NOT a key of this table, and it does not always point at a main-thread row. It names a tool call, which `turn_spawn_links` maps to the turn that emitted it: a main-thread turn at depth 1, another subagent's turn deeper. Resolving a nested subagent to the fan-out that ultimately caused it therefore takes a walk, not a join, which is what `getTaskFanOuts` does.
 
