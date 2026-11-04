@@ -3040,6 +3040,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('Escape mid-move puts the panel back where it started, saves nothing and leaves the panel open', async () => {
+      // A press, a drag, an Escape and two settles: on a loaded CI runner (this file's
+      // shard) it ran past the 15 s default on both attempts, so it gets the room its
+      // neighbours have.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openPanelSettled(page);
@@ -3655,6 +3659,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('a panel grown from the minimum, where the floor evened the terminals, grows them evenly whatever the seam held before', async () => {
+      // Two terminals, a seam drag and a panel drag: on a loaded CI runner (this file's
+      // shard) it ran past the 15 s default on both attempts, so it gets the room its
+      // neighbours have.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
