@@ -31,8 +31,8 @@
  * Cross-platform notes (`.claude/rules/cross-platform-parity.md`):
  *   - The only write outside os.tmpdir() is the seeded transcript, whose path
  *     is DERIVED from os.homedir() via the production path helper (never a
- *     hardcoded literal) - the same pattern the codex/kimi/droid capture specs
- *     use for ~/.codex and ~/.kimi. It is cleaned up with
+ *     hardcoded literal) - the same pattern the codex/droid capture specs
+ *     use for ~/.codex. It is cleaned up with
  *     { force: true, recursive: true }.
  *   - Every wait is a condition poll (expect.poll / helper poll loops); there
  *     is no bare waitForTimeout used as the wait mechanism.

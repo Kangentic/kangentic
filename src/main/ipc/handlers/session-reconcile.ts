@@ -9,6 +9,7 @@ import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCoun
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordSuspended, settleQueuedRecord } from '../../transition-engine/session-lifecycle';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import { clearSpawnProgress, emitSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
@@ -200,7 +201,7 @@ export async function restartSessionForSettingsChange(
         // that would flatten it, one over the cap) is typed in instead. The
         // engine already asserted idle for it. Escalation never brings a
         // command here for an adapter whose resume takes no prompt at all.
-        const unsentPrompt = outcome?.unsentPrompt ?? null;
+        const unsentPrompt = textLeftToType(outcome);
         if (resumedSessionId && unsentPrompt) {
           deliverAgentMessageInBackground(context, {
             taskId,

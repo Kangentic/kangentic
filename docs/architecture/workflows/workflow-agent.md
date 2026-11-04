@@ -53,7 +53,9 @@ server registers only the read-only tools and the planning tools, bound to that 
 (`workflow-agent-scope.ts`). That scope is the guard for every agent. Any agent can be it whose
 adapter delivers Kangentic's MCP per session (`kangenticMcp: 'per-session'`) and whose
 conversation can be resumed, by an id Kangentic chose, one the CLI creates before launch
-(`createSessionId`, Cursor's `create-chat`), or one captured after launch (`canBeWorkflowAgent`). Where the adapter declares `supportsReadOnlyLaunch` (Claude: `--tools
+(`createSessionId`, Cursor's `create-chat`), or one captured after launch. It must also take its
+first prompt on the command line, since the workflow keeps only a resume prompt off it, so an
+adapter with `freshPromptDelivery: 'typed'` (Kimi Code) is refused (`canBeWorkflowAgent`). Where the adapter declares `supportsReadOnlyLaunch` (Claude: `--tools
 Read,Grep,Glob,ToolSearch`, `--strict-mcp-config`, `--no-chrome`) it also has no edit or shell
 tools; any other runs in its default mode, and the first message asks it to leave files alone.
 An id the agent reports after launch, or a Claude `/clear` fork's new one, is recorded on the

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Project relocation
-description: How project:relocate repoints or moves a project, suspends its sessions and calls onProjectRelocated, and a per-agent table of the path-keyed state each CLI migrates (Claude slugs, Kimi md5 dirs, Codex trust headers, Grok encoded dirs) and the residue it accepts.
+description: How project:relocate repoints or moves a project, suspends its sessions and calls onProjectRelocated, and a per-agent table of the path-keyed state each CLI migrates (Claude slugs, Codex trust headers, Grok encoded dirs) and the residue it accepts.
 tags: [agents, projects, relocation]
 sources:
   - resource: src/main/ipc/handlers/project-relocate.ts
@@ -12,7 +12,6 @@ sources:
   - resource: src/main/agent/adapters/opencode/project-relocation.ts
   - resource: src/main/agent/adapters/gemini/project-relocation.ts
   - resource: src/main/agent/adapters/codex/project-relocation.ts
-  - resource: src/main/agent/adapters/kimi/project-relocation.ts
   - resource: src/main/agent/adapters/copilot/project-relocation.ts
   - resource: src/main/agent/adapters/grok/project-relocation.ts
   - resource: src/main/agent/adapters/antigravity/project-relocation.ts
@@ -55,12 +54,12 @@ same caveat the Claude adapter documents).
 | OpenCode | `session.directory`/`session.path`, `project.worktree`, `project_directory.directory` columns in `~/.local/share/opencode/opencode.db` (one transaction), and OpenCode 2's `session_v2.directory`/`session_v2.path` and `worktree.directory` in the same file. | No file backup (live WAL DB; rollback = status quo). `project.sandboxes` left untouched. Project id is git-derived, so sessions are never orphaned, only re-scoped. |
 | Gemini | `~/.gemini/projects.json` key, `.project_root` markers under `tmp/`+`history/<slug>/`, and `~/.gemini/trustedFolders.json` keys; slug dirs renamed opportunistically on a basename change. | When the new-basename slug is already taken, the old slug is kept (Gemini still resolves via the registry, but Kangentic's basename-keyed chat locator cannot find the old chats - a pre-existing Gemini basename-collision limitation). |
 | Codex | `[projects.'<path>']` trust headers in `~/.codex/config.toml` (line-based, preserving quote / `\\?\` prefix / separator style). | Rollout JSONLs under `~/.codex/sessions/` are intentionally NOT touched: `codex resume <id>` resolves by session id, so resume already survives a move. Only the cwd-filtered resume picker shows residue (it has an `--all` escape hatch). |
-| Kimi | `~/.kimi/sessions/<md5(work_dir)>/` dirs (and `<kaos>_<md5>` variants) and `~/.kimi/kimi.json` `work_dirs[].path`. | md5 is computed over the resolved native-separator path (Kangentic spawns Kimi with a forward-slashed `-w`, but Kimi normalizes to native before hashing). |
 | Copilot | `cwd` / `git_root` lines in `session-state/<uuid>/workspace.yaml`, in `~/.copilot` and in every Kangentic session's own config home (`<project>/.kangentic/sessions/*/copilot-config/`), where Kangentic's sessions live. | Best-effort and version-fragile (v1.0.52+ resumes in the saved cwd). The `~/.copilot/session-store.db` cache is left untouched, so picker/search residue is accepted. |
 | Aider | None. | History (each session's `.aider.chat.history.<id>.md`, and Aider's shared `.aider.chat.history.md`) lives inside the project folder and moves with it. |
 | Cursor | None. | No cwd-keyed external session store Kangentic depends on. |
 | Oz (Warp) | None. | No resumable on-disk session state. |
 | Ollama | None. | No resumable external session state; `onProjectRelocated` omitted. |
+| Kimi | None migrated. | `onProjectRelocated` omitted. Kimi Code keys `sessions/wd_<slug>_<sha256 prefix>/` by the path and refuses a resume from another directory, but its workspace registry was not traced and no relocation has run against a real CLI, so a move leaves those sessions behind. See [Kimi Code](kimi-code.md#what-needs-a-live-probe). |
 | Grok Build | `~/.grok/sessions/<encodeURIComponent(cwd)>/` session dirs and `[folders.'<path>']` headers in `~/.grok/trusted_folders.toml`. | Encoded-dir rename mirrors Droid's slug rename; the trust rewrite mirrors Codex's header rewrite (backup + atomic write). |
 | Antigravity | `trustedWorkspaces` entries in `~/.gemini/antigravity-cli/settings.json` and the workspace key in `~/.gemini/antigravity-cli/cache/last_conversations.json`. | Conversation data (`conversations/<uuid>.db`, `brain/<uuid>/`) is keyed by conversation id, not path, and Kangentic resumes by explicit `--conversation <id>` (cross-directory), so only trust and the user's own `agy -c` continuity need migrating. |
 | Goose | None. | Resume rides on the caller-supplied `--name` (cwd-independent), so no path-keyed state needs migrating; `onProjectRelocated` omitted. |

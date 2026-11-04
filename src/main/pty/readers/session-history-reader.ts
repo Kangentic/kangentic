@@ -209,7 +209,7 @@ export class SessionHistoryReader {
         filePath: resolvedPath,
         cursor: initialCursor,
         handoffDone: false,
-        parse: hook.parse,
+        parse: hook.createParse?.() ?? hook.parse,
         isFullRewrite: hook.isFullRewrite,
         startedAtEnd: startAtEnd,
         deferEofInit,

@@ -370,11 +370,39 @@ const OPENING_QUIET_MS = 500;
 const OPENING_ABORT_REASON = 'The task moved on before its opening prompt was sent.';
 
 /**
- * Type a task's opening prompt into an agent its spawn adopted
- * (`SpawnOutcome.typedOpening`: launched while the task's worktree ran its
- * setup script, before the prompt was ready), and wait for it to land. The
- * prompt is what the command line would have carried, so it goes as the
- * command line would deliver it: whole, and first.
+ * Wait for a session the concurrency cap queued to leave the queue. True when
+ * it started, false when it ended first or `signal` fired. Unbounded on purpose:
+ * a queue can run for hours, so a caller must not hold the task lock across it.
+ */
+export function awaitQueuedSessionStart(context: IpcContext, sessionId: string, signal?: AbortSignal): Promise<boolean> {
+  const { sessionManager } = context;
+  return new Promise<boolean>((resolve) => {
+    const finish = (started: boolean): void => {
+      sessionManager.off('session-changed', onChanged);
+      sessionManager.off('exit', onExit);
+      signal?.removeEventListener('abort', onAbort);
+      resolve(started);
+    };
+    const onChanged = (changedSessionId: string, session: { status: string }): void => {
+      if (changedSessionId === sessionId && session.status !== 'queued') finish(session.status === 'running');
+    };
+    const onExit = (exitedSessionId: string): void => {
+      if (exitedSessionId === sessionId) finish(false);
+    };
+    const onAbort = (): void => finish(false);
+    sessionManager.on('session-changed', onChanged);
+    sessionManager.on('exit', onExit);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) finish(false);
+  });
+}
+
+/**
+ * Type a task's opening prompt into an agent whose command line could not
+ * carry it (`SpawnOutcome.typedOpening`: adopted after starting during the
+ * task's worktree setup script, or a CLI that takes no starting prompt), and
+ * wait for it to land. The prompt is what the command line would have carried,
+ * so it goes as the command line would deliver it: whole, and first.
  *
  * Waits for the agent to be on screen (`awaitAgentReady`, bounded by the same
  * ceiling the launch overlay uses) and for its screen to be quiet, then
@@ -429,7 +457,7 @@ export async function deliverOpeningPromptAndWait(
         context, input.taskId, input.sessionId, input.prompt, 'immediate', input.verifier, signal, OPENING_ABORT_REASON,
       );
     }
-    console.log(`[agent-message] Task ${taskLabel}: opening prompt sent to the adopted agent`);
+    console.log(`[agent-message] Task ${taskLabel}: opening prompt typed in`);
     return null;
   } catch (error) {
     if (signal.aborted) return { outcome: 'cancelled', reason: OPENING_ABORT_REASON };

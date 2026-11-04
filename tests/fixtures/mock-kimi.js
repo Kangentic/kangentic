@@ -1,64 +1,36 @@
 #!/usr/bin/env node
 /**
- * Mock Kimi CLI for E2E tests.
+ * Mock Kimi Code CLI (2.x) for E2E tests. Behaves as
+ * src/main/agent/adapters/kimi/ reads the real CLI's docs and source:
  *
- * Real-CLI command shapes (see src/main/agent/adapters/kimi/command-builder.ts):
- *   kimi --version                                      -> detector probe
- *   kimi -w <cwd> [--session <uuid>] [--yolo|--plan]    -> spawn (interactive)
- *        [--prompt "..."]                                  Kimi accepts the same
- *                                                          --session flag for both
- *                                                          create (caller-owned UUID)
- *                                                          and resume.
+ *   kimi --version                                 -> bare version
+ *   kimi [--session <id>] [--model <alias>]        -> interactive session
+ *        [--plan | --yolo | --auto]
  *
- * Markers for test assertions (mirrors mock-codex):
- *   MOCK_KIMI_SESSION:<id>   -> new session
- *   MOCK_KIMI_RESUMED:<id>   -> resumed session (the same --session flag was reused
- *                               with a UUID that already has a wire.jsonl on disk)
- *   MOCK_KIMI_PROMPT:<text>  -> prompt text delivered
- *   MOCK_KIMI_CWD:<path>     -> the work_dir argument that was applied
+ * - No working-directory flag and no `--mcp-config-file`: either is an error.
+ * - No prompt on the command line: a positional argument is an error, so a
+ *   builder that puts one back fails its spec.
+ * - `--session` only resumes. An id with no session is an error.
+ * - A new session has no id and no folder until its first typed message. So
+ *   MOCK_KIMI_SESSION in scrollback proves the typed first prompt arrived.
  *
- * Mimics the real welcome banner so the adapter's PTY regex anchor
- *   `Session:\s+<uuid>`
- * captures the session ID end-to-end through SessionIdScanner.
+ * Markers for test assertions:
+ *   MOCK_KIMI_SESSION:<id>   -> a new session, created by the first message
+ *   MOCK_KIMI_RESUMED:<id>   -> resumed through --session
+ *   MOCK_KIMI_PROMPT:<text>  -> a message typed in, on one line
+ *   MOCK_KIMI_CWD:<path>     -> the process cwd
  *
- * Writes a wire.jsonl under ~/.kimi/sessions/<work_dir_hash>/<uuid>/ so the
- * SessionHistoryReader pipeline (locate -> parse) is exercised. Includes a
- * metadata header, TurnBegin, StatusUpdate (with a real model_id, context
- * usage, and token_usage payload), ToolCall, ToolResult, and TurnEnd.
- *
- * The work_dir hash is computed as md5(absolute_cwd_path) so it stays stable
- * across multiple invocations on the same project (mirroring real Kimi
- * behaviour - the algorithm is opaque upstream but the SCANNER does NOT rely
- * on it; it globs across all hash dirs).
+ * Writes under $KIMI_CODE_HOME (the E2E launch points it at the test's data
+ * dir, so no real home is touched):
+ *   session_index.jsonl
+ *   sessions/wd_<slug>_<sha256 prefix>/<id>/agents/main/wire.jsonl
  *
  * Env knobs:
- *   MOCK_KIMI_NO_BANNER=1  -> suppress the welcome banner so tests can
- *                             exercise the filesystem fallback capture path.
- *   MOCK_KIMI_NO_WIRE=1    -> suppress wire.jsonl creation.
- *   MOCK_KIMI_SUBAGENT=1   -> inject a SubagentEvent TurnBegin + TurnEnd pair
- *                             (subagent_type='explore') into the wire.jsonl,
- *                             exercising the SubagentStart / SubagentStop
- *                             lifecycle decoding path end-to-end.
- *   MOCK_KIMI_PLAN_DISPLAY=1 -> inject a PlanDisplay event (file_path='PLAN.md',
- *                               content='# Implementation plan\n- Step 1: scaffold\n
- *                               - Step 2: implement') into the wire.jsonl,
- *                               exercising the Notification detail round-trip
- *                               through the events-cache IPC pipeline.
- *   MOCK_KIMI_WRITE_KIMI_JSON=1 -> simulate real Kimi's racy read-modify-write of
- *                                  the kimi.json work_dirs[].last_session_id state.
- *                                  Intentionally non-atomic so concurrent invocations
- *                                  can corrupt the file - this models the upstream
- *                                  pattern that kimi-concurrent-spawns.spec.ts hunts.
- *   MOCK_KIMI_KIMI_JSON_PATH=path -> override the kimi.json write target to an
- *                                    absolute test-specific path, instead of the
- *                                    default ~/.kimi/kimi.json. Lets tests opt into
- *                                    the racy write without ever touching the real
- *                                    user state. Only consulted when
- *                                    MOCK_KIMI_WRITE_KIMI_JSON=1.
- *   MOCK_KIMI_KIMI_JSON_DELAY_MS=N -> insert N ms of synchronous busy-wait between
- *                                     read and write of kimi.json, widening the race
- *                                     window so concurrent mock processes interleave
- *                                     deterministically.
+ *   MOCK_KIMI_NO_BANNER=1   -> no welcome box and no exit hint, so the id can
+ *                              only come from the session index.
+ *   MOCK_KIMI_NO_WIRE=1     -> no wire records beyond the metadata line.
+ *   MOCK_KIMI_SUBAGENT=1    -> subagent.spawned + subagent.completed records.
+ *   MOCK_KIMI_PLAN_EXIT=1   -> plan_mode.enter and an approved ExitPlanMode.
  */
 
 const { randomUUID, createHash } = require('node:crypto');
@@ -69,285 +41,212 @@ const os = require('node:os');
 const args = process.argv.slice(2);
 
 if (args.includes('--version') || args.includes('-V')) {
-  console.log('kimi, version 1.37.0-mock');
+  console.log('2.4.1-mock');
   process.exit(0);
+}
+
+function fail(message) {
+  process.stderr.write(`error: ${message}\n`);
+  process.exit(1);
 }
 
 // --- Argument parsing -------------------------------------------------------
 
-// Flags whose value we don't care about for the test scenarios but that
-// take an argument we need to skip past so the next token isn't
-// misinterpreted as a positional (Kimi has no positional args, but
-// guarding against it keeps the parser honest).
-const FLAGS_WITH_VALUES = new Set([
-  '--output-format', '--input-format',
-  '--config', '--config-file',
-  '--model', '-m',
-  '--mcp-config', '--mcp-config-file',
-  '--skills-dir', '--add-dir',
-  '--max-steps-per-turn', '--max-retries-per-step', '--max-ralph-iterations',
-  '--agent', '--agent-file',
-]);
+const FLAGS_WITH_VALUES = new Set(['--model', '-m', '--add-dir', '--skills-dir', '--agent', '--agent-file']);
+const BOOLEAN_FLAGS = new Set(['--yolo', '-y', '--auto', '--plan', '--continue', '-c']);
+
+let requestedSessionId = null;
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  if (arg === '--session' || arg === '-S' || arg === '--resume' || arg === '-r') {
+    requestedSessionId = args[index + 1] ?? null;
+    index += 1;
+  } else if (FLAGS_WITH_VALUES.has(arg)) {
+    index += 1;
+  } else if (BOOLEAN_FLAGS.has(arg)) {
+    continue;
+  } else if (arg.startsWith('-')) {
+    fail(`unknown option '${arg}'`);
+  } else {
+    fail(`unknown command '${arg}'`);
+  }
+}
+
+// --- Data locations ---------------------------------------------------------
+
+const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
+const indexPath = path.join(home, 'session_index.jsonl');
+const cwd = process.cwd();
+
+function workDirKey(workDir) {
+  const normalized = workDir.replaceAll('\\', '/').replace(/\/+$/, '');
+  const base = normalized.split('/').pop() ?? normalized;
+  const slug = base.toLowerCase().replaceAll(/[^a-z0-9._-]+/g, '-').replaceAll(/^-+|-+$/g, '').slice(0, 40) || 'workspace';
+  const hash = createHash('sha256').update(normalized).digest('hex').slice(0, 12);
+  return `wd_${slug}_${hash}`;
+}
+
+function findSessionDir(sessionId) {
+  let text;
+  try {
+    text = fs.readFileSync(indexPath, 'utf-8');
+  } catch {
+    return null;
+  }
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line);
+      if (record.sessionId === sessionId && record.sessionDir) return record.sessionDir;
+    } catch {
+      // A line another mock process is appending.
+    }
+  }
+  return null;
+}
 
 let sessionId = null;
-let cwd = null;
-let prompt = null;
-let resumed = false;
+let wirePath = null;
 
-let hadWorkDir = false;
-for (let i = 0; i < args.length; i++) {
-  const arg = args[i];
-  if (arg === '-w' || arg === '--work-dir') {
-    cwd = args[++i] ?? null;
-    hadWorkDir = true;
-  } else if (arg === '--session' || arg === '--resume' || arg === '-S' || arg === '-r') {
-    sessionId = args[++i] ?? null;
-  } else if (arg === '--prompt' || arg === '--command' || arg === '-p' || arg === '-c') {
-    prompt = args[++i] ?? null;
-  } else if (FLAGS_WITH_VALUES.has(arg)) {
-    i++;
-  }
-  // booleans (--yolo, --plan, --print, --thinking, --no-thinking, --quiet,
-  // --final-message, --verbose, --debug, --wire) intentionally fall through.
+if (requestedSessionId) {
+  const sessionDir = findSessionDir(requestedSessionId);
+  if (!sessionDir) fail(`failed to start shell: Session "${requestedSessionId}" not found.`);
+  sessionId = requestedSessionId;
+  wirePath = path.join(sessionDir, 'agents', 'main', 'wire.jsonl');
+}
+const resumed = sessionId !== null;
+
+/** A new session exists only once its first message is sent. */
+function createSession() {
+  sessionId = `session_${randomUUID()}`;
+  const sessionDir = path.join(home, 'sessions', workDirKey(cwd), sessionId);
+  wirePath = path.join(sessionDir, 'agents', 'main', 'wire.jsonl');
+  fs.mkdirSync(path.dirname(wirePath), { recursive: true });
+  fs.writeFileSync(wirePath, JSON.stringify({ type: 'metadata', protocol_version: '1.5', created_at: Date.now() }) + '\n');
+  fs.appendFileSync(indexPath, JSON.stringify({ sessionId, sessionDir, workDir: cwd }) + '\n');
+  console.log(`MOCK_KIMI_SESSION:${sessionId}`);
 }
 
-if (!cwd) cwd = process.cwd();
-// Canonicalize so the work_dir hash matches what cleanupKimiSessionsForCwd
-// in tests/e2e/helpers.ts computes (path.resolve normalizes separators
-// and trailing slashes so md5 lands on the same digest on both sides).
-cwd = path.resolve(cwd);
+// --- wire.jsonl -------------------------------------------------------------
 
-// Detect resume vs create: a resume call passes a UUID whose session
-// directory already exists on disk. Mirrors the way real Kimi's
-// `Session.find(work_dir, id)` discovers an existing session and replays
-// its context.jsonl before the next TurnBegin.
-function workDirHash(cwdAbsolute) {
-  return createHash('md5').update(cwdAbsolute).digest('hex');
-}
-
-const sessionsRoot = path.join(os.homedir(), '.kimi', 'sessions');
-const hashDir = path.join(sessionsRoot, workDirHash(cwd));
-
-if (sessionId) {
-  // Caller-owned UUID. If a wire.jsonl exists under this work_dir hash
-  // for this UUID, treat the call as a resume.
-  const candidate = path.join(hashDir, sessionId, 'wire.jsonl');
-  resumed = fs.existsSync(candidate);
-} else {
-  sessionId = randomUUID();
-}
-
-const sessionDir = path.join(hashDir, sessionId);
-const wirePath = path.join(sessionDir, 'wire.jsonl');
-
-// --- wire.jsonl write -------------------------------------------------------
-
-function writeWireEvents() {
+function writeTurn(prompt) {
   if (process.env.MOCK_KIMI_NO_WIRE) return;
-  fs.mkdirSync(sessionDir, { recursive: true });
-
-  const now = Date.now() / 1000;
-  const lines = [];
-  if (!resumed) {
-    // Fresh session: write the metadata header.
-    lines.push(JSON.stringify({ type: 'metadata', protocol_version: '1.9' }));
+  const start = Date.now();
+  const stepUuid = randomUUID();
+  const loop = (event, offset) => ({ type: 'context.append_loop_event', agentId: 'main', event, time: start + offset });
+  const records = [
+    { type: 'turn.prompt', agentId: 'main', input: [{ type: 'text', text: prompt }], origin: 'user', turnId: 1, time: start },
+    { type: 'llm.request', agentId: 'main', kind: 'loop', provider: 'mock', model: 'kimi-k3', modelAlias: 'kimi-code/k3', toolSelect: false, systemPromptHash: 'x', toolsHash: 'x', messageCount: 1, time: start + 5 },
+    loop({ type: 'step.begin', uuid: stepUuid, step: 1 }, 10),
+    loop({ type: 'content.part', stepUuid, part: { type: 'text', text: 'Working on it.' } }, 20),
+    loop({ type: 'tool.call', stepUuid, toolCallId: 'tc-mock-1', name: 'Bash', args: { command: 'ls' } }, 30),
+    loop({ type: 'tool.result', toolCallId: 'tc-mock-1', result: { output: 'ok\n' } }, 40),
+    { type: 'token_counting.measured', agentId: 'main', length: 2, tokens: 24576, time: start + 50 },
+    loop({ type: 'step.end', uuid: stepUuid, usage: { inputOther: 800, output: 150, inputCacheRead: 1024, inputCacheCreation: 256 } }, 60),
+  ];
+  if (process.env.MOCK_KIMI_PLAN_EXIT) {
+    records.push(
+      { type: 'plan_mode.enter', agentId: 'main', id: 'plan-1', time: start + 70 },
+      loop({ type: 'tool.call', stepUuid, toolCallId: 'tc-plan-1', name: 'ExitPlanMode', args: {} }, 71),
+      loop({ type: 'tool.result', toolCallId: 'tc-plan-1', result: { output: 'Exited plan mode. Plan mode deactivated. All tools are now available.\n## Approved Plan:\nDo it' } }, 72),
+      { type: 'plan_mode.exit', agentId: 'main', id: 'plan-1', time: start + 73 },
+    );
   }
-  lines.push(JSON.stringify({
-    timestamp: now,
-    message: { type: 'TurnBegin', payload: { user_input: prompt ?? '' } },
-  }));
-  lines.push(JSON.stringify({
-    timestamp: now + 0.05,
-    message: {
-      type: 'StatusUpdate',
-      payload: {
-        context_usage: 0.12,
-        context_tokens: 24576,
-        max_context_tokens: 200000,
-        token_usage: {
-          input_other: 800,
-          output: 150,
-          input_cache_read: 1024,
-          input_cache_creation: 256,
-        },
-        message_id: 'msg-mock-1',
-        plan_mode: false,
-      },
-    },
-  }));
-  lines.push(JSON.stringify({
-    timestamp: now + 0.1,
-    message: {
-      type: 'ToolCall',
-      payload: {
-        type: 'function',
-        id: 'tc-mock-1',
-        function: { name: 'Shell', arguments: '{"command": "ls"}' },
-      },
-    },
-  }));
-  lines.push(JSON.stringify({
-    timestamp: now + 0.15,
-    message: {
-      type: 'ToolResult',
-      payload: {
-        tool_call_id: 'tc-mock-1',
-        return_value: { is_error: false, output: 'ok\n', message: 'ok', display: [] },
-      },
-    },
-  }));
-  // MOCK_KIMI_PLAN_DISPLAY=1: inject a PlanDisplay event with a known
-  // file_path and content so the E2E spec can assert that the notification
-  // detail survives the wire.jsonl -> SessionHistoryReader -> IPC round-trip
-  // in the "<file_path>: <truncated content>" format.
-  if (process.env.MOCK_KIMI_PLAN_DISPLAY) {
-    lines.push(JSON.stringify({
-      timestamp: now + 0.17,
-      message: {
-        type: 'PlanDisplay',
-        payload: {
-          file_path: 'PLAN.md',
-          content: '# Implementation plan\n- Step 1: scaffold\n- Step 2: implement',
-        },
-      },
-    }));
-  }
-
-  // MOCK_KIMI_SUBAGENT=1: inject a SubagentEvent TurnBegin + TurnEnd pair
-  // (subagent_type='explore') before the outer TurnEnd, exercising the
-  // SubagentStart / SubagentStop lifecycle decoding path end-to-end.
   if (process.env.MOCK_KIMI_SUBAGENT) {
-    lines.push(JSON.stringify({
-      timestamp: now + 0.18,
-      message: {
-        type: 'SubagentEvent',
-        payload: {
-          parent_tool_call_id: 'tc-mock-1',
-          agent_id: 'sub-mock-1',
-          subagent_type: 'explore',
-          event: { type: 'TurnBegin', payload: { user_input: 'explore the repo' } },
-        },
-      },
-    }));
-    lines.push(JSON.stringify({
-      timestamp: now + 0.19,
-      message: {
-        type: 'SubagentEvent',
-        payload: {
-          parent_tool_call_id: 'tc-mock-1',
-          agent_id: 'sub-mock-1',
-          subagent_type: 'explore',
-          event: { type: 'TurnEnd', payload: {} },
-        },
-      },
-    }));
+    records.push(
+      { type: 'subagent.spawned', subagentId: 'sub-mock-1', subagentName: 'explore', parentToolCallId: 'tc-mock-1', runInBackground: false, time: start + 80 },
+      { type: 'subagent.completed', subagentId: 'sub-mock-1', resultSummary: 'done', time: start + 90 },
+    );
   }
-
-  lines.push(JSON.stringify({
-    timestamp: now + 0.2,
-    message: { type: 'TurnEnd', payload: {} },
-  }));
-
-  // Resume mode: append to the existing file. Fresh: create.
-  const flag = resumed ? 'a' : 'w';
-  fs.writeFileSync(wirePath, lines.join('\n') + '\n', { flag });
+  records.push({ type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed', time: start + 100 });
+  fs.appendFileSync(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
 }
-
-// Only a real work-dir spawn (-w) registers a resumable session on disk. A
-// bare probe invocation (agent detection / readiness check) carries no -w and
-// inherits the app's cwd; writing a wire.jsonl for it would plant a stray
-// session under the app-cwd hash that the mtime-windowed filesystem capture
-// scan (KimiSessionHistoryParser.captureSessionIdFromFilesystem) could pick up
-// ahead of the real session, poisoning the captured id. Real Kimi ties a
-// session to its work_dir, so gating on -w mirrors that.
-if (hadWorkDir) {
-  writeWireEvents();
-}
-
-// --- kimi.json racy read-modify-write (opt-in) ------------------------------
-// Real Kimi maintains ~/.kimi/kimi.json with a work_dirs[] array tracking the
-// most recent session per work_dir. Under concurrent invocations against the
-// same HOME, that read-modify-write can race and corrupt the file. The spec
-// at tests/e2e/kimi-concurrent-spawns.spec.ts opts in to this branch via
-// MOCK_KIMI_WRITE_KIMI_JSON=1 to detect that race deterministically.
-
-if (process.env.MOCK_KIMI_WRITE_KIMI_JSON) {
-  const kimiJsonPath = process.env.MOCK_KIMI_KIMI_JSON_PATH
-    ? process.env.MOCK_KIMI_KIMI_JSON_PATH
-    : path.join(os.homedir(), '.kimi', 'kimi.json');
-  fs.mkdirSync(path.dirname(kimiJsonPath), { recursive: true });
-  let data;
-  try {
-    data = JSON.parse(fs.readFileSync(kimiJsonPath, 'utf-8'));
-  } catch {
-    data = { work_dirs: [] };
-  }
-  if (!Array.isArray(data.work_dirs)) data.work_dirs = [];
-
-  // Synchronous busy-wait widens the read-modify-write race window so two
-  // concurrent mock processes interleave deterministically. Real Kimi does
-  // nontrivial work between read and write; without a delay here, sub-ms
-  // timing makes corruption statistically rare even when the bug exists.
-  const delayMs = Number(process.env.MOCK_KIMI_KIMI_JSON_DELAY_MS ?? '0');
-  if (delayMs > 0) {
-    const target = Date.now() + delayMs;
-    while (Date.now() < target) { /* spin */ }
-  }
-
-  const existingIndex = data.work_dirs.findIndex((entry) => entry && entry.path === cwd);
-  if (existingIndex >= 0) data.work_dirs[existingIndex].last_session_id = sessionId;
-  else data.work_dirs.push({ path: cwd, last_session_id: sessionId });
-
-  // Intentionally non-atomic (no temp+rename). This models the racy pattern
-  // upstream Kimi may exhibit; an atomic write would hide the very bug the
-  // spec is hunting.
-  fs.writeFileSync(kimiJsonPath, JSON.stringify(data, null, 2));
-}
-
-// Real Kimi never deletes wire.jsonl - it persists for the lifetime of
-// the project so that future `kimi -r <uuid>` calls can replay context.
-// We mirror that here: NO cleanup on exit. The test's afterAll hook
-// (cleanupKimiSessionsForCwd in tests/e2e/helpers.ts) is responsible
-// for wiping any session directories it created.
 
 // --- PTY output -------------------------------------------------------------
 
-// Hide-cursor escape so detectFirstOutput() returns true.
-process.stdout.write('\x1b[?25l');
+// Hide-cursor escape, as a full-screen TUI draws, and bracketed paste on.
+process.stdout.write('\x1b[?25l\x1b[?2004h');
 
 if (!process.env.MOCK_KIMI_NO_BANNER) {
-  // Welcome banner that mirrors the real cyan-bordered TUI box.
-  // Critical: the "Session: <uuid>" line is the regex anchor.
-  console.log('Welcome to Kimi Code CLI!');
+  console.log('Welcome to Kimi Code!');
   console.log('Send /help for help information.');
-  console.log('');
   console.log(`Directory: ${cwd}`);
-  console.log(`Session: ${sessionId}`);
-  console.log('Model: kimi-for-coding');
-  console.log('');
-  console.log('Tip: Spot a bug or have feedback? Type /feedback.');
+  console.log(`Session:   ${sessionId ?? ''}`);
+  console.log('Model:     kimi-code/k3');
+  console.log('Version:   2.4.1-mock');
+  if (!resumed) console.log('No session yet - one will be created on your first message.');
 }
-
-console.log(`MOCK_KIMI_${resumed ? 'RESUMED' : 'SESSION'}:${sessionId}`);
+if (resumed) console.log(`MOCK_KIMI_RESUMED:${sessionId}`);
 console.log(`MOCK_KIMI_CWD:${cwd}`);
-if (prompt) console.log(`MOCK_KIMI_PROMPT:${prompt}`);
 
 // Idle timeout - exits after 30s if not interrupted.
-const timeout = setTimeout(() => { process.exit(0); }, 30000);
+let timeout = setTimeout(() => process.exit(0), 30000);
 
-function shutdown(signal) {
+function quit(code) {
   clearTimeout(timeout);
-  process.exit(signal === 'SIGINT' ? 130 : 0);
+  process.stdout.write('\x1b[?2004l\x1b[?25h');
+  if (sessionId && !process.env.MOCK_KIMI_NO_BANNER) {
+    console.log(' Bye!');
+    console.error(` To resume this session: kimi -r ${sessionId}`);
+  }
+  process.exit(code);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+function submit(line) {
+  const text = line.replaceAll('\x1b', '').trim();
+  if (text.length === 0) return;
+  if (text === '/exit' || text === '/quit') quit(0);
+  clearTimeout(timeout);
+  timeout = setTimeout(() => process.exit(0), 30000);
+  if (!sessionId) createSession();
+  console.log(`MOCK_KIMI_PROMPT:${text.replaceAll(/\s+/g, ' ')}`);
+  writeTurn(text);
+}
 
+process.on('SIGTERM', () => quit(0));
+process.on('SIGINT', () => quit(130));
+
+// Raw mode, as a TUI runs: Enter arrives as \r, and a bracketed paste's line
+// breaks stay inside the message.
+if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.resume();
 process.stdin.setEncoding('utf8');
+
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+let pending = '';
+let line = '';
+let inPaste = false;
+
 process.stdin.on('data', (data) => {
-  // Ctrl+C and the conventional "/exit\r" both trigger clean shutdown.
-  if (data.includes('\x03') || data.includes('/exit')) {
-    shutdown('STDIN');
+  if (data.includes('\x03')) quit(130);
+  pending += data;
+  for (;;) {
+    if (inPaste) {
+      const end = pending.indexOf(PASTE_END);
+      if (end < 0) return;
+      line += pending.slice(0, end);
+      pending = pending.slice(end + PASTE_END.length);
+      inPaste = false;
+      continue;
+    }
+    const start = pending.indexOf(PASTE_START);
+    const enter = pending.search(/[\r\n]/);
+    if (start >= 0 && (enter < 0 || start < enter)) {
+      line += pending.slice(0, start);
+      pending = pending.slice(start + PASTE_START.length);
+      inPaste = true;
+      continue;
+    }
+    if (enter >= 0) {
+      const submitted = line + pending.slice(0, enter);
+      pending = pending.slice(enter + 1);
+      line = '';
+      submit(submitted);
+      continue;
+    }
+    line += pending;
+    pending = '';
+    return;
   }
 });

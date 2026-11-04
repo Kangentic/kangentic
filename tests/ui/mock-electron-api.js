@@ -4005,13 +4005,14 @@
             // KEEP IN SYNC with KimiAdapter.permissions in src/main/agent/adapters/kimi/kimi-adapter.ts
             permissions: [
               { mode: 'plan', label: 'Plan (Read-Only)' },
-              { mode: 'default', label: 'Default (Confirm Actions)' },
-              { mode: 'bypassPermissions', label: 'YOLO (Skip Confirmations)' },
+              { mode: 'default', label: 'Always Ask' },
+              { mode: 'auto', label: 'Ask When Needed (YOLO)' },
+              { mode: 'bypassPermissions', label: 'Never Ask (Auto)' },
             ],
             defaultPermission: 'default',
             supportsSummarize: true,
-            kangenticMcp: 'per-session',
-            supportsWorkflowAgent: true,
+            kangenticMcp: 'shared-folder',
+            supportsWorkflowAgent: false,
           },
           {
             name: 'opencode', displayName: 'OpenCode', found: false, path: null, version: null,

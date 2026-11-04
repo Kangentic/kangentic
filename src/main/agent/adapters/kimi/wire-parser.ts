@@ -7,233 +7,159 @@ import {
   type SessionUsage,
   type SessionEvent,
 } from '../../../../shared/types';
-import { SHELL_ID_PATTERN_SOURCE } from '../../../../shared/background-command-spec';
 import { HOOK_DETAIL_CAP } from '../../../git/push-command';
 
-const SHELL_ID_PATTERN = new RegExp(SHELL_ID_PATTERN_SOURCE);
-
 /**
- * Parser for Kimi CLI's `wire.jsonl` session telemetry.
+ * Parser for Kimi Code CLI's `agents/main/wire.jsonl` (wire protocol 1.5).
  *
- * Wire protocol v1.9 (verified empirically against `kimi --print
- * --output-format stream-json` on v1.37.0 + the upstream schema, the
- * "Wire mode" page of Kimi CLI's own documentation).
+ * Sources (Kimi Code CLI 2.4.1, github.com/MoonshotAI/kimi-code, read
+ * 2026-11-03):
+ * - `packages/agent-core-v2/docs/wire-manifest.d.ts`, the generated manifest
+ *   of every durable record type and its payload.
+ * - `packages/agent-core-v2/src/wire/record.ts`: line 1 is
+ *   `{"type":"metadata","protocol_version","created_at"}` (`Date.now()`), and
+ *   every other line is `{"type", ...payload, "time"}`.
+ * - `packages/agent-core-v2/src/agent/contextMemory/loopEventFold.ts`: the
+ *   `event` of a `context.append_loop_event` is `step.begin`, `step.end`,
+ *   `content.part`, `tool.call` (`toolCallId`, `name`, `args` as an object) or
+ *   `tool.result` (`toolCallId`, `result: {output, isError}`).
+ * - `packages/agent-core-v2/src/features/plan/exitPlanModeReview.ts`: an
+ *   approved plan's result output starts `Exited plan mode.`; a rejected,
+ *   revised or dismissed one never does.
+ * Built from the source, not yet checked against a real run.
  *
- * On-disk layout:
- *   `~/.kimi/sessions/<work_dir_hash>/<session_uuid>/wire.jsonl`
+ * Mapping:
  *
- * The `<work_dir_hash>` is a 32-char hex of the absolute work_dir path
- * (algorithm not exposed; we never compute it - the locator globs across
- * all hashes and matches by UUID).
+ *   Record                                Activity      SessionEvent
+ *   ────────────────────────────────────  ────────────  ─────────────────────────
+ *   turn.prompt / turn.steer              → Thinking    Prompt (detail = input text)
+ *   turn.ended  completed / blocked       (released)    Idle
+ *   turn.ended  cancelled                 (released)    Interrupted
+ *   turn.ended  failed                    (released)    TurnFailed (detail = error)
+ *   turn.step.retrying                    (preserve)    TurnRetrying (detail = errorName)
+ *   turn.step.interrupted                 (preserve)    Notification (the turn.ended after it ends the turn)
+ *   loop step.begin                       → Thinking    (none)
+ *   loop tool.call                        (preserve)    ToolStart (toolId; detail = command for Bash, else name)
+ *   loop tool.result                      (preserve)    ToolEnd (ok | error), ExitPlanMode for an
+ *                                                       approved plan
+ *   loop step.end                        (preserve)    (none; per-step token usage)
+ *   interaction.request approval          (released)    Idle (Permission, waitKind approval; a plan review is one)
+ *   interaction.request question          (released)    Idle (Permission, waitKind question)
+ *   interaction.resolved                  → Thinking    (none)
+ *   subagent.spawned                      (preserve)    SubagentStart (subagentId; detail = name)
+ *   subagent.completed / failed / cancelled (preserve)  SubagentStop (subagentId)
+ *   full_compaction.begin                 → Thinking    Compact
+ *   plan_mode.enter / exit               (preserve)    Notification
+ *   token_counting.*, llm.request,        (preserve)    (none; usage and model)
+ *   usage.record
  *
- * File format: append-only JSONL.
- *   Line 1 (always):
- *     {"type": "metadata", "protocol_version": "1.9"}
- *   Lines 2..N:
- *     {"timestamp": <unix_seconds_float>,
- *      "message": {"type": "<MessageName>", "payload": {...}}}
+ * "Released": the event alone moves the engine and the chunk forces no
+ * activity, so a turn end reaches the On agent turn end automations.
  *
- * Resume via `kimi -r <uuid>` *appends* to the same file, so this parser
- * is wired into runtime.sessionHistory with `isFullRewrite: false`.
+ * A `tool.result` names only its call id, so a session's parser remembers each
+ * open call's tool (`openToolNames`) and tags both ends with it. Where it has
+ * no memory, or the start was never read (a watcher that began at the end of
+ * the file), the event is tagged `AgentTool.Bash`. The plan exit is named from
+ * its result text alone (`eventToolName`).
  *
- * The wire protocol defines 19 Event types and 4 Request types. Both
- * share the `{type, payload}` envelope shape inside the wire.jsonl
- * line, so this parser dispatches on `message.type` regardless of
- * Event-vs-Request kind. Requests show up in wire.jsonl when the agent
- * blocks waiting for an external response (approval, question, hook
- * callback) - their presence drives the activity state into Idle with
- * an appropriate IdleReason.
- *
- * Mapping table:
- *
- *   Event              Activity      SessionEvent emitted
- *   ─────────────────  ────────────  ───────────────────────────
- *   TurnBegin          → Thinking    Prompt (detail = user input)
- *   TurnEnd            (released)    Idle
- *   StepBegin          → Thinking    (none)
- *   StepInterrupted    (released)    Interrupted
- *   CompactionBegin    → Thinking    Compact
- *   CompactionEnd      (preserve)    (none)
- *   StatusUpdate       (preserve)    (none; updates SessionUsage)
- *   ContentPart        (preserve)    (none; streaming text fragment)
- *   ToolCall           (preserve)    ToolStart (toolId = call id; detail = the
- *                                    command for Shell, else the tool name)
- *   ToolCallPart       (preserve)    (none; argument-streaming fragment)
- *   ToolResult         (preserve)    ToolEnd (toolId; detail = ok | error), or for
- *                                    a background launch BackgroundShellStart
- *                                    (detail = task id) in its place; a TaskStop's
- *                                    result adds BackgroundShellEnd
- *   Notification       (preserve)    BackgroundShellEnd for a background task's
- *                                    `task.*` notification, else nothing
- *   ApprovalResponse   → Thinking    Notification (detail = response)
- *   SubagentEvent      (preserve)    SubagentStart  if inner event.type === TurnBegin
- *                                    SubagentStop   if inner event.type === TurnEnd
- *                                    Notification   otherwise
- *                                    detail = subagent_type || agent_id || "subagent"
- *   BtwBegin           (preserve)    SubagentStart (detail = "btw")
- *   BtwEnd             (preserve)    SubagentStop  (detail = "btw")
- *   SteerInput         → Thinking    Prompt (detail = user input)
- *   PlanDisplay        (preserve)    Notification (detail = file_path[: content...])
- *   HookTriggered      (preserve)    Notification (detail = "<event>:<target>")
- *   HookResolved       (preserve)    Notification (detail = "<event>:<action>")
- *
- *   Request            Activity      SessionEvent emitted
- *   ─────────────────  ────────────  ───────────────────────────
- *   ApprovalRequest    (released)    Idle (detail = IdleReason.Permission, waitKind = approval)
- *   ToolCallRequest    (preserve)    ToolStart (detail = name)
- *   QuestionRequest    (released)    Idle (detail = IdleReason.Permission, waitKind = question)
- *   HookRequest        (preserve)    Notification (detail = "<event>:<target>[: <summary>]")
- *
- * "Released" (task #859): the event alone moves the engine, and the chunk
- * forces no activity. A forced idle runs `forceIdle`, which ends no turn for
- * `onTurnEnded` (so the column's On agent turn end automations never ran for
- * Kimi) and clears every background shell the session holds.
- *
- * Background commands (task #859, measured on 1.37.0 against a local stand-in
- * for the model API, tests/fixtures/kimi/wire-background-tasks.jsonl): `Shell`
- * with `run_in_background: true` answers `message: "Background task started."`
- * with a `background_task` display block naming the task id (`bash-<id>`). The
- * launch's ToolStart carries the command, so the no-activity-hold flag rides
- * the engine's `toolId` memo to the named start, the way a Claude PowerShell
- * launch does. `TaskStop` answers "Task stop requested." with the same block,
- * and a background task that ends posts a `task.*` Notification naming it.
- *
- * All other inputs (malformed JSON, unrecognized types, missing
- * envelope fields) are skipped silently. Defensive parsing throughout.
+ * Background commands are not reported. `backgroundCommands` is a measured
+ * claim that also needs a per-session MCP URL, and Kimi's is folder-shared, so a
+ * background launch reads as a plain tool end (`background-commands.md`).
  */
 
-/** The ToolResult message of a `Shell` call that started a background task. */
-const KIMI_BACKGROUND_STARTED_MESSAGE = 'Background task started.';
+/**
+ * The CLI's shell tool (`docs/en/reference/tools.md`), whose command is the
+ * ToolStart's detail. The CLI's own name, which happens to equal `AgentTool.Bash`,
+ * the engine's tag.
+ */
+const KIMI_SHELL_TOOL = 'Bash';
 
-/** The ToolResult message of a `TaskStop` call. */
-const KIMI_TASK_STOP_MESSAGE = 'Task stop requested.';
+/** How an approved plan's result output starts (`exitPlanModeReview.ts`). */
+const APPROVED_PLAN_PREFIX = 'Exited plan mode.';
 
-/** Kimi's shell tool, whose command is the ToolStart's detail. */
-const KIMI_SHELL_TOOL = 'Shell';
+/** Detail for a tool call with no name. */
+const KIMI_TOOL_FALLBACK_NAME = 'tool';
 
-/** Every wire-protocol message type we explicitly handle. */
+/** Detail for a subagent spawn with no name. */
+const KIMI_SUBAGENT_FALLBACK_NAME = 'subagent';
+
+/** Every record type this parser acts on. */
 const KIMI_DISPATCH_TYPES = [
-  // Events
-  'TurnBegin',
-  'TurnEnd',
-  'StepBegin',
-  'StepInterrupted',
-  'CompactionBegin',
-  'CompactionEnd',
-  'StatusUpdate',
-  'ContentPart',
-  'ToolCall',
-  'ToolCallPart',
-  'ToolResult',
-  'ApprovalResponse',
-  'SubagentEvent',
-  'BtwBegin',
-  'BtwEnd',
-  'SteerInput',
-  'PlanDisplay',
-  'HookTriggered',
-  'HookResolved',
-  'Notification',
-  // Requests
-  'ApprovalRequest',
-  'ToolCallRequest',
-  'QuestionRequest',
-  'HookRequest',
+  'turn.prompt',
+  'turn.steer',
+  'turn.ended',
+  'turn.step.retrying',
+  'turn.step.interrupted',
+  'context.append_loop_event',
+  'interaction.request',
+  'interaction.resolved',
+  'subagent.spawned',
+  'subagent.completed',
+  'subagent.failed',
+  'subagent.cancelled',
+  'full_compaction.begin',
+  'plan_mode.enter',
+  'plan_mode.exit',
+  'token_counting.measured',
+  'token_counting.rebased',
+  'token_counting.truncated',
+  'token_counting.turn_recorded',
+  'llm.request',
+  'usage.record',
 ] as const;
-
-/**
- * Sentinel value emitted as the `detail` field of a `ToolStart` event when
- * a `ToolCall` arrives with neither `function.name` nor `payload.type`.
- * Exported so tests can reference the constant rather than duplicating the
- * literal, and so future renames flow through both sides automatically.
- */
-export const KIMI_TOOL_FALLBACK_NAME = 'tool';
-
-/**
- * Sentinel `detail` for `BtwBegin` / `BtwEnd` events (Kimi's "Brain
- * Truster" sidebar - a parallel reasoning context that runs alongside the
- * main turn). Surfaced as a Subagent start/stop pair to mirror Claude's
- * Task-tool subagent telemetry.
- */
-export const KIMI_BTW_SUBAGENT_NAME = 'btw';
-
-/**
- * Sentinel `detail` for a `SubagentEvent` whose payload omits both
- * `subagent_type` and `agent_id`. Falls through to "subagent" so the
- * Activity log row is meaningful instead of empty.
- */
-export const KIMI_SUBAGENT_FALLBACK_NAME = 'subagent';
-
-/**
- * Inner `event.type` discriminants on a `SubagentEvent` payload that map
- * to lifecycle events. The inner `event` is itself a full wire Event,
- * so these literals happen to share names with two outer wire-protocol
- * types - but they are checked against the *nested* event, which is a
- * separate dispatch surface from `KIMI_DISPATCH_TYPES`. Centralizing the
- * literals here keeps a future protocol rename to a single site.
- */
-const KIMI_SUBAGENT_INNER_BEGIN = 'TurnBegin';
-const KIMI_SUBAGENT_INNER_END = 'TurnEnd';
 
 type KimiDispatchType = typeof KIMI_DISPATCH_TYPES[number];
 
 function isKimiDispatchType(value: unknown): value is KimiDispatchType {
-  return typeof value === 'string'
-    && (KIMI_DISPATCH_TYPES as readonly string[]).includes(value);
+  return typeof value === 'string' && (KIMI_DISPATCH_TYPES as readonly string[]).includes(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Captured StatusUpdate token-usage fields. Sparse on purpose: only fields
- * seen in this chunk are emitted, matching Codex's pattern so that the
- * downstream shallow-merge in `setSessionUsage()` doesn't clobber correct
- * base values with zeros.
- */
-interface UsageAccumulator {
-  usedTokens: number | undefined;
-  totalInputTokens: number | undefined;
-  totalOutputTokens: number | undefined;
-  cachedInputTokens: number | undefined;
-  contextWindowSize: number | undefined;
-  usedPercentage: number | undefined;
+export interface WireParseOptions {
+  /**
+   * The context window of a model alias, from the user's `config.toml`
+   * (`max_context_size`). The wire records the alias a request ran on
+   * (`llm.request.modelAlias`) but not the window.
+   */
+  contextWindowForAlias?: (alias: string) => number | null;
+  /** The display name of a model alias, from `config.toml` (`display_name`). */
+  displayNameForAlias?: (alias: string) => string | null;
+  /**
+   * Each open call's tool name, by call id, kept across one session's chunks
+   * (`KimiSessionHistoryParser.createParse`). Omitted, every chunk stands alone.
+   */
+  openToolNames?: Map<string, string>;
+}
+
+interface UsageCapture {
+  usedTokens?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  cachedInputTokens?: number;
+  contextWindowSize?: number;
+  modelId?: string;
+  modelDisplayName?: string;
 }
 
 /**
- * Parse `content` (newly-appended JSONL bytes when isFullRewrite=false,
- * or the entire file when called from a resume reload) into a
- * consolidated `SessionHistoryParseResult`.
- *
- * Last-wins semantics for usage fields, append-only for events.
- *
- * Activity is set to whichever transition was observed last in the
- * chunk - so a chunk that contains TurnBegin → ToolCall → ToolResult →
- * TurnEnd settles on Idle, while a partial chunk that only includes
- * TurnBegin stays on Thinking. Events that don't have a defined activity
- * meaning (StatusUpdate, ContentPart, ToolCallPart, ...) DO NOT touch
- * the activity variable - they're observers, not transitioners.
+ * Parse newly-appended `wire.jsonl` bytes (or the whole file) into events,
+ * usage and an activity hint. Every chunk stands alone unless the caller passes
+ * `openToolNames`.
  */
 export function parseWireJsonl(
   content: string,
   _mode: 'full' | 'append',
+  options: WireParseOptions = {},
 ): SessionHistoryParseResult {
   const events: SessionEvent[] = [];
   let activity: Activity | null = null;
-
-  const usageAcc: UsageAccumulator = {
-    usedTokens: undefined,
-    totalInputTokens: undefined,
-    totalOutputTokens: undefined,
-    cachedInputTokens: undefined,
-    contextWindowSize: undefined,
-    usedPercentage: undefined,
-  };
+  const usage: UsageCapture = {};
 
   for (const line of content.split(/\r?\n/)) {
     if (!line) continue;
-
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -241,722 +167,292 @@ export function parseWireJsonl(
       continue;
     }
     if (!isRecord(parsed)) continue;
+    const type = parsed.type;
+    if (!isKimiDispatchType(type)) continue;
+    const ts = parseRecordTime(parsed.time);
 
-    // Header line: {"type": "metadata", "protocol_version": "1.9"}.
-    // No timestamp / message envelope. Skip.
-    if (parsed.type === 'metadata') continue;
-
-    // Standard envelope: { timestamp, message: { type, payload } }.
-    const message = parsed.message;
-    if (!isRecord(message)) continue;
-    const rawType = message.type;
-    const payload = message.payload;
-    if (!isKimiDispatchType(rawType)) continue;
-    const messageType: KimiDispatchType = rawType;
-
-    // Timestamp is unix seconds (float). SessionEvent.ts expects ms.
-    const timestamp = parseTimestamp(parsed.timestamp);
-
-    // Switch on the typed dispatch literal so TypeScript narrows each
-    // branch. A new entry in KIMI_DISPATCH_TYPES that isn't handled here
-    // surfaces as an exhaustiveness error at the default `assertNever`
-    // branch below.
-    switch (messageType) {
-      // ── Lifecycle / activity transitions ────────────────────────────
-      case 'TurnBegin': {
+    switch (type) {
+      case 'turn.prompt':
+      case 'turn.steer': {
         activity = Activity.Thinking;
-        if (isRecord(payload)) {
-          const text = extractUserInputText(payload.user_input);
-          if (text) {
-            events.push({ ts: timestamp, type: EventType.Prompt, detail: text });
-          }
-        }
+        const text = contentPartsText(parsed.input);
+        if (text) events.push({ ts, type: EventType.Prompt, detail: text });
         break;
       }
-      case 'TurnEnd': {
-        // The Idle event ends the turn the way a Stop hook does; a forced
-        // idle would end no turn and drop every background shell.
+      case 'turn.ended': {
         activity = null;
-        events.push({ ts: timestamp, type: EventType.Idle });
+        // A call a cancelled turn left open never gets its result.
+        options.openToolNames?.clear();
+        const reason = parsed.reason;
+        if (reason === 'cancelled') {
+          events.push({ ts, type: EventType.Interrupted });
+        } else if (reason === 'failed') {
+          events.push({ ts, type: EventType.TurnFailed, detail: turnErrorDetail(parsed.error) });
+        } else {
+          events.push({ ts, type: EventType.Idle });
+        }
         break;
       }
-      case 'StepBegin': {
-        activity = Activity.Thinking;
+      case 'turn.step.retrying': {
+        const errorName = typeof parsed.errorName === 'string' && parsed.errorName.length > 0 ? parsed.errorName : 'retry';
+        events.push({ ts, type: EventType.TurnRetrying, detail: errorName });
         break;
       }
-      case 'StepInterrupted': {
+      case 'turn.step.interrupted': {
+        const reason = typeof parsed.reason === 'string' ? parsed.reason : 'interrupted';
+        events.push({ ts, type: EventType.Notification, detail: `step interrupted: ${reason}` });
+        break;
+      }
+      case 'context.append_loop_event': {
+        const loopEvent = parsed.event;
+        if (!isRecord(loopEvent)) break;
+        const loopActivity = applyLoopEvent(loopEvent, ts, events, usage, options.openToolNames);
+        if (loopActivity) activity = loopActivity;
+        break;
+      }
+      case 'interaction.request': {
+        const kind = parsed.kind;
+        if (kind !== 'approval' && kind !== 'question') break;
         activity = null;
-        events.push({ ts: timestamp, type: EventType.Interrupted });
+        events.push({ ts, type: EventType.Idle, detail: IdleReason.Permission, waitKind: kind });
         break;
       }
-      case 'CompactionBegin': {
+      case 'interaction.resolved': {
         activity = Activity.Thinking;
-        events.push({ ts: timestamp, type: EventType.Compact });
         break;
       }
-      case 'CompactionEnd': {
-        // Compaction finished, but the turn may still be running. We do
-        // NOT force activity here - the next TurnEnd or next StepBegin
-        // will settle it. Surfacing a no-op preserves the activity that
-        // preceded compaction (typically Thinking).
+      case 'subagent.spawned': {
+        const subagentId = stringField(parsed.subagentId);
+        const name = stringField(parsed.subagentName) ?? KIMI_SUBAGENT_FALLBACK_NAME;
+        events.push({ ts, type: EventType.SubagentStart, detail: name, ...(subagentId ? { subagentId } : {}) });
         break;
       }
-      case 'SteerInput': {
-        activity = Activity.Thinking;
-        if (isRecord(payload)) {
-          const text = extractUserInputText(payload.user_input);
-          if (text) {
-            events.push({ ts: timestamp, type: EventType.Prompt, detail: text });
-          }
-        }
-        break;
-      }
-
-      // ── Telemetry ───────────────────────────────────────────────────
-      case 'StatusUpdate': {
-        if (isRecord(payload)) {
-          accumulateStatusUpdate(payload, usageAcc);
-        }
-        break;
-      }
-      case 'ContentPart':
-      case 'ToolCallPart': {
-        // Streaming-fragment events. They arrive between StatusUpdates
-        // and ToolCalls and don't carry independent activity meaning.
-        // Skip silently. Listed explicitly so this case is exhaustive
-        // and a future protocol bump that adds payload fields we want
-        // to observe shows up at the dispatch list and forces a
-        // decision rather than getting silently filtered.
-        break;
-      }
-
-      // ── Tool calls ─────────────────────────────────────────────────
-      case 'ToolCall': {
-        if (isRecord(payload)) {
-          const toolName = extractToolCallName(payload);
-          const toolId = typeof payload.id === 'string' && payload.id.length > 0 ? payload.id : undefined;
-          const command = toolName === KIMI_SHELL_TOOL ? extractShellCommand(payload) : null;
-          events.push({
-            ts: timestamp,
-            type: EventType.ToolStart,
-            tool: AgentTool.Bash,
-            ...(toolId ? { toolId } : {}),
-            // Capped as a hook's detail is (the event bridge's FIELD_CAP): the
-            // event cache keeps it and the command detectors scan it per event.
-            detail: command !== null ? command.slice(0, HOOK_DETAIL_CAP) : toolName,
-          });
-        }
-        break;
-      }
-      case 'ToolResult': {
-        if (isRecord(payload)) {
-          const returnValue = payload.return_value;
-          const isError = isRecord(returnValue) && returnValue.is_error === true;
-          const toolId = typeof payload.tool_call_id === 'string' && payload.tool_call_id.length > 0
-            ? payload.tool_call_id
-            : undefined;
-          const message = isRecord(returnValue) && typeof returnValue.message === 'string' ? returnValue.message : null;
-          const backgroundTaskId = isError || !isRecord(returnValue) ? null : extractBackgroundTaskId(returnValue.display);
-          if (backgroundTaskId && message === KIMI_BACKGROUND_STARTED_MESSAGE) {
-            // The tool moved to the background rather than ending: the named
-            // start closes its pending tool by `toolId` and reads the flag memo.
-            events.push({
-              ts: timestamp,
-              type: EventType.BackgroundShellStart,
-              tool: AgentTool.Bash,
-              ...(toolId ? { toolId } : {}),
-              detail: backgroundTaskId,
-            });
-            break;
-          }
-          events.push({
-            ts: timestamp,
-            type: EventType.ToolEnd,
-            tool: AgentTool.Bash,
-            ...(toolId ? { toolId } : {}),
-            detail: isError ? 'error' : 'ok',
-          });
-          if (backgroundTaskId && message === KIMI_TASK_STOP_MESSAGE) {
-            events.push({ ts: timestamp, type: EventType.BackgroundShellEnd, tool: AgentTool.Bash, detail: backgroundTaskId });
-          }
-        }
-        break;
-      }
-      case 'Notification': {
-        // A background task that ended (completed, failed, killed, ...).
-        if (
-          isRecord(payload)
-          && payload.source_kind === 'background_task'
-          && typeof payload.type === 'string'
-          && payload.type.startsWith('task.')
-          && typeof payload.source_id === 'string'
-          && payload.source_id.length > 0
-        ) {
-          events.push({ ts: timestamp, type: EventType.BackgroundShellEnd, tool: AgentTool.Bash, detail: payload.source_id });
-        }
-        break;
-      }
-
-      // ── Approval / question flow ───────────────────────────────────
-      case 'ApprovalRequest': {
-        activity = null;
+      case 'subagent.completed':
+      case 'subagent.failed':
+      case 'subagent.cancelled': {
+        const subagentId = stringField(parsed.subagentId);
         events.push({
-          ts: timestamp,
-          type: EventType.Idle,
-          detail: IdleReason.Permission,
-          waitKind: 'approval',
-        });
-        break;
-      }
-      case 'QuestionRequest': {
-        // The agent is blocked waiting for the user's answer: the same
-        // permission wait as an approval for activity purposes, told apart by
-        // its kind so the card draws a question.
-        activity = null;
-        events.push({
-          ts: timestamp,
-          type: EventType.Idle,
-          detail: IdleReason.Permission,
-          waitKind: 'question',
-        });
-        break;
-      }
-      case 'ApprovalResponse': {
-        // The user responded; the agent will resume work.
-        activity = Activity.Thinking;
-        if (isRecord(payload)) {
-          const response = typeof payload.response === 'string' ? payload.response : null;
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail: response ?? 'approval_response',
-          });
-        }
-        break;
-      }
-
-      // ── Subagent / Brain-Truster lifecycle ─────────────────────────
-      case 'SubagentEvent': {
-        if (isRecord(payload)) {
-          const subagentDetail = extractSubagentDetail(payload);
-          // The runner wraps every wire Event a subagent emits inside a
-          // SubagentEvent envelope (src/kimi_cli/subagents/runner.py
-          // :419-426). The inner `event` is the same Event union as the
-          // outer wire, so TurnBegin/TurnEnd are the lifecycle markers
-          // for the subagent's turn. Other inner types (StatusUpdate,
-          // ToolCall, ContentPart, ...) fall through to Notification so
-          // mid-run subagent chatter still surfaces in the activity log.
-          const innerType = extractInnerEventType(payload.event);
-          if (innerType === KIMI_SUBAGENT_INNER_BEGIN) {
-            events.push({
-              ts: timestamp,
-              type: EventType.SubagentStart,
-              detail: subagentDetail,
-            });
-          } else if (innerType === KIMI_SUBAGENT_INNER_END) {
-            events.push({
-              ts: timestamp,
-              type: EventType.SubagentStop,
-              detail: subagentDetail,
-            });
-          } else {
-            events.push({
-              ts: timestamp,
-              type: EventType.Notification,
-              detail: subagentDetail,
-            });
-          }
-        }
-        break;
-      }
-      case 'BtwBegin': {
-        events.push({
-          ts: timestamp,
-          type: EventType.SubagentStart,
-          detail: KIMI_BTW_SUBAGENT_NAME,
-        });
-        break;
-      }
-      case 'BtwEnd': {
-        events.push({
-          ts: timestamp,
+          ts,
           type: EventType.SubagentStop,
-          detail: KIMI_BTW_SUBAGENT_NAME,
+          detail: subagentId ?? KIMI_SUBAGENT_FALLBACK_NAME,
+          ...(subagentId ? { subagentId } : {}),
         });
         break;
       }
-
-      // ── Plan / hook telemetry ──────────────────────────────────────
-      case 'PlanDisplay': {
-        if (isRecord(payload)) {
-          const filePath = typeof payload.file_path === 'string' && payload.file_path.length > 0
-            ? payload.file_path
-            : 'plan';
-          const rawContent = typeof payload.content === 'string' ? payload.content : '';
-          const truncatedContent = truncateForActivityLog(rawContent, 200);
-          const detail = truncatedContent.length > 0
-            ? `${filePath}: ${truncatedContent}`
-            : filePath;
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail,
-          });
+      case 'full_compaction.begin': {
+        activity = Activity.Thinking;
+        events.push({ ts, type: EventType.Compact });
+        break;
+      }
+      case 'plan_mode.enter':
+      case 'plan_mode.exit': {
+        events.push({ ts, type: EventType.Notification, detail: type === 'plan_mode.enter' ? 'plan mode on' : 'plan mode off' });
+        break;
+      }
+      case 'token_counting.measured':
+      case 'token_counting.rebased':
+      case 'token_counting.truncated':
+      case 'token_counting.turn_recorded': {
+        const tokens = numberField(parsed.tokens);
+        if (tokens !== undefined) usage.usedTokens = tokens;
+        break;
+      }
+      case 'llm.request': {
+        const alias = stringField(parsed.modelAlias);
+        const model = stringField(parsed.model);
+        const id = alias ?? model;
+        if (id) {
+          usage.modelId = id;
+          usage.modelDisplayName = (alias ? options.displayNameForAlias?.(alias) : null) ?? id;
+        }
+        if (alias) {
+          const window = options.contextWindowForAlias?.(alias);
+          if (window && window > 0) usage.contextWindowSize = window;
         }
         break;
       }
-      case 'HookTriggered': {
-        if (isRecord(payload)) {
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail: formatHookDetail(payload),
-          });
+      case 'usage.record': {
+        // The model id is a fallback: `llm.request` names the alias the picker uses.
+        const model = stringField(parsed.model);
+        if (model && !usage.modelId) {
+          usage.modelId = model;
+          usage.modelDisplayName = model;
         }
         break;
       }
-      case 'HookResolved': {
-        if (isRecord(payload)) {
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail: formatHookResolvedDetail(payload),
-          });
-        }
-        break;
-      }
-      case 'HookRequest': {
-        if (isRecord(payload)) {
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail: formatHookRequestDetail(payload),
-          });
-        }
-        break;
-      }
-
-      // ── Bidirectional tool call (request form) ─────────────────────
-      case 'ToolCallRequest': {
-        // The Request form of a tool call - the agent waits for the
-        // external Wire client to execute the tool. From our passive-
-        // observer perspective it's identical telemetry to a ToolCall
-        // event: emit ToolStart so activity tracking sees an in-flight
-        // tool. The corresponding ToolResult (or ToolCallRequest's
-        // response message in JSON-RPC) closes it.
-        if (isRecord(payload)) {
-          const name = typeof payload.name === 'string' && payload.name.length > 0
-            ? payload.name
-            : KIMI_TOOL_FALLBACK_NAME;
-          events.push({
-            ts: timestamp,
-            type: EventType.ToolStart,
-            tool: AgentTool.Bash,
-            detail: name,
-          });
-        }
-        break;
-      }
-
       default: {
-        // Exhaustiveness check - if KIMI_DISPATCH_TYPES grows without a
-        // matching case here, this line becomes a TS2367 error.
-        const exhaustive: never = messageType;
+        const exhaustive: never = type;
         void exhaustive;
       }
     }
   }
 
-  const usage = buildUsage(usageAcc);
-  return { usage, events, activity };
+  return { usage: buildUsage(usage), events, activity };
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Payload helpers
-// ────────────────────────────────────────────────────────────────────
+/**
+ * A `tool.call`'s event name. Only a session's parser, which can name the end
+ * too, tags a call by its tool. The engine pairs an end with its start by name,
+ * so with no memory every call stays `Bash`. `ExitPlanMode` stays `Bash` as
+ * well: an end tagged `ExitPlanMode` means an approved plan, so a rejected
+ * plan's end must not carry that name.
+ */
+function eventToolName(name: string, toolId: string | null | undefined, openToolNames: Map<string, string> | undefined): string {
+  if (!openToolNames || !toolId || name === AgentTool.ExitPlanMode) return AgentTool.Bash;
+  return name;
+}
+
+/** Apply one `context.append_loop_event` event; returns an activity to force, if any. */
+function applyLoopEvent(
+  loopEvent: Record<string, unknown>,
+  ts: number,
+  events: SessionEvent[],
+  usage: UsageCapture,
+  openToolNames: Map<string, string> | undefined,
+): Activity | null {
+  switch (loopEvent.type) {
+    case 'step.begin':
+      return Activity.Thinking;
+    case 'step.end': {
+      applyTokenUsage(loopEvent.usage, usage);
+      return null;
+    }
+    case 'tool.call': {
+      const name = stringField(loopEvent.name) ?? KIMI_TOOL_FALLBACK_NAME;
+      const toolId = stringField(loopEvent.toolCallId);
+      const command = name === KIMI_SHELL_TOOL ? shellCommand(loopEvent.args) : null;
+      const tool = eventToolName(name, toolId, openToolNames);
+      if (toolId && tool !== AgentTool.Bash) openToolNames?.set(toolId, tool);
+      events.push({
+        ts,
+        type: EventType.ToolStart,
+        tool,
+        ...(toolId ? { toolId } : {}),
+        // Capped as a hook's detail is: the event cache keeps it and the
+        // command detectors scan it per event.
+        detail: command !== null ? command.slice(0, HOOK_DETAIL_CAP) : name,
+      });
+      return null;
+    }
+    case 'tool.result': {
+      const toolId = stringField(loopEvent.toolCallId);
+      const result = isRecord(loopEvent.result) ? loopEvent.result : {};
+      const isError = result.isError === true;
+      const output = contentPartsText(result.output) ?? '';
+      const planApproved = !isError && output.trimStart().startsWith(APPROVED_PLAN_PREFIX);
+      const openTool = toolId ? openToolNames?.get(toolId) : undefined;
+      if (toolId) openToolNames?.delete(toolId);
+      events.push({
+        ts,
+        type: EventType.ToolEnd,
+        tool: planApproved ? AgentTool.ExitPlanMode : openTool ?? AgentTool.Bash,
+        ...(toolId ? { toolId } : {}),
+        detail: isError ? 'error' : 'ok',
+      });
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Fold a step's `TokenUsage` (`inputOther`, `output`, `inputCacheRead`, `inputCacheCreation`). */
+function applyTokenUsage(value: unknown, usage: UsageCapture): void {
+  if (!isRecord(value)) return;
+  const inputOther = numberField(value.inputOther);
+  const output = numberField(value.output);
+  const cacheRead = numberField(value.inputCacheRead);
+  const cacheCreation = numberField(value.inputCacheCreation);
+  if (inputOther !== undefined || cacheRead !== undefined || cacheCreation !== undefined) {
+    usage.totalInputTokens = (inputOther ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
+  }
+  if (cacheRead !== undefined || cacheCreation !== undefined) {
+    usage.cachedInputTokens = (cacheRead ?? 0) + (cacheCreation ?? 0);
+  }
+  if (output !== undefined) usage.totalOutputTokens = output;
+}
 
 /**
- * Extract a single human-readable string from a `user_input` payload
- * field. `user_input` is `string | ContentPart[]` per the wire schema,
- * where a ContentPart is one of TextPart, ThinkPart, ImageURLPart,
- * AudioURLPart, VideoURLPart.
- *
- * For a string, return it directly (trimmed). For an array, join all
- * `text` parts; ignore think/media parts since they aren't human prompt
- * content. Returns null when the result is empty so the caller can skip
- * emitting a no-op Prompt event.
+ * A sparse usage report: only the fields this chunk saw, so the downstream
+ * shallow merge keeps earlier values. Null when it saw none.
  */
-function extractUserInputText(value: unknown): string | null {
+function buildUsage(captured: UsageCapture): SessionUsage | null {
+  const contextWindow: Partial<SessionUsage['contextWindow']> = {};
+  if (captured.usedTokens !== undefined) contextWindow.usedTokens = captured.usedTokens;
+  if (captured.totalInputTokens !== undefined) contextWindow.totalInputTokens = captured.totalInputTokens;
+  if (captured.totalOutputTokens !== undefined) contextWindow.totalOutputTokens = captured.totalOutputTokens;
+  if (captured.cachedInputTokens !== undefined) contextWindow.cacheTokens = captured.cachedInputTokens;
+  if (captured.contextWindowSize !== undefined) contextWindow.contextWindowSize = captured.contextWindowSize;
+  if (captured.usedTokens !== undefined && captured.contextWindowSize !== undefined && captured.contextWindowSize > 0) {
+    contextWindow.usedPercentage = (captured.usedTokens / captured.contextWindowSize) * 100;
+  }
+  const hasWindow = Object.keys(contextWindow).length > 0;
+  const model = captured.modelId
+    ? { id: captured.modelId, displayName: captured.modelDisplayName ?? captured.modelId, reportedByAgent: true }
+    : null;
+  if (!hasWindow && !model) return null;
+  return {
+    ...(hasWindow ? { contextWindow } : {}),
+    ...(model ? { model } : {}),
+  } as unknown as SessionUsage;
+}
+
+/**
+ * The text of a `ContentPart[]` (or a plain string): every `text` part joined,
+ * think and media parts skipped. Null when nothing is left.
+ */
+export function contentPartsText(value: unknown): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+    return trimmed.length > 0 ? value : null;
   }
   if (!Array.isArray(value)) return null;
-
-  const textPieces: string[] = [];
+  const pieces: string[] = [];
   for (const part of value) {
-    if (!isRecord(part)) continue;
-    if (part.type === 'text' && typeof part.text === 'string') {
-      const trimmed = part.text.trim();
-      if (trimmed.length > 0) textPieces.push(trimmed);
+    if (isRecord(part) && part.type === 'text' && typeof part.text === 'string' && part.text.trim().length > 0) {
+      pieces.push(part.text);
     }
-    // Other ContentPart shapes (think/image/audio/video) intentionally
-    // skipped - they aren't user prompt content.
   }
-  if (textPieces.length === 0) return null;
-  return textPieces.join(' ');
+  return pieces.length > 0 ? pieces.join('\n') : null;
 }
 
-/**
- * Resolve the tool name for a `ToolCall` payload, walking the
- * `function.name` → `payload.type` → fallback chain.
- */
-function extractToolCallName(payload: Record<string, unknown>): string {
-  const fn = payload.function;
-  if (isRecord(fn) && typeof fn.name === 'string' && fn.name.length > 0) {
-    return fn.name;
+/** The `command` of a `Bash` call's `args` (an object, or a JSON string). */
+function shellCommand(args: unknown): string | null {
+  let value = args;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
   }
-  if (typeof payload.type === 'string' && payload.type.length > 0) {
-    return payload.type;
-  }
-  return KIMI_TOOL_FALLBACK_NAME;
-}
-
-/**
- * The `command` of a `Shell` ToolCall, whose `function.arguments` is a JSON
- * string. Null when it does not parse or names no command.
- */
-function extractShellCommand(payload: Record<string, unknown>): string | null {
-  const functionField = payload.function;
-  if (!isRecord(functionField) || typeof functionField.arguments !== 'string') return null;
-  let parsedArguments: unknown;
-  try {
-    parsedArguments = JSON.parse(functionField.arguments);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsedArguments)) return null;
-  const command = parsedArguments.command;
+  if (!isRecord(value)) return null;
+  const command = value.command;
   return typeof command === 'string' && command.trim().length > 0 ? command : null;
 }
 
-/**
- * The task id of a ToolResult's `background_task` display block, when it is
- * id-shaped. A shapeless id is dropped: as a start it would take an anonymous
- * slot that no end could name.
- */
-function extractBackgroundTaskId(display: unknown): string | null {
-  if (!Array.isArray(display)) return null;
-  for (const block of display) {
-    if (!isRecord(block) || block.type !== 'background_task') continue;
-    const taskId = block.task_id;
-    if (typeof taskId === 'string' && SHELL_ID_PATTERN.test(taskId)) return taskId;
-  }
-  return null;
+/** A failed turn's detail: its error's name or code, else its message. */
+function turnErrorDetail(error: unknown): string {
+  if (!isRecord(error)) return 'failed';
+  return stringField(error.name) ?? stringField(error.code) ?? stringField(error.message) ?? 'failed';
 }
 
-/**
- * Pull the nested wire Event's `type` discriminant from a `SubagentEvent`
- * payload. The inner `event` field is itself a full wire Event - same
- * union as the outer protocol (TurnBegin, TurnEnd, StepBegin, ToolCall,
- * StatusUpdate, ...). Per the Pydantic schema in
- * `src/kimi_cli/wire/types.py` and the runner emission site at
- * `src/kimi_cli/subagents/runner.py:419`, the only discriminant we care
- * about for lifecycle tracking is `event.type`.
- *
- * Returns null when the envelope is malformed (event missing, not an
- * object, type field absent or non-string).
- */
-function extractInnerEventType(value: unknown): string | null {
-  if (!isRecord(value)) return null;
-  return typeof value.type === 'string' && value.type.length > 0 ? value.type : null;
+function stringField(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-/**
- * Resolve the detail string for a `SubagentEvent` payload. Prefers
- * `subagent_type`, then `agent_id`, then a stable fallback so the
- * Activity log row always has a meaningful identifier.
- */
-function extractSubagentDetail(payload: Record<string, unknown>): string {
-  const subagentType = payload.subagent_type;
-  if (typeof subagentType === 'string' && subagentType.length > 0) {
-    return subagentType;
-  }
-  const agentId = payload.agent_id;
-  if (typeof agentId === 'string' && agentId.length > 0) {
-    return agentId;
-  }
-  return KIMI_SUBAGENT_FALLBACK_NAME;
-}
-
-/**
- * Format a hook event's `<event>:<target>` detail string. Used by both
- * `HookTriggered` and `HookRequest` since they share the same
- * `event` + `target` fields.
- */
-function formatHookDetail(payload: Record<string, unknown>): string {
-  const event = typeof payload.event === 'string' ? payload.event : 'hook';
-  const target = typeof payload.target === 'string' ? payload.target : '';
-  return target.length > 0 ? `${event}:${target}` : event;
-}
-
-/**
- * Hard ceiling on a `HookRequest` Notification detail string. The hook
- * `input_data` field carries the full event payload, which on tool hooks
- * can include the entire arguments object - generous truncation prevents
- * the Activity log from being flooded by a single row.
- */
-const KIMI_HOOK_DETAIL_MAX_LEN = 200;
-
-/**
- * Per-summary cap, sized so the `<event>:<target>: ` prefix plus the
- * summary still fits inside `KIMI_HOOK_DETAIL_MAX_LEN`.
- */
-const KIMI_HOOK_SUMMARY_MAX_LEN = 180;
-
-/**
- * Format a `HookRequest` detail string. Builds on `formatHookDetail` for
- * the `<event>:<target>` head and then appends a one-line summary of the
- * hook's `input_data` payload when one can be extracted. The summary is
- * the highest-signal field for a developer debugging hook behavior - it
- * carries the actual prompt text on `on_user_input`, the tool name on
- * tool hooks, etc.
- *
- * Final string is truncated to `KIMI_HOOK_DETAIL_MAX_LEN` chars as
- * defence in depth - the per-summary cap should already enforce this,
- * but very long event/target names could still push the head over the
- * ceiling.
- */
-function formatHookRequestDetail(payload: Record<string, unknown>): string {
-  const head = formatHookDetail(payload);
-  const inputData = payload.input_data;
-  const summary = isRecord(inputData) ? extractHookInputSummary(inputData) : null;
-  const full = summary ? `${head}: ${summary}` : head;
-  return truncateForActivityLog(full, KIMI_HOOK_DETAIL_MAX_LEN);
-}
-
-/**
- * Pull a one-line summary out of a `HookRequest`'s `input_data` payload.
- *
- * `input_data` is the full event payload received by the hook
- * subscription. Its shape varies per `event`:
- *   - `on_user_input` and friends carry a `user_input` field
- *     (`string | ContentPart[]`) - reuse `extractUserInputText` for
- *     consistency with `TurnBegin` / `SteerInput`.
- *   - Tool hooks (`pre_tool_use`, `post_tool_use`) carry a tool
- *     identifier under `tool_name`, `name`, `function.name`, or a nested
- *     `tool_call.function.name`. Walk that chain.
- *   - For any other shape, surface the first short string-valued field
- *     as `key=value` so the row is still meaningful instead of empty.
- *
- * Returns null when nothing usable is found so the caller can fall back
- * to the bare `<event>:<target>` head.
- */
-function extractHookInputSummary(inputData: Record<string, unknown>): string | null {
-  const userInputSummary = extractUserInputText(inputData.user_input);
-  if (userInputSummary) {
-    return truncateForActivityLog(userInputSummary, KIMI_HOOK_SUMMARY_MAX_LEN);
-  }
-
-  const toolName = extractHookToolName(inputData);
-  if (toolName) {
-    return truncateForActivityLog(toolName, KIMI_HOOK_SUMMARY_MAX_LEN);
-  }
-
-  for (const [key, value] of Object.entries(inputData)) {
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (trimmed.length === 0) continue;
-    return truncateForActivityLog(`${key}=${trimmed}`, KIMI_HOOK_SUMMARY_MAX_LEN);
-  }
-
-  return null;
-}
-
-/**
- * Walk the tool-name chain on a hook `input_data` payload:
- * `tool_name → name → function.name → tool_call.function.name`. Returns
- * null when no candidate is present so the caller can fall through to
- * the generic key=value scan.
- */
-function extractHookToolName(inputData: Record<string, unknown>): string | null {
-  if (typeof inputData.tool_name === 'string' && inputData.tool_name.length > 0) {
-    return inputData.tool_name;
-  }
-  if (typeof inputData.name === 'string' && inputData.name.length > 0) {
-    return inputData.name;
-  }
-  const functionField = inputData.function;
-  if (
-    isRecord(functionField)
-    && typeof functionField.name === 'string'
-    && functionField.name.length > 0
-  ) {
-    return functionField.name;
-  }
-  const toolCall = inputData.tool_call;
-  if (isRecord(toolCall)) {
-    const nestedFunction = toolCall.function;
-    if (
-      isRecord(nestedFunction)
-      && typeof nestedFunction.name === 'string'
-      && nestedFunction.name.length > 0
-    ) {
-      return nestedFunction.name;
-    }
-    if (typeof toolCall.name === 'string' && toolCall.name.length > 0) {
-      return toolCall.name;
-    }
-  }
-  return null;
-}
-
-/**
- * Trim trailing whitespace, collapse internal newlines to spaces, and
- * truncate with a trailing `...` when the result exceeds `max`. The
- * suffix counts toward the limit so the returned string is always
- * `<= max`. ASCII-only suffix to stay safe across Windows console code
- * pages and any non-Chromium consumers of the same string.
- */
-export function truncateForActivityLog(value: string, max: number): string {
-  const flattened = value.replace(/\s+/g, ' ').trim();
-  if (flattened.length <= max) return flattened;
-  if (max <= 3) return flattened.slice(0, max);
-  return `${flattened.slice(0, max - 3)}...`;
-}
-
-/**
- * Format a `HookResolved` detail string emphasizing the `action`
- * (allow|block) since that is what changes the agent's behavior. The
- * `reason` field, when present, is appended for diagnostic context.
- */
-function formatHookResolvedDetail(payload: Record<string, unknown>): string {
-  const event = typeof payload.event === 'string' ? payload.event : 'hook';
-  const action = typeof payload.action === 'string' ? payload.action : 'unknown';
-  const reason = typeof payload.reason === 'string' && payload.reason.length > 0
-    ? payload.reason
-    : null;
-  const head = `${event}:${action}`;
-  return reason ? `${head} (${reason})` : head;
-}
-
-/**
- * Fold a `StatusUpdate` payload into the running usage accumulator.
- * Mutates `acc` in place; only fields actually seen in the payload are
- * touched so `setSessionUsage()`'s shallow merge doesn't overwrite
- * established base values with zeros.
- */
-function accumulateStatusUpdate(
-  payload: Record<string, unknown>,
-  acc: UsageAccumulator,
-): void {
-  const ratio = payload.context_usage;
-  if (typeof ratio === 'number' && Number.isFinite(ratio)) {
-    // context_usage is a 0..1 ratio per upstream docs. Convert to %
-    // for the SessionUsage contract.
-    acc.usedPercentage = ratio * 100;
-  }
-  const ctxTokens = payload.context_tokens;
-  if (typeof ctxTokens === 'number' && Number.isFinite(ctxTokens)) {
-    acc.usedTokens = ctxTokens;
-  }
-  const maxTokens = payload.max_context_tokens;
-  if (typeof maxTokens === 'number' && Number.isFinite(maxTokens) && maxTokens > 0) {
-    acc.contextWindowSize = maxTokens;
-  }
-
-  const tokenUsage = payload.token_usage;
-  if (!isRecord(tokenUsage)) return;
-
-  // Aggregate token_usage subfields into a per-StatusUpdate snapshot.
-  // input_other is fresh input (excludes cache hits), so the running
-  // input total for the current step is input_other + input_cache_read +
-  // input_cache_creation.
-  //
-  // IMPORTANT: token_usage in StatusUpdate is the *current step*
-  // count per upstream (Kimi CLI's "Wire mode" docs page), NOT a
-  // session-cumulative total. Multiple StatusUpdates per turn each
-  // report a different per-step value. Last-wins here means
-  // contextWindow.totalInputTokens reflects the most recent step's
-  // input count, mirroring Codex's `last_token_usage` semantics.
-  // Context occupancy is driven separately by the `context_tokens` /
-  // `max_context_tokens` pair which Kimi reports as cumulative
-  // session size.
-  const inputOther = numericField(tokenUsage.input_other);
-  const inputCacheRead = numericField(tokenUsage.input_cache_read);
-  const inputCacheCreation = numericField(tokenUsage.input_cache_creation);
-  const output = numericField(tokenUsage.output);
-
-  if (
-    inputOther !== undefined
-    || inputCacheRead !== undefined
-    || inputCacheCreation !== undefined
-  ) {
-    acc.totalInputTokens = (inputOther ?? 0)
-      + (inputCacheRead ?? 0)
-      + (inputCacheCreation ?? 0);
-  }
-  if (output !== undefined) acc.totalOutputTokens = output;
-  if (inputCacheRead !== undefined || inputCacheCreation !== undefined) {
-    acc.cachedInputTokens = (inputCacheRead ?? 0) + (inputCacheCreation ?? 0);
-  }
-}
-
-function numericField(value: unknown): number | undefined {
+function numberField(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 /**
- * wire.jsonl timestamps are unix seconds (float) per empirical capture
- * (1777229783.576391). Convert to epoch ms for SessionEvent.ts.
- * Falls back to Date.now() for malformed values.
+ * A record's `time` as epoch ms. The metadata line's `created_at` is
+ * `Date.now()` (`record.ts`); a value that reads as seconds is scaled, so a
+ * record written in either unit lands on the right clock.
  */
-function parseTimestamp(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.round(value * 1000);
+export function parseRecordTime(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value > 1e12 ? Math.round(value) : Math.round(value * 1000);
   }
   return Date.now();
-}
-
-/**
- * Build a sparse SessionUsage. Only includes fields seen in this chunk
- * so the downstream shallow merge does not clobber correct base values
- * with zeros. Returns null when nothing was captured.
- */
-function buildUsage(captured: UsageAccumulator): SessionUsage | null {
-  const {
-    usedTokens,
-    totalInputTokens,
-    totalOutputTokens,
-    cachedInputTokens,
-    contextWindowSize,
-    usedPercentage,
-  } = captured;
-
-  if (
-    usedTokens === undefined
-    && totalInputTokens === undefined
-    && totalOutputTokens === undefined
-    && cachedInputTokens === undefined
-    && contextWindowSize === undefined
-    && usedPercentage === undefined
-  ) {
-    return null;
-  }
-
-  const contextWindow: Record<string, number> = {};
-  if (usedTokens !== undefined) contextWindow.usedTokens = usedTokens;
-  if (totalInputTokens !== undefined) contextWindow.totalInputTokens = totalInputTokens;
-  if (totalOutputTokens !== undefined) contextWindow.totalOutputTokens = totalOutputTokens;
-  if (cachedInputTokens !== undefined) contextWindow.cacheTokens = cachedInputTokens;
-  if (contextWindowSize !== undefined) contextWindow.contextWindowSize = contextWindowSize;
-  if (usedPercentage !== undefined) {
-    contextWindow.usedPercentage = usedPercentage;
-  } else if (contextWindowSize !== undefined && contextWindowSize > 0 && usedTokens !== undefined) {
-    // Fall back to derived percentage when StatusUpdate sent tokens
-    // but not the ratio. Same belt-and-suspenders pattern as Codex.
-    contextWindow.usedPercentage = (usedTokens / contextWindowSize) * 100;
-  }
-
-  return { contextWindow } as unknown as SessionUsage;
 }

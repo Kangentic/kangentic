@@ -351,6 +351,39 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     }
   });
 
+  // This path types nothing, so a recap handed to a CLI that takes no starting
+  // prompt would be lost, and it would seed a turn that never starts.
+  it('opens idle with no recap when the agent\'s fresh prompt can only be typed', async () => {
+    const projectsRoot = path.join(projectPath, 'claude-projects');
+    fs.mkdirSync(projectsRoot, { recursive: true });
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'status.json'), JSON.stringify({
+      session_id: STORED_ID,
+      transcript_path: path.join(projectsRoot, '-gone-project', `${STORED_ID}.jsonl`),
+      model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+      cost: { total_cost_usd: 0.9, total_duration_ms: 60000, total_api_duration_ms: 40000 },
+      context_window: { total_input_tokens: 30000, total_output_tokens: 900, context_window_size: 200000, current_usage: null, used_percentage: null },
+    }));
+    const typedAdapter = adapter as typeof adapter & {
+      proveConversationGone?: typeof proveClaudeConversationGone;
+      freshPromptDelivery?: 'command-line' | 'typed';
+    };
+    typedAdapter.proveConversationGone = proveClaudeConversationGone;
+    typedAdapter.freshPromptDelivery = 'typed';
+    try {
+      const { result } = await runPrepare();
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.startOver).toBe('expired');
+      expect(result.data.resumed).toBe(false);
+      expect(result.data.prompt).toBeNull();
+    } finally {
+      delete typedAdapter.proveConversationGone;
+      delete typedAdapter.freshPromptDelivery;
+    }
+  });
+
   describe('an expired start-over, as startup wires it', () => {
     // The adapter proves a conversation gone, as Claude's does, against a
     // projects folder that exists but holds no transcript for STORED_ID.

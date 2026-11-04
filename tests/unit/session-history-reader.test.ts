@@ -189,6 +189,25 @@ describe('SessionHistoryReader', () => {
     expect(reader.isAttached('session-1')).toBe(true);
   });
 
+  // A format with memory across chunks keeps it per session: shared, one
+  // session's open tool calls would name another's.
+  it('gives each attached session its own parser when the hook makes them', async () => {
+    const filePath = path.join(tempDir, 'wire.jsonl');
+    fs.writeFileSync(filePath, '{"line":1}\n');
+    const emptyResult: SessionHistoryParseResult = { usage: null, events: [], activity: null };
+    const stateless = vi.fn(() => emptyResult);
+    const perSession = vi.fn(() => emptyResult);
+    const createParse = vi.fn(() => perSession);
+    const hook = { locate: async () => filePath, parse: stateless, createParse, isFullRewrite: false };
+
+    await reader.attach({ sessionId: 'session-a', agentSessionId: 'agent-a', cwd: tempDir, hook });
+    await reader.attach({ sessionId: 'session-b', agentSessionId: 'agent-b', cwd: tempDir, hook });
+
+    expect(createParse).toHaveBeenCalledTimes(2);
+    expect(perSession).toHaveBeenCalled();
+    expect(stateless).not.toHaveBeenCalled();
+  });
+
   it('skips attach when locate returns null', async () => {
     await reader.attach({
       sessionId: 'session-1',

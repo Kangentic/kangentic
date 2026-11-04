@@ -57,7 +57,7 @@ Runtime flow:
 1. An agent adapter declares a `sessionHistory` block in its `runtime` strategy (`src/shared/types.ts` - `AdapterRuntimeStrategy.sessionHistory`).
 2. On PTY spawn, the adapter's full runtime strategy is stored on `ManagedSession.agentParser` - SessionManager does nothing session-history-specific.
 3. The agent's session ID is captured via one of four paths (whichever fires first):
-   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Kimi, Grok, and Gemini (whose spawn-time `locate` waits up to 30 s, since its chat file appears only once the CLI has booted).
+   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, Grok, and Gemini (whose spawn-time `locate` waits up to 30 s, since its chat file appears only once the CLI has booted).
    - `runtime.sessionId.fromHook` (Gemini hook stdin)
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
@@ -81,7 +81,7 @@ The PtyActivityTracker keeps running in parallel until suppressed, so the boot w
 |-------|------|-----------|
 | `usage` | `SessionUsage \| null` | Updated usage snapshot. Null when this parse pass didn't touch model or tokens. The reader's callback merges it into the existing `usageCache` entry via `SessionTelemetry.setSessionUsage`. |
 | `events` | `SessionEvent[]` | New events to append to the session event log. Empty array when there are none. The reader pushes them through `SessionTelemetry.ingestEvents`, which runs each event through the activity engine plus the per-event detectors (PTY suppression, ExitPlanMode, PR command). |
-| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Gemini's whole-file rewrite) rather than relying on the event stream alone. Codex and Kimi return `null`: their turn starts and ends are events (a Stop hook, a wire `TurnEnd` Idle event), because a forced idle ends no turn for `onTurnEnded` and clears background shells. Null when events alone imply the transition. |
+| `activity` | `Activity \| null` | Explicit activity transition hint (`Activity.Thinking`, `Activity.Idle`, or `null`). Set when a log entry maps directly to a state change (e.g. Gemini's whole-file rewrite) rather than relying on the event stream alone. Codex and Kimi return `null`: their turn starts and ends are events (a Stop hook, a wire `turn.ended` Idle event), because a forced idle ends no turn for `onTurnEnded` and clears background shells. Null when events alone imply the transition. |
 
 All three fields are optional in the sense that any combination is valid - parsers can return partial results (e.g. a token-only update yields `usage` populated and `events: []`).
 
@@ -369,7 +369,7 @@ behavior below is the resume contract.
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
 | Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<project>/chats/session-<time>-<first 8 of id>.jsonl` (legacy `.json`) | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |
-| Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
+| Kimi | `kimi --session <id>` | `~/.kimi-code/sessions/<workspaceId>/<id>/agents/main/wire.jsonl` | `session_index.jsonl` by id | yes | yes | typed once the TUI is ready (no prompt on an interactive launch) |
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
 | OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
 | Copilot | `copilot --session-id <id> --config-dir <session home>` | `<config home>/session-state/<id>/` (+ `session-store.db`); each Kangentic session has its own home, so a resume first brings the folder over from the session's earlier home | session id (per config home) | no | yes (its `events.jsonl`) | typed once the TUI is ready |
@@ -384,8 +384,8 @@ behavior below is the resume contract.
 Reading the table by class:
 
 - **cwd-keyed per-session file that `--resume` reads:** Gemini, Qwen, Kimi, Droid, Grok. The
-  resume target is a file under a directory derived from the cwd (basename, slug, `md5`, or
-  Grok's `encodeURIComponent`), so moving the project to a path with a different cwd-derived key,
+  resume target is a file under a directory derived from the cwd (basename, slug, a `sha256`
+  prefix, or Grok's `encodeURIComponent`), so moving the project to a path with a different cwd-derived key,
   or deleting that file, makes the stored id unresolvable. These rows come from each relocation
   module's model of its CLI, not from a measured resume in another folder; Droid's and Grok's are
   the least certain.
@@ -458,7 +458,7 @@ empirical findings killed it:
    long-path edge, transient filesystem hiccup, or future change to a CLI's storage layout would
    silently turn a recoverable resume into a fresh session - worse than the visible "No
    conversation found" it was meant to replace. The cwd-keyed agents above each have a *more*
-   fragile locator than Claude's (Gemini basename collisions, Kimi `md5(cwd)`, Droid/Qwen slugs),
+   fragile locator than Claude's (Gemini basename collisions, Droid/Qwen slugs),
    so extending the guard to them would multiply that risk, not reduce it.
 
 The actual root cause of the #255 bug was unrelated to a missing transcript: when Kangentic was

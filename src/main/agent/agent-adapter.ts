@@ -479,6 +479,25 @@ export interface AgentAdapter {
   readonly resumePromptDelivery: 'command-line' | 'typed' | 'no-resume';
 
   /**
+   * How a FRESH session's first prompt reaches this agent.
+   *
+   * - `'command-line'` (the default when omitted): the launch command carries
+   *   it, so the builder must pass `options.prompt` on a fresh spawn.
+   * - `'typed'`: the CLI's interactive session takes no starting prompt (Kimi
+   *   Code 2.x rejects a positional argument, and its `-p` runs one prompt and
+   *   exits). The engine keeps the prompt off the command line and hands it
+   *   back (`SpawnOutcome.typedOpening`), and the caller types it in once the
+   *   agent is ready, ahead of anything else it sends, as for an agent adopted
+   *   from a worktree's setup script. Startup recovery types nothing, so it
+   *   opens such an agent with no recap, and a workflow's agent cannot be one
+   *   (`canBeWorkflowAgent`).
+   *
+   * `tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's
+   * real fresh command with a marked prompt and holds this value to it.
+   */
+  readonly freshPromptDelivery?: 'command-line' | 'typed';
+
+  /**
    * Whether a FRESH launch with no prompt opens the agent's interactive input,
    * where a prompt typed in (keystrokes, or a bracketed paste) is the same first
    * message the command line would have carried. True lets a task's agent start
@@ -1258,7 +1277,7 @@ export interface AgentAdapter {
    *   - 'command-injection': returns a JSONL-polling verifier that exact-matches
    *     the slash command in the session transcript.
    *
-   * Example (Codex, Copilot, OpenCode, Qwen, Kimi, Aider):
+   * Example (Codex, Copilot, OpenCode, Qwen, Aider):
    *   - 'paste': returns null, same reasoning as Claude.
    *   - 'command-injection': returns a verifier that exact-matches the
    *     SUBMITTED TEXT in that agent's own history, rather than Claude's

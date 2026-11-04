@@ -1,72 +1,44 @@
 /**
- * Kimi CLI transcript cleanup for PTY output.
+ * Kimi Code CLI transcript cleanup for PTY output.
  *
- * Kimi's TUI (verified empirically with kimi v1.37.0) renders:
+ * The TUI's welcome box (`apps/kimi-code/src/tui/components/chrome/welcome.ts`,
+ * Kimi Code CLI 2.4.1, read 2026-11-03) draws, inside a `╭─╮ │ ╰─╯` border:
  *
- *   Welcome banner box (cyan border):
- *     "Welcome to Kimi Code CLI!"
- *     "Send /help for help information."
- *     ""
- *     "Directory: ~\Path\to\workdir"
- *     "Session: <uuid>"
- *     "Model: <name|not set, send /login to login>"
- *     ""
- *     "Tip: Spot a bug or have feedback? Type /feedback ..."
+ *     "Welcome to Kimi Code!"
+ *     "Send /help for help information."   (or "Run /login or /provider to get started.")
+ *     "Directory: <workDir>"
+ *     "Session:   <id>"
+ *     "Model:     <alias>"                 (or "not set, run /login or /provider")
+ *     "Version:   <version>"
+ *     "MCP:       <summary>"
  *
- *   Input area (separator line):
- *     "_ input ____..."
+ * and a resumable session's exit prints "To resume this session: kimi -r <id>"
+ * (`run-shell.ts`). Built from the source; the TUI has not been captured.
  *
- *   Bottom status bar:
- *     "agent  ~\path  <branch>  ctrl-o: editor | ctrl-j: newline    context: 0.0%"
- *
- * Strategy:
- *   1. Strip welcome-banner metadata (Directory/Session/Model/Tip lines).
- *   2. Strip the "_ input _..." separator.
- *   3. Strip the bottom status bar fragments (agent / context: N% / hotkey
- *      hints).
- *   4. Defer to the shared border filter for the box-drawing characters.
- *   5. finalizeTranscript() collapses blank runs and trims duplicates.
- *
- * Unlike Aider we don't pick "last turn" - Kimi shows full conversation
- * inline and we want all of it for handoff context. The shared filter +
- * specific noise patterns leave just the assistant/user message bodies.
+ * Strategy: strip the welcome box's lines and the resume hint, defer to the
+ * shared border filter for the box-drawing characters, and let
+ * `finalizeTranscript()` collapse blank runs. The conversation itself is kept
+ * whole for handoff context.
  */
 
 import { filterNoiseLines, finalizeTranscript } from '../../handoff/transcript-cleanup';
 
 const KIMI_NOISE_PATTERNS: RegExp[] = [
-  // Welcome banner content
-  /^Welcome to Kimi Code CLI!?$/i,
-  /^Send \/help for help/i,
+  // Welcome box
+  /^Welcome to Kimi Code!?$/i,
+  /^Send \/help for help information\.?$/i,
+  /^Run \/login or \/provider to get started\.?$/i,
   /^Directory:\s/,
-  /^Session:\s+[0-9a-f-]+$/i,
+  /^Session:\s*\S*$/,
   /^Model:\s/,
-  /^Tip:\s.+\/feedback/i,
-  // Input area separator
-  /^[_]+\s*input\s*[_]+$/i,
-  // Bottom status bar bits. Empirically appears as a single status line
-  // with multiple cells separated by 2+ spaces; the cells themselves
-  // are stable enough to anchor on.
-  /^\s*agent\s+/,
-  /\bctrl-[oj]:\s/,
-  /\bcontext:\s+[\d.]+%/,
-  // "To resume this session" banner shown on print-mode exit.
-  /^To resume this session:\s+kimi\s+-r\s+[0-9a-f-]+$/i,
-  // Inline status / OAuth prompts
-  /^LLM not set$/,
-  /^Send \/login to login$/i,
-  // Slash-command help table rows. Anchored on the known Kimi command
-  // set (per `kimi --help` v1.37.0 + the in-TUI /help output) so that
-  // legitimate user/assistant prose starting with one of these tokens
-  // (e.g. "/login is required to access the API") is NOT eaten. New
-  // Kimi releases that introduce new slash commands will surface those
-  // help-table rows in the handoff transcript until this list is
-  // updated, which is the correct failure mode (non-essential noise
-  // instead of dropping real content).
-  // Two-or-more spaces between command and description distinguish a help-table
-  // row ("/login   Log in to your Kimi account") from legitimate prose like
-  // "/login is required to access the API" (single space, sentence structure).
-  /^\s*\/(?:help|login|logout|exit|quit|clear|compact|feedback|init|model|memory|status|cost|review|undo|redo|new)\s{2,}\S/i,
+  /^Version:\s+\d+\.\d+\.\d+\S*$/,
+  /^MCP:\s/,
+  // The startup notice of a session that has no message yet.
+  /^No session yet\b/i,
+  // Exit hint, shown when the session has content. The CLI prints both lines
+  // with a leading space.
+  /^\s*To resume this session:\s+kimi\s+-r\s+\S+$/i,
+  /^\s*Bye!$/,
 ];
 
 export function cleanKimiTranscript(rawText: string): string | null {

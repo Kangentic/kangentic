@@ -2,7 +2,6 @@ import { _electron as electron, expect, type ElectronApplication, type Page } fr
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
@@ -349,6 +348,9 @@ export async function launchApp(options?: {
           NODE_ENV: 'test',
           ELECTRON_DISABLE_GPU: '1',
           KANGENTIC_DATA_DIR: dataDir,
+          // mock-kimi.js and the adapter both read it, so a run's Kimi sessions
+          // stay in its data dir and leave with it.
+          KIMI_CODE_HOME: path.join(dataDir, 'kimi-code-home'),
         },
         colorScheme: 'dark',
       });
@@ -745,22 +747,6 @@ export async function createTask(
  * Used by E2E specs that need to point an agent's cliPath at a mock binary
  * (e.g. mock-claude, mock-codex, mock-gemini).
  */
-/**
- * Wipe the ~/.kimi/sessions/<hash>/ directory whose md5 matches the given
- * absolute work_dir. The mock-kimi fixture computes the hash the same way,
- * so this targets exactly the directories that mock spawned for this test.
- *
- * Mirrors the cleanup pattern used by mock-codex (which deletes its
- * rollout JSONL on exit), but factored into helpers because the mock
- * intentionally never cleans up itself - real Kimi persists wire.jsonl
- * across runs so resume can find it.
- */
-export function cleanupKimiSessionsForCwd(cwd: string): void {
-  const hash = createHash('md5').update(path.resolve(cwd)).digest('hex');
-  const target = path.join(os.homedir(), '.kimi', 'sessions', hash);
-  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* ignore */ }
-}
-
 /**
  * Remove the grok session store for a test cwd. mock-grok.js writes real
  * session files under `$GROK_HOME/sessions/<encodeURIComponent(cwd)>/`

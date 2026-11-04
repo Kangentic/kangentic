@@ -89,9 +89,9 @@ const ADAPTER_CLASSES = [
   },
   {
     name: 'kimi', importPath: '../../src/main/agent/adapters/kimi/kimi-adapter', className: 'KimiAdapter',
-    commandInjection: 'verifier', escalates: false,
+    commandInjection: 'null', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: true,
-    reason: 'wire.jsonl shape pinned against real captures; never reached a usable TUI, so unmeasured',
+    reason: 'Kimi Code 2.x wire flush on submit is unmeasured: no real run yet',
   },
   {
     name: 'warp', importPath: '../../src/main/agent/adapters/warp/warp-adapter', className: 'WarpAdapter',
