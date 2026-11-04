@@ -157,6 +157,30 @@ describe('mock-electron-api agents.list() fixture stays in sync with the agent r
     expect(actual, 'tests/ui/mock-electron-api.js agent entries drifted from the adapters\' supportsPlanAutoApproval').toEqual(expected);
   });
 
+  // The permission dropdown and the telemetry placeholder render from these,
+  // so a mock entry that drifts shows UI specs a different menu than the app.
+  it('every mock entry carries its adapter\'s permissions, default permission and live-telemetry declaration', async () => {
+    const mockAgents = await readMockAgentList();
+    type Declared = { permissions: unknown; defaultPermission: unknown; liveTelemetryUnsupported: unknown };
+    const expected: Record<string, Declared> = {};
+    const actual: Record<string, Declared> = {};
+    for (const name of agentRegistry.list()) {
+      const adapter = agentRegistry.getOrThrow(name);
+      const mockEntry = mockAgents.find((entry) => entry.name === name);
+      expected[name] = {
+        permissions: adapter.permissions,
+        defaultPermission: adapter.defaultPermission,
+        liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
+      };
+      actual[name] = {
+        permissions: mockEntry?.permissions,
+        defaultPermission: mockEntry?.defaultPermission,
+        liveTelemetryUnsupported: mockEntry?.liveTelemetryUnsupported,
+      };
+    }
+    expect(actual, 'tests/ui/mock-electron-api.js agent entries drifted from the adapters\' permissions / defaultPermission / liveTelemetryUnsupported').toEqual(expected);
+  });
+
   it('sanity: the extraction itself finds a plausible number of mock agent entries', () => {
     // Guards the marker-bounded extraction against silent drift (e.g. the
     // fixture is refactored and the regex starts matching zero names), which
