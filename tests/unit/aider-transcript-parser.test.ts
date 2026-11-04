@@ -125,6 +125,57 @@ describe('parseAiderHistoryMarkdown', () => {
     expect(entries.map((entry) => entry.uuid)).toEqual([`${SESSION_ID}:40`, `${SESSION_ID}:41`]);
   });
 
+  it('keeps the leading lines of a cut read that starts mid-turn', () => {
+    const entries = parseAiderHistoryMarkdown(
+      'rest of a long reply\n> Tokens: 1 sent, 2 received.\n#### next\nok',
+      SESSION_ID,
+      40,
+    );
+    expect(shapeOf(entries)).toEqual([
+      ['assistant', 'rest of a long reply'],
+      ['user', 'next'],
+      ['assistant', 'ok'],
+    ]);
+    expect(entries[0].uuid).toBe(`${SESSION_ID}:40`);
+  });
+
+  it('keeps the reply of a cut read that holds no user line', () => {
+    const entries = parseAiderHistoryMarkdown('tail of a reply\nmore of it', SESSION_ID, 40);
+    expect(shapeOf(entries)).toEqual([['assistant', 'tail of a reply\nmore of it']]);
+    expect(entries[0].uuid).toBe(`${SESSION_ID}:40`);
+  });
+
+  it('skips the leading lines of a read from the file start as the preamble', () => {
+    const entries = parseAiderHistoryMarkdown('rest of a long reply\n#### next\nok', SESSION_ID, 0);
+    expect(shapeOf(entries)).toEqual([
+      ['user', 'next'],
+      ['assistant', 'ok'],
+    ]);
+  });
+
+  it('keeps a Cost line after a complete one-line report in the reply', () => {
+    const entries = parseAiderHistoryMarkdown(
+      '#### q\nanswer\n> Tokens: 1 sent, 2 received. Cost: $0.01 message, $0.02 session.\nCost: $5.00 message, $9.00 session.\n',
+      SESSION_ID,
+    );
+    expect(shapeOf(entries)).toEqual([
+      ['user', 'q'],
+      ['assistant', 'answer'],
+      ['assistant', 'Cost: $5.00 message, $9.00 session.'],
+    ]);
+  });
+
+  it('keeps a Cost line of another shape after a split report in the reply', () => {
+    const entries = parseAiderHistoryMarkdown(
+      '#### q\n> Tokens: 1.8k sent, 500 cache write, 1.1k cache hit, 234 received.\nCost: roughly five dollars\n',
+      SESSION_ID,
+    );
+    expect(shapeOf(entries)).toEqual([
+      ['user', 'q'],
+      ['assistant', 'Cost: roughly five dollars'],
+    ]);
+  });
+
   it('reads CRLF files', () => {
     const entries = parseAiderHistoryMarkdown(FIXTURE.replace(/\n/g, '\r\n'), SESSION_ID);
     expect(entries).toHaveLength(7);

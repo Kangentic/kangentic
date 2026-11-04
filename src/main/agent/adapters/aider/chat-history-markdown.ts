@@ -82,9 +82,14 @@ export function parseTokensReport(text: string): AiderTokenCounts | null {
   return counts;
 }
 
+/** A `Cost:` report's two figures, `$<message> message, $<session> session`. */
+const COST_FIGURES = String.raw`Cost:\s*\$([0-9][0-9,.]*)\s+message,\s*\$([0-9][0-9,.]*)\s+session`;
+const COST_REPORT = new RegExp(COST_FIGURES);
+const BARE_COST_LINE = new RegExp(`^${COST_FIGURES}\\.?$`);
+
 /** The `$<message> message, $<session> session` figures anywhere in `text`, or null. */
 export function parseCostReport(text: string): AiderCostReport | null {
-  const match = /Cost:\s*\$([0-9][0-9,.]*)\s+message,\s*\$([0-9][0-9,.]*)\s+session/.exec(text);
+  const match = COST_REPORT.exec(text);
   if (!match) return null;
   const messageUsd = parseFloat(match[1].replace(/,/g, ''));
   const sessionUsd = parseFloat(match[2].replace(/,/g, ''));
@@ -92,18 +97,25 @@ export function parseCostReport(text: string): AiderCostReport | null {
   return { messageUsd, sessionUsd };
 }
 
-const BARE_COST_LINE = /^Cost: \$\S+ message, \$\S+ session\.?$/;
-
 /**
  * Whether a line is the `Cost:` half of a `Tokens:` report printed on a line
  * of its own. Aider does that when the report carries both cache fields, and
  * `tool_output` quotes only the first line, so in the history this half has
- * no `> `. The line counts as the report's half only right after a `Tokens:`
- * line; callers check that. The match is the whole line, so a reply that only
- * mentions a cost is not taken for it.
+ * no `> `. The line counts as the report's half only right after a line
+ * `isSplitTokensReport` accepts; callers check that. The match is the whole
+ * line, so a reply that only mentions a cost is not taken for it.
  */
 export function isBareCostLine(line: string): boolean {
   return BARE_COST_LINE.test(line.trim());
+}
+
+/**
+ * Whether a quoted history line is a `Tokens:` report whose `Cost:` half went
+ * to the next line. A report that carries its own `Cost:` is complete, so no
+ * bare line after it belongs to it.
+ */
+export function isSplitTokensReport(quotedLine: string): boolean {
+  return parseTokensReport(quotedLine) !== null && parseCostReport(quotedLine) === null;
 }
 
 function tokenValue(report: string, pattern: RegExp): number {
@@ -189,8 +201,7 @@ export function summarizeAiderHistory(content: string): AiderHistorySummary {
       summary.totals.cacheHit += tokens.cacheHit;
       summary.reportCount += 1;
     }
-    // A `Tokens:` line whose `Cost:` half shares it is a complete report.
-    previousWasTokensReport = tokens !== null && parseCostReport(quoted) === null;
+    previousWasTokensReport = isSplitTokensReport(quoted);
     readCost(quoted);
   }
   if (currentRunCost !== null) finishedRunsCost += currentRunCost;

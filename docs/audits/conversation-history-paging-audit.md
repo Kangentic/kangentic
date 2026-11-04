@@ -162,8 +162,9 @@ them. They are still open:
    reads SQLite or HTTP, so a byte cursor does not apply. Aider, Cursor, Copilot, Goose, Ollama and
    Warp have no transcript parser at all. Codex's, Grok's and OpenCode's history locators do not
    name the file their parser reads, and the archive sweep sizes files through the locator, so those
-   three need fixing first. Superseded since for Aider: it now parses each session's own
-   `.aider.chat.history.<id>.md` (`parseTranscript`), with no `readTranscriptPage`.
+   three need fixing first. This list is out of date. Cursor has since gained `parseTranscript` and
+   `readTranscriptPage`. Aider now parses each session's own `.aider.chat.history.<id>.md`
+   (`parseTranscript`), with no `readTranscriptPage`.
 4. **A truncated session in the middle of a task (Q4).** Each session's notice becomes that
    session's own gap row, with its own cursor. A page for it is inserted at its gap row, so earlier
    history lands between the previous session's end and that session's surviving tail.
@@ -229,10 +230,10 @@ Fix the three locators, then add `parseTranscriptWindow` to Qwen and Droid. Code
 need a line count carried in the cursor. OpenCode needs a row cursor outside the byte contract.
 
 As built, every adapter that parses a transcript got `readTranscriptPage` over its own tail's line
-parser instead (the agents Kangentic reads no transcript for, such as Aider, Cursor, Copilot, Goose,
-Ollama and Warp, have none; Aider has parsed its per-session history since, still with no page): no
-`parseTranscriptWindow` and no locator change was needed, since a page reads the file the adapter's
-own parse reads. Qwen, Droid, Codex, Kimi and Grok carry a line count in the cursor. OpenCode's
+parser instead. No `parseTranscriptWindow` and no locator change was needed, since a page reads the
+file the adapter's own parse reads. The agents Kangentic read no transcript for at the time, such as
+Aider, Cursor, Copilot, Goose, Ollama and Warp, got no page. Cursor has gained both since. Aider
+parses its per-session history since, still with no page. Qwen, Droid, Codex, Kimi and Grok carry a line count in the cursor. OpenCode's
 cursor names a message, and its unit is the characters of stored data. A legacy single-document
 Gemini file does not page. Where a page edge cuts state that crosses lines, the result is what the
 tail's own start already did:
