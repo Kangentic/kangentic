@@ -1,0 +1,29 @@
+{
+  "agentId": "general-purpose-toolu_fixture0001",
+  "agentType": "general-purpose",
+  "description": "List files and count total",
+  "parentSessionId": "00000000-0000-4000-8000-000000000001",
+  "toolUseId": "toolu_fixture0001",
+  "parentAgentId": null,
+  "createdAt": "2026-10-19T05:15:37.468Z",
+  "status": "completed",
+  "isBackgrounded": true,
+  "lastUpdatedAt": "2026-10-19T05:15:48.265Z",
+  "resolvedApprovalMode": "auto-edit",
+  "persistedCliFlags": {
+    "approvalMode": "auto-edit",
+    "bare": false,
+    "safeMode": false,
+    "sandbox": null,
+    "screenReader": false,
+    "model": "qwen3-coder-plus",
+    "authType": "openai",
+    "maxSessionTurns": -1,
+    "maxToolCalls": -1,
+    "maxSubagentDepth": 5
+  },
+  "subagentName": "general-purpose",
+  "resumeCount": 0,
+  "depth": 0,
+  "model": "qwen3-coder-plus"
+}
