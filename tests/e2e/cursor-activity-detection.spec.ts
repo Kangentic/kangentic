@@ -1,9 +1,9 @@
 /**
  * E2E test for Cursor CLI activity detection.
  *
- * Cursor's runtime strategy is `ActivityDetection.pty()` - the CLI has no
- * hooks system, so activity is derived purely from PTY silence. This spec
- * verifies that:
+ * Cursor's runtime strategy is `ActivityDetection.hooksAndPty()`, but the mock
+ * CLI runs no hooks, so activity here is derived from PTY silence, the
+ * fallback until a hook arrives. This spec verifies that:
  *  - A spawned Cursor session shows up in the activity IPC map
  *  - The session settles to 'idle' once the mock stops emitting output
  *  - The mock CLI receives the correct prompt and mode flags
@@ -21,6 +21,7 @@ import {
   mockAgentPath,
   setProjectDefaultAgent,
   waitForScrollback,
+  waitForTaskScrollback,
   waitForRunningSession,
   waitForTaskSessionNotRunning,
   getTaskIdByTitle,
@@ -116,33 +117,68 @@ test.describe('Cursor Agent - Activity Detection', () => {
     expect(scrollback).toContain('MOCK_CURSOR_PROMPT:');
   });
 
-  test('plan permission mode emits stream-json (non-interactive)', async () => {
-    // Cursor CLI does not have a native --plan flag. Cursor's
-    // --output-format stream-json is the only way to surface the model
-    // and session_id to the ContextBar, and it requires --print. The
-    // default Planning swimlane ships with permission_mode='plan'
-    // (see src/main/db/migrations/project-schema.ts:229), so the Cursor
-    // adapter routes it to -p + --output-format stream-json. An
-    // interactive-but-telemetry-less spawn would leave ContextBar stuck
-    // on "Starting agent...".
-    const title = `Cursor Mode ${runId}`;
-    await createTask(page, title, 'Verify non-interactive stream-json mode');
+  test('plan permission mode opens the session screen in plan mode (interactive)', async () => {
+    // The default Planning swimlane ships with permission_mode='plan'
+    // (see src/main/db/migrations/project-schema.ts). Cursor has `--mode plan`
+    // (https://cursor.com/docs/cli/reference/parameters), so the adapter keeps
+    // the session screen open with `--trust --mode plan` rather than a
+    // one-turn print run. mock-cursor.js writes MOCK_CURSOR_MODE: first and
+    // MOCK_CURSOR_STARTUP_MODE: after it, in separate console.log calls that
+    // can land in separate PTY chunks, so wait on the later marker.
+    //
+    // Scoped to this task's session: the shared app also holds the sessions
+    // earlier tests started, which are in plan mode too.
+    const title = `Cursor Plan ${runId} retry ${test.info().retry}`;
+    await createTask(page, title, 'Verify plan mode opens the session screen');
 
     const swimlaneIds = await getSwimlaneIds(page);
     const taskId = await getTaskIdByTitle(page, title);
 
     await moveTaskIpc(page, taskId, swimlaneIds.planning);
 
-    // mock-cursor.js writes MOCK_CURSOR_MODE: and the stream-json init event
-    // as two separate console.log calls, so they can land in two separate
-    // PTY chunks - waiting on the first marker alone raced the second's
-    // arrival. Wait on the later-arriving marker instead: scrollback is
-    // append-only, so its presence guarantees the earlier line already
-    // landed too.
-    const scrollback = await waitForScrollback(page, '"subtype":"init"', 15000);
-    expect(scrollback).toContain('MOCK_CURSOR_MODE:noninteractive');
-    // And the stream-json init event is present so ContextBar can light up.
-    expect(scrollback).toContain('"subtype":"init"');
+    const { scrollback } = await waitForTaskScrollback(page, taskId, 'MOCK_CURSOR_STARTUP_MODE:plan', 15000);
+    expect(scrollback).toContain('MOCK_CURSOR_MODE:interactive');
+    // No print run: no stream-json init event.
+    expect(scrollback).not.toContain('"subtype":"init"');
+  });
+
+  test('bypassPermissions emits stream-json (non-interactive)', async () => {
+    // Cursor's --output-format stream-json is the only way to surface the
+    // model and session_id to the ContextBar, and it requires --print, so a
+    // permission mode that is not a session screen (confirm-changes,
+    // skip-approvals, plan) routes to -p + --output-format stream-json.
+    // An interactive-but-telemetry-less spawn would leave ContextBar stuck on
+    // "Starting agent...". The Planning column is the only one this file can
+    // move a task into, so it takes bypassPermissions for this test only.
+    const title = `Cursor Print ${runId} retry ${test.info().retry}`;
+    await createTask(page, title, 'Verify non-interactive stream-json mode');
+
+    const swimlaneIds = await getSwimlaneIds(page);
+    const taskId = await getTaskIdByTitle(page, title);
+
+    await page.evaluate(
+      (id) => window.electronAPI.swimlanes.update({ id, permission_mode: 'bypassPermissions' }),
+      swimlaneIds.planning,
+    );
+    try {
+      await moveTaskIpc(page, taskId, swimlaneIds.planning);
+
+      // mock-cursor.js writes MOCK_CURSOR_MODE: and the stream-json init event
+      // as two separate console.log calls, so they can land in two separate
+      // PTY chunks - waiting on the first marker alone raced the second's
+      // arrival. Wait on the later-arriving marker instead: scrollback is
+      // append-only, so its presence guarantees the earlier line already
+      // landed too.
+      const { scrollback } = await waitForTaskScrollback(page, taskId, '"subtype":"init"', 15000);
+      expect(scrollback).toContain('MOCK_CURSOR_MODE:noninteractive');
+      // The result event ends the print run's turn.
+      await waitForTaskScrollback(page, taskId, '"type":"result"', 15000);
+    } finally {
+      await page.evaluate(
+        (id) => window.electronAPI.swimlanes.update({ id, permission_mode: 'plan' }),
+        swimlaneIds.planning,
+      );
+    }
   });
 });
 
