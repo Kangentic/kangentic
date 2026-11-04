@@ -121,7 +121,7 @@ const ADAPTER_CLASSES = [
     name: 'goose', importPath: '../../src/main/agent/adapters/goose/goose-adapter', className: 'GooseAdapter',
     commandInjection: 'null', escalates: false,
     verifiesSlashSubmission: true, requiresAgentSessionId: true,
-    reason: 'the adapter parses no history at all, so there is nothing to verify against. Goose DOES have hooks and a session store, so this null is a "not wired yet", and wiring either one needs the flush measurement before a verifier lands here',
+    reason: 'the adapter reads its hooks and its session database (user turns are `messages` rows), built from Goose docs and source without a live Goose, so a verifier needs the flush-on-submit measurement first; this null is "not measured yet", not "nothing to verify against"',
   },
 ] as const;
 

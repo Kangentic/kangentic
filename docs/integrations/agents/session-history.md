@@ -367,7 +367,7 @@ behavior below is the resume contract.
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes | typed once the TUI is ready |
 | Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a | n/a |
 | Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) | on the command line, `-i` (`-p` non-interactive) |
-| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) | on the command line, `-t` |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; the shared `sessions.db` is read by name instead) | on the command line, `-t` |
 
 Reading the table by class:
 
@@ -392,8 +392,9 @@ Reading the table by class:
   per-cwd `~/.cursor/projects/<slug>/` directory holds trust metadata and the `agent-transcripts`
   JSONL the conversation viewer reads, while the conversation `--resume` restores lives in
   `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
-  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent and
-  Kangentic reads no transcript file (`locateSessionHistoryFile` returns null).
+  caller-supplied `--name` against Goose's own session store, so resume is cwd-independent.
+  Kangentic reads that store's SQLite database by the same name for the transcript and usage, and
+  `locateSessionHistoryFile` returns null because the database is shared by every session.
 - **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
   `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
   downgrade.
