@@ -8,7 +8,7 @@
  * rust-v0.163.0), sanitized: zeroed ids, no real paths.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { JSONL_READ_CHUNK_BYTES } from '../../src/main/agent/shared/jsonl-complete-lines';
+import { TOOL_CALL_READ_CHUNK_BYTES } from '../../src/main/agent/shared/tool-call-cursor';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -337,7 +337,7 @@ describe('codexTranscriptToolResultTokens', () => {
     await expect(codexTranscriptToolResultTokens(filePath)).resolves.toEqual({ Bash: 10 });
     // More than one read chunk is appended, so the first chunk's lines are applied before the second read fails.
     const filler = JSON.stringify({ timestamp: '2026-10-20T10:00:14.000Z', type: 'event_msg', payload: { type: 'agent_message', message: 'p'.repeat(1000) } });
-    const fillerLines = Array.from({ length: Math.ceil((JSONL_READ_CHUNK_BYTES * 1.5) / (filler.length + 1)) }, () => filler);
+    const fillerLines = Array.from({ length: Math.ceil((TOOL_CALL_READ_CHUNK_BYTES * 1.5) / (filler.length + 1)) }, () => filler);
     fs.appendFileSync(filePath, `${[
       functionCall('call-2', 'exec_command', '2026-10-20T10:00:12.000Z'),
       output('call-2', 'y'.repeat(8), '2026-10-20T10:00:13.000Z'),

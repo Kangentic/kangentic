@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { streamJsonlRecords } from '../../shared/history-scan';
 import { touchBounded } from '../../shared/bounded-lru';
-import { forEachCompleteLine } from '../../shared/jsonl-complete-lines';
+import { forEachCompleteLine } from '../../shared/tool-call-cursor';
 import type { PerToolStat, TranscriptToolCounts, TranscriptUsage } from '../../../../shared/types';
 
 /**
