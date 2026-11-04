@@ -7,7 +7,8 @@ import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFil
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
-import { CodexHookTrustCheck, shimFamilyKey } from './hook-trust';
+import { CodexHookTrustCheck } from './hook-trust';
+import { shimFamilyKey } from '../../shared/shim-family-key';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { CodexModelCatalogCache, CATALOG_DISCOVERY_WAIT_MS, CATALOG_TTL_MS, FAILED_READ_RETRY_MS, catalogAcceptsEffort } from './model-catalog';
 import { codexEffortExecArgs } from './command-builder';

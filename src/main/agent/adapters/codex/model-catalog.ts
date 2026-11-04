@@ -2,7 +2,7 @@ import os from 'node:os';
 import { spawnCli, stopCli } from '../../shared/cli-print';
 import type { CliTarget } from '../../shared/cli-target';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
-import { shimFamilyKey } from './hook-trust';
+import { shimFamilyKey } from '../../shared/shim-family-key';
 import { converseWithAppServer, type AppServerConversation } from './app-server-rpc';
 
 /**
