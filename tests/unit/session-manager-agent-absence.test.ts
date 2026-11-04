@@ -220,6 +220,60 @@ describe('SessionManager agent-absence wiring', () => {
       retire();
       expect(reportHandledError).not.toHaveBeenCalled();
     });
+
+    it('hands a task to its pause instead of retiring it, so its Resume stands', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+
+      retire();
+
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+      expect(neverStarted.mock.calls[0][0]).toBe('session-1');
+      expect(session.status).toBe('running');
+      expect(session.overrideExitCode).toBeUndefined();
+      expect(killedPtys).toEqual([]);
+    });
+
+    it('retires the row at the next sweep if the pause never landed, reporting once', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+
+      retire();
+      retire();
+
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(session.status).toBe('exited');
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('ends a Command Terminal as before, with no pause', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedSession({
+        transient: true,
+        reportsAgentStart: true,
+        startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString(),
+      });
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('keeps the exited row a workflow\'s agent restarts from', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1', reportsAgentStart: true });
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('exited');
+    });
   });
 
   describe('isAgentAbsenceCandidate', () => {

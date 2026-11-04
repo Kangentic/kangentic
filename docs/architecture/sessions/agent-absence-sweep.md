@@ -346,6 +346,18 @@ reports neither signal is left out, because its silence proves nothing. Every se
 it otherwise, so a task's plain grace does not change. A WSL shell is never judged by the sweep, so
 it never reports.
 
+**A task whose launch never started is paused, not retired.** An exited row has no way forward: its
+surface is the terminal, its PTY is gone so no key lands, and `sessionToggleOffer` offers nothing
+for an ended session, which left a reporter on a dead pane with the card in its agent column. So
+for a task, `retireAgentlessSession` emits `agent-never-started` instead of killing, and
+`handlers/sessions.ts` calls `pauseTaskSession` with `suspendedBy: 'system'`, re-checked under the
+task lock against this session. The task then has the Resume every paused task has, and raises the
+"Agent did not start" notice, with the CLI's own account when it gave one. `'system'` holds nothing,
+so a restart resumes it too. A fresh launch with no transcript goes through
+`assessResumeConversation`, which starts it fresh. `launchFailureNoted` keeps it to one report: if
+the pause never lands, the row is still running at the next sweep, which retires it as usual. A
+Command Terminal still ends, and a workflow's own agent keeps the exited row its pane restarts from.
+
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept
 counting the agent and the bottom panel kept its tab - the exact two symptoms the sweep exists to
