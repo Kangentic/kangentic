@@ -36,11 +36,20 @@ test.afterEach(async () => {
   await browser?.close();
 });
 
+/**
+ * Open Settings > Git, retrying the clicks until the Stop script row is on screen.
+ * On a loaded CI runner a tab button can be on screen a tick before its handler is
+ * attached, so a single click is swallowed and the row never mounts (the first test
+ * of this file failed on its first attempt that way and passed on its retry).
+ */
 async function openGitTab(): Promise<void> {
-  await page.getByTestId('settings-button').click();
-  await page.getByTestId('settings-panel').waitFor({ state: 'visible', timeout: 5000 });
-  await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Git', exact: true }).click();
-  await expect(page.getByTestId(ROW_TEST_ID)).toBeVisible();
+  const panel = page.getByTestId('settings-panel');
+  await expect(async () => {
+    if (!(await panel.isVisible())) await page.getByTestId('settings-button').click();
+    await expect(panel).toBeVisible({ timeout: 2000 });
+    await page.getByTestId('settings-tab-list').getByRole('button', { name: 'Git', exact: true }).click({ timeout: 2000 });
+    await expect(page.getByTestId(ROW_TEST_ID)).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 12_000 });
 }
 
 async function commitStopScript(script: string): Promise<void> {
