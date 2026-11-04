@@ -110,7 +110,8 @@ prompt cache; a resume that also changes `--effort` has not been sampled yet.
     column, or it would restart for nothing. One cost remains. A session never launched at the
     target cannot know the model will downgrade it, so a session at `high` moved into a `max`
     column restarts once, and the moves after that converge. Removing that one restart needs
-    per-model effort levels, and adapters discover `effortLevels` per agent from `--help`.
+    per-model effort levels, and adapters discover `effortLevels` per agent, not per model. Only
+    Droid reports levels per model (`effortLevelsByModel`), and only for its headless runs.
   - **Model:** `task.model_override ?? record.applied_model ?? null`. Deliberately *not* sourced
     from telemetry: the agent reports a canonical id (`claude-opus-4-8`) while the configured
     values are flag strings (`opus`), so comparing across those id spaces would read "changed" on

@@ -227,7 +227,7 @@ cheaper model can be enough. Measured on Claude, Haiku 5.5 at `low` answered a c
 question and a "most expensive" question right in every run, as Sonnet did. It was a second faster
 and cost about a twentieth as much. It also invents more in task summaries (below), and the one
 model does both jobs. Every agent that has a headless read-only mode can answer; Warp
-cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels, and starts
+cannot, since it has none. **Effort** appears when the agent's CLI reports effort levels for the chosen model, and starts
 at `low`, which answers fastest. Ollama's starts unset, because a thinking level fails the run on a
 model that cannot think. A higher level is worth trying on a question that counts or
 compares across many tasks and comes back wrong. In one measurement Claude's `max` got right a

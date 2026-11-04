@@ -1,8 +1,8 @@
 /**
  * Unit tests for DroidAdapter -- command building (new + resume),
- * permission-mode no-op behaviour, session id capture, runtime
- * strategy wiring, and CLI lifecycle helpers (first-output detection,
- * exit sequence, hook removal).
+ * permission-mode flags, the hook settings file, the browser policy,
+ * session id capture, runtime strategy wiring, and CLI lifecycle helpers
+ * (first-output detection, exit sequence, hook removal).
  *
  * Empirical contract is locked in by scripts/probe-droid.js, which
  * runs the real `droid` binary and asserts the same shape this
@@ -24,8 +24,15 @@ import {
   agentShortName,
   agentInstallUrl,
 } from '../../src/renderer/utils/agent-display-name';
+import { parseDroidSessionIdFromHook } from '../../src/main/agent/adapters/droid/hook-manager';
+import { droidExecModelArgs } from '../../src/main/agent/adapters/droid/droid-adapter';
+import { droidBrowserServerNames } from '../../src/main/agent/adapters/droid/browser-servers';
+import { BROWSER_POLICY_PROMPT } from '../../src/main/agent/shared/browser-policy-hook';
+import type { CliTarget } from '../../src/main/agent/shared/cli-target';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+
+const FIXTURES = path.join(__dirname, '..', 'fixtures', 'droid-hooks');
 
 function makeOptions(overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {
   return {
@@ -79,10 +86,11 @@ describe('Droid Adapter', () => {
       expect(command).toContain('--cwd');
       expect(command).toContain('fix the bug');
       expect(command).not.toContain('--resume');
-      // Adapter intentionally does not shadow Droid's native TUI controls:
-      // no exec-only flags, no model pin, and with no events path no
+      // The default mode passes no autonomy flag, there is no model pin
+      // (interactive droid has no --model), and with no events path no
       // --settings file either (the hooks file needs one, see below).
       expect(command).not.toContain('--auto');
+      expect(command).not.toContain('--use-spec');
       expect(command).not.toContain('-m ');
       expect(command).not.toContain('--model');
       expect(command).not.toContain('--settings');
@@ -110,37 +118,78 @@ describe('Droid Adapter', () => {
       return { command, settingsPath: path.join(sessionDirectory, 'droid-settings.json') };
     }
 
+    type HookSettings = { hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>> };
+    function readSettings(settingsPath: string): HookSettings {
+      return JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as HookSettings;
+    }
+    /** The event type an event-bridge command reports (its third argument). */
+    function bridgeEventType(command: string): string | null {
+      return /event-bridge\.js" "[^"]*" (\S+)/.exec(command)?.[1] ?? null;
+    }
+
     it('passes --settings with a file that holds only hooks', () => {
       const { command, settingsPath } = spawnWithEvents();
       expect(command).toContain('--settings');
       expect(command).toContain('droid-settings.json');
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      const settings = readSettings(settingsPath);
       expect(Object.keys(settings)).toEqual(['hooks']);
-      expect(Object.keys(settings.hooks).sort()).toEqual(['Notification', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit']);
-      // No Stop: Droid's turn ends stay with the PTY silence timer.
+      expect(Object.keys(settings.hooks).sort()).toEqual([
+        'Notification', 'PostToolUse', 'PreCompact', 'PreToolUse', 'SessionEnd', 'SessionStart', 'UserPromptSubmit',
+      ]);
+      // No Stop and no SubagentStop: Droid's turn ends stay with the PTY silence timer, and it has no SubagentStart.
       expect(settings.hooks.Stop).toBeUndefined();
-      expect(command).not.toContain('--auto');
+      expect(settings.hooks.SubagentStop).toBeUndefined();
       expect(command).not.toContain('--model');
+    });
+
+    it('maps the lifecycle hooks to their own events', () => {
+      const { settingsPath } = spawnWithEvents();
+      const settings = readSettings(settingsPath);
+      expect(bridgeEventType(settings.hooks.SessionStart[0].hooks[0].command)).toBe('session_start');
+      expect(bridgeEventType(settings.hooks.SessionEnd[0].hooks[0].command)).toBe('session_end');
+      expect(bridgeEventType(settings.hooks.PreCompact[0].hooks[0].command)).toBe('compact');
+    });
+
+    it('reports no plain idle, which would end the turn and run turn-end automations', () => {
+      // The one idle is the Notification's permission wait, emitted only for the two wait types.
+      const { settingsPath } = spawnWithEvents();
+      const settings = readSettings(settingsPath);
+      const idleCommands = Object.values(settings.hooks)
+        .flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)))
+        .filter((command) => bridgeEventType(command) === 'idle');
+      expect(idleCommands).toHaveLength(1);
+      expect(idleCommands[0]).toBe(settings.hooks.Notification[0].hooks[0].command);
     });
 
     it('writes its hooks through the event bridge, to the session\'s own events file', () => {
       const { settingsPath } = spawnWithEvents();
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      const preToolUse = settings.hooks.PreToolUse[0];
+      const preToolUse = readSettings(settingsPath).hooks.PreToolUse[0];
       expect(preToolUse.matcher).toBe('*');
       expect(preToolUse.hooks[0].command).toMatch(/^node "[^"]*event-bridge\.js" "[^"]*events\.jsonl" tool_start /);
     });
 
-    it('runs a Droid in a WSL distro without hooks, as before', () => {
-      const { command, settingsPath } = spawnWithEvents({
-        shell: 'wsl -d Ubuntu',
-        cliTarget: {
-          kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/droid',
-          facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'mirrored' },
-        },
-      });
-      expect(command).not.toContain('--settings');
-      expect(fs.existsSync(settingsPath)).toBe(false);
+    it('carries the prompt text only for a session that asks for it', () => {
+      const promptCommand = (capturePromptText: boolean): string =>
+        readSettings(spawnWithEvents({ capturePromptText }).settingsPath).hooks.UserPromptSubmit[0].hooks[0].command;
+      const withText = promptCommand(true);
+      const withoutText = promptCommand(false);
+      expect(bridgeEventType(withText)).toBe('prompt');
+      expect(withText.length).toBeGreaterThan(withoutText.length);
+      expect(withoutText).toMatch(/ prompt$/);
+    });
+
+    it('registers the browser policy on PreToolUse, matching only third-party browser tools', () => {
+      const { settingsPath } = spawnWithEvents();
+      const policy = readSettings(settingsPath).hooks.PreToolUse[1];
+      expect(policy.hooks[0].command).toMatch(/^node "[^"]*browser-policy-bridge\.js" [A-Za-z0-9+/=]+$/);
+      const matcher = new RegExp(`^(?:${policy.matcher})$`);
+      expect(matcher.test('mcp__playwright__browser_navigate')).toBe(true);
+      expect(matcher.test('mcp__Puppeteer__click')).toBe(true);
+      expect(matcher.test('mcp__kangentic__kangentic_browser_open_pane')).toBe(false);
+      expect(matcher.test('Execute')).toBe(false);
+      const spec = JSON.parse(Buffer.from(policy.hooks[0].command.split(' ').pop()!, 'base64').toString('utf8'));
+      expect(spec.toolField).toBe('tool_name');
+      expect(spec.reply.hookSpecificOutput).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'deny' });
     });
 
     it('spawns without --settings, and does not throw, when the settings file cannot be written', () => {
@@ -203,28 +252,42 @@ describe('Droid Adapter', () => {
     });
   });
 
-  describe('buildCommand - permission mode is ignored (Droid TUI handles it)', () => {
-    // Droid's TUI exposes shift+tab to cycle autonomy modes. The
-    // adapter does not translate Kangentic's PermissionMode into any
-    // flag or settings override -- the user owns autonomy in the TUI.
-    const cases: PermissionMode[] = ['plan', 'default', 'acceptEdits', 'bypassPermissions'];
-    for (const mode of cases) {
-      it(`'${mode}' produces the same bare command as default`, () => {
-        const command = adapter.buildCommand(makeOptions({
-          cwd: tempDir,
-          projectRoot: tempDir,
-          permissionMode: mode,
-          prompt: 'go',
-        }));
-        expect(command).not.toContain('--auto');
+  describe('buildCommand - permission mode flags (droid --help 0.218.0)', () => {
+    // Interactive droid takes --use-spec and --auto low|medium|high, and has no
+    // --skip-permissions-unsafe (exec only).
+    const cases: Array<[PermissionMode, string | null]> = [
+      ['default', null],
+      ['plan', '--use-spec'],
+      ['dontAsk', '--use-spec'],
+      ['acceptEdits', '--auto low'],
+      ['auto', '--auto medium'],
+      ['bypassPermissions', '--auto high'],
+    ];
+    for (const [mode, flag] of cases) {
+      it(`'${mode}' launches with ${flag ?? 'no autonomy flag'}`, () => {
+        const command = adapter.buildCommand(makeOptions({ cwd: tempDir, projectRoot: tempDir, permissionMode: mode, prompt: 'go' }));
+        if (flag) expect(command).toContain(` ${flag} `);
+        const flagCount = (command.match(/--use-spec|--auto /g) ?? []).length;
+        expect(flagCount).toBe(flag ? 1 : 0);
         expect(command).not.toContain('--skip-permissions-unsafe');
-        expect(command).not.toContain('--settings');
+        // The flags come before the prompt, which is the last argument.
+        expect(command.endsWith('go') || command.endsWith('"go"') || command.endsWith("'go'")).toBe(true);
       });
     }
 
-    it('exposes a single "Default" permission entry in the adapter', () => {
-      expect(adapter.permissions.length).toBe(1);
-      expect(adapter.permissions[0].mode).toBe('default');
+    it('offers each mode the builder maps, and Default first by default', () => {
+      expect(adapter.permissions.map((entry) => entry.mode)).toEqual(['plan', 'default', 'acceptEdits', 'auto', 'bypassPermissions']);
+      expect(adapter.defaultPermission).toBe('default');
+    });
+  });
+
+  describe('buildCommand - the Agent Browser system prompt', () => {
+    it('appends the browser policy only while the Agent Browser is on', () => {
+      const on = adapter.buildCommand(makeOptions({ cwd: tempDir, projectRoot: tempDir, prompt: 'go', shell: 'bash', browserAutomationEnabled: true }));
+      const off = adapter.buildCommand(makeOptions({ cwd: tempDir, projectRoot: tempDir, prompt: 'go', shell: 'bash', browserAutomationEnabled: false }));
+      expect(on).toContain('--append-system-prompt');
+      expect(on).toContain(BROWSER_POLICY_PROMPT.slice(0, 40));
+      expect(off).not.toContain('--append-system-prompt');
     });
   });
 
@@ -252,14 +315,15 @@ describe('Droid Adapter', () => {
   });
 
   describe('runtime strategy', () => {
-    it('uses PTY-only activity detection (no hooks in v1)', () => {
+    it('keeps PTY activity detection: hooks add detail, silence ends turns', () => {
       expect(adapter.runtime.activity.kind).toBe('pty');
     });
 
-    it('exposes fromFilesystem session id capture (no fromHook)', () => {
-      expect(adapter.runtime.sessionId).toBeDefined();
+    it('captures the session id from the SessionStart hook, with the folder scan as fallback', () => {
+      expect(adapter.runtime.sessionId!.fromHook).toBeTypeOf('function');
       expect(adapter.runtime.sessionId!.fromFilesystem).toBeTypeOf('function');
-      expect(adapter.runtime.sessionId!.fromHook).toBeUndefined();
+      const sessionStart = fs.readFileSync(path.join(FIXTURES, 'droid-0.218.0-session-start.json'), 'utf-8');
+      expect(adapter.runtime.sessionId!.fromHook!(sessionStart)).toBe('00000000-0000-4000-8000-9422fe9dcf40');
     });
 
     it('reads the hooks\' events.jsonl through statusFile, with no status line to parse', () => {
@@ -737,5 +801,81 @@ describe('agent-display-name - droid entry', () => {
 
   it('agentInstallUrl returns the Factory docs URL for "droid"', () => {
     expect(agentInstallUrl('droid')).toBe('https://docs.factory.ai/cli/getting-started/overview');
+  });
+});
+
+// ── headless model and effort flags ────────────────────────────────────────
+
+describe('droidExecModelArgs', () => {
+  it('passes --model and -r only when set, since an empty value is an error', () => {
+    expect(droidExecModelArgs('claude-opus-5', 'high')).toEqual(['--model', 'claude-opus-5', '-r', 'high']);
+    expect(droidExecModelArgs('claude-opus-5', null)).toEqual(['--model', 'claude-opus-5']);
+    expect(droidExecModelArgs(null, 'high')).toEqual(['-r', 'high']);
+    expect(droidExecModelArgs(undefined, '')).toEqual([]);
+  });
+});
+
+// ── SessionStart session id ────────────────────────────────────────────────
+
+describe('parseDroidSessionIdFromHook', () => {
+  const sessionStart = fs.readFileSync(path.join(FIXTURES, 'droid-0.218.0-session-start.json'), 'utf-8');
+
+  it('reads session_id from the 0.218.0 SessionStart payload', () => {
+    expect(parseDroidSessionIdFromHook(sessionStart)).toBe('00000000-0000-4000-8000-9422fe9dcf40');
+  });
+
+  it('still reads it from a payload the event bridge cut short', () => {
+    // The bridge stores at most 2048 characters of the payload; a long transcript_path can cut it mid-string.
+    expect(parseDroidSessionIdFromHook(sessionStart.slice(0, 200))).toBe('00000000-0000-4000-8000-9422fe9dcf40');
+  });
+
+  it('returns null for a payload with no usable id', () => {
+    expect(parseDroidSessionIdFromHook('{"hook_event_name":"SessionStart"}')).toBeNull();
+    expect(parseDroidSessionIdFromHook('{"session_id":"abc123"}')).toBeNull();
+    expect(parseDroidSessionIdFromHook('{"session_id":42}')).toBeNull();
+    expect(parseDroidSessionIdFromHook('not json')).toBeNull();
+    expect(parseDroidSessionIdFromHook('')).toBeNull();
+  });
+});
+
+// ── browser servers ────────────────────────────────────────────────────────
+
+describe('droidBrowserServerNames', () => {
+  let home: string;
+  let project: string;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-droid-home-'));
+    project = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-droid-project-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(project, { recursive: true, force: true });
+  });
+
+  /** A place whose home is the temp folder, so the user file is read from there. */
+  function placeAt(homeDirectory: string): CliTarget {
+    return {
+      kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/droid',
+      facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: homeDirectory, uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'mirrored' },
+    };
+  }
+
+  function writeMcp(folder: string, servers: Record<string, unknown>): void {
+    fs.mkdirSync(path.join(folder, '.factory'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '.factory', 'mcp.json'), JSON.stringify({ mcpServers: servers }));
+  }
+
+  it('finds browser servers in the user and project mcp.json, by package or name', () => {
+    writeMcp(home, { pw: { type: 'stdio', command: 'npx', args: ['@playwright/mcp@latest'] }, linear: { type: 'http', url: 'https://mcp.linear.app/mcp' } });
+    writeMcp(project, { 'chrome-devtools': { command: 'npx', args: ['chrome-devtools-mcp'] }, kangentic: { type: 'http', url: 'http://127.0.0.1:1/mcp' } });
+    expect(droidBrowserServerNames({ cwd: project, place: placeAt(home) }).sort()).toEqual(['chrome-devtools', 'pw']);
+  });
+
+  it('is empty when neither file exists or parses', () => {
+    fs.mkdirSync(path.join(project, '.factory'));
+    fs.writeFileSync(path.join(project, '.factory', 'mcp.json'), '{ not json');
+    expect(droidBrowserServerNames({ cwd: project, place: placeAt(home) })).toEqual([]);
   });
 });

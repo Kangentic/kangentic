@@ -82,13 +82,36 @@ describe('a Droid session in a WSL distro', () => {
     expect(new DroidAdapter().buildEnv(options)).toEqual({ KANGENTIC_MCP_TOKEN: MCP_TOKEN });
   });
 
+  it('runs its hooks through the WSL hook transport, with --settings in the distro\'s form', () => {
+    const target = targetOn('mirrored');
+    const options = sessionOptions(target);
+    const sessionDirectory = path.dirname(options.eventsOutputPath!);
+    const command = new DroidAdapter().buildCommand(options);
+    const settingsPath = path.join(sessionDirectory, 'droid-settings.json');
+
+    expect(command).toContain(`--settings ${quoteArg(cliPathForTarget(settingsPath, target), options.shell)}`);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
+    const script = cliPathForTarget(wslHookPaths(sessionDirectory).script, target);
+    // Every hook publishes through the session's own transport script: events, and the browser policy's reply.
+    const commands = Object.values(settings.hooks).flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)));
+    expect(commands.length).toBeGreaterThan(0);
+    for (const hookCommand of commands) {
+      expect(hookCommand.startsWith('sh ')).toBe(true);
+      expect(hookCommand).toContain(script);
+      expect(hookCommand).not.toContain('event-bridge');
+    }
+    expect(settings.hooks.SessionStart[0].hooks[0].command).toMatch(/ event session_start$/);
+    expect(settings.hooks.PreToolUse[1].hooks[0].command).toMatch(/ reply browser-policy [A-Za-z0-9+/=]+$/);
+    expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
+  });
+
   it('on mirrored networking keeps the URL entry', () => {
     const options = sessionOptions(targetOn('mirrored'));
     new DroidAdapter().buildCommand(options);
     expect(readEntry(options.cwd)).toEqual({ type: 'http', url: MCP_URL, headers: { 'X-Kangentic-Token': '${KANGENTIC_MCP_TOKEN}' } });
   });
 
-  it('on this machine keeps the URL entry, the forward-slash cwd and no hook folder', () => {
+  it('on this machine keeps the URL entry, the forward-slash cwd, the node bridge and no hook folder', () => {
     const options = sessionOptions(null);
     const command = new DroidAdapter().buildCommand(options);
     expect(command.startsWith(`/usr/local/bin/droid --cwd ${quoteArg(toForwardSlash(options.cwd), 'bash')}`)).toBe(true);
