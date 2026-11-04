@@ -9,6 +9,7 @@ sources:
   - resource: src/shared/shell-quote.ts
   - resource: src/main/pty/spawn/pty-spawn.ts
   - resource: src/main/agent/shared/shim-launch.ts
+  - resource: src/main/agent/shared/shim-family-key.ts
   - resource: src/main/agent/shared/npm-shim-target.ts
   - resource: src/main/config/paths.ts
   - resource: src/main/agent/shared/exec-version.ts
@@ -137,6 +138,12 @@ the prompt with `sanitizeForPty`, so the whole title and description still arriv
 case the fix is `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` in that host, then an app
 restart. Other platforms are untouched, the session row keeps the original prompt, and no adapter
 knows any of this: a `.cmd` shim is a Windows packaging fact.
+
+An adapter that caches something per CLI path keys it with `shimFamilyKey`
+(`src/main/agent/shared/shim-family-key.ts`): the path without a `.cmd`, `.bat` or `.ps1`
+extension, lowercased on Windows. The swap means `buildCommand` can receive the sibling while
+discovery ran with the `.cmd`, and both spellings share the key. Codex's hook trust read and
+Ollama's reported `--think` levels use it.
 
 Two consequences. The Windows process tree becomes `pwsh -> node` rather than
 `pwsh -> cmd.exe -> node` (the background-shell watcher's immediate-parent rule counts both

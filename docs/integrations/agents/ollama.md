@@ -30,10 +30,10 @@ ollama run <model> [--think=<level>] [-- "<prompt>"]
 
 ## Effort
 
-Effort is Ollama's thinking level, passed as `--think=<level>` after the model and before the `--` guard, only when a column or task sets one. The levels are read from the CLI, never kept in Kangentic: `discoverOllamaCapabilities` runs `ollama run --help` beside `ollama list` and `parseOllamaThinkLevels` takes the slash-separated words on the `--think` line, minus `true`/`false`. At v0.40.14 the line reads "Enable thinking mode: true/false or high/medium/low for supported models", so the Effort dropdown offers high, medium and low. A CLI without the flag (before 0.9.0) or a failed help read reports no levels, and the Effort row stays hidden.
+Effort is Ollama's thinking level, passed as `--think=<level>` after the model and before the `--` guard, only when a column or task sets one. The levels are read from the CLI, never kept in Kangentic: `discoverOllama` runs `ollama run --help` beside `ollama list` and `parseOllamaThinkLevels` takes the slash-separated words on the `--think` line, minus `true`/`false`. At v0.40.14 the line reads "Enable thinking mode: true/false or high/medium/low for supported models", so the Effort dropdown offers high, medium and low. A CLI without the flag (before 0.9.0) reports no levels, and the Effort row stays hidden. A help read that fails (a timeout, a spawn error) is not an answer: the adapter keeps and offers the levels an earlier read of that CLI reported, and with none it reports no levels.
 
 - The `=` form is required. `--think` is registered with `NoOptDefVal = "true"`, and pflag gives such a flag a value only when it is attached with `=`. `--think high` parses as `--think` (true) plus a stray positional `high`.
-- A level the CLI did not report is dropped. The spawn path hands over a column's or task's effort without checking it, so a level left from another agent (Claude's `xhigh`) would otherwise fail the run. The adapter keeps the levels each CLI path's discovery reported and passes `--think` only for one of them; before that path's discovery has run, the level passes through and the CLI decides.
+- A level the CLI did not report is dropped. The spawn path hands over a column's or task's effort without checking it, so a level left from another agent (Claude's `xhigh`) would otherwise fail the run. The adapter keeps the levels each CLI path's discovery reported and passes `--think` only for one of them; before a help read of that path has answered, the level passes through and the CLI decides.
 - Levels are model-defined. A reported level on a model that cannot think fails the run with "does not support thinking", shown in the terminal. Leaving Effort unset passes nothing and keeps Ollama's default, which turns thinking on for any model that supports it.
 
 ## Model pill
@@ -54,7 +54,7 @@ None. `ollama run` writes no status file, session file or structured stream; its
 
 `--hidethinking` keeps a thinking model's reasoning out of the answer. Ollama turns thinking on by default for any model that supports it and prints it to stdout between `Thinking...` and `...done thinking.` whether or not stdout is a terminal. Before the flag, an answer from qwen3, deepseek-r1 or gpt-oss carried the model's whole reasoning.
 
-`--think` and `--hidethinking` need Ollama 0.9.0 or later, when thinking shipped, and an older CLI fails a run with an unknown-flag error. The answer run discovers the CLI's levels just before it starts, so a CLI whose help has no `--think` flag gets neither flag. The cost is that a `run --help` that fails for some other reason also drops `--hidethinking`, and a thinking model's reasoning then reaches that one answer.
+`--think` and `--hidethinking` need Ollama 0.9.0 or later, when thinking shipped, and an older CLI fails a run with an unknown-flag error. The answer run discovers the CLI's levels just before it starts, so a CLI whose help has no `--think` flag gets neither flag. A `run --help` that fails records nothing, so `--hidethinking` is still passed unless an earlier read of that CLI found no `--think` flag. The cost is that an older CLI whose help read keeps failing gets the flag and fails the answer with an unknown-flag error, shown as the answer's error.
 
 ## WSL
 

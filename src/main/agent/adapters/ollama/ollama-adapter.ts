@@ -2,9 +2,10 @@ import { AgentDetector } from '../../shared/agent-detector';
 import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
-import { discoverOllamaCapabilities } from './capability-discovery';
+import { discoverOllama } from './capability-discovery';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { resolveCliTarget } from '../../shared/cli-target';
+import { shimFamilyKey } from '../../shared/shim-family-key';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -48,16 +49,17 @@ export function thinkFlag(level: string): string {
 }
 
 /**
- * The key a CLI path's reported `--think` levels are kept under. Discovery
- * runs with the detected path, but on Windows a spawn can launch a `.cmd`
- * shim's `.ps1` or extensionless sibling instead (resolveShimLaunch), and
- * Windows paths compare without case. So on Windows the key drops a shim
- * extension and is lowercased, and every spelling of one install shares it.
+ * One shell word as buildCommand's `quoteArg` writes the executable: double
+ * quoted, single quoted (a fish `\'` escape included), a backslash escape, or
+ * a bare character, repeated. So a POSIX `'/o'\''brien dir/ollama'` is one word.
  */
-export function thinkLevelKey(cliPath: string): string {
-  if (process.platform !== 'win32') return cliPath;
-  return cliPath.replace(/\.(?:cmd|bat|ps1)$/i, '').toLowerCase();
-}
+const EXECUTABLE_WORD = String.raw`(?:"[^"]*"|'(?:[^'\\]|\\.)*'|\\.|[^\s"'\\])+`;
+
+/** The model after `run`: double quoted, single quoted or bare, one capture group each. */
+const MODEL_TOKEN = String.raw`(?:"([^"]+)"|'([^']+)'|(\S+))`;
+
+/** `<executable> run <model>` at the start of a command buildCommand wrote. */
+const RUN_MODEL_PATTERN = new RegExp(String.raw`^\s*${EXECUTABLE_WORD}\s+run\s+${MODEL_TOKEN}`);
 
 /**
  * Ollama CLI adapter - drives a local LLM via the `ollama` CLI
@@ -120,10 +122,13 @@ export class OllamaAdapter implements AgentAdapter {
   }
 
   /**
-   * The `--think` levels each CLI path last reported, keyed by `thinkLevelKey`
-   * of the path its discovery ran with. buildCommand uses it to drop a level
+   * The `--think` levels each CLI path last reported, keyed by `shimFamilyKey`
+   * of the path its discovery ran with, so the `.ps1` or extensionless sibling
+   * a Windows spawn launches finds them. buildCommand uses it to drop a level
    * that CLI does not take (see `acceptedThinkLevel`), and the answer run to
-   * leave out `--hidethinking` for a CLI with no thinking flags.
+   * leave out `--hidethinking` for a CLI with no thinking flags. Only a
+   * `run --help` that answered writes it: a failed read says nothing about the
+   * CLI, so the levels an earlier read reported stay.
    */
   private readonly reportedThinkLevels = new Map<string, readonly string[]>();
 
@@ -131,12 +136,17 @@ export class OllamaAdapter implements AgentAdapter {
    * Discover installed models via `ollama list` so the renderer can populate
    * the model picker, and the `--think` levels from `ollama run --help`.
    * Never throws (returns model-override support with no list on failure,
-   * which the renderer renders as a free-form text input).
+   * which the renderer renders as a free-form text input). When the help read
+   * fails, the levels an earlier read reported are offered instead.
    */
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
-    const capabilities = await discoverOllamaCapabilities(cliPath);
-    this.reportedThinkLevels.set(thinkLevelKey(cliPath), capabilities.effortLevels ?? []);
-    return capabilities;
+    const { capabilities, thinkLevels } = await discoverOllama(cliPath);
+    const key = shimFamilyKey(cliPath);
+    if (thinkLevels) {
+      this.reportedThinkLevels.set(key, thinkLevels);
+      return capabilities;
+    }
+    return { ...capabilities, effortLevels: [...(this.reportedThinkLevels.get(key) ?? [])] };
   }
 
   /**
@@ -152,7 +162,7 @@ export class OllamaAdapter implements AgentAdapter {
   private acceptedThinkLevel(cliPath: string, effort: string | null | undefined): string | null {
     const level = effort?.trim();
     if (!level) return null;
-    const reported = this.reportedThinkLevels.get(thinkLevelKey(cliPath));
+    const reported = this.reportedThinkLevels.get(shimFamilyKey(cliPath));
     if (reported && !reported.includes(level)) return null;
     return level;
   }
@@ -213,10 +223,11 @@ export class OllamaAdapter implements AgentAdapter {
    * no name table is kept (cli-features-over-custom-layers.md).
    *
    * Reads only the token right after `run`, after skipping the executable
-   * (quoted or bare), so a prompt that mentions `run something` never seeds it.
+   * as one shell word (RUN_MODEL_PATTERN), so a prompt that mentions
+   * `run something` never seeds it.
    */
   configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
-    const match = command.match(/^\s*(?:"[^"]*"|'[^']*'|\S+)\s+run\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const match = command.match(RUN_MODEL_PATTERN);
     const id = match?.[1] ?? match?.[2] ?? match?.[3];
     if (!id || id.startsWith('-')) return null;
     return { id, displayName: id };
@@ -317,9 +328,9 @@ export class OllamaAdapter implements AgentAdapter {
    * (https://github.com/ollama/ollama/blob/v0.40.14/cmd/cmd.go, and
    * https://ollama.com/blog/thinking, which names it for scripting). It needs
    * Ollama 0.9.0 or later, when thinking shipped, and an older CLI fails the
-   * run on a flag it does not know. So once discovery has run for this CLI
-   * and found no `--think` flag, the flag is left out. Before discovery it is
-   * passed.
+   * run on a flag it does not know. So once discovery has read this CLI's
+   * help and found no `--think` flag, the flag is left out. Before discovery,
+   * or when every help read so far failed, it is passed.
    *
    * The effort arrives already checked: the answer run and the automation
    * agent pass only a level this CLI's discovery reported just before the run.
@@ -342,7 +353,7 @@ export class OllamaAdapter implements AgentAdapter {
     const chosenModel = model?.trim();
     if (!chosenModel) throw new Error('choose a model for Ollama in Settings > Knowledge Graph');
     const args = ['run', chosenModel];
-    const reportedLevels = this.reportedThinkLevels.get(thinkLevelKey(cliPath));
+    const reportedLevels = this.reportedThinkLevels.get(shimFamilyKey(cliPath));
     if (!reportedLevels || reportedLevels.length > 0) args.push('--hidethinking');
     const effort = options?.effort?.trim();
     if (effort) args.push(thinkFlag(effort));
