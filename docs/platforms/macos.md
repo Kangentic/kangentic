@@ -22,7 +22,7 @@ sources:
 
 macOS keeps 1024 bytes of a line in a tty's canonical mode (`MAX_CANON`) and drops the rest, the Enter included. A spawn types its command 100 ms after the shell starts, so a shell still in its startup files (nvm, oh-my-zsh, powerlevel10k) gets the line in that mode. The agent then never starts: the shell shows the command cut off with an open quote, and nothing reports an error. It depends on timing as well as length. On one Mac a 1723-byte launch ran, and a later 1590-byte resume of the same task stopped at exactly 1024 bytes.
 
-`--append-system-prompt` with the browser policy took a Claude launch past that limit, and a long task prompt reaches it too. So a command past 900 bytes goes in a launcher file in the session folder, and the shell is typed a short line that sources it: see [A command too long to type](shells-and-paths.md#a-command-too-long-to-type). `macos-spawn-helper.yml` runs that line through real zsh during a controlled startup delay, and fails if the old whole line stops failing, so the job proves it reached the limit.
+`--append-system-prompt` with the browser policy took a Claude launch past that limit, and a long task prompt reaches it too. So a command past 900 bytes goes in a launcher file in the session folder, and the shell is typed a short line that sources it: see [A command too long to type](shells-and-paths.md#a-command-too-long-to-type). `macos-spawn-helper.yml` runs that line through real zsh during a controlled startup delay, and fails if the old whole line stops failing, so the job proves it reached the limit. It also runs one under a pinned powerlevel10k with instant prompt, which draws a prompt before the startup files finish, so a screen that looks ready is not one.
 
 ## macOS Code Signing
 

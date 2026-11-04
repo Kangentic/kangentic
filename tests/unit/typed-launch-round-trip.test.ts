@@ -10,10 +10,10 @@
  * during the delay and work once the shell has reached its prompt. Without that
  * control this file could pass on a rig that never reached canonical mode.
  *
- * Where it runs: bash in CI's unit tier on Linux, zsh in macos-spawn-helper.yml,
- * and fish and nushell in shell-quoting-posix.yml. Those workflows set
- * KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS, so a shell they need fails rather than
- * skips. Nothing here runs on Windows, whose shells have no such limit.
+ * Where it runs: bash in CI's unit tier on Linux, zsh in macos-spawn-helper.yml
+ * (with a pinned powerlevel10k), and every shell in shell-quoting-posix.yml. Those
+ * workflows set KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS, so a shell they need fails
+ * rather than skips. Nothing here runs on Windows, whose shells have no such limit.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn as ptySpawn, type IPty } from 'node-pty';
@@ -122,7 +122,13 @@ interface Rig {
 
 function makeRig(shell: ProbeShell, delayMs: number): Rig {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'kng-typed-launch-')));
-  cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+  // Best-effort, with retries: a shell ending on its hangup still writes its
+  // history file here as this runs, and a temp folder left behind harms nothing.
+  cleanups.push(() => {
+    try {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch { /* still held */ }
+  });
   // Written at delay 0 too: zsh with no .zshrc can open its new-user prompt.
   shell.writeStartup(root, delayMs);
   // A run of spaces, as a real project folder may hold.
@@ -247,6 +253,61 @@ describe.skipIf(shellsUnderTest.length === 0)('a launch typed while the shell st
   });
 });
 
+/**
+ * The setup #744 ran: zsh with powerlevel10k's instant prompt, which draws a prompt
+ * before the startup files finish, so a screen that looks ready is not one. Only
+ * the macOS job names a checkout, pinned there, since the theme is not a dependency.
+ */
+const powerlevel10kDirectory = process.env.KANGENTIC_POWERLEVEL10K_DIRECTORY;
+const zshShell = installedShells.find((shell) => shell.program === 'zsh');
+
+describe.skipIf(!powerlevel10kDirectory || !zshShell)('a launch under powerlevel10k instant prompt', () => {
+  const shell = zshShell as ProbeShell;
+  const INSTANT_PROMPT_CACHE_DEADLINE_MS = 15_000;
+
+  function writeInstantPromptRc(rig: Rig): void {
+    fs.writeFileSync(path.join(rig.root, '.zshrc'), [
+      'typeset -g POWERLEVEL9K_INSTANT_PROMPT=quiet',
+      'typeset -g POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true',
+      'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true',
+      'typeset -g POWERLEVEL9K_LEFT_PROMPT_ELEMENTS=(dir)',
+      'typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=()',
+      'cache="$HOME/.cache/p10k-instant-prompt-${(%):-%n}.zsh"',
+      '[[ -r "$cache" ]] && source "$cache"',
+      `source "${powerlevel10kDirectory}/powerlevel10k.zsh-theme"`,
+      `sleep ${STARTUP_DELAY_MS / 1000}`,
+      '',
+    ].join('\n'));
+  }
+
+  /** The instant prompt draws from a cache a first interactive start writes. */
+  async function primeInstantPrompt(rig: Rig): Promise<void> {
+    const first = startShell(shell, rig);
+    const cacheDirectory = path.join(rig.root, '.cache');
+    const deadline = Date.now() + INSTANT_PROMPT_CACHE_DEADLINE_MS;
+    const cacheWritten = (): boolean => fs.existsSync(cacheDirectory)
+      && fs.readdirSync(cacheDirectory).some((name) => name.startsWith('p10k-instant-prompt-'));
+    while (Date.now() < deadline && !cacheWritten()) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    first.kill();
+    expect(cacheWritten()).toBe(true);
+  }
+
+  it('reaches the agent with a --resume command too long to type', async () => {
+    const rig = makeRig(shell, 0);
+    writeInstantPromptRc(rig);
+    await primeInstantPrompt(rig);
+    const args = ['--append-system-prompt', policyOfBytes(OVERSIZED_BYTES), '--resume', RESUME_ID];
+
+    typeLine(shell, rig, launchLine(shell, rig, commandFor(shell, rig, args)), TYPED_AT_MS);
+    const report = await waitForReport(rig, STUB_DEADLINE_MS);
+
+    expect(report?.argv).toEqual(args);
+    expect(report?.stdoutIsTerminal).toBe(true);
+  }, 45_000);
+});
+
 describe.skipIf(!controlShell)('the same long line typed whole (the control)', () => {
   const shell = controlShell as ProbeShell;
   const args = ['--append-system-prompt', policyOfBytes(OVERSIZED_BYTES), '--resume', RESUME_ID];
@@ -281,10 +342,13 @@ describe.skipIf(!controlShell)('the same long line typed whole (the control)', (
     // A key while the shell is still in its startup files: the queue is full.
     setTimeout(() => pty.write('\r'), keysDuringDelayMs);
     // At the prompt: Ctrl+C clears the cut line, then a short line runs the stub.
+    // Two writes: an interrupt flushes the tty's input queue, and whatever shared
+    // its write would go with it.
     const probeArgs = ['--keys-reached-the-shell'];
-    setTimeout(() => pty.write(`\x03${commandFor(shell, rig, probeArgs)}\r`), keysAfterDelayMs);
+    setTimeout(() => pty.write('\x03'), keysAfterDelayMs);
+    setTimeout(() => pty.write(`${commandFor(shell, rig, probeArgs)}\r`), keysAfterDelayMs + 700);
 
-    const report = await waitForReport(rig, keysAfterDelayMs + CONTROL_SETTLE_MS);
+    const report = await waitForReport(rig, keysAfterDelayMs + 700 + CONTROL_SETTLE_MS);
 
     console.log(`[typed-launch measurement] ${process.platform} ${shell.program}: keys after the startup delay ${
       report ? `reached the shell, stub argv ${JSON.stringify(report.argv.slice(0, 1))}` : 'did NOT reach the shell'
