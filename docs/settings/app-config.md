@@ -125,7 +125,7 @@ PermissionMode values:
 - `auto` -- `--permission-mode auto` (classifier-based auto-approval)
 - `bypassPermissions` -- `--dangerously-skip-permissions` (no prompts at all)
 
-All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI only exposes Interactive and Non-Interactive; Oz CLI exposes only Default, since the user's Warp agent profile decides its permissions).
+All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI exposes Interactive (Confirm Changes), Interactive (Skip Approvals), Plan (Read-Only) and Non-Interactive (Full Access); Oz CLI exposes only Default, since the user's Warp agent profile decides its permissions).
 
 ## Remote Execution
 
