@@ -769,7 +769,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   context.sessionManager.on('agent-never-started', (sessionId: string, session: Session) => {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) return;
-    notifyStartupFailureIfNamed(session, 0, projectId, 'Its launch command never ran.');
+    notifyStartupFailureIfNamed(session, 0, projectId, 'The launch command never ran.');
     void pauseTaskSession(context, session.taskId, {
       projectId,
       suspendedBy: 'system',

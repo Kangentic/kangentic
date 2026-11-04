@@ -22,7 +22,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildSpawnClearPrelude, adaptCommandForShell, quoteArg } from '../../src/shared/paths';
-import { resolveShellArgs } from '../../src/main/pty/spawn/pty-spawn';
 import { buildTypedLaunch, TYPED_LINE_BYTE_BUDGET } from '../../src/main/pty/spawn/typed-launch';
 
 /** Past the kernel's canonical limit on each platform, as the #744 command was on macOS. */
@@ -38,6 +37,8 @@ const RESUME_ID = '535cf65a-0000-4000-8000-000000000000';
 
 interface ProbeShell {
   program: string;
+  /** What `resolveShellArgs` starts it with. Copied rather than imported: that module reaches electron, whose binary the macOS job does not install. */
+  args: readonly string[];
   /** Write the startup file that holds the shell in its startup for `delayMs`. */
   writeStartup(root: string, delayMs: number): void;
 }
@@ -45,14 +46,17 @@ interface ProbeShell {
 const PROBE_SHELLS: readonly ProbeShell[] = [
   {
     program: 'bash',
+    args: ['--login'],
     writeStartup: (root, delayMs) => fs.writeFileSync(path.join(root, '.bash_profile'), `sleep ${delayMs / 1000}\n`),
   },
   {
     program: 'zsh',
+    args: ['--login'],
     writeStartup: (root, delayMs) => fs.writeFileSync(path.join(root, '.zshrc'), `sleep ${delayMs / 1000}\n`),
   },
   {
     program: 'fish',
+    args: [],
     writeStartup: (root, delayMs) => {
       fs.mkdirSync(path.join(root, '.config', 'fish'), { recursive: true });
       fs.writeFileSync(path.join(root, '.config', 'fish', 'config.fish'), `sleep ${delayMs / 1000}\n`);
@@ -60,6 +64,7 @@ const PROBE_SHELLS: readonly ProbeShell[] = [
   },
   {
     program: 'nu',
+    args: [],
     writeStartup: (root, delayMs) => {
       fs.mkdirSync(path.join(root, '.config', 'nushell'), { recursive: true });
       fs.writeFileSync(path.join(root, '.config', 'nushell', 'config.nu'), `sleep ${delayMs}ms\n`);
@@ -67,6 +72,7 @@ const PROBE_SHELLS: readonly ProbeShell[] = [
   },
   {
     program: 'pwsh',
+    args: ['-NoLogo'],
     writeStartup: (root, delayMs) => {
       fs.mkdirSync(path.join(root, '.config', 'powershell'), { recursive: true });
       fs.writeFileSync(path.join(root, '.config', 'powershell', 'profile.ps1'), `Start-Sleep -Milliseconds ${delayMs}\n`);
@@ -90,6 +96,11 @@ for (const program of requiredShells) {
 
 /** The shell that shows the limit on this platform, for the control. */
 const controlShell = installedShells.find((shell) => shell.program === (process.platform === 'darwin' ? 'zsh' : 'bash'));
+
+/** The workflows name their shells. Anywhere else, the unit tier included, the control shell alone. */
+const shellsUnderTest = requiredShells.length > 0
+  ? installedShells.filter((shell) => requiredShells.includes(shell.program))
+  : installedShells.filter((shell) => shell === controlShell);
 
 const cleanups: Array<() => void> = [];
 
@@ -147,8 +158,7 @@ function startShell(shell: ProbeShell, rig: Rig): IPty {
     ZDOTDIR: rig.root,
     XDG_CONFIG_HOME: path.join(rig.root, '.config'),
   };
-  const { exe, args } = resolveShellArgs(shell.program);
-  const pty = ptySpawn(exe, args, { cols: 120, rows: 30, cwd: rig.root, env: environment });
+  const pty = ptySpawn(shell.program, [...shell.args], { cols: 120, rows: 30, cwd: rig.root, env: environment });
   // node-pty stalls a child whose output is never read.
   pty.onData(() => undefined);
   cleanups.push(() => {
@@ -211,8 +221,8 @@ const LONG_PROMPT = [
   policyOfBytes(5_000),
 ].join('\n');
 
-describe.skipIf(installedShells.length === 0)('a launch typed while the shell starts', () => {
-  describe.each(installedShells.map((shell) => ({ program: shell.program, shell })))('$program', ({ shell }) => {
+describe.skipIf(shellsUnderTest.length === 0)('a launch typed while the shell starts', () => {
+  describe.each(shellsUnderTest.map((shell) => ({ program: shell.program, shell })))('$program', ({ shell }) => {
     it('reaches the agent with a --resume command too long to type, during the startup delay', async () => {
       const rig = makeRig(shell, STARTUP_DELAY_MS);
       const args = ['--append-system-prompt', policyOfBytes(OVERSIZED_BYTES), '--resume', RESUME_ID];
