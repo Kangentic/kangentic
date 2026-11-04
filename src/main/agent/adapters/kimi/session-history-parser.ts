@@ -9,7 +9,7 @@ import { kimiModelByAlias } from './config-toml';
 /**
  * Locator and parser for Kimi Code CLI's session history,
  * `<KIMI_CODE_HOME>/sessions/<workspaceId>/<sessionId>/agents/main/wire.jsonl`
- * (`docs/en/configuration/data-locations.md`, Kimi Code CLI 2.4.1, read
+ * (`en/configuration/data-locations.md`, Kimi Code CLI 2.4.1, read
  * 2026-11-03).
  *
  * A session is found by its id through `session_index.jsonl`, which names

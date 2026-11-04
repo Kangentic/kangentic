@@ -9,8 +9,10 @@
  * to multiline mode. Dropping the option from any adapter regresses prompt
  * delivery for tasks with multi-line descriptions.
  *
- * Coverage: codex, aider, opencode, kimi, droid, warp, ollama, grok, antigravity.
- * (claude, gemini, copilot, qwen-code are covered in their own test files.)
+ * Coverage: codex, aider, opencode, droid, warp, ollama, grok, antigravity.
+ * (claude, gemini, copilot, qwen-code are covered in their own test files. Kimi
+ * Code is the opposite case: it takes no prompt on its command line, and its
+ * test below holds the prompt off it.)
  *
  * Strategy: build the command with `shell: 'bash'` and a multi-line XML
  * prompt, then assert that the built command still contains a newline from
@@ -168,7 +170,11 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
     expect(command).toContain(EXPECTED_FRAGMENT);
   });
 
-  it('KimiCommandBuilder preserves newlines in prompt under bash', () => {
+  // Kimi Code takes no prompt on an interactive launch (a positional argument
+  // is an unknown command, and `-p` runs one prompt and exits), so the engine
+  // types the opening in. The guard here is the inverse of the others': a
+  // prompt that reached the command line would run the wrong way.
+  it('KimiCommandBuilder keeps the prompt off the command line', () => {
     const builder = new KimiCommandBuilder();
     const command = builder.buildKimiCommand({
       kimiPath: '/usr/bin/kimi',
@@ -178,7 +184,8 @@ describe('Adapter multiline prompt - regression guard for { multiline: true }', 
       shell: 'bash',
       prompt: MULTILINE_XML,
     });
-    expect(command).toContain(EXPECTED_FRAGMENT);
+    expect(command).not.toContain('Fix login');
+    expect(command).not.toContain('\n');
   });
 
   it('DroidCommandBuilder preserves newlines in prompt under bash', () => {

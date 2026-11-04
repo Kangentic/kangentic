@@ -5,8 +5,8 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 /**
  * Where Kimi Code CLI keeps its data.
  *
- * Source: Kimi Code CLI 2.4.1 docs, `docs/en/configuration/data-locations.md`
- * and `docs/en/configuration/env-vars.md` (github.com/MoonshotAI/kimi-code,
+ * Source: Kimi Code CLI 2.4.1 docs, `en/configuration/data-locations.md`
+ * and `en/configuration/env-vars.md` (github.com/MoonshotAI/kimi-code,
  * read 2026-11-03). The data root is `$KIMI_CODE_HOME`, else `~/.kimi-code`,
  * and it holds `config.toml`, `credentials/`, `session_index.jsonl` and
  * `sessions/<workspaceId>/<sessionId>/`. Built from the docs, not yet checked

@@ -7,7 +7,7 @@ import { parseRecordTime } from './wire-parser';
 /**
  * A session's subagent transcripts in Kimi Code CLI: each subagent keeps its
  * own `<sessionDir>/agents/<subagentId>/wire.jsonl` beside `agents/main/`
- * (`docs/en/configuration/data-locations.md`, Kimi Code CLI 2.4.1, read
+ * (`en/configuration/data-locations.md`, Kimi Code CLI 2.4.1, read
  * 2026-11-03). Its steps end with a `step.end` loop event carrying that step's
  * `usage`, and the main agent's wire records `subagent.spawned` with
  * `subagentName` and `parentToolCallId`

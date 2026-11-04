@@ -23,11 +23,11 @@ The adapter drives Kimi Code CLI 2.x (npm `@moonshot-ai/kimi-code`, binary `kimi
 
 **Built from documentation.** Every flag, path, record and result string below comes from the CLI's docs and source, read on 2026-11-03. No real Kimi session has run against this adapter. The specs drive `tests/fixtures/mock-kimi.js`, which behaves as we read the CLI, and the parser tests also replay the CLI's own sample sessions, copied byte for byte into `tests/fixtures/kimi-upstream-sample-*.jsonl` at tag 2.4.1. Those samples hold no tool call, turn end or interaction record, so those rest on `wire-manifest.d.ts`. [What needs a live probe](#what-needs-a-live-probe) lists what a real run must check.
 
-Sources, under `github.com/MoonshotAI/kimi-code/blob/main/`:
+Sources, under `github.com/MoonshotAI/kimi-code/blob/main/`. The CLI's own docs are in that repository's `docs` folder, and the adapter's comments cite them relative to it (`en/reference/kimi-command.md`):
 
-- `docs/en/reference/kimi-command.md`, `tools.md` and `slash-commands.md`
-- `docs/en/configuration/config-files.md`, `data-locations.md` and `env-vars.md`
-- `docs/en/customization/mcp.md` and `hooks.md`, `docs/en/guides/interaction.md`
+- `en/reference/kimi-command.md`, `tools.md` and `slash-commands.md`
+- `en/configuration/config-files.md`, `data-locations.md` and `env-vars.md`
+- `en/customization/mcp.md` and `hooks.md`, `en/guides/interaction.md`
 - `apps/kimi-code/src/cli/commands.ts`, `apps/kimi-code/src/cli/v2/run-v2-print.ts`, `apps/kimi-code/src/tui/components/chrome/welcome.ts`
 - `packages/agent-core-v2/docs/wire-manifest.d.ts`, and under `packages/agent-core-v2/src/`: `agent/contextMemory/loopEventFold.ts`, `features/plan/exitPlanModeReview.ts`, `agent/tools/os/bash/bashTool.ts`, `_base/utils/workdir-slug.ts`
 
@@ -121,7 +121,7 @@ The context window comes from the alias's `max_context_size` in the host's `conf
 
 The CLI has no MCP flag or environment variable for one session. It reads `$KIMI_CODE_HOME/mcp.json` and the project's `.kimi-code/mcp.json`, and the docs name no `${VAR}` expansion. So `kangenticMcp` is `'shared-folder'`: the session's literal URL goes into `<cwd>/.kimi-code/mcp.json`, merged with the user's servers. Every session in a folder shares the entry, so the last to start decides the URL. A file Kangentic creates is git-excluded, and the entry comes out when the folder's last session releases it (`SharedFolderHolds`). A file Kangentic cannot parse is left alone and is the `kangenticMcpBlockedReason`.
 
-The token never reaches the file. It is `KANGENTIC_MCP_TOKEN` in the session's environment (`buildEnv`). The HTTP entry names that variable in `bearerTokenEnvVar` (`docs/en/customization/mcp.md`), so the CLI sends `Authorization: Bearer <token>`, which our server accepts beside `X-Kangentic-Token`. The WSL bridge's stdio entry has no `env`, because a local stdio server inherits the CLI's environment (`mergeStdioEnv` in `mcpCore/client-stdio.ts`). A `kimi` you start yourself in the folder while a Kangentic session holds the file has no such variable, so that one server does not connect (`client-remote.ts` throws for a missing variable).
+The token never reaches the file. It is `KANGENTIC_MCP_TOKEN` in the session's environment (`buildEnv`). The HTTP entry names that variable in `bearerTokenEnvVar` (`en/customization/mcp.md`), so the CLI sends `Authorization: Bearer <token>`, which our server accepts beside `X-Kangentic-Token`. The WSL bridge's stdio entry has no `env`, because a local stdio server inherits the CLI's environment (`mergeStdioEnv` in `mcpCore/client-stdio.ts`). A `kimi` you start yourself in the folder while a Kangentic session holds the file has no such variable, so that one server does not connect (`client-remote.ts` throws for a missing variable).
 
 A `'shared-folder'` adapter cannot be a Workflow agent, and neither can one whose fresh prompt is typed (`canBeWorkflowAgent`). It cannot declare `backgroundCommands` either, because a mark through a shared URL could land on another session ([Background commands](background-commands.md#background-commands)). So a background `Bash` reads as a plain tool end, its turn ends with no hold, and its task is not offered `kangentic_mark_background_service`.
 

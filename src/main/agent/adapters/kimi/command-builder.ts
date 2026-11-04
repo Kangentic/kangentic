@@ -8,7 +8,7 @@ import { kimiKangenticMcpEntry, writeKimiProjectMcpConfig } from './mcp-config';
 /**
  * Build the shell command that starts Kimi Code CLI's interactive session.
  *
- * Flags from `docs/en/reference/kimi-command.md` and
+ * Flags from `en/reference/kimi-command.md` and
  * `apps/kimi-code/src/cli/options.ts` (Kimi Code CLI 2.4.1, read 2026-11-03):
  *
  *   -S, --session [id]   resume that session (it never creates one with a chosen id)
@@ -40,7 +40,7 @@ export interface KimiCommandOptions extends Omit<SpawnCommandOptions, 'agentPath
 
 /**
  * Map Kangentic's permission mode to Kimi Code's flags
- * (`docs/en/guides/interaction.md`, "The three permission modes"):
+ * (`en/guides/interaction.md`, "The three permission modes"):
  *
  *   plan               -> --plan  (read-only Plan mode)
  *   default            -> no flag ("Always Ask", the CLI's `manual` default)
