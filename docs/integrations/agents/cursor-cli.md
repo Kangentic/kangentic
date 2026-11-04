@@ -275,7 +275,12 @@ tool, in a scratch folder whose `.cursor/hooks.json` dumps each hook's stdin to 
   `reportsTurnEnd` back to false.
 
 A CLI that is not signed in cannot stand in. On v2026.09.26 a print run with no login exits on
-"Authentication required" before any hook fires, `sessionStart` included.
+"Authentication required" before any hook fires, `sessionStart` included. `cursor-agent status` is
+no proof of a login: on the review's third pass it reported one while a `-p` run in a scratch folder
+still stopped at "Authentication required". Sign in again (`cursor-agent logout`, then
+`cursor-agent login`, or set `CURSOR_API_KEY`) and confirm with a `-p` run before the capture.
+Once the fixtures replay, rewrite "Built from documentation, not run against Cursor" and this section
+to say what the run confirmed.
 
 Until then `reportsTurnEnd` stays true on the docs' word. The terminal carries activity until the
 first hook arrives, and the stale-thinking reclaim returns the card to idle after a `stop` that
