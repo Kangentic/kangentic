@@ -1693,6 +1693,60 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
       expect(rulesRead).toHaveBeenCalledTimes(totalDistinctBases + 1);
     });
 
+    // A full cache plus one expired entry: refreshing that entry must replace
+    // it in place, not count it against the bound and push out an unrelated
+    // (oldest) base whose answer is still fresh. The failed read also expires
+    // on its own two-minute clock while the clean answers beside it survive.
+    it('refreshing an expired failed-read base does not evict an unrelated fresh base from a full cache', async () => {
+      vi.useFakeTimers();
+      try {
+        const byNumber = vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber');
+        vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+        stubBypassModes({ [REVIEW_RULESET]: 'always' });
+        const failingBases = new Set<string>(['base-5']);
+        const rulesRead = vi.spyOn(GitHubImporter.prototype, 'resolveBranchRules')
+          .mockImplementation(async (_cwd, baseRefName) => (failingBases.has(baseRefName)
+            ? null
+            : { pullRequestRulesetIds: [REVIEW_RULESET], mergeBlockingRulesetIds: [REVIEW_RULESET], requiredStatusCheckContexts: [] }));
+        const resolveBase = async (baseIndex: number) => {
+          byNumber.mockResolvedValue(blockedByReview({ baseRefName: `base-${baseIndex}` }));
+          return gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+        };
+        const fullCacheSize = 32;
+        for (let baseIndex = 0; baseIndex < fullCacheSize; baseIndex += 1) await resolveBase(baseIndex);
+        expect(rulesRead).toHaveBeenCalledTimes(fullCacheSize);
+
+        // Two minutes on: only the failed read has expired.
+        vi.advanceTimersByTime(2 * 60_000);
+        failingBases.clear();
+        const refreshed = await resolveBase(5);
+        expect(refreshed?.mergeReadiness).toBe('ready');
+        expect(rulesRead).toHaveBeenCalledTimes(fullCacheSize + 1);
+
+        // The oldest base and the newest one are both still served from cache.
+        await resolveBase(0);
+        await resolveBase(fullCacheSize - 1);
+        expect(rulesRead).toHaveBeenCalledTimes(fullCacheSize + 1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // Both entry points reach the ruleset path and share one per-base answer.
+    it('resolveForBranch folds through the ruleset path and shares the answer with resolveByNumber', async () => {
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByBranch').mockResolvedValue([blockedByReview({ state: 'OPEN' })]);
+      vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(blockedByReview());
+      vi.spyOn(GitHubImporter.prototype, 'resolveMergeBypass').mockResolvedValue(noClassicRule);
+      const rulesRead = stubRules();
+      const rulesetRead = stubBypassModes({ [REVIEW_RULESET]: 'always' });
+      const byBranch = await gitHubPRConnector.resolveForBranch!('/r', 'feat', 'main', BYPASS_ON);
+      expect(byBranch?.mergeReadiness).toBe('ready');
+      const byNumber = await gitHubPRConnector.resolveByNumber!('/r', 900, BYPASS_ON);
+      expect(byNumber?.mergeReadiness).toBe('ready');
+      expect(rulesRead).toHaveBeenCalledTimes(1);
+      expect(rulesetRead).toHaveBeenCalledTimes(1);
+    });
+
     it('shares one read between a repo checkout and a task worktree of the same repo and base', async () => {
       stubResolve(blockedByReview());
       const rulesRead = stubRules();
