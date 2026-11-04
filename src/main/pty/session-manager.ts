@@ -795,8 +795,8 @@ export class SessionManager extends EventEmitter {
         // resolve fires here, the PR does not exist yet.
         this.emit('branch-pushed', sessionId, branch);
       },
-      onAgentSessionId: (sessionId, agentReportedId) => {
-        // Agent session ID capture covers three cases:
+      onAgentSessionId: (sessionId, agentReportedId, options) => {
+        // Agent session ID capture covers four cases (the fourth is below):
         // 1. Fresh capture: agent_session_id was null (Codex/Gemini), now captured from hooks/PTY output.
         // 2. Stale recovery: agent_session_id was pre-specified (Claude --resume) but the agent
         //    created a different session (--resume failed silently). DB needs the correct ID.
@@ -841,14 +841,26 @@ export class SessionManager extends EventEmitter {
         // the forked conversation.
         const historyHook = session.agentParser?.runtime?.sessionHistory;
         if (historyHook && !this.statusFileReader.hasReceivedStatus(sessionId)) {
-          // No startAtEnd here: this attach only ever runs when the agent id was
-          // NOT known at spawn time - either a fresh Codex/Gemini capture (a
-          // brand-new transcript whose early entries we want) or a
-          // stale-session-id recovery (also a fresh file, under the newly
-          // captured id). Reading from the start is correct in both. The
-          // resumed-existing-file EOF case never reaches here: it is held by the
-          // idempotent spawn-time attach (which passes startAtEnd), so this path
-          // never re-parses pre-resume content.
+          // 4. A hook moved the conversation with no status channel behind it
+          //    (`followsSessionStartMoves`, Qwen's /clear): the tail still holds
+          //    the old conversation's file, and an attach is a no-op while it
+          //    does, so it is released first and the attach below reads the new
+          //    conversation from its start. A move that lands after the session
+          //    ended attaches nothing: its cleanup already released the tail.
+          if (options?.conversationMoved) {
+            if (session.status !== 'running') return;
+            this.sessionHistoryReader.detach(sessionId);
+          }
+          // No startAtEnd here. Cases 1 and 2 are a fresh file under a newly
+          // captured id, whose early entries we want. Case 4 is a new
+          // conversation (a /clear or /branch, read from its start), or an
+          // in-TUI /resume of an older one, where reading from the start is
+          // still right: the history parser this case serves reports the
+          // latest usage snapshot, which the usage cache replaces, not adds. A
+          // spawn-time resume of an existing file never reaches here: the
+          // idempotent spawn-time attach (which passes startAtEnd) holds it.
+          // A moved conversation's file may not exist until its first prompt,
+          // so that attach waits for it (`waitForFile`).
           this.sessionHistoryReader.attach({
             sessionId,
             agentSessionId: agentReportedId,
@@ -856,6 +868,7 @@ export class SessionManager extends EventEmitter {
             hook: historyHook,
             agentName: session.agentName,
             cliTarget: session.cliTarget,
+            waitForFile: options?.conversationMoved === true,
           }).catch((err) => {
             console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, err);
           });
@@ -987,7 +1000,8 @@ export class SessionManager extends EventEmitter {
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         // Before the events, and on every batch: a SessionStart that moves the
-        // conversation is what lets the status channel follow a new id.
+        // conversation is what lets the status channel follow a new id. After
+        // captureHookSessionIds, which seeds the id a move is measured against.
         this.telemetry.noteSessionStartHooks(sessionId, rawLines);
         this.telemetry.ingestEvents(sessionId, events);
       },

@@ -14,7 +14,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
-import { qwenHomeDir } from './qwen-home';
+import { qwenRuntimeDir } from './qwen-home';
 import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import {
   listMostRecentDirs,
@@ -82,7 +82,9 @@ async function detectModelFlagSupport(cliPath: string, target: CliTarget | null)
  */
 async function scanQwenSessionHistory(place: CliPlace | null): Promise<string[]> {
   const modelSet = new Set<string>();
-  const projectsDir = path.join(qwenHomeDir(place), 'projects');
+  // Global: no workspace, so only QWEN_RUNTIME_DIR and the user's
+  // `advanced.runtimeOutputDir` can move it (`qwenRuntimeDir`).
+  const projectsDir = path.join(qwenRuntimeDir(null, place), 'projects');
 
   // Rank project directories by their `chats/` subdirectory's mtime so
   // test-artifact dirs (which never write to chats/) are skipped first. Cap at

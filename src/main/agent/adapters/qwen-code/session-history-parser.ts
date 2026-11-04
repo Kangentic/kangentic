@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { qwenHomeDir } from './qwen-home';
+import { qwenRuntimeDir } from './qwen-home';
 import { cliPathForTarget, cliPlatformForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
   type SessionHistoryParseResult,
@@ -199,10 +199,21 @@ function toNumber(value: unknown): number | undefined {
  * byte-for-byte.
  */
 export function qwenChatsDir(cwd: string, place: CliPlace | null = null): string {
+  return path.join(qwenProjectDir(cwd, place), 'chats');
+}
+
+/**
+ * Qwen's per-project directory, `<runtime>/projects/<sanitizeCwd(cwd)>`
+ * (`Storage.getProjectDir`, packages/core/src/config/storage.ts v0.26.6),
+ * which holds `chats/` and `subagents/`. `<runtime>` is `qwenRuntimeDir`:
+ * `QWEN_RUNTIME_DIR` or `advanced.runtimeOutputDir` move it away from
+ * `QWEN_HOME`.
+ */
+export function qwenProjectDir(cwd: string, place: CliPlace | null = null): string {
   // A Qwen in a WSL distro was given the `/mnt` form of the cwd, and slugs it
   // as Linux does: case kept.
   const slug = place ? qwenProjectSlug(cliPathForTarget(cwd, place), cliPlatformForTarget(place)) : qwenProjectSlug(cwd);
-  return path.join(qwenHomeDir(place), 'projects', slug, 'chats');
+  return path.join(qwenRuntimeDir(cwd, place), 'projects', slug);
 }
 
 /**

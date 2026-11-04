@@ -50,7 +50,7 @@ same caveat the Claude adapter documents).
 | Agent | What migrates | Documented residue / notes |
 |-------|---------------|----------------------------|
 | Claude | `~/.claude/projects/<slug>/` transcript dirs and `~/.claude.json` `projects` keys (backup `~/.claude.json.kangentic-backup`). | - |
-| Qwen Code | `~/.qwen/projects/<slug>/` chats, `~/.qwen/tmp/<sha256>/` history, and `~/.qwen/trustedFolders.json` keys. | - |
+| Qwen Code | `<runtime>/projects/<slug>/` chats and subagents, `<runtime>/tmp/<sha256>/` history, and `~/.qwen/trustedFolders.json` keys. `<runtime>` is `QWEN_RUNTIME_DIR`, then the new location's `advanced.runtimeOutputDir`, then `~/.qwen`. | - |
 | Droid | `~/.factory/sessions/<cwd-slug>/` session dirs. | Best-effort: Droid is closed source, so resume resolution around the slug dir is not authoritatively documented. |
 | OpenCode | `session.directory`/`session.path`, `project.worktree`, `project_directory.directory` columns in `~/.local/share/opencode/opencode.db` (one transaction), and OpenCode 2's `session_v2.directory`/`session_v2.path` and `worktree.directory` in the same file. | No file backup (live WAL DB; rollback = status quo). `project.sandboxes` left untouched. Project id is git-derived, so sessions are never orphaned, only re-scoped. |
 | Gemini | `~/.gemini/projects.json` key, `.project_root` markers under `tmp/`+`history/<slug>/`, and `~/.gemini/trustedFolders.json` keys; slug dirs renamed opportunistically on a basename change. | When the new-basename slug is already taken, the old slug is kept (Gemini still resolves via the registry, but Kangentic's basename-keyed chat locator cannot find the old chats - a pre-existing Gemini basename-collision limitation). |

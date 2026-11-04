@@ -1,9 +1,15 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { QwenDetector } from './detector';
 import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
 import { QwenSessionHistoryParser } from './session-history-parser';
 import { createQwenCommandInjectionVerifier } from './command-injection-verifier';
-import { parseQwenTranscript, locateQwenTranscriptFile, readQwenTranscriptPage } from './transcript-parser';
+import { parseQwenTranscript, parseQwenTranscriptWindow, locateQwenTranscriptFile, readQwenTranscriptPage } from './transcript-parser';
+import { parseQwenTranscriptToolCounts, parseQwenTranscriptToolResultTokens, parseQwenTranscriptUsage } from './transcript-metrics';
+import { proveQwenConversationGone } from './conversation-gone';
+import { parseQwenSubagentUsage, qwenSubagentDir, statQwenSubagentDir } from './subagent-usage';
+import { QWEN_SUBAGENT_TOOL } from './hook-manager';
 import { QwenStatusParser } from './status-parser';
 import { discoverQwenCapabilities } from './capability-discovery';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
@@ -11,19 +17,42 @@ import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { hostPathForTarget, resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import type {
   AgentAdapter,
   AgentInfo,
   SpawnCommandOptions,
   SettingsChangeSpec,
+  ParsedSubagentUsage,
   ParsedTranscript,
+  ParsedTranscriptWindow,
+  SubagentTranscriptSignature,
   SummarizeOptions,
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
 } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
+import type {
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  SubmissionContextType,
+  SubmissionVerifier,
+  AgentCapabilities,
+  TranscriptToolCounts,
+  TranscriptUsage,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+/** Where a run's transcript is, as the session-metrics readers pass it. */
+interface TranscriptReadInput {
+  transcriptPath?: string | null;
+  agentSessionId?: string | null;
+  cwd?: string | null;
+  place?: CliPlace | null;
+}
+
+/** A run's transcript and the time window of the run the tool reads count. */
+type TranscriptWindowReadInput = TranscriptReadInput & { sinceMs?: number | null; untilMs?: number | null };
 
 /**
  * Qwen Code CLI adapter - wraps QwenDetector, QwenCommandBuilder,
@@ -58,6 +87,9 @@ export class QwenAdapter implements AgentAdapter {
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
     { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
+    // `--approval-mode auto` from Qwen 0.16.0; an older or undetected Qwen
+    // runs it as Auto Edit (command-builder.ts, `supportsAutoApprovalMode`).
+    { mode: 'auto', label: 'Auto (Classifier Approves Safe Actions)' },
     { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
@@ -131,7 +163,7 @@ export class QwenAdapter implements AgentAdapter {
    *   when the caller-supplied UUID matches. fromOutput accepts either
    *   `qwen` or `gemini` as the binary name in the resume regex - some
    *   fork builds still print the upstream string.
-   * - sessionHistory: tails ~/.qwen/projects/<sanitizeCwd(cwd)>/chats/<sessionId>.jsonl
+   * - sessionHistory: tails <runtime>/projects/<sanitizeCwd(cwd)>/chats/<sessionId>.jsonl (qwenChatsDir)
    *   (append-only JSONL, one event per line) and walks lines backwards
    *   to extract model + tokens + contextWindowSize from the most recent
    *   assistant event. See QwenSessionHistoryParser.
@@ -141,6 +173,10 @@ export class QwenAdapter implements AgentAdapter {
       parseStatus: QwenStatusParser.parseStatus,
       parseEvent: QwenStatusParser.parseEvent,
       isFullRewrite: false,
+      // Which SessionStart moved the conversation; with
+      // `sessionId.followsSessionStartMoves` below, a /clear or /branch
+      // switches the session's id.
+      parseSessionStart: QwenStatusParser.parseSessionStart,
     },
     // Its turn-end hook reaches the engine as an Idle event.
     reportsTurnEnd: true,
@@ -156,6 +192,10 @@ export class QwenAdapter implements AgentAdapter {
       return /\u2570[\u2500]+\u256F/.test(clean) || /I'm ready\./.test(clean);
     }),
     sessionId: {
+      // Qwen's /clear and /branch start a new session id, and Qwen writes no
+      // status file to carry it, so the SessionStart hook that names it
+      // switches the session (statusFile.parseSessionStart).
+      followsSessionStartMoves: true,
       fromHook(hookContext) {
         try {
           const context: unknown = JSON.parse(hookContext);
@@ -265,6 +305,117 @@ export class QwenAdapter implements AgentAdapter {
     place?: CliPlace | null,
   ): Promise<TranscriptPageReadResult> {
     return readQwenTranscriptPage(agentSessionId, locateQwenTranscriptFile(agentSessionId, cwd, place ?? null), request);
+  }
+
+  /** One bounded window of the chat, for the conversation indexer's whole-file walk (transcript-parser.ts). */
+  async parseTranscriptWindow(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+    _attributedMessageIds?: Set<string>,
+    place?: CliPlace | null,
+  ): Promise<ParsedTranscriptWindow> {
+    const filePath = locateQwenTranscriptFile(agentSessionId, cwd, place ?? null);
+    const window = await parseQwenTranscriptWindow(agentSessionId, filePath, startByte, maxBytes);
+    return { ...window, sourcePath: filePath };
+  }
+
+  /** The tool reads honor a run's `sinceMs`/`untilMs`: every record is timestamped. */
+  readonly scopesTranscriptReadsByTime = true;
+
+  /**
+   * Lifetime tokens, tool calls and result-token estimates from Qwen's own
+   * chat (transcript-metrics.ts). A `--resume` appends to the same file, so
+   * the tool reads are scoped to one run by time.
+   */
+  async transcriptUsage(input: TranscriptReadInput): Promise<TranscriptUsage | null> {
+    const filePath = await this.runTranscriptPath(input);
+    return filePath ? parseQwenTranscriptUsage(filePath) : null;
+  }
+
+  async transcriptToolCounts(input: TranscriptWindowReadInput): Promise<TranscriptToolCounts | null> {
+    const filePath = await this.runTranscriptPath(input);
+    return filePath ? parseQwenTranscriptToolCounts(filePath, input.sinceMs, input.untilMs) : null;
+  }
+
+  async transcriptToolResultTokens(input: TranscriptWindowReadInput): Promise<Record<string, number> | null> {
+    const filePath = await this.runTranscriptPath(input);
+    return filePath ? parseQwenTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs) : null;
+  }
+
+  /**
+   * The path Qwen reported (a hook's `transcript_path`) when its file is
+   * there, else the chat the session id and cwd name. Null with neither.
+   */
+  private async runTranscriptPath(input: TranscriptReadInput): Promise<string | null> {
+    const place = input.place ?? null;
+    const reported = input.transcriptPath ? hostPathForTarget(input.transcriptPath, place) : null;
+    if (reported && path.isAbsolute(reported) && await fs.promises.stat(reported).then(() => true, () => false)) {
+      return reported;
+    }
+    if (input.agentSessionId && input.cwd) return locateQwenTranscriptFile(input.agentSessionId, input.cwd, place);
+    return reported;
+  }
+
+  /**
+   * A resume of a deleted chat exits with "No saved session found with ID"
+   * (https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/cli/src/config/config.ts);
+   * proven gone, it starts fresh from a recap instead (conversation-gone.ts).
+   */
+  proveConversationGone(params: {
+    agentSessionId: string;
+    reportedPaths: ReadonlyArray<string>;
+    cwd: string;
+    place?: CliPlace | null;
+  }): Promise<boolean> {
+    return proveQwenConversationGone(params);
+  }
+
+  /** Staleness signature for the session's `subagents/<sessionId>/` folder (subagent-usage.ts). */
+  statSubagentTranscripts(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null {
+    return statQwenSubagentDir(qwenSubagentDir(agentSessionId, cwd, place ?? null));
+  }
+
+  /** Every subagent's tokens for the session, one turn per API response (subagent-usage.ts). */
+  parseSubagentUsage(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage> {
+    return parseQwenSubagentUsage(agentSessionId, cwd, place ?? null);
+  }
+
+  /**
+   * Qwen starts a subagent with its `agent` tool (`task` is a legacy alias;
+   * https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/tool-names.ts),
+   * and a subagent's sidecar names that call's id as `toolUseId`.
+   */
+  readonly subagentSpawnToolName = QWEN_SUBAGENT_TOOL;
+
+  /**
+   * Qwen's file-changing tools and the field naming the file
+   * (https://github.com/QwenLM/qwen-code/blob/v0.26.6/packages/core/src/tools/edit.ts,
+   * write-file.ts and tool-names.ts in the same folder): `edit` (and its
+   * legacy alias `replace`), `write_file`, `notebook_edit`.
+   */
+  readonly fileChangeTools = [
+    { tool: 'edit', pathField: 'file_path' },
+    { tool: 'replace', pathField: 'file_path' },
+    { tool: 'write_file', pathField: 'file_path' },
+    { tool: 'notebook_edit', pathField: 'notebook_path' },
+  ];
+
+  /**
+   * The `--model` the command carries, so a card names its model before the
+   * first assistant record reports one. The raw id is the label: Qwen serves
+   * many providers' ids, and no derivation reads well for all of them. Only
+   * the flag region is searched (before the `-i`/`-p` prompt), so a prompt
+   * containing `--model <word>` is never read as the flag.
+   */
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    const promptFlag = command.search(/\s-[ip]\s/);
+    const flagRegion = promptFlag === -1 ? command : command.slice(0, promptFlag);
+    const match = flagRegion.match(/--model\s+(?:"([^"]+)"|'([^']+)'|(\S+))/);
+    const id = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+    if (!id) return null;
+    return { id, displayName: id };
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {

@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { QwenCommandBuilder, supportsMcpConfigFlag } from '../../src/main/agent/adapters/qwen-code';
+import { supportsAutoApprovalMode } from '../../src/main/agent/adapters/qwen-code/command-builder';
 import type { QwenCommandOptions } from '../../src/main/agent/adapters/qwen-code';
 import {
   QWEN_BACKGROUND_COMMAND_SPEC,
@@ -87,10 +88,19 @@ describe('QwenCommandBuilder', () => {
       expect(command).not.toContain('auto_edit');
     });
 
-    it('auto maps to --approval-mode auto-edit', () => {
-      const command = buildCommand({ permissionMode: 'auto' });
-      expect(command).toContain('--approval-mode auto-edit');
-      expect(command).not.toContain('auto_edit');
+    // Qwen's yargs `choices` gain `auto` (its LLM classifier mode) in 0.16.0
+    // and refuse it before, so an older or undetected Qwen gets auto-edit.
+    it('auto maps to --approval-mode auto on Qwen 0.16.0 and later', () => {
+      expect(buildCommand({ permissionMode: 'auto', cliVersion: '0.16.0' })).toMatch(/--approval-mode auto(?!-)/);
+      expect(buildCommand({ permissionMode: 'auto', cliVersion: '0.26.6' })).toMatch(/--approval-mode auto(?!-)/);
+    });
+
+    it('auto falls back to --approval-mode auto-edit before 0.16.0 and with no detected version', () => {
+      for (const cliVersion of ['0.15.6', null, undefined, 'not-a-version']) {
+        const command = buildCommand({ permissionMode: 'auto', cliVersion });
+        expect(command).toContain('--approval-mode auto-edit');
+        expect(command).not.toContain('auto_edit');
+      }
     });
 
     it('bypassPermissions maps to --approval-mode yolo', () => {
@@ -298,6 +308,28 @@ describe('QwenCommandBuilder', () => {
       expect(supportsMcpConfigFlag(undefined)).toBe(true);
       expect(supportsMcpConfigFlag('')).toBe(true);
       expect(supportsMcpConfigFlag('unknown')).toBe(true);
+    });
+  });
+
+  describe('supportsAutoApprovalMode', () => {
+    it.each([
+      ['0.15.6', false],
+      ['v0.14.1', false],
+      ['0.16.0', true],
+      ['0.16.0-nightly.20260101', true],
+      ['0.26.6', true],
+      ['1.0.0', true],
+    ] as const)('%s -> %s', (version, expected) => {
+      expect(supportsAutoApprovalMode(version)).toBe(expected);
+    });
+
+    // The opposite default to the MCP flag: an unknown value stops Qwen from
+    // starting, while auto-edit only asks before shell commands.
+    it('refuses auto when the version is unknown or unreadable', () => {
+      expect(supportsAutoApprovalMode(null)).toBe(false);
+      expect(supportsAutoApprovalMode(undefined)).toBe(false);
+      expect(supportsAutoApprovalMode('')).toBe(false);
+      expect(supportsAutoApprovalMode('unknown')).toBe(false);
     });
   });
 
