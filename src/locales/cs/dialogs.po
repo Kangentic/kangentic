@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, one {{viewedCount} z # souboru označeno jako zobraz
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {Zobrazeno {viewedCount} z # souboru} few {Zobrazeno {viewedCount} z # souborů} many {Zobrazeno {viewedCount} z # souboru} other {Zobrazeno {viewedCount} z # souborů}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "Již aktuální"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "V tomto sloupci už použito."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "Absolutní cesta nebo cesta začínající ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy

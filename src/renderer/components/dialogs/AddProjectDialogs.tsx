@@ -176,7 +176,7 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
             {stateLabel(host.state)}
           </p>
         ) : null}
-        <Field label={t`Folder on the host`} hint={t`An absolute path, or one starting with ~/`}>
+        <Field label={t`Folder on the host`} hint={t`A folder inside your home on the host, such as ~/code/api`}>
           <input
             type="text"
             autoFocus

@@ -73,7 +73,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
-## SSH hosts (10 channels)
+## SSH hosts (11 channels)
 Machine-global like the mobile bridge, so none takes a trailing `projectId`: a host serves every project and must be addable with no project open. Backs the SSH settings tab and the Add project chooser. See [SSH remote hosts](../../platforms/ssh-remote.md).
 
 | Channel | Pattern | Purpose |
@@ -85,6 +85,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `ssh:removeHost` | invoke | Remove a host with its projects (they stay on the host), end their agents, delete the key Kangentic made and take it off the host when reachable |
 | `ssh:renameHost` | invoke | Rename a host |
 | `ssh:reconnectHost` | invoke | Connect again now, installing the host program first if it is missing |
+| `ssh:hostProgram` | invoke | What the Kangentic program on a connected host reports: its version, this app's version, when it started, how many terminals it holds and which versions are installed. Rejects with the reason when the host cannot answer |
 | `ssh:forgetHostKey` | invoke | Forget a changed host key so the next connection asks again |
 | `ssh:probeRemoteFolder` | invoke | Whether a folder exists on a host, and whether it is a git repository, as the host's own program says. Rejects with the reason when it cannot say |
 | `ssh:hostsChanged` | on | Event: a host was added or removed, or its connection state moved |

@@ -11,8 +11,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { FileTail, type FileChunkEvent } from '../../src/main/remote/helper/file-tail';
-import { mirrorPathToHost, toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
+import { hostPathForTarget, hostPathToMirror, mirrorPathToHost, placeFromStored, toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
+import { clearClaudeTranscriptLocatorCacheForTests, findClaudeTranscriptFile } from '../../src/main/agent/adapters/claude/transcript-locator';
 
 let folder: string;
 const teardown: Array<() => void> = [];
@@ -174,6 +175,28 @@ describe('a path in the mirror of the host\'s home, as the host names it', () =>
   });
 });
 
+describe('a path the CLI reports on the host, as this computer reads it', () => {
+  const localHome = path.join(os.tmpdir(), 'mirrors', 'host-a');
+  const shellFolder = path.join(os.tmpdir(), 'remote-projects', 'p1');
+  const place: SshCliPlace = {
+    kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome, roots: [{ local: shellFolder, host: '/home/dev/api' }],
+  };
+
+  it('maps a path under the host\'s home into the mirror, and one under the project into the shell folder', () => {
+    expect(hostPathForTarget('/home/dev/.claude/projects/-home-dev-api/abc.jsonl', place))
+      .toBe(path.join(localHome, '.claude', 'projects', '-home-dev-api', 'abc.jsonl'));
+    // The project lies under the home, and the project root wins.
+    expect(hostPathForTarget('/home/dev/api/src/main.ts', place)).toBe(path.join(shellFolder, 'src', 'main.ts'));
+  });
+
+  it('leaves a path outside the home and the project as it is, and a place with no mirror alone', () => {
+    expect(hostPathForTarget('/srv/other/file', place)).toBe('/srv/other/file');
+    expect(hostPathToMirror('/home/dev/.claude/x', { ...place, localHome: '' })).toBeNull();
+    expect(hostPathToMirror('/home/dev', place)).toBeNull();
+    expect(hostPathToMirror('/home/developer/x', place)).toBeNull();
+  });
+});
+
 describe('Claude\'s transcript on a host', () => {
   const localHome = path.join(os.tmpdir(), 'mirrors', 'host-a');
   const shellFolder = path.join(os.tmpdir(), 'remote-projects', 'p1');
@@ -187,6 +210,44 @@ describe('Claude\'s transcript on a host', () => {
     // And that is the host's file once the mirror's root is the host's home.
     const place: SshCliPlace = { kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome, roots: [] };
     expect(mirrorPathToHost(files[0], place)).toBe('/home/dev/.claude/projects/-home-dev-api/abc.jsonl');
+  });
+
+  it('is found by Claude\'s own locator once the copy has arrived, from the session\'s own folder and host', async () => {
+    clearClaudeTranscriptLocatorCacheForTests();
+    const realHome = path.join(folder, 'mirror');
+    const realShell = path.join(folder, 'shell');
+    const realStored = toStoredCliTarget({
+      kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: realHome, roots: [{ local: realShell, host: '/home/dev/api' }],
+    });
+    const adapter = new ClaudeAdapter();
+    const [copy] = adapter.remoteTranscriptFiles({ agentSessionId: 'abc', cwd: realShell, cliTarget: realStored });
+    const place = placeFromStored(realStored);
+
+    expect(await findClaudeTranscriptFile({ agentSessionId: 'abc', cwd: realShell, place })).toBeNull();
+
+    fs.mkdirSync(path.dirname(copy), { recursive: true });
+    fs.writeFileSync(copy, '{"type":"user"}\n');
+    expect(await findClaudeTranscriptFile({ agentSessionId: 'abc', cwd: realShell, place })).toBe(copy);
+  });
+
+  it('is found from the path Claude reports in its status line, which is a path on the host', async () => {
+    clearClaudeTranscriptLocatorCacheForTests();
+    const realHome = path.join(folder, 'mirror');
+    const realShell = path.join(folder, 'shell');
+    const realStored = toStoredCliTarget({
+      kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: realHome, roots: [{ local: realShell, host: '/home/dev/api' }],
+    });
+    const place = placeFromStored(realStored);
+    const copy = path.join(realHome, '.claude', 'projects', '-home-dev-api', 'abc.jsonl');
+    fs.mkdirSync(path.dirname(copy), { recursive: true });
+    fs.writeFileSync(copy, '{"type":"user"}\n');
+
+    expect(await findClaudeTranscriptFile({
+      agentSessionId: 'abc',
+      cwd: path.join(folder, 'somewhere-else'),
+      place,
+      reportedPath: '/home/dev/.claude/projects/-home-dev-api/abc.jsonl',
+    })).toBe(copy);
   });
 
   it('declares nothing for a conversation that is not on a host', () => {

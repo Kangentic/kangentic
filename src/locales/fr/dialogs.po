@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, one {Fichier marqué comme consulté : {viewedCount}
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount} sur # fichier vu} many {{viewedCount} sur # de fichiers vus} other {{viewedCount} sur # fichiers vus}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "Déjà à jour"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "Déjà utilisé dans cette colonne."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "Chemin absolu, ou commençant par ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy

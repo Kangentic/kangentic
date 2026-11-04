@@ -445,10 +445,22 @@ describe('checking a folder on a host', () => {
     const rig = makeRig();
     rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' });
     rig.hostService.pathPresence.mockResolvedValueOnce(['absent', 'absent']);
-    expect((await rig.admin.probeRemoteFolder('h1', '/srv/none')).exists).toBe(false);
+    expect((await rig.admin.probeRemoteFolder('h1', '/home/dev/none')).exists).toBe(false);
 
     rig.hostService.pathPresence.mockRejectedValueOnce(new Error('Kangentic has no connection set up for host h1'));
-    await expect(rig.admin.probeRemoteFolder('h1', '/srv/none')).rejects.toThrow('no connection set up');
+    await expect(rig.admin.probeRemoteFolder('h1', '/home/dev/none')).rejects.toThrow('no connection set up');
+  });
+
+  it('refuses a folder outside the host\'s home with the home it must be in, before asking the host about it', async () => {
+    const rig = makeRig();
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' });
+
+    await expect(rig.admin.probeRemoteFolder('h1', '/srv/app')).rejects.toThrow('/srv/app is outside the home folder on the host (/home/dev)');
+    await expect(rig.admin.probeRemoteFolder('h1', '/home/developer/app')).rejects.toThrow('outside the home folder');
+    expect(rig.hostService.pathPresence).not.toHaveBeenCalled();
+    // The home itself and anything under it is fine.
+    rig.hostService.pathPresence.mockResolvedValue(['present', 'absent']);
+    await expect(rig.admin.probeRemoteFolder('h1', '~')).resolves.toMatchObject({ path: '/home/dev' });
   });
 
   it.each([

@@ -148,6 +148,19 @@ export function mirrorPathToHost(localPath: string, place: SshCliPlace): string 
   return `${normalizedHost(place.home)}/${relative.split(path.sep).join('/')}`;
 }
 
+/**
+ * A path under the host's home as this computer's mirror of that home names it (the inverse of
+ * `mirrorPathToHost`), or null when the place has no mirror or the path is not inside the host's home.
+ * This is what a path the CLI reported (`~/.claude/projects/...` in its status line) becomes here.
+ */
+export function hostPathToMirror(hostPath: string, place: SshCliPlace): string | null {
+  if (!place.localHome || !hostPath.startsWith('/')) return null;
+  const home = normalizedHost(place.home);
+  const normalized = normalizedHost(hostPath);
+  if (normalized === home || !normalized.startsWith(`${home}/`)) return null;
+  return path.join(place.localHome, ...normalized.slice(home.length + 1).split('/').filter(Boolean));
+}
+
 export type CliTarget = CliPlace & {
   /** The CLI's path where it runs: in the distro, or on the SSH host (`/home/dev/.local/bin/claude`). */
   linuxCliPath: string;
@@ -435,7 +448,11 @@ export function cliPathForTarget(windowsPath: string, place: CliPlace | null): s
  */
 export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): string {
   if (!place || !cliSidePath.startsWith('/')) return cliSidePath;
-  if (place.kind === 'ssh') return hostPathToLocal(cliSidePath, place.roots);
+  if (place.kind === 'ssh') {
+    // A folder under a project root is the shell folder's; anything else under the host's home is the mirror's.
+    if (longestRoot(place.roots, 'host', cliSidePath)) return hostPathToLocal(cliSidePath, place.roots);
+    return hostPathToMirror(cliSidePath, place) ?? cliSidePath;
+  }
   const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(cliSidePath);
   if (driveMount) {
     const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');

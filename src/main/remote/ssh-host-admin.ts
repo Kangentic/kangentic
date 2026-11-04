@@ -197,6 +197,11 @@ export class SshHostAdmin {
     this.requireHost(hostId);
     const info = await this.deps.hosting.hostService.hostInfo(hostId);
     const resolved = resolveHostFolder(folderPath, info.home);
+    // The helper reads and writes only beneath the user's home, so a project anywhere else could be added
+    // here and then fail on its first file. Said now, with the home it must be in.
+    if (resolved !== info.home && !resolved.startsWith(`${info.home.replace(/\/+$/, '')}/`)) {
+      throw new Error(`${resolved} is outside the home folder on the host (${info.home}). Kangentic works only in folders inside it.`);
+    }
     const [folder, git] = await this.deps.hosting.hostService.pathPresence(hostId, [resolved, `${resolved}/.git`]);
     return { exists: folder === 'present', path: resolved, isGitRepo: git === 'present' };
   }

@@ -261,6 +261,10 @@ msgstr "{fileCount, plural, other {已將 {viewedCount} / # 個檔案標記為�
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, other {已檢視 {viewedCount} / # 個檔案}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
 msgstr "窄窗格會直接內嵌顯示"
@@ -376,11 +380,6 @@ msgstr "已是最新狀態"
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Already used on this column."
 msgstr "此欄已使用。"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "絕對路徑，或以 ~/ 開頭的路徑"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"

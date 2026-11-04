@@ -156,7 +156,7 @@ export async function installHost(
   const hostDirectory = `"$HOME/.kangentic/host/${asset.version}"`;
   // The touch marks this version as used now, so the pruning of versions nothing has used for a month
   // (`helper/program-versions.ts`) never takes one that another computer on this account still connects with.
-  const relayCommand = posixShellCommand(`touch ${hostDirectory}/.complete 2>/dev/null; exec "$HOME/.kangentic/host/${asset.version}/node/bin/node" "$HOME/.kangentic/host/${asset.version}/app/host.js" relay --dir "$HOME/.kangentic/host/run"`);
+  const relayCommand = posixShellCommand(`touch -c ${hostDirectory}/.complete 2>/dev/null; exec "$HOME/.kangentic/host/${asset.version}/node/bin/node" "$HOME/.kangentic/host/${asset.version}/app/host.js" relay --dir "$HOME/.kangentic/host/run"`);
 
   const present = await run(posixShellCommand(`test -f ${hostDirectory}/.complete && cat ${hostDirectory}/.sha256 2>/dev/null; true`));
   if (present.stdout.trim() === asset.sha256) return { directory, relayCommand, installed: false };

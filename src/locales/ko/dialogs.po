@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, other {파일 #개 중 {viewedCount}개 확인됨}}"
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, other {파일 #개 중 {viewedCount}개 확인함}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "이미 최신 상태임"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "이 열에서 이미 사용 중입니다."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "절대 경로 또는 ~/로 시작하는 경로"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy

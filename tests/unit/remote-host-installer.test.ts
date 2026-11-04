@@ -40,7 +40,7 @@ describe('installing the helper', () => {
 
     expect(installed).toEqual({
       directory: '/home/dev/.kangentic/host/0.52.0',
-      relayCommand: `sh -c 'touch "$HOME/.kangentic/host/0.52.0"/.complete 2>/dev/null; exec "$HOME/.kangentic/host/0.52.0/node/bin/node" "$HOME/.kangentic/host/0.52.0/app/host.js" relay --dir "$HOME/.kangentic/host/run"'`,
+      relayCommand: `sh -c 'touch -c "$HOME/.kangentic/host/0.52.0"/.complete 2>/dev/null; exec "$HOME/.kangentic/host/0.52.0/node/bin/node" "$HOME/.kangentic/host/0.52.0/app/host.js" relay --dir "$HOME/.kangentic/host/run"'`,
       installed: true,
     });
     expect(host.calls).toHaveLength(3);

@@ -258,6 +258,10 @@ msgstr "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {#
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr "A folder inside your home on the host, such as ~/code/api"
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
 msgstr "A narrow pane renders inline"
@@ -371,10 +375,6 @@ msgstr "Already up to date"
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Already used on this column."
 msgstr "Already used on this column."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-msgid "An absolute path, or one starting with ~/"
-msgstr "An absolute path, or one starting with ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"

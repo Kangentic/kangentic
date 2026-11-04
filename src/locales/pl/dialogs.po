@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, one {Przejrzane: {viewedCount} z # pliku} few {Przej
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {Przejrzano {viewedCount} z # pliku} few {Przejrzano {viewedCount} z # plików} many {Przejrzano {viewedCount} z # plików} other {Przejrzano {viewedCount} z # pliku}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "Już aktualne"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "Już użyty w tej kolumnie."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "Ścieżka bezwzględna lub zaczynająca się od ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy

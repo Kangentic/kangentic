@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, one {# fájlból {viewedCount} megtekintettként meg
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount}/# fájl megtekintve} other {{viewedCount}/# fájl megtekintve}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "Már naprakész"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "Ebben az oszlopban már használatban van."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "Abszolút elérési út, vagy ~/ kezdetű út"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy

@@ -320,6 +320,10 @@ msgstr "{fileCount, plural, one {{viewedCount}/# dosya görüldü olarak işaret
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount}/# dosya görüntülendi} other {{viewedCount}/# dosya görüntülendi}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -459,11 +463,6 @@ msgstr "Zaten güncel"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "Bu sütunda zaten kullanılıyor."
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "An absolute path, or one starting with ~/"
-msgstr "Mutlak bir yol veya ~/ ile başlayan bir yol"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
