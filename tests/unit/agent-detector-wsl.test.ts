@@ -54,6 +54,25 @@ describe('AgentDetector - a CLI inside a WSL distro', () => {
     expect(execVersion).not.toHaveBeenCalled();
   });
 
+  // A versionLaunch starts a Windows program directly, which cannot run a
+  // distro's Linux binary: the WSL path must be probed in the distro and the
+  // hook must never be asked about it.
+  it('never asks versionLaunch about a path in a distro, and probes it in the distro', async () => {
+    const runWsl = vi.fn(async () => ({ stdout: '2.1.311 (Claude Code)\n', stderr: '' }));
+    const versionLaunch = vi.fn(() => ({ file: 'C:\\Tools\\cli.exe' }));
+    const detector = new AgentDetector(
+      { binaryName: 'claude', supportsWslCli: true, parseVersion: (raw) => raw.replace(/\s*\(Claude Code\)\s*$/, '').trim() || null, versionLaunch },
+      { platform: 'win32', resolveFacts: async () => FACTS, runWsl },
+    );
+
+    const result = await detector.detect(CLI_PATH);
+
+    expect(result).toMatchObject({ found: true, version: '2.1.311', cliTarget: { kind: 'wsl', distro: 'Ubuntu' } });
+    expect(versionLaunch).not.toHaveBeenCalled();
+    expect(runWsl).toHaveBeenCalledTimes(1);
+    expect(execVersion).not.toHaveBeenCalled();
+  });
+
   it('carries the error the distro printed when the CLI cannot start', async () => {
     const runWsl = vi.fn(async () => {
       throw Object.assign(new Error('Command failed'), { code: 127, stderr: "/usr/bin/env: 'node': No such file or directory\n" });
