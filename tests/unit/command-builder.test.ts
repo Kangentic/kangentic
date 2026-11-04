@@ -2639,6 +2639,45 @@ describe('Merged Settings: project settings read on every spawn', () => {
       expect(permissions.defaultMode).toBe('acceptEdits');
     });
 
+    it.each(['auto', 'bypassPermissions'])('does not let the root\'s settings.local.json reach %s', (mode) => {
+      // The root's local file is laid over a worktree's own settings.json too.
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { allow: ['Read'] } });
+      writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { defaultMode: mode, allow: ['Bash(root-local:*)'] } });
+
+      const permissions = buildSession(new CommandBuilder(), `root-local-mode-${mode}`, worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toBeUndefined();
+      expect(permissions.allow).toEqual(expect.arrayContaining(['Read', 'Bash(root-local:*)']));
+    });
+
+    it('adds no defaultMode, and no permissions key, when no file sets one', () => {
+      writeClaudeFile(worktreeDir, 'settings.json', { env: { KEPT: '1' } });
+
+      const merged = buildSession(new CommandBuilder(), 'mode-absent', worktreeDir);
+
+      expect(merged.env).toEqual({ KEPT: '1' });
+      expect(merged.permissions).toBeUndefined();
+    });
+
+    it('leaves permissions without a defaultMode as written', () => {
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { allow: ['Read'], deny: ['Bash(rm:*)'] } });
+
+      const permissions = buildSession(new CommandBuilder(), 'mode-none', worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions).not.toHaveProperty('defaultMode');
+      expect(permissions.allow).toContain('Read');
+      expect(permissions.deny).toContain('Bash(rm:*)');
+    });
+
+    it.each([['a number', 42], ['null', null], ['a list', ['auto']]])('passes %s defaultMode through untouched', (label, value) => {
+      // Only the two refused strings are dropped. A value that is not one is not this check's to judge.
+      writeClaudeFile(worktreeDir, 'settings.json', { permissions: { defaultMode: value, allow: ['Read'] } });
+
+      const permissions = buildSession(new CommandBuilder(), `mode-odd-${String(label).replace(/\s/g, '-')}`, worktreeDir).permissions as Record<string, unknown>;
+
+      expect(permissions.defaultMode).toEqual(value);
+    });
+
     it('a change to its own settings.json reaches a resume of the same session', () => {
       writeClaudeFile(worktreeDir, 'settings.json', { permissions: { deny: ['Bash(git rebase:*)'] } });
       const builder = new CommandBuilder();

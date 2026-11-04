@@ -6,13 +6,15 @@
  * pinned in each adapter's own test file. All filesystem writes are
  * sandboxed under os.tmpdir().
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {
   ensureLocalGitExcludes,
   resolveGitCommonDir,
+  settingsBaseDirectory,
 } from '../../src/main/agent/shared/git-exclude';
 
 let tmpRoot: string;
@@ -57,6 +59,87 @@ describe('resolveGitCommonDir', () => {
     expect(resolveGitCommonDir(workspace)).toBeNull();
     ensureLocalGitExcludes(workspace, ['.agents/plugins/kangentic/']);
     expect(fs.existsSync(excludePath())).toBe(false);
+  });
+});
+
+// The exit-status classification behind a worktree session's settings base. Real git, because the
+// classification is git's own exit statuses. Each case starts git processes, which can pass
+// vitest's 5 s default under load.
+describe('settingsBaseDirectory', { timeout: 30_000 }, () => {
+  const SETTINGS_FOLDER = '.gemini';
+
+  function git(directory: string, ...commandArguments: string[]): void {
+    execFileSync('git', [
+      '-c', 'user.name=Test',
+      '-c', 'user.email=test@example.test',
+      '-c', 'commit.gpgsign=false',
+      ...commandArguments,
+    ], { cwd: directory, stdio: 'ignore' });
+  }
+
+  function writeSettings(directory: string): void {
+    fs.mkdirSync(path.join(directory, SETTINGS_FOLDER), { recursive: true });
+    fs.writeFileSync(path.join(directory, SETTINGS_FOLDER, 'settings.json'), '{}');
+  }
+
+  /** A repository with one commit and a worktree on its own branch. */
+  function createRepositoryAndWorktree(): { projectRoot: string; worktree: string } {
+    const projectRoot = path.join(tmpRoot, 'repo');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    git(projectRoot, 'init', '--initial-branch=main');
+    fs.writeFileSync(path.join(projectRoot, 'README.md'), 'readme\n');
+    git(projectRoot, 'add', 'README.md');
+    git(projectRoot, 'commit', '-m', 'first');
+    const worktree = path.join(tmpRoot, 'worktree');
+    git(projectRoot, 'worktree', 'add', '-b', 'task', worktree);
+    return { projectRoot, worktree };
+  }
+
+  it('starts from the worktree when git tracks its settings file', () => {
+    const { projectRoot, worktree } = createRepositoryAndWorktree();
+    writeSettings(worktree);
+    git(worktree, 'add', `${SETTINGS_FOLDER}/settings.json`);
+    git(worktree, 'commit', '-m', 'settings');
+
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(worktree);
+  });
+
+  it('starts from the project root when git does not track the worktree file (exit 1)', () => {
+    const { projectRoot, worktree } = createRepositoryAndWorktree();
+    writeSettings(worktree);
+
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+  });
+
+  it('starts from the project root when the worktree has no settings file', () => {
+    const { projectRoot, worktree } = createRepositoryAndWorktree();
+
+    expect(settingsBaseDirectory(worktree, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+  });
+
+  it('starts from the project root when the folder is no git checkout (exit 128 with no .git)', () => {
+    const { projectRoot } = createRepositoryAndWorktree();
+    const plainFolder = path.join(tmpRoot, 'plain');
+    writeSettings(plainFolder);
+    // Keep git from finding a repository in a parent of the temp folder.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', tmpRoot);
+
+    try {
+      expect(settingsBaseDirectory(plainFolder, projectRoot, SETTINGS_FOLDER)).toBe(projectRoot);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps the worktree when its .git points at a git dir that is gone (exit 128 from a checkout)', () => {
+    // A pruned or moved worktree: git refuses it. That is no answer about the file, so the
+    // root's content must not replace the branch's.
+    const { projectRoot } = createRepositoryAndWorktree();
+    const brokenWorktree = path.join(tmpRoot, 'broken');
+    writeSettings(brokenWorktree);
+    fs.writeFileSync(path.join(brokenWorktree, '.git'), `gitdir: ${path.join(tmpRoot, 'no-such-gitdir')}\n`);
+
+    expect(settingsBaseDirectory(brokenWorktree, projectRoot, SETTINGS_FOLDER)).toBe(brokenWorktree);
   });
 });
 
