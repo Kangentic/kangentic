@@ -254,6 +254,25 @@ describe('createV2SessionTracker', () => {
     ]);
   });
 
+  it.each([
+    ['permission.asked', 'approval'],
+    ['question.asked', 'question'],
+  ])('keeps a subagent open through the root\'s %s wait, and stops it when the root\'s turn ends', async (askedType, waitKind) => {
+    const tracker = await createTracker();
+    tracker.onEvent({ type: 'session.execution.started', data: { sessionID: SESSION } }, 1);
+    expect(types(tracker.onEvent({ type: 'session.created', data: { sessionID: CHILD, parentID: SESSION } }, 1)))
+      .toEqual([{ type: 'subagent_start', subagentId: CHILD }]);
+
+    // The root waits on the user while its subagent still runs: the wait is not the turn's end.
+    expect(types(tracker.onEvent({ type: askedType, data: { sessionID: SESSION } }, 1)))
+      .toEqual([{ type: 'idle', detail: 'permission', waitKind }]);
+
+    expect(types(tracker.onEvent({ type: 'session.execution.succeeded', data: { sessionID: SESSION } }, 1))).toEqual([
+      { type: 'subagent_stop', subagentId: CHILD },
+      { type: 'idle' },
+    ]);
+  });
+
   it('writes a compaction of the root', async () => {
     const tracker = await createTracker();
     tracker.onEvent({ type: 'session.execution.started', data: { sessionID: SESSION } }, 1);

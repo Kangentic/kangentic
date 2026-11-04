@@ -98,7 +98,7 @@ export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'ev
  *   (`resumePromptDelivery: 'typed'`).
  *
  * - The TUI's auto-approve flag, `--auto` (1.17.12 and later, and OpenCode
- *   2), is passed only for a Bypass column (`passesAutoApprove`), on a fresh
+ *   2), is passed only for a Build (Auto-approve) column (`passesAutoApprove`), on a fresh
  *   spawn and a resume alike. OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
  *   at runtime via Tab. We map Kangentic's permission-mode dropdown to
  *   the `--agent <name>` flag for the initial spawn only - resume
@@ -332,7 +332,7 @@ export function openCodeModelFromCommand(command: string): string | null {
 }
 
 /**
- * Whether a local TUI spawn passes `--auto`: the column's mode is Bypass and
+ * Whether a local TUI spawn passes `--auto`: the column's mode is Build (Auto-approve) and
  * the detected CLI has the flag (`openCodeSupportsAutoApprove`). `--auto` is
  * OpenCode's own "auto-approve permissions that are not explicitly denied"
  * (opencode.ai/docs/permissions, `opencode --help` on 1.18.31), so a rule the

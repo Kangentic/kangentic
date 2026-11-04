@@ -164,6 +164,88 @@ describe('readOpenCodeTranscriptUsageAtPath', () => {
   });
 });
 
+describe('readOpenCodeTranscriptUsageAtPath with an answer still in flight', () => {
+  const ZERO_TOKENS = assistantTokens(0, 0, 0, 0, 0);
+
+  it('answers null for an OpenCode 1 session whose only answer has every count 0', () => {
+    const database = openDatabase();
+    createTables(database);
+    database.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run('msg_a1', SESSION, 2000, 2000, JSON.stringify({ role: 'assistant', tokens: ZERO_TOKENS }));
+    database.close();
+    expect(readOpenCodeTranscriptUsageAtPath(dbPath, SESSION)).toBeNull();
+  });
+
+  it('sums only the finished answer when an OpenCode 1 session also has an all-zero in-flight one', () => {
+    const database = openDatabase();
+    createTables(database);
+    const insertMessage = database.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)');
+    insertMessage.run('msg_a1', SESSION, 2000, 2000, JSON.stringify({ role: 'assistant', tokens: assistantTokens(100, 20, 5, 1000, 10) }));
+    insertMessage.run('msg_a2', SESSION, 3000, 3000, JSON.stringify({ role: 'assistant', tokens: ZERO_TOKENS }));
+    database.close();
+    expect(readOpenCodeTranscriptUsageAtPath(dbPath, SESSION)).toEqual({ inputTokens: 1110, outputTokens: 25 });
+  });
+
+  it('answers null for an OpenCode 2 session whose only answer has every count 0', () => {
+    const database = openDatabase();
+    createTables(database);
+    database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)').run('m1', SESSION, 'assistant', 1, 1000, 1000, JSON.stringify({ content: [], tokens: ZERO_TOKENS }));
+    database.close();
+    expect(readOpenCodeTranscriptUsageAtPath(dbPath, SESSION)).toBeNull();
+  });
+
+  it('sums only the finished answer when an OpenCode 2 session also has an all-zero in-flight one', () => {
+    const database = openDatabase();
+    createTables(database);
+    const insert = database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)');
+    insert.run('m1', SESSION, 'assistant', 1, 1000, 1000, JSON.stringify({ content: [], tokens: assistantTokens(100, 20, 5, 1000, 10) }));
+    insert.run('m2', SESSION, 'assistant', 2, 2000, 2000, JSON.stringify({ content: [], tokens: ZERO_TOKENS }));
+    database.close();
+    expect(readOpenCodeTranscriptUsageAtPath(dbPath, SESSION)).toEqual({ inputTokens: 1110, outputTokens: 25 });
+  });
+});
+
+describe('readOpenCodeToolResultTokensAtPath error results and duplicate ids', () => {
+  it('sizes an OpenCode 1 tool part with only a string error by that error', () => {
+    const database = openDatabase();
+    createTables(database);
+    database.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run('prt_err', 'msg_a', SESSION, 1000, 1000, JSON.stringify({
+      type: 'tool', callID: 'call_err', tool: 'failing_tool', state: { status: 'error', error: 'e'.repeat(36) },
+    }));
+    database.close();
+    expect(readOpenCodeToolResultTokensAtPath(dbPath, SESSION)).toEqual({ failing_tool: 9 });
+  });
+
+  it('sizes an OpenCode 2 tool by a string state.error and by a state.error message', () => {
+    const database = openDatabase();
+    createTables(database);
+    database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)').run('m1', SESSION, 'assistant', 1, 1000, 1000, JSON.stringify({
+      content: [
+        { type: 'tool', id: 'call_string_error', name: 'string_error_tool', state: { status: 'error', input: {}, error: 'a'.repeat(20) } },
+        { type: 'tool', id: 'call_object_error', name: 'object_error_tool', state: { status: 'error', input: {}, error: { type: 'x', message: 'b'.repeat(12) } } },
+      ],
+    }));
+    database.close();
+    expect(readOpenCodeToolResultTokensAtPath(dbPath, SESSION)).toEqual({ string_error_tool: 5, object_error_tool: 3 });
+  });
+
+  it('counts an OpenCode 2 call stored in two records once, at its last stored result', () => {
+    const database = openDatabase();
+    createTables(database);
+    const insert = database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const recordWithResult = (text: string) => JSON.stringify({
+      content: [{ type: 'tool', id: 'call_dup', name: 'dup_tool', state: { status: 'completed', input: {}, content: [{ type: 'text', text }] } }],
+    });
+    insert.run('m1', SESSION, 'assistant', 1, 1000, 1000, recordWithResult('p'.repeat(40)));
+    insert.run('m2', SESSION, 'assistant', 2, 2000, 2000, recordWithResult('q'.repeat(8)));
+    database.close();
+    expect(readOpenCodeToolResultTokensAtPath(dbPath, SESSION)).toEqual({ dup_tool: 2 });
+    expect(readOpenCodeToolCountsAtPath(dbPath, SESSION)).toEqual({
+      toolCallCount: 1,
+      toolBreakdown: [{ toolName: 'dup_tool', callCount: 1, totalDurationMs: 0, interruptedCount: 0 }],
+    });
+  });
+});
+
 describe('readOpenCodeToolResultTokensAtPath', () => {
   it('estimates each tool\'s returned text at four characters a token, a call once at its last result', () => {
     buildV1Session();

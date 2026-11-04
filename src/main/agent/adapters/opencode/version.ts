@@ -11,9 +11,7 @@
  * as OpenCode 1, whose command line every earlier Kangentic release used.
  */
 export function openCodeMajorVersion(version: string | null | undefined): number | null {
-  if (!version) return null;
-  const match = /^v?(\d+)(?:\.|$)/i.exec(version.trim().replace(/^opencode\s+/i, ''));
-  return match ? Number(match[1]) : null;
+  return openCodeVersionParts(version)?.[0] ?? null;
 }
 
 /** True for OpenCode 2 and later. */
@@ -22,10 +20,14 @@ export function isOpenCodeV2(version: string | null | undefined): boolean {
   return major !== null && major >= 2;
 }
 
-/** `[major, minor, patch]` of a detected version, or null when it cannot be read. */
+/**
+ * `[major, minor, patch]` of a detected version, or null when it cannot be
+ * read. The major must be followed by a dot or the end, so a digit run such
+ * as `2beta` is not read as a version.
+ */
 function openCodeVersionParts(version: string | null | undefined): [number, number, number] | null {
   if (!version) return null;
-  const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i.exec(version.trim().replace(/^opencode\s+/i, ''));
+  const match = /^v?(\d+)(?=\.|$)(?:\.(\d+))?(?:\.(\d+))?/i.exec(version.trim().replace(/^opencode\s+/i, ''));
   if (!match) return null;
   return [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)];
 }
