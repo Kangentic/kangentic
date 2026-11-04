@@ -105,7 +105,8 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
 | Antigravity CLI | Workspace plugin `<cwd>/.agents/plugins/kangentic/` (`serverUrl` + `X-Kangentic-Token` header; streamable HTTP, connects at the first agent turn) | project file, stripped when the folder's last session exits |
 | Cursor CLI | `<cwd>/.cursor/mcp.json` entry with `${env:KANGENTIC_MCP_URL}` + `${env:KANGENTIC_MCP_TOKEN}`, plus `--approve-mcps` | process env (file holds only var references; stripped when the folder's last session exits) |
-| Oz CLI, Goose CLI | Not wired | n/a |
+| Oz CLI | `--mcp <sessionDir>/mcp.json` (`url` + `X-Kangentic-Token` header; for a NAT-networked WSL distro, a stdio entry with `command`, `args` and the token in `env`, see [Oz CLI](../agents/oz-cli.md#wsl); built from Warp's docs, not yet run against a real `oz`) | session file (gitignored) |
+| Goose CLI | Not wired | n/a |
 | Aider, Ollama | Not possible - neither CLI is an MCP client | n/a |
 
 Each adapter declares its row as `kangenticMcp` (`'per-session'` or `'shared-folder'`), and

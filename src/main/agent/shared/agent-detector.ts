@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import which from 'which';
-import { execVersion } from './exec-version';
+import { execVersion, type VersionLaunch } from './exec-version';
 import { isNpmShimCandidate, missingNpmShimTarget } from './npm-shim-target';
 import { cliInvocationForTarget, parseWslCliPath, type CliTarget } from './cli-target';
 import { describeWslFailure, resolveWslDistroFacts, type WslDistroFacts } from './wsl-distro';
@@ -112,6 +112,16 @@ export interface AgentDetectorConfig {
    * input: on Windows they join a shell command line. Default `--version`.
    */
   versionArgs?: readonly string[];
+
+  /**
+   * A program to start directly, with no shell, for the version probe of a
+   * path found on this machine, or null to probe the path as usual. For a CLI
+   * whose launcher hides its output from a pipe: Warp's `oz.cmd` sets
+   * `WARP_CLI_MODE=1` and runs `warp.exe`, a GUI-subsystem program, and run
+   * through cmd it prints nothing, so Oz was never found on Windows. Not asked
+   * for a WSL path, which is probed inside its distro.
+   */
+  versionLaunch?(candidatePath: string): VersionLaunch | null;
 
   /**
    * True when the adapter runs a CLI installed inside a WSL distro (its
@@ -463,9 +473,17 @@ export class AgentDetector {
         return { ok: false, reason: 'missing', detail: 'the file does not exist on disk', transient: false };
       }
       const versionArgs = this.config.versionArgs;
+      const launch = this.config.versionLaunch?.(candidatePath) ?? null;
+      // Passes only the arguments this detector sets, so execVersion's own
+      // defaults stay in one place.
+      const runProbe = (timeout?: number): Promise<{ stdout: string; stderr: string }> => {
+        if (launch) return execVersion(candidatePath, timeout, versionArgs, launch);
+        if (versionArgs) return execVersion(candidatePath, timeout, versionArgs);
+        return timeout === undefined ? execVersion(candidatePath) : execVersion(candidatePath, timeout);
+      };
       let output: { stdout: string; stderr: string };
       try {
-        output = versionArgs ? await execVersion(candidatePath, undefined, versionArgs) : await execVersion(candidatePath);
+        output = await runProbe();
       } catch (error) {
         // A timeout says the binary is slow, not that it is the wrong one, and
         // every agent is probed at once at boot: a CLI answering in 1.3 s alone
@@ -473,9 +491,7 @@ export class AgentDetector {
         // So once more with room, by which point the rest have mostly finished.
         if (!isProbeTimeout(error)) return probeFailed(error);
         try {
-          output = versionArgs
-            ? await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS, versionArgs)
-            : await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS);
+          output = await runProbe(SLOW_PROBE_TIMEOUT_MS);
         } catch (retryError) {
           return probeFailed(retryError);
         }

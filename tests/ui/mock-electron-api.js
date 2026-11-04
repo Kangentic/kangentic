@@ -3918,9 +3918,9 @@
           {
             name: 'gemini', displayName: 'Gemini CLI', found: false, path: null, version: null,
             permissions: [
-              { mode: 'plan', label: 'Plan (Read-Only)' },
-              { mode: 'default', label: 'Default (Interactive)' },
-              { mode: 'acceptEdits', label: 'Auto-Edit' },
+              { mode: 'plan', label: 'Plan (Read-Only Research)' },
+              { mode: 'default', label: 'Default (Confirm Actions)' },
+              { mode: 'acceptEdits', label: 'Auto Edit (Auto-Approve Edits)' },
               { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
             ],
             defaultPermission: 'acceptEdits',
@@ -3945,8 +3945,10 @@
           {
             name: 'aider', displayName: 'Aider', found: false, path: null, version: null,
             permissions: [
-              { mode: 'default', label: 'Interactive (Confirm)' },
-              { mode: 'bypassPermissions', label: 'Auto-Approve (--yes)' },
+              { mode: 'plan', label: 'Ask (Read-Only Questions)' },
+              { mode: 'default', label: 'Code (Confirm Changes)' },
+              { mode: 'acceptEdits', label: 'Architect (Two-Model Design)' },
+              { mode: 'bypassPermissions', label: 'Auto Yes (Skip Confirmations)' },
             ],
             defaultPermission: 'bypassPermissions',
           },
@@ -3957,7 +3959,7 @@
               { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
               { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
             ],
-            defaultPermission: 'default',
+            defaultPermission: 'bypassPermissions',
             supportsSummarize: true,
             // An interactive session prints no id, so `create-chat` names one before launch.
             kangenticMcp: 'per-session',
@@ -3965,12 +3967,20 @@
           },
           {
             name: 'warp', displayName: 'Oz CLI', found: false, path: null, version: null,
+            // KEEP IN SYNC with WarpAdapter.permissions and WarpAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/warp/warp-adapter.ts
             permissions: [
-              { mode: 'plan', label: 'Plan Only (Read-Only)' },
-              { mode: 'default', label: 'Default' },
-              { mode: 'bypassPermissions', label: 'Auto (Skip Confirmations)' },
+              { mode: 'default', label: 'Default (set by your Warp agent profile)' },
             ],
             defaultPermission: 'default',
+            kangenticMcp: 'per-session',
+            supportsWorkflowAgent: false,
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: none',
+              unavailableTitle:
+                'Oz CLI does not report live telemetry to Kangentic.\n' +
+                'Its own output in the terminal shows what the run did.',
+            },
           },
           {
             name: 'copilot', displayName: 'GitHub Copilot CLI', found: false, path: null, version: null,
@@ -4008,6 +4018,13 @@
               { mode: 'acceptEdits', label: 'Build' },
             ],
             defaultPermission: 'acceptEdits',
+            // KEEP IN SYNC with OpenCodeAdapter.liveTelemetryUnsupported
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: TUI only',
+              unavailableTitle:
+                'OpenCode does not stream live telemetry to Kangentic.\n' +
+                'Its TUI shows the model, context and cost.',
+            },
             supportsSummarize: true,
             kangenticMcp: 'per-session',
             supportsWorkflowAgent: true,

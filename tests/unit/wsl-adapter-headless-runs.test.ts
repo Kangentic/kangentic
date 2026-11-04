@@ -102,9 +102,11 @@ const WSL_AGENTS = agentRegistry.list()
  * TUI-first: `discoverDroidCapabilities` returns a fixed
  * `supportsModelOverride: false` (model and effort stay in the TUI, see
  * `.claude/rules/cli-features-over-custom-layers.md`), so there is no CLI run
- * to put in a distro. Any other adapter must run at least one probe.
+ * to put in a distro. Warp declares `supportsModelOverride: true` from Oz's
+ * docs (`oz agent run --model`) and lists no models, since `oz model list` has
+ * no documented output format. Any other adapter must run at least one probe.
  */
-const DISCOVERY_RUNS_NOTHING = new Set<string>(['droid']);
+const DISCOVERY_RUNS_NOTHING = new Set<string>(['droid', 'warp']);
 
 function expectStartedInDistro(linuxCliPath: string): void {
   expect(started.length).toBeGreaterThan(0);
