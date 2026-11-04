@@ -6673,8 +6673,9 @@ export interface AdapterRuntimeStrategy {
 
   /**
    * How the agent's real CLI session ID is captured for resume support.
-   * Omit entirely for agents that don't support resume (e.g. Aider) or
-   * that use caller-owned IDs via --session-id (e.g. Claude Code).
+   * Omit entirely for agents that don't support resume (e.g. Ollama) or
+   * that use caller-owned IDs (e.g. Claude Code's --session-id, Aider's
+   * --chat-history-file).
    */
   readonly sessionId?: {
     /** Parse session ID from hook stdin JSON. Fires once on session_start
@@ -6724,7 +6725,7 @@ export interface AdapterRuntimeStrategy {
    * authoritative telemetry is the hook-driven `statusFile` pipeline,
    * and the transcript reader is detached on the first status.json
    * parse (via StatusFileReaderCallbacks.onFirstStatus). Omit entirely
-   * for agents with no such file (Aider has no equivalent).
+   * for agents with no such file (Ollama has no equivalent).
    */
   readonly sessionHistory?: {
     /**

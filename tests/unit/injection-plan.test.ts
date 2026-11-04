@@ -416,9 +416,9 @@ describe('prepareInjectionPlan', () => {
   });
 
   it('still verifies a cwd-keyed adapter that has no agent_session_id', async () => {
-    // Aider is the case: it declares no `sessionIdCapture` because it keeps ONE
-    // `.aider.chat.history.md` per project directory, so a session never gets
-    // an agent_session_id. Without the opt-out the wrapper short-circuits on
+    // Aider is the case: a session with no id (a Command Terminal) writes Aider's
+    // shared `.aider.chat.history.md`, which `cwd` alone identifies, so it has no
+    // agent_session_id. Without the opt-out the wrapper short-circuits on
     // the missing id and the verifier can NEVER confirm - which is strictly
     // worse than having no verifier, because the burst still retries and then
     // reports `failed` where it used to stay silently `unconfirmed`.

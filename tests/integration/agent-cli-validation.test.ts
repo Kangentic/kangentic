@@ -236,7 +236,7 @@ const SESSIONS_ROOTS: Record<string, SessionRootSpec | undefined> = {
   copilot: { root: path.join(os.homedir(), '.copilot'), expectModels: true },
   opencode: undefined, // session storage path varies; skip scan check
   droid: { root: path.join(os.homedir(), '.factory', 'sessions'), expectModels: true },
-  aider: undefined, // .aider.chat.history.md lives per-project, not global
+  aider: undefined, // chat history files live in the project, not a global root
   warp: undefined, // no per-user session store
   // Grok's model list comes from its own `~/.grok/models_cache.json` (the
   // same source its /model picker uses), which the CLI writes on first use -
