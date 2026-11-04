@@ -76,6 +76,8 @@ export interface HelperRigOptions {
   endpoint?: ConstructorParameters<typeof HelperServer>[0]['endpoint'];
   homeDirectory?: string;
   baseEnv?: NodeJS.ProcessEnv;
+  /** Where the helper reads the kernel's tables from, for a test with fixture text. */
+  procDirectory?: string;
 }
 
 /** A helper whose node-pty hands out the queued fakes in order. */
@@ -90,6 +92,7 @@ export function makeHelperRig(fakeCount = 1, options: HelperRigOptions = {}): He
   const helper = new HelperServer({
     homeDirectory: options.homeDirectory,
     baseEnv: options.baseEnv,
+    procDirectory: options.procDirectory,
     coreDeps: {
       resolveAgent: () => undefined,
       transcriptSinkFor: () => null,

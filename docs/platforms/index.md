@@ -15,7 +15,7 @@
 
 ## Remote machines
 
-* [SSH remote hosts](ssh-remote.md) - Running agents on a Linux host over SSH: the trust model, adding a host without a terminal (fingerprint, password once, key file, SSH config), the program Kangentic installs on the host and how npm run build:host makes it, how a drop, a quit and a restart behave, how a remote project differs from a local one, which agents run there, and the known limits.
+* [SSH remote hosts](ssh-remote.md) - Running agents on a Linux host over SSH: the trust model, adding a host without a terminal (fingerprint, password once, key file, SSH config), the program Kangentic installs on the host and how npm run build:host makes it, how a drop, a quit and a restart behave, how a remote project differs from a local one, how a dev server's port reaches this computer, which agents run there, and the known limits.
 
 ## Failure recovery
 

@@ -163,6 +163,10 @@ describe('pty host out-of-process boundary', () => {
       // process (one renderer port serves local and remote); the fix is to start ssh on the spawn
       // worker, named as the known cost in .claude/rules/pty-host-out-of-process.md.
       'src/main/remote/link/ssh-connection.ts': 'ssh for a remote host\'s link, on dial and redial only; known to hold the thread for one CreateProcess (see above)',
+      // The same cost, once per forwarded dev-server port: an `ssh -N -L` started when a server first
+      // listens on the host, and again after a failure (backoff 2 s to 30 s). Held beside the links, which
+      // already know each host's ssh options. Not on any terminal's path.
+      'src/main/remote/link/port-forward.ts': 'ssh -N -L for a forwarded dev-server port, once per port and on a retry; the same CreateProcess cost as the link\'s ssh',
     };
     for (const devBuild of [false, true]) {
       const inputs = await bundleInputs(HOST_ENTRY, devBuild);

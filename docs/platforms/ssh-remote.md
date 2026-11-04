@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: SSH remote hosts
-description: "Running agents on a Linux host over SSH: the trust model, adding a host without a terminal (fingerprint, password once, key file, SSH config), the program Kangentic installs on the host and how npm run build:host makes it, how a drop, a quit and a restart behave, how a remote project differs from a local one, which agents run there, and the known limits."
+description: "Running agents on a Linux host over SSH: the trust model, adding a host without a terminal (fingerprint, password once, key file, SSH config), the program Kangentic installs on the host and how npm run build:host makes it, how a drop, a quit and a restart behave, how a remote project differs from a local one, how a dev server's port reaches this computer, which agents run there, and the known limits."
 tags: [ssh, remote, hosts, helper, beta]
 sources:
   - resource: src/main/remote/remote-host-service.ts
@@ -17,6 +17,9 @@ sources:
   - resource: src/main/remote/helper/helper-server.ts
   - resource: src/main/remote/helper/host-command.ts
   - resource: src/main/remote/host-file-sync.ts
+  - resource: src/main/remote/link/port-forward.ts
+  - resource: src/main/remote/port-forward-plan.ts
+  - resource: src/main/remote/helper/listening-ports.ts
   - resource: src/main/agent/shared/remote-files.ts
   - resource: scripts/build-host.mjs
   - resource: scripts/lib/deterministic-tar.mjs
@@ -89,6 +92,16 @@ Add project asks where first once a host exists: This computer, or a host. A hos
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
 - Removing a host removes its projects from Kangentic, suspends their agents and leaves the folders on the host.
 
+## Dev servers on a host
+
+An agent on a remote project reserves a dev-server port with `kangentic_reserve_dev_ports`, as on any project, and starts its server on the host at that number. Kangentic then carries the port to the same number on this computer, so `http://localhost:<port>` here and the Browser pane reach it.
+
+- **What is forwarded.** The ports reserved by tasks of the host's projects (the dev-port ledger), and only those. Kangentic works out the set from the ledger and the project rows each time it changes, so a deleted task, project or host stops its forward too (`src/main/remote/port-forward-plan.ts`).
+- **When.** Not at reservation. The host's program reports which ports listen on loopback or the wildcard address (`listeningPorts`, read from `/proc/net/tcp` and `/proc/net/tcp6`), asked every 2 seconds while a wanted port has no forward yet. A forward starts when its server first listens, usually within a few seconds of the server starting, and stays until the port is no longer wanted. A stopped server leaves an idle listener here, so restarting a server does not rebuild the forward.
+- **How.** One `ssh -N -L 127.0.0.1:<port>:localhost:<port>` per port, with the host's own connection options and key (`src/main/remote/link/port-forward.ts`), started by the process that holds the links. It is a separate `ssh`, not a channel of the link: a running `ssh` cannot take another forward on Windows (no `ControlMaster`), and a dev server's traffic would otherwise share one stream with the terminals' keystrokes. The listener is bound to 127.0.0.1 only, and named explicitly because `ExitOnForwardFailure` does not reliably fail for a half-taken `localhost` bind. The far end is `localhost`, so a server on `::1` (Vite's default) is reached too.
+- **Failures.** A port already held on this computer is reported without starting `ssh`. An `ssh` that exits while its port is still wanted is started again after 2 seconds, doubling to 30. `kangentic_check_dev_ports` tells the agent, per port, whether it is forwarding, waiting for a server, or blocked and why.
+- **Measured** on this computer's `ssh.exe` against a real `sshd`: a server on the host was reachable at `127.0.0.1` here 0.6 seconds after the first poll, a port held locally was reported blocked and then forwarded once freed, and no `ssh` was left running after the port was dropped or the forwarder was disposed.
+
 ## Files an agent edits on a host
 
 An agent's trust, hook and MCP code was written for files on this computer: it merges Kangentic's entry into the user's `~/.gemini/trustedFolders.json` or `<project>/.cursor/mcp.json` and strips it when the session ends. For a CLI on a host those files are on the host, so an adapter does not rewrite that code. It declares the files (`AgentAdapter.remoteFiles()`: paths relative to the CLI's home, paths relative to the project, and which of them hold a secret), and `HostFileSync` (`src/main/remote/host-file-sync.ts`) does the rest:
@@ -127,7 +140,9 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **The release path for the host program has not run yet.** A development build uses `npm run build:host`. An installed build reads `resources/host/manifest.json` and downloads the one archive its host's CPU needs from the release into `<config folder>/host-assets/<version>/` the first time it is needed, checks it against the manifest's SHA-256 and size, and only then sends it, so the installer grows by a few hundred bytes instead of about 90 MB. The release workflow's `build-host` job builds both archives, attaches them to the draft release and hands the manifest to every packaging leg, and each leg fails if its packaged `resources/host/manifest.json` is missing or for another version (`docs/releases/deployment.md`, "The host program"). The archives are byte-stable, so a re-run produces the same checksums. None of that has run in a real release yet: the first tagged build is its test, and the download is reachable only once the release is published. Until a build carries the manifest, a connect ends with "This build of Kangentic does not include the program to install on a host", shown on the host's row.
 - **A host with `KillUserProcesses=yes` ends the daemon with the login session that started it.** Phase 0 measured this (`docs/audits/ssh-remote-phase-0-audit.md`): only linger plus `systemd-run --user` keeps it. Kangentic does not detect the setting or change the host, so on such a host the agents end when the session that installed the program ends, and recovery treats them as lost. Enabling linger is the host owner's call.
 - **`ssh` starts on the pty host's terminal thread** when a link dials or redials, which on Windows holds local terminals for one `CreateProcess`.
-- **A remote project's dev servers are not forwarded.** `kangentic_reserve_dev_ports` reserves a number on this computer and tells the agent so, but nothing carries a port on the host to a port here, so a server an agent starts there is not reachable at localhost and the Browser pane cannot open it.
+- **Only reserved ports are forwarded.** A server an agent starts on a port it did not reserve with `kangentic_reserve_dev_ports` is not reachable from this computer. A panel that lists the host's ports and forwards them on a click is not built.
+- **A crash of the process holding the links can leave a forward's `ssh` running,** holding its local port. The next forward of that port then shows as blocked, with the port named as in use on this computer. End the stray `ssh`, or restart the computer.
+- **A host whose `sshd` sets `AllowTcpForwarding no` cannot forward.** The port shows as blocked with `ssh`'s own refusal.
 - **Tasks in a remote project share one folder.** There are no worktrees, so two agents edit the same files. The Add project form says so.
 - **A remote session has no process-tree watching.** The background-shell watcher, the transcript readers and the session-id filesystem pass read this computer's disk, so they are off for a remote session until the read mirror lands.
 - **A macOS client is unmeasured** for how an agent exits, as it is for local sessions.

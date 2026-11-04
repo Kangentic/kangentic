@@ -8,6 +8,12 @@
  * remote agents were told to end.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { PassThrough } from 'node:stream';
+import type { spawn } from 'node:child_process';
 import { HostRouter, type RoutedCore } from '../../src/main/remote/host-router';
 import type { PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import type { RemoteHostConnection } from '../../src/main/remote/protocol/messages';
@@ -167,6 +173,56 @@ describe('the remote request', () => {
 
     expect(rig.router.hub.linkOf('host-a')).toBeUndefined();
     await expect(rig.router.handleRequest('spawn', fullSpawn('remote-1', 11, 'host-a'))).rejects.toThrow('no connection set up');
+  });
+});
+
+describe('forwarding a host\'s dev-server ports', () => {
+  it('asks the host which ports listen over its link, starts an ssh for a wanted one, and ends it when the host is removed', async () => {
+    const proc = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-router-proc-'));
+    fs.mkdirSync(path.join(proc, 'net'));
+    // 127.0.0.1:7300 listening.
+    fs.writeFileSync(path.join(proc, 'net', 'tcp'), '  sl  local_address rem_address   st\n   0: 0100007F:1C84 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1 0\n');
+    const spawned: Array<{ file: string; args: string[] }> = [];
+    const stopped: unknown[] = [];
+    const bound = new Set<number>();
+    const helperRig = makeHelperRig(1, { homeDirectory: proc, baseEnv: { SHELL: '/bin/zsh' }, procDirectory: proc });
+    const core = { handleCommand: vi.fn(), handleRequest: vi.fn(), attachRendererPort: vi.fn(), liveChildCount: 0 };
+    const router = new HostRouter({
+      core: core as unknown as RoutedCore,
+      emit: () => undefined,
+      connectTo: () => async () => dialHelper(helperRig),
+      reconnect: { initialDelayMs: 100, maxDelayMs: 400 },
+      forwarding: {
+        spawnProcess: ((file: string, args: string[]) => {
+          spawned.push({ file, args });
+          bound.add(7300);
+          return Object.assign(new EventEmitter(), { stderr: new PassThrough(), exitCode: null, pid: 1 });
+        }) as unknown as typeof spawn,
+        isLocalPortBound: async (port) => bound.has(port),
+        stopProcess: (child) => stopped.push(child),
+        pollMs: 500,
+      },
+    });
+    teardown.push(() => router.hub.removeHost('host-a'), () => helperRig.helper.dispose(), () => fs.rmSync(proc, { recursive: true, force: true }));
+
+    await router.handleRequest('remote', { op: 'setForwards', hostId: 'host-a', ports: [7300] });
+    const added = router.handleRequest('remote', { op: 'addHost', hostId: 'host-a', connection });
+    await settle();
+    await added;
+    // The helper reads the kernel's table with real file I/O, which fake timers do not advance.
+    for (let attempt = 0; attempt < 40 && spawned.length === 0; attempt += 1) {
+      await settle(250);
+      await fs.promises.stat(proc);
+    }
+    await settle(1000);
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].args).toEqual(['-N', '-o', 'ExitOnForwardFailure=yes', '-L', '127.0.0.1:7300:localhost:7300', 'host-a']);
+    expect(await router.handleRequest('remote', { op: 'listForwards', hostId: 'host-a' })).toEqual([{ port: 7300, state: 'forwarding' }]);
+
+    await router.handleRequest('remote', { op: 'removeHost', hostId: 'host-a' });
+    expect(stopped).toHaveLength(1);
+    expect(await router.handleRequest('remote', { op: 'listForwards', hostId: 'host-a' })).toEqual([]);
   });
 });
 

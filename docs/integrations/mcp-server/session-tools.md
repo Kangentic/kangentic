@@ -251,6 +251,12 @@ what holds across instances and against every other process on the machine.
 The scan range is `devServer.portRangeStart` / `portRangeEnd` (default 7300-7499), chosen to miss the
 common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 
+On a project that runs on an SSH host the server is started on the host, at exactly the reserved
+number. Kangentic forwards that port to the same number on the user's computer as soon as the server
+listens, so `http://localhost:<port>` there and the Browser pane reach it (see
+[SSH remote](../../platforms/ssh-remote.md), "Dev servers on a host"). The response carries
+`data.onRemoteHost: true`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | No | The task reserving the ports, as a display ID (`42` or `#42`) or a UUID. Defaults to the caller's own task. |
@@ -294,4 +300,8 @@ is. An empty result is the normal state for a task using its project's own confi
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
 Returns `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
-`{ port, reservation, listening }` row per port checked).
+`{ port, reservation, listening }` row per port checked). For a project on an SSH host it also returns
+`data.forwards`, one `{ port, state, detail? }` row per reserved port: `forwarding` (reachable at
+`localhost` on the user's computer), `waiting` (nothing listens on the host yet) or `blocked` (with
+`ssh`'s words, or that the port is in use on the user's computer). There, `listening: true` on a
+reserved port means the forward is up.

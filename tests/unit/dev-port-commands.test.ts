@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { setPortForwardPlan, type PortForwardPlan } from '../../src/main/remote/port-forward-plan';
+import type { PortForwardStatus } from '../../src/main/remote/protocol/messages';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 /**
@@ -77,29 +78,69 @@ beforeEach(() => {
   describeDevPorts.mockResolvedValue([]);
 });
 
-describe('handleReserveDevPorts on a project that runs on an SSH host', () => {
-  const hostContext = { ...context, getProjectPath: () => '/shells/remote-project' } as unknown as CommandContext;
+describe('dev ports on a project that runs on an SSH host', () => {
+  const syncNow = vi.fn(async () => undefined);
+  const statusOf = vi.fn(async (): Promise<PortForwardStatus[]> => []);
 
-  afterEach(() => setRemoteLaunchResolver(null));
+  beforeEach(() => {
+    syncNow.mockClear();
+    statusOf.mockReset();
+    statusOf.mockResolvedValue([]);
+    setPortForwardPlan({
+      hostOfProject: (projectId: string) => (projectId === 'proj-1' ? 'host-a' : null),
+      syncNow,
+      statusOf,
+    } as unknown as PortForwardPlan);
+  });
 
-  it('tells the agent the port is on the host and is not forwarded, so it does not send the user to localhost', async () => {
-    setRemoteLaunchResolver({ isRemote: (projectPath) => projectPath === '/shells/remote-project', resolve: async () => null });
+  afterEach(() => setPortForwardPlan(null));
 
-    const result = await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
+  it('tells the agent to start its server on the host, that the port will reach the user\'s computer, and to confirm it', async () => {
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Reserved port 7300');
-    expect(result.message).toContain('not forwarded to the user');
+    expect(result.message).toContain('forwards it to the same port on the user\'s computer');
+    expect(result.message).toContain('kangentic_check_dev_ports');
     expect(result.data).toMatchObject({ ports: [7300], onRemoteHost: true });
+    // The forward is asked for before the answer, so the agent's first check already sees it.
+    expect(syncNow).toHaveBeenCalledTimes(1);
   });
 
   it('says nothing of a host for a project on this computer', async () => {
-    setRemoteLaunchResolver({ isRemote: (projectPath) => projectPath === '/shells/remote-project', resolve: async () => null });
-
-    const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, { ...context, projectId: 'local-1' } as unknown as CommandContext);
 
     expect(result.message).not.toContain('remote host');
     expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1 });
+    expect(syncNow).not.toHaveBeenCalled();
+  });
+
+  it('reports where each of the task\'s ports stands when it is checked', async () => {
+    getDevPortsForTask.mockReturnValue([7300, 7301, 7302]);
+    describeDevPorts.mockResolvedValue([status(7300, 'this-task', true), status(7301, 'this-task', false), status(7302, 'this-task', false)]);
+    statusOf.mockResolvedValue([
+      { port: 7300, state: 'forwarding' },
+      { port: 7301, state: 'waiting' },
+      { port: 7302, state: 'blocked', detail: 'Port 7302 is already in use on this computer.' },
+    ]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
+
+    expect(result.message).toContain('7300 (forwarding: http://localhost:7300 reaches your server)');
+    expect(result.message).toContain('7301 (waiting: nothing is listening on the host yet)');
+    expect(result.message).toContain('7302 (blocked: Port 7302 is already in use on this computer.)');
+    expect((result.data as { forwards: unknown[] }).forwards).toHaveLength(3);
+  });
+
+  it('adds nothing about forwarding when a local project is checked', async () => {
+    getDevPortsForTask.mockReturnValue([7300]);
+    describeDevPorts.mockResolvedValue([status(7300, 'this-task', true)]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, { ...context, projectId: 'local-1' } as unknown as CommandContext);
+
+    expect(result.message).not.toContain('Forwarded');
+    expect(result.data).not.toHaveProperty('forwards');
+    expect(statusOf).not.toHaveBeenCalled();
   });
 });
 

@@ -6,7 +6,8 @@ import {
 } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { isRemoteProjectPath } from '../../remote/remote-launch';
+import { getPortForwardPlan } from '../../remote/port-forward-plan';
+import type { PortForwardStatus } from '../../remote/protocol/messages';
 import { resolveTask } from './task-resolver';
 
 /** Bounded so a single call cannot drain the range. */
@@ -92,11 +93,13 @@ export const handleReserveDevPorts: CommandHandler = async (
   }
 
   // A project on an SSH host runs its server there. The number is reserved on the user's computer (the
-  // ledger and the bind probe are theirs), and nothing carries a host port to it yet, so a server started
-  // on the host is not reachable at localhost for the user, or for a Browser pane.
-  const onHost = isRemoteProjectPath(context.getProjectPath());
+  // ledger and the bind probe are theirs), and Kangentic carries it from the host to the same number here
+  // once a server listens on it there (`port-forward-plan.ts`), so localhost and the Browser pane reach it.
+  const plan = getPortForwardPlan();
+  const onHost = plan?.hostOfProject(context.projectId) != null;
+  if (onHost) await plan?.syncNow();
   const hostNote = onHost
-    ? ' This project runs on a remote host, so a server you start there is on the host and is not forwarded to the user\'s computer: do not tell them to open localhost, and do not expect the Browser pane to reach it.'
+    ? ' This project runs on a remote host: start your server there on exactly this port. Kangentic forwards it to the same port on the user\'s computer as soon as the server is listening (within a few seconds), so http://localhost:<port> on their computer and the Browser pane reach it. Confirm with kangentic_check_dev_ports.'
     : '';
   return {
     success: true,
@@ -106,6 +109,13 @@ export const handleReserveDevPorts: CommandHandler = async (
     data: { ports, requested: count, reserved: ports.length, ...(onHost ? { onRemoteHost: true } : {}) },
   };
 };
+
+/** One forwarded port, in the words the agent should act on. */
+function describeForward(forward: PortForwardStatus): string {
+  if (forward.state === 'forwarding') return `${forward.port} (forwarding: http://localhost:${forward.port} reaches your server)`;
+  if (forward.state === 'blocked') return `${forward.port} (blocked: ${forward.detail ?? 'ssh could not forward it'})`;
+  return `${forward.port} (waiting: nothing is listening on the host yet)`;
+}
 
 /** One port's two-source answer, in the words the agent should act on. */
 function describeStatus(status: DevPortStatus): string {
@@ -199,11 +209,20 @@ export const handleCheckDevPorts: CommandHandler = async (
     lines.push(`Also checked: ${others.map(describeStatus).join(', ')}.`);
   }
 
+  // On a project that runs on an SSH host, whether each of the task's ports reaches the user's computer.
+  const plan = getPortForwardPlan();
+  const hostId = plan?.hostOfProject(context.projectId) ?? null;
+  const forwards = hostId && plan ? await plan.statusOf(hostId) : [];
+  const forwardsOfMine = forwards.filter((forward) => mine.some((status) => status.port === forward.port));
+  if (hostId && forwardsOfMine.length > 0) {
+    lines.push(`Forwarded from the host to this computer: ${forwardsOfMine.map(describeForward).join(', ')}.`);
+  }
+
   return {
     success: true,
     message: lines.join(' '),
     // `ports` stays the task's own reservations so a caller reading just that
     // field gets what it always got; `statuses` is the two-source answer.
-    data: { ports: held, statuses },
+    data: { ports: held, statuses, ...(hostId ? { forwards: forwardsOfMine } : {}) },
   };
 };

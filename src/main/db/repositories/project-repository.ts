@@ -4,6 +4,7 @@ import type { Project, ProjectCreateInput, ProjectRemote } from '../../../shared
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
 import { softly } from '../soft-db';
+import { devPortRepository } from './dev-port-repository';
 import { rememberProjectRoots } from '../../shared/project-roots';
 
 /** A `projects` row as stored: a remote project's host and folder are two nullable columns. */
@@ -109,6 +110,7 @@ export class ProjectRepository {
       });
     });
     tx();
+    devPortRepository.notifyChanged();
   }
 
   rename(id: string, name: string): Project {

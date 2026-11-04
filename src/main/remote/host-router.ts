@@ -17,6 +17,7 @@ import type { PtyHostCommand, PtyHostEvent, PtyHostMethod, PtyHostRequestMap, Re
 import type { PtyHostRequestOptions } from '../pty/host/pty-host-client';
 import { commandRoute } from './host-routes';
 import { HostUnreachableError, LinkHub } from './link/link-hub';
+import { PortForwarder, type PortForwarderOptions } from './link/port-forward';
 import { openSshStream } from './link/ssh-connection';
 import type { HelperMethod, RemoteHostConnection, RemoteHostRequest, RemoteRequestParams } from './protocol/messages';
 
@@ -37,6 +38,8 @@ export interface HostRouterOptions {
   log?: (line: string) => void;
   /** Overrides how soon a lost link redials, for a test. */
   reconnect?: { initialDelayMs?: number; maxDelayMs?: number };
+  /** Overrides how forwards start and are probed, for a test. */
+  forwarding?: Partial<Omit<PortForwarderOptions, 'requestListening'>>;
 }
 
 function sshConnectionFor(connection: RemoteHostConnection): () => Promise<Duplex> {
@@ -45,6 +48,8 @@ function sshConnectionFor(connection: RemoteHostConnection): () => Promise<Duple
 
 export class HostRouter {
   readonly hub = new LinkHub();
+  /** Carries a host's dev-server ports to this computer; started beside the links, ended with them. */
+  readonly forwarder: PortForwarder;
   private readonly core: RoutedCore;
   private readonly connectTo: (connection: RemoteHostConnection) => () => Promise<Duplex>;
   /** One per process start, so a restarted host's PTY ids are never mistaken for the last run's. */
@@ -53,7 +58,19 @@ export class HostRouter {
   constructor(private readonly options: HostRouterOptions) {
     this.core = options.core;
     this.connectTo = options.connectTo ?? sshConnectionFor;
-    this.hub.setEventListener(options.emit);
+    this.forwarder = new PortForwarder({
+      requestListening: async (hostId) => {
+        const link = this.hub.linkOf(hostId);
+        if (!link) throw new HostUnreachableError(hostId, `Kangentic has no connection set up for host ${hostId}`);
+        return (await link.requestHelper('listeningPorts', {})).ports;
+      },
+      log: (line) => options.log?.(`[forward] ${line}`),
+      ...options.forwarding,
+    });
+    this.hub.setEventListener((event) => {
+      if (event.type === 'remoteLink') this.forwarder.linkState(event.hostId, event.state);
+      options.emit(event);
+    });
   }
 
   /** The PTYs the core still runs, and the links still sending their quit frame. */
@@ -97,6 +114,7 @@ export class HostRouter {
   beginShutdown(exitWaitMs: number | undefined): void {
     this.core.handleCommand({ type: 'shutdown' });
     this.hub.shutdown(exitWaitMs);
+    this.forwarder.dispose();
   }
 
   private async handleRemote(request: RemoteHostRequest): Promise<unknown> {
@@ -108,10 +126,17 @@ export class HostRouter {
           reconnect: this.options.reconnect,
           log: (line) => this.options.log?.(`[ssh ${request.hostId.slice(0, 8)}] ${line}`),
         }, request.sessions ?? []);
+        this.forwarder.addHost(request.hostId, request.connection);
         return { ok: true };
       case 'removeHost':
+        this.forwarder.removeHost(request.hostId);
         this.hub.removeHost(request.hostId);
         return { ok: true };
+      case 'setForwards':
+        this.forwarder.setPorts(request.hostId, request.ports);
+        return { ok: true };
+      case 'listForwards':
+        return this.forwarder.list(request.hostId);
       case 'helper': {
         const link = this.hub.linkOf(request.hostId);
         if (!link) throw new HostUnreachableError(request.hostId, `Kangentic has no connection set up for host ${request.hostId}`);

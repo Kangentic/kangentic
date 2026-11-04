@@ -188,6 +188,20 @@ export interface HelperRequestMap {
   readFile: { params: { path: string; maxBytes?: number }; result: { exists: boolean; content: string | null } };
   /** Whether each path is there. Only the helper may say a path is absent: this computer's copy proves nothing. */
   pathPresence: { params: { paths: string[] }; result: Array<'present' | 'absent'> };
+  /**
+   * The TCP ports a server on the host is listening on at loopback or the wildcard address, sorted. A
+   * failed read is an error, never an empty list: an empty list says nothing is listening.
+   */
+  listeningPorts: { params: Record<string, never>; result: { ports: number[] } };
+}
+
+/** Where one forwarded dev-server port stands (`link/port-forward.ts`). */
+export interface PortForwardStatus {
+  port: number;
+  /** `waiting`: nothing listens on the host yet. `forwarding`: reachable at 127.0.0.1 here. `blocked`: ssh could not forward it. */
+  state: 'waiting' | 'forwarding' | 'blocked';
+  /** For `blocked`, ssh's own words. */
+  detail?: string;
 }
 
 /** What the process that holds the links needs to dial one SSH host. Plain data: it crosses a process boundary. */
@@ -219,6 +233,13 @@ export type RemoteHostRequest =
    */
   | { op: 'addHost'; hostId: string; connection: RemoteHostConnection; sessions?: RemoteSessionRoute[] }
   | { op: 'removeHost'; hostId: string }
+  /**
+   * The dev-server ports of a host's projects that should reach this computer. The full set each time:
+   * a port left out stops being forwarded. Each is forwarded to the same number here once a server
+   * listens on it there.
+   */
+  | { op: 'setForwards'; hostId: string; ports: number[] }
+  | { op: 'listForwards'; hostId: string }
   | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown; raw?: Uint8Array };
 
 export type HelperMethod = keyof HelperRequestMap;

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
 import type { SshHost, SshHostCreateInput } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { devPortRepository } from './dev-port-repository';
 
 /** An `ssh_hosts` row as stored: SQLite has no boolean, so a created key is 0 or 1. */
 interface SshHostRow extends Omit<SshHost, 'key_created'> {
@@ -67,5 +68,6 @@ export class SshHostRepository {
       const reposition = db.prepare('UPDATE projects SET position = ? WHERE id = ?');
       remaining.forEach((row, index) => reposition.run(index, row.id));
     })();
+    devPortRepository.notifyChanged();
   }
 }

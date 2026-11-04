@@ -11,6 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { PATHS } from '../config/paths';
 import type { ProjectRepository } from '../db/repositories/project-repository';
+import { devPortRepository } from '../db/repositories/dev-port-repository';
 import { SshHostRepository } from '../db/repositories/ssh-host-repository';
 import type { SessionManager } from '../pty/session-manager';
 import type { HostAsset } from './link/host-installer';
@@ -18,6 +19,7 @@ import { readInstallId } from './install-identity';
 import { HostStatusBook } from './host-status';
 import { defaultSshClientPaths } from './ssh-client';
 import type { SshHostAdmin } from './ssh-host-admin';
+import { PortForwardPlan, setPortForwardPlan } from './port-forward-plan';
 import { createRemoteLaunchResolver, setRemoteLaunchResolver } from './remote-launch';
 import { RemoteHostService } from './remote-host-service';
 import { RemoteSessionRelay } from './remote-session-relay';
@@ -85,6 +87,17 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     homeMirror: (hostId) => PATHS.remoteHomeMirror(hostId),
   }));
 
+  // The reserved dev-server ports of remote projects reach this computer once a server listens on them
+  // (the pty host's forwarder starts the ssh). The ledger is the source: every change to it is a sync.
+  const forwardPlan = new PortForwardPlan({
+    leases: () => devPortRepository.listAll(),
+    projects: () => deps.projects().list(),
+    send: (request) => deps.sessionManager.remoteHostRequest(request),
+    log,
+  });
+  setPortForwardPlan(forwardPlan);
+  devPortRepository.onChange(() => forwardPlan.schedule());
+
   const connectHost = async (hostId: string): Promise<void> => {
     status.set(hostId, 'connecting');
     try {
@@ -101,6 +114,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   // new link's reconcile rebinds them to their sessions on the host.
   deps.sessionManager.on('pty-host-restarted', () => {
     for (const hostId of hostService.connectedHosts()) void connectHost(hostId);
+    // The new process remembers no forward either.
+    forwardPlan.resend();
   });
 
   return {
@@ -113,6 +128,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     async connectAll() {
       // connectHost never throws, so one host that fails or hangs holds up no other.
       await Promise.all(hosts.list().map((host) => connectHost(host.id)));
+      // Ports reserved in an earlier run are still leased: forward them once their servers are up.
+      forwardPlan.resend();
     },
   };
 }

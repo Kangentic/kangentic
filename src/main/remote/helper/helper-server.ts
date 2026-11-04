@@ -24,6 +24,7 @@ import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
 import { runHostCommand } from './host-command';
+import { readListeningPorts } from './listening-ports';
 import { HookWatcher } from './hook-watcher';
 import { patchJsonFile, type JsonPatchRequest, type JsonPatchResult } from './json-patch';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
@@ -97,6 +98,8 @@ export interface HelperServerOptions {
   homeDirectory?: string;
   /** The environment every PTY starts from, before the spawn's own variables. Defaults to the daemon's. */
   baseEnv?: NodeJS.ProcessEnv;
+  /** Where the kernel's tables are read from. Defaults to `/proc`; a test points it at fixture text. */
+  procDirectory?: string;
   /** Everything the core needs but `emit`, which the server owns. */
   coreDeps: Omit<PtyHostCoreDeps, 'emit'>;
   /** Timers and limits for the link's endpoint, which tests shorten. */
@@ -371,6 +374,7 @@ export class HelperServer {
     removeFiles: (params) => this.removeFiles(params.paths),
     removeEmptyDirectories: (params) => this.removeEmptyDirectories(params.paths),
     runCommand: (params) => this.runCommand(params),
+    listeningPorts: async () => ({ ports: await readListeningPorts(this.options.procDirectory) }),
   };
 
   private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {

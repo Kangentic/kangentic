@@ -61,6 +61,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   re-checks it as it swaps the file in, and a push is compared with what Kangentic last knew the host
   to hold (shared by every session on the host), never with one session's own pull, which another
   session's push makes stale. A file that is not plain JSON is never rewritten.
+- **A forwarded dev-server port is its own `ssh -N -L`, never a channel of the link.** The process that
+  holds the links starts it (`link/port-forward.ts`), bound to 127.0.0.1 and named explicitly, only for a
+  port the dev-port ledger leases to a project on that host, and only once the host's program reports a
+  server listening on it. Main sends the full wanted set (`port-forward-plan.ts`), recomputed from the
+  tables and not from one release path. Terminal traffic never shares a stream with it.
 - **A probe of an agent's CLI on a host runs on the host.** `execCliForTarget` and
   `place.files.runCommand` run the program through the user's shell on the host, with a timeout
   that stops its process group. `cliInvocationForTarget` throws for a host: it would start a
@@ -90,6 +95,13 @@ process, a path tested against the wrong disk, an environment that overwrites th
   runner on POSIX (banner stripped, exit code, stdin, timeout) and pins the shell choice.
   `tests/unit/<adapter>-ssh-remote.test.ts` runs each adapter's real trust and builder over a fake
   host and asserts what lands there carries host paths and nothing of this computer.
+- **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
+  (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
+  `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only
+  once a server listens, a port held here is blocked without starting `ssh`, retry with backoff, and that
+  every `ssh` is ended on removal, when a port leaves the wanted set, and on exit.
+  `tests/unit/remote-port-forward-plan.test.ts` pins the wanted set from the ledger and project rows, and
+  `tests/unit/remote-host-router.test.ts` the path through the router and the helper.
 - **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
   with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
   to prepare (the case a down link reaches) or the spawn throws, and that a local spawn that throws
