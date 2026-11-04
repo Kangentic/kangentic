@@ -138,9 +138,11 @@ export function gooseWindowsHookPath(
 ): Record<string, string> | null {
   const pathKey = Object.keys(environment).find((key) => key.toUpperCase() === 'PATH') ?? 'Path';
   const currentPath = environment[pathKey] ?? '';
-  const folders = currentPath.split(';').map((folder) => folder.trim()).filter(Boolean);
-  if (folders.some((folder) => exists(path.win32.join(folder, 'sh.exe')))) return null;
-  const gitBin = gitForWindowsBinCandidates(environment, folders, exists).find((folder) => exists(path.win32.join(folder, 'sh.exe')));
+  // Windows accepts a quoted PATH entry, such as "C:\Program Files\Git\cmd".
+  const folders = currentPath.split(';').map((folder) => folder.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  const holdsSh = (folder: string): boolean => exists(path.win32.join(folder, 'sh.exe'));
+  if (folders.some(holdsSh)) return null;
+  const gitBin = gitForWindowsBinCandidates(environment, folders, exists).find(holdsSh);
   if (!gitBin) return null;
   return { [pathKey]: currentPath ? `${currentPath.replace(/;+$/, '')};${gitBin}` : gitBin };
 }

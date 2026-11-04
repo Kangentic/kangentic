@@ -13,7 +13,8 @@ import { findGooseSession, withGooseDatabase } from './session-store';
  * camelCase (Goose's source at 1.57.0,
  * `crates/goose-provider-types/src/conversation/message.rs`):
  * - `text` {text}
- * - `thinking` {thinking}
+ * - `thinking` {thinking}, or `reasoning` {text} in a row an older Goose wrote,
+ *   which Goose's own reader turns into `thinking`
  * - `toolRequest` {id, toolCall: {status: "success", value: {name, arguments}}}
  * - `toolResponse` {id, toolResult: {status: "success", value: {content: [{type: "text", text}], isError}}}
  *   or `{status: "error", error}` when the call failed outright
@@ -142,6 +143,8 @@ export function mapGooseRows(
         if (block.text.trim().length > 0) assistantBlocks.push({ type: 'text', text: block.text });
       } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
         if (block.thinking.trim().length > 0) assistantBlocks.push({ type: 'thinking', text: block.thinking });
+      } else if (block.type === 'reasoning' && typeof block.text === 'string') {
+        if (block.text.trim().length > 0) assistantBlocks.push({ type: 'thinking', text: block.text });
       } else if (block.type === 'toolRequest' && typeof block.id === 'string') {
         const { name, input } = toolCallOf(block);
         assistantBlocks.push({ type: 'tool_use', id: block.id, name, input });

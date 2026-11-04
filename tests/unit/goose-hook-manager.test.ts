@@ -187,6 +187,36 @@ describe('gooseWindowsHookPath', () => {
     expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Other\\bin\\sh.exe'))).toBeNull();
   });
 
+  it('reads a quoted PATH entry, and leaves the entry as it was written', () => {
+    const environment = { Path: 'C:\\Windows;"D:\\Tools\\Git\\cmd"' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Git\\cmd\\git.exe', 'D:\\Tools\\Git\\bin\\sh.exe'))).toEqual({
+      Path: 'C:\\Windows;"D:\\Tools\\Git\\cmd";D:\\Tools\\Git\\bin',
+    });
+  });
+
+  it('counts sh in a quoted PATH entry as already on PATH', () => {
+    const environment = { Path: '"D:\\Tools\\Git\\usr\\bin";C:\\Windows', ProgramFiles: 'C:\\Program Files' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Git\\usr\\bin\\sh.exe', gitSh))).toBeNull();
+  });
+
+  it('matches the cmd folder in any case, with a trailing backslash, and on a share', () => {
+    const upperCase = { Path: 'C:\\Windows;D:\\Tools\\Git\\CMD\\' };
+    expect(gooseWindowsHookPath(upperCase, only('D:\\Tools\\Git\\CMD\\git.exe', 'D:\\Tools\\Git\\bin\\sh.exe'))).toEqual({
+      Path: 'C:\\Windows;D:\\Tools\\Git\\CMD\\;D:\\Tools\\Git\\bin',
+    });
+    const share = { Path: '\\\\server\\share\\Git\\cmd' };
+    expect(gooseWindowsHookPath(share, only('\\\\server\\share\\Git\\cmd\\git.exe', '\\\\server\\share\\Git\\bin\\sh.exe'))).toEqual({
+      Path: '\\\\server\\share\\Git\\cmd;\\\\server\\share\\Git\\bin',
+    });
+  });
+
+  it('falls through to a default install when the Git on PATH has no sh beside it', () => {
+    const environment = { Path: 'D:\\Tools\\Git\\cmd', ProgramFiles: 'C:\\Program Files' };
+    expect(gooseWindowsHookPath(environment, only('D:\\Tools\\Git\\cmd\\git.exe', gitSh))).toEqual({
+      Path: 'D:\\Tools\\Git\\cmd;C:\\Program Files\\Git\\bin',
+    });
+  });
+
   it('finds a per-user install under LOCALAPPDATA', () => {
     const environment = { Path: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' };
     expect(gooseWindowsHookPath(environment, only('C:\\Users\\dev\\AppData\\Local\\Programs\\Git\\bin\\sh.exe'))).toEqual({
