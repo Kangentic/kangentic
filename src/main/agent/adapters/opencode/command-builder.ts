@@ -4,7 +4,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import type { CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks } from './hook-manager';
-import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
+import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1, openCodeSupportsAutoApprove } from './version';
 import type { PermissionMode, ResolvedExecutionTarget } from '../../../../shared/types';
 
 export interface OpenCodeCommandOptions {
@@ -97,9 +97,9 @@ export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'ev
  *   continues, so the adapter types a resume's message in instead
  *   (`resumePromptDelivery: 'typed'`).
  *
- * - OpenCode 1.18.31's TUI has an auto-approve flag, `--auto`, which
- *   Kangentic does not pass: auto-approval stays the user's choice in
- *   OpenCode. OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
+ * - The TUI's auto-approve flag, `--auto` (1.17.12 and later, and OpenCode
+ *   2), is passed only for a Bypass column (`passesAutoApprove`), on a fresh
+ *   spawn and a resume alike. OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
  *   at runtime via Tab. We map Kangentic's permission-mode dropdown to
  *   the `--agent <name>` flag for the initial spawn only - resume
  *   preserves the user's runtime Tab selection rather than overriding
@@ -146,10 +146,15 @@ export class OpenCodeCommandBuilder {
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];
 
+    // `--auto` is a flag on the TUI process, not a choice the session keeps,
+    // so a resume passes it too.
+    const autoApprove = passesAutoApprove(options);
+
     // OpenCode 2's TUI takes no `--agent` or `--model`: a fresh spawn names
     // them in config (`buildOpenCodeEnv`).
     if (openCode2) {
       parts.push('--standalone');
+      if (autoApprove) parts.push('--auto');
       if (options.resume && options.sessionId) {
         parts.push('--session', quoteArg(options.sessionId, shell));
       } else if (options.prompt) {
@@ -157,6 +162,8 @@ export class OpenCodeCommandBuilder {
       }
       return parts.join(' ');
     }
+
+    if (autoApprove) parts.push('--auto');
 
     if (options.resume && options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
@@ -313,6 +320,30 @@ function buildOpenCodeAttachCommand(
 }
 
 /**
+ * The model a command names with `--model`, unquoted, or null. The builder
+ * puts `--prompt` last, so only the command before it is read, and prompt
+ * text that mentions `--model` is never taken for the flag.
+ */
+export function openCodeModelFromCommand(command: string): string | null {
+  const flags = command.split(/\s--prompt(?:\s|$)/)[0];
+  const match = /(?:^|\s)--model\s+(?:'([^']*)'|"([^"]*)"|([^\s'"]+))/.exec(flags);
+  const model = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+  return model.length > 0 ? model : null;
+}
+
+/**
+ * Whether a local TUI spawn passes `--auto`: the column's mode is Bypass and
+ * the detected CLI has the flag (`openCodeSupportsAutoApprove`). `--auto` is
+ * OpenCode's own "auto-approve permissions that are not explicitly denied"
+ * (opencode.ai/docs/permissions, `opencode --help` on 1.18.31), so a rule the
+ * user wrote as `deny` still holds. `attach` is never given it: nothing
+ * documents the flag there.
+ */
+function passesAutoApprove(options: OpenCodeCommandOptions): boolean {
+  return options.permissionMode === 'bypassPermissions' && openCodeSupportsAutoApprove(options.cliVersion);
+}
+
+/**
  * A prompt as one `--prompt` argument. A non-Unix shell (cmd.exe, PowerShell)
  * gets its double quotes swapped for single quotes first.
  */
@@ -329,7 +360,7 @@ function quotePrompt(prompt: string, shell?: string): string {
  *   plan              -> "plan"  (built-in: read-only, no edits/bash)
  *   default           -> null    (omit flag - defer to user's `default_agent` config, falls back to "build")
  *   acceptEdits       -> "build" (built-in: full tool access)
- *   bypassPermissions -> "build" (closest built-in - users wanting full bypass define their own agent and set it as `default_agent`)
+ *   bypassPermissions -> "build" (plus `--auto` where the CLI has it, see `passesAutoApprove`)
  *   dontAsk / auto    -> null    (Claude/Gemini-shaped modes that can leak through; safe to defer)
  *
  * OpenCode's primary agents define their own per-tool permissions, so

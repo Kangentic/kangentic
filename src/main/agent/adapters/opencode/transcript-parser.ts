@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import type DatabaseType from 'better-sqlite3';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
@@ -66,7 +66,7 @@ export function parseOpenCodeTranscriptAtPath(dbPath: string, sessionId: string)
 }
 
 /** Run a read-only query against the database, or answer `fallback` when it cannot be opened or read. */
-function withDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
+export function withDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
   if (!fs.existsSync(dbPath)) return fallback;
   const DatabaseConstructor = loadBetterSqlite3();
   if (!DatabaseConstructor) return fallback;
@@ -124,7 +124,7 @@ interface MessageExtent {
  * `message` as before. A session whose newest turn moves to the other store
  * changes its cursors, and the viewer starts it again (`reset`).
  */
-type MessageStore = 'v1' | 'v2';
+export type MessageStore = 'v1' | 'v2';
 
 /** The session's newest `time_created` in `table`, or null for none or no such table. */
 function newestMessageAt(database: DatabaseType.Database, table: 'message' | 'session_message', sessionId: string): number | null {
@@ -140,7 +140,7 @@ function newestMessageAt(database: DatabaseType.Database, table: 'message' | 'se
   }
 }
 
-function storeOf(database: DatabaseType.Database, sessionId: string): MessageStore {
+export function storeOf(database: DatabaseType.Database, sessionId: string): MessageStore {
   const v1Newest = newestMessageAt(database, 'message', sessionId);
   const v2Newest = newestMessageAt(database, 'session_message', sessionId);
   if (v2Newest === null) return 'v1';
@@ -275,6 +275,42 @@ export function readOpenCodeTailAtPath(dbPath: string, sessionId: string): OpenC
       cursor: encodeMessageCursor(extents[start]),
     });
     return { entries, totalPosition };
+  });
+}
+
+/**
+ * One bounded window of a session for the conversation indexer
+ * (`AgentAdapter.parseTranscriptWindow`): the whole messages that start at or
+ * after `startByte`, up to `maxBytes` of stored data, at least one. Positions are
+ * the tail's and the viewer's unit (characters of `data`), so `nextByteOffset`
+ * is where the next message starts and the walk ends at `totalBytes`. Every
+ * message carries its own usage, so no attribution carry is needed between
+ * windows. Retains nothing between calls.
+ */
+export function readOpenCodeTranscriptWindowAtPath(
+  dbPath: string,
+  sessionId: string,
+  startByte: number,
+  maxBytes: number,
+): { entries: TranscriptEntry[]; nextByteOffset: number; totalBytes: number; firstByteOffset: number; endByte: number } {
+  const empty = { entries: [], nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };
+  return withDatabase(dbPath, empty, (database) => {
+    const store = storeOf(database, sessionId);
+    const extents = messageExtents(database, sessionId, store);
+    if (extents.length === 0) return empty;
+    const totalBytes = extents[extents.length - 1].position + extents[extents.length - 1].size;
+    const from = extents.findIndex((extent) => extent.position >= startByte);
+    if (from < 0) return { entries: [], nextByteOffset: totalBytes, totalBytes, firstByteOffset: totalBytes, endByte: totalBytes };
+    let to = from + 1;
+    while (to < extents.length && extents[to].position + extents[to].size - extents[from].position <= maxBytes) to += 1;
+    const endByte = to < extents.length ? extents[to].position : totalBytes;
+    return {
+      entries: readMessages(database, sessionId, extents, from, to, store),
+      nextByteOffset: endByte,
+      totalBytes,
+      firstByteOffset: extents[from].position,
+      endByte,
+    };
   });
 }
 
@@ -428,11 +464,42 @@ export function mapOpenCodeRows(
       }
     }
 
-    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+    const usage = openCodeTurnUsage(messageData.tokens);
+    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, ...(usage ? { usage } : {}), blocks });
     for (const result of toolResults) entries.push(result);
   }
 
   return entries;
+}
+
+/**
+ * One answer's tokens as a `TranscriptTurnUsage`, from an assistant message's
+ * `tokens: { input, output, reasoning, cache: { read, write } }`
+ * (`AssistantMessage` in `@opencode-ai/sdk` at v1.18.31; OpenCode 2's records
+ * keep a `tokens` of their own, read the same way). OpenCode counts reasoning
+ * apart from output; both are generated, so both are output here. Undefined
+ * when the message reports none.
+ */
+export function openCodeTurnUsage(tokens: unknown): TranscriptTurnUsage | undefined {
+  if (!isRecord(tokens)) return undefined;
+  const cache = isRecord(tokens.cache) ? tokens.cache : {};
+  return {
+    inputTokens: positiveNumber(tokens.input),
+    outputTokens: positiveNumber(tokens.output) + positiveNumber(tokens.reasoning),
+    cacheCreationInputTokens: positiveNumber(cache.write),
+    cacheReadInputTokens: positiveNumber(cache.read),
+  };
+}
+
+/** A finite number above zero, else 0: a token count or cost read from untrusted JSON. */
+export function positiveNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** A stored `data` column parsed to an object, or null when it is not JSON or not an object. */
+export function parseJsonRecord(data: string): Record<string, unknown> | null {
+  const parsed = tryParseJson(data);
+  return isRecord(parsed) ? parsed : null;
 }
 
 /**
@@ -494,7 +561,8 @@ export function mapOpenCodeRemoteEntries(messages: OpenCodeRemoteMessageEntry[])
       }
     }
 
-    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+    const usage = openCodeTurnUsage(info.tokens);
+    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, ...(usage ? { usage } : {}), blocks });
     for (const result of toolResults) entries.push(result);
   }
 
@@ -521,7 +589,7 @@ export function capOpenCodeRemoteEntries(entries: TranscriptEntry[]): Transcript
   return prependTruncationMarker(entries.slice(start), total - kept, total);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

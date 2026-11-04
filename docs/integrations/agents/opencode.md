@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: OpenCode
-description: OpenCode's activity plugin copied into .opencode/plugins (tool calls, and question and permission waits), the --auto flag Kangentic does not pass, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, remote mode through opencode attach with no plugin or MCP, and OpenCode 2's --standalone launch with the agent and model in config.
+description: OpenCode's activity plugin copied into .opencode/plugins (tool calls, subagents, question and permission waits, and a status.json of model, context, tokens and cost), --auto for the Bypass mode, the model list from opencode models, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, remote mode through opencode attach with no plugin or MCP, and OpenCode 2's --standalone launch with the agent and model in config.
 tags: [agents, adapter, opencode]
 sources:
   - resource: src/main/agent/adapters/opencode/opencode-adapter.ts
@@ -20,6 +20,9 @@ sources:
   - resource: src/main/agent/adapters/opencode/command-injection-verifier.ts
   - resource: src/main/agent/adapters/opencode/capability-discovery.ts
   - resource: src/main/agent/adapters/opencode/project-relocation.ts
+  - resource: src/main/agent/adapters/opencode/status-parser.ts
+  - resource: src/main/agent/adapters/opencode/transcript-usage.ts
+  - resource: src/main/agent/adapters/opencode/subagent-usage.ts
 ---
 # OpenCode
 
@@ -67,13 +70,24 @@ opencode --standalone [--session <id> | --prompt <text>]
 - **Sign-in.** V2 keeps credentials in the database's `credential` table and imports a V1 `auth.json` there at start, so `probeAuth` counts that table first (local only), then reads `auth.json`.
 - **Upgrading in place.** The detected version is cached until Kangentic re-detects the CLI (a CLI path change, or a restart), so the first spawn after replacing OpenCode 1 with 2 under the same path still gets the V1 command.
 - **Answer runs** (auto-name, Knowledge Graph Ask): `run --agent plan --format json --standalone`, and the session delete takes `--standalone` too. V2 has no `--pure`. Its `run --format json` events have V1's shape. V2's built-in Plan agent allows shell commands (V1's refused them), so an answer run's inline config denies `shell` and `edit`. Measured: without the deny a scripted shell call wrote its file, with it V2 did not offer the shell tool.
-- **Model picker.** V2's root `--help` has no `--model`, so capability discovery reports the model override as supported on V2 without reading the help.
+- **Model picker.** V2's root `--help` has no `--model`, so capability discovery reports the model override as supported on V2 without reading the help. V2's `models` command has not been read, so a V2 picker has no list and takes a typed id.
+- **Bypass.** V2's TUI command keeps `--auto` (`packages/cli/src/commands/commands.ts` at v2.2.5, `PermissionParams`), so a Bypass column's V2 spawn is `opencode --standalone --auto`.
 - **Remote mode** with a local OpenCode 2 is blocked: the remote spawn is OpenCode 1's `opencode attach <url>`, which OpenCode 2 does not have. The spawn fails with "OpenCode remote mode needs OpenCode 1", and "Test connection" with a local V2 gives the same answer before it asks the server. The V2 server client and the connection test's naming of a V2 server are described under Remote Execution below.
-- **Telemetry.** OpenCode streams no token usage to Kangentic on either major, so the adapter declares `liveTelemetryUnsupported` ("Telemetry: TUI only") and the card no longer shows "Starting agent..." for the whole session.
+- **Subagents and compaction.** `createV2SessionTracker` reads the 2.2.5 event schema (`packages/schema/src/session-event.ts`): a `session.created` whose `data.parentID` is set is a `task` subagent's child session, so it writes `subagent_start` and the child's `session.execution.*` end writes `subagent_stop`, never the task's own `session_start` or `idle`. The root's turn end stops any subagent still open first. `session.compaction.started` writes `compact`. A subagent's tool calls carry its `subagentId`.
+- **Telemetry.** The V2 plugin writes the same `status.json` as OpenCode 1's (Live telemetry below): the model from the root's `session.step.started` (`Model.Ref`: `id`, `providerID`), tokens and cost from each `session.step.ended` (`TokenUsage.Info` in `token-usage.ts`), and cost from compactions and subagent steps too. The events give no model name or context limit, so the label is the id and the context size is 0. The adapter keeps `liveTelemetryUnsupported` ("Telemetry: TUI only") for remote sessions, which run no plugin; the card and context bar show it only until a session names a model.
 
 ## Permission Modes
 
-The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` (label "Plan", OpenCode's built-in read-only agent) and `acceptEdits` (label "Build", full tool access). The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. On a fresh OpenCode 1 spawn the mode sets OpenCode's `--agent` (on OpenCode 2, `default_agent` in the inline config): `plan` gives `--agent plan`, `acceptEdits` and `bypassPermissions` give `--agent build`, and `default`, `dontAsk` and `auto` give no flag, deferring to the user's `default_agent`. A resume passes only `--session <id>`, because the saved session already has an agent and the user may have switched it with Tab. OpenCode 1.18.31's TUI does have an auto-approve flag, `--auto` ("auto-approve permissions that are not explicitly denied (dangerous!)"), which Kangentic does not pass: `bypassPermissions` still maps to `--agent build`, and auto-approval is the user's choice in OpenCode (the flag, or `opencode.json`). `bypassPermissions`, `default`, `dontAsk` and `auto` sit outside the `permissions` list and are still accepted by `mapPermissionModeToAgent` for mixed-agent projects. The default mode is `acceptEdits`.
+The `permissions` list exposes the modes OpenCode itself has, in its own vocabulary:
+
+| Mode | Label | OpenCode 1 fresh spawn | OpenCode 2 fresh spawn |
+|------|-------|------------------------|------------------------|
+| `plan` | Plan | `--agent plan` (the built-in read-only agent) | `default_agent: "plan"` in the inline config |
+| `default` | Default Agent | no flag, so the user's own `default_agent` decides | nothing named |
+| `acceptEdits` | Build | `--agent build` (full tool access) | `default_agent: "build"` |
+| `bypassPermissions` | Build (Auto-approve) | `--auto --agent build` | `--auto`, `default_agent: "build"` |
+
+The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. `--auto` is OpenCode's own flag, "auto-approve permissions that are not explicitly denied (dangerous!)" (`opencode --help` on 1.18.31; [permissions](https://opencode.ai/docs/permissions/)), so a `deny` rule the user wrote still holds. OpenCode 1 added it in 1.17.12 (PRs #33279 and #34641), and an older or unread version gets `--agent build` alone, since it would reject the flag (`openCodeSupportsAutoApprove`, `version.ts`). A resume passes `--session <id>` and no `--agent`, because the saved session already has an agent and the user may have switched it with Tab. It does pass `--auto`, which is a flag on the TUI process, not a choice the session keeps. `attach` (remote mode) never gets `--auto`: nothing documents it there. `dontAsk` and `auto` have no OpenCode meaning and sit outside the list: `mapPermissionModeToAgent` still accepts them for mixed-agent projects and gives no flag. The default mode is `acceptEdits`.
 
 ## Settings Merge
 
@@ -90,6 +104,61 @@ The copy is byte-compare idempotent, and removal of either name verifies a senti
 The plugin also reports the waits on the user (GitHub #452), from its `event` hook, which OpenCode calls with every event for its directory and no type filter (`packages/opencode/src/plugin/index.ts` in 1.18.31). `question.asked` writes the permission `idle` tagged `waitKind: 'question'`, and `permission.asked` the same tagged `'approval'` (type strings from OpenCode's `packages/schema/src/v1/question.ts` and `v1/permission.ts`). OpenCode publishes both from inside the tool's own execution: it triggers `tool.execute.before`, runs the tool, whose `ask` publishes the request, then triggers `tool.execute.after`, also after a throw. So the wait lands after the tool's `tool_start` and the tool's `tool_end` ends it. The answers (`question.replied`, `question.rejected`, `permission.replied`) are logged as notifications only; a rejection ends the tool or the turn, whose next `tool_start` or `session.idle` clears the wait. OpenCode 2 does not run this plugin; its own reports the same waits (see OpenCode 2 above).
 
 The plugin file is hidden from git via the shared `.git/info/exclude` mechanism (`src/main/agent/shared/git-exclude.ts`, see [Antigravity](antigravity.md)), seeded only once the plugin file actually exists at the destination so a failed copy never leaves an entry pointing at a missing file. Earlier releases appended the entry to the project's tracked `.gitignore` instead, which dirtied the user's checkout. A line those releases appended is left in place. It names the old `.mjs` path, so the exclude entry alone hides the `.js` copy. The OpenCode 2 plugin directory is hidden the same way, under `.opencode/plugins/kangentic-activity/`.
+
+### Subagents, prompts and compaction (OpenCode 1)
+
+OpenCode's `task` tool runs a subagent in a child session whose `Session.parentID` names the task's session, and the `event` hook gets every session's events with no filter. The plugin used to write a child's `session.created` and `session.idle` as the task's own `session_start` and `idle`, which ended the task's turn while the subagent still ran. `createSessionTracker` now tells them apart: a session is a child once a `session.created` or `session.updated` shows its `parentID`, and every other session is the root (the TUI's own, or the one a resume opened).
+
+- A child's `session.created` writes `subagent_start` with `subagentId` set to the child's session id, and its `session.idle` or `session.error` writes `subagent_stop`. A child the `task` tool continues raises no second `session.created`, so its `session.status` of `busy` starts it again.
+- The root's `session.idle` first stops every subagent still open, then writes `idle`.
+- `tool.execute.before` and `tool.execute.after` add `toolId` from their `callID`, and `subagentId` for a call a child makes.
+- `chat.message` (the user's message reaching the root) writes `prompt`.
+- `experimental.session.compacting`, which OpenCode calls before it compacts a session, writes `compact`.
+
+Question and permission waits are written whichever session asked, since a subagent's wait is on the user too.
+
+OpenCode 2's plugin does the same from its own events (see OpenCode 2 above).
+
+### Live telemetry
+
+The OpenCode 1 plugin keeps the session's `status.json` beside `events.jsonl` (the same session folder, so the path needs no variable of its own and is already the distro's path under WSL), and the adapter's `statusFile.parseStatus` (`parseOpenCodeStatus`, `status-parser.ts`) reads it. The plugin rewrites it whole and in place, as Claude's status bridge does, since the reader watches the file itself and a rename would swap it under that watch; `isFullRewrite` is true. A read that lands mid-write gets bad JSON, which the parser drops.
+
+- **Model:** the one the root's newest answer came from (`providerID/modelID`, the form `--model` takes), so a `/models` switch shows once the new model answers. Before the first answer it is the root's newest `chat.params` model. Each `chat.params` input carries a `Model` (`id`, `providerID`, `name`, `limit.context`), which names and sizes that model; nothing documents that only the main agent's requests pass through `chat.params`, so it never picks the model shown on its own. A model no `chat.params` described (a resumed session's first answer) has no name and context size 0.
+- **Context:** the root's newest assistant message, `tokens.input` plus `tokens.cache.read` and `cache.write`, against `limit.context`. A model with no limit reports size 0, the unknown sentinel, and 0 percent.
+- **Tokens:** the root's assistant messages summed, each counted once at its latest numbers. Input includes the cache read and written; output includes reasoning.
+- **Cost:** every assistant message's `cost`, the subagents' included, since they are paid too.
+- **No session id** is reported, so a child session can never read as a conversation switch.
+
+OpenCode 2's plugin writes the same file from `session.step.started` and `session.step.ended` (OpenCode 2 above). A remote session runs no plugin and has no telemetry.
+
+### Model picker
+
+On OpenCode 1, discovery runs `opencode models --verbose` (`parseOpenCodeModels`, `capability-discovery.ts`) when the help lists `--model`. The command lists only the providers the user has connected (`Provider.list()` in `provider/provider.ts`, `cli/cmd/models.ts` at v1.18.31; [CLI docs](https://opencode.ai/docs/cli/#models)): one `<providerID>/<modelID>` line per model, each followed in `--verbose` by the model's JSON, whose `name` labels it. Two providers serving one name are told apart by the provider. The list is kept per CLI path until a model dropdown forces a refresh or the CLI is detected again. The agent list waits on every adapter's discovery before it answers, so an unforced ask with no list yet starts the read and answers without one; a forced ask (a dropdown opening) waits for it, joining a read already in flight. A failed read keeps the last list, or leaves the picker's typed input when there is none. `configuredModelFromCommand` seeds the card with the `--model` of a V1 command, by that name once the list has been read, and `modelDisplayName` names a telemetry-learned id from it. No effort levels are reported: OpenCode's reasoning variants differ per model and only `run` takes `--variant`, while the TUI cycles them with ctrl+t ([models](https://opencode.ai/docs/models/)).
+
+### Transcript usage, tool counts and subagents
+
+These read a local session from `opencode.db`, in the store the transcript reader picks; a remote or distro session answers null or empty.
+
+- **`transcriptUsage`** (`transcript-usage.ts`) sums every assistant message's `tokens` the way Claude's transcript usage does.
+- **Per-turn usage.** Each assistant entry the transcript readers mint carries its message's `tokens` as `usage` (`openCodeTurnUsage`), for the turn-usage ledger.
+- **`transcriptToolCounts`** counts distinct calls by name (`callID` on an OpenCode 1 tool part, `id` on an OpenCode 2 `tool` content item). **`transcriptToolResultTokens`** estimates each call's returned text (`state.output` or `state.error`, OpenCode 2's `state.content`) at four characters a token. Both keep to `sinceMs` and `untilMs` by the row's `time_created`, so the adapter declares `scopesTranscriptReadsByTime`: OpenCode keeps a resumed session's runs in one session, as Claude keeps them in one transcript.
+- **`parseTranscriptWindow`** walks the session for the conversation indexer in the transcript reader's position unit (characters of stored `data`), whole messages at a time, the same entries the tail parse mints.
+- **Subagents** (`subagent-usage.ts`, OpenCode 1). The `task` tool runs a subagent in a child session whose `session.parent_id` names its parent (`packages/core/src/session/sql.ts`), and the spawning part's `state.metadata.sessionId` names the child (`tool/task.ts`), both at v1.18.31. `parseSubagentUsage` reads each child's answers, to any depth, as one turn per assistant message, with the spawning `task` call as `parentToolUseId` and its `subagent_type` as the agent type; the `task` calls subagents make are its spawn links. `statSubagentTranscripts` signs the child sessions by count, stored size and newest update. `subagentSpawnToolName` is `task`, so the indexer links a main-thread `task` call to the turn that made it. OpenCode 2's `session_v2` parent column has not been read, so an OpenCode 2 session reports no subagents. `fileChangeTools` names `edit` and `write` by `filePath` (`tool/edit.ts` and `tool/write.ts` at v1.18.31; [tools](https://opencode.ai/docs/tools/)); `apply_patch` carries its paths inside `patchText`.
+
+### Built from documentation
+
+Everything in the four subsections above, the OpenCode 2 plugin's subagents, compaction and telemetry, and the Bypass mode, was built from OpenCode's published source and docs and has not been run against a real OpenCode session. Sources: tag v1.18.31 of `github.com/anomalyco/opencode` (`packages/plugin/src/index.ts`, `packages/sdk/js/src/gen/types.gen.ts`, `packages/core/src/session/sql.ts`, `cli/cmd/models.ts`, `provider/provider.ts`, `tool/edit.ts`, `tool/write.ts`, `tool/task.ts`) and tag v2.2.5 (`packages/cli/src/commands/commands.ts`, `packages/schema/src/session-event.ts`, `token-usage.ts`, `model.ts`). The plugin tests' fixtures are shaped from those types (`tests/fixtures/opencode-plugin-events.json`). Two parts were since checked against OpenCode 1.18.31 on a real machine: the `opencode models --verbose` layout, which `tests/fixtures/opencode-models-verbose.txt` holds verbatim, and the `opencode.db` tables and fields the usage and subagent readers use (`session.parent_id`, a `task` part's `state.metadata.sessionId` and `state.input.subagent_type`, an answer's `tokens`, `edit` and `write` taking `filePath`). Check first on a live run: that a child session's idle (OpenCode 1) or `session.execution.succeeded` (OpenCode 2) arrives, since the subagent's stop rests on it; the hook payloads the plugins read; the `status.json` numbers against the TUI's own; and that `--auto` approves a prompt.
+
+### Gaps against Claude Code
+
+Checked against OpenCode's docs and left unbuilt:
+
+- **Not supported by the CLI:** a live model or effort swap (`getInjectionSequence`; the TUI only opens pickers or cycles, `/models`, `/variants`, ctrl+t), a TUI effort flag, rate-limit windows (only `session.status` `retry`, with quota detail for OpenCode Zen alone), background commands (`bash` takes `command`, `timeout`, `workdir`), a trust prompt, readable directories by flag (only the `external_directory` permission in config), and `dontAsk` or classifier modes.
+- **Need a live probe:** plan exit (`plan_exit` exists only with `OPENCODE_EXPERIMENTAL_PLAN_MODE`, and nothing documents how an approved and a rejected exit differ in `tool.execute.after`), webp, avif, svg and pdf in `pastedImageNativeExtensions` (the TUI's paste handler lists them), `supportsReadOnlyLaunch`, `supportsPlanAutoApproval` and `mayApprovePlanTool`, `consoleCloseIsGraceful`, `hungTurn`, a paste verifier and escalation, `describeStartupFailure` and `proveConversationGone` (what `--session` does with a missing id), and an effort setting for answer runs (`run --variant`).
+- **Not applicable:** Claude's background-session members (`stopBackgroundSession` and its siblings), `runtime.sessionHistory` (the history is SQLite), `kangenticMcpBlockedReason`, `pastedImageReferenceTemplate`, and `firstPromptMayBeTyped` (measured not declared, see [First prompt typed](adapter-interface.md#first-prompt-typed-firstpromptmaybetyped)).
+- **Not built, by decision:**
+  - `openAnswerSession`. OpenCode has no stdin-JSON session to keep warm; one would be an `opencode serve` process driven over HTTP, a server lifecycle and paid answers nobody could check without a live run. The alternative, a warm `opencode serve` the adapter starts and stops itself, waits for that run.
+  - `onWorktreeRemoved` for OpenCode's per-worktree snapshot folders (`snapshot/<projectID>/<hash of the worktree>` in `instance-store.ts`, never cleaned up by OpenCode). The hook is for trust entries only, by design (see [Optional properties](optional-properties.md)), the snapshots are OpenCode's undo data, and the folder's name is an internal hash. The alternative, deleting the folder by recomputing that hash, would tie Kangentic to an OpenCode internal.
 
 ## Session ID Capture
 
@@ -130,6 +199,6 @@ The adapter tracks which cwd resolved to which remote target in an in-memory `Ma
 ## Limitations
 
 - **Concurrent same-cwd spawns cannot be disambiguated (local mode only):** Two OpenCode tasks spawned within ~30 s against the same `cwd` cannot be reliably distinguished by `captureSessionIdFromFilesystem`. Both rows match the directory + time-window predicate, so the parser returns the most recently created row - which can attribute task A's session ID to task B, or vice versa. Kangentic's per-task worktrees (`git.worktreesEnabled`, default `true`) sidestep this by giving every task its own `cwd`. If you have disabled worktrees and need to run multiple OpenCode tasks against the same project root, either re-enable worktrees in Settings -> Git or stagger the spawns by more than 30 seconds. The Codex CLI parser carries the same caveat. Does not apply to remote-mode sessions (see above).
-- **No status.json pipeline:** activity is `hooks_and_pty` - the activity plugin's events are authoritative when they fire, and PTY-silence detection (`PTY_SILENCE_THRESHOLD_MS`, same `PtyActivityTracker` shape as Codex) is the fallback tier for sessions without the plugin (remote mode, failed install). OpenCode has no statusline, so there is no `status.json` pipeline.
+- **Activity is `hooks_and_pty`:** the activity plugin's events are authoritative when they fire, and PTY-silence detection (`PTY_SILENCE_THRESHOLD_MS`, same `PtyActivityTracker` shape as Codex) is the fallback tier for sessions without the plugin (remote mode, failed install). OpenCode has no statusline; the only `status.json` is the activity plugin's (Live telemetry above), so a remote session has no live telemetry.
 - **No trust dialog:** `ensureTrust` is a no-op. OpenCode does not prompt for directory trust on first run.
 - **Remote mode is single-directory per project:** the server working directory is per-project, not per-task, so concurrent remote tasks in the same project share one directory. Per-task remote worktrees would require remote git operations (OpenCode's `POST /session/:id/shell` is the mechanism, if pursued later).

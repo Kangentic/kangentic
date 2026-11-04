@@ -17,6 +17,7 @@
 // hook-manager.ts uses it to identify files it authored before deletion, so
 // it never removes a user-authored plugin.
 import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * Same cap as the hook bridge's `FIELD_CAP` (src/main/agent/event-bridge.js):
@@ -109,7 +110,175 @@ function extractToolEndEvent(hookEvent, now = Date.now()) {
   };
 }
 
+// The OpenCode 1 plugin (kangentic-activity.mjs) keeps its own copy of the
+// helpers below and of the status shape: each plugin is one file OpenCode loads
+// alone. Edit the two together.
+function finiteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** A line that ends the root's turn: its idle (not a permission wait) or an interrupt. */
+function endsRootTurn(line) {
+  return (line.type === 'idle' && line.detail !== 'permission') || line.type === 'interrupted';
+}
+
+/** `TokenUsage.Info` (`packages/schema/src/token-usage.ts` at v2.2.5): input, output, reasoning, cache.read, cache.write. */
+function readTokens(tokens) {
+  const cache = tokens && typeof tokens === 'object' && tokens.cache && typeof tokens.cache === 'object' ? tokens.cache : {};
+  return {
+    input: finiteNumber(tokens?.input),
+    output: finiteNumber(tokens?.output),
+    reasoning: finiteNumber(tokens?.reasoning),
+    cacheRead: finiteNumber(cache.read),
+    cacheWrite: finiteNumber(cache.write),
+  };
+}
+
+/**
+ * One OpenCode 2 process's sessions. The `task` subagent runs in a child
+ * session whose `session.created` carries `data.parentID`
+ * (`packages/schema/src/session-event.ts` at v2.2.5), and the event stream
+ * holds every session's events. Without this, a child's first event wrote the
+ * task's `session_start` and its `session.execution.succeeded` the task's
+ * `idle`, which ended the task's turn while the subagent ran. A child now
+ * writes `subagent_start` and `subagent_stop`, keyed by its session id.
+ *
+ * It also keeps the session's telemetry for `status.json` (the same shape the
+ * OpenCode 1 plugin writes, read by `parseOpenCodeStatus`): the model from the
+ * root's `session.step.started` (`Model.Ref`: `id`, `providerID`), and each
+ * step's `tokens` and `cost` from `session.step.ended`, keyed by
+ * `assistantMessageID`. The events name no context limit, so the size is 0, the
+ * unknown sentinel. Cost adds the subagents' steps and compactions.
+ *
+ * Built from the 2.2.5 schema; the `step`, `compaction` and child events have
+ * not been seen in a live run.
+ */
+function createV2SessionTracker() {
+  const seenSessions = new Set();
+  const childSessions = new Set();
+  const openChildren = new Set();
+  const rootTokensByMessage = new Map();
+  const costByKey = new Map();
+  let model = null;
+  let lastRootMessage = null;
+  let compactionCount = 0;
+  let statusDirty = false;
+
+  const isNewSession = (sessionID) => {
+    if (seenSessions.has(sessionID)) return false;
+    seenSessions.add(sessionID);
+    return true;
+  };
+  const isChild = (sessionID) => typeof sessionID === 'string' && childSessions.has(sessionID);
+
+  function startChild(sessionID, now) {
+    if (openChildren.has(sessionID)) return [];
+    openChildren.add(sessionID);
+    return [{ ts: now, type: 'subagent_start', subagentId: sessionID }];
+  }
+
+  function stopChild(sessionID, now) {
+    if (!openChildren.delete(sessionID)) return [];
+    return [{ ts: now, type: 'subagent_stop', subagentId: sessionID }];
+  }
+
+  function noteStepEnded(sessionID, data) {
+    const messageID = typeof data.assistantMessageID === 'string' ? data.assistantMessageID : null;
+    if (!messageID) return;
+    costByKey.set(`step:${messageID}`, finiteNumber(data.cost));
+    statusDirty = true;
+    if (isChild(sessionID)) return;
+    rootTokensByMessage.set(messageID, readTokens(data.tokens));
+    lastRootMessage = messageID;
+  }
+
+  return {
+    onEvent(event, now = Date.now()) {
+      if (!event || typeof event !== 'object') return [];
+      const eventType = typeof event.type === 'string' ? event.type : '';
+      const data = event.data && typeof event.data === 'object' ? event.data : {};
+      const sessionID = sessionIdOf(event);
+      if (eventType === 'session.created' && sessionID && typeof data.parentID === 'string' && data.parentID.length > 0) {
+        childSessions.add(sessionID);
+        seenSessions.add(sessionID);
+        return startChild(sessionID, now);
+      }
+      if (eventType === 'session.step.ended' || eventType === 'session.step.failed') noteStepEnded(sessionID, data);
+      if (eventType === 'session.compaction.ended' || eventType === 'session.compaction.failed') {
+        compactionCount += 1;
+        costByKey.set(`compaction:${compactionCount}`, finiteNumber(data.cost));
+        statusDirty = true;
+      }
+      if (isChild(sessionID)) {
+        if (eventType === 'session.execution.started') return startChild(sessionID, now);
+        if (/^session\.execution\./.test(eventType)) return stopChild(sessionID, now);
+        // A subagent's wait is on the user too.
+        if (/^(question|permission)\./.test(eventType)) return extractEvent(event, () => false, now);
+        return [];
+      }
+      if (eventType === 'session.step.started' && data.model && typeof data.model === 'object' && typeof data.model.id === 'string') {
+        const stepModel = typeof data.model.providerID === 'string' && data.model.providerID ? `${data.model.providerID}/${data.model.id}` : data.model.id;
+        if (stepModel !== model) {
+          model = stepModel;
+          statusDirty = true;
+        }
+      }
+      if (eventType === 'session.compaction.started') {
+        const lines = sessionID && isNewSession(sessionID)
+          ? [{ ts: now, type: 'session_start', hookContext: JSON.stringify({ sessionID }).slice(0, 2048) }]
+          : [];
+        return [...lines, { ts: now, type: 'compact' }];
+      }
+      const lines = extractEvent(event, isNewSession, now);
+      if (!lines.some(endsRootTurn)) return lines;
+      // The root's turn is over, so no subagent of it is still running. The
+      // stops go after a `session_start` this event opened and before the idle.
+      const stops = [];
+      for (const child of [...openChildren]) stops.push(...stopChild(child, now));
+      const starts = lines.filter((line) => line.type === 'session_start');
+      const rest = lines.filter((line) => line.type !== 'session_start');
+      return [...starts, ...stops, ...rest];
+    },
+
+    toolStart(hookEvent, now = Date.now()) {
+      const line = extractToolStartEvent(hookEvent, now);
+      return isChild(hookEvent?.sessionID) ? { ...line, subagentId: hookEvent.sessionID } : line;
+    },
+
+    toolEnd(hookEvent, now = Date.now()) {
+      const line = extractToolEndEvent(hookEvent, now);
+      return isChild(hookEvent?.sessionID) ? { ...line, subagentId: hookEvent.sessionID } : line;
+    },
+
+    takeStatusChange() {
+      const changed = statusDirty;
+      statusDirty = false;
+      return changed;
+    },
+
+    status() {
+      if (!model) return null;
+      const totals = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+      for (const tokens of rootTokensByMessage.values()) {
+        for (const key of Object.keys(totals)) totals[key] += tokens[key];
+      }
+      let costUsd = 0;
+      for (const cost of costByKey.values()) costUsd += cost;
+      return {
+        kangenticOpenCodeStatus: 1,
+        model: { id: model },
+        contextLimit: 0,
+        context: (lastRootMessage && rootTokensByMessage.get(lastRootMessage)) || { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        totals,
+        costUsd,
+      };
+    },
+  };
+}
+
 const eventsPath = process.env.KANGENTIC_EVENTS_PATH;
+// Beside the events file, as the OpenCode 1 plugin keeps it.
+const statusPath = eventsPath ? path.join(path.dirname(eventsPath), 'status.json') : null;
 
 function appendEvent(event) {
   if (!eventsPath || !event) return;
@@ -120,30 +289,36 @@ function appendEvent(event) {
   }
 }
 
+/** Rewrite the status file whole, in place, as the OpenCode 1 plugin does. */
+function writeStatus(status) {
+  if (!statusPath || !status) return;
+  try {
+    fs.writeFileSync(statusPath, JSON.stringify(status));
+  } catch {
+    // Best effort. The session may have ended and its folder gone.
+  }
+}
+
 export default {
   id: 'kangentic.activity',
   async setup(ctx) {
     if (!eventsPath) return undefined;
-    const seenSessions = new Set();
-    const isNewSession = (sessionID) => {
-      if (seenSessions.has(sessionID)) return false;
-      seenSessions.add(sessionID);
-      return true;
-    };
+    const tracker = createV2SessionTracker();
     const controller = new AbortController();
     void (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-          for (const line of extractEvent(event, isNewSession)) appendEvent(line);
+          for (const line of tracker.onEvent(event)) appendEvent(line);
+          if (tracker.takeStatusChange()) writeStatus(tracker.status());
         }
       } catch {
         // The subscription ends with the plugin (abort) or the server.
       }
     })();
-    await ctx.tool.hook('execute.before', (hookEvent) => appendEvent(extractToolStartEvent(hookEvent)));
-    await ctx.tool.hook('execute.after', (hookEvent) => appendEvent(extractToolEndEvent(hookEvent)));
+    await ctx.tool.hook('execute.before', (hookEvent) => appendEvent(tracker.toolStart(hookEvent)));
+    await ctx.tool.hook('execute.after', (hookEvent) => appendEvent(tracker.toolEnd(hookEvent)));
     return () => controller.abort();
   },
   // For the unit tests. OpenCode reads only `id` and `setup`.
-  helpers: { extractEvent, extractToolDetail, extractToolStartEvent, extractToolEndEvent },
+  helpers: { extractEvent, extractToolDetail, extractToolStartEvent, extractToolEndEvent, createV2SessionTracker },
 };
