@@ -248,6 +248,44 @@ describe('mapGooseRows', () => {
     ])).toEqual([]);
   });
 
+  it('reads the assistant message Goose\'s own deserialization test pins', () => {
+    // The literal in test_deserialization (goose-provider-types conversation/message.rs).
+    const contentJson = `[
+      { "type": "text", "text": "I'll help you with that." },
+      {
+        "type": "toolRequest",
+        "id": "tool123",
+        "toolCall": { "status": "success", "value": { "name": "test_tool", "arguments": { "param": "value" } } }
+      }
+    ]`;
+    const entries = mapGooseRows([{
+      id: 1,
+      role: 'assistant',
+      content_json: contentJson,
+      created_timestamp: 1740171566,
+      metadata_json: '{ "agentVisible": true, "userVisible": true }',
+    }]);
+    expect(entries).toEqual([{
+      kind: 'assistant',
+      uuid: 'goose:1',
+      ts: 1_740_171_566_000,
+      blocks: [
+        { type: 'text', text: 'I\'ll help you with that.' },
+        { type: 'tool_use', id: 'tool123', name: 'test_tool', input: { param: 'value' } },
+      ],
+    }]);
+  });
+
+  it('shows the reasoning block an older Goose stored as thinking', () => {
+    // The literal in test_deserialization_migrates_reasoning_to_thinking.
+    const entries = mapGooseRows([
+      row(1, 'assistant', [{ type: 'reasoning', text: 'step by step' }, text('final answer')], 1740171566),
+    ]);
+    expect(entries).toEqual([expect.objectContaining({
+      blocks: [{ type: 'thinking', text: 'step by step' }, { type: 'text', text: 'final answer' }],
+    })]);
+  });
+
   it('reads a millisecond timestamp as milliseconds', () => {
     expect(mapGooseRows([row(1, 'user', [text('hi')], 1_800_000_000_123)])[0].ts).toBe(1_800_000_000_123);
   });
