@@ -118,14 +118,16 @@ describe('Adapter summarize() invocation shapes', () => {
   // and those of the answer run's read-only and no-session flags that leave its
   // mode alone. A mode change waits for a title measured in that mode.
   const GROK_DENY = ['--deny', 'Write', '--deny', 'Edit', '--deny', 'Bash', '--no-subagents', '--disable-web-search', '--no-memory'];
+  // Grok names its title run's session itself (`-s`), a fresh UUID each run.
+  const GROK_SESSION_UUID = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   type Summarizer = { summarize: (prompt: string, cliPath: string, cwd: string, options?: { model?: string | null; effort?: string | null }) => Promise<string> };
-  const summarizers: Array<[string, () => Promise<Summarizer>, string[]]> = [
+  const summarizers: Array<[string, () => Promise<Summarizer>, unknown[]]> = [
     ['codex', async () => new (await import('../../src/main/agent/adapters/codex/codex-adapter')).CodexAdapter(), ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', '--model', 'm1']],
     ['kimi', async () => new (await import('../../src/main/agent/adapters/kimi/kimi-adapter')).KimiAdapter(), ['--print', '--quiet', '--model', 'm1']],
     ['qwen', async () => new (await import('../../src/main/agent/adapters/qwen-code/qwen-adapter')).QwenAdapter(), ['--output-format', 'text', '--chat-recording=false', '--model', 'm1']],
     ['droid', async () => new (await import('../../src/main/agent/adapters/droid/droid-adapter')).DroidAdapter(), ['exec', '-o', 'text', '--model', 'm1']],
     ['cursor', async () => new (await import('../../src/main/agent/adapters/cursor/cursor-adapter')).CursorAdapter(), ['--trust', '--output-format', 'text', '--model', 'm1', '-p']],
-    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', ...GROK_DENY, '--model', 'm1', '--reasoning-effort', 'low', '-p']],
+    ['grok', async () => new (await import('../../src/main/agent/adapters/grok/grok-adapter')).GrokAdapter(), ['--output-format', 'plain', ...GROK_DENY, '--model', 'm1', '--reasoning-effort', 'low', '-s', GROK_SESSION_UUID, '-p']],
   ];
   it.each(summarizers)('%s passes the chosen model as its answer run does', async (_name, create, expectedArgs) => {
     const adapter = await create();
@@ -185,8 +187,71 @@ describe('Adapter summarize() invocation shapes', () => {
     const adapter = new GrokAdapter();
     await adapter.summarize('triage crash report', '/usr/bin/grok', '/cwd');
     const call = runCliPrintSummarizeMock.mock.calls[0][0];
-    expect(call.args).toEqual(['--output-format', 'plain', ...GROK_DENY, '-p']);
+    expect(call.args).toEqual(['--output-format', 'plain', ...GROK_DENY, '-s', GROK_SESSION_UUID, '-p']);
     expect(call.promptVia).toBe('arg');
+  });
+
+  it('Grok removes the session its title run named, and only that one', async () => {
+    // A headless run keeps its session in ~/.grok/sessions like any other.
+    // The run names it with -s, so the folder to remove is known before the
+    // run starts, and a sibling session in the same folder is left alone.
+    const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-summarize-home-'));
+    const originalGrokHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
+      const { grokSessionDir } = await import('../../src/main/agent/adapters/grok/session-paths');
+      const answerHome = path.join(grokHome, 'answer-home');
+      const siblingSession = grokSessionDir(answerHome, '00000000-0000-4000-8000-000000000001', null);
+      fs.mkdirSync(siblingSession, { recursive: true });
+      let titleSession = '';
+      runCliPrintSummarizeMock.mockImplementationOnce(async (input: { args: string[] }) => {
+        titleSession = grokSessionDir(answerHome, input.args[input.args.indexOf('-s') + 1], null);
+        fs.mkdirSync(titleSession, { recursive: true });
+        fs.writeFileSync(path.join(titleSession, 'updates.jsonl'), '{}\n');
+        return 'Mocked Title';
+      });
+
+      await new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome);
+
+      expect(titleSession).not.toBe('');
+      expect(fs.existsSync(titleSession)).toBe(false);
+      expect(fs.existsSync(siblingSession)).toBe(true);
+    } finally {
+      if (originalGrokHome === undefined) delete process.env.GROK_HOME;
+      else process.env.GROK_HOME = originalGrokHome;
+      fs.rmSync(grokHome, { recursive: true, force: true });
+    }
+  });
+
+  it('Grok removes the session its title run named even when the run fails, and the error still propagates', async () => {
+    // A timed-out or crashed run still leaves its session folder behind, so the
+    // cleanup must run on the failure path too, not only after a clean return.
+    const grokHome = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-summarize-fail-home-'));
+    const originalGrokHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const { GrokAdapter } = await import('../../src/main/agent/adapters/grok/grok-adapter');
+      const { grokSessionDir } = await import('../../src/main/agent/adapters/grok/session-paths');
+      const answerHome = path.join(grokHome, 'answer-home');
+      let titleSession = '';
+      runCliPrintSummarizeMock.mockImplementationOnce(async (input: { args: string[] }) => {
+        titleSession = grokSessionDir(answerHome, input.args[input.args.indexOf('-s') + 1], null);
+        fs.mkdirSync(titleSession, { recursive: true });
+        fs.writeFileSync(path.join(titleSession, 'updates.jsonl'), '{}\n');
+        throw new Error('timed out');
+      });
+
+      await expect(new GrokAdapter().summarize('triage crash report', '/usr/bin/grok', answerHome))
+        .rejects.toThrow('timed out');
+
+      expect(titleSession).not.toBe('');
+      expect(fs.existsSync(titleSession)).toBe(false);
+    } finally {
+      if (originalGrokHome === undefined) delete process.env.GROK_HOME;
+      else process.env.GROK_HOME = originalGrokHome;
+      fs.rmSync(grokHome, { recursive: true, force: true });
+    }
   });
 
   it('all adapters with summarize wrap the prompt via buildSummarizePrompt', async () => {

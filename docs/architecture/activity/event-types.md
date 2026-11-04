@@ -177,7 +177,8 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   Planning's (kangentic-mobile #119). So an adapter can report the session's mode on its events, as
   the boolean `SessionEvent.planMode` that the `extractPlanMode` directive sets. Claude's
   `UserPromptSubmit` and `Stop` hooks carry `permission_mode`. A payload that carries `agent_id`
-  fired inside a subagent, which can run in its own mode, so it reports nothing. `SessionTelemetry`
+  fired inside a subagent, which can run in its own mode, so it reports nothing. Grok's carry
+  `permissionMode`, and a subagent's carries `subagentType` (built from Grok's docs). `SessionTelemetry`
   keeps each session's changes in a `PlanModeTrail` (`plan-mode-trail.ts`), stamped with the app's
   clock at ingest rather than `event.ts`, which is the agent host's.
   `SessionManager.hadLeftPlanModeBy(sessionId, atMs)` is true when the session reported plan mode

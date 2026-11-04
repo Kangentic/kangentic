@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
@@ -7,13 +8,13 @@ import { GrokCommandBuilder, grokMcpWiringEnabled } from './command-builder';
 import { removeHooksFile } from './hook-manager';
 import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV, removeMcpConfig, writeMcpConfig } from './mcp-config';
 import { GrokStatusParser } from './status-parser';
-import { GrokSessionHistoryParser, grokModelDisplayName } from './session-history-parser';
-import { parseGrokTranscript, readGrokTranscriptPage, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
+import { GrokSessionHistoryParser, grokCachedModelDisplayName, grokModelDisplayName } from './session-history-parser';
+import { parseGrokTranscript, parseGrokTranscriptWindow, readGrokTranscriptPage, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
 import { createGrokCommandInjectionVerifier } from './command-injection-verifier';
 import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
-import { grokChatHistoryPath, grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
+import { grokChatHistoryPath, grokSessionDir } from './session-paths';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -33,6 +34,7 @@ import type {
   SpawnCommandOptions,
   SettingsChangeSpec,
   ParsedTranscript,
+  ParsedTranscriptWindow,
   SummarizeOptions,
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
@@ -61,6 +63,24 @@ export function grokInitSessionId(line: string): string | null {
     return null;
   }
 }
+
+/**
+ * Remove one headless run's session folder from `~/.grok/sessions`. The id
+ * becomes a path segment of a recursive delete, so only a plain id is trusted:
+ * `..` would name the sessions folder itself. Best effort: a folder left
+ * behind costs disk, not correctness.
+ */
+async function removeGrokSession(cwd: string, sessionId: string | null, place: CliPlace | null): Promise<void> {
+  if (!sessionId || !/^[\w-]+$/.test(sessionId)) return;
+  await fs.promises.rm(grokSessionDir(cwd, sessionId, place), { recursive: true, force: true }).catch(() => undefined);
+}
+
+/**
+ * A value typed after a slash command must be one plain token: Grok reads the
+ * words after `/model` as its window and effort, and a line break would submit
+ * what follows as a prompt.
+ */
+const GROK_SLASH_ARGUMENT = /^[\w.:/@+-]+$/;
 
 /**
  * Grok Build (xAI) adapter - the full Claude-class harness.
@@ -99,6 +119,14 @@ export class GrokAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
   readonly transcriptHasTimestamps = false;
+  /**
+   * Grok's subagent tool (01-getting-started.md and 16-subagents.md shipped
+   * with 1.0.0; 10-hooks.md aliases Claude's `Task` to it). Built from the
+   * docs. The conversation indexer records a spawn link for each call, but
+   * nothing attributes usage to one until Grok's subagent turns are parsed into
+   * the usage ledger.
+   */
+  readonly subagentSpawnToolName = 'spawn_subagent';
   /**
    * `--permission-mode` accepts Kangentic's exact PermissionMode names
    * (verified in `grok --help`), so all six pass through 1:1. Internally
@@ -249,9 +277,16 @@ export class GrokAdapter implements AgentAdapter {
    * from the NEW cwd?" gate, where a cross-cwd match on the OLD cwd's
    * store would falsely skip the migration and `--resume` would start
    * empty.
+   *
+   * It names `chat_history.jsonl`, the file `parseTranscriptWindow` walks:
+   * the index, the archive and the message trail size and offset the file
+   * this returns, and offsets into one file are wrong for the other. Both
+   * live in the one session folder, so the existence answers do not change
+   * for a conversation that had a turn. Telemetry still tails
+   * `updates.jsonl` through `runtime.sessionHistory`'s own locator.
    */
   async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
-    const expectedPath = grokUpdatesJsonlPath(cwd, agentSessionId, place ?? null);
+    const expectedPath = grokChatHistoryPath(cwd, agentSessionId, place ?? null);
     try {
       fs.accessSync(expectedPath);
       return expectedPath;
@@ -262,6 +297,22 @@ export class GrokAdapter implements AgentAdapter {
 
   async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
     return parseGrokTranscript(agentSessionId, cwd, place ?? null);
+  }
+
+  /**
+   * One bounded window of `chat_history.jsonl`, so the conversation index and
+   * the transcript archive cover the whole conversation rather than its tail.
+   * Grok reports no usage per line, so the attribution carry is not used.
+   */
+  async parseTranscriptWindow(
+    agentSessionId: string,
+    cwd: string,
+    startByte: number,
+    maxBytes: number,
+    _attributedMessageIds?: Set<string>,
+    place?: CliPlace | null,
+  ): Promise<ParsedTranscriptWindow> {
+    return parseGrokTranscriptWindow(agentSessionId, grokChatHistoryPath(cwd, agentSessionId, place ?? null), startByte, maxBytes);
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
@@ -337,15 +388,29 @@ export class GrokAdapter implements AgentAdapter {
   }
 
   /**
-   * Grok has native `/model <id> [effort]` and `/effort <level>` slash
-   * commands, but slash submissions are unverifiable here (see
-   * `canVerifySlashSubmission`) - an unconfirmed injection that lands in
-   * the prompt box as literal text would pollute the conversation. The
-   * suspend + respawn fallback applies `--model` / `--reasoning-effort`
-   * deterministically instead.
+   * The Command Terminal's live model and effort swap, through Grok's own
+   * slash commands (04-slash-commands.md shipped with 1.0.0): `/model <name>`
+   * takes a model id, and `/effort <level>` sets the current model's effort.
+   * `/model` gets the id alone: the arguments after it changed by 1.0.45
+   * (model, then window, then effort), and an id alone reads the same in both.
+   * Model first, so the effort lands on the model that should carry it.
+   *
+   * Built from the docs; not yet typed into a running Grok. Its only caller
+   * types it unverified (`verify: 'none'`), so `canVerifySlashSubmission`
+   * does not apply; that governs a task's auto_commands. A task session never
+   * asks: it restarts with `--model` / `--reasoning-effort`. A value that is
+   * not one plain token (`GROK_SLASH_ARGUMENT`) is not typed at all.
    */
-  getInjectionSequence(_spec: SettingsChangeSpec): string[] {
-    return [];
+  getInjectionSequence(spec: SettingsChangeSpec): string[] {
+    const sequence: string[] = [];
+    if (spec.modelChanged && spec.model && GROK_SLASH_ARGUMENT.test(spec.model)) sequence.push(`/model ${spec.model}`);
+    if (spec.effortChanged && spec.effort && GROK_SLASH_ARGUMENT.test(spec.effort)) sequence.push(`/effort ${spec.effort}`);
+    return sequence;
+  }
+
+  /** A learned model id's name from Grok's own models cache, or null when the cache does not name it. */
+  modelDisplayName(modelId: string): string | null {
+    return grokCachedModelDisplayName(modelId);
   }
 
   configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
@@ -390,31 +455,42 @@ export class GrokAdapter implements AgentAdapter {
    * run's model and effort flags and its deny rules. A user's
    * `permission_mode = "always-approve"` let the plain run write files and run
    * commands; the deny rules are the one control that beats it (see
-   * `answerFromContext`). The session it leaves in `~/.grok/sessions` stays:
-   * removing it needs the stream's init line, so that waits until a title is
-   * measured on the answer run itself (the CLI here was too old to run).
+   * `answerFromContext`).
+   *
+   * The run names its own session (`-s <uuid>`), and that session's folder in
+   * `~/.grok/sessions` is removed afterwards, as the answer run removes its
+   * own. 17-sessions.md (shipped with 1.0.0) documents `-s` for a headless
+   * run: "only to create a new session with a UUID". Built from the docs; the
+   * CLI here is too old to reach xAI's API.
    */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
-    return runCliPrintSummarize({
-      cliPath,
-      args: [
-        '--output-format', 'plain',
-        '--deny', 'Write',
-        '--deny', 'Edit',
-        '--deny', 'Bash',
-        '--no-subagents',
-        '--disable-web-search',
-        '--no-memory',
-        ...(options?.model ? ['--model', options.model] : []),
-        ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
-        '-p',
-      ],
-      prompt: buildSummarizePrompt(prompt),
-      cwd,
-      promptVia: 'arg',
-      // A Grok installed in a WSL distro runs there.
-      cliTarget: await resolveCliTarget(cliPath, true),
-    });
+    const cliTarget = await resolveCliTarget(cliPath, true);
+    const sessionId = randomUUID();
+    try {
+      return await runCliPrintSummarize({
+        cliPath,
+        args: [
+          '--output-format', 'plain',
+          '--deny', 'Write',
+          '--deny', 'Edit',
+          '--deny', 'Bash',
+          '--no-subagents',
+          '--disable-web-search',
+          '--no-memory',
+          ...(options?.model ? ['--model', options.model] : []),
+          ...(options?.effort ? ['--reasoning-effort', options.effort] : []),
+          '-s', sessionId,
+          '-p',
+        ],
+        prompt: buildSummarizePrompt(prompt),
+        cwd,
+        promptVia: 'arg',
+        // A Grok installed in a WSL distro runs there.
+        cliTarget,
+      });
+    } finally {
+      await removeGrokSession(cwd, sessionId, cliTarget);
+    }
   }
 
   readonly answerCapabilities = { streaming: true, search: true, model: true, effort: true, defaultEffort: 'low' };
@@ -554,12 +630,8 @@ export class GrokAdapter implements AgentAdapter {
         ...(input.env ? { env: input.env } : {}),
       });
     } finally {
-      // The id comes off the CLI's own output and becomes a path segment of a
-      // recursive delete, so only a plain id is trusted: `..` would name the
-      // sessions folder itself.
-      if (sessionId && /^[\w-]+$/.test(sessionId)) {
-        await fs.promises.rm(grokSessionDir(cwd, sessionId, cliTarget), { recursive: true, force: true }).catch(() => undefined);
-      }
+      // The id comes off the CLI's own output; the helper trusts only a plain one.
+      await removeGrokSession(cwd, sessionId, cliTarget);
     }
   }
 
