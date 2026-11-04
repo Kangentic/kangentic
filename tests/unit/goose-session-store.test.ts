@@ -276,6 +276,17 @@ describe('mapGooseRows', () => {
     }]);
   });
 
+  it('reads a tool result an older Goose stored as a bare content array', () => {
+    const entries = mapGooseRows([row(1, 'user', [{
+      type: 'toolResponse',
+      id: 'c1',
+      toolResult: { status: 'success', value: [{ type: 'text', text: 'a.txt' }] },
+    }], 1)]);
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: 'tool_result', toolUseId: 'c1', content: 'a.txt', isError: false }),
+    ]);
+  });
+
   it('shows the reasoning block an older Goose stored as thinking', () => {
     // The literal in test_deserialization_migrates_reasoning_to_thinking.
     const entries = mapGooseRows([
