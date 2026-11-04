@@ -37,10 +37,17 @@
  *     through the same threshold and recovery line. MemAvailable alone reads
  *     low on a healthy machine that keeps cold pages in swap.
  *   - macOS: the kernel's own verdict, `kern.memorystatus_vm_pressure_level`
- *     (1 normal, 2 warn, 4 critical). No byte figure there is trustworthy:
- *     compressed memory and swap grow on demand. The level is read through
- *     `sysctl` off the main thread after each tick and reported on the next,
- *     so it is one tick late; a reading older than two ticks counts as unknown.
+ *     (1 normal, 2 warn, 4 critical). Critical is low and normal is not. Warn
+ *     alone says too little: a machine sat at warn on every check with 36% of
+ *     its memory free and its swap 94% full, and agents were paused for it.
+ *     Swap is no ceiling there, since macOS adds swap files as it needs them,
+ *     and if room really runs out the level goes to critical. So warn is judged
+ *     by the kernel's own free percentage (`kern.memorystatus_level`) against
+ *     the threshold and recovery line the other platforms use. `os.freemem` is
+ *     not that figure: it leaves out memory the kernel can reclaim. Both are
+ *     read through `sysctl` off the main thread after each tick and reported on
+ *     the next, so they are one tick late; a reading older than two ticks
+ *     counts as unknown.
  */
 
 import type { HostMemorySample } from '../../shared/types';
@@ -53,6 +60,8 @@ const BYTES_PER_KB = 1024;
 export interface SampleHostMemoryOptions {
   /** The cached macOS pressure level (see `createPressureLevelReader`). */
   memoryPressureLevel?: number | null;
+  /** The cached macOS free percentage, read the same way. */
+  memoryFreePercent?: number | null;
 }
 
 /** Only Windows' swapTotal/swapFree have been verified to mean commit
@@ -77,6 +86,7 @@ export function sampleHostMemory(options: SampleHostMemoryOptions = {}): HostMem
     swapTotalBytes: isLinux && info.swapTotal != null ? info.swapTotal * BYTES_PER_KB : null,
     swapFreeBytes: isLinux && info.swapFree != null ? info.swapFree * BYTES_PER_KB : null,
     memoryPressureLevel: process.platform === 'darwin' ? options.memoryPressureLevel ?? null : null,
+    memoryFreePercent: process.platform === 'darwin' ? options.memoryFreePercent ?? null : null,
   };
 }
 
@@ -126,9 +136,9 @@ export type MemoryHeadroom =
   | { kind: 'bytes'; remainingBytes: number; limitBytes: number }
   | { kind: 'level'; low: boolean };
 
-/** macOS pressure levels that count as low memory: warn (2) and critical (4). */
-const MAC_LOW_PRESSURE_LEVELS: ReadonlySet<number> = new Set([2, 4]);
 const MAC_NORMAL_PRESSURE_LEVEL = 1;
+const MAC_WARN_PRESSURE_LEVEL = 2;
+const MAC_CRITICAL_PRESSURE_LEVEL = 4;
 
 /**
  * The sample's headroom, or null when this platform's reading is missing or
@@ -154,9 +164,16 @@ export function memoryHeadroom(sample: HostMemorySample): MemoryHeadroom | null 
   if (sample.platform === 'darwin') {
     const level = sample.memoryPressureLevel ?? null;
     if (level === null) return null;
-    if (MAC_LOW_PRESSURE_LEVELS.has(level)) return { kind: 'level', low: true };
+    if (level === MAC_CRITICAL_PRESSURE_LEVEL) return { kind: 'level', low: true };
     if (level === MAC_NORMAL_PRESSURE_LEVEL) return { kind: 'level', low: false };
-    return null;
+    if (level !== MAC_WARN_PRESSURE_LEVEL) return null;
+    const freePercent = sample.memoryFreePercent ?? null;
+    if (freePercent === null || sample.physicalTotalBytes <= 0) return null;
+    return {
+      kind: 'bytes',
+      remainingBytes: sample.physicalTotalBytes * (freePercent / 100),
+      limitBytes: sample.physicalTotalBytes,
+    };
   }
   return null;
 }
@@ -168,15 +185,24 @@ export function parseMacPressureLevel(stdout: string): number | null {
   return Number(trimmed);
 }
 
-/** Reads the macOS level once, off the main thread. Null on any failure. */
-async function readMacPressureLevel(): Promise<number | null> {
+/** `kern.memorystatus_level` prints a percentage. Anything else is unknown. */
+export function parseMacFreePercent(stdout: string): number | null {
+  const percent = parseMacPressureLevel(stdout);
+  return percent !== null && percent <= 100 ? percent : null;
+}
+
+/** Reads one macOS sysctl once, off the main thread. Null on any failure. */
+async function readMacSysctl(name: string, parse: (stdout: string) => number | null): Promise<number | null> {
   try {
-    const { stdout } = await execFileAsync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 2000 });
-    return parseMacPressureLevel(stdout);
+    const { stdout } = await execFileAsync('/usr/sbin/sysctl', ['-n', name], { timeout: 2000 });
+    return parse(stdout);
   } catch {
     return null;
   }
 }
+
+const readMacPressureLevel = (): Promise<number | null> => readMacSysctl('kern.memorystatus_vm_pressure_level', parseMacPressureLevel);
+const readMacFreePercent = (): Promise<number | null> => readMacSysctl('kern.memorystatus_level', parseMacFreePercent);
 
 export interface PressureLevelReader {
   /** The cached level, or null when there is none or it is older than `maxAgeMs`. */
@@ -320,6 +346,9 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
   const state = createHostMemoryPressureState();
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const pressureLevel = process.platform === 'darwin' ? createPressureLevelReader() : null;
+  // Its own read: an unknown name fails a whole sysctl run, and the level must
+  // survive a macOS that lacks this one.
+  const freePercent = process.platform === 'darwin' ? createPressureLevelReader(readMacFreePercent) : null;
   const tick = (): void => {
     // A diagnostics sampler must never be the thing that crashes the app it
     // is trying to protect - an uncaught throw here would surface every 60s
@@ -327,6 +356,7 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
     try {
       const sample = sampleHostMemory({
         memoryPressureLevel: pressureLevel?.current(Date.now(), intervalMs * 2) ?? null,
+        memoryFreePercent: freePercent?.current(Date.now(), intervalMs * 2) ?? null,
       });
       lastSample = sample;
       options.onSample?.(sample);
@@ -340,13 +370,16 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
       console.error('[host-memory] Sampling tick failed:', error);
     }
     pressureLevel?.refresh();
+    freePercent?.refresh();
   };
   const interval = setInterval(tick, intervalMs);
   interval.unref();
-  // The first macOS level is ready for the first tick rather than the second.
+  // The first macOS reading is ready for the first tick rather than the second.
   pressureLevel?.refresh();
+  freePercent?.refresh();
   return () => {
     clearInterval(interval);
     pressureLevel?.dispose();
+    freePercent?.dispose();
   };
 }

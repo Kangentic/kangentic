@@ -14,6 +14,7 @@ import {
   evaluateHostMemoryPressure,
   getLastHostMemorySample,
   memoryHeadroom,
+  parseMacFreePercent,
   parseMacPressureLevel,
   pressureThreshold,
   recoveryLine,
@@ -21,6 +22,7 @@ import {
   startHostMemorySampler,
   type HostMemorySample,
 } from '../../src/main/diagnostics/host-memory';
+import { createMemoryReliefState, evaluateMemoryRelief } from '../../src/main/diagnostics/idle-agent-pause';
 
 function sample(overrides: Partial<HostMemorySample> = {}): HostMemorySample {
   return {
@@ -426,9 +428,49 @@ describe('memoryHeadroom', () => {
     expect(memoryHeadroom(sample({ platform: 'linux', commitLimitBytes: null, commitRemainingBytes: null }))).toBeNull();
   });
 
-  it.each([[2, true], [4, true], [1, false]] as const)('reads macOS pressure level %i as low=%s', (level, low) => {
+  it.each([[4, true], [1, false]] as const)('reads macOS pressure level %i as low=%s', (level, low) => {
     expect(memoryHeadroom(sample({ platform: 'darwin', commitLimitBytes: null, commitRemainingBytes: null, memoryPressureLevel: level })))
       .toEqual({ kind: 'level', low });
+  });
+
+  describe('macOS at the warn level', () => {
+    // A real report: 36 GB of RAM, level 2 on every check, 36% free, swap 94% full.
+    const warnAt = (memoryFreePercent: number | null): HostMemorySample => sample({
+      platform: 'darwin',
+      commitLimitBytes: null,
+      commitRemainingBytes: null,
+      physicalTotalBytes: 36 * GB,
+      memoryPressureLevel: 2,
+      memoryFreePercent,
+    });
+
+    it('does not read as low with 36% of a 36 GB machine free', () => {
+      const state = createMemoryReliefState();
+      expect(evaluateMemoryRelief(memoryHeadroom(warnAt(36)), state)).toBe(false);
+    });
+
+    it('reads as low once the free percentage falls under the threshold', () => {
+      const state = createMemoryReliefState();
+      expect(evaluateMemoryRelief(memoryHeadroom(warnAt(4)), state)).toBe(true);
+    });
+
+    it('holds its latch between the threshold and the recovery line, and clears past it', () => {
+      const state = createMemoryReliefState();
+      evaluateMemoryRelief(memoryHeadroom(warnAt(4)), state);
+      expect(evaluateMemoryRelief(memoryHeadroom(warnAt(8)), state)).toBe(true);
+      expect(evaluateMemoryRelief(memoryHeadroom(warnAt(36)), state)).toBe(false);
+    });
+
+    it('clears a critical latch once warn shows plenty free', () => {
+      const state = createMemoryReliefState();
+      const critical = sample({ platform: 'darwin', commitLimitBytes: null, commitRemainingBytes: null, memoryPressureLevel: 4 });
+      evaluateMemoryRelief(memoryHeadroom(critical), state);
+      expect(evaluateMemoryRelief(memoryHeadroom(warnAt(36)), state)).toBe(false);
+    });
+
+    it('has no reading without the free percentage, which pauses nothing', () => {
+      expect(memoryHeadroom(warnAt(null))).toBeNull();
+    });
   });
 
   it.each([null, 0, 3, 8])('has no macOS reading for level %s', (level) => {
@@ -455,6 +497,16 @@ describe('parseMacPressureLevel', () => {
     expect(parseMacPressureLevel('')).toBeNull();
     expect(parseMacPressureLevel('sysctl: unknown oid')).toBeNull();
     expect(parseMacPressureLevel('-1')).toBeNull();
+  });
+});
+
+describe('parseMacFreePercent', () => {
+  it('reads a percentage, and nothing past 100', () => {
+    expect(parseMacFreePercent('36\n')).toBe(36);
+    expect(parseMacFreePercent('0')).toBe(0);
+    expect(parseMacFreePercent('100')).toBe(100);
+    expect(parseMacFreePercent('101')).toBeNull();
+    expect(parseMacFreePercent('sysctl: unknown oid')).toBeNull();
   });
 });
 
@@ -772,26 +824,62 @@ describe('startHostMemorySampler', () => {
     }
 
     it('reads once at start, then hands each tick the level the run before it cached', async () => {
-      mocks.execFileAsync
-        .mockResolvedValueOnce({ stdout: '1\n', stderr: '' })
-        .mockResolvedValueOnce({ stdout: '4\n', stderr: '' });
+      const levels = ['1\n', '4\n'];
+      mocks.execFileAsync.mockImplementation(async (_file: string, args: string[]) => ({
+        stdout: args[1] === SYSCTL_ARGUMENTS[1] ? levels.shift() ?? '1\n' : '36\n',
+        stderr: '',
+      }));
+      const levelReads = (): number => mocks.execFileAsync.mock.calls
+        .filter((call) => (call[1] as string[])[1] === SYSCTL_ARGUMENTS[1]).length;
       const onSample = vi.fn();
 
       const dispose = startOnDarwin(onSample);
 
       // The first level is read ahead of the first tick, off the main thread.
-      expect(mocks.execFileAsync).toHaveBeenCalledTimes(1);
+      expect(levelReads()).toBe(1);
       expect(mocks.execFileAsync).toHaveBeenCalledWith('/usr/sbin/sysctl', SYSCTL_ARGUMENTS, expect.anything());
 
       // The first tick already carries the start-up read, and starts the next.
       await vi.advanceTimersByTimeAsync(1000);
       expect(levelOf(onSample, 0)).toBe(1);
-      expect(mocks.execFileAsync).toHaveBeenCalledTimes(2);
+      expect(levelReads()).toBe(2);
 
       // The second tick carries what the first tick's run read.
       await vi.advanceTimersByTimeAsync(1000);
       expect(levelOf(onSample, 1)).toBe(4);
-      expect(mocks.execFileAsync).toHaveBeenCalledTimes(3);
+      expect(levelReads()).toBe(3);
+
+      dispose();
+    });
+
+    it('carries the free percentage beside the level, from a read of its own', async () => {
+      mocks.execFileAsync.mockImplementation(async (_file: string, args: string[]) => {
+        if (args[1] === SYSCTL_ARGUMENTS[1]) return { stdout: '2\n', stderr: '' };
+        return { stdout: '36\n', stderr: '' };
+      });
+      const onSample = vi.fn();
+
+      const dispose = startOnDarwin(onSample);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(levelOf(onSample, 0)).toBe(2);
+      expect((onSample.mock.calls[0][0] as HostMemorySample).memoryFreePercent).toBe(36);
+
+      dispose();
+    });
+
+    it('keeps the level when this macOS has no free percentage', async () => {
+      mocks.execFileAsync.mockImplementation(async (_file: string, args: string[]) => {
+        if (args[1] === SYSCTL_ARGUMENTS[1]) return { stdout: '4\n', stderr: '' };
+        throw new Error('sysctl: unknown oid');
+      });
+      const onSample = vi.fn();
+
+      const dispose = startOnDarwin(onSample);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(levelOf(onSample, 0)).toBe(4);
+      expect((onSample.mock.calls[0][0] as HostMemorySample).memoryFreePercent).toBeNull();
 
       dispose();
     });

@@ -426,7 +426,8 @@ in one Sentry org, one triage surface.
   cache and reads near zero on a healthy machine. It is null on every other platform. No Linux
   pressure warning is raised from it. Linux samples also carry `swapTotalBytes` and
   `swapFreeBytes`, and macOS samples `memoryPressureLevel` (the kernel's
-  `kern.memorystatus_vm_pressure_level`, read a tick late), which the low-memory pause reads
+  `kern.memorystatus_vm_pressure_level`, read a tick late) and `memoryFreePercent`
+  (`kern.memorystatus_level`, which judges the warn level), which the low-memory pause reads
   (`src/main/diagnostics/idle-agent-pause.ts`).
 - **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
   process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
