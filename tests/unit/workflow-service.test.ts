@@ -476,9 +476,10 @@ describe('workflow operations', () => {
 
       expect(vi.mocked(resumeTaskSession).mock.calls.map(([, taskId]) => taskId).sort())
         .toEqual([taskIdOf('paused'), taskIdOf('gate')].sort());
-      // Not an explicit start: the column's own auto_spawn and a held pause still decide.
+      // Not an explicit start: the column's own auto_spawn and a held pause still
+      // decide. It names its start path, so a failed start is reported as a workflow's.
       expect(vi.mocked(autoSpawnForTask).mock.calls).toEqual([
-        [runtime, 'home', { id: taskIdOf('empty'), title: 'empty' }, laneNamed('Testing').id],
+        [runtime, 'home', { id: taskIdOf('empty'), title: 'empty' }, laneNamed('Testing').id, { startPath: 'workflow' }],
       ]);
       expect(result).toMatchObject({ resumed: 2, started: 1, alreadyRunning: 1, failed: [] });
       expect(result.workflow.state).toBe('running');

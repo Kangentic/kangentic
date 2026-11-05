@@ -42,7 +42,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import type { BoardProfile, Project, Swimlane, Task } from '../../src/shared/types';
+import type { BoardProfile, LaunchStartPath, Project, Swimlane, Task } from '../../src/shared/types';
 import type { SessionRecordStatus, SuspendedBy } from '../../src/shared/types';
 import type { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import type { EarlyAgentHandle } from '../../src/main/transition-engine/early-agent';
@@ -252,6 +252,7 @@ interface LauncherOptions {
   task?: Task | null;
   toLane?: Swimlane;
   explicitStart?: boolean;
+  startPath?: LaunchStartPath;
   settingsSourceLane?: Swimlane | null;
   signal?: AbortSignal;
 }
@@ -274,6 +275,7 @@ function buildLauncher(options: LauncherOptions = {}) {
     projectId: PROJECT_ID,
     projectPath: PROJECT_PATH,
     explicitStart: options.explicitStart,
+    startPath: options.startPath,
     signal: options.signal,
     ...('settingsSourceLane' in options ? { settingsSourceLane: options.settingsSourceLane } : {}),
   } as unknown as LauncherInput;
@@ -364,6 +366,14 @@ describe('createEarlyAgentLauncher: what it will not launch', () => {
     expect(sessionRepositoryState.getLatestForTask).toHaveBeenCalledWith(TASK_ID);
     expect(engineSpies.agentStartsFirstOnEnter).not.toHaveBeenCalled();
     expect(engineSpies.launchEarlyAgent).not.toHaveBeenCalled();
+  });
+
+  it('hands the engine what started it, so a phone start does not read as the board', async () => {
+    const { launch } = buildLauncher({ startPath: 'phone' });
+
+    await launch(WORKTREE_PATH);
+
+    expect(theLaunchInput().startPath).toBe('phone');
   });
 
   it('does not treat a system suspend (a quit or a move) as a held pause', async () => {

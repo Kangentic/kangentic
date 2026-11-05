@@ -42,6 +42,12 @@ const mockReadLocalBranchSha = vi.fn(async (): Promise<string | null> => null);
 const mockVisitStartedAt = vi.fn((): string | null => null);
 const mockHasEnterRunSince = vi.fn((): boolean => false);
 
+const mockReportPreflightFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPreflightFailure: mockReportPreflightFailure,
+}));
+
 vi.mock('node:fs', () => ({
   default: { existsSync: vi.fn(() => true) },
 }));
@@ -232,6 +238,11 @@ describe('autoSpawnTasks first-spawn wiring', () => {
 
       expect(startFirstAgent.mock.calls.map(([task]) => task.id)).toEqual(['task-first', 'task-second']);
       expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('task-first'), expect.any(Error));
+      expect(mockReportPreflightFailure).toHaveBeenCalledTimes(1);
+      expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+        cause: 'recovery_first_agent',
+        startPath: 'startup_recovery',
+      }));
     } finally {
       consoleError.mockRestore();
     }
@@ -519,6 +530,10 @@ describe('autoSpawnTasks: hand-off ordering, shutdown and discovery failures', (
         expect.stringContaining(`Preparation failed for task ${HISTORY_TASK_ID}`),
         expect.any(Error),
       );
+      expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+        cause: 'recovery_prepare',
+        startPath: 'startup_recovery',
+      }));
       expect(handedOffTaskIds(startFirstAgent)).toEqual([FIRST_TASK_ID]);
     } finally {
       consoleError.mockRestore();
@@ -543,6 +558,10 @@ describe('autoSpawnTasks: hand-off ordering, shutdown and discovery failures', (
         expect.stringContaining(`Discovery failed for task ${FIRST_TASK_ID}`),
         expect.any(Error),
       );
+      expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+        cause: 'recovery_discovery',
+        startPath: 'startup_recovery',
+      }));
       expect(handedOffTaskIds(startFirstAgent)).toEqual([SECOND_TASK_ID]);
     } finally {
       consoleError.mockRestore();
@@ -563,6 +582,47 @@ describe('autoSpawnTasks: hand-off ordering, shutdown and discovery failures', (
     expect(handedOffTaskIds(startFirstAgent)).toEqual([FIRST_TASK_ID]);
     // The board path's spawn would otherwise see a session and start no agent.
     expect(mockTaskUpdate.mock.invocationCallOrder[0]).toBeLessThan(startFirstAgent.mock.invocationCallOrder[0]);
+  });
+
+  it('reports a spawn that failed as a startup recovery, naming the agent', async () => {
+    mockTaskList.mockReturnValue([makeTaskRow(HISTORY_TASK_ID)]);
+    mockHistoryTaskRecord();
+    mockPrepareAgentSpawn.mockResolvedValue({
+      ok: true as const,
+      data: {
+        adapter: { name: 'claude', sessionType: 'claude_agent', removeHooks: vi.fn() },
+        agent: 'claude',
+        command: 'claude',
+        cwd: '/mock/project',
+        sessionRecordId: PREPARED_RECORD_ID,
+        agentSessionId: null,
+        permissionMode: 'acceptEdits',
+        statusOutputPath: '/mock/status.json',
+        eventsOutputPath: '/mock/events.jsonl',
+        extraEnv: null,
+        appliedModel: null,
+        appliedEffort: null,
+        shell: 'powershell',
+        cliTarget: null,
+        resumed: false,
+      },
+    } as never);
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockRejectedValue(new Error('pty host down'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await autoSpawnTasks('proj-123', '/mock/project', sessionManager as never, makeConfigManager() as never, 'claude', null, 'claude-opus-4-8', 'xhigh', undefined, {});
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+        cause: 'recovery_spawn',
+        agent: 'claude',
+        startPath: 'startup_recovery',
+      }));
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   // Control for the test above: a row that names no session needs no clearing.
