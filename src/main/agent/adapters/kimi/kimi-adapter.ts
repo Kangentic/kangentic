@@ -6,7 +6,7 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { WSL_MCP_TOKEN_ENV } from '../../shared/wsl-hook-transport';
-import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { KimiCommandBuilder, kimiMcpWiringEnabled } from './command-builder';
 import { KimiSessionHistoryParser, locateKimiWireFile } from './session-history-parser';
@@ -14,8 +14,8 @@ import { parseKimiTranscript, parseKimiTranscriptWindow, readKimiTranscriptPage 
 import { kimiTranscriptToolCounts, kimiTranscriptUsage } from './transcript-usage';
 import { discoverKimiCapabilities } from './capability-discovery';
 import { kimiProjectMcpConfigProblem, removeKimiProjectMcpConfig } from './mcp-config';
-import { findKimiSessionDir, kimiSessionDeleted } from './session-index';
-import { kimiCredentialsDir, kimiMainWirePath } from './kimi-home';
+import { findKimiSessionDir, kimiSessionDeleted, kimiSessionIdsInFolder } from './session-index';
+import { kimiCredentialsDir, kimiMainWirePath, kimiSessionIndexPath } from './kimi-home';
 import { KIMI_SUBAGENT_TOOL, parseKimiSubagentUsage, statKimiSubagentTranscripts } from './subagent-transcripts';
 import { kimiModelByAlias, readKimiCodeConfig } from './config-toml';
 import { contentPartsText } from './wire-parser';
@@ -40,6 +40,8 @@ import type {
   SubmissionVerifier,
   AgentCapabilities,
   ExitSequenceStep,
+  RemoteTranscriptIndex,
+  StoredCliTarget,
   TranscriptToolCounts,
   TranscriptUsage,
 } from '../../../../shared/types';
@@ -96,11 +98,39 @@ export class KimiAdapter implements AgentAdapter {
   /** A Kimi Code installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
   /**
-   * On a remote host over SSH the CLI is `kimi` from the host's own login PATH (#913). Its sessions,
-   * wire file and index stay on the host, so the transcript and the id pass read nothing there: the id
-   * comes from the welcome box or the exit hint, and activity from the terminal.
+   * On a remote host over SSH the CLI is `kimi` from the host's own login PATH (#913). Its index and
+   * wire file are copied to this computer (`remoteTranscriptIndex`, `remoteTranscriptFiles`), and a fresh
+   * session's id comes from the index, or the exit hint when two sessions share a folder. The filesystem
+   * pass reads nothing there, and activity comes from the terminal.
    */
   readonly remoteCliName = 'kimi';
+
+  /**
+   * The conversation's wire on a host, once the mirrored index says where it is. Named from the index and
+   * not from a file here: the wire cannot arrive until it is named, so `locateKimiWireFile`, which wants it on
+   * disk, would never find it. Subagent wires are not carried.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    const sessionDir = findKimiSessionDir(options.agentSessionId, place);
+    return sessionDir ? [kimiMainWirePath(sessionDir)] : [];
+  }
+
+  /**
+   * Kimi's index, tailed from a session's start. It is what says where the wire is and, since a fresh session
+   * prints its id only as it exits, what the id is. A fresh session writes its line on its first message.
+   */
+  remoteTranscriptIndex(options: { cwd: string; cliTarget: StoredCliTarget }): RemoteTranscriptIndex | null {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return null;
+    const folder = cliPathForTarget(options.cwd, place);
+    return {
+      path: kimiSessionIndexPath(place),
+      folder,
+      sessionIdsIn: (text) => kimiSessionIdsInFolder(text, folder),
+    };
+  }
 
   /**
    * The one file a Kimi on a remote host has edited on the host (#913): the project's
