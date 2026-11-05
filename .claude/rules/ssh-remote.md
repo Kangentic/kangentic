@@ -55,8 +55,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
   An export never crosses the link as a reply, which is one 256 KiB frame. It lands as `<copy>.part` and is
   renamed in only when whole, so a stale copy never reads as an empty one, and a total is of the whole file,
   never a difference. A reader of an ending session waits for the last export through
-  `remoteTranscriptSettled`, bounded. An id from an index is taken only when it can be no other session's:
-  a wrong id resumes another conversation.
+  `remoteTranscriptSettled`, bounded. An id from an index is taken only when it can be no other session's,
+  and stays provisional (`notifyInferredAgentSessionId`) so the agent's own report replaces it: a wrong id
+  resumes another conversation. An export's position is the compact JSON before a message, never a byte of the
+  file, which is a new file each time, so a cursor holds from one export to the next.
 - **A worktree on a host is made by the host's git, and the folder here is a stand-in.** A task's
   worktree is `<project folder on the host>/.kangentic/worktrees/<n>`, made, counted and removed by
   one `sh` script the helper runs (`remote-worktrees.ts`), reached through `WorktreeManager`'s
@@ -142,7 +144,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
   tests read real captures through the real readers. `resume-conversation-guard-ssh.test.ts` pins `unknown`
   whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
   `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
-  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed.
+  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `scripts/ssh-link-rig.mjs`,
+  which `ssh-rig.yml` runs, takes an export past a frame's cap across a real `ssh` killed partway.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only

@@ -8,11 +8,17 @@
  *
  * Each round kills the `ssh` process (its tree, by pid), waits for the link to be connected again, and
  * checks what the plan's gate asks: the same PTY pid is still alive on the host, the owner epoch moved
- * on by one, and the ticks in its scrollback run without a gap.
+ * on by one, and the ticks in its scrollback run without a gap. Then a transcript export crosses a drop of
+ * its own, and must arrive whole.
  */
 
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { Duplex } from 'node:stream';
+import { remoteExportPath, type SshCliPlace } from '../src/main/agent/shared/cli-target';
+import { prepareWslHookTransport } from '../src/main/agent/shared/wsl-hook-transport';
 import { PtyHostClient } from '../src/main/pty/host/pty-host-client';
 import type { RendererPort } from '../src/main/pty/host/protocol';
 import type { FromPtyHostPortMessage } from '../src/shared/pty-port-protocol';
@@ -20,6 +26,7 @@ import { RemoteLink, type RemoteLinkState } from '../src/main/remote/link/remote
 import { openSshStream } from '../src/main/remote/link/ssh-connection';
 import { createSshRunner } from '../src/main/remote/link/ssh-run';
 import { installHost, type HostAsset } from '../src/main/remote/link/host-installer';
+import { RemoteSessionRelay, type RemoteSessionFiles } from '../src/main/remote/remote-session-relay';
 
 interface Options {
   sshPath: string;
@@ -90,6 +97,67 @@ function percentile(values: number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
 }
 
+/**
+ * A session's export on the host, through the built helper and a real `ssh`, with the connection killed while the
+ * export is still arriving. An export past a reply's 256 KiB cap has to arrive by the tail, and the copy must end
+ * up whole, with nothing left on the host. It is one document, so a stray byte would be a conversation lost.
+ */
+async function exportAcrossADrop(): Promise<{ bytes: number; part: boolean; whole: boolean; hostFileGone: boolean }> {
+  const bytes = 2_400_000;
+  const hostProject = '/home/dev/rig-transcript';
+  const fakeCli = `${hostProject}/fake-export.sh`;
+  const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-link-rig-'));
+  const shellFolder = path.join(localRoot, 'shell');
+  const localSession = path.join(shellFolder, '.kangentic', 'sessions', 'export');
+  fs.mkdirSync(localSession, { recursive: true });
+  prepareWslHookTransport(localSession);
+  const place: SshCliPlace = { kind: 'ssh', hostId: 'rig', home: '/home/dev', shellName: 'bash', localHome: path.join(localRoot, 'mirror'), roots: [{ local: shellFolder, host: hostProject }] };
+  const copy = remoteExportPath(place, 'rig', 'conversation');
+
+  const files: RemoteSessionFiles = {
+    writeFiles: (_hostId, fileList, directories) => link.requestHelper('writeFiles', { files: fileList, ...(directories ? { directories } : {}) }),
+    writeFileRaw: async () => undefined,
+    watchHooks: (_hostId, sessionId, directory, statusFile) => link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) }),
+    unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
+    watchFiles: (_hostId, sessionId, tailed) => link.requestHelper('watchFiles', { sessionId, files: tailed }),
+    unwatchFiles: (_hostId, sessionId) => link.requestHelper('unwatchFiles', { sessionId }),
+    removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
+    removeEmptyDirectories: (_hostId, paths) => link.requestHelper('removeEmptyDirectories', { paths }),
+    runCommand: (_hostId, request) => link.requestHelper('runCommand', request),
+  };
+  const relay = new RemoteSessionRelay({ files, log: (line) => process.stderr.write(`[relay] ${line}\n`) });
+  client.setEventHandler((event) => {
+    if (event.type === 'fileChunk') relay.deliverChunk(event);
+  });
+  await link.requestHelper('writeFiles', { files: [{ path: fakeCli, content: `#!/bin/sh\nhead -c ${bytes} /dev/zero | tr '\\0' x\n`, mode: 0o755 }] });
+
+  await relay.register({
+    hostId: 'rig',
+    sessionId: 'export',
+    place,
+    localSessionDirectory: localSession,
+    statusOutputPath: path.join(localSession, 'status.json'),
+    agentSessionId: 'conversation',
+    transcripts: { files: () => [], snapshot: async () => ({ file: fakeCli, args: [], cwd: hostProject, localPath: copy }) },
+  });
+
+  // The first export runs a few seconds in. Killed once its first chunk lands, with most of it still to come.
+  await waitFor('the export to start arriving', () => fs.existsSync(`${copy}.part`), 20_000);
+  const part = !fs.existsSync(copy);
+  streams.at(-1)?.destroy();
+  await waitFor('the drop to be seen', () => state !== 'connected', 10_000);
+  await waitFor('the reconnect', () => state === 'connected', 30_000);
+  await waitFor('the export to be whole', () => fs.existsSync(copy), 30_000);
+
+  const content = fs.readFileSync(copy);
+  const whole = content.length === bytes && content.every((byte) => byte === 0x78);
+  await relay.release('export');
+  const hostFile = `/home/dev/.kangentic/transcripts/rig/conversation.json`;
+  const [presence] = await link.requestHelper('pathPresence', { paths: [hostFile] });
+  fs.rmSync(localRoot, { recursive: true, force: true });
+  return { bytes, part, whole, hostFileGone: presence === 'absent' };
+}
+
 async function main(): Promise<void> {
   // The installer first, as the add-host flow runs it: nothing is on the host yet. A second call must find the
   // version complete and send nothing.
@@ -155,11 +223,13 @@ async function main(): Promise<void> {
     previousLastTick = lastTick;
   }
 
-  const allPassed = rounds.every((row) => row.alive && row.samePid && row.epochAdvancedByOne && row.scrollbackContiguous && row.progressed);
+  const transcript = await exportAcrossADrop();
+  const allPassed = transcript.whole && transcript.hostFileGone && rounds.every((row) => row.alive && row.samePid && row.epochAdvancedByOne && row.scrollbackContiguous && row.progressed);
   const summary = {
     drops: options.drops,
     passed: rounds.filter((row) => row.alive && row.samePid && row.epochAdvancedByOne && row.scrollbackContiguous && row.progressed).length,
     allPassed,
+    transcript,
     reconnectMs: { p50: percentile(reconnectMs, 0.5), p95: percentile(reconnectMs, 0.95), max: Math.max(...reconnectMs) },
     hostPid: pid,
     finalTick: previousLastTick,

@@ -90,6 +90,11 @@ after the start. No export file was left on the host.
 It runs the helper in-process over an in-memory link, with the CLI started by the test. It proves the path from
 a CLI's files to a reader, not a spawn through the app or a real `ssh`.
 
+`scripts/ssh-link-rig.mjs` covers the link. On Windows' own `ssh.exe`, against the built helper installed on a
+fresh sshd, a 2.4 MB export (past a reply's 256 KiB cap) lost its connection after the first chunk arrived. It
+ended whole, the reader's path held nothing until then, and the host's file was gone after the release. The
+export there is a stand-in CLI. `ssh-rig.yml` runs the same pass on Linux.
+
 The first run of it found what fakes could not. A login shell on that image does not add `~/.local/bin`, so
 `goose` was not found through the helper's shell, and the run's failure line was bash's own opening lines. The
 first was the rig's: the real agent PTY starts through the same shell. The second was a fault, since those lines
