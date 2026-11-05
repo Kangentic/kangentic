@@ -25,9 +25,12 @@ import {
   launchNeverStarted,
   launchTagsOf,
   launchVersionTag,
+  logLaunchStep,
   preflightTagsOf,
   reportLaunchFailure,
   reportLaunchRecovered,
+  reportPreflightFailure,
+  reportPtyPortFailure,
   reportSessionLaunchFailure,
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
@@ -411,6 +414,97 @@ describe('reportLaunchRecovered', () => {
     const [error, eventTags] = reportHandledError.mock.calls[0];
     expect((error as Error).name).toBe('AgentLaunchRecoveredError');
     expect(eventTags).toMatchObject({ retry: 'recovered', attempt: '2' });
+  });
+});
+
+describe('reportPtyPortFailure', () => {
+  it('opens its own issue under its own error name, with no session to describe', () => {
+    reportPtyPortFailure();
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [error, eventTags, , fingerprint] = reportHandledError.mock.calls[0];
+    expect((error as Error).name).toBe('PtyPortDeliveryError');
+    expect(eventTags).toMatchObject({ source: 'agent_launch', stage: 'pty_port', cause: 'not_delivered' });
+    expect(fingerprint).toEqual(['agent-launch', 'pty_port', 'not_delivered']);
+  });
+
+  it('reports once per run, so a window that keeps asking cannot fill the quota', () => {
+    reportPtyPortFailure();
+    reportPtyPortFailure();
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('reportPreflightFailure', () => {
+  const base = { cause: 'worktree', agent: 'claude', startPath: 'board' } as const;
+
+  it('names the kind of error and its errno, which are fixed shapes', () => {
+    const error = Object.assign(new TypeError('boom'), { code: 'EBUSY' });
+    reportPreflightFailure({ ...base, error });
+
+    expect(reportHandledError.mock.calls[0][1]).toMatchObject({ error_type: 'TypeError', errno: 'EBUSY', cause: 'worktree' });
+  });
+
+  it('leaves out a code or a name that carries text, since a branch is named after a task', () => {
+    const error = Object.assign(new Error('boom'), { code: 'fix-acme-billing', name: 'fix: the Acme billing export' });
+    reportPreflightFailure({ ...base, error });
+
+    const eventTags = reportHandledError.mock.calls[0][1];
+    expect(eventTags).not.toHaveProperty('errno');
+    expect(eventTags).not.toHaveProperty('error_type');
+    expect(JSON.stringify(eventTags)).not.toContain('Acme');
+    expect(JSON.stringify(eventTags)).not.toContain('acme');
+  });
+
+  it('sends a fixed message for an error whose text it was not told to keep', () => {
+    reportPreflightFailure({ ...base, error: new Error("fatal: cannot lock ref 'refs/heads/fix-acme-billing'") });
+
+    const sent = reportHandledError.mock.calls[0][0] as Error;
+    expect(sent.name).toBe('AgentLaunchPreflightError');
+    expect(sent.message).toBe('Agent launch failed: preflight (worktree)');
+  });
+
+  it('keeps the message when told to, with its paths redacted', () => {
+    reportPreflightFailure({ ...base, error: new Error('cannot read /Users/dev/secret-project/launch.sh'), keepMessage: true });
+
+    const sent = reportHandledError.mock.calls[0][0] as Error;
+    expect(sent.message).toContain('cannot read');
+    expect(sent.message).not.toContain('/Users/dev');
+  });
+
+  it('reports a step that failed with a return value rather than a throw', () => {
+    reportPreflightFailure({ ...base, error: null });
+
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentLaunchPreflightError');
+  });
+
+  it('does not count a start that was taken over', () => {
+    reportPreflightFailure({ ...base, error: new DOMException('aborted', 'AbortError') });
+    expect(reportHandledError).not.toHaveBeenCalled();
+  });
+
+  it('never throws, so a failed report cannot replace the failure it reports', () => {
+    reportHandledError.mockImplementationOnce(() => { throw new Error('sentry is down'); });
+
+    expect(() => reportPreflightFailure({ ...base, error: new Error('git failed') })).not.toThrow();
+  });
+});
+
+describe('logLaunchStep', () => {
+  it('logs the session, the step, and an agent and shell from fixed lists, nothing else', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const target = session({
+      id: 'abcdef12-0000-0000-0000-000000000000',
+      shell: '/Users/dev/bin/my-custom-shell',
+      cwd: '/Users/dev/secret-project',
+      launcherPath: '/Users/dev/secret-project/launch.sh',
+    });
+
+    logLaunchStep(target, 'first_output');
+
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith('[AGENT-LAUNCH] session=abcdef12 step=first_output agent=claude shell=other');
   });
 });
 
