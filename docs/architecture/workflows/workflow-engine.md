@@ -440,7 +440,8 @@ src/main/workflows/
   or paused workflow's task, in `TASK_UPDATE` and `handleUpdateTask`, which the phone shares, and
   says what to use instead. It fails closed. `false` is always taken, so a card left held has a way
   back, and a finished workflow's task is ordinary again. `automations_pausable` tells the phone.
-  A migration (`releaseWorkflowTaskHolds`) clears the switch on every workflow task outside Done and
+  A migration (`releaseWorkflowTaskHolds`, once per database through `schema_meta`, because a task whose
+  workflow is gone or finished may be held again) clears the switch on every workflow task outside Done and
   writes `plan_approval = 'manual'`, because a hold read Automatic as Manual. The workflow keeps
   judging a card while a person works with it, so a turn that ends on the column's exit line moves
   it on. Only Pause stops that.

@@ -8,6 +8,8 @@ import { worktreeFolderFromPath } from '../../../shared/worktree-folder';
 import { SWIMLANE_ROLES } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
 
+const WORKFLOW_HOLDS_RELEASED_FLAG = 'workflow_task_holds_released_at';
+
 export function runProjectMigrations(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS swimlanes (
@@ -2182,19 +2184,26 @@ export function runProjectMigrations(db: Database.Database): void {
 /**
  * Migration: a workflow task cannot pause its automations (owner's decision,
  * 2026-11-05), so a card held before that has no switch left. Clears it on every
- * workflow task not yet in Done. It reads no `workflows` row: a task's workflow
- * can live in another project's database, and a workflow with a task outside
- * Done is running or paused. Its plan stays a person's to review: a hold read an
- * Automatic plan approval as Manual, and lifting it alone would have Kangentic
- * approve what a person meant to read. Safe on every open: nothing holds a
- * workflow task again.
+ * workflow task not yet in Done. It reads no `workflows` row, because a task's
+ * workflow can live in another project's database. Its plan stays a person's to
+ * review: a hold read an Automatic plan approval as Manual, and lifting it alone
+ * would have Kangentic approve what a person meant to read.
+ *
+ * Once per database, through `schema_meta`, and not on every open: a task whose
+ * workflow is gone or finished is ordinary again and may be held, and a repeat
+ * run could not tell that hold from the old kind.
  */
 function releaseWorkflowTaskHolds(db: Database.Database): void {
-  db.prepare(`
-    UPDATE tasks SET automations_disabled = 0, plan_approval = 'manual'
-    WHERE automations_disabled = 1 AND workflow_id IS NOT NULL AND archived_at IS NULL
-      AND swimlane_id NOT IN (SELECT id FROM swimlanes WHERE role = 'done')
-  `).run();
+  const released = db.prepare('SELECT value FROM schema_meta WHERE key = ?').get(WORKFLOW_HOLDS_RELEASED_FLAG);
+  if (released !== undefined) return;
+  writeTransaction(db, () => {
+    db.prepare(`
+      UPDATE tasks SET automations_disabled = 0, plan_approval = 'manual'
+      WHERE automations_disabled = 1 AND workflow_id IS NOT NULL AND archived_at IS NULL
+        AND swimlane_id NOT IN (SELECT id FROM swimlanes WHERE role = 'done')
+    `).run();
+    db.prepare('INSERT INTO schema_meta (key, value) VALUES (?, ?)').run(WORKFLOW_HOLDS_RELEASED_FLAG, new Date().toISOString());
+  })();
 }
 
 function runWorkflowsMigration(db: Database.Database): void {

@@ -129,7 +129,7 @@ export function taskHoldRefusal(task: Pick<Task, 'display_id' | 'workflow_id' | 
   const label = `#${task.display_id}`;
   try {
     const workflow = workflowOfTask(task, projectId);
-    if (!workflow || workflow.state === 'done') return null;
+    if (workflow?.state !== 'running' && workflow?.state !== 'paused') return null;
     return WORKFLOW_REFUSALS.noTaskHold(label, workflow.title);
   } catch {
     return WORKFLOW_REFUSALS.noTaskHold(label, 'its workflow');

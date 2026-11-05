@@ -234,7 +234,7 @@ Key/value flags for data migrations that cannot answer "have I run" from the dat
 | key | TEXT | PRIMARY KEY | |
 | value | TEXT | NOT NULL | |
 
-Three keys so far. The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
+Four keys so far. The automations migration writes `automations_migrated_at`. That migration is one-way and deliberately
 leaves its source rows in `actions` and `swimlane_transitions` for an older build to read, so the
 presence of converted rows proves nothing: a board could legitimately have automations and no
 transitions, or both.
@@ -250,6 +250,10 @@ exists was read to its end, so an open with the worker down retries the whole li
 `tool_breakdown_duration_repair_retry` holds a JSON array of the record ids whose log exists but
 could not be read to its end (a lock, a permission error). The next open replays only those, and
 the key is deleted when the repair flag is written.
+
+`workflow_task_holds_released_at` marks the one run of `releaseWorkflowTaskHolds`, which clears
+holds left on workflow tasks. A task whose workflow is gone or finished may be held again, so a
+repeat run could not tell that hold from the old kind.
 
 Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
 mark) rather than migration bookkeeping.

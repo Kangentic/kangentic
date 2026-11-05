@@ -1438,6 +1438,12 @@
           return t.id === input.id;
         });
         if (idx >= 0) {
+          var holdWorkflowTitle = input.automations_disabled === true && tasks[idx].workflow_id
+            ? window.__mockOpenWorkflowTitle(tasks[idx].workflow_id)
+            : null;
+          if (holdWorkflowTitle !== null) {
+            throw new Error('#' + tasks[idx].display_id + ' is in ' + holdWorkflowTitle + ', so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the "Needs owner:" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow.');
+          }
           tasks[idx] = Object.assign({}, tasks[idx], input, { updated_at: now() });
           return tasks[idx];
         }
@@ -5744,6 +5750,15 @@
       }
 
       function homeOf(entry) { return entry.projectId || currentProjectId; }
+
+      // tasks.update asks this, as main's taskHoldRefusal does: the title of a
+      // running or paused workflow, or null for one that is finished or gone.
+      window.__mockOpenWorkflowTitle = function (workflowId) {
+        hydrate();
+        var entry = entries.find(function (candidate) { return candidate.workflow.id === workflowId; });
+        if (!entry || (entry.workflow.state !== 'running' && entry.workflow.state !== 'paused')) return null;
+        return entry.workflow.title;
+      };
 
       function blockerHeld(link) {
         return (window.__mockUnreadableProjects || []).indexOf(link.blocker_project_id) !== -1;
