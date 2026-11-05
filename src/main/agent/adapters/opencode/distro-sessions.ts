@@ -44,7 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** A session id in the shape OpenCode gives one, the only text that goes on a command line. */
-function isSessionId(value: string): boolean {
+export function isSessionId(value: string): boolean {
   return /^[\w-]+$/.test(value);
 }
 
