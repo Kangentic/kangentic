@@ -570,6 +570,39 @@ describe('an export racing its own tail, its release and its replacement', () =>
     expect(fs.readFileSync(copy(), 'utf8')).toBe('{}\n');
   });
 
+  it('keeps the last whole copy when a piece of the next export never landed, and the next export starts over', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const [tailed] = host.watchCalls[0];
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'whole\n', 6));
+    expect(fs.readFileSync(copy(), 'utf8')).toBe('whole\n');
+
+    // Nothing resends the middle of this one, and its last chunk still brings the file to the size the host said.
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'aaaa', 12, true));
+    relay.deliverChunk(chunk('s1', tailed.key, 8, 'cccc', 12));
+    expect(fs.readFileSync(copy(), 'utf8')).toBe('whole\n');
+
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'replacement\n', 12, true));
+    expect(fs.readFileSync(copy(), 'utf8')).toBe('replacement\n');
+  });
+
+  it('keeps the last whole copy when the staged file went partway through an export', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const [tailed] = host.watchCalls[0];
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'whole\n', 6));
+
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'aaaa', 8, true));
+    fs.rmSync(`${copy()}.part`, { force: true });
+    relay.deliverChunk(chunk('s1', tailed.key, 4, 'bbbb', 8));
+
+    expect(fs.readFileSync(copy(), 'utf8')).toBe('whole\n');
+  });
+
   it('starts no further export once the relay is disposed during one', async () => {
     const { host, relay } = makeRelay();
     let finishExport = (): void => undefined;

@@ -147,6 +147,50 @@ describe('patchJsonFile', () => {
     expect(await patchJsonFile({ path: file, ops, lockDirectory: lock })).toEqual({ applied: true, changed: true });
   });
 
+  // Both see the old lock. The second's removal is held until the first has taken a fresh lock and is reading, the
+  // order that lets it remove that fresh lock and hold it too, so one read-modify-write overwrites the other's.
+  it('lets one request break a stale lock when two saw it, so they never hold it together', async () => {
+    const file = path.join(directory, '.claude.json');
+    const lock = path.join(directory, '.claude.json.lock');
+    fs.mkdirSync(lock);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    const realRemoveDirectory = fs.promises.rmdir.bind(fs.promises);
+    const realReadFile = fs.promises.readFile.bind(fs.promises);
+    let removals = 0;
+    let holders = 0;
+    let mostHolders = 0;
+    vi.spyOn(fs.promises, 'rmdir').mockImplementation(async (target) => {
+      removals += 1;
+      if (removals === 2) await new Promise((resolve) => setTimeout(resolve, 10));
+      return realRemoveDirectory(target);
+    });
+    vi.spyOn(fs.promises, 'readFile').mockImplementation((async (target: string, options: BufferEncoding) => {
+      holders += 1;
+      mostHolders = Math.max(mostHolders, holders);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      try {
+        return await realReadFile(target, options);
+      } finally {
+        holders -= 1;
+      }
+    }) as never);
+
+    try {
+      const answers = await Promise.all(['first', 'second'].map((key) => patchJsonFile({
+        path: file,
+        ops: [{ op: 'set', at: [key], value: true }],
+        lockDirectory: lock,
+      })));
+
+      expect(mostHolders).toBe(1);
+      expect(answers.every((answer) => answer.applied)).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    expect(Object.keys(JSON.parse(fs.readFileSync(file, 'utf8'))).sort()).toEqual(['first', 'second']);
+  });
+
   // A stale lock that rmdir cannot remove (something is inside it) used to be treated as broken, so the loop
   // retried at once and never reached its budget: the helper spun, and the spawn waited on it for good.
   it('answers locked, inside the budget, for a stale lock folder that cannot be removed, and leaves it and the file alone', async () => {

@@ -85,7 +85,7 @@ const HOST_CODEX_PROGRAM = 'codex';
  * with the failure: either way nothing is left there that the caller cannot name.
  */
 const MAKE_SCRATCH_SCRIPT = [
-  'case "${TMPDIR:-/tmp}" in *[!A-Za-z0-9/._-]*) base=/tmp ;; *) base=${TMPDIR:-/tmp} ;; esac',
+  'case "${TMPDIR:-/tmp}" in [!/]*|*[!A-Za-z0-9/._-]*) base=/tmp ;; *) base=${TMPDIR:-/tmp} ;; esac',
   'scratch=$(mktemp -d "$base/kangentic-codex-hooks-XXXXXX") || exit 1',
   'mkdir "$scratch/home" "$scratch/folder" || { rm -rf "$scratch"; exit 1; }',
   'printf %s "$scratch"',

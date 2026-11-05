@@ -125,6 +125,41 @@ function delay(durationMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
+/** The locks a request of this program is breaking now. */
+const breakingLocks = new Set<string>();
+
+function lockAge(lockDirectory: string): Promise<number> {
+  return fs.stat(lockDirectory).then((stats) => Date.now() - stats.mtimeMs, () => 0);
+}
+
+/**
+ * Take a stale lock by removing it and making it again, and say whether this call holds it now. One request at
+ * a time, and the age is read again inside that: two requests that both saw the old lock would otherwise have
+ * the second remove the fresh lock the first just took, and both would go on. A lock that cannot be removed
+ * (something inside it) is not taken.
+ */
+async function takeStaleLock(lockDirectory: string): Promise<boolean> {
+  if (breakingLocks.has(lockDirectory)) return false;
+  breakingLocks.add(lockDirectory);
+  try {
+    if (await lockAge(lockDirectory) <= LOCK_STALE_MS) return false;
+    const removed = await fs.rmdir(lockDirectory).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+    );
+    if (!removed) return false;
+    return await fs.mkdir(lockDirectory).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+        return false;
+      },
+    );
+  } finally {
+    breakingLocks.delete(lockDirectory);
+  }
+}
+
 /** Take a lock by `mkdir`, breaking one older than the stale age. False when it stays held past the budget. */
 async function acquireLock(lockDirectory: string): Promise<boolean> {
   const startedAt = Date.now();
@@ -135,15 +170,7 @@ async function acquireLock(lockDirectory: string): Promise<boolean> {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
-    const age = await fs.stat(lockDirectory).then((stats) => Date.now() - stats.mtimeMs, () => 0);
-    if (age > LOCK_STALE_MS) {
-      // One that cannot be removed (something inside it) is waited on like a held lock, inside the budget.
-      const broken = await fs.rmdir(lockDirectory).then(
-        () => true,
-        (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
-      );
-      if (broken) continue;
-    }
+    if (await lockAge(lockDirectory) > LOCK_STALE_MS && await takeStaleLock(lockDirectory)) return true;
     if (Date.now() - startedAt >= LOCK_BUDGET_MS) return false;
     await delay(LOCK_RETRY_LADDER_MS[Math.min(attempt, LOCK_RETRY_LADDER_MS.length - 1)]);
   }

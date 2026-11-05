@@ -181,6 +181,8 @@ type TailKind = 'file' | 'index' | 'snapshot';
 interface Tail {
   localPath: string;
   kind: TailKind;
+  /** Where an export's staged bytes end while none are missing. Null once a chunk could not be written. */
+  stagedEnd?: number | null;
 }
 
 interface SnapshotState {
@@ -705,31 +707,42 @@ export class RemoteSessionRelay {
     const entry = this.sessions.get(event.sessionId);
     const tail = entry?.tails.get(event.key);
     if (!entry || !tail) return;
+    const isSnapshot = tail.kind === 'snapshot';
+    const startsOver = event.reset || event.offset === 0;
+    // Nothing resends a chunk, so one that does not follow the last means this export has a piece missing: a
+    // write failed here, or the staged file went. The size would still come out right and a hole would read as
+    // whole, so this transfer stops here, the last whole copy stands, and the next export starts over.
+    if (isSnapshot && !startsOver && tail.stagedEnd !== event.offset) return;
     // An export is one document, so the copy a reader opens is only ever a whole one. The last whole copy
     // stays in place until the next is complete: a stale copy never reads as an empty one.
-    const target = tail.kind === 'snapshot' ? stagedPath(tail.localPath) : tail.localPath;
+    const target = isSnapshot ? stagedPath(tail.localPath) : tail.localPath;
     let written = -1;
     let chunkEnd = event.offset;
     try {
       // Inside this try: a failure is logged and the next chunk tries again.
       fsSync.mkdirSync(path.dirname(target), { recursive: true });
       // Read and write without append mode, which would put every write at the end whatever its offset.
-      const descriptor = openForWriteAt(target);
+      // Only an export's first chunk may make its staged file: a later one that makes it starts with a hole.
+      const descriptor = isSnapshot && !startsOver ? fsSync.openSync(target, 'r+') : openForWriteAt(target);
       try {
         // The first chunk of an export empties what an earlier one left that never finished arriving.
-        if (event.reset || (tail.kind === 'snapshot' && event.offset === 0)) fsSync.ftruncateSync(descriptor, 0);
+        if (isSnapshot ? startsOver : event.reset) fsSync.ftruncateSync(descriptor, 0);
         const bytes = Buffer.from(event.data, 'base64');
         if (bytes.length > 0) fsSync.writeSync(descriptor, bytes, 0, bytes.length, event.offset);
         chunkEnd += bytes.length;
-        if (tail.kind === 'snapshot') written = fsSync.fstatSync(descriptor).size;
+        if (isSnapshot) {
+          written = fsSync.fstatSync(descriptor).size;
+          tail.stagedEnd = chunkEnd;
+        }
       } finally {
         fsSync.closeSync(descriptor);
       }
     } catch (error) {
+      if (isSnapshot) tail.stagedEnd = null;
       this.options.log?.(`could not write the transcript for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    if (tail.kind === 'snapshot') {
+    if (isSnapshot) {
       if (typeof event.size !== 'number') {
         // An older program on the host: the daemon outlives an update of the app, and joins under one version.
         if (!entry.warnedNoSize) this.options.log?.(`the host's program sends no file size, so the transcript of ${entry.sessionId.slice(0, 8)} cannot be told whole. Restart the program on the host.`);
