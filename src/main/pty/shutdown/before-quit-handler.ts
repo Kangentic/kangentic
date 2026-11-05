@@ -82,7 +82,9 @@ export function createBeforeQuitHandler(
     // unreadable contributes no pid but still has an exit callback in flight.
     // The pids check is belt and braces against an inconsistent report.
     if (ptyKillReport.killedCount === 0 && ptyKillReport.pids.length === 0) {
-      // Nothing to drain: byte-for-byte the plain synchronous quit.
+      // Nothing to drain: byte-for-byte the plain synchronous quit. A live pty
+      // host is always in the report (SessionManager.killAll), so this is the
+      // in-process host with no PTY, or a host that was already down.
       log('[SHUTDOWN] pty-drain:skip reason=no-pty-killed');
       drainState = 'complete';
       return;

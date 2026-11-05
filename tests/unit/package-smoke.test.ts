@@ -25,6 +25,7 @@ const {
   appEnvironment,
   stripTerminalControls,
   findFailureMarkers,
+  scanRunLines,
 } = __testing;
 
 const PACKAGE = { name: 'kangentic', productName: 'Kangentic' };
@@ -171,6 +172,7 @@ describe('package smoke: the log check', () => {
       '{"level":"warn","args":["[retrieval] retrieval worker fork failed:","Error"]}',
       '{"level":"warn","args":["[retrieval-worker] sqlite-vec unavailable, semantic search disabled:","Error"]}',
       '{"level":"error","args":["[SHUTDOWN] hard-failsafe:fired"]}',
+      '[SHUTDOWN] pty-drain:timeout 1500ms lingering=4242 blind=0',
       '{"level":"warn","args":["[TASK-REAP] reap failed (non-fatal): Cannot find module koffi"]}',
       '{"level":"warn","args":["[TASK-REAP] host reap failed (non-fatal):","PtyHostTimeoutError: The pty host did not answer reapTaggedProcesses in time"]}',
       '{"level":"warn","args":["[PTY-HOST] Toolhelp process listing failed; the watcher falls back to the PowerShell probe:","Error"]}',
@@ -196,7 +198,33 @@ describe('package smoke: the log check', () => {
       '{"level":"warn","args":["[UPDATER] Skipping init: app-update.yml not found in the resources directory."]}',
       '{"level":"warn","args":["[pty-host] answered a heartbeat after 1200 ms"]}',
       '{"level":"log","args":["[pty-host] forked"]}',
+      '[SHUTDOWN] pty-drain:start n=2 blind=0',
+      '[SHUTDOWN] pty-drain:done 225ms',
     ])).toEqual([]);
+  });
+
+  it('fails on a drain timeout that only the app output carries (the macOS SIGTERM route)', () => {
+    // A packaged build exits on a signal before it writes its queued log lines.
+    const { failures } = scanRunLines([], ['[SHUTDOWN] pty-drain:timeout 1500ms lingering=4242 blind=0']);
+    expect(failures).toHaveLength(1);
+  });
+
+  it('fails on a marker that only the log file carries', () => {
+    const record = '{"ts":"2026-01-01T00:00:00.000Z","level":"log","source":"main","args":["[SHUTDOWN] hard-failsafe:fired"]}';
+    const { failures } = scanRunLines([record], []);
+    expect(failures).toHaveLength(1);
+  });
+
+  it('lists each output drain line once, and a JSON log record of the same line adds no copy', () => {
+    const drainLine = '[SHUTDOWN] pty-drain:done 225ms';
+    const record = '{"ts":"2026-01-01T00:00:00.000Z","level":"log","source":"main","args":["[SHUTDOWN] pty-drain:done 225ms"]}';
+    const { drainLines } = scanRunLines([record], ['[SHUTDOWN] pty-drain:start n=2 blind=0', drainLine]);
+    expect(drainLines).toEqual(['[SHUTDOWN] pty-drain:start n=2 blind=0', drainLine]);
+  });
+
+  it('still matches a marker behind the output echo time prefix', () => {
+    const { failures } = scanRunLines([], ['[10:38:16] [SHUTDOWN] pty-drain:timeout 1500ms lingering=4242 blind=0']);
+    expect(failures).toHaveLength(1);
   });
 
   it('watches for log lines that still exist in src/main', () => {

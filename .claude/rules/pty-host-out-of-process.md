@@ -94,8 +94,10 @@ at the Windows timer floor.
   no Sentry, no retrieval code. It writes transcripts on its own database connection (migrations
   off, `wal_autocheckpoint` 0: the retrieval worker runs the checkpoints).
 - **Quit.** `killAll()` posts every kill (a young session's after its grace, see
-  [[pty-teardown-grace]]) and adds the host's pid to the drain report; `dispose()` posts `shutdown`;
-  the host flushes, waits for every exit callback, and exits itself. See [[synchronous-shutdown]].
+  [[pty-teardown-grace]]) and adds a live host's pid to the drain report on every quit; `dispose()`
+  posts `shutdown`; the host flushes, waits for every exit callback, raw PTYs and CLI runs included,
+  and exits itself. Main waits for it up to the drain's deadline, on a user's quit or a POSIX
+  signal. See [[synchronous-shutdown]].
 - **Project delete awaits `closeProjectInPtyHost`** before unlinking the database files, as it does
   the retrieval worker's close.
 - **One-shot child processes run in the host too.** On Windows libuv runs CreateProcess
@@ -132,8 +134,8 @@ at the Windows timer floor.
   worker, with the run's pid pinned by the I/O thread's handle until taskkill exits, or the process
   group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
   them inside its exit bound. At quit, `stopAllCliRuns` also stops each run's tree from main by pid
-  (`killChildTreeByPid`): with no terminal open the quit does not wait for the host, which can be
-  torn down before it reads its stop. `spawnCli` spawns locally only when no host is registered.
+  (`killChildTreeByPid`): a host that runs out its exit wait is torn down with the quit, and may
+  never read its stop. `spawnCli` spawns locally only when no host is registered.
   Every one of these stops, local, in the host, and by pid, is `src/main/shared/child-tree-stop.ts`,
   which imports only `spawn` so the host can bundle it.
 
@@ -194,8 +196,9 @@ at the Windows timer floor.
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the
   retrieval worker, a task reap that must stop a detached process a task's terminal left (koffi
   loading in the packaged host), a quit with the terminal running (a user's quit on Windows and Linux; SIGTERM
-  on macOS, which skips the exit drain), and a fail on any log line saying a forked process
-  crashed or the host fell back to main. Not a required check.
+  on macOS, which skips Electron's teardown but not the exit drain), and a fail on any log line saying
+  a forked process crashed, the host fell back to main, or the quit gave up waiting for the host.
+  Not a required check.
   `tests/unit/package-smoke.test.ts` pins the script's pure parts and that every log line it
   watches for still exists in `src/main`.
 

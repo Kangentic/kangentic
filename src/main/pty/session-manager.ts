@@ -1543,11 +1543,16 @@ export class SessionManager extends EventEmitter {
   }
 
   dispose(): void {
-    this.telemetry.dispose();
-    // Flush every transcript. A utility host then exits once every PTY's exit
-    // callback has landed (killAll posted the kills, a young one's after its
-    // grace), within the bound killAll worked out from the drain's deadline.
-    this.host.shutdown(this.hostExitWaitMs);
+    try {
+      this.telemetry.dispose();
+    } finally {
+      // Flush every transcript. A utility host then exits once every PTY's exit
+      // callback has landed (killAll posted the kills, a young one's after its
+      // grace), within the bound killAll worked out from the drain's deadline.
+      // In a finally: killAll has put the host in the drain's report, so a host
+      // never told to exit holds the quit to the deadline and is then left behind.
+      this.host.shutdown(this.hostExitWaitMs);
+    }
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
     for (const sessionId of [...this.agentEndSettleTimers.keys()]) this.cancelAgentEndSettle(sessionId);
   }
@@ -4800,17 +4805,19 @@ export class SessionManager extends EventEmitter {
     // The PTYs' exit callbacks land in the pty host, which exits itself once
     // they have (or at its own deadline), after `dispose()` posts its shutdown.
     // The drain waits for that process too, so the quit never tears the host
-    // down while one of those callbacks is in flight (Sentry DESKTOP-C, now
-    // in the host). Counted as one more kill so the blind count stays right.
-    // The host's own wait ends inside the drain's deadline, which a deferred
-    // kill extends by its grace.
+    // down while one of those callbacks is in flight (Sentry DESKTOP-C and
+    // DESKTOP-2A, in the host). Counted as one more kill so the blind count
+    // stays right. The host's own wait ends inside the drain's deadline, which
+    // a deferred kill extends by its grace.
     this.hostExitWaitMs = PTY_EXIT_DRAIN_DEADLINE_MS
       + (report.deferredCount > 0 ? KILL_GRACE_MS : 0)
       - HOST_EXIT_MARGIN_MS;
+    // Every live host, whatever this report holds. An empty report says nothing
+    // about the host: a raw probe, a PTY killed just before the quit, and a
+    // spawn still in its round trip all have an exit to land and no session
+    // row. An idle host exits at once, so the wait costs the drain's settle.
     const hostPid = this.host.hostPid;
-    // A spawn still in its host round trip counts too: the host may have
-    // started its PTY, which the spawn flow kills when its reply lands.
-    if (hostPid === null || (report.killedCount === 0 && this.spawnsInFlight.size === 0)) return report;
+    if (hostPid === null) return report;
     return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };
   }
 

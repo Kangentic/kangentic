@@ -606,11 +606,10 @@ describe('SessionManager: a cancelled spawn whose PTY never reports its exit sti
 describe('SessionManager: killAll with a spawn in its host round trip', () => {
   const HOST_PID = 4242;
 
-  // Pins the `this.spawnsInFlight.size === 0` term in `killAll`'s host-pid
-  // condition. The host may have started the spawn's PTY, which the spawn flow
-  // stops when the reply lands; with no row for it `killedCount` is 0, so
-  // before the change the report left the host out and the quit drain let the
-  // host be torn down with that kill in flight.
+  // The host may have started the spawn's PTY, which the spawn flow stops when
+  // the reply lands. There is no row for it, so `killAll` kills nothing, and
+  // the report must still hold the host or the quit tears it down with that
+  // kill in flight.
   it('includes the host pid while a spawn is held at the host, though no session exists yet', async () => {
     const { manager, transport } = makeManager();
     transport.setHostPid(HOST_PID);
@@ -627,17 +626,19 @@ describe('SessionManager: killAll with a spawn in its host round trip', () => {
     await flush();
   });
 
-  // Control for the test above, on its own manager and before any spawn: with no
-  // session and no spawn in flight the host pid is not added, so the report
-  // above is the in-flight spawn and not a host pid that is always appended.
-  it('leaves the host out of the report when nothing was killed and no spawn is in flight', () => {
+  // Control for the test above: the pid comes from the host, so with no host
+  // process there is nothing to add for the spawn.
+  it('reports nothing for a spawn in flight when there is no host process', async () => {
     const { manager, transport } = makeManager();
-    transport.setHostPid(HOST_PID);
+    await holdDirectSpawn(manager, transport, 642);
 
     const report = manager.killAll();
 
     expect(report.pids).toEqual([]);
     expect(report.killedCount).toBe(0);
+
+    transport.releaseSpawns();
+    await flush();
   });
 });
 
