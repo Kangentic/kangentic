@@ -196,7 +196,7 @@ describe('notifySpawnBlocked - every failure reaches the user', () => {
     expect(sentMessage(send)).not.toMatch(/CLI CLI/i);
   });
 
-  it('names the agent step for an opaque spawn failure', () => {
+  it('sends an opaque spawn failure as the raw error, under a title that names the step', () => {
     // Not narrowed to a missing CLI: an arbitrary engine failure would
     // otherwise keep the silent-card symptom that this step exists to close.
     const send = vi.fn();
@@ -209,7 +209,7 @@ describe('notifySpawnBlocked - every failure reaches the user', () => {
       'explicit-project',
     );
 
-    expect(sentMessage(send)).toBe('Agent did not start: worktree is locked');
+    expect(sentMessage(send)).toBe('worktree is locked');
   });
 
   it('sends only the FIRST line of a multi-line git error', () => {

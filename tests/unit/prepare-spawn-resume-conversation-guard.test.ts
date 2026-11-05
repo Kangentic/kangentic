@@ -266,6 +266,45 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     return { result, sessionRepo, listForTaskNewestFirst };
   }
 
+  it('starts a launch that never ran fresh, with the prompt it still owes', async () => {
+    const { result } = await runPrepare({
+      taskRecords: [makeSessionRecord({
+        id: RECORD_ID,
+        prompt: 'Fix the login redirect',
+        launch_failed_at: '2026-11-05T12:00:00.000Z',
+      })],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.startOver).toBe('never-started');
+    expect(result.data.resumed).toBe(false);
+    expect(result.data.prompt).toBe('Fix the login redirect');
+  });
+
+  it('does not hand the owed prompt of a launch that never ran to an agent whose fresh prompt can only be typed', async () => {
+    // This path types nothing, so the prompt would be lost, or run twice once typed.
+    const typedAdapter = adapter as typeof adapter & { freshPromptDelivery?: 'command-line' | 'typed' };
+    typedAdapter.freshPromptDelivery = 'typed';
+    try {
+      const { result } = await runPrepare({
+        taskRecords: [makeSessionRecord({
+          id: RECORD_ID,
+          prompt: 'Fix the login redirect',
+          launch_failed_at: '2026-11-05T12:00:00.000Z',
+        })],
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.data.startOver).toBe('never-started');
+      expect(result.data.prompt).toBeNull();
+      expect(buildCommandMock.mock.calls[0][0]).not.toMatchObject({ prompt: 'Fix the login redirect' });
+    } finally {
+      delete typedAdapter.freshPromptDelivery;
+    }
+  });
+
   it('downgrades to fresh: a new agent session id, resume=false on the built command, and no id swap', async () => {
     writeEmptyStatusFile(RECORD_ID);
 

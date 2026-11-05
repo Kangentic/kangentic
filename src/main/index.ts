@@ -80,6 +80,7 @@ import { markBrowserGuestWebContents } from './analytics/renderer-classification
 import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-cleanup';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
+import { reportAbandonedLaunches } from './pty/abandoned-launches';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
 import { drainPtyExitCallbacks, type PtyExitDrainResult } from './pty/shutdown/exit-callback-drain';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
@@ -133,6 +134,9 @@ const GPU_HEALTH_FILE_PATH = path.join(PATHS.configDir, 'gpu-health.json');
 // the module-scope graphics decision below PEEKS it and initRunUptimeTracking
 // in whenReady OWNS it, so two path.join calls could diverge silently.
 const RUN_UPTIME_FILE_PATH = path.join(PATHS.configDir, 'analytics-run.json');
+
+// Launches a person quit on, reported by the next launch (abandoned-launches.ts).
+const ABANDONED_LAUNCHES_FILE_PATH = path.join(PATHS.configDir, 'abandoned-launches.json');
 
 /** How long the escalation report waits on app.getGPUInfo('complete') before
  *  giving up on it. Enrichment only: nothing downstream needs it, and the
@@ -2136,6 +2140,14 @@ app.whenReady().then(async () => {
 
   const previousRunProps = previousRunLaunchProps();
 
+  // Launches a person quit on last run. After setErrorReportingUser, so an event
+  // counts its install. Wrapped: a telemetry-only failure must not disrupt startup.
+  try {
+    reportAbandonedLaunches(ABANDONED_LAUNCHES_FILE_PATH);
+  } catch (error) {
+    console.warn('[AGENT-LAUNCH] Reading the launches a quit ended failed:', error);
+  }
+
   // A GPU health escalation (repeated GPU process deaths within one launch,
   // possibly ending in the browser process being killed - gpu-health.ts)
   // latches to disk rather than reporting live, because LOG(FATAL) can kill
@@ -2580,6 +2592,7 @@ function performShutdown(options?: PerformShutdownOptions): boolean {
   ptyKillReport = syncShutdownCleanup({
     ...getShutdownDependencies(),
     allowGrace: options?.allowGrace === true,
+    abandonedLaunchesFilePath: ABANDONED_LAUNCHES_FILE_PATH,
   });
   return true;
 }

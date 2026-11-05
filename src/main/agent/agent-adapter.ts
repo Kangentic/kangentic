@@ -29,6 +29,7 @@ import type {
   TranscriptPageUnavailableReason,
   StoredCliTarget,
 } from '../../shared/types';
+import type { UserSetupMatch } from '../../shared/user-configuration-error';
 
 /**
  * Result of `AgentAdapter.parseTranscript`. `entries` is the parsed
@@ -1344,6 +1345,23 @@ export interface AgentAdapter {
    * shape, per `agent-adapters-boundary`.
    */
   describeStartupFailure?(finalOutput: string, exitCode: number): string | null;
+
+  /**
+   * Optional: read this CLI's final output for a failure that is the user's own
+   * setup: `login_required` (no login, or an expired or invalid key) or
+   * `bad_configuration` (the CLI refuses the user's own config).
+   *
+   * What this names stays out of Sentry and gets no retry, so it must be the
+   * CLI's own wording, measured, and narrow enough that an agent's or a tool's
+   * output cannot match it. Return null for anything else. An installed CLI's
+   * unknown failure is reported, because it may be a Kangentic bug, and so is one
+   * that rejects an option Kangentic passed. Leave this out with no measured
+   * wording: unidentified is the safe side.
+   *
+   * An agent-specific string in an adapter, surfaced through this generic shape,
+   * per `agent-adapters-boundary`.
+   */
+  identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
 
   /**
    * Optional: whether a SLASH-prefixed `auto_command` can be verified in this

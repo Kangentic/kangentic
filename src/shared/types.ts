@@ -9,6 +9,7 @@ import type {
   AnnouncementsChangedPayload,
 } from './announcements';
 import type { AppLocale } from './i18n/locales';
+import type { UserSetupMatch } from './user-configuration-error';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
@@ -1462,6 +1463,13 @@ export interface SessionRecord {
   suspended_at: string | null;
   exited_at: string | null;
   suspended_by: SuspendedBy | null;
+  /**
+   * When this FRESH launch was found never to have started (UTC ISO). The agent
+   * wrote no conversation, so a Resume starts fresh with this record's `prompt`
+   * rather than `--resume`. Null on every other record, a resume that failed
+   * included: its conversation is still there to resume.
+   */
+  launch_failed_at: string | null;
   total_cost_usd: number | null;
   total_input_tokens: number | null;
   total_output_tokens: number | null;
@@ -6557,6 +6565,11 @@ export interface AgentParser {
    */
   readonly reportsAgentStart?: boolean;
   /**
+   * Optional: a login or configuration failure this CLI's own output names. See
+   * `AgentAdapter.identifyUserSetupFailure`.
+   */
+  identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
+  /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
    * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.
@@ -7320,6 +7333,20 @@ export interface QueueSnapshot {
   global: QueueTask[];
 }
 
+/**
+ * What started a session, as a launch failure report tags it. A fixed list, so
+ * the value is safe on an event. `retry` is the one automatic second launch a
+ * launch that never started gets (`src/main/pty/agent-launch-report.ts`).
+ */
+export type LaunchStartPath =
+  | 'board'
+  | 'resume'
+  | 'command_terminal'
+  | 'workflow'
+  | 'phone'
+  | 'startup_recovery'
+  | 'retry';
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7327,6 +7354,13 @@ export interface SpawnSessionInput {
   projectId: string;
   command: string;
   cwd: string;
+  /** What started this session. Required, so a new spawn sink has to say. */
+  startPath: LaunchStartPath;
+  /**
+   * The agent CLI's version as detection read it. Raw detector text, so
+   * `launchVersionTag` vets it before it reaches an event.
+   */
+  agentCliVersion?: string | null;
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)
@@ -8273,7 +8307,7 @@ export interface ElectronAPI {
     // `projectId` the renderer stamps at interaction time (same rationale as
     // the task mutations above). kill/write/resize/list operate by session id
     // and stay project-agnostic. See .claude/rules/project-scoped-ipc.md.
-    spawn: (input: SpawnSessionInput, projectId?: string | null) => Promise<Session>;
+    spawn: (input: Omit<SpawnSessionInput, 'startPath'>, projectId?: string | null) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
     /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */

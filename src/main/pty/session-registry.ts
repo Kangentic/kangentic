@@ -12,6 +12,8 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
+import type { LaunchStartPath } from '../../shared/types';
+import type { LaunchOutputClass } from './agent-launch-report';
 
 /**
  * Internal per-session state owned by the main process. The subset
@@ -120,12 +122,45 @@ export interface ManagedSession {
   agentStartObservedAt?: number | null;
   /** The agent reports its own start (`AgentParser.reportsAgentStart`, read at spawn). */
   reportsAgentStart?: boolean;
-  /** This session's launch failure was reported, so a second retirement only retires it. */
+  /** This session's launch failure was reported, whatever its stage. A session reports once. */
   launchFailureNoted?: boolean;
+  /** What the launch report read in the output, for the retry to wait on. */
+  launchOutputRead?: Promise<LaunchOutputClass>;
   /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
   typedLineBytes?: number | null;
   /** The typed line sourced a launcher file instead of carrying the command. */
   launcherUsed?: boolean;
+  /**
+   * The launcher file that typed line sources. Main-side only: a report sends
+   * whether it still exists, never the path, and the file holds the task's prompt.
+   */
+  launcherPath?: string | null;
+  /** What started this session (`SpawnSessionInput.startPath`). */
+  startPath?: LaunchStartPath;
+  /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
+  agentCliVersion?: string | null;
+  /** Epoch ms of the first output of any kind, the shell's own included. */
+  firstOutputAt?: number | null;
+  /**
+   * Epoch ms of the pty host's `agentOutput`: text after the spawn's clear ran,
+   * so the shell ran the typed line. Not evidence the AGENT ran, because the
+   * shell's own "command not found" lands here too.
+   */
+  agentOutputAt?: number | null;
+  /** Epoch ms of the agent's first hook event, SessionEnd aside (a kill synthesizes one). */
+  agentHookObservedAt?: number | null;
+  /**
+   * Epoch ms of the first session id the agent itself gave, from a hook, its
+   * status line, its output or a file it wrote. Never the id a caller assigned
+   * at spawn, which proves nothing about the agent.
+   */
+  agentIdReportedAt?: number | null;
+  /** Epoch ms the launch overlay gave up waiting for the agent (`AGENT_READY_CEILING_MS`). */
+  readyCeilingAt?: number | null;
+  /** The first sign the agent ran was noted, so its trail line and a recovery come once. */
+  agentRanNoted?: boolean;
+  /** A retry that worked has been reported, once. */
+  retryRecoveryNoted?: boolean;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at

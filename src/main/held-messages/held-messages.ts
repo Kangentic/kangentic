@@ -5,6 +5,7 @@ import type { Session } from '../../shared/types';
 import { MOVE_MESSAGE_MAX_CHARS } from '../agent/commands/move-message-limit';
 import { getProjectDb } from '../db/database';
 import { SentSessionMessageRepository } from '../db/repositories/sent-session-message-repository';
+import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import {
@@ -183,6 +184,9 @@ const claimedRowIds = new Map<string, Set<string>>();
 /** Command-line rides waiting for their session to run, by session id. */
 const pendingRides = new Map<string, HeldClaim>();
 
+/** Rides on a running session whose agent has not shown it started, by session id. */
+const launchRides = new Map<string, HeldClaim>();
+
 /** How long the flush waits after a session first runs, for a recap mark to land. */
 const HELD_FLUSH_SETTLE_MS = 1_000;
 
@@ -274,13 +278,13 @@ export function settleClaimFromReport(claim: HeldClaim, report: InjectionReport,
  * The claim rode a session's command line: it commits when that session first
  * runs, not when the spawn returns. A queued session (the concurrency cap) has
  * its command built now and run later, and a move before its promotion means
- * it never runs. A session already running commits at once; one already gone
- * releases.
+ * it never runs. A session already running commits once its agent shows it
+ * started (`commitOnceAgentStarts`); one already gone releases.
  */
 export function commitWhenSessionRuns(context: IpcContext, claim: HeldClaim, sessionId: string): void {
   const session = context.sessionManager.getSession(sessionId);
   if (session?.status === 'running') {
-    claim.commit(sessionId);
+    commitOnceAgentStarts(context, claim, sessionId);
   } else if (session?.status === 'queued') {
     // One ride per queued session. An earlier one would otherwise be dropped
     // unsettled, its rows reserved until a restart.
@@ -289,6 +293,66 @@ export function commitWhenSessionRuns(context: IpcContext, claim: HeldClaim, ses
   } else {
     claim.release({ flush: true });
   }
+}
+
+/**
+ * A running PTY is only a shell. For an adapter that reports its start, the
+ * messages count as delivered once its agent shows it started, since a launch
+ * that never ran took nothing in. An adapter with no start signal cannot say, so
+ * they commit now.
+ */
+function commitOnceAgentStarts(context: IpcContext, claim: HeldClaim, sessionId: string): void {
+  if (!context.sessionManager.agentStartPending(sessionId)) {
+    claim.commit(sessionId);
+    return;
+  }
+  launchRides.get(sessionId)?.release({ flush: false });
+  launchRides.set(sessionId, claim);
+}
+
+/**
+ * A session ended with messages riding its launch. Evidence that came with no
+ * event of its own still commits. A fresh launch marked failed replays its record's
+ * prompt, which holds them, so holding them too would send them twice. Anything
+ * else put nothing to the agent: a failed resume replays no prompt, and a launch
+ * a person stopped left a conversation that does not hold them.
+ */
+function settleLaunchRide(context: IpcContext, sessionId: string): void {
+  const ride = launchRides.get(sessionId);
+  if (!ride) return;
+  launchRides.delete(sessionId);
+  if (!context.sessionManager.agentStartPending(sessionId) || failedLaunchReplaysItsPrompt(ride)) {
+    ride.commit(sessionId);
+  } else {
+    ride.release({ flush: true });
+  }
+}
+
+function failedLaunchReplaysItsPrompt(ride: HeldClaim): boolean {
+  try {
+    const latest = new SessionRepository(getProjectDb(ride.projectId)).getLatestForTask(ride.taskId);
+    return Boolean(latest?.launch_failed_at);
+  } catch (error) {
+    console.error(`[held-messages] Could not read the launch of task ${ride.taskId.slice(0, 8)}:`, error);
+    return false;
+  }
+}
+
+/**
+ * A column's message typed after the spawn, for a launch that never showed its
+ * agent ran. It goes to the next agent as a held message, or a retry that
+ * succeeds would start with the column's message missing. A task moved on since
+ * keeps nothing: the message was for a column it left.
+ */
+export function holdUndeliveredOpening(
+  context: IpcContext,
+  input: { projectId: string | null | undefined; taskId: string; message: string; report: InjectionReport; taskStayed: boolean },
+): void {
+  const projectId = input.projectId ?? context.currentProjectId;
+  if (!projectId || !input.taskStayed || input.report.textReachedAgent !== false) return;
+  if (!context.sessionManager.agentStartPending(input.report.sessionId)) return;
+  const outcome = holdTaskMessage(context, { projectId, taskId: input.taskId, message: input.message });
+  if (outcome.status === 'refused') console.warn(`[held-messages] A failed launch's opening was not held: ${outcome.error}`);
 }
 
 /**
@@ -417,7 +481,8 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
  *
  * A ride on a queued session goes back on hold when the session leaves the
  * queue without running: removed, exited, or suspended (a pause while queued
- * emits neither `exit` nor `session-removed`, only its status).
+ * emits neither `exit` nor `session-removed`, only its status). A ride on a
+ * running session waits for the agent's start the same way (`settleLaunchRide`).
  *
  * Returns the unsubscribe, which puts back every ride still waiting.
  */
@@ -432,7 +497,10 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
   };
   const onSessionChanged = (sessionId: string, session: Session): void => {
     if (session.status !== 'running') {
-      if (session.status !== 'queued') releaseRide(sessionId, true);
+      if (session.status !== 'queued') {
+        releaseRide(sessionId, true);
+        settleLaunchRide(context, sessionId);
+      }
       return;
     }
     if (seenRunning.has(sessionId)) return;
@@ -440,7 +508,7 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
     const ride = pendingRides.get(sessionId);
     if (ride) {
       pendingRides.delete(sessionId);
-      ride.commit(sessionId);
+      commitOnceAgentStarts(context, ride, sessionId);
     }
     if (session.transient || !session.taskId || !session.projectId) return;
     const { taskId, projectId } = session;
@@ -449,15 +517,28 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
   const onSessionGone = (sessionId: string): void => {
     seenRunning.delete(sessionId);
     releaseRide(sessionId, true);
+    settleLaunchRide(context, sessionId);
   };
+  const onAgentRan = (sessionId: string): void => {
+    const ride = launchRides.get(sessionId);
+    if (!ride) return;
+    launchRides.delete(sessionId);
+    ride.commit(sessionId);
+  };
+  context.sessionManager.on('agent-ran', onAgentRan);
   context.sessionManager.on('session-changed', onSessionChanged);
   context.sessionManager.on('session-removed', onSessionGone);
   context.sessionManager.on('exit', onSessionGone);
   return () => {
+    context.sessionManager.off('agent-ran', onAgentRan);
     context.sessionManager.off('session-changed', onSessionChanged);
     context.sessionManager.off('session-removed', onSessionGone);
     context.sessionManager.off('exit', onSessionGone);
     for (const sessionId of [...pendingRides.keys()]) releaseRide(sessionId, false);
+    for (const [sessionId, ride] of [...launchRides]) {
+      launchRides.delete(sessionId);
+      ride.release({ flush: false });
+    }
   };
 }
 
@@ -465,4 +546,5 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
 export function resetHeldMessagesForTests(): void {
   claimedRowIds.clear();
   pendingRides.clear();
+  launchRides.clear();
 }

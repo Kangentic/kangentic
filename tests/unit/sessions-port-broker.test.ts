@@ -273,6 +273,12 @@ function findPortsLostListener(): IpcHandler {
 // Tests
 // ---------------------------------------------------------------------------
 
+const mockReportPtyPortFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPtyPortFailure: mockReportPtyPortFailure,
+}));
+
 describe('sessions.ts renderer port broker', () => {
   let context: ReturnType<typeof createMockContext>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -320,6 +326,27 @@ describe('sessions.ts renderer port broker', () => {
       // The teardown watch is armed after a successful hand-off.
       expect(renderer.listenerCount('destroyed')).toBe(1);
       expect(renderer.listenerCount('render-process-gone')).toBe(1);
+    });
+
+    it('reports a renderer left open with no port, since its terminals take no keystroke', () => {
+      const renderer = addRenderer(7);
+      renderer.postMessage.mockImplementation(() => { throw new Error('post failed'); });
+
+      requestPort(renderer);
+
+      expect(mockReportPtyPortFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports nothing for a window that went away during the post', () => {
+      const renderer = addRenderer(7);
+      renderer.postMessage.mockImplementation(() => {
+        renderer.markDestroyed();
+        throw new Error('Render frame was disposed before WebFrameMain could be accessed');
+      });
+
+      requestPort(renderer);
+
+      expect(mockReportPtyPortFailure).not.toHaveBeenCalled();
     });
 
     it('closes the host end, attaches nothing, arms no watch and throws nothing when the post throws', () => {

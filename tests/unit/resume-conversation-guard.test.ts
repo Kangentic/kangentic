@@ -580,3 +580,51 @@ describe('both spawn chokepoints run the check after the reconcile and the migra
     expect(source).toMatch(/prompt: prompt \?\? undefined/);
   });
 });
+
+describe('a launch the check marked as failed', () => {
+  // Red without the marker: the agent wrote no report, so this reads unknown and
+  // the task resumes a conversation that was never written, then fails again.
+  it('starts fresh with no report from the agent, which never ran', async () => {
+    const verdict = await assessResumeConversation({
+      adapter: claudeShapedAdapter(),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [{ ...folderRecord(), launch_failed_at: '2026-11-05T12:00:00.000Z' }],
+      cwd,
+      projectPath,
+    });
+    expect(verdict).toBe('never-started');
+  });
+
+  it('reads the newest record, past an empty slot for one it could not find', async () => {
+    const verdict = await assessResumeConversation({
+      adapter: adapterWithoutStatusPipeline(),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [null, { ...folderRecord(), launch_failed_at: '2026-11-05T12:00:00.000Z' }],
+      cwd,
+      projectPath,
+    });
+    expect(verdict).toBe('never-started');
+  });
+
+  it('never discards a conversation that had turns', async () => {
+    const verdict = await assessResumeConversation({
+      adapter: adapterWithoutProof(),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [{ ...folderRecord(), launch_failed_at: '2026-11-05T12:00:00.000Z', total_output_tokens: 40 }],
+      cwd,
+      projectPath,
+    });
+    expect(verdict).toBe('unknown');
+  });
+
+  it('leaves an unmarked record to today\'s resume', async () => {
+    const verdict = await assessResumeConversation({
+      adapter: claudeShapedAdapter(),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [folderRecord()],
+      cwd,
+      projectPath,
+    });
+    expect(verdict).toBe('unknown');
+  });
+});

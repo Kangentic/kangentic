@@ -1,3 +1,5 @@
+import { identifyOpenCodeUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -289,6 +291,11 @@ export class OpenCodeAdapter implements AgentAdapter {
       for (const [cwd, target] of targets) this.remoteTargetsByCwd.set(cwd, target);
     },
   };
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyOpenCodeUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

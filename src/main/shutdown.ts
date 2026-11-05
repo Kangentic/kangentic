@@ -12,6 +12,7 @@ import { markRecordSuspended, settleQueuedRecord } from './transition-engine/ses
 import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers/session-metrics';
 import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
+import { recordAbandonedLaunches } from './pty/abandoned-launches';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
 import type { BoardConfigManager } from './config/board-config-manager';
@@ -46,6 +47,8 @@ interface ShutdownDependencies {
    * anything deferred.
    */
   allowGrace: boolean;
+  /** Where a launch a person quit on waits for the next launch to report it. */
+  abandonedLaunchesFilePath: string;
 }
 
 const HARD_SHUTDOWN_DEADLINE_MS = 6000;
@@ -150,6 +153,13 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     runCleanupStep(
       'terminalSubmitScheduler.cancelAll',
       () => dependencies.getTerminalSubmitScheduler().cancelAll(),
+    );
+
+    // A launch a person is quitting on, while the rows still read running. Disk
+    // only: the next launch reports it (abandoned-launches.ts).
+    runCleanupStep(
+      'recordAbandonedLaunches',
+      () => recordAbandonedLaunches(dependencies.abandonedLaunchesFilePath, sessionManager.abandonedLaunchTags()),
     );
 
     // Mark running DB records as 'suspended' so sessions can resume on next launch.

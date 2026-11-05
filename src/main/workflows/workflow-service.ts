@@ -1189,7 +1189,7 @@ async function bringBackTaskAgent(context: IpcContext, projectId: string, task: 
       try {
         const session = await resumeTaskSession(context, task.id, {
           projectId,
-          onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, projectId),
+          onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, projectId, 'workflow'),
         });
         // Null: a newer resume, a pause or a reset took the task over.
         return session ? 'resumed' : 'skipped';
@@ -1208,7 +1208,7 @@ async function bringBackTaskAgent(context: IpcContext, projectId: string, task: 
       // reports its own failure with the spawn-blocked notice. Not awaited: that
       // list can run a script for minutes, and the phone's Resume answers in
       // 10 s. It is counted as accepted, as the phone's own Start is.
-      autoSpawnForTask(context, projectId, { id: task.id, title: task.title }, decision.laneId).catch((error: unknown) => {
+      autoSpawnForTask(context, projectId, { id: task.id, title: task.title }, decision.laneId, { startPath: 'workflow' }).catch((error: unknown) => {
         console.warn(`[WORKFLOW] Could not start #${task.display_id}'s agent on Resume:`, error);
       });
       return 'started';

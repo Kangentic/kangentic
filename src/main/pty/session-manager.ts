@@ -47,7 +47,7 @@ import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
-import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
+import { InProcessPtyHostTransport, PTY_HOST_LOST_EXIT_CODE, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
 import type {
   HostExecRequest,
   HostExecResult,
@@ -89,7 +89,21 @@ import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
-import { launchNeverStarted, reportAgentNeverStarted } from './agent-launch-report';
+import {
+  LAUNCH_ABANDON_MS,
+  hasAgentRunEvidence,
+  isUserSetupFailureClass,
+  launchNeverStarted,
+  launchTagsOf,
+  logLaunchStep,
+  reportLaunchRecovered,
+  reportSessionLaunchFailure,
+  type LaunchEndedBy,
+  type LaunchOutputClass,
+  type LaunchStage,
+  type LaunchTags,
+  type SessionLaunchFailure,
+} from './agent-launch-report';
 import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
@@ -783,6 +797,12 @@ export class SessionManager extends EventEmitter {
           const startedSession = this.registry.get(sessionId);
           if (startedSession) startedSession.agentStartObservedAt ??= Date.now();
         }
+        // Any hook proves the agent ran. Not a SessionEnd: a kill synthesizes one.
+        const hookSession = event.type === EventType.SessionEnd ? undefined : this.registry.get(sessionId);
+        if (hookSession) {
+          hookSession.agentHookObservedAt ??= Date.now();
+          this.noteAgentRan(hookSession);
+        }
         if (event.type === EventType.Prompt) this.tookPrompt.add(sessionId);
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
@@ -821,6 +841,10 @@ export class SessionManager extends EventEmitter {
         // recoverStaleSessionId() handles all cases - emit unconditionally.
         const session = this.registry.get(sessionId);
         if (!session) return;
+        // Every caller here heard the id from the agent or found it in a file the
+        // agent wrote. A caller-owned id set at spawn never comes this way.
+        session.agentIdReportedAt ??= Date.now();
+        this.noteAgentRan(session);
         // The host can stop scanning this session's output for an id.
         this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
@@ -1093,7 +1117,12 @@ export class SessionManager extends EventEmitter {
         // end offset lets the phone's seed drop bytes it already holds.
         this.emit('data-tap', event.sessionId, event.data, event.endOffset);
         return;
-      case 'outputSeen':
+      case 'outputSeen': {
+        const outputSession = this.registry.get(event.sessionId);
+        if (outputSession && outputSession.firstOutputAt == null) {
+          outputSession.firstOutputAt = Date.now();
+          logLaunchStep(outputSession, 'first_output');
+        }
         this.telemetry.activityEngine.markPtyChunk(event.sessionId);
         // Production stuck-pending-tools signal: a single timestamp write so a
         // long quiet foreground tool (a test run streaming output with no hook
@@ -1102,6 +1131,7 @@ export class SessionManager extends EventEmitter {
         this.telemetry.activityEngine.markPtyOutput(event.sessionId);
         this.emit('output-seen', event.sessionId);
         return;
+      }
       // These re-create per-session state too (the first-output latch and
       // the alt-screen mirror), so a session removed while its parked PTY
       // still writes its exit screen is dropped here like the cases below.
@@ -1129,9 +1159,15 @@ export class SessionManager extends EventEmitter {
         });
         return;
       }
-      case 'agentOutput':
+      case 'agentOutput': {
+        const launchedSession = this.registry.get(event.sessionId);
+        if (launchedSession && launchedSession.agentOutputAt == null) {
+          launchedSession.agentOutputAt = Date.now();
+          logLaunchStep(launchedSession, 'typed_line_ran');
+        }
         this.markAgentReady(event.sessionId);
         return;
+      }
       case 'altScreen': {
         if (!this.registry.has(event.sessionId)) return;
         this.inAltScreen.set(event.sessionId, event.inAltScreen);
@@ -1146,7 +1182,10 @@ export class SessionManager extends EventEmitter {
         // decide whether the force-kill must wait for the exit sequence. A
         // later re-entry is not a boot and must not re-open the window.
         const session = this.registry.get(event.sessionId);
-        if (session) session.altScreenEnteredAt ??= Date.now();
+        if (session) {
+          session.altScreenEnteredAt ??= Date.now();
+          this.noteAgentRan(session);
+        }
         // No shell enters the alt buffer, so this is the agent's first frame.
         this.markAgentReady(event.sessionId);
         this.reassertGeometryForBootingChild(event.sessionId, {
@@ -1434,7 +1473,140 @@ export class SessionManager extends EventEmitter {
   private armAgentReadyCeiling(sessionId: string): void {
     const session = this.registry.get(sessionId);
     if (!session?.agentParser || session.status !== 'running') return;
-    this.firstOutputTracker.armCeiling(sessionId, AGENT_READY_CEILING_MS, () => this.markAgentReady(sessionId));
+    this.firstOutputTracker.armCeiling(sessionId, AGENT_READY_CEILING_MS, () => {
+      session.readyCeilingAt ??= Date.now();
+      this.markAgentReady(sessionId);
+    });
+  }
+
+  /**
+   * Where the sweep cannot judge a session (`canTreeJudgeAgent`), a launch that
+   * never started would otherwise never be noticed. A timer sees it instead, and
+   * only reports: it pauses nothing, because nothing here saw the agent gone.
+   */
+  private armUnjudgedLaunchCheck(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.agentParser || this.canTreeJudgeAgent(session)) return;
+    if (!launchNeverStarted(session)) return;
+    const timer = setTimeout(() => {
+      if (this.registry.get(sessionId) !== session) return;
+      if (session.status !== 'running' || session.pty === null) return;
+      if (this.isHiddenUntilAdopted(sessionId) || !launchNeverStarted(session)) return;
+      this.reportLaunchOf(session, 'never_started', { extraTags: { judge: 'timer' } });
+    }, COMMAND_TERMINAL_AGENT_START_CEILING_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+  }
+
+  /**
+   * May this failed launch get its one retry? Only with no sign the agent ran,
+   * so no prompt runs twice and no second paid turn starts, and no cause the
+   * adapter identified as the user's, which a second launch cannot fix. A cause
+   * nobody identified retries, since it may be ours. Asked after the pause, since
+   * a late hook can land while the session goes down, and it waits for the output
+   * read the report posted. A retry is never retried.
+   */
+  async mayRetryLaunch(sessionId: string): Promise<boolean> {
+    const session = this.registry.get(sessionId);
+    if (!session || session.startPath === 'retry') return false;
+    const outputClass = await session.launchOutputRead;
+    if (outputClass && isUserSetupFailureClass(outputClass)) return false;
+    return !isShuttingDown() && launchNeverStarted(session);
+  }
+
+  /** What the report found in this launch's output. Undefined when it read nothing. */
+  async launchOutputClass(sessionId: string): Promise<LaunchOutputClass | undefined> {
+    return this.registry.get(sessionId)?.launchOutputRead;
+  }
+
+  /** True while an adapter that reports its start has not shown this launch ran. */
+  agentStartPending(sessionId: string): boolean {
+    const session = this.registry.get(sessionId);
+    return session !== undefined && launchNeverStarted(session);
+  }
+
+  /** The CLI ran and named its own startup failure, which the user is shown. */
+  noteAgentExitedAtStart(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (session) this.reportLaunchOf(session, 'agent_exited');
+  }
+
+  /**
+   * The launches a quit is about to end that a person gave up on, by the same
+   * test as `noteLaunchEnded`. Synchronous, for the quit path: no exit listener
+   * runs there, so these go on disk for the next launch (`abandoned-launches.ts`).
+   */
+  abandonedLaunchTags(now: number = Date.now()): LaunchTags[] {
+    const launches: LaunchTags[] = [];
+    for (const session of this.registry.values()) {
+      if (session.status !== 'running' || session.launchFailureNoted === true) continue;
+      if (this.isHiddenUntilAdopted(session.id) || !launchNeverStarted(session)) continue;
+      if (now - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) continue;
+      const endedBy: LaunchEndedBy = 'quit';
+      launches.push({ ...launchTagsOf(session, now), ended_by: endedBy, output_class: 'not_read' });
+    }
+    return launches;
+  }
+
+  /** The agent showed it ran, once. On a retry, that makes this launch a recovery. */
+  private noteAgentRan(session: ManagedSession): void {
+    if (session.agentRanNoted === true) return;
+    session.agentRanNoted = true;
+    logLaunchStep(session, 'agent_ran');
+    if (session.startPath === 'retry') reportLaunchRecovered(session);
+    this.emit('agent-ran', session.id);
+  }
+
+  /**
+   * Report this session's launch failure. The ring's read is posted now, so a
+   * kill that follows cannot lose it. A session whose row has gone has no ring,
+   * and one with no output yet holds only what a resume seeded it with.
+   */
+  private reportLaunchOf(
+    session: ManagedSession,
+    stage: LaunchStage,
+    options: Pick<SessionLaunchFailure, 'extraTags' | 'onlyWhenIdentified'> = {},
+  ): void {
+    const ringIsThisLaunchs = this.registry.get(session.id) === session && typeof session.firstOutputAt === 'number';
+    reportSessionLaunchFailure({
+      session,
+      stage,
+      readOutput: ringIsThisLaunchs ? () => this.getRawScrollback(session.id) : null,
+      ...options,
+    });
+  }
+
+  /**
+   * A session's PTY exited. Report it if the launch had not shown its agent ran.
+   *
+   * On its own, that is a shell that died before the agent: `shell_exit`, for any
+   * adapter once the typed line never ran, because the CLI always runs under a
+   * shell that outlives it. For an adapter that reports its start, its silence is
+   * enough. Ended by Kangentic, it counts only past `LAUNCH_ABANDON_MS`, since a
+   * quick Stop is no failure, and only for an adapter whose silence means
+   * something. A host loss has its own report, a hidden agent was never the
+   * task's, and a report from a quit would never land (`recordAbandonedLaunches`
+   * covers the quit).
+   */
+  private noteLaunchEnded(
+    session: ManagedSession,
+    exit: { exitCode: number; signal: number | null; intentional: boolean },
+  ): void {
+    if (session.agentParser) logLaunchStep(session, 'exited');
+    if (session.launchFailureNoted === true || !session.agentParser) return;
+    if (isShuttingDown() || exit.exitCode === PTY_HOST_LOST_EXIT_CODE) return;
+    if (this.isHiddenUntilAdopted(session.id) || hasAgentRunEvidence(session)) return;
+    const exitTags = { exit_code: String(exit.exitCode), exit_signal: exit.signal === null ? 'none' : String(exit.signal) };
+    if (!exit.intentional) {
+      const typedLineNeverRan = typeof session.agentOutputAt !== 'number';
+      if (session.reportsAgentStart === true || typedLineNeverRan) {
+        this.reportLaunchOf(session, 'shell_exit', { extraTags: exitTags });
+      }
+      return;
+    }
+    if (!launchNeverStarted(session)) return;
+    if (Date.now() - Date.parse(session.startedAt) < LAUNCH_ABANDON_MS) return;
+    const endedBy: LaunchEndedBy = session.status === 'suspended' ? 'pause' : 'kill';
+    this.reportLaunchOf(session, 'abandoned', { extraTags: { ...exitTags, ended_by: endedBy } });
   }
 
   /**
@@ -2398,7 +2570,12 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
-      if (session.status === 'running') this.armAgentReadyCeiling(id);
+      if (session.status === 'running') {
+        const spawned = this.registry.get(id);
+        if (spawned) logLaunchStep(spawned, 'spawned');
+        this.armAgentReadyCeiling(id);
+        this.armUnjudgedLaunchCheck(id);
+      }
       if (session.status === 'running' && input.resuming && !input.transient) {
         this.announceResumed(id, input.agentSessionId ?? null, input.resumedBy ?? 'user');
       }
@@ -2484,6 +2661,7 @@ export class SessionManager extends EventEmitter {
         const inFlight = this.spawnsInFlight.get(sessionId);
         if (inFlight) inFlight.abandonedPtyExit = ptyExited;
       },
+      onLaunchEnded: (session, exit) => this.noteLaunchEnded(session, exit),
       onPtyExited: (sessionId) => {
         // An exit lifts the overlay on its own (the renderers read it), so the
         // backstop has nothing left to do, and must not mark a dead row.
@@ -3621,9 +3799,13 @@ export class SessionManager extends EventEmitter {
     if (!this.isAgentAbsenceCandidate(sessionId)) return;
     const session = this.registry.get(sessionId);
     if (!session) return;
+    if (session.reportsAgentStart !== true && !hasAgentRunEvidence(session)) {
+      // This adapter's silence proves nothing, so only the shell's own words
+      // make this a failed launch. It retires as usual either way.
+      this.reportLaunchOf(session, 'never_started', { extraTags: { judge: 'sweep' }, onlyWhenIdentified: true });
+    }
     if (launchNeverStarted(session) && session.launchFailureNoted !== true) {
-      session.launchFailureNoted = true;
-      reportAgentNeverStarted(session);
+      this.reportLaunchOf(session, 'never_started', { extraTags: { judge: 'sweep' } });
       // A task keeps its way back: it pauses rather than exits, so its Resume
       // stands, and the conversation does not read as one the user ended. A
       // Command Terminal ends below, and a workflow's agent keeps the exited row

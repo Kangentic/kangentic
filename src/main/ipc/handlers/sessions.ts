@@ -11,6 +11,7 @@ import { UsageHistoryRepository } from '../../db/repositories/usage-history-repo
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
+import { isUserSetupFailureClass, reportPtyPortFailure } from '../../pty/agent-launch-report';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { planExitTargetFor } from '../helpers/plan-exit-target';
 import { readTaskLastMessage, readTaskReport, readTaskRoute } from '../helpers/task-report';
@@ -28,7 +29,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
 import { forgetTranscriptPath, persistTranscriptPath } from './session-transcript-path';
-import { abortInFlightResume } from './session-resume-controllers';
+import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
@@ -73,7 +74,8 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
     if (!resolvedProjectId) throw new Error('Cannot spawn session: no project is currently open');
-    return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId });
+    // Set after the spread: the renderer's value never names a start path.
+    return context.sessionManager.spawn({ ...input, projectId: resolvedProjectId, startPath: 'board' });
   });
   ipcMain.handle(IPC.SESSION_KILL, (_, id) => {
     // Serialize against suspend/resume/reset for the same task so KILL can't
@@ -273,6 +275,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     } catch (error) {
       console.warn(`[pty-port] could not hand renderer ${target.id} its port:`, error instanceof Error ? error.message : String(error));
       port1.close();
+      // A window going away is the expected case here. One still open is left
+      // with terminals that show history and take no keystroke.
+      if (!target.isDestroyed()) reportPtyPortFailure();
       return;
     }
     context.sessionManager.attachRendererPort(target.id, port1);
@@ -727,6 +732,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
    * its own and the sweep's kill arrives INTENTIONAL) and the rare direct PTY
    * exit. Never for a Command Terminal, which has no task to notify about.
    * `fallbackReason` is for a launch known to have failed whose CLI said nothing.
+   * That launch also shows the line its adapter identified as the user's own
+   * setup, so a person who is signed out reads the CLI's words. Only that launch:
+   * a login that lapsed in a session that ran is not an agent that did not start.
    */
   const notifyStartupFailureIfNamed = (exitedSession: Session, exitCode: number, projectId: string, fallbackReason?: string): void => {
     if (exitedSession.transient) return;
@@ -736,9 +744,18 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     if (!describeStartupFailure && !fallbackReason) return;
     // The ring lives in the pty host. The read is posted now, ahead of any
     // kill that follows, so it sees the CLI's last words.
-    void context.sessionManager.getRawScrollback(exitedSession.id).then((rawScrollback) => {
-      const startupFailure = describeStartupFailure?.(rawScrollback, exitCode) ?? fallbackReason;
+    void context.sessionManager.getRawScrollback(exitedSession.id).then(async (rawScrollback) => {
+      const namedByCli = describeStartupFailure?.(rawScrollback, exitCode);
+      // The class, not only the line: a resume's ring starts with the last
+      // session's output, and the report does not read a ring that holds only that.
+      const outputClass = fallbackReason ? await context.sessionManager.launchOutputClass(exitedSession.id) : undefined;
+      const userSetupLine = outputClass && isUserSetupFailureClass(outputClass)
+        ? adapter?.identifyUserSetupFailure?.(rawScrollback)?.line
+        : undefined;
+      const startupFailure = namedByCli ?? userSetupLine ?? fallbackReason;
       if (!startupFailure) return;
+      // The session's report keeps it to one, if the sweep reported this launch.
+      if (namedByCli) context.sessionManager.noteAgentExitedAtStart(exitedSession.id);
       try {
         const failedTask = new TaskRepository(getProjectDb(projectId)).getById(exitedSession.taskId);
         if (failedTask) notifySpawnBlocked(context, failedTask, 'agent', new Error(startupFailure), projectId);
@@ -769,6 +786,18 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // The notice waits for the pause: a pause declined for a newer session of the
   // task has no failure to report. The sweep has let this session go, so a pause
   // that does not land retires the row here, or it stays a running phantom.
+  //
+  // A launch with no sign its agent ran gets one retry on a fresh PTY first, after
+  // the pause released the task lock, and the notice waits for that one's outcome.
+  // A fresh launch is marked failed under the lock, so this retry and any later
+  // Resume start it fresh with its own prompt: `--resume` would find no
+  // conversation. A failed resume is unmarked, and its conversation is still there.
+  //
+  // The retry is Kangentic's own, so a person's gesture beats it. The decision
+  // needs the output read and the retry takes the task lock itself, so it cannot
+  // be made under the lock. A resume controller held from before the pause stands
+  // in: a Pause, a Resume, a reset or a relocation in that gap aborts it, as it
+  // aborts any resume, and a phone's Start is a resume in flight.
   context.sessionManager.on('agent-never-started', (sessionId: string, session: Session) => {
     const retire = (): void => context.sessionManager.retireAgentlessSession(sessionId);
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
@@ -776,19 +805,41 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       retire();
       return;
     }
+    const notifyFailure = (): void => notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
+    const retryWindow = new AbortController();
+    registerResumeController(session.taskId, retryWindow);
     void pauseTaskSession(context, session.taskId, {
       projectId,
       suspendedBy: 'system',
       stillEligible: (liveSession) => liveSession.id === sessionId,
-    }).then((outcome) => {
-      if (outcome === 'paused') {
-        notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
-      } else {
+      onAccepted: () => {
+        if (!session.resuming) new SessionRepository(getProjectDb(projectId)).markLaunchFailed(sessionId);
+      },
+    }).then(async (outcome) => {
+      if (outcome !== 'paused') {
         retire();
+        return;
       }
+      const mayRetry = await context.sessionManager.mayRetryLaunch(sessionId);
+      releaseResumeController(session.taskId, retryWindow);
+      // Another start owns the task now, so it has no failure to show, and a retry
+      // would cancel that start.
+      if (isResumeInFlight(session.taskId)) return;
+      if (!mayRetry || retryWindow.signal.aborted) {
+        notifyFailure();
+        return;
+      }
+      console.warn(`[AGENT-LAUNCH] session=${sessionId.slice(0, 8)} retrying on a fresh PTY`);
+      // `onFailed`, not the rejection: a task the user moved to To Do or Done since
+      // is refused, and a refusal is their answer rather than a failure to show.
+      void resumeTaskSession(context, session.taskId, { projectId, startPath: 'retry', onFailed: notifyFailure }).catch((error: unknown) => {
+        console.warn('[AGENT-LAUNCH] The retry could not start:', error);
+      });
     }).catch((error: unknown) => {
       console.warn('[AGENT-LAUNCH] Pause after a failed launch failed:', error);
       retire();
+    }).finally(() => {
+      releaseResumeController(session.taskId, retryWindow);
     });
   });
 

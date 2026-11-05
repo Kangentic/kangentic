@@ -23,7 +23,7 @@ import { resolveBrowserAutomationConfig } from '../../browser/browser-automation
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
-import { DEFAULT_AGENT } from '../../../shared/types';
+import { DEFAULT_AGENT, type LaunchStartPath } from '../../../shared/types';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { markCommandTerminalRespawn, forgetCommandTerminalRespawn } from '../helpers/command-terminal-browser';
 import type {
@@ -36,6 +36,7 @@ import type {
 } from '../../../shared/types';
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -223,6 +224,12 @@ function projectRootIsShared(context: IpcContext, projectRoot: string): boolean 
   return context.sessionManager.listSessions().some((session) =>
     (session.status === 'running' || session.status === 'queued')
     && normalizeComparablePath(session.cwd) === comparableRoot);
+}
+
+/** What started this terminal: a phone's start is unattended, and a restart restores. */
+function commandTerminalStartPath(input: StartCommandTerminalInput, restore: CommandTerminalRestoreStart | undefined): LaunchStartPath {
+  if (restore) return 'startup_recovery';
+  return input.unattended ? 'phone' : 'command_terminal';
 }
 
 /**
@@ -439,6 +446,8 @@ export async function startCommandTerminal(
       projectId: input.projectId,
       command,
       cwd: projectRoot,
+      startPath: commandTerminalStartPath(input, restore),
+      agentCliVersion: detection.version,
       env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
@@ -497,6 +506,19 @@ export async function startCommandTerminal(
     // A restored terminal is nobody using the feature: the app brought it back.
     if (!restore) trackFeatureUsed('command_terminal');
     return { session, slot: reservation.slot, branch, ...(checkoutError ? { checkoutError } : {}) };
+  } catch (error) {
+    // A typed refusal is an answer, and a shell that did not start reported from
+    // its own spawn, so only what nothing expected reports here.
+    if (!(error instanceof CommandTerminalStartError)) {
+      reportPreflightFailure({
+        cause: 'command_terminal',
+        error,
+        agent: project.default_agent,
+        startPath: commandTerminalStartPath(input, restore),
+        keepMessage: true,
+      });
+    }
+    throw error;
   } finally {
     // The spawned row now holds the slot itself (it is in the registry), and a
     // failed start must free it.

@@ -386,7 +386,7 @@ describe('the workflow engine host', () => {
       await advance(DEBOUNCE_MS);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(1);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledWith(
-        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'git exploded' }), 'home',
+        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'git exploded' }), 'home', 'workflow',
       );
 
       // Second failure, same message: no new toast.
@@ -399,7 +399,7 @@ describe('the workflow engine host', () => {
       expect(harness.handleTaskMove).toHaveBeenCalledTimes(3);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(2);
       expect(harness.notifySpawnBlocked).toHaveBeenLastCalledWith(
-        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'the disk is full' }), 'home',
+        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'the disk is full' }), 'home', 'workflow',
       );
     });
 
@@ -411,7 +411,7 @@ describe('the workflow engine host', () => {
       await advance(DEBOUNCE_MS);
 
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(1);
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home', 'workflow']);
     });
 
     it('passes the error itself as the cause of a worktree failure that carries none', async () => {
@@ -421,7 +421,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', error, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', error, 'home', 'workflow']);
     });
 
     it('names the worktree step for an error the real wrapWorktreeSetupError built', async () => {
@@ -433,7 +433,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home', 'workflow']);
     });
 
     it('names the checkout step for a BranchCheckoutBlockedError', async () => {
@@ -443,7 +443,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['checkout', error, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['checkout', error, 'home', 'workflow']);
     });
 
     it('names the agent step for any other failure, a thrown string included', async () => {
@@ -452,7 +452,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['agent', 'the spawn queue is gone', 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['agent', 'the spawn queue is gone', 'home', 'workflow']);
     });
 
     it('shows nothing, and does not open the database, for a start whose project was deleted while the move ran', async () => {

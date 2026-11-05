@@ -269,7 +269,7 @@ export class WorkflowEngineHost {
       const task = db ? new TaskRepository(db).getById(intent.taskId) : undefined;
       if (!task) return;
       const { step, cause } = spawnFailureOf(error);
-      notifySpawnBlocked(this.context, task, step, cause, intent.projectId);
+      notifySpawnBlocked(this.context, task, step, cause, intent.projectId, 'workflow');
     } catch (toastError) {
       console.warn('[WORKFLOW] Could not report a failed start:', toastError);
     }

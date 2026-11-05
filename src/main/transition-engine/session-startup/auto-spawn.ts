@@ -7,6 +7,7 @@ import { AutomationRunRepository } from '../../db/repositories/automation-run-re
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
@@ -130,6 +131,7 @@ async function handOffFirstAgents(
       handedOff++;
     } catch (error) {
       console.error(`[AUTO_SPAWN] First agent failed for task ${task.id}:`, error);
+      reportPreflightFailure({ cause: 'recovery_first_agent', error, startPath: 'startup_recovery', keepMessage: true });
     }
   }
   if (handedOff > 0) {
@@ -294,6 +296,7 @@ export async function autoSpawnTasks(
         candidates.push({ lane: laneForTask, task, hasSessionRecord });
       } catch (error) {
         console.error(`[AUTO_SPAWN] Discovery failed for task ${task.id}:`, error);
+        reportPreflightFailure({ cause: 'recovery_discovery', error, startPath: 'startup_recovery', keepMessage: true });
       }
     }
   }
@@ -392,6 +395,7 @@ export async function autoSpawnTasks(
       spawnInputs.push({ task, isolatedSwimlaneId: resolveIsolatedSwimlaneId(lane), ...prep.data });
     } catch (err) {
       console.error(`[AUTO_SPAWN] Preparation failed for task ${task.id}:`, err);
+      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery', keepMessage: true });
     }
   }
 
@@ -458,6 +462,8 @@ export async function autoSpawnTasks(
           projectId,
           command: input.command,
           cwd: input.cwd,
+          startPath: 'startup_recovery',
+          agentCliVersion: input.agentCliVersion,
           env: input.extraEnv ?? undefined,
           statusOutputPath: input.statusOutputPath,
           eventsOutputPath: input.eventsOutputPath,
@@ -522,6 +528,14 @@ export async function autoSpawnTasks(
         console.log(`[AUTO_SPAWN] Spawn cancelled for task ${input.task.id}: the session was ended while it spawned`);
       } else {
         console.error(`[AUTO_SPAWN] Spawn failed for task ${input.task.id}:`, result.reason);
+        reportPreflightFailure({
+          cause: 'recovery_spawn',
+          error: result.reason,
+          agent: input.adapter.name,
+          agentCliVersion: input.agentCliVersion,
+          startPath: 'startup_recovery',
+          keepMessage: true,
+        });
       }
     }
   }

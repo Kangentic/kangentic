@@ -298,7 +298,7 @@ in one Sentry org, one triage surface.
   processes. It has to be both: main adds a forwarded renderer crumb with `scope.addBreadcrumb`,
   which never calls main's hook. Dropping a crumb before it is added also keeps it out of the ring;
   on one event, `[agent-push]` debug lines had evicted every click. By category:
-  - `console`: kept only under a tag in `CONSOLE_BREADCRUMB_TAGS` (`[UPDATER]`,
+  - `console`: kept only under a tag in `CONSOLE_BREADCRUMB_TAGS` (`[AGENT-LAUNCH]`, `[UPDATER]`,
     `[electron-updater]`, `[SHUTDOWN]`, `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`, `[APP]`) or
     Electron's own `Error occurred in handler for '<channel>'`, and never at debug level. A kept
     line is rebuilt from its arguments: the tagged string with paths redacted, each Error reduced
@@ -341,14 +341,11 @@ in one Sentry org, one triage surface.
 - **Handled errors are forwarded too** (`reportHandledError`; the renderer counterpart,
   `reportHandledRendererError`, serves the monaco funnel above): the deliberate catch sites that
   otherwise emit only a sanitized count - updater structural failures (`source: updater`), PTY
-  spawn failures (`source: pty_spawn`), the silent agent-spawn catches (`source: spawn`, with a
-  `reason` tag), a Kangentic utility worker that has crashed past its restart cap
+  spawn failures (`source: pty_spawn`), a Kangentic utility worker that has crashed past its restart cap
   (`source: utility_process`, with `service`, `exitCode`, `crashCount`, and `cause`), and a GPU health
   escalation reported on the next launch (`source: gpu_process`, with `reason`, `exitCode`, and
-  `crashCount` - see the GPU health bullet below), an agent launch that never started
-  (`source: agent_launch`, with `platform`, `shell` from a fixed list, `typed_line_bytes`,
-  `session_age_s` and `launcher`; the message is fixed and no command text or path is sent, see
-  [Agent absence sweep](../architecture/sessions/agent-absence-sweep.md)), a task leftover reap or a
+  `crashCount` - see the GPU health bullet below), a failed agent launch (`source: agent_launch`,
+  see "Every failed launch has one report" below), a task leftover reap or a
   leftover-list Stop that
   failed (`source: task_reap`, with `stage` (`reap` or `stop`) and `code` (`reader_load`,
   `empty_scan`, `process_list`, `window_list`, `connection_list`, `reap_error`, `host_timeout`,
@@ -411,6 +408,78 @@ in one Sentry org, one triage surface.
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
   `timeSyncWork` span that was running (or `outside any labelled step` when none was), so the line
   is in the stderr tail by the 15 s kill.
+- **Every failed launch has one report.** A user whose terminal never starts leaves, and most of
+  these failures throw nothing, so `src/main/pty/agent-launch-report.ts` is the one way a launch
+  failure reaches Sentry. Each report has a `stage`, and each stage its own error name:
+
+  | `stage` | Fires when | Error name |
+  |---|---|---|
+  | `preflight` | A worktree, checkout, session folder or adapter step failed before any PTY, or a Command Terminal, workflow agent or startup recovery start threw | `AgentLaunchPreflightError` |
+  | `pty_spawn` | The shell did not spawn. Its `source` stays `pty_spawn` | `PtyOutputNotConnectedError`, or the plain `Error` every earlier issue was grouped on |
+  | `shell_exit` | The shell exited on its own with no sign the agent ran | `AgentLaunchShellExitError` |
+  | `never_started` | The sweep, or a timer where the sweep cannot judge, found no agent and no sign one ran | `AgentLaunchNeverStartedError` |
+  | `agent_exited` | A CLI named its own startup failure (`describeStartupFailure`) | `AgentLaunchAgentExitedError` |
+  | `abandoned` | A person ended a launch that had shown nothing for 15 s | `AgentLaunchAbandonedError` |
+  | `pty_port` | A renderer that stays open never got its terminal port | `PtyPortDeliveryError` |
+
+  `reportHandledError` takes a fingerprint, and these reports pass `['agent-launch', stage, cause]`,
+  so each cause opens its own issue whichever call path reported it. `pty_spawn` passes none, because
+  its issues are grouped on the lines in `recordSpawnFailure`, which claim the report and keep
+  sending from those lines. A retry that worked sends one `AgentLaunchRecoveredError`, tagged
+  `retry: recovered`, so a recovered failure still shows.
+
+  An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `start_path` (`board`,
+  `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`), `shell`, `attempt`,
+  `launcher` (`none`, `present`, `missing`), `shell_printed` (`none`, `before_launch`,
+  `after_launch`, around the spawn's clear), `first_output_s`, `session_age_s` (both buckets),
+  `typed_line_bytes` and `overlay_ceiling`. A report on a session adds `output_class`
+  (`command_not_found`, `permission_denied`, `no_such_file`, `unknown_option`, `login_required`,
+  `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
+  (`pause`, `kill`, `quit`). `never_started` adds `judge` (`sweep`, `timer`). A preflight report
+  adds `error_type` and `errno` when the error has them.
+
+  Every value is fixed. A command holds the task's prompt and scrollback can hold secrets, so the
+  last output is classified in main and only the class leaves. The classifier anchors on how a shell
+  words a failure, so text the shell echoed, such as a task titled "fix permission denied", cannot
+  match. Detection keeps whatever a CLI printed, so `agent_cli_version` must look like a version or
+  it reads `unknown`. The launcher's path stays in main, and only whether it still exists leaves.
+  Git writes branch names into its errors, and branches are named after tasks, so a worktree or
+  checkout report sends a fixed message and a `cause` (`worktree`, `checkout`, `stale_directory`).
+  Other preflight reports keep the error's message with its paths redacted.
+
+  One event per `stage`, `cause`, `attempt` and `agent` per run, on top of one report per session
+  (`launchFailureNoted`), so one broken machine cannot use up the org's quota. `attempt` is in the
+  key because a retry that failed has to reach Sentry, and `agent` because one agent's failure must
+  not hide another's. The local `[AGENT-LAUNCH]` line is written
+  whether or not the event goes, and that tag is a breadcrumb, so these events carry their trail.
+
+  **Sentry stays a list of bugs we can fix, so what the user's own setup causes stays out.** That is
+  decided in one place, the early return in `reportHandledError`, by `UserConfigurationError`. These
+  reach it through the same path as any failure, and it drops them, so nothing else decides:
+
+  - `AgentCliNotFoundError`: the CLI is missing.
+  - `AgentUserSetupError`: an installed CLI is not logged in or refuses the user's own configuration,
+    as its adapter identified from the CLI's words (`identifyUserSetupFailure`).
+  - `GitUserStateError`: a dirty tree, a branch in use elsewhere, a missing base branch, a path too
+    long. `BranchCheckoutBlockedError` is the same.
+
+  Excluded failures still count in Aptabase as `spawn_failed`, with a fixed reason. The CLI's line
+  that named the failure goes to the user's notice and nowhere else.
+
+  **Only a cause identified positively is excluded.** An unknown failure from an installed CLI is
+  reported, because it may be our bug. So is one that reads as command not found (detection and the
+  shell disagreed) or that rejects an option we passed (we built a bad command). A recognizer reads
+  whole lines at the end of the output, so a typed prompt quoting one of these sentences cannot
+  match, and it leaves out any file Kangentic writes. See
+  [Which agents identify what](../integrations/agents/optional-properties.md).
+
+  An abort is a task taken over, not a failure, and a refusal at a Command Terminal start (the cap, a
+  slot taken, a conversation in use) is an answer, so neither is reported at all.
+
+  The quit path sends nothing (`synchronous-shutdown.md`), and no exit listener runs there. So a
+  launch a person quit on goes on disk, as `abandoned-launches.json` in the config directory, and
+  the next launch reports it (`src/main/pty/abandoned-launches.ts`). A person who never opens the
+  app again is not reported.
 - **A ConPTY whose output never connected is its own issue.** Sentry groups a `pty_spawn` report
   by the error's type and the code line of each in-app frame, and ignores the message (DESKTOP-23's
   grouping info). So `recordSpawnFailure` (`src/main/pty/spawn/pty-spawn.ts`) reports that shape

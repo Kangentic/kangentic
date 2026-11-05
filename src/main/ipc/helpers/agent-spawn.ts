@@ -9,7 +9,7 @@ import { TransitionEngine } from '../../transition-engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTemplate, interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
-import { reportHandledError } from '../../analytics/error-reporting';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -17,7 +17,7 @@ import { placeOfRecord } from '../../agent/shared/cli-target';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
-import type { Task, Swimlane, Project, AutoCommandMode } from '../../../shared/types';
+import type { Task, Swimlane, Project, AutoCommandMode, LaunchStartPath } from '../../../shared/types';
 import { showAutomationNotification } from '../../automations/shared/show-automation-notification';
 import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
@@ -40,6 +40,7 @@ import {
   claimHeldMessages,
   commitWhenSessionRuns,
   composeOpeningMessage,
+  holdUndeliveredOpening,
   pasteHeldAfterTurn,
   settleClaimFromReport,
   type HeldClaim,
@@ -216,6 +217,8 @@ export interface AgentSpawnOptions {
   toLane: Swimlane;
   skipPromptTemplate?: boolean;
   signal?: AbortSignal;
+  /** What started this, when it is not the board: a phone, or the automatic retry. */
+  startPath?: LaunchStartPath;
   /** Project ID for handoff context resolution. Resolved from caller's context. */
   projectId?: string;
   /** Project filesystem path for handoff context resolution. */
@@ -712,7 +715,16 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
           freshlySpawned: true,
           onOutcome: (report) => {
-            if (columnText !== undefined) reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
+            if (columnText !== undefined) {
+              reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
+              holdUndeliveredOpening(context, {
+                projectId: options.projectId,
+                taskId: currentTask.id,
+                message: columnText,
+                report,
+                taskStayed: tasks.getById(currentTask.id)?.swimlane_id === currentTask.swimlane_id,
+              });
+            }
             if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
           },
         });
@@ -963,6 +975,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         {
           ...resolveSpawnOverrides(beforeSpawn, toLane, project),
           earlyAgent: options.earlyAgent,
+          startPath: options.startPath,
         },
       );
       startedAgentInGroup = true;
@@ -1069,7 +1082,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // counted and surfaced without becoming an un-actionable issue.
       console.error('[spawnAgent] Failed to start session:', error);
       trackEvent('spawn_failed', { agent: targetAgent, reason: 'resume' });
-      reportHandledError(error, { source: 'spawn', reason: 'resume', agent: targetAgent });
+      reportPreflightFailure({ cause: 'agent_start', error, agent: targetAgent, startPath: options.startPath ?? 'board', keepMessage: true, alreadyCounted: true });
       notifySpawnBlocked(context, beforeSpawn, 'agent', error, options.projectId);
       // Rethrown, unlike the old fallback which returned: the runner records
       // the row that asked for the agent as skipped with this reason, so a
@@ -1349,6 +1362,8 @@ export function createEarlyAgentLauncher(input: {
   projectId: string;
   projectPath: string | null;
   explicitStart?: boolean;
+  /** See `AgentSpawnOptions.startPath`. The adopted session keeps it. */
+  startPath?: LaunchStartPath;
   signal?: AbortSignal;
 }): (worktreePath: string) => Promise<EarlyAgentHandle | null> {
   const { context, tasks } = input;
@@ -1384,6 +1399,7 @@ export function createEarlyAgentLauncher(input: {
         permissionOverride: toLane.permission_mode,
         agentOverride: resolution.agent,
         spawnOverrides: resolveSpawnOverrides(previewTask, toLane, project),
+        startPath: input.startPath,
         signal: input.signal,
       });
     } catch (error) {
@@ -1420,6 +1436,8 @@ export function resolveInjectionVerifier(
 export interface AutoSpawnForTaskOptions {
   /** See `AgentSpawnOptions.explicitStart`. Forwarded, and also lifts this function's own `auto_spawn` gate. */
   explicitStart?: boolean;
+  /** See `AgentSpawnOptions.startPath`. Forwarded. */
+  startPath?: LaunchStartPath;
 }
 
 /**
@@ -1578,6 +1596,7 @@ export async function autoSpawnForTask(
           projectId,
           projectPath,
           explicitStart: options.explicitStart,
+          startPath: options.startPath,
           signal,
         }));
         const hadWorktree = Boolean(fullTask.worktree_path);
@@ -1586,7 +1605,7 @@ export async function autoSpawnForTask(
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           console.error('[auto-spawn] Worktree creation failed:', worktreeError);
-          notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
+          notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId, options.startPath);
           return;
         }
         const setupStillRunning = setupStillRunningFor(context, projectPath, initScriptMode, hadWorktree ? null : fullTask.worktree_path);
@@ -1606,7 +1625,7 @@ export async function autoSpawnForTask(
           // targets whichever project the tool named, which is often not the
           // focused one. Falling back to `context.currentProjectId` would stamp
           // the notice with the wrong project, and the renderer filters on it.
-          notifySpawnBlocked(context, fullTask, 'checkout', checkoutError, projectId);
+          notifySpawnBlocked(context, fullTask, 'checkout', checkoutError, projectId, options.startPath);
           return;
         }
 
@@ -1632,6 +1651,7 @@ export async function autoSpawnForTask(
             context, engine, tasks, sessionRepo, task: current.fullTask, fromSwimlaneId: '*', toLane: current.toLane,
             projectId, projectPath, attachments, signal,
             explicitStart: options.explicitStart,
+            startPath: options.startPath,
             earlyAgent: earlyAgent ?? undefined,
             setupStillRunning,
           });
@@ -1671,7 +1691,7 @@ export async function autoSpawnForTask(
         // DB may be closed; keep the placeholder
       }
       trackEvent('spawn_failed', { agent: failedAgent, reason: 'auto_spawn' });
-      reportHandledError(err, { source: 'spawn', reason: 'auto_spawn', agent: failedAgent });
+      reportPreflightFailure({ cause: 'auto_spawn', error: err, agent: failedAgent, startPath: options.startPath ?? 'board', keepMessage: true, alreadyCounted: true });
     } finally {
       releaseResumeController(task.id, controller);
     }

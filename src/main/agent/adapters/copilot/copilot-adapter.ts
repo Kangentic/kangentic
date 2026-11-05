@@ -1,3 +1,5 @@
+import { identifyCopilotUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -110,6 +112,11 @@ export class CopilotAdapter implements AgentAdapter {
    * removes every directory recorded for its folder.
    */
   private readonly sessionConfigDirs = new Map<string, { folder: string; configDir: string }>();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyCopilotUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

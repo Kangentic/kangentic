@@ -249,7 +249,7 @@ describe('startTaskSession', () => {
       PROJECT_ID,
       { id: TASK_ID, title: 'Ship the thing' },
       LANE_ID,
-      { explicitStart: true },
+      { explicitStart: true, startPath: 'phone' },
     );
   });
 
@@ -266,7 +266,7 @@ describe('startTaskSession', () => {
       PROJECT_ID,
       { id: TASK_ID, title: 'Ship the thing' },
       LANE_ID,
-      { explicitStart: true },
+      { explicitStart: true, startPath: 'phone' },
     );
     // withTaskLock is not reentrant and autoSpawnForTask takes its own, so
     // the call must land OUTSIDE this function's lock. A nested call here
@@ -381,7 +381,7 @@ describe('startTaskSession', () => {
       const result = await startTaskSession(makeContext(), PROJECT_ID, TASK_ID);
 
       expect(result.outcome).toBe('starting');
-      expect(mockAutoSpawnForTask).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, { id: TASK_ID, title: 'Ship the thing' }, LANE_ID, { explicitStart: true });
+      expect(mockAutoSpawnForTask).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, { id: TASK_ID, title: 'Ship the thing' }, LANE_ID, { explicitStart: true, startPath: 'phone' });
       expect(mockResumeTaskSession).not.toHaveBeenCalled();
     });
   });

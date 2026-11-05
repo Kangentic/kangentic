@@ -42,7 +42,7 @@ Nineteen event types are tracked, all on critical-path actions only:
 | `feature_used` | Once per curated feature per UTC day | feature |
 | `board_snapshot` | Once per project per app run, the first time the user views it (the boot auto-open or a sidebar switch); background activation of other projects does not count, and neither does the open that creates a project, whose board is still the default | columns, customColumns, taskBucket (`0` / `1-9` / `10-49` / `50-199` / `200+`), profiles |
 | `update_outcome` | Next launch after the app version changed | result (`applied` / `rolled_back`), fromVersion, toVersion |
-| `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`) |
+| `spawn_failed` | An agent spawn failed (born-into-column create, MCP auto-spawn, any board-driven resume including a drag move, startup recovery) | agent, reason (`create_spawn`, `auto_spawn`, `resume`, `unknown_agent`, `cli_not_found`, and for a failure the user's own setup caused, which stays out of Sentry: `login_required`, `bad_configuration`, `worktree`, `checkout`) |
 | `utility_worker_crashed` | A Kangentic utility process failed unexpectedly (it exited, failed to fork, never said ready, or stopped answering; not an idle recycle or quit): at most twice per service per app run, on the first crash and when the restart cap latches | service (`kangentic-embeddings`, `kangentic-line-count`, `kangentic-dictation`, `kangentic-retrieval`, `kangentic-pty-host`), exitCode (see below), cause (`exit` / `fork_failed` / `ready_timeout` / `request_timeout`), phase (`first` / `latched`) |
 | `gpu_process_gone` | The GPU process failed (a fault death: not a kill, an OOM, or a Windows session-teardown exit): at most twice per app run, on the first fault and when the escalation threshold latches | reason (Electron's `child-process-gone` reason), exitCode, phase (`first` / `latched`) |
 | `leftover_processes` | Once per leftover-process report, the one a toast shows: a terminal transition (Done, To Do, delete) or a burst of them found something a task's agent left running in its folder, or the startup sweep stopped or failed to stop something. Never sent when a task left nothing | stopped, kept, failed (counts of processes stopped, left running on purpose or with stopping off, and still running after the force kill), stoppingEnabled |
@@ -186,8 +186,8 @@ itself the signal that the defaults are right.
 
 `source` discriminates the failure path: `uncaughtException`, `unhandledRejection`,
 `render-process-gone` (extras: `reason`, `exitCode`), `error_boundary` (extras: `boundary`,
-`panel`), `updater`, `pty_spawn` (extras: `shell`, `shellArgs`, `cwdExists`,
-`shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`),
+`panel`), `updater`, `pty_spawn` (extras: `shell`, a name from a fixed list and never a path,
+`cwdExists`, `shellExists`, `errno`, `platform`, `arch`), `pty_spawn_cwd_missing` (extra: `platform`),
 `secondInstanceNoWindow`, `duplicateCreateWindow`, `createWindowBeforeMcpSettled`,
 `globalDbUnreadable`, and `startupFailure`.
 

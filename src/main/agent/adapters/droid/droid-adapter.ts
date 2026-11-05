@@ -1,3 +1,5 @@
+import { identifyDroidUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { DroidDetector } from './detector';
 import { DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
@@ -122,6 +124,11 @@ export class DroidAdapter implements AgentAdapter {
   // worktrees usually make that impossible, but a project with no worktree
   // configured runs every task in the project root. See SharedFolderHolds.
   private readonly mcpHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyDroidUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

@@ -136,13 +136,21 @@ rather than being lost. A claim settles exactly once:
 - **commit** when the agent got them: a confirmed or unconfirmed typed delivery, or a command-line
   ride once its session first runs (`commitWhenSessionRuns`). A queued session bakes its opening
   message into a command that runs later, so a ride commits at the promotion, and a session removed
-  before it runs puts the messages back.
+  before it runs puts the messages back. A running PTY is only a shell, so for an adapter that
+  reports its start a ride waits for its agent to show it started (`agent-ran`). A launch that ended
+  with no such sign puts them back, since a failed resume replays no prompt, unless it is a fresh
+  launch marked failed. That one replays its record's prompt, which holds them, so they commit and
+  go once. An adapter with no start signal commits at the first run, as it cannot say more.
 - **release** when nothing of them reached the agent. The delivery report says so with
   `textReachedAgent: false`: a superseded paste or keystroke burst, a session gone, a turn wait
   that ended `exited` or `timeout`, a CLI that never came alive. Pausing a task during its first
   turn does not lose its held messages. A release from the start path flushes again if an agent is
   live by then; one from the late flush never does, so a paste that keeps failing cannot loop.
 - **fail** when typing began and did not finish.
+
+A column's message typed after the spawn, for a launch that never showed its agent ran, becomes a
+held message of its own (`holdUndeliveredOpening`), so the retry's agent still gets it. It stays
+out for a task that has left the column, since it was meant for that column.
 
 The code that takes a claim releases it in a `finally` unless it handed the claim to a delivery or
 a ride: an aborted or superseded move, a row skipped by Condition or Frequency, a failed spawn.

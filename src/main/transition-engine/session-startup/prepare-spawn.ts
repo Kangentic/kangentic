@@ -69,8 +69,9 @@ export interface PreparedSpawn {
   /** Whether the command resumes the agent's conversation (`--resume`). */
   resumed: boolean;
   /**
-   * The command's opening prompt. Null on every startup spawn but one: a
-   * resume whose conversation the agent deleted starts fresh with a recap.
+   * The command's opening prompt. Null on every startup spawn but two: a
+   * resume whose conversation the agent deleted starts fresh with a recap, and
+   * a launch that never started starts fresh with the prompt it never ran.
    */
   prompt: string | null;
   /** Why a requested resume became a fresh spawn; null when it did not. */
@@ -83,6 +84,8 @@ export interface PreparedSpawn {
    * background paste waits for the box (`SpawnSessionInput.inputInAlternateScreen`).
    */
   inputInAlternateScreen: boolean;
+  /** The agent CLI's version as detection read it (`SpawnSessionInput.agentCliVersion`). */
+  agentCliVersion: string | null;
 }
 
 export type PrepareResult =
@@ -275,6 +278,12 @@ export async function prepareAgentSpawn(input: {
       );
       canResume = false;
       startOver = 'never-started';
+      // The prompt of a launch that never ran is still owed, and this path types
+      // nothing, so a CLI that takes no starting prompt opens idle.
+      const failedLaunch = lineage.find(Boolean);
+      if (failedLaunch?.launch_failed_at && failedLaunch.prompt && adapter.freshPromptDelivery !== 'typed') {
+        prompt = failedLaunch.prompt;
+      }
     } else if (verdict === 'expired') {
       canResume = false;
       startOver = 'expired';
@@ -416,6 +425,7 @@ export async function prepareAgentSpawn(input: {
       startOver,
       expiredLastActiveAt,
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
+      agentCliVersion: detection.version,
     },
   };
 }

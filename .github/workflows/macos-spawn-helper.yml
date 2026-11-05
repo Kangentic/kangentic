@@ -18,6 +18,9 @@ name: macOS spawn-helper
 # bytes of a line a shell is not yet reading, and only a Mac's tty has that
 # limit (tests/unit/typed-launch-round-trip.test.ts). It shares this job so a
 # real node-pty session on macOS costs no second macOS slot (test-value.md).
+# The same step runs a failed launch through real zsh and the real spawn flow
+# (tests/unit/launch-failure-real-shell.test.ts): only a real POSIX shell shows a
+# zsh dying in its startup file, or a signal death, reaching the report.
 #
 # Path-filtered, and deliberately NOT a required check: ci.yml runs at the job
 # cap (see the note at the top of that file), and this only has something to say when the helper, its gates, node-pty, or the typed launch change.
@@ -34,7 +37,10 @@ on:
       - 'build/afterSign.js'
       - 'package-lock.json'
       - 'src/main/pty/spawn/typed-launch.ts'
+      - 'src/main/pty/agent-launch-report.ts'
+      - 'src/main/pty/lifecycle/session-spawn-flow.ts'
       - 'tests/unit/typed-launch-round-trip.test.ts'
+      - 'tests/unit/launch-failure-real-shell.test.ts'
       - '.github/workflows/macos-spawn-helper.yml'
   push:
     branches: [main]
@@ -45,7 +51,10 @@ on:
       - 'build/afterSign.js'
       - 'package-lock.json'
       - 'src/main/pty/spawn/typed-launch.ts'
+      - 'src/main/pty/agent-launch-report.ts'
+      - 'src/main/pty/lifecycle/session-spawn-flow.ts'
       - 'tests/unit/typed-launch-round-trip.test.ts'
+      - 'tests/unit/launch-failure-real-shell.test.ts'
       - '.github/workflows/macos-spawn-helper.yml'
   workflow_dispatch:
 
@@ -108,8 +117,8 @@ jobs:
           git -C "$RUNNER_TEMP/powerlevel10k" checkout FETCH_HEAD
           echo "KANGENTIC_POWERLEVEL10K_DIRECTORY=$RUNNER_TEMP/powerlevel10k" >> "$GITHUB_ENV"
       # Verbose and not silent, so the job log carries the hangup line.
-      - name: Run a typed launch through real zsh
+      - name: Run a typed launch and a failed launch through real zsh
         # A missing zsh fails the run instead of skipping it.
         env:
           KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: zsh
-        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts --silent=false --reporter=verbose
+        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts tests/unit/launch-failure-real-shell.test.ts --silent=false --reporter=verbose

@@ -22,6 +22,8 @@ const HELD_TEXT = 'Lower the cap to 3 and rethrow the last error.';
 
 let storedTask: Task;
 let outcome: SpawnOutcome;
+/** What the paused record holds beyond its pause. */
+let latestRecordFields: { launch_failed_at?: string; prompt?: string | null } = {};
 
 const engine = {
   resumeSuspendedSession: vi.fn(async (): Promise<SpawnOutcome> => {
@@ -42,7 +44,7 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   // Paused before the task's last entry into its column, so the Resume continues the conversation.
   SessionRepository: class {
-    getLatestForTask() { return { status: 'suspended', suspended_at: '2026-10-28T13:00:00.000Z' }; }
+    getLatestForTask() { return { status: 'suspended', suspended_at: '2026-10-28T13:00:00.000Z', ...latestRecordFields }; }
   },
 }));
 vi.mock('../../src/main/db/repositories/task-move-repository', () => ({
@@ -125,6 +127,55 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
     mockForgetRecapSession.mockClear();
     storedTask = { id: TASK_ID, title: 'Retry the sync', swimlane_id: LANE.id, session_id: null, archived_at: null } as Task;
     outcome = { startOver: null, recapOnly: false, unsentPrompt: null };
+    latestRecordFields = {};
+  });
+
+  it('replays the prompt of a launch that never ran, with no template over it', async () => {
+    // The column message and held messages that rode the launch are in this
+    // string. A template in the slot would run the task prompt in their place.
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: '/code-review' };
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, startPath: 'retry' });
+
+    const call = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+    expect(call[2]).toBe(true);
+    expect(call[3]).toBe('/code-review');
+  });
+
+  it('carries startPath to the engine overrides: the session row is the only guard against retrying a retry', async () => {
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: '/code-review' };
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, startPath: 'retry' });
+
+    const call = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+    expect(call[7]).toEqual(expect.objectContaining({ startPath: 'retry' }));
+  });
+
+  it('adds what was held since to the prompt it replays', async () => {
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: 'Fix the login redirect' };
+    mockClaimHeldMessages.mockReturnValue(fakeHeldClaim());
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+    expect(resumedWith()).toBe(`Fix the login redirect\n\n${HELD_TEXT}`);
+  });
+
+  it('lets a command the person chose win over the prompt it would replay', async () => {
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: 'Fix the login redirect' };
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, resumePrompt: '/plan' });
+
+    expect(resumedWith()).toBe('/plan');
+  });
+
+  it('resumes as before when the launch did not fail', async () => {
+    latestRecordFields = { prompt: 'Fix the login redirect' };
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+    const call = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+    expect(call[2]).toBeUndefined();
+    expect(call[3]).toBeUndefined();
   });
 
   it('types a Commands-menu command the resume could not carry on its command line', async () => {

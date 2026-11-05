@@ -2284,4 +2284,13 @@ function migrateWorkflows(db: Database.Database): void {
   if (!workflowColumnNames.has('plan_approval')) {
     db.exec('ALTER TABLE workflows ADD COLUMN plan_approval TEXT DEFAULT NULL');
   }
+
+  // When a fresh launch was found never to have started, so a Resume starts it
+  // fresh with its own prompt instead of `--resume` on a conversation the agent
+  // never wrote. NULL for every other session.
+  const sessionHasLaunchFailedAt = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
+    .some((column) => column.name === 'launch_failed_at');
+  if (!sessionHasLaunchFailedAt) {
+    db.exec('ALTER TABLE sessions ADD COLUMN launch_failed_at TEXT DEFAULT NULL');
+  }
 }

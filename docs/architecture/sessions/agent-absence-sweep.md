@@ -335,16 +335,61 @@ that check cannot prove (a conversation whose evidence is gone, a WSL path), and
 rather than a restart.
 
 **It reports a launch that never started.** Nothing throws when a typed command never runs, so
-the sweep is the only thing that sees it. `retireAgentlessSession` checks `launchNeverStarted`
+the sweep sees what nothing else does. `retireAgentlessSession` checks `launchNeverStarted`
 (`src/main/pty/agent-launch-report.ts`): an adapter that declares `reportsAgentStart`, on a session
-with no `agentStartObservedAt`, no `altScreenEnteredAt` and no `agentEndSignaledAt`. It then sends
-one handled report with a fixed message and writes one `[AGENT-LAUNCH]` warning to the local log.
-The report tags are the platform, a shell name from a fixed list, the typed line's bytes, the
-session's age and whether a launcher file was used, never command text or a path. An adapter that
-reports neither signal is left out, because its silence proves nothing. Every session stamps
+with none of the evidence in `hasAgentRunEvidence`. That is a SessionStart, an alt-screen entry, a
+SessionEnd signal, any other hook event, or a session id the agent gave itself (from a hook, its
+status line, its output or a file it wrote; an id a caller assigned at spawn proves nothing). The
+report is `stage: never_started`, one of the stages in
+[Error reporting](../../telemetry/error-reporting.md). Every session stamps
 `agentStartObservedAt` at its first SessionStart for this; only a Command Terminal's sweep gate reads
-it otherwise, so a task's plain grace does not change. A WSL shell is never judged by the sweep, so
-it never reports.
+it otherwise, so a task's plain grace does not change.
+
+**Which agents can report this.** Only Claude and Droid declare `reportsAgentStart`. The flag is
+static and read at spawn, so it has to hold for every way an adapter launches, print and resume
+included, and a wrong `true` pauses a healthy task. Audited over all 15 adapters:
+
+| Adapters | Why not |
+|---|---|
+| `aider`, `warp`, `ollama` | No start signal at all |
+| `kimi` | No hook, and its alt screen is assumed, never measured |
+| `gemini`, `goose`, `cursor` | The hook is the only signal, and it is unmeasured or conditional |
+| `antigravity`, `codex`, `copilot`, `grok`, `qwen-code` | A print launch has no TUI, and its hooks are unmeasured, or skipped in an untrusted folder |
+| `opencode` | Closest: always a TUI locally. A remote attach and a resumed launch are unmeasured |
+
+Droid's flag rests on a hook measured in `droid exec`, not in a signed-in TUI. It stays, because its
+session file gives it a second signal: the id the poll finds counts as evidence, so a run whose hook
+stayed silent reads as a run.
+
+**Any agent reports what is positive evidence of a failure.** Two things need no start signal, and
+neither pauses anything or retries. A shell that exits on its own before the host's `agentOutput`
+reports `shell_exit`: the typed line never ran, and the CLI always runs under a shell that outlives
+it (`typed-launch.ts`), so this is a failed launch for any agent. And at the sweep, a session of an
+adapter with no start signal reports `never_started` when its last output is a shell's own failure
+(`classifyLaunchOutput`). **Known gap.** A silent session of an adapter with no start signal is
+not reported. Its silence still proves nothing.
+
+**What the user's own setup causes takes the same path and stops at the filter.** An adapter that
+names a login or configuration failure from its CLI's words (`identifyUserSetupFailure`) makes the
+class `login_required` or `bad_configuration`. That report ends at `reportHandledError` and counts
+in Aptabase ([Error reporting](../../telemetry/error-reporting.md)). A task whose launch failed this
+way still pauses, so it keeps its Resume for after the user signs in.
+
+**A shell the sweep cannot judge gets a timer.** Where `canTreeJudgeAgent` is false (a WSL shell, or
+the watcher off), a one-shot timer at the Command Terminal start ceiling, 120 s, reports
+`never_started` with `judge: timer` for a launch with no evidence. It only reports. Nothing here saw
+the agent gone, so it pauses nothing.
+
+**A launch that ended early reports from the PTY's exit.** The spawn flow's exit listener is the one
+place every ending but a quit reaches, so `noteLaunchEnded` runs there, ahead of the synthetic
+SessionEnd. A shell that exited on its own is `shell_exit`, with its code and signal (the host's
+`exit` event carries the signal, since node-pty reports a signal death as code 0). Kangentic's own
+end is `abandoned`, for an adapter that reports its start, past `LAUNCH_ABANDON_MS`: the launch
+overlay's 15 s ceiling. A cold Claude reaches its alt screen in about 3 s, so a Stop sooner than
+that is a quick Stop and no failure. `ended_by` reads `pause` for a suspend (a Stop, a move to Done)
+and `kill` for a kill (a move to To Do, a delete), since neither call knows which gesture asked. A
+host loss, a hidden agent and a quit are left out here; a quit goes on disk
+([Error reporting](../../telemetry/error-reporting.md)).
 
 **A task whose launch never started is paused, not retired.** An exited row has no way forward: its
 surface is the terminal, its PTY is gone so no key lands, and `sessionToggleOffer` offers nothing
@@ -352,7 +397,11 @@ for an ended session, which left a reporter on a dead pane with the card in its 
 for a task, `retireAgentlessSession` emits `agent-never-started` instead of killing, and
 `handlers/sessions.ts` calls `pauseTaskSession` with `suspendedBy: 'system'`, re-checked under the
 task lock against this session. Once the pause lands the task has the Resume every paused task has,
-and raises the "Agent did not start" notice, with the CLI's own account when it gave one. `'system'`
+and raises the "Agent didn't start" notice, with the CLI's own account when it gave one. For a cause
+an adapter identified as the user's own setup, that is the CLI's own line word for word
+(`identifyUserSetupFailure`), read only when the report found it in this launch, because a resume's
+ring starts with the last session's output. The notice is the raw error on an error card, which has
+Copy, with no diagnosis and no advice. `'system'`
 holds nothing, so a restart resumes it too. A fresh launch with no transcript goes through
 `assessResumeConversation`, which starts it fresh. The watcher unregisters a session once it reports
 it absent, so no later sweep judges the row. A pause that does not land (declined for a newer
@@ -360,6 +409,35 @@ session, no live session, a throw, no project) therefore has the listener call
 `retireAgentlessSession` again, which retires the row as usual, and `launchFailureNoted` keeps it to
 one report. A Command Terminal still ends, and a workflow's own agent keeps the exited row its pane
 restarts from. A session hidden until adopted retires too, since no listener may learn of it.
+
+**A failed launch gets one retry.** Once the pause lands and the task lock is free, the listener asks
+`mayRetryLaunch`, and with no evidence the agent ran and no cause identified as the user's it calls
+`resumeTaskSession` with `startPath: 'retry'` on a fresh PTY. A second launch cannot sign anyone in,
+so that cause skips straight to the notice. A cause nobody identified retries, since it may be ours.
+The answer waits for the report's read of the output (`launchOutputRead`). The evidence is read
+after the pause, because a late hook can land while the session goes down, so no prompt runs twice
+and no second paid turn starts. The notice waits for that outcome. A retry is never retried, so a second failure stays paused and raises it.
+The first failure reports at once with `attempt: 1`, a second with `attempt: 2`, and a recovery
+sends one event of its own.
+
+**A person's gesture beats the retry.** The decision needs the output read and the retry takes the
+task lock itself, so it cannot be made under the lock. The listener holds a resume controller from
+before the pause instead, so a Pause, a Resume, a reset or a relocation in that gap aborts it. An
+aborted window starts no retry and raises the notice, unless another start is in flight, a phone's
+Start included. That start owns the task, so there is no failure to show. A move to To Do or Done
+aborts nothing: `resumeTaskSession` refuses the task, and `onFailed`, which a refusal never reaches,
+is what raises the notice for a retry that really failed.
+
+**A failed fresh launch keeps its prompt.** Claude's `--session-id` is written to the record at spawn
+and the CLI writes its conversation on the first turn, so a Resume of a launch that never ran would
+spawn `--resume` on nothing, and the task's prompt would be lost. So the pause marks a fresh launch
+`sessions.launch_failed_at`, under the task lock and before the PTY goes down.
+`assessResumeConversation` reads a marked record with no turns as `never-started`, and
+`resumeTaskSession` replays that record's own `prompt` with no template over it. That string is what
+the launch would have run, a column's message and held messages included, so a person's Resume
+and the retry do the same thing, no enter row runs twice, and nothing held is lost. Startup recovery
+folds the same prompt in, since a `'system'` pause resumes on a restart. A failed resume is not
+marked: its conversation is still there, and it resumes with no prompt.
 
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept

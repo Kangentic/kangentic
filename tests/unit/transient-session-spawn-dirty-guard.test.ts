@@ -68,6 +68,12 @@ vi.mock('node:fs', () => ({
 
 vi.mock('uuid', () => ({ v4: vi.fn(() => 'mock-transient-task-id') }));
 
+const mockReportPreflightFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPreflightFailure: mockReportPreflightFailure,
+}));
+
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: vi.fn(async (input: { agentPath: string; prompt: string | undefined }) => ({
     agentPath: input.agentPath,
@@ -662,6 +668,17 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
       .rejects.toMatchObject({ code: 'unknown-project' });
   });
 
+  it('reports no refusal: the cap and a taken slot are answers, and a dead shell already reported', async () => {
+    mockReportPreflightFailure.mockClear();
+    const context = createMockContext();
+    context.sessionManager.spawn.mockResolvedValueOnce({ id: 'failed-session', status: 'exited', exitCode: -1, pid: null });
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' }))
+      .rejects.toMatchObject({ code: 'spawn-failed' });
+
+    expect(mockReportPreflightFailure).not.toHaveBeenCalled();
+  });
+
   it('never gives two starts in flight the same slot, and frees a failed start\'s slot', async () => {
     const context = createMockContext();
     let releaseFirstSpawn!: () => void;
@@ -672,6 +689,11 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
     const first = startCommandTerminal(context as never, { projectId: 'proj-1' });
     const second = startCommandTerminal(context as never, { projectId: 'proj-1' });
     await expect(second).rejects.toThrow('spawn failed');
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+      cause: 'command_terminal',
+      startPath: 'command_terminal',
+      keepMessage: true,
+    }));
     await vi.waitFor(() => expect(releaseFirstSpawn).toBeTypeOf('function'));
     releaseFirstSpawn();
     expect((await first).slot).toBe('slot-1');

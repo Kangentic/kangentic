@@ -1,3 +1,5 @@
+import { identifyQwenUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { QwenDetector } from './detector';
 import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
@@ -93,6 +95,11 @@ export class QwenAdapter implements AgentAdapter {
   // it only when the folder's last session releases. Keyed by session id:
   // see SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyQwenUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

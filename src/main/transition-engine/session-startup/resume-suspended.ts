@@ -6,6 +6,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, ConversationExpiredNotice, SessionRecord, Task } from '../../../shared/types';
@@ -500,6 +501,9 @@ export async function resumeSuspendedSessions(
       if (!prep.ok) {
         const cause = prep.reason === 'unknown-agent' ? 'Unknown agent' : 'CLI not found';
         console.warn(`[SESSION_RECOVERY] ${cause} for task ${task.id.slice(0, 8)}; ${giveUpOutcome()}`);
+        if (prep.reason === 'unknown-agent') {
+          reportPreflightFailure({ cause: 'unknown_agent', error: null, startPath: 'startup_recovery' });
+        }
         await giveUpPreparation();
         skipped++;
         continue;
@@ -511,6 +515,7 @@ export async function resumeSuspendedSessions(
         `[SESSION_RECOVERY] Preparation failed for session ${record.id} (task ${record.task_id}); ${giveUpOutcome()}:`,
         err,
       );
+      reportPreflightFailure({ cause: 'recovery_prepare', error: err, startPath: 'startup_recovery', keepMessage: true });
       try {
         await giveUpPreparation();
       } catch (updateErr) {
@@ -589,6 +594,8 @@ export async function resumeSuspendedSessions(
           projectId,
           command: input.command,
           cwd: input.cwd,
+          startPath: 'startup_recovery',
+          agentCliVersion: input.agentCliVersion,
           env: input.extraEnv ?? undefined,
           statusOutputPath: input.statusOutputPath,
           eventsOutputPath: input.eventsOutputPath,
@@ -685,6 +692,14 @@ export async function resumeSuspendedSessions(
           `[SESSION_RECOVERY] Spawn failed for session ${input.record.id} (task ${input.record.task_id}):`,
           result.reason,
         );
+        reportPreflightFailure({
+          cause: 'recovery_spawn',
+          error: result.reason,
+          agent: input.adapter.name,
+          agentCliVersion: input.agentCliVersion,
+          startPath: 'startup_recovery',
+          keepMessage: true,
+        });
       }
       try {
         retireRecord(sessionRepo, input.record.id);

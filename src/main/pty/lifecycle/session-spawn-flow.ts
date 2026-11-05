@@ -130,6 +130,12 @@ export interface SpawnFlowContext {
    * this keeps every exited row.
    */
   onPtyExited?: (sessionId: string) => void;
+  /**
+   * The session's PTY exited, before anything of the exit was applied. Every
+   * ending but a quit passes here (`killAllSessions` detaches the listener), so
+   * a launch that ended before its agent showed it ran is noticed here.
+   */
+  onLaunchEnded?: (session: ManagedSession, exit: { exitCode: number; signal: number | null; intentional: boolean }) => void;
 }
 
 /**
@@ -501,7 +507,6 @@ export async function performSpawn(
       input,
       shell,
       shellExe,
-      shellArgs,
       effectiveCwd,
       previousScrollback: spawnOutcome.previousScrollback,
     }, {
@@ -555,6 +560,9 @@ export async function performSpawn(
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
     typedLineBytes: typedLaunch?.typedLineBytes ?? null,
     launcherUsed: typedLaunch !== null && typedLaunch.launcher !== null,
+    launcherPath: typedLaunch?.launcher?.filePath ?? null,
+    startPath: input.startPath,
+    agentCliVersion: input.agentCliVersion ?? null,
   };
 
   context.registry.set(id, session);
@@ -705,7 +713,7 @@ export async function performSpawn(
 
   // PTY exit cleanup sequence. Don't overwrite 'suspended' - suspend()
   // sets that before killing the PTY, and the new status must survive.
-  const ptyExitDisposable = context.host.onPtyExit(ptyProcess.ptyId, (exitCode: number) => {
+  const ptyExitDisposable = context.host.onPtyExit(ptyProcess.ptyId, (exitCode, signal) => {
     // Captured BEFORE the status mutation below. `intentional` means Kangentic
     // ended this session deliberately, so a non-zero force-kill exit must not be
     // misclassified as a crash. Two deliberate-end mechanisms set it:
@@ -718,6 +726,9 @@ export async function performSpawn(
     // The flag rides the 'exit' event so App.tsx can suppress the false crash
     // notification without depending on cross-channel store-status ordering.
     const intentional = session.status === 'suspended' || session.intentionalExit === true;
+    // Ahead of the synthetic session_end below, and with the raw code: whatever
+    // ended this session, this is the one place every ending but a quit reaches.
+    context.onLaunchEnded?.(session, { exitCode, signal: signal ?? null, intentional });
     if (session.status !== 'suspended') {
       session.status = 'exited';
       // Synthetic session_end - Claude Code's hook won't fire on kill

@@ -44,7 +44,8 @@ import {
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
-import { describeClaudeStartupFailure } from './startup-failure';
+import { describeClaudeStartupFailure, identifyClaudeUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { proveClaudeConversationGone } from './conversation-gone';
 import { claudeBackgroundSessionOf, claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
@@ -1049,6 +1050,11 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   describeStartupFailure(finalOutput: string, exitCode: number): string | null {
     return describeClaudeStartupFailure(finalOutput, exitCode);
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyClaudeUserSetupFailure(finalOutput);
   }
 
   /**
