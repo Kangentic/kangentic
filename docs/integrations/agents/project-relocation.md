@@ -49,7 +49,7 @@ same caveat the Claude adapter documents).
 
 | Agent | What migrates | Documented residue / notes |
 |-------|---------------|----------------------------|
-| Claude | `~/.claude/projects/<slug>/` transcript dirs and `~/.claude.json` `projects` keys (backup `~/.claude.json.kangentic-backup`). A project reached through a symlink moves under its physical path first, the path Claude files both under, then under the path as given. | - |
+| Claude | `~/.claude/projects/<slug>/` transcript dirs and `~/.claude.json` `projects` keys (backup `~/.claude.json.kangentic-backup`). On macOS and Linux, a project reached through a symlink moves under its physical path first, the path Claude files both under, then under the path as given. | - |
 | Qwen Code | `<runtime>/projects/<slug>/` chats and subagents, `<runtime>/tmp/<sha256>/` history, and `~/.qwen/trustedFolders.json` keys. `<runtime>` is `QWEN_RUNTIME_DIR`, then the new location's `advanced.runtimeOutputDir`, then `~/.qwen`. | - |
 | Droid | `~/.factory/sessions/<cwd-slug>/` session dirs. | Best-effort: Droid is closed source, so resume resolution around the slug dir is not authoritatively documented. |
 | OpenCode | `session.directory`/`session.path`, `project.worktree`, `project_directory.directory` columns in `~/.local/share/opencode/opencode.db` (one transaction), and OpenCode 2's `session_v2.directory`/`session_v2.path` and `worktree.directory` in the same file. | No file backup (live WAL DB; rollback = status quo). `project.sandboxes` left untouched. Project id is git-derived, so sessions are never orphaned, only re-scoped. |

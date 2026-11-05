@@ -554,8 +554,9 @@ export interface AgentAdapter {
    * detection still succeeds.
    *
    * `forceRefresh` (set when a model dropdown opens) bypasses any
-   * adapter-internal capability caches - notably Claude's 12h /model picker
-   * probe - so a newly shipped model appears without a Kangentic restart.
+   * adapter-internal capability caches - notably Claude's 12h model-list cache
+   * (the `initialize` handshake, or the /model picker probe when it fails) - so a
+   * newly shipped model appears without a Kangentic restart.
    * Adapters with no cache to bypass may ignore it.
    */
   discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
