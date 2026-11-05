@@ -95,6 +95,18 @@ export function isOnRoute(columns: readonly RouteColumn[], route: RouteFields, c
   return routeColumns(columns, route).some((column) => column.id === columnId);
 }
 
+/**
+ * Does `target` lie ahead of `from`: Done, or a later column by position? Not
+ * the route's next column, so a send-back is still a send-back when it names a
+ * column the route skips.
+ */
+export function isForwardOf(
+  target: Pick<Swimlane, 'position' | 'role'>,
+  from: Pick<Swimlane, 'position'>,
+): boolean {
+  return target.role === 'done' || target.position > from.position;
+}
+
 /** A column as a route step names it. */
 export type StepColumn = RouteColumn & Pick<Swimlane, 'name' | 'color' | 'icon'>;
 
