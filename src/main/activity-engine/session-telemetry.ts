@@ -112,7 +112,7 @@ interface SessionTelemetryCallbacks {
    * (`runtime.sessionId.followsSessionStartMoves`), so the listener re-points
    * what it tails at the new conversation.
    */
-  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean }): void;
+  onAgentSessionId?(sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean; inferred?: boolean }): void;
   /**
    * A SessionStart named the CLI's own background session: did the session's
    * conversation `fromAgentSessionId` move there, rather than a copy start
@@ -1016,6 +1016,17 @@ export class SessionTelemetry {
       this.recordReportedId(sessionId, agentReportedId);
       this.callbacks.onAgentSessionId?.(sessionId, agentReportedId);
     }
+  }
+
+  /**
+   * An id worked out rather than reported (a new line in a CLI's session index, for a session on a host). It
+   * goes where a captured id goes, so the transcript starts copying, but it closes no capture channel: the
+   * agent's own report still lands, and replaces it when the two differ. A clean exit therefore corrects a
+   * wrong guess before anything resumes it.
+   */
+  notifyInferredAgentSessionId(sessionId: string, inferredId: string): void {
+    if (this.agentSessionIdChecked.has(sessionId)) return;
+    this.callbacks.onAgentSessionId?.(sessionId, inferredId, { inferred: true });
   }
 
   /**
