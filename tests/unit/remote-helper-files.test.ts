@@ -7,7 +7,7 @@
  * config file wiped by a torn read, a hook record sent twice or out of order, or a record too large
  * for a frame ending the connection and stalling every terminal on the host.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -145,6 +145,35 @@ describe('patchJsonFile', () => {
     fs.utimesSync(lock, old, old);
 
     expect(await patchJsonFile({ path: file, ops, lockDirectory: lock })).toEqual({ applied: true, changed: true });
+  });
+
+  // A stale lock that rmdir cannot remove (something is inside it) used to be treated as broken, so the loop
+  // retried at once and never reached its budget: the helper spun, and the spawn waited on it for good.
+  it('answers locked, inside the budget, for a stale lock folder that cannot be removed, and leaves it and the file alone', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    try {
+      const file = path.join(directory, '.claude.json');
+      fs.writeFileSync(file, '{"keep":true}');
+      const lock = path.join(directory, '.claude.json.lock');
+      fs.mkdirSync(lock);
+      fs.writeFileSync(path.join(lock, 'owner'), 'someone else');
+      const old = new Date(Date.now() - 60_000);
+      fs.utimesSync(lock, old, old);
+
+      let outcome: Awaited<ReturnType<typeof patchJsonFile>> | null = null;
+      void patchJsonFile({ path: file, ops, lockDirectory: lock }).then((result) => { outcome = result; });
+      // The delays are faked and the file system is real: give the file system a real turn, then move the clock.
+      for (let step = 0; step < 200 && outcome === null; step += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await vi.advanceTimersByTimeAsync(500);
+      }
+
+      expect(outcome).toEqual({ applied: false, changed: false, reason: 'locked' });
+      expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
+      expect(fs.readFileSync(file, 'utf8')).toBe('{"keep":true}');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -52,6 +52,11 @@ describe('the export a Goose session on a host names', () => {
     });
   });
 
+  // The name goes on a command line and into a file name in the mirror: a path climbing out of it, or an option, is no name.
+  it.each(['../../x', '--help', '-n', '; rm -rf ~', ''])('names nothing for %j, which is no plain session name', async (agentSessionId) => {
+    await expect(adapter.remoteTranscriptSnapshot({ agentSessionId, cwd: shellFolder, cliTarget: toStoredCliTarget(place)! })).resolves.toBeNull();
+  });
+
   it('names nothing for a Goose that does not run on a host', async () => {
     await expect(adapter.remoteTranscriptSnapshot({ agentSessionId: SESSION_NAME, cwd: shellFolder, cliTarget: { kind: 'wsl', distro: 'Ubuntu' } })).resolves.toBeNull();
   });

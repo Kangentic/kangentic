@@ -43,9 +43,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A session id in the shape OpenCode gives one, the only text that goes on a command line. */
+/** A session id in the shape OpenCode gives one, the only text that goes on a command line. A leading dash would read as an option. */
 export function isSessionId(value: string): boolean {
-  return /^[\w-]+$/.test(value);
+  return /^\w[\w-]*$/.test(value);
 }
 
 /** `session list --format json`'s records, or none for no output, other output, or a bad record. */

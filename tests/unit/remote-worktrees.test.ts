@@ -85,6 +85,16 @@ describe('making a worktree on the host', () => {
     expect(fs.statSync(localPath).isDirectory()).toBe(true);
   });
 
+  // The base name reaches `git fetch` as an argument. After `--` git reads it as a ref, never as an option, even
+  // if the name check in front of the script ever lets a dash-leading name through.
+  it('fetches the base after `--`, so a base name is never read by git as an option', async () => {
+    const { backend, calls } = backendWith(async () => answer('KG:created\nKG:branch:b\nKG:base:main\nKG:sha:aa\n'));
+
+    await backend.ensureWorktree(task, gitConfig);
+
+    expect(calls[0].args[1]).toContain('origin -- "$first"');
+  });
+
   it('cuts from the base the task names, and from nothing else', async () => {
     const { backend, calls } = backendWith(async () => answer('KG:created\nKG:branch:b\nKG:base:release\nKG:sha:aa\n'));
 

@@ -62,8 +62,11 @@ export interface SshPlaceFiles {
   jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult>;
   /** Write files on the host, making their folders. Each path is beneath the host's home. */
   writeFiles(files: HostFileWrite[]): Promise<{ written: number; conflicts?: string[] }>;
-  /** Remove files on the host. A file that is not there is not an error. */
-  removeFiles(paths: string[]): Promise<unknown>;
+  /**
+   * Remove files on the host. A file that is not there is not an error. A path named in `expect` is removed
+   * only while it holds that text, and is listed in `conflicts` otherwise.
+   */
+  removeFiles(paths: string[], expect?: Record<string, string>): Promise<{ removed: number; conflicts?: string[] }>;
   /** Whether each path is there. Only this answer may call a path absent; a failed ask is an error. */
   pathPresence(paths: string[]): Promise<Array<'present' | 'absent'>>;
   /** Run a program on the host to completion and return what it printed (`HostCommandRequest`). */
@@ -151,9 +154,12 @@ export function mirrorPathToHost(localPath: string, place: SshCliPlace): string 
 /**
  * Where the copy of an exported conversation lives in this computer's mirror of the host's home: the file
  * `<host home>/.kangentic/transcripts/<agent>/<id>.json`, once `mirrorPathToHost` maps it. For an agent whose
- * conversations sit in one shared database, so a reader has a file of the conversation's own to open.
+ * conversations sit in one shared database, so a reader has a file of the conversation's own to open. Null for
+ * a session not on a host, and for an id that is no plain name: it becomes a file on both computers, and an
+ * argument of the export.
  */
-export function remoteExportPath(place: SshCliPlace, agentName: string, agentSessionId: string): string {
+export function remoteExportPath(place: CliPlace | null | undefined, agentName: string, agentSessionId: string | null | undefined): string | null {
+  if (place?.kind !== 'ssh' || !agentSessionId || !/^\w[\w.-]*$/.test(agentSessionId)) return null;
   return path.join(place.localHome, '.kangentic', 'transcripts', agentName, `${agentSessionId}.json`);
 }
 

@@ -17,15 +17,20 @@
  *   and the session is restarted.
  * - the session id test: a session on a host waits for rollout files that cannot be there.
  */
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
+import { readCodexHookTrustOnHost } from '../../src/main/agent/adapters/codex/hook-trust';
 import { createCodexCommandInjectionVerifier } from '../../src/main/agent/adapters/codex/command-injection-verifier';
 import { codexHookDefinitions } from '../../src/main/agent/adapters/codex/hook-manager';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
 import { WSL_HOOK_SCRIPT } from '../../src/main/agent/shared/wsl-hook-transport';
 import { settleHostFiles } from '../../src/main/remote/host-file-sync';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
-import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
+import { toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import { FakeSshHost, makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 import { MCP_TOKEN, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost } from './ssh-adapter-spawn-harness';
 
@@ -90,6 +95,67 @@ function installCodex(host: FakeSshHost, answer: (request: HostCommandRequest) =
   });
   return fake;
 }
+
+/** The script the hook trust read runs on the host to make its scratch folders, taken from the command it sends. */
+async function scratchScriptSent(): Promise<string> {
+  const sent: HostCommandRequest[] = [];
+  const place = {
+    kind: 'ssh',
+    files: {
+      runCommand: async (request: HostCommandRequest): Promise<HostCommandResult> => {
+        sent.push(request);
+        return { code: 1, stdout: '', stderr: '', timedOut: false };
+      },
+    },
+  } as unknown as SshCliPlace;
+  await expect(readCodexHookTrustOnHost(place, codexHookDefinitions('wsl'))).rejects.toThrow('could not make a scratch folder');
+  expect(sent[0].file).toBe('sh');
+  return sent[0].args[1];
+}
+
+// The scratch folder is named in a command typed on the host, so a TMPDIR the host's shell would split is not used,
+// and a folder that could not be finished is not left behind. Needs a POSIX sh, mktemp and mkdir.
+describe.skipIf(process.platform === 'win32')('the script that makes the hook trust read\'s scratch folder, run for real with sh', () => {
+  const SCRATCH_FOLDER_SHAPE = /^\/[^\s'"]*kangentic-codex-hooks-[A-Za-z0-9]+$/;
+  const cleanup: string[] = [];
+
+  afterEach(() => {
+    for (const target of cleanup.splice(0)) fs.rmSync(target, { recursive: true, force: true });
+  });
+
+  it('falls back to /tmp for a TMPDIR holding a space, and prints a folder the read accepts, with home and folder inside', async () => {
+    const script = await scratchScriptSent();
+
+    const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: '/tmp/a folder with spaces' } });
+
+    expect(run.status).toBe(0);
+    cleanup.push(run.stdout);
+    expect(run.stdout).toMatch(SCRATCH_FOLDER_SHAPE);
+    expect(run.stdout.startsWith('/tmp/kangentic-codex-hooks-')).toBe(true);
+    expect(fs.statSync(`${run.stdout}/home`).isDirectory()).toBe(true);
+    expect(fs.statSync(`${run.stdout}/folder`).isDirectory()).toBe(true);
+  });
+
+  it('removes the folder and exits non-zero when the folders inside it cannot be made', async () => {
+    const script = await scratchScriptSent();
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-scratch-base-'));
+    cleanup.push(base);
+    // A `mkdir` that always fails, ahead of the real one. mktemp is a different program and still works.
+    const stubs = path.join(base, 'stubs');
+    fs.mkdirSync(stubs);
+    fs.writeFileSync(path.join(stubs, 'mkdir'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    // The script uses the base only when its characters are plain, and /tmp otherwise: look where it will make the folder.
+    const scratchBase = /^[A-Za-z0-9/._-]+$/.test(base) ? base : '/tmp';
+    const before = fs.readdirSync(scratchBase).filter((name) => name.startsWith('kangentic-codex-hooks-'));
+
+    const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: base, PATH: `${stubs}${path.delimiter}${process.env.PATH ?? ''}` } });
+
+    expect(run.status).not.toBe(0);
+    expect(run.stdout).toBe('');
+    const after = fs.readdirSync(scratchBase).filter((name) => name.startsWith('kangentic-codex-hooks-'));
+    expect(after).toEqual(before);
+  });
+});
 
 describe('a Codex session on a remote host', () => {
   it('declares the CLI name and the files it edits', () => {

@@ -34,6 +34,7 @@ vi.mock('../../src/main/db/repositories/ssh-host-repository', () => ({
 }));
 
 import { createRemoteHosting } from '../../src/main/remote/remote-hosting';
+import { RemoteHostService } from '../../src/main/remote/remote-host-service';
 import { RemoteAgentUnsupportedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import * as path from 'node:path';
 
@@ -126,6 +127,22 @@ describe('resolving a project path to its remote', () => {
       .resolves.toBeNull();
     await expect(resolveRemoteLaunch({ projectPath: path.resolve(path.join('mock', 'elsewhere')), cwd: localProjectPath, adapter: adapterWithoutRemoteCli }))
       .resolves.toBeNull();
+  });
+
+  it('hands a host file removal its expected text, or the host removes a file the user just changed', async () => {
+    const removeFiles = vi.spyOn(RemoteHostService.prototype, 'removeFiles').mockResolvedValue({ removed: 1 });
+    vi.spyOn(RemoteHostService.prototype, 'hostInfo').mockResolvedValue({ home: '/home/dev', shellName: 'bash' } as never);
+    hostingWithProjects();
+
+    const launch = await resolveRemoteLaunch({
+      projectPath: remoteProjectPath,
+      cwd: remoteProjectPath,
+      adapter: { name: 'claude', displayName: 'Claude Code', remoteCliName: 'claude' },
+    });
+    await launch?.place.files?.removeFiles(['/home/dev/app/.mcp.json'], { '/home/dev/app/.mcp.json': '{}' });
+
+    expect(removeFiles).toHaveBeenCalledWith('host-1', ['/home/dev/app/.mcp.json'], { '/home/dev/app/.mcp.json': '{}' });
+    vi.restoreAllMocks();
   });
 
   it.runIf(process.platform === 'win32')('matches a remote project path regardless of letter case on Windows', async () => {

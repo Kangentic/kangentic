@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import type { TranscriptEntry, TranscriptToolCounts, TranscriptUsage } from '../../../../shared/types';
 import { capToNewestEntries } from '../../shared/transcript-truncation';
-import { mapGooseRows, tallyToolRows, toolCountsOf, type GooseMessageRow } from './transcript-parser';
+import { numberOrNull } from './session-store';
+import { isRecord, mapGooseRows, tallyToolRows, toolCountsOf, type GooseMessageRow } from './transcript-parser';
 
 /**
  * A conversation on an SSH host, read from the copy of its `goose session export --format json` on this
@@ -20,14 +21,6 @@ export interface GooseExport {
   rows: GooseMessageRow[];
   model: string | null;
   usage: TranscriptUsage | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** A session's lifetime tokens: `accumulated_usage`, else its latest turn's, as the database reader falls back. */

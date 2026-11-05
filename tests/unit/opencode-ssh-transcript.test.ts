@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
-import { forgetDistroOpenCodeVersions } from '../../src/main/agent/adapters/opencode/distro-sessions';
+import { forgetDistroOpenCodeVersions, isSessionId } from '../../src/main/agent/adapters/opencode/distro-sessions';
 import { readTrail } from '../../src/main/agent/message-trail-read';
 import { getCachedTranscript } from '../../src/main/agent/transcript-cache';
 import { remoteExportPath, toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
@@ -73,6 +73,16 @@ describe('the export an OpenCode session on a host names', () => {
 
   it('refuses an id that is not an id, since it goes on a command line', async () => {
     await expect(named('; rm -rf ~', askingVersion('1.19.5'))).resolves.toBeNull();
+    // A leading dash would be read by `opencode export` as an option, not an id.
+    await expect(named('--help', askingVersion('1.19.5'))).resolves.toBeNull();
+    await expect(named('../../x', askingVersion('1.19.5'))).resolves.toBeNull();
+  });
+
+  // The adapter's own path check refuses these first, so this pins the second guard the id passes on its way to a command line.
+  it('does not take an id that starts with a dash as a session id', () => {
+    expect(isSessionId('--help')).toBe(false);
+    expect(isSessionId('-s')).toBe(false);
+    expect(isSessionId('ses_1a2B-3c')).toBe(true);
   });
 
   it('copies into the mirror, where a mirror path maps back to the host', () => {

@@ -80,9 +80,16 @@ const HOST_CODEX_PROGRAM = 'codex';
 /**
  * Makes the read's scratch folders on the host and prints the folder. Under the host's temporary
  * folder, not its home: the read must touch neither the user's Codex state nor a project, and the
- * helper's file jobs would leave the empty folders behind.
+ * helper's file jobs would leave the empty folders behind. A temporary folder whose name the check
+ * below would refuse is passed over for `/tmp`, and a scratch folder that cannot be finished goes
+ * with the failure: either way nothing is left there that the caller cannot name.
  */
-const MAKE_SCRATCH_SCRIPT = 'scratch=$(mktemp -d "${TMPDIR:-/tmp}/kangentic-codex-hooks-XXXXXX") && mkdir "$scratch/home" "$scratch/folder" && printf %s "$scratch"';
+const MAKE_SCRATCH_SCRIPT = [
+  'case "${TMPDIR:-/tmp}" in *[!A-Za-z0-9/._-]*) base=/tmp ;; *) base=${TMPDIR:-/tmp} ;; esac',
+  'scratch=$(mktemp -d "$base/kangentic-codex-hooks-XXXXXX") || exit 1',
+  'mkdir "$scratch/home" "$scratch/folder" || { rm -rf "$scratch"; exit 1; }',
+  'printf %s "$scratch"',
+].join('\n');
 
 /** The scratch folder the script above prints: absolute, no quote or space, named by the script. */
 const SCRATCH_FOLDER = /^\/[^\s'"]*kangentic-codex-hooks-[A-Za-z0-9]+$/;

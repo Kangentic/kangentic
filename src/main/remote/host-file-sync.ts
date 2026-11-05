@@ -168,7 +168,7 @@ export class HostFileSync {
 
   private async pushFiles(files: NonNullable<SshCliPlace['files']>, options: PushOptions): Promise<void> {
     const writes: HostFileWrite[] = [];
-    const removals: Array<{ file: TrackedFile; expected: string | null }> = [];
+    const removals: Array<{ file: TrackedFile; expected: string }> = [];
     const created: TrackedFile[] = [];
     const written: Array<{ file: TrackedFile; content: string }> = [];
     // Each host read is a round trip on a path a spawn waits for, and none depends on another.
@@ -204,7 +204,8 @@ export class HostFileSync {
         continue;
       }
       if (local === null) {
-        removals.push({ file, expected: hostNow });
+        // Not there on the host either was the `hostNow === local` case above.
+        if (hostNow !== null) removals.push({ file, expected: hostNow });
       } else {
         writes.push({
           path: file.hostPath,
@@ -233,8 +234,17 @@ export class HostFileSync {
       }
     }
     if (removals.length > 0) {
-      await files.removeFiles(removals.map((removal) => removal.file.hostPath));
+      const answer = await files.removeFiles(
+        removals.map((removal) => removal.file.hostPath),
+        Object.fromEntries(removals.map((removal) => [removal.file.hostPath, removal.expected])),
+      );
+      const refused = new Set(answer.conflicts ?? []);
+      if (refused.size > 0) {
+        if (options.onConflict === 'throw') throw new HostFileChangedError([...refused][0]);
+        console.warn(`${LOG_TAG} ${[...refused].join(', ')} changed on the host as it was removed, so it was left as it is.`);
+      }
       for (const { file } of removals) {
+        if (refused.has(file.hostPath)) continue;
         file.hostContent = null;
         knownHostContent.set(hostFileKey(this.place.hostId, file.hostPath), null);
       }
@@ -258,16 +268,26 @@ export class HostFileSync {
       // Only where the folder is a git checkout; creating `.git` in a plain folder would make it look like one.
       const [infoFolder] = await files.pathPresence([`${rootHost}/.git/info`]);
       if (infoFolder !== 'present') return;
-      const existing = await files.readFile(excludeFile);
-      const current = existing.exists && existing.content !== null ? existing.content : '';
-      const have = new Set(current.split('\n').map((line) => line.trim()));
-      // Named from the working directory, not the root. Every worktree reads this file, and git anchors a
-      // leading slash to the top of the checkout it is looking at, which for a task's worktree is not the root.
-      const wanted = created.map((file) => `/${file.relative}`).filter((line) => !have.has(line));
-      if (wanted.length === 0) return;
-      const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
-      const marker = Array.from(have).some((line) => line.startsWith('# kangentic:')) ? '' : '# kangentic: agent runtime files (local ignore, safe to remove)\n';
-      await files.writeFiles([{ path: excludeFile, content: `${current}${separator}${marker}${wanted.join('\n')}\n`, mode: 0o644 }]);
+      // Every session of the project writes this one file, so a write that lost to another reads again.
+      for (let attempt = 0; attempt < EXCLUDE_WRITE_ATTEMPTS; attempt += 1) {
+        const existing = await files.readFile(excludeFile);
+        const current = existing.exists && existing.content !== null ? existing.content : '';
+        const have = new Set(current.split('\n').map((line) => line.trim()));
+        // Named from the working directory, not the root. Every worktree reads this file, and git anchors a
+        // leading slash to the top of the checkout it is looking at, which for a task's worktree is not the root.
+        const wanted = created.map((file) => `/${file.relative}`).filter((line) => !have.has(line));
+        if (wanted.length === 0) return;
+        const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
+        const marker = Array.from(have).some((line) => line.startsWith('# kangentic:')) ? '' : '# kangentic: agent runtime files (local ignore, safe to remove)\n';
+        const answer = await files.writeFiles([{
+          path: excludeFile,
+          content: `${current}${separator}${marker}${wanted.join('\n')}\n`,
+          mode: 0o644,
+          expect: existing.exists ? existing.content : null,
+        }]);
+        if (!answer.conflicts?.length) return;
+      }
+      console.warn(`${LOG_TAG} ${excludeFile} kept changing, so the new files stay visible in git status.`);
     } catch (error) {
       // Best-effort, as locally: the file only stays visible in git status.
       console.warn(`${LOG_TAG} could not add the new files to the host's git exclude: ${error instanceof Error ? error.message : String(error)}`);
@@ -279,6 +299,9 @@ export class HostFileSync {
     return this.place.roots.find((candidate) => isUnderLocalRoot(this.workingDirectory, [candidate]));
   }
 }
+
+/** How often a project's git exclude is tried when another session writes it between the read and the write. */
+const EXCLUDE_WRITE_ATTEMPTS = 3;
 
 /**
  * What Kangentic last knew each host file to hold, by host and path, shared by every session on the host.

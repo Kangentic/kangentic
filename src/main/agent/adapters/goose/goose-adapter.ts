@@ -53,11 +53,6 @@ import {
 } from './transcript-parser';
 import { gooseExportEntries, gooseExportToolCounts, gooseExportToolResultTokens, readGooseExportFile } from './export-reader';
 
-/** The copy of a host session's export on this computer, or null for a session not on a host. */
-function hostExportPath(agentSessionId: string | null | undefined, place: CliPlace | null | undefined): string | null {
-  return agentSessionId && place?.kind === 'ssh' ? remoteExportPath(place, 'goose', agentSessionId) : null;
-}
-
 /**
  * Goose CLI adapter - integrates Block's Goose agent CLI (`goose`)
  * (https://github.com/aaif-goose/goose) behind the generic AgentAdapter
@@ -406,7 +401,7 @@ export class GooseAdapter implements AgentAdapter {
 
   async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
     // A session on a host has a file of its own here, once its export has arrived.
-    const exported = hostExportPath(agentSessionId, place);
+    const exported = remoteExportPath(place, this.name, agentSessionId);
     if (exported) return fs.existsSync(exported) ? exported : null;
     // Goose keeps every session in one shared database, so no file is this
     // session's own: its mtime moves with every other Goose session, and a
@@ -427,12 +422,13 @@ export class GooseAdapter implements AgentAdapter {
     cliTarget: StoredCliTarget;
   }): Promise<RemoteTranscriptSnapshot | null> {
     const place = placeFromStored(options.cliTarget);
-    if (place?.kind !== 'ssh') return null;
+    const localPath = remoteExportPath(place, this.name, options.agentSessionId);
+    if (place?.kind !== 'ssh' || !localPath) return null;
     return {
       file: place.linuxCliPath ?? this.remoteCliName,
       args: ['session', 'export', '--name', options.agentSessionId, '--format', 'json'],
       cwd: cliPathForTarget(options.cwd, place),
-      localPath: remoteExportPath(place, this.name, options.agentSessionId),
+      localPath,
     };
   }
 
@@ -444,7 +440,7 @@ export class GooseAdapter implements AgentAdapter {
    * conversation reads as none yet.
    */
   async parseTranscript(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
-    const exportedPath = hostExportPath(agentSessionId, place);
+    const exportedPath = remoteExportPath(place, this.name, agentSessionId);
     if (exportedPath) {
       const exported = readGooseExportFile(exportedPath);
       return exported ? { entries: gooseExportEntries(exported), sourcePath: exportedPath } : { entries: [], sourcePath: null };
@@ -469,7 +465,7 @@ export class GooseAdapter implements AgentAdapter {
 
   /** Lifetime tokens, from the session row's `accumulated_*` sums. */
   async transcriptUsage(input: { agentSessionId?: string | null; place?: CliPlace | null }): Promise<TranscriptUsage | null> {
-    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    const exportedPath = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exportedPath) return readGooseExportFile(exportedPath)?.usage ?? null;
     if (input.place || !input.agentSessionId) return null;
     return readGooseTranscriptUsage(gooseSessionsDatabasePath(), input.agentSessionId);
@@ -482,7 +478,7 @@ export class GooseAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
-    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    const exportedPath = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exportedPath) {
       const exported = readGooseExportFile(exportedPath);
       return exported ? gooseExportToolCounts(exported, input.sinceMs ?? null, input.untilMs ?? null) : null;
@@ -498,7 +494,7 @@ export class GooseAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<Record<string, number> | null> {
-    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    const exportedPath = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exportedPath) {
       const exported = readGooseExportFile(exportedPath);
       return exported ? gooseExportToolResultTokens(exported, input.sinceMs ?? null, input.untilMs ?? null) : null;

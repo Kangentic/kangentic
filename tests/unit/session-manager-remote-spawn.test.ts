@@ -51,6 +51,7 @@ async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 
 
 interface Rig {
   manager: SessionManager;
+  postedCommands: PtyHostCommand[];
   helperRig: HelperRig;
   relay: RemoteSessionRelay;
   place: SshCliPlace;
@@ -61,10 +62,17 @@ interface Rig {
 }
 
 /** The pty host as main sees it, with the router in front of a real core, in this process. */
-function routedTransport(router: HostRouter, listenerRef: { current: ((event: PtyHostEvent) => void) | null }): PtyHostTransport {
+function routedTransport(
+  router: HostRouter,
+  listenerRef: { current: ((event: PtyHostEvent) => void) | null },
+  postedCommands?: PtyHostCommand[],
+): PtyHostTransport {
   return {
     hostPid: null,
-    post: (command: PtyHostCommand) => router.handleCommand(command),
+    post: (command: PtyHostCommand) => {
+      postedCommands?.push(command);
+      return router.handleCommand(command);
+    },
     attachRendererPort: (rendererId: number, port: RendererPort) => router.attachRendererPort(rendererId, port),
     request: <M extends PtyHostMethod>(method: M, params: PtyHostRequestMap[M]['params']) => router.handleRequest(method, params),
     setEventListener: (listener) => { listenerRef.current = listener; },
@@ -85,7 +93,8 @@ async function makeRig(): Promise<Rig> {
   });
   teardown.push(() => router.hub.removeHost('host-a'), () => helperRig.helper.dispose());
 
-  const manager = new SessionManager({ ptyHostTransport: routedTransport(router, listenerRef) });
+  const postedCommands: PtyHostCommand[] = [];
+  const manager = new SessionManager({ ptyHostTransport: routedTransport(router, listenerRef, postedCommands) });
   teardown.push(() => manager.killAll());
 
   const service = new RemoteHostService({
@@ -120,6 +129,7 @@ async function makeRig(): Promise<Rig> {
   fs.writeFileSync(path.join(localSession, 'settings.json'), '{"hooks":{}}');
   return {
     manager,
+    postedCommands,
     helperRig,
     relay,
     place,
@@ -221,6 +231,23 @@ describe('an id found after a session on a host has started', () => {
 
     expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-from-exit-hint');
     expect(told).toHaveBeenLastCalledWith('s1', 'agent-from-exit-hint');
+    foundListener.mockRestore();
+  });
+
+  // A guessed id that closed the host's capture channel would latch: the agent's own report could never
+  // replace it, and a resume would open someone else's conversation.
+  it('keeps the host\'s capture channel open for an inferred id, and closes it for the agent\'s own report', async () => {
+    const foundListener = vi.spyOn(RemoteSessionRelay.prototype, 'onSessionIdFound');
+    const rig = await makeRig();
+    await spawnRemote(rig);
+    const reportFound = foundListener.mock.lastCall?.[0];
+    const knownCommands = () => rig.postedCommands.filter((command) => command.type === 'setAgentSessionIdKnown');
+
+    reportFound?.('s1', 'agent-from-index');
+    expect(knownCommands()).toEqual([]);
+
+    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint');
+    expect(knownCommands()).toEqual([{ type: 'setAgentSessionIdKnown', sessionId: 's1' }]);
     foundListener.mockRestore();
   });
 });

@@ -185,7 +185,7 @@ export interface HelperRequestMap {
   /** Stop, after sending what is already published. */
   unwatchHooks: { params: { sessionId: string }; result: { watching: false } };
   /** Remove files the app wrote and a CLI should no longer find (its hooks, its MCP entry). A missing file is not an error. */
-  removeFiles: { params: { paths: string[] }; result: { removed: number } };
+  removeFiles: { params: { paths: string[]; expect?: Record<string, string> }; result: { removed: number; conflicts?: string[] } };
   /** Remove folders that hold nothing, deepest first as given. A folder with anything in it, or not there, is left. */
   removeEmptyDirectories: { params: { paths: string[] }; result: { removed: number } };
   /**

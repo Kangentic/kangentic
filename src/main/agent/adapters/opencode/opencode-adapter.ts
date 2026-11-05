@@ -115,11 +115,6 @@ function hostVersionKey(place: SshCliPlace): string {
   return `${place.hostId}\u0000${place.linuxCliPath ?? 'opencode'}`;
 }
 
-/** The copy of a host session's export on this computer, or null for a session not on a host. */
-function hostExportPath(agentSessionId: string | null | undefined, place: CliPlace | null | undefined): string | null {
-  return agentSessionId && place?.kind === 'ssh' ? remoteExportPath(place, 'opencode', agentSessionId) : null;
-}
-
 /**
  * An export as a walk reads a file: everything from `startPosition` is one window, whatever the size, in the
  * positions `openCodeExportFrom` gives. A copy that is not here yet is an empty window with no source.
@@ -697,7 +692,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (this.remoteTargetsByCwd.has(cwd)) return null;
     // A session on a host has its export here, once it has arrived. That file is the conversation's own, so
     // the staleness check, the archive and the message trail have something to read.
-    const exported = hostExportPath(agentSessionId, place);
+    const exported = remoteExportPath(place, this.name, agentSessionId);
     if (exported) return fs.existsSync(exported) ? exported : null;
     if (place) return null;
     return OpenCodeSessionHistoryParser.locate({ agentSessionId, cwd });
@@ -715,7 +710,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     runProgram: RemoteProgramRunner;
   }): Promise<RemoteTranscriptSnapshot | null> {
     const place = placeFromStored(options.cliTarget);
-    if (place?.kind !== 'ssh' || !isSessionId(options.agentSessionId)) return null;
+    const localPath = remoteExportPath(place, this.name, options.agentSessionId);
+    if (place?.kind !== 'ssh' || !localPath || !isSessionId(options.agentSessionId)) return null;
     const file = place.linuxCliPath ?? this.remoteCliName;
     const openCode2 = await isDistroOpenCodeV2({ ...place, linuxCliPath: file }, async (_target, cliArgs) => {
       const { code, stdout } = await options.runProgram(file, cliArgs);
@@ -727,7 +723,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       file,
       args: distroSessionExportArgs(options.agentSessionId, openCode2),
       cwd: cliPathForTarget(options.cwd, place),
-      localPath: remoteExportPath(place, 'opencode', options.agentSessionId),
+      localPath,
     };
   }
 
@@ -742,7 +738,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     }
     // A session on a host reads the copy of its export. Nothing on this computer can ask the host from
     // here, and this runs in the retrieval worker, so a copy that has not arrived reads as no transcript yet.
-    const exported = hostExportPath(agentSessionId, place);
+    const exported = remoteExportPath(place, this.name, agentSessionId);
     if (exported) {
       const messages = readOpenCodeExportFile(exported);
       return {
@@ -777,7 +773,7 @@ export class OpenCodeAdapter implements AgentAdapter {
    * keeps the live snapshot.
    */
   async transcriptUsage(input: OpenCodeTranscriptReadInput): Promise<TranscriptUsage | null> {
-    const exported = hostExportPath(input.agentSessionId, input.place);
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exported) return openCodeExportUsage(readOpenCodeExportFile(exported));
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
@@ -790,7 +786,7 @@ export class OpenCodeAdapter implements AgentAdapter {
    * session, or one with no tool call.
    */
   async transcriptToolCounts(input: OpenCodeTranscriptReadInput): Promise<TranscriptToolCounts | null> {
-    const exported = hostExportPath(input.agentSessionId, input.place);
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exported) return openCodeExportToolCounts(readOpenCodeExportFile(exported), { sinceMs: input.sinceMs, untilMs: input.untilMs });
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
@@ -803,7 +799,7 @@ export class OpenCodeAdapter implements AgentAdapter {
    * which has no local row, so the earlier-run fill moves on.
    */
   async transcriptToolResultTokens(input: OpenCodeTranscriptReadInput): Promise<Record<string, number> | null> {
-    const exported = hostExportPath(input.agentSessionId, input.place);
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
     if (exported) return openCodeExportToolResultTokens(readOpenCodeExportFile(exported), { sinceMs: input.sinceMs, untilMs: input.untilMs });
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
@@ -853,7 +849,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     _attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
   ): Promise<ParsedTranscriptWindow> {
-    const exported = hostExportPath(agentSessionId, place);
+    const exported = remoteExportPath(place, this.name, agentSessionId);
     if (exported) return readExportWindow(exported, startByte);
     const sourcePath = openCodeTranscriptSourcePath();
     if (!this.localSessionId({ agentSessionId, cwd, place })) {

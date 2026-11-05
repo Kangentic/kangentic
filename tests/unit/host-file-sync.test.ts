@@ -183,6 +183,36 @@ describe('pushing what the adapter changed', () => {
     expect(exclude).not.toContain('.kangentic/worktrees');
   });
 
+  // Every session of the project writes the one exclude file. A write that lost to another session, and was
+  // not read again, would drop the other session's lines or ours.
+  it('reads the exclude file again when another session changed it between the read and the write, and keeps both sets of lines', async () => {
+    const excludePath = '/home/dev/app/.git/info/exclude';
+    host.directories.add('/home/dev/app/.git/info');
+    host.files.set(excludePath, '# existing\nbuild/\n');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{}');
+    // The other session lands its lines after our read of the exclude file, once.
+    const realRead = host.api.readFile;
+    let interfered = false;
+    host.api.readFile = async (hostPath) => {
+      const answer = await realRead(hostPath);
+      if (hostPath === excludePath && !interfered) {
+        interfered = true;
+        host.files.set(excludePath, '# existing\nbuild/\n# kangentic: agent runtime files (local ignore, safe to remove)\n/.gemini/settings.json\n');
+      }
+      return answer;
+    };
+
+    await sync.push();
+
+    expect(interfered).toBe(true);
+    const lines = (host.files.get(excludePath) ?? '').split('\n');
+    expect(lines).toContain('build/');
+    expect(lines).toContain('/.gemini/settings.json');
+    expect(lines).toContain('/.cursor/mcp.json');
+  });
+
   it('adds nothing to the exclude file of a folder that is not a git checkout, and does not create .git', async () => {
     const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
     await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
@@ -191,6 +221,57 @@ describe('pushing what the adapter changed', () => {
     await sync.push();
 
     expect([...host.files.keys()].some((key) => key.includes('.git'))).toBe(false);
+  });
+});
+
+describe('removing a file the adapter removed', () => {
+  /** The user saves the file on the host after the push's own read and before the host unlinks it. */
+  function userEditsAfterRead(hostPath: string): void {
+    const realRead = host.api.readFile;
+    host.api.readFile = async (requested) => {
+      const answer = await realRead(requested);
+      if (requested === hostPath) host.files.set(hostPath, '{"user":"edit"}');
+      return answer;
+    };
+  }
+
+  it('removes a file that still holds what Kangentic last saw', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.rm(path.join(projectFolder, '.cursor', 'mcp.json'));
+
+    await sync.push();
+
+    expect(host.files.has('/home/dev/app/.cursor/mcp.json')).toBe(false);
+  });
+
+  it('throws and keeps a file the user changed in the instant before the unlink', async () => {
+    host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.rm(path.join(projectFolder, '.cursor', 'mcp.json'));
+    userEditsAfterRead('/home/dev/app/.cursor/mcp.json');
+
+    await expect(sync.push({ onConflict: 'throw' })).rejects.toBeInstanceOf(HostFileChangedError);
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"user":"edit"}');
+  });
+
+  it('keeps the file and what is known of it, and does not throw, when told to skip', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
+      const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+      await fs.rm(path.join(projectFolder, '.cursor', 'mcp.json'));
+      userEditsAfterRead('/home/dev/app/.cursor/mcp.json');
+
+      await expect(sync.push({ onConflict: 'skip' })).resolves.toBeUndefined();
+
+      expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"user":"edit"}');
+      // A removal that did not happen must not be remembered as one, or the next push compares with a file that is not there.
+      const tracked = (sync as unknown as { tracked: Array<{ hostContent: string | null }> }).tracked;
+      expect(tracked[0].hostContent).toBe('{"v":1}');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
