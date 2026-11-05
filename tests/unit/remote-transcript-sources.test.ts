@@ -414,6 +414,23 @@ describe('an exported transcript', () => {
     expect(fs.readFileSync(copy(), 'utf8')).toBe('{"whole":true}\n');
   });
 
+  it('logs the reason, not the shell\'s own opening lines, which change run to run', async () => {
+    const host = fakeHost();
+    const lines: string[] = [];
+    const relay = new RemoteSessionRelay({ files: host.files, log: (line) => lines.push(line) });
+    teardown.push(() => relay.dispose());
+    let pid = 1000;
+    host.state.answer = () => {
+      pid += 1;
+      return { code: 127, stdout: '', stderr: `bash: cannot set terminal process group (${pid}): Inappropriate ioctl for device\nbash: no job control in this shell\nsh: 4: agent: not found\n`, timedOut: false };
+    };
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+
+    await vi.advanceTimersByTimeAsync(65_000);
+
+    expect(lines).toEqual(['could not export the transcript for s1: sh: 4: agent: not found']);
+  });
+
   it('survives a host that cannot be reached, with the copy as it was', async () => {
     const { host, relay } = makeRelay();
     host.files.runCommand = async () => { throw new Error('the host did not answer runCommand within 30 s'); };
