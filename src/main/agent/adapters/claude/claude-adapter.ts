@@ -79,7 +79,7 @@ import type {
   ExitSequenceStep,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
-import { peekModelPickerAliasIds } from './model-picker-probe';
+import { peekModelPickerAliasIds, setLateModelScanListener } from './model-picker-probe';
 
 /**
  * The one tool an answering agent is allowed, by its full MCP name.
@@ -420,8 +420,12 @@ export class ClaudeAdapter implements AgentAdapter {
     }
     const rescan = await rescanClaudeModels(cliPath, forceRefresh);
     return rescan
-      ? { ...staticCapabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases) }
+      ? { ...staticCapabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases, rescan.displayNames) }
       : staticCapabilities;
+  }
+
+  onCapabilitiesChanged(listener: () => void): void {
+    setLateModelScanListener(listener);
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {

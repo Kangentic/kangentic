@@ -1,0 +1,564 @@
+{
+  "comment": "Rows of the initialize control response, cut from `models` only, never `account`. signedIn is verbatim from Claude Code 2.1.318. Each compact case is [value, resolvedModel, displayName] rows. signedOut, bedrock, vertex and apiKeyShape are the rows measured on 2.1.318 with no credentials. foundry is a cut of the measured shape (its default and haiku rows are as measured). allowlist and customOption keep the measured values, with the rest of each row filled in from signedOut: the measurement recorded no displayName for them, and customOption's is illustrative. Each acp case is copied from src/tests/model-resolution.test.ts in agentclientprotocol/claude-agent-acp, whose comment says LIVE_SHAPED_MODELS mirrors a real supportedModels() response: acpLiveShaped is LIVE_SHAPED_MODELS, acpSonnetDefault is SONNET_DEFAULT_MODELS, acpDated is its dated array, acpNoResolvedModel is SDK_MODELS plus the sonnet rows of its bare sibling test. arnTarget is illustrative: the ARN is the override target in that file, and these rows are the shapes it could reach us in.",
+  "signedIn": [
+    {
+      "value": "default",
+      "resolvedModel": "claude-opus-5-5",
+      "displayName": "Default (recommended)",
+      "description": "Opus 5.5 · Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "opus",
+      "resolvedModel": "claude-opus-5-5",
+      "displayName": "Opus 5.5",
+      "description": "For complex work and everyday tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "fable",
+      "resolvedModel": "claude-fable-5-1",
+      "displayName": "Fable 5.1",
+      "description": "For your toughest challenges",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "sonnet",
+      "resolvedModel": "claude-sonnet-5-5",
+      "displayName": "Sonnet 5.5",
+      "description": "Most efficient for simpler tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "haiku",
+      "resolvedModel": "claude-haiku-5-5",
+      "displayName": "Haiku 5.5",
+      "description": "Fastest for quick answers",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "claude-haiku-4-5-20251001",
+      "resolvedModel": "claude-haiku-4-5-20251001",
+      "displayName": "Haiku 4.5",
+      "description": "Fastest for quick answers",
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-sonnet-5",
+      "resolvedModel": "claude-sonnet-5",
+      "displayName": "Sonnet 5",
+      "description": "Efficient for routine tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-opus-5",
+      "resolvedModel": "claude-opus-5",
+      "displayName": "Opus 5",
+      "description": "Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-fable-5",
+      "resolvedModel": "claude-fable-5",
+      "displayName": "Fable 5",
+      "description": "Most capable for your hardest and longest-running tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": false
+    },
+    {
+      "value": "claude-opus-4-8",
+      "resolvedModel": "claude-opus-4-8",
+      "displayName": "Opus 4.8",
+      "description": "Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-opus-4-7",
+      "resolvedModel": "claude-opus-4-7",
+      "displayName": "Opus 4.7",
+      "description": "Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-opus-4-6",
+      "resolvedModel": "claude-opus-4-6",
+      "displayName": "Opus 4.6",
+      "description": "Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    },
+    {
+      "value": "claude-sonnet-4-6",
+      "resolvedModel": "claude-sonnet-4-6",
+      "displayName": "Sonnet 4.6",
+      "description": "Efficient for routine tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true,
+      "supportsThinkingOff": true
+    }
+  ],
+  "compact": {
+    "signedOut": [
+      [
+        "default",
+        "claude-opus-5-5",
+        "Default (recommended)"
+      ],
+      [
+        "opus",
+        "claude-opus-5-5",
+        "Opus"
+      ],
+      [
+        "fable",
+        "claude-fable-5-1",
+        "Fable"
+      ],
+      [
+        "sonnet",
+        "claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "haiku",
+        "claude-haiku-5-5",
+        "Haiku"
+      ]
+    ],
+    "bedrock": [
+      [
+        "default",
+        "us.anthropic.claude-opus-5-5",
+        "Default"
+      ],
+      [
+        "us.anthropic.claude-fable-5-1",
+        "us.anthropic.claude-fable-5-1",
+        "Fable"
+      ],
+      [
+        "us.anthropic.claude-sonnet-5-5",
+        "us.anthropic.claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "us.anthropic.claude-sonnet-5",
+        "us.anthropic.claude-sonnet-5",
+        "Sonnet 5"
+      ],
+      [
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-sonnet-4-6",
+        "Sonnet 4.6"
+      ],
+      [
+        "us.anthropic.claude-sonnet-4-6[1m]",
+        "us.anthropic.claude-sonnet-4-6[1m]",
+        "Sonnet 4.6 (1M context)"
+      ],
+      [
+        "us.anthropic.claude-opus-4-1-20250805-v1:0",
+        "us.anthropic.claude-opus-4-1-20250805-v1:0",
+        "Opus 4.1"
+      ],
+      [
+        "us.anthropic.claude-opus-5-5",
+        "us.anthropic.claude-opus-5-5",
+        "Opus"
+      ],
+      [
+        "us.anthropic.claude-opus-5",
+        "us.anthropic.claude-opus-5",
+        "Opus 5"
+      ],
+      [
+        "us.anthropic.claude-opus-4-8",
+        "us.anthropic.claude-opus-4-8",
+        "Opus 4.8"
+      ],
+      [
+        "us.anthropic.claude-opus-4-7",
+        "us.anthropic.claude-opus-4-7",
+        "Opus 4.7"
+      ],
+      [
+        "us.anthropic.claude-opus-4-6-v1",
+        "us.anthropic.claude-opus-4-6-v1",
+        "Opus 4.6"
+      ],
+      [
+        "us.anthropic.claude-opus-4-6-v1[1m]",
+        "us.anthropic.claude-opus-4-6-v1[1m]",
+        "Opus 4.6 (1M context)"
+      ],
+      [
+        "haiku",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "Haiku"
+      ]
+    ],
+    "vertex": [
+      [
+        "default",
+        "claude-opus-5-5",
+        "Default"
+      ],
+      [
+        "claude-fable-5-1",
+        "claude-fable-5-1",
+        "Fable"
+      ],
+      [
+        "claude-sonnet-5-5",
+        "claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "claude-sonnet-5",
+        "claude-sonnet-5",
+        "Sonnet 5"
+      ],
+      [
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-6",
+        "Sonnet 4.6"
+      ],
+      [
+        "claude-sonnet-4-6[1m]",
+        "claude-sonnet-4-6[1m]",
+        "Sonnet 4.6 (1M context)"
+      ],
+      [
+        "claude-opus-5-5",
+        "claude-opus-5-5",
+        "Opus"
+      ],
+      [
+        "claude-opus-5",
+        "claude-opus-5",
+        "Opus 5"
+      ],
+      [
+        "claude-opus-4-8",
+        "claude-opus-4-8",
+        "Opus 4.8"
+      ],
+      [
+        "claude-opus-4-7",
+        "claude-opus-4-7",
+        "Opus 4.7"
+      ],
+      [
+        "claude-opus-4-6",
+        "claude-opus-4-6",
+        "Opus 4.6"
+      ],
+      [
+        "claude-opus-4-6[1m]",
+        "claude-opus-4-6[1m]",
+        "Opus 4.6 (1M context)"
+      ],
+      [
+        "haiku",
+        "claude-haiku-4-5@20251001",
+        "Haiku"
+      ]
+    ],
+    "foundry": [
+      [
+        "default",
+        "claude-sonnet-4-5",
+        "Default"
+      ],
+      [
+        "claude-sonnet-5-5",
+        "claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "claude-opus-4-8",
+        "claude-opus-4-8",
+        "Opus 4.8"
+      ],
+      [
+        "haiku",
+        "claude-haiku-4-5",
+        "Haiku"
+      ]
+    ],
+    "customOption": [
+      [
+        "default",
+        "claude-opus-5-5",
+        "Default (recommended)"
+      ],
+      [
+        "opus",
+        "claude-opus-5-5",
+        "Opus"
+      ],
+      [
+        "my-gateway-model",
+        "my-gateway-model",
+        "My Team Gateway"
+      ]
+    ],
+    "allowlist": [
+      [
+        "default",
+        "claude-sonnet-5-5",
+        "Default (recommended)"
+      ],
+      [
+        "sonnet",
+        "claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "haiku",
+        "claude-haiku-5-5",
+        "Haiku"
+      ]
+    ],
+    "apiKeyShape": [
+      [
+        "default",
+        "claude-opus-5-5",
+        "Default (recommended)"
+      ],
+      [
+        "opus",
+        "claude-opus-5-5",
+        "Opus"
+      ],
+      [
+        "claude-fable-5-1[1m]",
+        "claude-fable-5-1",
+        "Fable"
+      ],
+      [
+        "sonnet",
+        "claude-sonnet-5-5",
+        "Sonnet"
+      ],
+      [
+        "haiku",
+        "claude-haiku-5-5",
+        "Haiku"
+      ]
+    ],
+    "acpLiveShaped": [
+      [
+        "default",
+        "claude-opus-4-8[1m]",
+        "Default (recommended)"
+      ],
+      [
+        "opus[1m]",
+        "claude-opus-4-8[1m]",
+        "Opus"
+      ],
+      [
+        "sonnet",
+        "claude-sonnet-5",
+        "Sonnet"
+      ],
+      [
+        "haiku",
+        "claude-haiku-4-5-20251001",
+        "Haiku"
+      ]
+    ],
+    "acpSonnetDefault": [
+      [
+        "default",
+        "claude-sonnet-5",
+        "Default (recommended)"
+      ],
+      [
+        "opus",
+        "claude-opus-4-6[1m]",
+        "Opus"
+      ],
+      [
+        "sonnet",
+        "claude-sonnet-5",
+        "Sonnet"
+      ],
+      [
+        "sonnet[1m]",
+        "claude-sonnet-5[1m]",
+        "Sonnet"
+      ]
+    ],
+    "acpDated": [
+      [
+        "haiku",
+        "claude-haiku-4-5-20251001",
+        "Haiku 4.5"
+      ],
+      [
+        "sonnet",
+        "eu.anthropic.claude-sonnet-5",
+        "Sonnet 5"
+      ]
+    ],
+    "acpNoResolvedModel": [
+      [
+        "default",
+        null,
+        "Default"
+      ],
+      [
+        "opus",
+        null,
+        "Opus"
+      ],
+      [
+        "sonnet",
+        null,
+        "Sonnet"
+      ],
+      [
+        "sonnet[1m]",
+        null,
+        "Sonnet"
+      ]
+    ],
+    "arnTarget": [
+      [
+        "default",
+        "arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a",
+        "Default"
+      ],
+      [
+        "opus",
+        "arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a",
+        "Opus"
+      ],
+      [
+        "arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a",
+        "arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a",
+        "Team profile"
+      ]
+    ]
+  }
+}

@@ -315,10 +315,10 @@ export function ModelCombobox({
 
   const handleInputFocus = () => {
     if (suppressOpenOnFocusRef.current) return;
-    if (hasOptions) {
-      setIsOpen(true);
-      onOpen?.();
-    }
+    if (hasOptions) setIsOpen(true);
+    // Even with nothing to show: a user with no history whose first read failed
+    // has no chevron, so this is the only thing that asks again.
+    onOpen?.();
   };
 
   // Focus leaving the field and its menu (a Tab to the dialog's Create button)

@@ -561,6 +561,14 @@ export interface AgentAdapter {
   discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
 
   /**
+   * Register who to tell when a `discoverCapabilities` answer stopped waiting
+   * for a read that has since landed, so an inventory built without that read
+   * is dropped. Claude's cold wait is the one that exists. An adapter holds one
+   * listener, and a later call replaces it.
+   */
+  onCapabilitiesChanged?(listener: () => void): void;
+
+  /**
    * Pre-approve a working directory so the agent does not prompt for trust, and apply any other
    * pre-spawn global-config state the adapter needs for a clean start (Claude also keeps its
    * fullscreen diff panel closed here). Every spawn path calls this before `buildCommand`,

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseModelFromClaudeCommand,
   humanizeClaudeModelId,
+  claudeCoreOf,
   configuredModelFromClaudeCommand,
   buildModelDisplayNames,
   buildModelCapabilityFields,
@@ -67,6 +68,63 @@ describe('humanizeClaudeModelId', () => {
     expect(humanizeClaudeModelId('')).toBeNull();
     expect(humanizeClaudeModelId('   ')).toBeNull();
   });
+
+  // Every id the CLI listed under a provider, from check-label-rule on 2.1.318.
+  it.each([
+    ['us.anthropic.claude-fable-5-1', 'Fable 5.1'],
+    ['us.anthropic.claude-sonnet-5-5', 'Sonnet 5.5'],
+    ['us.anthropic.claude-sonnet-5', 'Sonnet 5'],
+    ['us.anthropic.claude-sonnet-4-6', 'Sonnet 4.6'],
+    ['us.anthropic.claude-sonnet-4-6[1m]', 'Sonnet 4.6 (1M)'],
+    ['us.anthropic.claude-opus-4-1-20250805-v1:0', 'Opus 4.1'],
+    ['us.anthropic.claude-opus-5-5', 'Opus 5.5'],
+    ['us.anthropic.claude-opus-5', 'Opus 5'],
+    ['us.anthropic.claude-opus-4-8', 'Opus 4.8'],
+    ['us.anthropic.claude-opus-4-6-v1', 'Opus 4.6'],
+    ['us.anthropic.claude-opus-4-6-v1[1m]', 'Opus 4.6 (1M)'],
+    ['us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Haiku 4.5'],
+    ['claude-haiku-4-5@20251001', 'Haiku 4.5'],
+    ['claude-fable-5-1', 'Fable 5.1'],
+    ['claude-opus-5-5', 'Opus 5.5'],
+    ['claude-sonnet-4-6[1m]', 'Sonnet 4.6 (1M)'],
+    ['claude-opus-4-6[1m]', 'Opus 4.6 (1M)'],
+    ['claude-fable-5-1[1m]', 'Fable 5.1 (1M)'],
+    ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+    ['eu.anthropic.claude-sonnet-5', 'Sonnet 5'],
+  ])('labels %s as %s from its claude- core', (id, label) => {
+    expect(humanizeClaudeModelId(id)).toBe(label);
+  });
+});
+
+describe('claudeCoreOf', () => {
+  it.each([
+    ['claude-opus-4-8', 'claude-opus-4-8'],
+    ['us.anthropic.claude-opus-5-5', 'claude-opus-5-5'],
+    ['arn:aws:bedrock:us-west-2:111122223333:inference-profile/us.anthropic.claude-opus-5-5', 'claude-opus-5-5'],
+    ['vendor/claude-haiku-4-5', 'claude-haiku-4-5'],
+    ['vendor:claude-haiku-4-5', 'claude-haiku-4-5'],
+  ])('finds the core of %s', (id, core) => {
+    expect(claudeCoreOf(id)).toBe(core);
+  });
+
+  it.each([
+    'team-claude-proxy-v2',
+    'databricks-claude-sonnet-4-5',
+    'my-gateway-model',
+    'opus',
+  ])('finds no core in %s, where claude- sits mid-word or is absent', (id) => {
+    expect(claudeCoreOf(id)).toBeNull();
+  });
+
+  it('keeps the whole id\'s words when claude- sits mid-word, rather than the tail after it', () => {
+    expect(humanizeClaudeModelId('team-claude-proxy-v2')).toBe('Team Claude Proxy V2');
+  });
+
+  it('still labels an ARN from the core it ends with', () => {
+    expect(
+      humanizeClaudeModelId('arn:aws:bedrock:us-west-2:111122223333:inference-profile/us.anthropic.claude-opus-5-5'),
+    ).toBe('Opus 5.5');
+  });
 });
 
 describe('configuredModelFromClaudeCommand', () => {
@@ -98,6 +156,14 @@ describe('buildModelDisplayNames', () => {
 
   it('returns an empty map for an empty list', () => {
     expect(buildModelDisplayNames([])).toEqual({});
+  });
+
+  it('takes the CLI\'s name for an id with no claude- core, the two ids a label cannot be derived from', () => {
+    const arn = 'arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a';
+    expect(buildModelDisplayNames(['my-gateway-model', arn, 'claude-opus-4-8'], {
+      'my-gateway-model': 'My Team Gateway',
+      [arn]: 'Opus',
+    })).toEqual({ 'my-gateway-model': 'My Team Gateway', [arn]: 'Opus', 'claude-opus-4-8': 'Opus 4.8' });
   });
 });
 

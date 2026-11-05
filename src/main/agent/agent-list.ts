@@ -23,6 +23,7 @@ import { createCachedSingleton, type CachedSingleton } from '../shared/cached-si
 import { agentRegistry } from './agent-registry';
 import { invalidateWslDistroFacts } from './shared/wsl-distro';
 import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
+import type { AgentAdapter } from './agent-adapter';
 import type { AgentDetectionInfo } from '../../shared/types';
 
 type CliPathOverrides = Record<string, string | null | undefined>;
@@ -68,6 +69,21 @@ function invalidateAllAgentListCaches(): void {
   agentListCaches.clear();
 }
 
+/** Adapters already told to drop the inventory when a read lands late. */
+const watchedAdapters = new WeakSet<AgentAdapter>();
+
+/**
+ * An inventory has no TTL, so one built while a capability read was still
+ * running stays without it. Main's own readers (MCP validation, the workflow
+ * agent) then rebuild on their next call, and the renderer does on the rescan a
+ * dropdown fires when it opens.
+ */
+function watchLateCapabilities(adapter: AgentAdapter): void {
+  if (watchedAdapters.has(adapter)) return;
+  watchedAdapters.add(adapter);
+  adapter.onCapabilitiesChanged?.(invalidateAllAgentListCaches);
+}
+
 async function buildAgentList(
   cliPathOverrides: CliPathOverrides,
   forceRefresh = false,
@@ -81,6 +97,7 @@ async function buildAgentList(
   return Promise.all(
     agentRegistry.list().map(async (agentName): Promise<AgentDetectionInfo> => {
       const adapter = agentRegistry.getOrThrow(agentName);
+      watchLateCapabilities(adapter);
       const info = await adapter.detect(cliPathOverrides[agentName] ?? null);
       const [authenticated, capabilities] = await Promise.all([
         // The CLI this project detected, which its own CLI path may name.

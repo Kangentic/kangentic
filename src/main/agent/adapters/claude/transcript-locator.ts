@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { locateClaudeTranscriptFile } from './transcript-parser';
+import { physicalPath } from './physical-path';
 import { touchBounded } from '../../shared/bounded-lru';
 import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 import { listProjectFolders, PROJECT_SCAN_BATCH } from '../../shared/project-folders';
@@ -129,8 +130,19 @@ export function peekClaudeTranscriptFile(query: ClaudeTranscriptQuery): string {
  * it: the cwd's file, or a parent folder's. Measured on 2.1.312 from a worktree
  * of the folder a conversation started in. A file under any other folder is
  * not counted, because whether Claude resumes from there is unmeasured.
+ *
+ * Claude slugs the real cwd, so a session in a project reached through a symlink
+ * has its file under the physical path's slug, not the one `cwd` names.
  */
 export async function findClaudeResumeTranscriptFile(query: ClaudeTranscriptQuery): Promise<string | null> {
+  const atCwd = await resumeFileFrom(query);
+  if (atCwd || query.place) return atCwd;
+  const resolvedCwd = path.resolve(query.cwd);
+  const physicalCwd = await physicalPath(resolvedCwd);
+  return physicalCwd === resolvedCwd ? null : resumeFileFrom({ ...query, cwd: physicalCwd });
+}
+
+async function resumeFileFrom(query: ClaudeTranscriptQuery): Promise<string | null> {
   const derived = locateClaudeTranscriptFile(query.agentSessionId, query.cwd, query.place ?? null);
   if (await isPresent(derived)) return derived;
   return firstAncestorHit(query);

@@ -17,6 +17,7 @@ sources:
   - resource: src/main/agent/adapters/gemini/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/transcript-locator.ts
+  - resource: src/main/agent/adapters/claude/physical-path.ts
   - resource: src/main/agent/shared/run-transcript-path.ts
   - resource: src/main/agent/adapters/claude/transcript-parser.ts
     title: claudeProjectSlug, locateClaudeTranscriptFile
@@ -273,7 +274,7 @@ So every Claude read resolves its path through `claude/transcript-locator.ts`, i
 
 The cache is per process: main and the retrieval worker each keep one. The sync readers on main (the background-shell and permission-rejection polls, the subagent folder's signature) take `peekClaudeTranscriptFile`, which checks steps 1 to 3 and never searches. On a miss it starts the async find, unless one is running or a miss is still remembered, so the next 2 s poll has the answer. A WSL place searches the distro's home only after the cwd check has already read through the distro's share, so the search starts nothing the read did not.
 
-`proveConversationGone` checks the path every reader would open before its own scan, so a conversation the locator finds is never proved gone. Where Kangentic can read a history and where Claude's `--resume` reads it are two questions: the migrate-on-resume below asks the narrower one (`findClaudeResumeTranscriptFile`, steps 2 and 4 only), so a history under a renamed worktree's old slug still moves, and one under a parent folder's slug stays.
+`proveConversationGone` checks the path every reader would open before its own scan, so a conversation the locator finds is never proved gone. Where Kangentic can read a history and where Claude's `--resume` reads it are two questions: the migrate-on-resume below asks the narrower one (`findClaudeResumeTranscriptFile`, steps 2 and 4 only), so a history under a renamed worktree's old slug still moves, and one under a parent folder's slug stays. That check also tries the cwd's physical path, since Claude slugs its real cwd and a project can be reached through a symlink.
 
 ### What the fallback parser reads
 
@@ -365,7 +366,7 @@ behavior below is the resume contract.
 
 | Agent | Resume invocation | Where `--resume` reads | Keyed by | cwd-bound resume? | Same path as `locateSessionHistoryFile`? | Prompt on resume |
 |---|---|---|---|---|---|---|
-| Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
+| Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id (and under the cwd's physical path on macOS and Linux) | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
 | Gemini | `gemini --resume <id>` / `--session-id <id>` | `~/.gemini/tmp/<project>/chats/session-<time>-<first 8 of id>.jsonl` (legacy `.json`) | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |

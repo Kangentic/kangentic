@@ -248,9 +248,9 @@ full id (`"claude-opus-5-5"`) stays pinned for a column that needs a fixed model
 stored exactly as written, because the file does not know which agent a column runs. A
 hand-written friendly Claude name (`"Opus"`, `"Opus 5.5"`) still works: the Claude adapter
 converts it to Claude's spelling (`opus`, `claude-opus-5-5`) when it builds `--model`, and no
-other agent ever sees that conversion. A single word converts only when Claude's own `/model`
-picker has listed that family, so a gateway model named `"Workhorse"` reaches the CLI as written;
-before the first picker scan on a machine, write the alias in lowercase. What an alias means is
+other agent ever sees that conversion. A single word converts only when Claude's own model
+list has that alias, so a gateway model named `"Workhorse"` reaches the CLI as written; before
+the first read of that list on a machine, write the alias in lowercase. What an alias means is
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
 

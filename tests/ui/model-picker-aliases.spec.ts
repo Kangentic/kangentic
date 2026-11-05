@@ -1053,6 +1053,58 @@ test.describe('Column Manager overview reads saved overrides by the column\'s ow
 });
 
 // ---------------------------------------------------------------------------
+// A user with no history whose first read found nothing
+// ---------------------------------------------------------------------------
+
+test.describe('Model combobox with no models known', () => {
+  test('asks for a rescan on focus with no menu to open, and the list that lands offers the dropdown', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await createProject(page, `NoHistory ${Date.now()}`);
+      await waitForBoard(page);
+      await setAgentListOverrides(page, {
+        claude: { capabilities: { effortLevels: ['low', 'high'], supportsModelOverride: true } },
+      });
+      // A forced read is the rescan, and it finds the list the first read did not.
+      await page.evaluate((listThatLands) => {
+        const testWindow = window as unknown as {
+          __mockAgentListOverrides?: Record<string, unknown>;
+          __forcedAgentLists: number;
+          electronAPI: { agents: { list: (forceRefresh?: boolean, ...rest: unknown[]) => Promise<unknown> } };
+        };
+        const realList = testWindow.electronAPI.agents.list;
+        testWindow.__forcedAgentLists = 0;
+        testWindow.electronAPI.agents.list = (forceRefresh, ...rest) => {
+          if (forceRefresh) {
+            testWindow.__forcedAgentLists += 1;
+            testWindow.__mockAgentListOverrides = listThatLands;
+          }
+          return realList(forceRefresh, ...rest);
+        };
+      }, CLAUDE_WITH_ALIASES);
+
+      await openNewTaskAdvanced(page);
+      const modelInput = page.locator('input[data-testid="task-model-override"]');
+      const dropdownToggle = modelInput.locator('xpath=ancestor::div[1]').locator('button[aria-label="Open dropdown"]');
+      await expect(modelInput).toBeVisible();
+      await expect(dropdownToggle).toHaveCount(0);
+
+      await modelInput.focus();
+
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __forcedAgentLists: number }).__forcedAgentLists)).toBe(1);
+      await expect(dropdownToggle).toBeVisible();
+      // The list arrived under a field the user may be typing in, so no menu opened over it.
+      await expect(page.locator('[data-testid="task-model-override-menu"]')).toHaveCount(0);
+
+      await dropdownToggle.click();
+      await expect(page.locator('[data-testid="task-model-override-menu"] button[data-model-alias]')).toHaveCount(3);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Settings > Agent default-model combobox
 // ---------------------------------------------------------------------------
 

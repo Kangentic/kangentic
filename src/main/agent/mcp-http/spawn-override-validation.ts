@@ -92,8 +92,8 @@ function resolveAgent(input: SpawnOverrideValidationInput): { agent: string; sou
  *
  * This decides what we are able to check. A discovered model list is built from
  * concrete ids - Claude's comes from `message.model` on assistant records in
- * transcript history and from the CLI's `/model` picker, both of which report
- * full ids - so an alias is by construction absent from it even though
+ * transcript history and from the CLI's own list, whose aliases are kept apart
+ * from its ids - so an alias is by construction absent from it even though
  * `--model opus` is perfectly valid and is the first example in the tool's own
  * schema. Rejecting on absence would therefore refuse a value the CLI accepts.
  *

@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { cliHomeDir, resolveCliTarget } from '../../shared/cli-target';
 import { runClaudeCli } from './cli-run';
-import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
+import { awaitModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
 import { buildModelCapabilityFields } from './model-display-name';
 import {
   listMostRecentDirs,
@@ -168,20 +168,20 @@ export async function discoverClaudeStaticCapabilities(cliPath: string): Promise
  *    window since the last time the dialog opened. This is the base source -
  *    it covers `[1m]` variants and gateway/Bedrock id forms that only appear
  *    in transcripts.
- * 2. The CLI's own `/model` picker, driven through a hidden short-lived PTY
- *    (see model-picker-probe.ts) - the only surface that enumerates a newly
- *    shipped model before the user has used it, and it works with every auth
- *    method. Normally read from a background-warmed cache so discovery never
- *    blocks on the PTY round trip; fails silently to source 1.
+ * 2. The CLI's own list: the `initialize` handshake, or its `/model` picker
+ *    when that fails (see model-picker-probe.ts). This is what enumerates a
+ *    newly shipped model before the user has used it, for every auth method.
+ *    It is read from a cache, awaited with a bound only on a cold one, so a
+ *    first launch has the whole list; fails silently to source 1.
  *
  * When `forceRefresh` is set (the on-demand rescan a model dropdown fires when
- * it opens) the picker is instead awaited with its TTL bypassed, so a model
+ * it opens) the read is instead awaited with its TTL bypassed, so a model
  * that shipped since the cache warmed appears without a Kangentic restart. This
  * still does not block the UI: the caller runs it in the background and the
- * dropdown re-renders once the fresh result lands (~2s).
+ * dropdown re-renders once the fresh result lands.
  *
- * The floating aliases come from the picker only (see parseModelPickerScreen):
- * transcripts record resolved ids, never the alias a session was started with.
+ * The floating aliases come from the CLI's list only: transcripts record
+ * resolved ids, never the alias a session was started with.
  *
  * Returns undefined when neither source yields a model, in which case the
  * renderer falls back to a free-form text input.
@@ -196,13 +196,14 @@ export async function rescanClaudeModels(
   const transcriptModels = target === undefined ? undefined : await discoverHistoricalModels(cliHomeDir(target));
   const pickerScan = forceRefresh
     ? await probeModelPickerModels(cliPath, true)
-    : getCachedModelPickerModels(cliPath);
+    : await awaitModelPickerModels(cliPath);
 
   if (!transcriptModels && !pickerScan) return undefined;
   const union = new Set<string>([...(transcriptModels ?? []), ...(pickerScan?.models ?? [])]);
   return {
     models: Array.from(union).sort((modelIdA, modelIdB) => modelIdA.localeCompare(modelIdB)),
     aliases: pickerScan?.aliases ?? [],
+    ...(pickerScan?.displayNames ? { displayNames: pickerScan.displayNames } : {}),
   };
 }
 
@@ -219,5 +220,5 @@ export async function discoverClaudeCapabilities(
   const capabilities = await discoverClaudeStaticCapabilities(cliPath);
   if (!capabilities.supportsModelOverride) return capabilities;
   const rescan = await rescanClaudeModels(cliPath, forceRefresh);
-  return rescan ? { ...capabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases) } : capabilities;
+  return rescan ? { ...capabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases, rescan.displayNames) } : capabilities;
 }

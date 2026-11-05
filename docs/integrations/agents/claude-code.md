@@ -9,9 +9,11 @@ sources:
   - resource: src/main/agent/adapters/claude/command-builder.ts
   - resource: src/main/agent/adapters/claude/hook-manager.ts
   - resource: src/main/agent/adapters/claude/trust-manager.ts
+  - resource: src/main/agent/adapters/claude/physical-path.ts
   - resource: src/main/agent/adapters/claude/claude-json-lock.ts
   - resource: src/main/agent/adapters/claude/diff-panel.ts
   - resource: src/main/agent/adapters/claude/model-picker-probe.ts
+  - resource: src/main/agent/adapters/claude/model-list-handshake.ts
   - resource: src/main/agent/adapters/claude/subscription-fallback.ts
   - resource: src/main/agent/shared/hook-utils.ts
   - resource: src/main/agent/shared/npm-shim-target.ts
@@ -85,7 +87,7 @@ The merged settings are built as on Windows, but every command in them runs in t
 
 Readers rebuild the place from the session row's `cli_target` (`placeFromStored`). The transcript is `~/.claude/projects/<slug>/<id>.jsonl` under the distro home, with the slug built from the `/mnt` path the conversation started in (`locateClaudeTranscriptFile`). The readers find it through the transcript locator there as here: the reported path, the cwd's slug, each parent folder's, then every project folder of the distro's home (see [Where a Claude transcript is](session-history.md#where-a-claude-transcript-is)). A Linux transcript path Claude reports in its status line maps back through the share as it arrives (`hostPathForTarget`). Subagent transcripts, the proof that a conversation is gone and a background shell's output file (the distro's `/tmp/claude/...`) follow the same place. Project relocation and the migrate-on-resume after a worktree rename move only this machine's files, so a resume whose distro history a rename orphaned reports "No conversation found".
 
-Capability discovery reads `--help` through `wsl.exe` (`execCliForTarget`) for the effort levels and the `--model` flag. The model list scans the distro home's `~/.claude/projects` for models. The `/model` picker probe trusts its scratch directory in the distro's `~/.claude.json` and starts `--safe-mode` through `wsl.exe` (`cliInvocationForTarget`), with the classic renderer variable and `TERM` crossing in `WSLENV`. A title summary, a Knowledge Graph answer and the warm answer session run in the distro too, their settings and MCP files named by `/mnt` path. On NAT networking such a run starts its own relay for the bridge (`startRunMcpRelay`). Claude is the one adapter run end to end against a real distro install, in a `/preview` run.
+Capability discovery reads `--help` through `wsl.exe` (`execCliForTarget`) for the effort levels and the `--model` flag. The model list scans the distro home's `~/.claude/projects` for models. The `initialize` handshake runs through `wsl.exe` with the rest of `spawnCli`'s runs. The `/model` picker fallback trusts its scratch directory in the distro's `~/.claude.json` and starts `--safe-mode` through `wsl.exe` (`cliInvocationForTarget`), with the classic renderer variable and `TERM` crossing in `WSLENV`. A title summary, a Knowledge Graph answer and the warm answer session run in the distro too, their settings and MCP files named by `/mnt` path. On NAT networking such a run starts its own relay for the bridge (`startRunMcpRelay`). Claude is the one adapter run end to end against a real distro install, in a `/preview` run.
 
 ## Permission Modes
 
@@ -263,7 +265,7 @@ Safety guarantees:
 
 The lock has two layers. An in-process promise chain serializes Kangentic's own writers. Around it, every operation takes Claude's own `~/.claude.json.lock` (proper-lockfile semantics: a `mkdir` directory, stale after 10 s), because the CLI writes the same file from every running session and one of those writes withdraws the fullscreen boot canary (`fullscreenBootPending[pid]`) on a graceful exit; a Kangentic write that read before that withdrawal and wrote after it resurrects the record, and a dead pid found at the next launch is a strike against the fullscreen renderer. Each writer reads INSIDE the lock. A lock still held after the 12 s budget (which outlasts the stale window, so an abandoned lock is always broken first) makes the writer skip its write and warn, the CLI's own policy on a final `ELOCKED`. `tests/unit/claude-json-lock.test.ts` pins the acquire, the wait, the stale break, and the skip; the rule is `.claude/rules/pty-teardown-grace.md`.
 
-The `/model` picker probe (`model-picker-probe.ts`) is the one other Claude process the adapter spawns. It runs on the classic renderer (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`), which never arms that canary, and exits the CLI with `/exit`, waiting on the PTY's own exit before the fallback kill. A run that never got `/model` into the input box (a dialog showed, or it timed out) types nothing more, not even Esc, and is killed outright, and so is a run whose Enter opened a dialog instead of the picker; the classic renderer leaves no canary record to strand.
+The model list adds two more Claude processes (`model-picker-probe.ts`). The `initialize` handshake (`model-list-handshake.ts`) is a `-p` run with no TUI, so it arms no canary. It ends stdin and lets the CLI exit, which took about 2 s signed in on 2.1.318, and stops it only after 5 s. The `/model` picker probe is its fallback. It runs on the classic renderer (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`), which never arms that canary, and exits the CLI with `/exit`, waiting on the PTY's own exit before the fallback kill. A run that never got `/model` into the input box (a dialog showed, or it timed out) types nothing more, not even Esc, and is killed outright, and so is a run whose Enter opened a dialog instead of the picker; the classic renderer leaves no canary record to strand.
 
 ### Trust Management
 
@@ -272,14 +274,14 @@ The `/model` picker probe (`model-picker-probe.ts`) is the one other Claude proc
 Before every spawn, `ClaudeAdapter.ensureTrust()` calls `ensureClaudeSpawnConfig()`, which makes ONE read-modify-write of `~/.claude.json` under the lock (it used to be three passes per spawn, each parsing and rewriting a file that runs to 1.5 MB):
 
 1. Read `~/.claude.json` asynchronously (a missing file starts from an empty object; a file that exists but does not parse as a JSON object is left untouched, since it holds the user's auth and MCP state, and the session shows a trust prompt instead)
-2. Trust the working directory: a `projects` entry with `hasTrustDialogAccepted: true`, copying `enabledMcpjsonServers` from the parent project entry for a worktree (MCP server inheritance)
+2. Trust the working directory: a `projects` entry with `hasTrustDialogAccepted: true`, copying `enabledMcpjsonServers` from the parent project entry for a worktree (MCP server inheritance). The key is the path Claude reads as its cwd. A local Claude on macOS or Linux keys trust by its real cwd and ignores an entry under a symlink (macOS's temp folder sits behind `/var` -> `/private/var`), so `physicalPath` resolves the key there. Windows and a WSL distro keep the path as given, since realpath would follow a junction or subst drive. Project relocation and the browser server lookup read `~/.claude.json` by the same physical path
 3. Append `kangentic` to the entry's `enabledMcpjsonServers` (append-if-absent) so the Kangentic MCP server is enabled without a prompt
 4. Set `diffSidebarOpen: false` (see Diff Panel below)
 5. Write once, asynchronously and atomically (temp file + rename), only when something changed
 
 A rename still refused after its retries (the file held open, usually on Windows) falls back to an in-place write. When that write fails too and leaves the file short, the temp file is the one complete copy, so it is kept and named in the thrown error; when the file still parses, nothing is kept. The first whole write of a run removes copies an earlier failed write kept, and so does the first whole write after a failed write keeps one.
 
-`ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the model-picker probe trusts its scratch directory). They share the same reader and writer, so they also leave a file that does not parse untouched and write through a temp file.
+`ensureWorktreeTrust()` and `ensureMcpServerTrust()` remain for callers that need one change alone (the `/model` fallback probe trusts its scratch directory, and the `initialize` handshake needs no trust entry). They share the same reader and writer, so they also leave a file that does not parse untouched and write through a temp file.
 
 ### Diff Panel
 
