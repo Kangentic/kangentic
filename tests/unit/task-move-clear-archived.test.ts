@@ -121,6 +121,11 @@ vi.mock('../../src/main/held-messages/held-messages', () => ({
   clearHeldMessages: (...args: unknown[]) => mockClearHeldMessages(...args),
 }));
 
+const mockRefreshStoppedMark = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/automations/stopped-mark', () => ({
+  refreshStoppedMark: (...args: unknown[]) => mockRefreshStoppedMark(...args),
+}));
+
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -309,6 +314,35 @@ describe('handleTaskMove clears archived_at on a move out of Done', () => {
 
     expect(taskRepo.clearArchived).toHaveBeenCalledTimes(1);
     expect(taskRepo.clearArchived).toHaveBeenCalledWith(task.id);
+  });
+});
+
+// A stop belongs to the visit that just ended, and a session the move keeps gets
+// no turn end to say so. Without the refresh a card moved on would keep wearing
+// the agent-stopped mark in its new column.
+describe('handleTaskMove refreshes the stopped mark when the task changes column', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('once on a move to another column', async () => {
+    const fromLane = makeSwimlane(CUSTOM_LANE_ID, { role: null, auto_spawn: false });
+    const toLane = makeSwimlane(AUTO_SPAWN_OFF_LANE_ID, { role: null, auto_spawn: false });
+    const task = makeTask({ swimlane_id: CUSTOM_LANE_ID });
+
+    await move(task, AUTO_SPAWN_OFF_LANE_ID, [fromLane, toLane]);
+
+    expect(mockRefreshStoppedMark).toHaveBeenCalledTimes(1);
+    expect(mockRefreshStoppedMark).toHaveBeenCalledWith(expect.anything(), 'proj-test', task.id);
+  });
+
+  it('not on a reorder within the same column', async () => {
+    const lane = makeSwimlane(CUSTOM_LANE_ID, { role: null, auto_spawn: false });
+    const task = makeTask({ swimlane_id: CUSTOM_LANE_ID });
+
+    await move(task, CUSTOM_LANE_ID, [lane]);
+
+    expect(mockRefreshStoppedMark).not.toHaveBeenCalled();
   });
 });
 
