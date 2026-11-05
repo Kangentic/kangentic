@@ -147,13 +147,15 @@ which can be Done. A row that sends a task back still goes where it says.
 clean worktree. If it agrees, the card goes straight to Done, past the rest of its route, and the
 reason goes in the run log. This works in any column and needs no Automation agent. A task with no
 worktree has nothing to compare, so the agent's word stands. If the branch has changes, or cannot be
-read, nothing moves and the agent is told why.
+read, nothing moves and the agent is told why. The line also skips what lies ahead on the route,
+Manual plan approval included: a task in Planning has an empty branch, so there the check proves
+nothing and the agent's word decides.
 
 **Columns only you move a card out of.** When a column's only Move to column rows send a task back
 (a Testing column with "Checks failing" and "Changes requested", say), the workflow never moves a
 card out of it, because the way on is yours to give. Once the agent has finished what it can do
 alone, the card stops and you get one notice. Drag it on when it is ready. A real stall there still
-gets its nudges. To let a run go on by itself, give the column a row that moves the task forward.
+gets its nudges, and so does a turn that ends with no final message. To let a run go on by itself, give the column a row that moves the task forward.
 
 **When a step does not finish.** Nothing an agent writes stops a running workflow's task unless it
 says that only you can settle it: a change from the plan, something you must weigh in on, or a
@@ -199,7 +201,8 @@ Stalled with why on hover. Through an outage Kangentic keeps checking every hour
 service comes back the task moves on by itself. If you answer a stalled task and it stops again
 later, recovery starts over for it, with its own notice. A start that keeps failing for 30
 minutes and a hung turn the interrupt does not end get the notice too. Pausing the workflow
-cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
+cancels all of it, and a task in a running workflow raises no plain Agent idle notice or toast. A
+permission prompt still does. The
 **Workflow stalled** switch is in Settings > Notifications.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step

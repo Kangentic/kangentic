@@ -20,6 +20,7 @@ function input(overrides: Partial<IdleToastInput> = {}): IdleToastInput {
     sessionIdShort: 'a1b2c3d4',
     endsOwnCall: false,
     reason: undefined,
+    inRunningWorkflow: false,
     ...overrides,
   };
 }
@@ -125,6 +126,7 @@ describe('resolveIdleToast', () => {
       ['the session is on another project', { isCurrentProject: false }],
       ['the session is a Command Terminal', { transient: true }],
       ['the terminal is already on screen', { ownedByDetailSurface: true }],
+      ['a running workflow judges the turn', { inRunningWorkflow: true }],
     ];
 
     for (const [reason, overrides] of suppressing) {
@@ -135,6 +137,12 @@ describe('resolveIdleToast', () => {
         expect(resolveIdleToast(input(overrides))).toBeNull();
       });
     }
+  });
+
+  // No step check answers a prompt, so only the idle half is the workflow's.
+  it('still fires for a permission prompt in a running workflow', () => {
+    const toast = resolveIdleToast(input({ state: 'permission', inRunningWorkflow: true }));
+    expect(toast?.title).toBe('Agent needs your input');
   });
 
   describe('a session whose task the board has not loaded', () => {
