@@ -218,6 +218,7 @@ describe('a turn end and a task with its automations disabled', () => {
     });
 
     sessionManager = Object.assign(new EventEmitter(), {
+      setTaskStopped: vi.fn(),
       getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
       isLatestTurn: (sessionId: string, workSerial: number) => sessionId === SESSION_ID && workSerial === WORK_SERIAL,
     });
@@ -278,7 +279,7 @@ describe('a turn end and a task with its automations disabled', () => {
   }
 
   const secondsAgo = (seconds: number): string => new Date(Date.now() - seconds * 1000).toISOString();
-  const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped');
+  const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped' && run.type !== 'column_stopped');
 
   describe('the pass for a disabled task', () => {
     it('records each pending row as skipped with the reason, and runs nothing', async () => {

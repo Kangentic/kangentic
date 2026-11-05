@@ -562,6 +562,58 @@ describe('AutomationRunRepository', () => {
     expect(runs.listForTask(taskId)).toEqual([]);
   });
 
+  // A restart prunes on project open, and the stopped mark is read back from
+  // these rows. Pruned, a stopped card would lose its mark at the restart and
+  // look like a healthy one. Red-green: drop the COLUMN_STOP_TYPES_SQL clause
+  // from pruneTo and the kept rows go.
+  it('keeps a task\'s stop rows in the column it is in now, past the limit, until it moves or is archived', () => {
+    const { database, runs, columnId, taskId } = setup();
+    const otherColumnId = new SwimlaneRepository(database).list()[1].id;
+    database
+      .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('task-plain', 'An ordinary task', '', columnId, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+    /** Stamp the row just written, since a new row is stamped now and would fall inside the limit. */
+    const stampNewest = (second: number) => database
+      .prepare('UPDATE automation_runs SET started_at = ? WHERE rowid = (SELECT MAX(rowid) FROM automation_runs)')
+      .run(at(second));
+    const stopRowIds = () => (database.prepare("SELECT id FROM automation_runs WHERE type IN ('column_stopped', 'column_stop_cleared')").all() as Array<{ id: string }>).length;
+
+    runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+    stampNewest(0);
+    runs.recordColumnStopCleared({ taskId, swimlaneId: columnId, reason: 'It can go on.' });
+    stampNewest(1);
+    // A stop row left in a column the task is no longer in.
+    runs.recordColumnStop({ taskId, swimlaneId: otherColumnId, cause: 'spent-row', reason: 'Spent.' });
+    stampNewest(2);
+    for (let index = 0; index < 4; index += 1) {
+      runs.start({ id: `plain-${index}`, automation: automation('a1', columnId), taskId: 'task-plain' });
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(at(10 + index), `plain-${index}`);
+    }
+
+    runs.pruneTo(4);
+    // Both rows in the task's current column stay; the one from the column it left goes.
+    expect(stopRowIds()).toBe(2);
+    expect(runs.columnStop(taskId, columnId, null)).toBeNull();
+    expect(runs.columnStop(taskId, otherColumnId, null)).toBeNull();
+
+    // A task that moved on no longer needs the rows of the column it left.
+    database.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(otherColumnId, taskId);
+    runs.pruneTo(4);
+    expect(stopRowIds()).toBe(0);
+
+    // And an archived task needs none, even in the column it sits in.
+    database.prepare('UPDATE tasks SET swimlane_id = ?, archived_at = NULL WHERE id = ?').run(columnId, taskId);
+    runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+    stampNewest(0);
+    runs.pruneTo(4);
+    expect(runs.columnStop(taskId, columnId, null)).toMatchObject({ cause: 'reply' });
+    database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', taskId);
+    runs.pruneTo(4);
+    expect(stopRowIds()).toBe(0);
+  });
+
   // Task #952: the newest 200 rows were a few hours of one workflow, so the
   // night it ran was pruned before anyone could read it.
   describe('a workflow still going, or done for less than a day', () => {
@@ -780,6 +832,39 @@ describe('AutomationRunRepository', () => {
   // and the query compares strictly, so each row here is stamped at a second of
   // its own. Each case marks the task first, so a "not marked" can only come
   // from the one fact it flips.
+  describe('columnStop, rows written in one millisecond', () => {
+    const SAME_INSTANT = '2026-01-01T00:00:10.000Z';
+
+    /** A new row is stamped now; pin the newest to the shared instant so only rowid can order it. */
+    function pinNewest(database: DatabaseType.Database): void {
+      database
+        .prepare('UPDATE automation_runs SET started_at = ?, finished_at = ? WHERE rowid = (SELECT MAX(rowid) FROM automation_runs)')
+        .run(SAME_INSTANT, SAME_INSTANT);
+    }
+
+    // Red-green: drop "rowid DESC" from columnStop's ORDER BY and the first case
+    // reads the stop it was written after, since a tie falls back to scan order.
+    it('reads a clear written after a stop in the same millisecond as no stop', () => {
+      const { database, runs, columnId, taskId } = setup();
+      runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+      pinNewest(database);
+      runs.recordColumnStopCleared({ taskId, swimlaneId: columnId, reason: 'It can go on.' });
+      pinNewest(database);
+
+      expect(runs.columnStop(taskId, columnId, null)).toBeNull();
+    });
+
+    it('reads a stop written after a clear in the same millisecond as a stop', () => {
+      const { database, runs, columnId, taskId } = setup();
+      runs.recordColumnStopCleared({ taskId, swimlaneId: columnId, reason: 'It can go on.' });
+      pinNewest(database);
+      runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+      pinNewest(database);
+
+      expect(runs.columnStop(taskId, columnId, null)).toEqual({ cause: 'reply', reason: 'It waits for a sign in.' });
+    });
+  });
+
   describe('listStalledTasks', () => {
     const REASON = 'the agent stopped before its step was done.';
     const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
@@ -900,6 +985,91 @@ describe('AutomationRunRepository', () => {
       stall(10, 'an older stall.');
 
       expect(runs.listStalledTasks()).toEqual(new Map([[taskId, 'the newest stall.']]));
+    });
+
+    // `isStalled` is the one-task read the stopped mark makes at every turn end.
+    // It must answer for the task asked about only, and agree with the board-wide
+    // read in every state that read distinguishes.
+    describe('isStalled, the read for one task', () => {
+      const OTHER_TASK_ID = 'task-other';
+
+      function twoTaskSetup() {
+        const fixture = stalledSetup();
+        const { database, runs, columnId } = fixture;
+        database
+          .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(OTHER_TASK_ID, 'Another task', '', columnId, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+        return {
+          ...fixture,
+          stallOther: (second: number) => {
+            runs.recordWorkflowStall({ taskId: OTHER_TASK_ID, swimlaneId: columnId, workflowId: 'workflow-2', reason: REASON, countedNudges: 0 });
+            database
+              .prepare('UPDATE automation_runs SET started_at = ?, finished_at = ? WHERE rowid = (SELECT MAX(rowid) FROM automation_runs)')
+              .run(at(second), at(second));
+          },
+        };
+      }
+
+      it('is false for a task with no stall, and true once it stalls', () => {
+        const { runs, taskId, stall } = twoTaskSetup();
+        expect(runs.isStalled(taskId)).toBe(false);
+
+        stall(10);
+
+        expect(runs.isStalled(taskId)).toBe(true);
+      });
+
+      // Red-green: drop the "AND stall.task_id = ?" clause and the unstalled
+      // task reads as stalled, since any stalled task on the board matches.
+      it('answers for the task asked about, never for another stalled task on the board', () => {
+        const { runs, taskId, stall } = twoTaskSetup();
+        stall(10);
+
+        expect(runs.isStalled(taskId)).toBe(true);
+        expect(runs.isStalled(OTHER_TASK_ID)).toBe(false);
+        expect(runs.isStalled('task-that-does-not-exist')).toBe(false);
+      });
+
+      it('reads each of two stalled tasks as stalled, and clears only the one that recovered', () => {
+        const { runs, taskId, stall, stallOther, recovery } = twoTaskSetup();
+        stall(10);
+        stallOther(11);
+        expect(runs.isStalled(taskId)).toBe(true);
+        expect(runs.isStalled(OTHER_TASK_ID)).toBe(true);
+
+        recovery(20, 'succeeded');
+
+        expect(runs.isStalled(taskId)).toBe(false);
+        expect(runs.isStalled(OTHER_TASK_ID)).toBe(true);
+      });
+
+      it('agrees with listStalledTasks when the task moved on, was archived, or a step judged a turn', () => {
+        const { database, runs, taskId, stall, step, otherColumnId } = twoTaskSetup();
+        const agrees = () => expect(runs.isStalled(taskId)).toBe(runs.listStalledTasks().has(taskId));
+
+        stall(10);
+        agrees();
+        expect(runs.isStalled(taskId)).toBe(true);
+
+        step(20, null);
+        agrees();
+        expect(runs.isStalled(taskId)).toBe(true);
+
+        step(30, false);
+        agrees();
+        expect(runs.isStalled(taskId)).toBe(false);
+
+        stall(40);
+        database.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(otherColumnId, taskId);
+        agrees();
+        expect(runs.isStalled(taskId)).toBe(false);
+
+        database.prepare('UPDATE tasks SET swimlane_id = (SELECT swimlane_id FROM tasks WHERE id = ?) WHERE id = ?').run(OTHER_TASK_ID, taskId);
+        expect(runs.isStalled(taskId)).toBe(true);
+        database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run(at(50), taskId);
+        agrees();
+        expect(runs.isStalled(taskId)).toBe(false);
+      });
     });
   });
 });

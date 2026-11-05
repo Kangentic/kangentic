@@ -1953,6 +1953,15 @@ a test file that already fails on the base. The task agent says so in its turn, 
 at the cap waiting on a person instead of on a To Do task nobody watches. Raising the cap waits
 until the dogfood record shows passes hitting it.
 
+The record came in on 2026-11-04: 2 of the 14 adapter tasks hit the cap (tasks 984 and 985), and
+both argue against a higher one. Each had one step no agent could do, a live capture, and each
+bounce paid for an Executing turn that did nothing, about $4 a card over three turns, plus a fresh
+review at $8 to $12. The cap stays at 3. Task 994 removes the loop instead: a step only a person can
+do stops the card on its first report (`needsOwner`, `Needs owner:` below the verdict), a CLI that
+cannot run here is replayed from its published examples as a `decision` in the pass, and a stopped
+card wears `agent-stopped` on the board, so "with its verdict and steps showing" no longer depends on
+someone opening that card's terminal.
+
 No ledger line records a step. A step the task agent finished is gone from the code, and one it did
 not finish should be raised again. That depends on a later finder seeing it, and neither the full
 pack nor the since-review pack carries out-of-diff code nobody touched. So a step the task agent

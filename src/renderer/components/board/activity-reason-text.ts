@@ -25,6 +25,7 @@ import type { ActivityReason } from '../../../shared/types';
 export function formatActivityReasonText(reason: ActivityReason, now: number = Date.now()): string {
   switch (reason.kind) {
     case 'idle': {
+      if (reason.stopped) return i18n._(msg({ message: 'Stopped', context: 'Agent status' }));
       const duration = formatDurationBetween(reason.since, now);
       return i18n._(msg`Idle for ${{ duration }}`);
     }

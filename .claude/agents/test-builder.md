@@ -54,7 +54,7 @@ This agent is invoked in two ways:
    **What counts as a gap (explicit, falsifiable - do not raise vague "could use more tests" gaps):**
    - a changed exported function, or a new branch / early-return, with no covering assertion;
    - a new IPC channel with no `tests/ui/mock-electron-api.js` entry exercised by a UI test;
-   - an external-input parser (`JSON.parse` of file contents / IPC payloads / child-process stdout that dispatches on string-literal fields) with no real-shape fixture test - the `codex-rollout-event-msg.jsonl` pattern;
+   - an external-input parser (`JSON.parse` of file contents / IPC payloads / child-process stdout that dispatches on string-literal fields) with no real-shape fixture test - the `codex-rollout-event-msg.jsonl` pattern. A CLI that cannot run here is replayed from its published examples, its docs or its own test data, never a shape written by hand;
    - a new user-facing flow (dialog, form, DnD, store mutation) with no UI-tier assertion;
    - a new main-process wiring path (PTY lifecycle, fs.watch, cross-process IPC, app-restart) with no E2E assertion AND no lower-tier equivalent.
    Each gap row must name the specific `file` and the concrete behavior to assert. A "gap" you cannot state as a falsifiable missing assertion is not a gap.

@@ -19,6 +19,7 @@ import { hasCondition, hasFinalLine, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
 import { resolveMoveTarget, routeOf } from '../move-target';
 import { heldMoveReason, runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
+import { isTaskWorkflowPaused } from '../../workflows/workflow-home';
 import {
   afterWorkflowStep,
   armWorkflowRecoveryOnIdle,
@@ -41,6 +42,9 @@ import { setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold'
 import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
+import type { ConditionCheckOutcome } from '../condition-check/condition-check';
+import { refreshStoppedMark } from '../stopped-mark';
+import { judgeColumnStop, NEEDS_A_PERSON_CHECK_ID, NEEDS_A_PERSON_CONDITION } from './column-stop';
 import { deliverMessageToSession } from './deliver-message';
 import { moveTaskFromRow } from './move-from-row';
 import { readSessionFinalReply, tryReadSessionFinalReply } from './final-reply-reader';
@@ -132,6 +136,10 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  *   logged an internal CLI agent's tool events only, such an agent's tool
  *   start after a Stop reopened the turn and never ended. Waiting on that
  *   work's own turn end lost the rows for good, and the card sat in the column.
+ * - **A pass off a workflow ends by asking whether the board stopped the card**
+ *   (`column-stop.ts`), once no row moved the task or messaged the agent. That
+ *   read is why a column whose rows are all spent still reads the reply. A
+ *   column with no rows never gets here, by the fast path below.
  * - **A turn the column waited on says why its rows did not run; the rest stay
  *   silent.** Silent: the task left the column or the session is not its own
  *   (`resolveSubject`), a move superseded the pass, a newer turn began, every
@@ -272,6 +280,8 @@ export function registerTurnEndAutomations(context: IpcContext): void {
   // the spawn returns.
   context.sessionManager.on('session-resumed', (resumed: SessionResumedPayload) => {
     setImmediate(() => {
+      // A restart emptied the stopped set, and the run log still holds the stop.
+      refreshStoppedMark(context, resumed.projectId, resumed.taskId);
       void catchUpAfterResume(context, resumed);
     });
   });
@@ -694,7 +704,13 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: task.workflow_id },
     );
   }
-  if (pending.length === 0 && !stepRuns) return;
+  // Off a workflow, the pass ends by asking whether the board stopped the card,
+  // even with no row left to run: a spent row is exactly that case. A paused
+  // task's rows are off by a person's choice, so nothing stopped it. A paused
+  // workflow's task is no exception to the workflow's own rule: its step and
+  // recovery read it again at the Resume, so a stop written here would outlast it.
+  const judgesStop = !stepApplies && taskRunnability.ok && !isTaskWorkflowPaused(task, payload.projectId);
+  if (pending.length === 0 && !stepRuns && !judgesStop) return;
 
   const controller = new AbortController();
   const releaseGroup = trackTurnEndGroup(task.id, controller);
@@ -765,12 +781,56 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
           handOnStepVerdict(context, payload, task, column.id, step);
         }
       }
+    } else if (judgesStop && !rowsOutcome.messagedAgent && !controller.signal.aborted) {
+      await judgeColumnStop({
+        taskId: task.id,
+        swimlaneId: column.id,
+        rows: rows.filter((row) => automationRegistry.get(row.type) !== undefined && canColumnRun(row.type, facts, 'turn_end').ok),
+        runs,
+        visitStartedAt,
+        readReply,
+        check: (conditionRows, askNeedsAPerson) => checkColumnStop(context, payload, subject, readReply(), conditionRows, askNeedsAPerson, controller.signal),
+        stillCurrent: () => isTurnStillCurrent(context, payload, column.id) && !controller.signal.aborted,
+      });
     }
     if (judgedHeldTurn) heldPassesServed.set(payload.sessionId, payload.workSerial);
   } finally {
     releaseGroup();
     clearSpawnProgress(context.mainWindow, task.id);
+    refreshStoppedMark(context, payload.projectId, task.id);
   }
+}
+
+/** Is this the session's latest turn, settled, with the task still in the column? */
+function isTurnStillCurrent(context: IpcContext, payload: TurnEndedPayload, columnId: string): boolean {
+  return resolveSubject(context, payload)?.column.id === columnId
+    && context.sessionManager.isLatestTurn(payload.sessionId, payload.workSerial)
+    && isTurnSettled(context.sessionManager, payload.sessionId);
+}
+
+/** The one model call `judgeColumnStop` makes: a spent row's Conditions and the built-in question. */
+async function checkColumnStop(
+  context: IpcContext,
+  payload: TurnEndedPayload,
+  subject: TurnEndSubject,
+  reply: Promise<string | null>,
+  conditionRows: ColumnAutomation[],
+  askNeedsAPerson: boolean,
+  signal: AbortSignal,
+): Promise<ConditionCheckOutcome> {
+  const { task, column, repos } = subject;
+  const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
+  const engine = createTransitionEngine(
+    context, repos.automations, repos.automationRuns, repos.tasks, new SessionRepository(getProjectDb(payload.projectId)), repos.attachments,
+    payload.projectId, projectPath,
+  );
+  const agentReply = await reply;
+  const templateVars = engine.resolveGroupTemplateVars(task, column, 'turn_end', { agentReply });
+  const input = engine.conditionCheckInput(task, column, 'turn_end', conditionRows, templateVars, { agentReply });
+  const rows = askNeedsAPerson
+    ? [...input.rows, { automationId: NEEDS_A_PERSON_CHECK_ID, name: 'Needs a person', condition: NEEDS_A_PERSON_CONDITION }]
+    : input.rows;
+  return engine.checkConditions({ ...input, rows }, { signal }, engine.conditionCheckCall(task, column));
 }
 
 /** Hold a released move again, unless a newer hold or a stopped recovery replaced it. */

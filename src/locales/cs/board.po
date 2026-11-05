@@ -498,6 +498,12 @@ msgstr "Zobrazit změny"
 msgid "Starting agent..."
 msgstr "Spouštění agenta..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Zastaveno"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"

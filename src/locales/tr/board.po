@@ -498,6 +498,12 @@ msgstr "Değişiklikleri göster"
 msgid "Starting agent..."
 msgstr "Ajan başlatılıyor..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Durduruldu"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
@@ -581,7 +587,7 @@ msgstr "Boş bir aracı yuvası bekleniyor."
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr "{columnName} içinde bir yuva bekleniyor."
+msgstr "{columnName} sütununda yuva bekleniyor."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

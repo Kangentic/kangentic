@@ -498,6 +498,12 @@ msgstr "Módosítások megjelenítése"
 msgid "Starting agent..."
 msgstr "Ügynök indítása..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Leállítva"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"

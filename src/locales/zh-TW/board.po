@@ -408,6 +408,12 @@ msgstr "顯示變更"
 msgid "Starting agent..."
 msgstr "正在啟動代理..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "已停止"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "Superseded by {workflowTitle}"
 msgstr "已由 {workflowTitle} 取代"

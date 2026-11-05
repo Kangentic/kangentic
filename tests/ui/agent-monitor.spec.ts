@@ -413,7 +413,7 @@ test.describe('agent monitor', () => {
           : row
       ))));
 
-      // An approval wears the board card's crested shield (#452), not the envelope.
+      // An approval wears the board card's quartered shield (#452), not the envelope.
       const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
       await expect(mark).toHaveAttribute('data-mark', 'agent-approval');
       // The slot, not the mark: the mark inside an IconSlot takes no pointer.
@@ -426,6 +426,32 @@ test.describe('agent monitor', () => {
       await expect(slot).toHaveAccessibleDescription('');
       await slot.hover();
       await expect(page.getByRole('tooltip').filter({ hasText: 'Waiting for your approval for' })).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a stopped card wears the board card\'s pennant here too, and has no tip', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-working'
+          ? Object.assign({}, row, { activity: 'idle', activityReason: { kind: 'idle', since: Date.now() - 60000, stopped: true } })
+          : row
+      ))));
+
+      const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
+      await expect(mark).toHaveAttribute('data-mark', 'agent-stopped');
+      await expect(mark).toHaveAccessibleName('Stopped');
+      await mark.locator('xpath=..').hover();
+      await expect(page.getByRole('tooltip')).toHaveCount(0);
+
+      // The table asks the same function, and its cell names the mark too.
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+      const tableMark = page.locator('[data-testid="monitor-table-row"]', { hasText: 'Fix PTY capture race' }).locator('svg[data-mark]');
+      await expect(tableMark).toHaveAttribute('data-mark', 'agent-stopped');
+      await expect(tableMark).toHaveAccessibleName('Stopped');
     } finally {
       await browser.close();
     }

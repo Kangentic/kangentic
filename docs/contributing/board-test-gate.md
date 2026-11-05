@@ -48,8 +48,10 @@ decision and lists the alternative, adds tests, and commits that pass itself, so
 a branch carrying a `*(review)` commit no local agent authored. That is expected, not corruption.
 
 The pass ends with a verdict computed by `scripts/review-verdict.mjs`: **Ready** (move to Testing) or
-**Blocked** (move back to Executing and do the named steps). There is no "skipped" status, and the
-commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A branch with nothing to
+**Blocked** (move back to Executing and do the named steps). A step only a person can do adds a
+`Needs owner:` line below the verdict, which neither Code Review row matches, so the card stops
+there on the first report with the `agent-stopped` mark, and the person answers in that session.
+There is no "skipped" status, and the commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A branch with nothing to
 review ends Blocked too (`--no-changes`), since on the board it means Executing committed nothing.
 Task 916's review ended on a bare "No changes to review." that neither Code Review row matched, and
 the workflow moved the task on to Testing unreviewed. A finished pass normally

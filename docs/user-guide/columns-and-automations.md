@@ -112,6 +112,19 @@ the count over whoever moves it. On task enter and On task exit rows count the s
 you make into or out of their column always runs them, and their Frequency limits only the moves
 the board makes. Both start off.
 
+**A card the board stopped.** The card's amber envelope turns into a pennant when its agent has
+finished and nothing will move it until you act. That is one of two things, in a column with On agent
+turn end rows: a Move to column row would have run but has used up its Frequency, or the agent says
+it cannot go on until a person does something, in any words. The second is judged by the Automation
+agent after your rows have run, at a small model cost, only when no row moved the task or messaged
+the agent. A last line of `Needs owner: <what you need>` counts with no model call, so a column's
+prompt can ask for it. With no Automation agent, only that line and a spent row count. The pennant
+shows only when the app knows, so a turn that just ends on an unexpected line keeps the envelope. It
+has no tooltip: open the task to read why. It goes when the card leaves the column, or, for what the
+agent said, when a later turn no longer says so. A spent row's pennant stays until a person moves
+the card. On a workflow task it shows when the agent ends on `Needs owner:` or recovery runs out, not
+while recovery is still trying.
+
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
 task to Executing`, or `Runs npm run lint` (a script shows in code type). A long value ends where

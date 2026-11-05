@@ -498,6 +498,12 @@ msgstr "Pokaż zmiany"
 msgid "Starting agent..."
 msgstr "Uruchamianie agenta..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Zatrzymany"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
@@ -576,7 +582,7 @@ msgstr "Wyświetl rozmowę"
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr "Oczekiwanie na wolne miejsce agenta."
+msgstr "Oczekiwanie na wolne miejsce dla agenta."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy

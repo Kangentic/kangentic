@@ -58,6 +58,7 @@ import { englishText } from '../../src/shared/i18n/english';
 /** The English the engine stores and an agent reads; the constant is a descriptor. */
 const AUTOMATIONS_DISABLED_REASON = englishText(AUTOMATIONS_DISABLED_REASON_DESCRIPTOR);
 import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
+import { NEEDS_A_PERSON_CHECK_ID } from '../../src/main/automations/turn-end/column-stop';
 import { matchFinalLine, TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
 import { readFinalReply } from '../../src/main/agent/message-trail-read';
 import type { TranscriptAnchor } from '../../src/main/agent/shared/transcript-anchor';
@@ -85,6 +86,7 @@ const hoisted = vi.hoisted(() => ({
   waitForTurnCompletion: vi.fn(),
   runWorkflowStep: vi.fn(),
   workflowStepApplies: vi.fn(),
+  isTaskWorkflowPaused: vi.fn(),
   clearSpawnProgress: vi.fn(),
   findSession: vi.fn(),
   retrievalCall: vi.fn(),
@@ -127,6 +129,10 @@ vi.mock('../../src/main/workflows/workflow-step', () => ({
   runWorkflowStep: hoisted.runWorkflowStep,
   workflowStepApplies: hoisted.workflowStepApplies,
 }));
+vi.mock('../../src/main/workflows/workflow-home', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/workflows/workflow-home')>()),
+  isTaskWorkflowPaused: hoisted.isTaskWorkflowPaused,
+}));
 vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageToSession: vi.fn(),
   deliverMessageAfterMove: vi.fn(),
@@ -148,6 +154,7 @@ const MODEL_REASON = 'Choose a model for the Automation agent in Settings > Work
 const TIMED_OUT_REASON = 'The Automation agent did not answer in time.';
 
 interface FakeSessionManager extends EventEmitter {
+  setTaskStopped: ReturnType<typeof vi.fn>;
   getActivityCache: () => Record<string, string>;
   isLatestTurn: (sessionId: string, workSerial: number) => boolean;
   hadLeftPlanModeBy: (sessionId: string, atMs: number) => boolean;
@@ -219,6 +226,7 @@ describe('a turn end and the rows it may run', () => {
     hoisted.runWorkflowStep.mockImplementation(async () => undefined);
     // A workflow task, so a pass always reaches its `finally` unless the visit gate stops it.
     hoisted.workflowStepApplies.mockImplementation(() => true);
+    hoisted.isTaskWorkflowPaused.mockImplementation(() => false);
     hoisted.checkConditions.mockImplementation(async () => ({ ok: true, answers: new Map() }));
     hoisted.conditionCheckInput.mockImplementation(() => ({}));
     checkCall = { projectId: PROJECT_ID, taskId, swimlaneId: laneId, job: 'condition_check' };
@@ -255,6 +263,7 @@ describe('a turn end and the rows it may run', () => {
     });
 
     sessionManager = Object.assign(new EventEmitter(), {
+      setTaskStopped: vi.fn(),
       getActivityCache: () => ({ [SESSION_ID]: 'idle' }),
       isLatestTurn: (sessionId: string, workSerial: number) => sessionId === SESSION_ID && workSerial === WORK_SERIAL,
       hadLeftPlanModeBy: vi.fn((_sessionId: string, _atMs: number) => false),
@@ -319,7 +328,7 @@ describe('a turn end and the rows it may run', () => {
   }
 
   const secondsAgo = (seconds: number): string => new Date(Date.now() - seconds * 1000).toISOString();
-  const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped');
+  const skippedRows = () => runs.listForTask(taskId).filter((run) => run.status === 'skipped' && run.type !== 'column_stopped');
   /** Each skip as [row id, reason], sorted, so a test pins which row got which reason and how many. */
   const skipPairs = () => skippedRows().map((run) => [run.automation_id, run.detail]).sort();
 
@@ -804,6 +813,152 @@ describe('a turn end and the rows it may run', () => {
     });
   });
 
+  // The pennant comes last: only once nothing is left that could still act. The
+  // decisions themselves are in column-stop.test.ts; these pin when the pass asks.
+  describe('whether the board stopped the card', () => {
+    function replySays(text: string): void {
+      hoisted.findSession.mockImplementation(() => ({ session_type: 'claude_agent', agent_session_id: 'agent-session-1', cwd: '/mock/worktree' }));
+      hoisted.retrievalCall.mockImplementation(async () => ({ text, uuid: 'reply-1', ts: Date.now() }));
+    }
+
+    beforeEach(() => {
+      hoisted.workflowStepApplies.mockImplementation(() => false);
+      hoisted.task.workflow_id = null;
+      hoisted.conditionCheckInput.mockImplementation(() => ({ rows: [] }));
+      hoisted.checkConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([[NEEDS_A_PERSON_CHECK_ID, { met: true, reason: 'It waits for a sign in.' }]]),
+      }));
+      hoisted.rows = [row({ final_line: 'All done' })];
+      replySays('Cannot go on until you sign in.');
+      enterColumnAt(secondsAgo(60));
+    });
+
+    it('asks once no row acted, with the built-in question in one call, and marks the card', async () => {
+      await endTurn();
+
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      const [input, , call] = hoisted.checkConditions.mock.calls[0] as [{ rows: Array<{ automationId: string }> }, unknown, unknown];
+      expect(input.rows.map((asked) => asked.automationId)).toEqual([NEEDS_A_PERSON_CHECK_ID]);
+      expect(call).toBe(checkCall);
+      expect(runs.columnStop(taskId, laneId, null)).toEqual({ cause: 'reply', reason: 'It waits for a sign in.' });
+      expect(sessionManager.setTaskStopped).toHaveBeenCalledWith(taskId, 'turn');
+    });
+
+    it('never asks when a row moved the card', async () => {
+      hoisted.executeTransition.mockImplementation(async () => {
+        hoisted.task.swimlane_id = 'lane-next';
+        hoisted.column = { ...hoisted.column, id: 'lane-next' };
+        return { results: [] };
+      });
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    it('never asks when a row messaged the agent, since its answer is the turn to judge', async () => {
+      hoisted.executeTransition.mockImplementation(async (_task: unknown, _column: unknown, _trigger: string, options: { deliverToAgent: (message: string, mode: string, signal: AbortSignal) => Promise<void> }) => {
+        await options.deliverToAgent('Apply your findings', 'send', new AbortController().signal);
+        return { results: [] };
+      });
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    it('never asks for a workflow task: the agent classifies itself, and recovery may still clear it', async () => {
+      hoisted.workflowStepApplies.mockImplementation(() => true);
+      hoisted.task.workflow_id = 'workflow-1';
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    it('never asks in a column with no turn-end rows, which reads no reply either', async () => {
+      hoisted.rows = [];
+      await endTurn();
+      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    it('never asks for a task whose automations a person paused', async () => {
+      hoisted.task.automations_disabled = true;
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    it('never asks for a paused workflow\'s task: its step reads it again at the Resume', async () => {
+      hoisted.task.workflow_id = 'workflow-1';
+      hoisted.isTaskWorkflowPaused.mockImplementation(() => true);
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+      expect(runs.columnStop(taskId, laneId, null)).toBeNull();
+    });
+
+    it('brings a stop back when a session resumes, since a restart emptied what main held', async () => {
+      runs.recordColumnStop({ taskId, swimlaneId: laneId, cause: 'spent-row', reason: 'Spent.' });
+      sessionManager.emit('session-resumed', {
+        sessionId: SESSION_ID,
+        taskId,
+        projectId: PROJECT_ID,
+        agentSessionId: 'agent-session-1',
+        isolatedSwimlaneId: null,
+        workSerial: WORK_SERIAL,
+        resumedBy: 'user',
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(sessionManager.setTaskStopped).toHaveBeenCalledWith(taskId, 'visit');
+    });
+
+    it('never asks once a newer turn began', async () => {
+      hoisted.executeTransition.mockImplementation(async () => {
+        sessionManager.isLatestTurn = () => false;
+        return { results: [] };
+      });
+      await endTurn();
+      expect(hoisted.checkConditions).not.toHaveBeenCalled();
+    });
+
+    const stopRows = () => runs.listForTask(taskId).filter((run) => run.type === 'column_stopped');
+
+    it('writes no stop when the task moved to another column during the check', async () => {
+      hoisted.checkConditions.mockImplementation(async () => {
+        hoisted.task.swimlane_id = 'lane-next';
+        hoisted.column = { ...hoisted.column, id: 'lane-next' };
+        return { ok: true, answers: new Map([[NEEDS_A_PERSON_CHECK_ID, { met: true, reason: 'It waits for a sign in.' }]]) };
+      });
+      await endTurn();
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(stopRows()).toEqual([]);
+    });
+
+    it('writes no stop when the pass was aborted during the check', async () => {
+      hoisted.checkConditions.mockImplementation(async () => {
+        // What the move path calls to stop a column's turn-end work.
+        supersedeTurnEndWork(taskId);
+        return { ok: true, answers: new Map([[NEEDS_A_PERSON_CHECK_ID, { met: true, reason: 'It waits for a sign in.' }]]) };
+      });
+      await endTurn();
+      expect(hoisted.checkConditions).toHaveBeenCalledTimes(1);
+      expect(stopRows()).toEqual([]);
+    });
+
+    it('does not count a spent move row the column cannot run as one that would have moved the card', async () => {
+      // Start an agent here is off, so Move to column cannot run at this turn end.
+      hoisted.column = { ...hoisted.column, auto_spawn: false };
+      const spent = row({ final_line: null, max_runs: 1 });
+      hoisted.rows = [spent];
+      const spentRunId = randomUUID();
+      runs.start({ id: spentRunId, automation: spent, taskId });
+      runs.finish(spentRunId, 'succeeded', 'Moved.');
+      hoisted.checkConditions.mockImplementation(async () => ({
+        ok: true,
+        answers: new Map([[NEEDS_A_PERSON_CHECK_ID, { met: false, reason: 'It can go on.' }]]),
+      }));
+
+      await endTurn();
+
+      expect(stopRows()).toEqual([]);
+    });
+  });
+
   // The reply a turn end judges is read from where the turn began
   // (`transcriptAnchor`), so a turn that wrote no text never hands on the line
   // an earlier turn ended on.
@@ -1048,9 +1203,11 @@ describe('a turn end and the rows it may run', () => {
 
       await endTurn();
 
-      // The pass stopped at the cheap gate, after writing the skip.
-      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      // No row is left to run, and the pass still goes on to ask whether the
+      // board stopped the card (column-stop.test.ts has the rest).
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
       expect(skippedRows().map((run) => run.detail)).toEqual([SPENT_REASON]);
+      expect(runs.columnStop(taskId, laneId, secondsAgo(60))).toMatchObject({ cause: 'spent-row' });
     });
 
     it('is recorded again in the next visit (the control)', async () => {

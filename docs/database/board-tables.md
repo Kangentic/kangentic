@@ -379,6 +379,16 @@ prefix is `workflow-step` for `workflow_step`, `workflow-stalled` for `workflow_
 | `workflow_recovery_start` | a recovery that starts over (`recordWorkflowRecoveryStart`) | After a stall, a turn recovery did not start stopped again. The row is where the next recovery counts from, so that stall gets its own nudges and its own notice. Also written, with its reason in `detail`, when Kangentic started the agent again after a restart and when a low-memory pause stopped it. |
 | `workflow_interrupt` | the hang check (`recordWorkflowInterrupt`) | A turn shown working whose agent wrote nothing past its limit, interrupted with the CLI's own key. Never counted as a recovery attempt. |
 
+**A stopped card's rows.** Two more types name no column automation, on any task, in a workflow or
+not. `automation_id` carries the cause, so `columnStop` reads the visit's newest row as the card's
+stop. `automations/stopped-mark.ts` draws `agent-stopped` from it, and a prune keeps a task's stop
+rows in the column it is in now.
+
+| `type` | Written by | What it holds |
+|--------|------------|---------------|
+| `column_stopped` | the end of a turn-end pass (`recordColumnStop`) | The board stopped the card. `automation_id` is `column-stop:spent-row` (a spent move row would have run, sticky for the visit) or `column-stop:reply` (the agent's words, replaced by the next judged turn). `condition_reason` is why. |
+| `column_stop_cleared` | a later turn (`recordColumnStopCleared`) | The agent's words no longer bear out a `reply` stop. `automation_id` is `column-stop:cleared`. |
+
 Three indices, one per question the log is asked:
 
 | Index | Columns | Serves |
@@ -392,8 +402,10 @@ Three indices, one per question the log is asked:
 `pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table, plus
 every counted run of an automation with a Frequency limit on a task that is not archived, plus a
 workflow task's own rows (the six types above) in the column it is in now, while it is not
-archived. Recovery rebuilds a parked task from those rows after a restart, which is when the
+archived, plus any task's stop rows (`column_stopped` and `column_stop_cleared`) on the same terms.
+Recovery rebuilds a parked task from those rows after a restart, which is when the
 prune runs, and one board wrote 136 to 169 rows a day, so the newest 200 can be a single night.
+A pruned stop row would take the stopped card's mark with it.
 It also keeps the newest enter run of a live task with no session record in the column it is in
 now, when that column is not To Do or Done. The startup reconcile reads it to leave alone a task
 whose agent failed to start after its enter group ran, rather than run that group again at every

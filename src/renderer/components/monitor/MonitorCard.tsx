@@ -36,6 +36,7 @@ import {
 } from '../board/CardMessageTrail';
 import { activityReasonIcon } from '../board/ActivityReasonTooltip';
 import { formatActivityReasonText } from '../board/activity-reason-text';
+import { isStoppedReason } from '../board/agent-wait';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -144,7 +145,8 @@ function StateGlyph({ row, variant }: { row: MonitorSessionRow; variant: 'card' 
   if (!content) return null;
   const slot = <IconSlot size={16} className="shrink-0">{content.glyph}</IconSlot>;
   if (variant === 'row') return slot;
-  const tip = row.activityReason ? reasonText : formatMonitorStatus(row);
+  // A stopped card has no tip, as on the board: an empty label holds it shut.
+  const tip = isStoppedReason(row.activityReason) ? '' : row.activityReason ? reasonText : formatMonitorStatus(row);
   return (
     <Tooltip
       label={tip}

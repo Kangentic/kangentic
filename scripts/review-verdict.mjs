@@ -14,9 +14,15 @@
  *             The skill pastes that output verbatim and makes the closing block the LAST thing in
  *             the pass's final message, so a person and an agent read the same signal: the line
  *             `Verdict: Ready`, or one numbered step per blocker followed by `Verdict: Blocked`.
- *             The verdict is the block's LAST line either way, so the board's Code Review rows
- *             route on it with a Text match (an exact final line, checked in code) rather than
- *             asking an agent to find it.
+ *             The verdict is the block's LAST line, bar the exception below, so the board's Code
+ *             Review rows route on it with a Text match (an exact final line, checked in code)
+ *             rather than asking an agent to find it.
+ *             The one exception: a pass with a step only a person can do (`needsOwner`) adds a
+ *             `Needs owner: <step>` line below the verdict. Still no third verdict, only a last line
+ *             that matches neither row. The card stops where it is on the first report instead of
+ *             taking an Executing turn that can do nothing about it, and the app's Needs owner
+ *             read stops the card on any board, a workflow's included. A Text match sees only the
+ *             last line, so a mark above the verdict could not have changed the routing.
  *             The old prose verdicts above included a "Clean"; the new one is "Ready" so it
  *             cannot be read as the report's "no uncommitted files" line.
  *   --ledger  prints only the `Refuted:` and `Decisions:` lines for the review commit body. A later
@@ -42,6 +48,7 @@
  *       "mechanism": "short phrase naming the defect", "status": "fixed|refuted|blocked",
  *       "reason": "required for refuted and blocked",
  *       "step": "required for a blocked finding: what the task agent must do in this task",
+ *       "needsOwner": true (optional, blocked and not quick only: only a person can do the step),
  *       "decision": { "chosen": "...", "alternative": "..." } (optional, fixed and not quick only),
  *       "quick": true (optional; a quick fix never affects the verdict and carries no decision),
  *       "reRaise": { "of": "the ledger line", "newEvidence": "..." } (optional)
@@ -131,6 +138,12 @@ export function validateFindings(report) {
       if (finding.status === 'blocked' && finding.quick !== true && !isNonEmptyString(finding.step)) {
         problems.push(`${label}.step is required for a blocked finding: name what the task agent must do in this task`);
       }
+      if (finding.needsOwner !== undefined) {
+        if (finding.needsOwner !== true) problems.push(`${label}.needsOwner must be true, or left out`);
+        if (finding.status !== 'blocked') problems.push(`${label}.needsOwner is only valid on a blocked finding`);
+        // A quick finding never decides the verdict, so it could not stop the card either.
+        if (finding.quick === true) problems.push(`${label}.needsOwner is not valid on a quick finding: a person-only step is not mechanical`);
+      }
       if (finding.decision !== undefined) {
         const decision = finding.decision;
         if (decision === null || typeof decision !== 'object' || !isNonEmptyString(decision.chosen) || !isNonEmptyString(decision.alternative)) {
@@ -165,18 +178,25 @@ function ledgerKey(finding) {
   return `${oneLine(finding.file)}${symbol}: ${oneLine(finding.mechanism)}`;
 }
 
-/** Ready unless a non-quick finding is blocked or a check failed. Assumes a validated report. */
+/**
+ * Ready unless a non-quick finding is blocked or a check failed. `ownerSteps` are the blockers only
+ * a person can do: a pass with any stops the card, so it takes no Executing turn that could do
+ * nothing about them, and the person's answer in that session settles the rest. Assumes a validated
+ * report.
+ */
 export function computeVerdict(report) {
   const blockers = [];
+  const ownerSteps = [];
   for (const finding of report.findings) {
     if (finding.status === 'blocked' && finding.quick !== true) {
       blockers.push({ location: oneLine(finding.location), step: oneLine(finding.step) });
+      if (finding.needsOwner === true) ownerSteps.push(oneLine(finding.step));
     }
   }
   for (const check of CHECKS) {
     if (report.checks[check.key] === 'fail') blockers.push({ location: check.label, step: check.step });
   }
-  return { verdict: blockers.length === 0 ? 'Ready' : 'Blocked', blockers };
+  return { verdict: blockers.length === 0 ? 'Ready' : 'Blocked', blockers, ownerSteps };
 }
 
 /** The Summary block, the Decisions made list, then the closing verdict block. */
@@ -219,13 +239,16 @@ export function renderSummary(report) {
 }
 
 /**
- * The last block of the pass's final message: any blocking steps, then the verdict. The verdict
- * comes last so it is the message's final line, which is what the board's Text match rows read.
+ * The last block of the pass's final message: any blocking steps, then the verdict, as the
+ * message's final line, which is what the board's Text match rows read. The one exception is a
+ * step only a person can do, which adds the `Needs owner:` line below it, so neither row matches
+ * and the card stops where it is.
  */
 export function renderClosingBlock(report) {
-  const { verdict, blockers } = computeVerdict(report);
+  const { verdict, blockers, ownerSteps } = computeVerdict(report);
   const lines = blockers.map((blocker, blockerIndex) => `${blockerIndex + 1}. ${blocker.location}: ${blocker.step}`);
   lines.push(`Verdict: ${verdict}`);
+  if (ownerSteps.length > 0) lines.push(`Needs owner: ${ownerSteps.join('; ')}`);
   return lines.join('\n');
 }
 

@@ -48,6 +48,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { ManagedSession, SessionRegistry } from '../../src/main/pty/session-registry';
 import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, ActivityReason } from '../../src/shared/types';
@@ -134,5 +135,157 @@ describe('SessionManager: onReasonChange forwards to a separate activity-reason 
       expect(emission.sessionId).toBe(sessionId);
       expect(emission.activity).toBe('thinking');
     }
+  });
+
+  describe('a task the board has stopped', () => {
+    const TASK_ID = 'task-stopped';
+    let sessionId: string;
+    let reasonEmissions: ActivityReasonEmission[];
+    let activityEmissions: ActivityState[];
+
+    /** A real turn: thinking, then idle, so the engine holds a real idle reason. */
+    function finishTurn(): void {
+      const telemetry = getTelemetry(manager);
+      const now = Date.now();
+      telemetry.ingestEvents(sessionId, [{ ts: now, type: EventType.Prompt }]);
+      telemetry.ingestEvents(sessionId, [{ ts: now + 1, type: EventType.Idle }]);
+    }
+
+    beforeEach(() => {
+      sessionId = manager.registerSuspendedPlaceholder({ taskId: TASK_ID, projectId: 'project-stopped', cwd: '/mock/cwd' })!.id;
+      getTelemetry(manager).initSession(sessionId);
+      finishTurn();
+      reasonEmissions = [];
+      activityEmissions = [];
+      manager.on('activity-reason', (id: string, activity: ActivityState, reason: ActivityReason) => {
+        reasonEmissions.push({ sessionId: id, activity, reason });
+      });
+      manager.on('activity', (_id: string, activity: ActivityState) => {
+        activityEmissions.push(activity);
+      });
+    });
+
+    it('reaches the renderer as a reason-only refresh, since the idle push left before the rows ran', () => {
+      manager.setTaskStopped(TASK_ID, 'visit');
+      expect(reasonEmissions).toHaveLength(1);
+      expect(reasonEmissions[0]).toMatchObject({ sessionId, activity: 'idle', reason: { kind: 'idle', stopped: true } });
+      // 'activity' would raise a second idle notice for one finished turn.
+      expect(activityEmissions).toEqual([]);
+    });
+
+    it('holds in every read a sync or the Agent Monitor makes', () => {
+      manager.setTaskStopped(TASK_ID, 'visit');
+      expect(manager.getActivityReason(sessionId)).toMatchObject({ kind: 'idle', stopped: true });
+      expect(manager.getActivityReasonsCache()[sessionId]).toMatchObject({ kind: 'idle', stopped: true });
+    });
+
+    it('sends nothing when nothing changed', () => {
+      manager.setTaskStopped(TASK_ID, null);
+      manager.setTaskStopped(TASK_ID, 'visit');
+      manager.setTaskStopped(TASK_ID, 'visit');
+      expect(reasonEmissions).toHaveLength(1);
+    });
+
+    it('takes the flag back off, with its own refresh', () => {
+      manager.setTaskStopped(TASK_ID, 'visit');
+      manager.setTaskStopped(TASK_ID, null);
+      expect(reasonEmissions).toHaveLength(2);
+      expect(reasonEmissions[1].reason).not.toHaveProperty('stopped');
+      expect(manager.getActivityReason(sessionId)).not.toHaveProperty('stopped');
+    });
+
+    it('drops a stop from the agent\'s words as its next turn begins, since that turn\'s idle lands before it is judged', () => {
+      manager.setTaskStopped(TASK_ID, 'turn');
+      getTelemetry(manager).ingestEvents(sessionId, [{ ts: Date.now(), type: EventType.Prompt }]);
+      getTelemetry(manager).ingestEvents(sessionId, [{ ts: Date.now() + 1, type: EventType.Idle }]);
+      expect(manager.getActivityReason(sessionId)).not.toHaveProperty('stopped');
+    });
+
+    it('sets the flag again at the next idle, after the agent worked', () => {
+      manager.setTaskStopped(TASK_ID, 'visit');
+      getTelemetry(manager).ingestEvents(sessionId, [{ ts: Date.now(), type: EventType.Prompt }]);
+      expect(manager.getActivityReason(sessionId)).not.toHaveProperty('stopped');
+      getTelemetry(manager).ingestEvents(sessionId, [{ ts: Date.now() + 1, type: EventType.Idle }]);
+      expect(manager.getActivityReason(sessionId)).toMatchObject({ kind: 'idle', stopped: true });
+    });
+
+    it('counts a stop from the agent\'s words set while a turn runs for nothing, since that turn is not judged yet', () => {
+      const telemetry = getTelemetry(manager);
+      telemetry.ingestEvents(sessionId, [{ ts: Date.now(), type: EventType.Prompt }]);
+      expect(manager.getActivityCache()[sessionId]).toBe('thinking');
+      manager.setTaskStopped(TASK_ID, 'turn');
+      telemetry.ingestEvents(sessionId, [{ ts: Date.now() + 1, type: EventType.Idle }]);
+      expect(manager.getActivityReason(sessionId)).toMatchObject({ kind: 'idle' });
+      expect(manager.getActivityReason(sessionId)).not.toHaveProperty('stopped');
+    });
+
+    it('still shows a spent row\'s stop set while a turn runs, at that turn\'s idle', () => {
+      const telemetry = getTelemetry(manager);
+      telemetry.ingestEvents(sessionId, [{ ts: Date.now(), type: EventType.Prompt }]);
+      manager.setTaskStopped(TASK_ID, 'visit');
+      telemetry.ingestEvents(sessionId, [{ ts: Date.now() + 1, type: EventType.Idle }]);
+      expect(manager.getActivityReason(sessionId)).toMatchObject({ kind: 'idle', stopped: true });
+    });
+
+    it('forgets the stop when the task\'s sessions are removed, so a later session of it starts unmarked', async () => {
+      manager.setTaskStopped(TASK_ID, 'visit');
+      await manager.removeByTaskId(TASK_ID);
+      const nextId = manager.registerSuspendedPlaceholder({ taskId: TASK_ID, projectId: 'project-stopped', cwd: '/mock/cwd' })!.id;
+      getTelemetry(manager).initSession(nextId);
+      const now = Date.now();
+      getTelemetry(manager).ingestEvents(nextId, [{ ts: now, type: EventType.Prompt }]);
+      getTelemetry(manager).ingestEvents(nextId, [{ ts: now + 1, type: EventType.Idle }]);
+      expect(manager.getActivityReason(nextId)).toMatchObject({ kind: 'idle' });
+      expect(manager.getActivityReason(nextId)).not.toHaveProperty('stopped');
+    });
+  });
+
+  describe('a stopped task whose session is hidden until adopted', () => {
+    const HIDDEN_TASK_ID = 'task-stopped-hidden';
+    const HIDDEN_SESSION_ID = 'sess-stopped-hidden';
+
+    function seedHiddenIdleSession(): void {
+      const registry = (manager as unknown as { registry: SessionRegistry }).registry;
+      registry.set(HIDDEN_SESSION_ID, {
+        id: HIDDEN_SESSION_ID,
+        taskId: HIDDEN_TASK_ID,
+        projectId: 'project-stopped',
+        pty: { sealUserInput: vi.fn() } as unknown as ManagedSession['pty'],
+        status: 'running',
+        shell: '',
+        cwd: '/mock/cwd',
+        startedAt: new Date().toISOString(),
+        exitCode: null,
+        resuming: false,
+        transient: false,
+        exitSequence: ['\x03'],
+      } as ManagedSession);
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add(HIDDEN_SESSION_ID);
+      const telemetry = getTelemetry(manager);
+      telemetry.initSession(HIDDEN_SESSION_ID);
+      const now = Date.now();
+      telemetry.ingestEvents(HIDDEN_SESSION_ID, [{ ts: now, type: EventType.Prompt }]);
+      telemetry.ingestEvents(HIDDEN_SESSION_ID, [{ ts: now + 1, type: EventType.Idle }]);
+    }
+
+    it('sends no refresh for it, since nothing has told the renderer it exists', () => {
+      seedHiddenIdleSession();
+      const emitSpy = vi.spyOn(manager, 'emit');
+      manager.setTaskStopped(HIDDEN_TASK_ID, 'visit');
+      expect(emitSpy.mock.calls.filter(([eventName]) => eventName === 'activity-reason')).toEqual([]);
+    });
+
+    it('carries the stop in the activity push adoption makes when the idle clock could not restart', () => {
+      seedHiddenIdleSession();
+      manager.setTaskStopped(HIDDEN_TASK_ID, 'visit');
+      vi.spyOn(getTelemetry(manager), 'restartIdleClock').mockReturnValue(false);
+      const pushes: Array<{ activity: ActivityState; reason: ActivityReason }> = [];
+      manager.on('activity', (_id: string, activity: ActivityState, reason: ActivityReason) => pushes.push({ activity, reason }));
+
+      expect(manager.adoptSession(HIDDEN_SESSION_ID)).toBe(true);
+
+      expect(pushes).toHaveLength(1);
+      expect(pushes[0]).toMatchObject({ activity: 'idle', reason: { kind: 'idle', stopped: true } });
+    });
   });
 });

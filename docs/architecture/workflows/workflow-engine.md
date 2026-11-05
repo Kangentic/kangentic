@@ -340,7 +340,11 @@ src/main/workflows/
     failed, spends nothing, and after the schedule an outage is re-judged hourly for up to a day.
   - The stall notice goes out once a recovery, on desktop (`DesktopNotifier.notifyWorkflowTask`,
     past the focus gate), on the phone as `input-required`, and as the `workflow:stalled` toast.
-    Its `workflow_stalled` row is the latch and the card's mark, so a restart keeps both.
+    Its `workflow_stalled` row is the latch and the card's mark, so a restart keeps both. A stalled
+    card and one waiting on its owner also wear `agent-stopped` in the title row
+    (`automations/stopped-mark.ts`). A spent row alone does not, because recovery can still clear
+    it, and the turn-end runner's `Needs a person` check never runs for a workflow task: the agent
+    classifies itself with the `Needs owner:` line.
   - After a stall, a turn recovery did not start (the user typed, a column message) that stops
     again starts a new recovery (`workflow_recovery_start`), with its own nudges, its own notice
     and its own 24 hours. A nudge's own turn carries its recovery on (`lastTurnFromNudge`; after

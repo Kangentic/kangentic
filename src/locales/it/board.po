@@ -498,6 +498,12 @@ msgstr "Mostra modifiche"
 msgid "Starting agent..."
 msgstr "Avvio dell'agente..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Interrotto"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
