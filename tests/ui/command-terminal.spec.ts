@@ -4871,7 +4871,7 @@ test.describe('Command Terminal', () => {
           __mockCommandTerminalHistoryText: { 'by-text': 'goes out in the next release, so keep it', 'by-name': 'also the release' },
         });
 
-        await page.getByTestId('command-terminal-earlier-search').fill('release');
+        await typeEarlierQuery(page, 'release');
         // Before main answers: the name and prompt rows, and a line saying more may come.
         await expect.poll(() => earlierNames(page)).toEqual(['by-name', 'by-prompt']);
         await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
@@ -4948,7 +4948,7 @@ test.describe('Command Terminal', () => {
         await openWithOneTerminal(page);
         await seedSearch(page, { __mockHoldCommandTerminalHistorySearch: true });
         const field = page.getByTestId('command-terminal-earlier-search');
-        await field.fill('zzz');
+        await typeEarlierQuery(page, 'zzz');
         await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
         await expect(page.getByTestId('command-terminal-earlier-empty')).toHaveCount(0);
         await expect(page.getByTestId('command-terminal-earlier-heading')).toHaveCount(0);
@@ -4972,7 +4972,7 @@ test.describe('Command Terminal', () => {
       try {
         await openWithOneTerminal(page);
         await seedSearch(page, { __mockCommandTerminalHistoryIndexingOff: true });
-        await page.getByTestId('command-terminal-earlier-search').fill('Conversation 1');
+        await typeEarlierQuery(page, 'Conversation 1');
         await expect(page.getByTestId('command-terminal-earlier-indexing-off')).toHaveText('Indexing is off, so conversation text was not searched');
         await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(1);
       } finally {
