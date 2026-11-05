@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   askpassProgram,
+  checkKeyFile,
   createHostKey,
   deleteHostKeys,
   detectSshClient,
@@ -373,6 +374,24 @@ describe('the key Kangentic signs in with', () => {
     const plainKey = path.join(scratch, 'id_ed25519_plain');
     fs.writeFileSync(plainKey, openSshKeyText('none'));
     await expect(importHostKey(hostId, plainKey, deps)).resolves.toContain('id_imported');
+  });
+
+  it('checks a chosen key file without copying it, with the same refusals, so a bad key is refused when it is chosen', async () => {
+    const plainKey = path.join(scratch, 'id_ed25519_plain');
+    fs.writeFileSync(plainKey, openSshKeyText('none'));
+    await expect(checkKeyFile(plainKey)).resolves.toBeUndefined();
+
+    const protectedKey = path.join(scratch, 'id_ed25519_protected');
+    fs.writeFileSync(protectedKey, openSshKeyText('aes256-ctr'));
+    await expect(checkKeyFile(protectedKey)).rejects.toThrow('passphrase');
+
+    const notAKey = path.join(scratch, 'notes.txt');
+    fs.writeFileSync(notAKey, 'hello');
+    await expect(checkKeyFile(notAKey)).rejects.toThrow('not a private key');
+
+    await expect(checkKeyFile(path.join(scratch, 'absent'))).rejects.toThrow();
+    // Nothing was copied anywhere.
+    expect(fs.existsSync(path.join(scratch, 'config'))).toBe(false);
   });
 
   it('writes the copy with LF line ends, which a POSIX ssh needs, when the chosen file has CRLF', async () => {

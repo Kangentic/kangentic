@@ -86,6 +86,7 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `ssh:renameHost` | invoke | Rename a host |
 | `ssh:reconnectHost` | invoke | Connect again now, installing the host program first if it is missing |
 | `ssh:hostProgram` | invoke | What the Kangentic program on a connected host reports: its version, this app's version, when it started, how many terminals it holds and which versions are installed. Rejects with the reason when the host cannot answer |
+| `ssh:checkKeyFile` | invoke | Whether a key file the user chose can be used. Rejects with the reason (not a private key, or a passphrase Kangentic never asks for), so the Add host form refuses it when it is chosen. Copies nothing |
 | `ssh:probeChangedKey` | invoke | The key a host whose key changed presents now (type, fingerprint) and the fingerprint recorded before when it can be read. Trusts nothing |
 | `ssh:trustNewKey` | invoke | Trust the fingerprint the user was shown for a host whose key changed: read the key again and require it to match, forget the old entry, record the new one, connect |
 | `ssh:probeRemoteFolder` | invoke | Whether a folder exists on a host, and whether it is a git repository, as the host's own program says. Rejects with the reason when it cannot say |
@@ -136,10 +137,11 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `git:fileHistory` | invoke | Commits touching a single file (`git log --follow`), newest first, for the Changes panel's per-file history popover. Local-only and fail-safe |
 | `git:blame` | invoke | Per-line blame (`git blame --line-porcelain`) - short hash, author, date per line of the file's current content - for the DiffViewer blame gutter. Local-only and fail-safe |
 
-## Dialog (1 channel)
+## Dialog (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `dialog:selectFolder` | invoke | OS folder picker. With options (Add project) it offers New folder and starts at `options.defaultPath`, else home. Without (relocate, locate) it starts at the parent of the last folder it returned, else home, because Electron 43 otherwise opens in Downloads. Returns the path, or null on cancel |
+| `dialog:selectFile` | invoke | OS file picker for one file (the Add host key file). Opens in `options.defaultPath`, where a leading `~` is the home folder, and falls back to home when that folder is not there. Returns the path, or null on cancel |
 
 ## Window (6 channels)
 | Channel | Pattern | Purpose |

@@ -4719,6 +4719,15 @@
         }
         return '/mock/path/test-project';
       },
+      // window.__mockFilePath: the path selectFile() returns (consume-once); null is a cancel.
+      selectFile: async function (_options) {
+        var override = window.__mockFilePath;
+        if (override !== undefined) {
+          window.__mockFilePath = undefined;
+          return override;
+        }
+        return '/mock/home/.ssh/id_ed25519';
+      },
     },
 
     backlogAttachments: {
@@ -5186,6 +5195,10 @@
           });
           fire();
           return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
+        // window.__mockSshKeyFileError: a string that makes checkKeyFile() reject with it (a passphrase, not a key).
+        checkKeyFile: async function () {
+          if (win().__mockSshKeyFileError) throw new Error(win().__mockSshKeyFileError);
         },
         // A host whose key changed: window.__mockSshProbeResult overrides what it presents now.
         probeChangedKey: async function (hostId) {

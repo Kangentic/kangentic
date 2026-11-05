@@ -338,6 +338,25 @@ export async function createHostKey(hostId: string, deps: SshSetupDeps): Promise
 }
 
 /**
+ * The text of a private key file Kangentic can use, with line ends a POSIX OpenSSH accepts. Refuses a file
+ * that is not a private key and one with a passphrase, in words the user can act on.
+ */
+async function readUsablePrivateKey(sourcePath: string): Promise<string> {
+  // A key saved on Windows can carry CRLF line ends, which a POSIX OpenSSH refuses as an invalid format.
+  const content = (await fs.readFile(sourcePath, 'utf8')).replace(/\r\n/g, '\n');
+  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new Error('That file is not a private key.');
+  if (/ENCRYPTED/.test(content.split('\n').slice(0, 4).join('\n')) || isEncryptedOpenSshKey(content)) {
+    throw new Error('That key has a passphrase, and Kangentic never asks for one. Add it to ssh-agent, or let Kangentic make its own key.');
+  }
+  return content;
+}
+
+/** Whether a key file the user chose is one Kangentic can use, checked when it is chosen instead of when the host is added. Throws the reason. */
+export async function checkKeyFile(sourcePath: string): Promise<void> {
+  await readUsablePrivateKey(sourcePath);
+}
+
+/**
  * Keep a copy of a key file the user chose, in Kangentic's folder with owner-only permissions. A key
  * in Downloads is mode 0644 on POSIX and `ssh` refuses it, and a copy also keeps working if the
  * original moves. The copy goes when the host does.
@@ -346,12 +365,7 @@ export async function importHostKey(hostId: string, sourcePath: string, deps: Ss
   const directory = hostKeyDirectory(deps.configDirectory, hostId);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const target = path.join(directory, 'id_imported');
-  // A key saved on Windows can carry CRLF line ends, which a POSIX OpenSSH refuses as an invalid format.
-  const content = (await fs.readFile(sourcePath, 'utf8')).replace(/\r\n/g, '\n');
-  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new Error('That file is not a private key.');
-  if (/ENCRYPTED/.test(content.split('\n').slice(0, 4).join('\n')) || isEncryptedOpenSshKey(content)) {
-    throw new Error('That key has a passphrase, and Kangentic never asks for one. Add it to ssh-agent, or let Kangentic make its own key.');
-  }
+  const content = await readUsablePrivateKey(sourcePath);
   await fs.rm(target, { force: true });
   // On Windows the new file inherits the ACL of Kangentic's folder in the user's profile, which
   // `ssh.exe` accepts because only the user and the system can read it.

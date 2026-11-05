@@ -268,6 +268,7 @@ export const IPC = {
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',
+  DIALOG_SELECT_FILE: 'dialog:selectFile',
 
   // Window
   WINDOW_MINIMIZE: 'window:minimize',
@@ -338,6 +339,7 @@ export const IPC = {
   SSH_RENAME_HOST: 'ssh:renameHost',
   SSH_RECONNECT_HOST: 'ssh:reconnectHost',
   SSH_HOST_PROGRAM: 'ssh:hostProgram',
+  SSH_CHECK_KEY_FILE: 'ssh:checkKeyFile',
   SSH_PROBE_CHANGED_KEY: 'ssh:probeChangedKey',
   SSH_TRUST_NEW_KEY: 'ssh:trustNewKey',
   SSH_PROBE_REMOTE_FOLDER: 'ssh:probeRemoteFolder',

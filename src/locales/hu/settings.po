@@ -12,9 +12,9 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
-#. placeholder {0}: trustTarget.probe.hostname
+#. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgid "{0} now presents a different key."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
@@ -156,6 +156,10 @@ msgstr "Egy hívás sikertelen volt"
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Lebegő panel az egyes munkamenetek aktivitási állapotáról és utolsó átmeneteiről, a .kangentic/debug mappába is kiírva."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -652,6 +656,10 @@ msgstr "Válasszon modellt"
 #, fuzzy
 msgid "Choose an agent"
 msgstr "Válasszon ügynököt"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1617,24 +1625,10 @@ msgstr "Feltételeket és folyamatlépéseket ítél meg, feladatokat nevez el."
 msgid "Kangentic could not write its settings file."
 msgstr "A Kangentic nem tudta írni a beállításfájlját."
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-msgstr "A Kangentic másolatot tárol róla. A jelmondatos kulcsnak az SSH-ügynökben kell lennie."
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic records it once and connects. Its other hosts are not affected."
-msgstr ""
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
-msgstr "A Kangentic egyszer rögzíti. Ha a gazdagép kulcsa megváltozik, megtagadja a csatlakozást."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
@@ -2260,6 +2254,10 @@ msgstr "Előnézet beszéd közben: a streamelés azonnali, a darabolt pontos."
 #, fuzzy
 msgid "Privacy"
 msgstr "Adatvédelem"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3104,9 +3102,8 @@ msgstr "Ez a gyorsbillentyű rögzített, nem rendelhető át"
 
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "This is the key {0} presents. Trust it only if it matches the host."
-msgstr "Ezt a kulcsot mutatja fel: {0}. Csak akkor bízzon meg benne, ha egyezik a gazdagép kulcsával."
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3170,6 +3167,14 @@ msgstr "Átírás"
 #, fuzzy
 msgid "Transition and motion effects."
 msgstr "Átmeneti és mozgási effektusok."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust new key"

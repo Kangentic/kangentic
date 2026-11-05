@@ -12,10 +12,10 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr "{0, plural, one {# terminal running} other {# terminals running}}"
 
-#. placeholder {0}: trustTarget.probe.hostname
+#. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
-msgstr "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgid "{0} now presents a different key."
+msgstr "{0} now presents a different key."
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
@@ -128,6 +128,10 @@ msgstr "A call failed"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr "A key with a passphrase must be in your SSH agent."
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "A name from your SSH config works too, which is how a jump host or a port is set."
@@ -529,6 +533,10 @@ msgstr "Choose a model"
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 msgid "Choose an agent"
 msgstr "Choose an agent"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr "Choose…"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Claude 5h / weekly quota bars"
@@ -1308,21 +1316,9 @@ msgstr "Judges conditions and workflow steps, and names tasks."
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic could not write its settings file."
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-msgstr "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic records it once and connects. Its other hosts are not affected."
-msgstr "Kangentic records it once and connects. Its other hosts are not affected."
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
-msgstr "Kangentic records it once. If the host's key ever changes, it refuses to connect."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
@@ -1830,6 +1826,10 @@ msgstr "Preview while you speak: streaming is instant, chunked is accurate."
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Privacy"
 msgstr "Privacy"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr "Private key"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
@@ -2515,8 +2515,8 @@ msgstr "This hotkey is fixed and cannot be rebound"
 
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "This is the key {0} presents. Trust it only if it matches the host."
-msgstr "This is the key {0} presents. Trust it only if it matches the host."
+msgid "This is the key {0} presents."
+msgstr "This is the key {0} presents."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "This project's path to the agent CLI (auto-detected if empty)"
@@ -2568,6 +2568,14 @@ msgstr "Transcription"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Transition and motion effects."
 msgstr "Transition and motion effects."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust new key"

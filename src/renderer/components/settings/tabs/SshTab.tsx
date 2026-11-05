@@ -56,6 +56,71 @@ const PROGRAM_REFRESH_MS = 15_000;
  * The Kangentic program on a connected host: its version and how many terminals it is holding. Quiet when the
  * host cannot answer: the row above already says whether the host is connected, and this line is extra.
  */
+/** The key a host whose key changed presents now, shown beside the one trusted before, for the user to trust or not. */
+function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
+  probe: SshHostKeyProbe;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useLingui();
+  return (
+    <BaseDialog
+      onClose={onClose}
+      title={t`New host key`}
+      testId="ssh-trust-new-key"
+      footer={
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+            data-testid="ssh-trust-new-key-cancel"
+          >
+            <Trans>Cancel</Trans>
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on disabled:opacity-50"
+            data-testid="ssh-trust-new-key-confirm"
+          >
+            {busy ? <Loader2 size={12} className="animate-spin" /> : null}
+            <Trans>Trust new key</Trans>
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm font-medium text-fg">
+          <Trans>{probe.hostname} now presents a different key.</Trans>
+        </p>
+        <div className="rounded-md border border-edge bg-surface-hover/40 px-3 py-2.5">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+            <dt className="text-fg-faint"><Trans>Type</Trans></dt>
+            <dd className="font-mono text-fg-secondary">{probe.keyType}</dd>
+            {probe.previousFingerprint ? (
+              <>
+                <dt className="text-fg-faint"><Trans>Before</Trans></dt>
+                <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-previous-fingerprint">{probe.previousFingerprint}</dd>
+              </>
+            ) : null}
+            <dt className="text-fg-faint"><Trans>Now</Trans></dt>
+            <dd className="font-mono text-fg select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-new-fingerprint">{probe.fingerprint}</dd>
+          </dl>
+        </div>
+        <p className="text-xs text-fg-faint">
+          <Trans>Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects.</Trans>
+        </p>
+      </div>
+    </BaseDialog>
+  );
+}
+
+/** One fact on a host row's facts line: a hairline separates it from the one before. */
+const FACT_CELL_CLASS = 'border-l border-edge pl-3';
+
 function HostProgramLine({ hostId }: { hostId: string }) {
   const hostProgram = useSshStore((state) => state.hostProgram);
   const [program, setProgram] = useState<SshHostProgram | null>(null);
@@ -81,7 +146,7 @@ function HostProgramLine({ hostId }: { hostId: string }) {
   const appVersion = program.appVersion;
   const older = version !== null && appVersion !== null && version !== appVersion;
   return (
-    <div className="flex items-center gap-2 text-xs text-fg-faint" data-testid="ssh-host-program">
+    <span className="flex basis-full flex-wrap items-center gap-x-3" data-testid="ssh-host-program">
       <span data-testid="ssh-host-program-version">
         {version === null
           ? <Trans>Program version unknown</Trans>
@@ -89,11 +154,10 @@ function HostProgramLine({ hostId }: { hostId: string }) {
             ? <Trans>Program {version} (this app is {appVersion})</Trans>
             : <Trans>Program {version}</Trans>}
       </span>
-      <span aria-hidden="true">|</span>
-      <span data-testid="ssh-host-program-sessions">
+      <span className={FACT_CELL_CLASS} data-testid="ssh-host-program-sessions">
         {plural(program.liveSessions, { one: '# terminal running', other: '# terminals running' })}
       </span>
-    </div>
+    </span>
   );
 }
 
@@ -110,6 +174,7 @@ export function SshTab() {
   const removeHost = useSshStore((state) => state.removeHost);
   const renameHost = useSshStore((state) => state.renameHost);
   const reconnectHost = useSshStore((state) => state.reconnectHost);
+  const checkKeyFile = useSshStore((state) => state.checkKeyFile);
   const probeChangedKey = useSshStore((state) => state.probeChangedKey);
   const trustNewKey = useSshStore((state) => state.trustNewKey);
 
@@ -199,6 +264,25 @@ export function SshTab() {
     }
   }
 
+  /**
+   * Pick the private key in the OS dialog, which opens in the user's ~/.ssh. A key that cannot be used (it has a
+   * passphrase, or is no key) is refused now, with the reason, instead of when Add host is pressed.
+   */
+  async function chooseKeyFile(): Promise<void> {
+    const session = addSessionRef.current;
+    const chosen = await window.electronAPI.dialog.selectFile({ title: t`Private key`, defaultPath: '~/.ssh' });
+    if (!chosen || session !== addSessionRef.current) return;
+    setAddError(null);
+    try {
+      await checkKeyFile(chosen);
+      if (session === addSessionRef.current) setKeyFilePath(chosen);
+    } catch (error) {
+      if (session !== addSessionRef.current) return;
+      setKeyFilePath('');
+      setAddError(describeIpcError(error));
+    }
+  }
+
   async function handleAdd(): Promise<void> {
     if (!probe) return;
     const session = addSessionRef.current;
@@ -281,7 +365,7 @@ export function SshTab() {
                 return (
                   <li
                     key={host.id}
-                    className="rounded-md border border-edge bg-surface-hover/30 px-3 py-2 space-y-1.5"
+                    className="rounded-md border border-edge bg-surface-hover/40 px-3 py-2.5 space-y-2.5"
                     data-testid="ssh-host-row"
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -326,7 +410,7 @@ export function SshTab() {
                       ) : (
                         <>
                           <div className="min-w-0 flex items-center gap-2">
-                            <span className="text-sm text-fg-secondary truncate" data-testid="ssh-host-name">{host.name}</span>
+                            <span className="text-sm font-medium text-fg truncate" data-testid="ssh-host-name">{host.name}</span>
                             <Tooltip label={host.destination}>
                               <span className="min-w-0">
                                 <Pill size="sm" className="shrink-0 max-w-[16rem] truncate bg-surface-hover/60 text-fg-faint font-mono" data-testid="ssh-host-destination">
@@ -391,22 +475,23 @@ export function SshTab() {
                         </>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-fg-faint">
-                      <span className={`flex items-center gap-1 ${connection.className}`} data-testid="ssh-host-connection">
-                        {connection.icon}
-                        {connection.label}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-edge pt-2.5 text-xs text-fg-faint">
+                      <span className="flex items-center gap-2">
+                        <span className={`flex items-center gap-1 font-medium ${connection.className}`} data-testid="ssh-host-connection">
+                          {connection.icon}
+                          {connection.label}
+                        </span>
+                        {status.since ? (
+                          <Tooltip label={formatDateTime(status.since)}>
+                            <span data-testid="ssh-host-connection-since"><Trans>since {since}</Trans></span>
+                          </Tooltip>
+                        ) : null}
                       </span>
-                      {status.since ? (
-                        <Tooltip label={formatDateTime(status.since)}>
-                          <span data-testid="ssh-host-connection-since"><Trans>since {since}</Trans></span>
-                        </Tooltip>
-                      ) : null}
-                      <span aria-hidden="true">|</span>
-                      <span data-testid="ssh-host-project-count">
+                      <span className={FACT_CELL_CLASS} data-testid="ssh-host-project-count">
                         {plural(projectCount, { one: '# project', other: '# projects' })}
                       </span>
+                      {status.state === 'connected' ? <HostProgramLine hostId={host.id} /> : null}
                     </div>
-                    {status.state === 'connected' ? <HostProgramLine hostId={host.id} /> : null}
                     {detail ? (
                       <div>
                         <ReportedError error={detail} testId="ssh-host-error" />
@@ -471,18 +556,20 @@ export function SshTab() {
               ) : null}
 
               {step === 'trust' && probe ? (
-                <div className="space-y-2" data-testid="ssh-add-trust">
-                  <p className="text-sm text-fg-secondary">
-                    <Trans>This is the key {probe.hostname} presents. Trust it only if it matches the host.</Trans>
+                <div className="space-y-3" data-testid="ssh-add-trust">
+                  <p className="text-sm font-medium text-fg">
+                    <Trans>This is the key {probe.hostname} presents.</Trans>
                   </p>
-                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                    <dt className="text-fg-faint"><Trans>Type</Trans></dt>
-                    <dd className="font-mono text-fg-secondary">{probe.keyType}</dd>
-                    <dt className="text-fg-faint"><Trans>Fingerprint</Trans></dt>
-                    <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-add-fingerprint">{probe.fingerprint}</dd>
-                  </dl>
+                  <div className="rounded-md border border-edge bg-surface-hover/40 px-3 py-2.5">
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+                      <dt className="text-fg-faint"><Trans>Type</Trans></dt>
+                      <dd className="font-mono text-fg-secondary">{probe.keyType}</dd>
+                      <dt className="text-fg-faint"><Trans>Fingerprint</Trans></dt>
+                      <dd className="font-mono text-fg select-text [overflow-wrap:anywhere]" data-testid="ssh-add-fingerprint">{probe.fingerprint}</dd>
+                    </dl>
+                  </div>
                   <p className="text-xs text-fg-faint">
-                    <Trans>Kangentic records it once. If the host's key ever changes, it refuses to connect.</Trans>
+                    <Trans>Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes.</Trans>
                   </p>
                 </div>
               ) : null}
@@ -503,15 +590,25 @@ export function SshTab() {
                   {signInMethod === 'key-file' ? (
                     <label className="block space-y-1">
                       <span className="text-xs text-fg-muted"><Trans>Path to the private key</Trans></span>
-                      <input
-                        type="text"
-                        className={`${INPUT_CLASS} font-mono`}
-                        value={keyFilePath}
-                        spellCheck={false}
-                        data-testid="ssh-add-key-path"
-                        onChange={(event) => setKeyFilePath(event.target.value)}
-                      />
-                      <span className="block text-xs text-fg-faint"><Trans>Kangentic keeps a copy. A key with a passphrase must be in your SSH agent.</Trans></span>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          className={`${INPUT_CLASS} min-w-0 flex-1 font-mono`}
+                          value={keyFilePath}
+                          spellCheck={false}
+                          data-testid="ssh-add-key-path"
+                          onChange={(event) => setKeyFilePath(event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors"
+                          data-testid="ssh-add-key-choose"
+                          onClick={() => void chooseKeyFile()}
+                        >
+                          <Trans>Choose…</Trans>
+                        </button>
+                      </div>
+                      <span className="block text-xs text-fg-faint"><Trans>A key with a passphrase must be in your SSH agent.</Trans></span>
                     </label>
                   ) : null}
                   {signInMethod === 'create-key' ? (
@@ -605,54 +702,12 @@ export function SshTab() {
       </SettingsCard>
 
       {trustTarget ? (
-        <BaseDialog
+        <NewHostKeyDialog
+          probe={trustTarget.probe}
+          busy={trustBusy}
+          onConfirm={() => void confirmTrustNewKey()}
           onClose={() => setTrustTarget(null)}
-          title={t`New host key`}
-          testId="ssh-trust-new-key"
-          footer={
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setTrustTarget(null)}
-                className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
-                data-testid="ssh-trust-new-key-cancel"
-              >
-                <Trans>Cancel</Trans>
-              </button>
-              <button
-                type="button"
-                disabled={trustBusy}
-                onClick={() => void confirmTrustNewKey()}
-                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on disabled:opacity-50"
-                data-testid="ssh-trust-new-key-confirm"
-              >
-                {trustBusy ? <Loader2 size={12} className="animate-spin" /> : null}
-                <Trans>Trust new key</Trans>
-              </button>
-            </div>
-          }
-        >
-          <div className="space-y-3">
-            <p className="text-sm text-fg-secondary">
-              <Trans>{trustTarget.probe.hostname} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled.</Trans>
-            </p>
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              <dt className="text-fg-faint"><Trans>Type</Trans></dt>
-              <dd className="font-mono text-fg-secondary">{trustTarget.probe.keyType}</dd>
-              {trustTarget.probe.previousFingerprint ? (
-                <>
-                  <dt className="text-fg-faint"><Trans>Before</Trans></dt>
-                  <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-previous-fingerprint">{trustTarget.probe.previousFingerprint}</dd>
-                </>
-              ) : null}
-              <dt className="text-fg-faint"><Trans>Now</Trans></dt>
-              <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-new-fingerprint">{trustTarget.probe.fingerprint}</dd>
-            </dl>
-            <p className="text-xs text-fg-faint">
-              <Trans>Kangentic records it once and connects. Its other hosts are not affected.</Trans>
-            </p>
-          </div>
-        </BaseDialog>
+        />
       ) : null}
 
       {removeTarget ? (

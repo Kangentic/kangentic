@@ -12,9 +12,9 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
-#. placeholder {0}: trustTarget.probe.hostname
+#. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgid "{0} now presents a different key."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
@@ -156,6 +156,10 @@ msgstr "呼び出しが失敗しました"
 #, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "各セッションのアクティビティ状態と直近の遷移を表示するフローティングパネル。.kangentic/debug にも書き出されます。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -652,6 +656,10 @@ msgstr "モデルを選択"
 #, fuzzy
 msgid "Choose an agent"
 msgstr "エージェントを選択"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1617,24 +1625,10 @@ msgstr "条件とワークフローの手順を判定し、タスクに名前を
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic は設定ファイルに書き込めませんでした。"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-msgstr "Kangentic がコピーを保持します。パスフレーズ付きのキーは SSH エージェントに登録しておく必要があります。"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic records it once and connects. Its other hosts are not affected."
-msgstr ""
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
-msgstr "Kangentic はこれを一度だけ記録します。ホストのキーが変更された場合は接続を拒否します。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
@@ -2260,6 +2254,10 @@ msgstr "話している間のプレビュー: ストリーミングは即時、�
 #, fuzzy
 msgid "Privacy"
 msgstr "プライバシー"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3104,9 +3102,8 @@ msgstr "このホットキーは固定されており、再割り当てできま
 
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "This is the key {0} presents. Trust it only if it matches the host."
-msgstr "これは {0} が提示したキーです。ホストと一致する場合のみ信頼してください。"
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -3170,6 +3167,14 @@ msgstr "文字起こし"
 #, fuzzy
 msgid "Transition and motion effects."
 msgstr "トランジションとモーション効果。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust new key"

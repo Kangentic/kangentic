@@ -6643,6 +6643,14 @@ export interface SelectFolderOptions {
   defaultPath?: string;
 }
 
+/** Optional native file-picker dialog customization (dialog.selectFile). */
+export interface SelectFileOptions {
+  title?: string;
+  buttonLabel?: string;
+  /** The folder the dialog opens in. A leading `~` is the home folder. A folder that is not there falls back to home. */
+  defaultPath?: string;
+}
+
 /**
  * Read-only probe of a candidate project folder, returned by
  * `projects.probePath`. Drives the Add project dialog's git verdict and
@@ -8846,6 +8854,8 @@ export interface ElectronAPI {
   // Dialog
   dialog: {
     selectFolder: (options?: SelectFolderOptions) => Promise<string | null>;
+    /** OS file picker for one file. Returns the path, or null on cancel. */
+    selectFile: (options?: SelectFileOptions) => Promise<string | null>;
   };
 
   // Notifications
@@ -9211,6 +9221,8 @@ export interface ElectronAPI {
     /** What the host's program reports. Rejects while the host is not connected, with the reason. */
     hostProgram: (hostId: string) => Promise<SshHostProgram>;
     /** Forget the recorded key of a host whose key changed, so the next connection asks again. */
+    /** Whether a key file the user chose can be used. Rejects with the reason, such as a passphrase. */
+    checkKeyFile: (keyFilePath: string) => Promise<void>;
     /** The key a host whose key changed presents now, and the fingerprint trusted before when it can be read. Trusts nothing. */
     probeChangedKey: (hostId: string) => Promise<SshHostKeyProbe>;
     /** Trust the key the user was shown for a host whose key changed: forget the old one, record the new one, connect. */

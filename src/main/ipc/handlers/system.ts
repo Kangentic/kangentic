@@ -11,6 +11,7 @@ import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
+import { resolvePickerStartFolder } from '../helpers/picker-start-folder';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
 import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
@@ -36,6 +37,7 @@ import type {
   HandoffRecord,
   RemoteServerStatus,
   SelectFolderOptions,
+  SelectFileOptions,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -698,6 +700,18 @@ export function registerSystemHandlers(context: IpcContext): void {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     lastPickedFolderParent = path.dirname(result.filePaths[0]);
+    return result.filePaths[0];
+  });
+
+  // One file, for a caller that needs a path to a file (an SSH key). Opens in the folder asked for, else home.
+  ipcMain.handle(IPC.DIALOG_SELECT_FILE, async (_event, options?: SelectFileOptions) => {
+    const result = await dialog.showOpenDialog(context.mainWindow, {
+      properties: ['openFile'],
+      title: options?.title,
+      buttonLabel: options?.buttonLabel,
+      defaultPath: resolvePickerStartFolder(options?.defaultPath, app.getPath('home'), (candidate) => fs.existsSync(candidate)),
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
 

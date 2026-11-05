@@ -12,9 +12,9 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
-#. placeholder {0}: trustTarget.probe.hostname
+#. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgid "{0} now presents a different key."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
@@ -130,6 +130,10 @@ msgstr "呼叫失敗"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "浮動面板顯示各工作階段的活動狀態與最近轉換，也會寫入 .kangentic/debug。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -538,6 +542,10 @@ msgstr "選擇模型"
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 msgid "Choose an agent"
 msgstr "選擇代理"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Claude 5h / weekly quota bars"
@@ -1325,23 +1333,9 @@ msgstr "判斷條件與工作流程步驟，並為任務命名。"
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic 無法寫入設定檔。"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
-msgstr "Kangentic 會保留複本。具有通關密語的金鑰必須位於您的 SSH 代理程式中。"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Kangentic records it once and connects. Its other hosts are not affected."
-msgstr ""
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
-msgstr "Kangentic 只會記錄一次。若主機的金鑰之後變更，就會拒絕連線。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
@@ -1860,6 +1854,10 @@ msgstr "說話時預覽：串流即時呈現，分段則較準確。"
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Privacy"
 msgstr "隱私權"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
@@ -2559,9 +2557,8 @@ msgstr "此快速鍵固定，無法重新綁定"
 
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "This is the key {0} presents. Trust it only if it matches the host."
-msgstr "這是 {0} 提供的金鑰。請僅在其與主機相符時才信任。"
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "This project's path to the agent CLI (auto-detected if empty)"
@@ -2613,6 +2610,14 @@ msgstr "轉錄"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Transition and motion effects."
 msgstr "轉場與動態效果。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust new key"

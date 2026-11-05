@@ -26,6 +26,7 @@ import { sshArgsFor } from './remote-host-service';
 import { assertSafeDestination } from './ssh-client';
 import type { RemoteHosting } from './remote-hosting';
 import {
+  checkKeyFile,
   createHostKey,
   deleteHostKeys,
   detectSshClient,
@@ -79,6 +80,11 @@ export class SshHostAdmin {
 
   listHosts(): SshHostStatus[] {
     return this.deps.hosting.hosts.list().map((host) => this.statusOf(host));
+  }
+
+  /** Whether a key file the user chose can be used, so a passphrase key is refused when it is chosen. Rejects with the reason. */
+  async checkKeyFile(keyFilePath: string): Promise<void> {
+    await checkKeyFile(keyFilePath);
   }
 
   async probeHostKey(destination: string): Promise<SshHostKeyProbe> {

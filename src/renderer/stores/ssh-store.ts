@@ -38,6 +38,8 @@ interface SshStore {
   removeHost: (hostId: string) => Promise<void>;
   renameHost: (hostId: string, name: string) => Promise<void>;
   reconnectHost: (hostId: string) => Promise<void>;
+  /** Whether a key file the user chose can be used. Rejects with the reason, such as a passphrase. */
+  checkKeyFile: (keyFilePath: string) => Promise<void>;
   /** The key a host whose key changed presents now, with the fingerprint trusted before when known. Trusts nothing. */
   probeChangedKey: (hostId: string) => Promise<SshHostKeyProbe>;
   /** Trust the key the user was shown, replacing the old one, and connect. */
@@ -115,6 +117,8 @@ const createSshStore = () => create<SshStore>((set, get) => ({
     await window.electronAPI.ssh.reconnectHost(hostId);
     await get().loadHosts();
   },
+
+  checkKeyFile: (keyFilePath) => window.electronAPI.ssh.checkKeyFile(keyFilePath),
 
   probeChangedKey: (hostId) => window.electronAPI.ssh.probeChangedKey(hostId),
 

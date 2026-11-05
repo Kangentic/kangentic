@@ -406,6 +406,19 @@ describe('removing a host', () => {
   });
 });
 
+describe('checking a key file the user chose', () => {
+  it('passes a usable key, and rejects one with a passphrase, with the reason', async () => {
+    const rig = makeRig();
+    const usable = path.join(scratch, 'id_plain');
+    fs.writeFileSync(usable, '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n');
+    const protectedKey = path.join(scratch, 'id_protected');
+    fs.writeFileSync(protectedKey, '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\nabc\n-----END RSA PRIVATE KEY-----\n');
+
+    await expect(rig.admin.checkKeyFile(usable)).resolves.toBeUndefined();
+    await expect(rig.admin.checkKeyFile(protectedKey)).rejects.toThrow('passphrase');
+  });
+});
+
 describe('a host whose key changed', () => {
   it('reads the key it presents now, with no fingerprint before when none is recorded, and trusts nothing', async () => {
     const rig = makeRig();

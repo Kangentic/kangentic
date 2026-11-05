@@ -119,6 +119,63 @@ test('adds a host through the fingerprint step and shows it connected', async ()
   await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
 });
 
+test.describe('choosing a key file', () => {
+  async function openKeyFileStep() {
+    await openSshTab();
+    await page.locator('[data-testid="ssh-add-host"]').click();
+    await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+    await page.locator('[data-testid="ssh-add-destination"]').fill('dev@lab.example.test');
+    await page.locator('[data-testid="ssh-add-continue"]').click();
+    await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+    await page.locator('[data-testid="ssh-signin-key-file"]').click();
+  }
+
+  test.afterEach(async () => {
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as Record<string, unknown>;
+      delete mockWindow.__mockSshKeyFileError;
+      mockWindow.__mockFilePath = undefined;
+    });
+  });
+
+  test('fills the path from the picker, and keeps Add host disabled until there is one', async () => {
+    await openKeyFileStep();
+    await expect(page.locator('[data-testid="ssh-add-submit"]')).toBeDisabled();
+
+    await page.evaluate(() => { (window as unknown as Record<string, unknown>).__mockFilePath = 'C:\\Users\\dev\\.ssh\\id_ed25519'; });
+    await page.locator('[data-testid="ssh-add-key-choose"]').click();
+
+    await expect(page.locator('[data-testid="ssh-add-key-path"]')).toHaveValue('C:\\Users\\dev\\.ssh\\id_ed25519');
+    await expect(page.locator('[data-testid="ssh-add-submit"]')).toBeEnabled();
+  });
+
+  test('leaves the path alone when the picker is cancelled', async () => {
+    await openKeyFileStep();
+    await page.locator('[data-testid="ssh-add-key-path"]').fill('/typed/by/hand');
+
+    await page.evaluate(() => { (window as unknown as Record<string, unknown>).__mockFilePath = null; });
+    await page.locator('[data-testid="ssh-add-key-choose"]').click();
+
+    await expect(page.locator('[data-testid="ssh-add-key-path"]')).toHaveValue('/typed/by/hand');
+    await expect(page.locator('[data-testid="ssh-add-error"]')).toHaveCount(0);
+  });
+
+  test('refuses a key it cannot use when it is chosen, with the reason, and clears the path', async () => {
+    await openKeyFileStep();
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as Record<string, unknown>;
+      mockWindow.__mockSshKeyFileError = 'That key has a passphrase, and Kangentic never asks for one.';
+      mockWindow.__mockFilePath = 'C:\\Users\\dev\\.ssh\\id_protected';
+    });
+
+    await page.locator('[data-testid="ssh-add-key-choose"]').click();
+
+    await expect(page.locator('[data-testid="ssh-add-error"]')).toContainText('has a passphrase');
+    await expect(page.locator('[data-testid="ssh-add-key-path"]')).toHaveValue('');
+    await expect(page.locator('[data-testid="ssh-add-submit"]')).toBeDisabled();
+  });
+});
+
 test('keeps the form and shows the reason when the host cannot be reached', async () => {
   await page.evaluate(() => {
     (window as unknown as Record<string, unknown>).__mockSshProbeError = 'ssh: connect to host lab port 22: Connection timed out';
