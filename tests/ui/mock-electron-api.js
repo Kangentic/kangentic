@@ -6043,7 +6043,7 @@
           if (place === 'done') { counts.done += 1; return; }
           if (place === 'working') {
             counts.working += 1;
-            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task, boardOf(entry, task)), hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
+            boardTasks[task.id] = { waitingFor: [], hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
             return;
           }
           var waitingFor = links.filter(function (link) {
@@ -6056,7 +6056,7 @@
             return blocker ? '#' + blocker.display_id : 'a task';
           });
           counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
-          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
+          boardTasks[task.id] = { waitingFor: waitingFor, hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
@@ -6065,19 +6065,6 @@
           agent: agentSummary(workflow.id),
           stalledTasks: stalledTasks,
         };
-      }
-
-      // Main's human gate (isHumanGate) also counts a column whose agent reports no
-      // turn end, and every column while no Automation agent is set up. The mock
-      // checks only auto_spawn, even where the web build's agent list carries
-      // reportsTurnEnd, so here a column that starts no agent is the only gate.
-      function humanGateExit(workflow, task, projectId) {
-        if (workflow.state !== 'running' || task.automations_disabled) return null;
-        var column = laneOf(task.swimlane_id);
-        if (!column || column.auto_spawn) return null;
-        var after = routeColumns(task, projectId).find(function (lane) { return lane.position > column.position; });
-        var next = after || doneLane(projectId);
-        return next ? next.id : null;
       }
 
       function editDraft(entry, edit) {

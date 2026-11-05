@@ -62,20 +62,28 @@ describe('the Workflows view operations', () => {
       },
       boardEvents: { emitBoardChanged: vi.fn() },
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
-      // No Automation agent chosen: every column is a human gate unless it starts no agent at all.
       configManager: { load: () => ({}) },
-      // The workflow agents: none unless a test adds one.
+      // The workflow agents: none unless a test adds one. A task has an agent
+      // only when a test names it in `workingTaskIds`, and that agent is working.
       sessionManager: {
         listSessions: () => agentSessions,
-        getActivityCache: () => agentActivity,
+        getActivityCache: () => ({ ...agentActivity, [WORKING_SESSION_ID]: 'thinking' }),
+        findLiveSessionByTaskId: (taskId: string) => (workingTaskIds.has(taskId) ? { id: WORKING_SESSION_ID, status: 'running' } : undefined),
+        hasLiveOrStartingSession: (taskId: string) => workingTaskIds.has(taskId),
+        isTurnHeldByBackgroundWork: () => false,
+        automatedKeysBlocker: () => null,
       },
+      terminalSubmitScheduler: { hasPending: () => false },
     } as unknown as IpcContext;
+    workingTaskIds.clear();
     agentSessions.length = 0;
     for (const key of Object.keys(agentActivity)) delete agentActivity[key];
   });
 
   const agentSessions: Array<{ id: string; workflowId: string; status: string }> = [];
   const agentActivity: Record<string, string> = {};
+  const WORKING_SESSION_ID = 'session-working';
+  const workingTaskIds = new Set<string>();
 
   afterEach(() => {
     setWorkflowChangedWindow(null);
@@ -319,9 +327,9 @@ describe('the Workflows view operations', () => {
     it('gives each board card what it waits for, where a hand may move it, and whether it has links', async () => {
       const { workflow, api, ui, docs } = await started();
       const [before] = view.listWorkflowSummaries(context, 'home');
-      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null, hasLinks: true, stallReason: null });
+      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], hasLinks: true, stallReason: null });
       // Docs has no link either way, so its strip offers none to show.
-      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null, hasLinks: false, stallReason: null });
+      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], hasLinks: false, stallReason: null });
 
       // In a column whose work no agent can judge (here, none is chosen), a person drags it on.
       new TaskRepository(homeDb()).move(
@@ -330,7 +338,7 @@ describe('the Workflows view operations', () => {
       );
       const [after] = view.listWorkflowSummaries(context, 'home');
       // A blocker has links too: the link is read from either end.
-      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review'), hasLinks: true, stallReason: null });
+      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], hasLinks: true, stallReason: null });
       expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
     });
 
@@ -409,15 +417,6 @@ describe('the Workflows view operations', () => {
         expect(summaryTask(workflow.id, api.id).stallReason).toBe('the step check could not run.');
       });
 
-      it('names no human-gate exit for it, where the same task not held names the next column', async () => {
-        const { workflow, api, tasks } = await startedInExecuting();
-        expect(summaryTask(workflow.id, api.id).humanGateTargetId).toBe(laneId('home', 'Code Review'));
-
-        tasks.update({ id: api.id, automations_disabled: true });
-
-        expect(summaryTask(workflow.id, api.id).humanGateTargetId).toBeNull();
-      });
-
       it('lets a hand move it to any column but To Do, through the real lock check, and keeps another agent out', async () => {
         const { api, tasks } = await startedInExecuting();
         const check = (column: string, origin: 'renderer' | 'agent') => lock.checkWorkflowMove(context, {
@@ -427,7 +426,8 @@ describe('the Workflows view operations', () => {
           origin,
           moverIsTaskAgent: false,
         });
-        // Not held: only the gate's next column is open to a hand.
+        // Not held, with its agent working: the lock.
+        workingTaskIds.add(api.id);
         expect(check('Testing', 'renderer')).toMatch(/is locked while/);
 
         tasks.update({ id: api.id, automations_disabled: true });
@@ -574,7 +574,7 @@ describe('the Workflows view operations', () => {
       });
     });
 
-    it('lets a hand drag a started task out of a gate, and never a task out of To Do', async () => {
+    it('lets a hand take a stopped card anywhere but To Do, locks one in motion, and never takes a task out of To Do', async () => {
       const { api, ui, docs } = await started();
       const tasks = new TaskRepository(homeDb());
       const byHand = (taskId: string, column: string) => lock.checkWorkflowMove(context, {
@@ -584,16 +584,21 @@ describe('the Workflows view operations', () => {
         origin: 'renderer',
         moverIsTaskAgent: false,
       });
-      // To Do runs no agent, but it is the queue, not a gate: a ready task and
-      // a waiting one both stay for the engine, as the board's lock shows them.
+      // To Do runs no agent, but it is the queue: a ready task and a waiting one
+      // both stay for the engine, as the board's lock shows them.
       expect(byHand(docs.id, 'Planning')).toMatch(/is locked while/);
       expect(byHand(ui.id, 'Planning')).toMatch(/is locked while/);
 
-      // Started, in a column no agent judges (none is chosen here): the drag to
-      // the next column on its route is the report, and only that one.
+      // Started, with no agent: stopped, so the owner's to move.
       tasks.move({ taskId: api.id, targetSwimlaneId: laneId('home', 'Executing'), targetPosition: 0 }, { origin: 'workflow' });
       expect(byHand(api.id, 'Code Review')).toBeNull();
-      expect(byHand(api.id, 'Testing')).toMatch(/is locked while/);
+      expect(byHand(api.id, 'Testing')).toBeNull();
+      expect(byHand(api.id, 'Done')).toBeNull();
+      expect(byHand(api.id, 'To Do')).toMatch(/Remove it from the workflow to move it to To Do/);
+
+      // The same card with its agent working: in motion, so locked.
+      workingTaskIds.add(api.id);
+      expect(byHand(api.id, 'Code Review')).toMatch(/is locked while/);
     });
 
     describe('when the lock cannot read the task\'s workflow', () => {

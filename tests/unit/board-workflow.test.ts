@@ -29,7 +29,7 @@ function summary(id: string, state: Workflow['state'], boardTasks: WorkflowSumma
 function boardWorkflow(overrides: Partial<BoardWorkflow> = {}): BoardWorkflow {
   return {
     workflowId: 'w', homeProjectId: 'home', title: 'Usage budgets', colorSlot: 5, state: 'running',
-    waitingFor: [], humanGateTargetId: null, hasLinks: true, stallReason: null, ...overrides,
+    waitingFor: [], hasLinks: true, stallReason: null, ...overrides,
   };
 }
 
@@ -38,12 +38,12 @@ const TASK = { id: 't414', display_id: 414, swimlane_id: 'executing', automation
 const HELD_TASK = { ...TASK, automations_disabled: true };
 
 describe('boardWorkflowOf', () => {
-  const own = summary('w', 'running', { t414: { waitingFor: [], humanGateTargetId: 'review', hasLinks: true } });
+  const own = summary('w', 'running', { t414: { waitingFor: ['#413'], hasLinks: true } });
   const foreign = summary('w2', 'paused');
 
   it('reads a card on its home board from the board project\'s list', () => {
     const read = boardWorkflowOf([own], {}, { id: 't414', workflow_id: 'w', workflow_project_id: 'home' }, 'home');
-    expect(read).toMatchObject({ workflowId: 'w', homeProjectId: 'home', state: 'running', humanGateTargetId: 'review', hasLinks: true });
+    expect(read).toMatchObject({ workflowId: 'w', homeProjectId: 'home', state: 'running', waitingFor: ['#413'], hasLinks: true });
     // A home task may carry no project id of its own.
     expect(boardWorkflowOf([own], {}, { id: 't414', workflow_id: 'w', workflow_project_id: null }, 'home')?.workflowId).toBe('w');
   });
@@ -108,11 +108,18 @@ describe('the lock on the board', () => {
     expect(boardMoveRefusal(workflow, TASK, { id: 'executing', role: null })).toBeNull();
   });
 
-  it('lets a person drag a card out of a human gate to the next column of its route, and nowhere else', () => {
-    const workflow = boardWorkflow({ humanGateTargetId: 'review' });
-    expect(isLockedOnBoard(workflow, TASK)).toBe(false);
-    expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBeNull();
-    expect(boardMoveRefusal(workflow, TASK, { id: 'testing', role: null })).toBe('#414 is locked while Usage budgets runs.');
+  it('lets a person move a stopped card to any column but To Do', () => {
+    const workflow = boardWorkflow();
+    expect(isLockedOnBoard(workflow, TASK, true)).toBe(false);
+    expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null }, true)).toBeNull();
+    expect(boardMoveRefusal(workflow, TASK, { id: 'testing', role: null }, true)).toBeNull();
+    expect(boardMoveRefusal(workflow, TASK, { id: 'done', role: 'done' }, true)).toBeNull();
+    expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' }, true))
+      .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+  });
+
+  it('tells a stopped card to remove it first for Backlog and Archive, not that it is locked', () => {
+    expect(sendAwayRefusal(boardWorkflow(), TASK, true)).toBe('Remove #414 from Usage budgets first.');
   });
 
   it('lets a paused workflow\'s card move by hand except into To Do', () => {
@@ -133,10 +140,6 @@ describe('the lock on the board', () => {
       const workflow = boardWorkflow();
       expect(isLockedOnBoard(workflow, TASK)).toBe(true);
       expect(isLockedOnBoard(workflow, HELD_TASK)).toBe(false);
-    });
-
-    it('is not locked in a human gate either, which was already open', () => {
-      expect(isLockedOnBoard(boardWorkflow({ humanGateTargetId: 'review' }), HELD_TASK)).toBe(false);
     });
 
     it.each([

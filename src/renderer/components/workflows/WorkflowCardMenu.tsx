@@ -9,6 +9,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
+import { taskStoppedNow } from '../../utils/workflow-refusal';
 import { findBoardTask } from '../../utils/board-task-index';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
@@ -117,6 +118,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   // stays the whole label, so it never reads as pausing the workflow.
   const laneRole = swimlanes.find((lane) => lane.id === task.swimlane_id)?.role ?? null;
   const sessionToggleRow = sessionToggleRowFor(displayKind, laneRole, task);
+  const stopped = taskStoppedNow(task, laneRole);
   const displayId = task.display_id;
 
   return (
@@ -155,9 +157,9 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
       } : undefined}
       // Holds this task out of its workflow, or lets the workflow take it again.
       onToggleAutomations={() => { void toggleTaskAutomations(task, viewTask.projectId); }}
-      moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId))}
+      moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId), stopped)}
       // Every card here is in a started workflow, so Backlog and Archive are refused.
-      sendAwayRefusal={sendAwayRefusal(workflow, task) ?? t`Remove #${displayId} from its workflow first.`}
+      sendAwayRefusal={sendAwayRefusal(workflow, task, stopped) ?? t`Remove #${displayId} from its workflow first.`}
       onEdit={() => openHere(true)}
       onShowChanges={() => {
         // Keyed by task id, so safe for a task on any board.
