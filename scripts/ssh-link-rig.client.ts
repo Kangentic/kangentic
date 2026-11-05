@@ -113,6 +113,7 @@ async function exportAcrossADrop(): Promise<{ bytes: number; part: boolean; whol
   prepareWslHookTransport(localSession);
   const place: SshCliPlace = { kind: 'ssh', hostId: 'rig', home: '/home/dev', shellName: 'bash', localHome: path.join(localRoot, 'mirror'), roots: [{ local: shellFolder, host: hostProject }] };
   const copy = remoteExportPath(place, 'rig', 'conversation');
+  if (!copy) throw new Error('the rig\'s session has no export path');
 
   const files: RemoteSessionFiles = {
     writeFiles: (_hostId, fileList, directories) => link.requestHelper('writeFiles', { files: fileList, ...(directories ? { directories } : {}) }),

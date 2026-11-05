@@ -123,10 +123,10 @@ describe.skipIf(process.platform === 'win32')('the script that makes the hook tr
     for (const target of cleanup.splice(0)) fs.rmSync(target, { recursive: true, force: true });
   });
 
-  it('falls back to /tmp for a TMPDIR holding a space, and prints a folder the read accepts, with home and folder inside', async () => {
+  it.each(['/tmp/a folder with spaces', 'relative/tmp'])('falls back to /tmp for a TMPDIR of %s, and prints a folder the read accepts, with home and folder inside', async (temporaryFolder) => {
     const script = await scratchScriptSent();
 
-    const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: '/tmp/a folder with spaces' } });
+    const run = spawnSync('sh', ['-c', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: temporaryFolder } });
 
     expect(run.status).toBe(0);
     cleanup.push(run.stdout);
