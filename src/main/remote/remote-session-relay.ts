@@ -31,7 +31,7 @@ import { localPathToHost, mirrorPathToHost, type SshCliPlace } from '../agent/sh
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
 import type { PtyHostEvent } from '../pty/host/protocol';
-import type { RemoteProgramRunner, RemoteTranscriptIndex, RemoteTranscriptSnapshot } from '../../shared/types';
+import type { AgentParser, RemoteProgramRunner, RemoteTranscriptIndex, RemoteTranscriptSnapshot, StoredCliTarget } from '../../shared/types';
 import type { HostCommandRequest, HostCommandResult, HostFileWrite } from './protocol/messages';
 
 /** The helper's file jobs, as `RemoteHostService` offers them. */
@@ -58,6 +58,20 @@ export interface RemoteTranscriptSource {
   index?: RemoteTranscriptIndex;
   /** How to export a transcript that is no plain file. Null while none can be named. */
   snapshot?(agentSessionId: string, runProgram: RemoteProgramRunner): Promise<RemoteTranscriptSnapshot | null>;
+}
+
+/**
+ * What a session's adapter says about its transcript on a host, asked again once the session's id or an index
+ * entry arrives. A remote task works in one folder for its whole life, so `cwd` and the target hold.
+ */
+export function remoteTranscriptSource(parser: AgentParser | undefined, cwd: string, cliTarget: StoredCliTarget): RemoteTranscriptSource {
+  const index = parser?.remoteTranscriptIndex?.({ cwd, cliTarget }) ?? null;
+  const snapshotOf = parser?.remoteTranscriptSnapshot?.bind(parser);
+  return {
+    files: (agentSessionId) => parser?.remoteTranscriptFiles?.({ agentSessionId, cwd, cliTarget }) ?? [],
+    ...(index ? { index } : {}),
+    ...(snapshotOf ? { snapshot: (agentSessionId, runProgram) => snapshotOf({ agentSessionId, cwd, cliTarget, runProgram }) } : {}),
+  };
 }
 
 export interface RemoteSessionRegistration {
@@ -504,7 +518,7 @@ export class RemoteSessionRelay {
     });
     const answer = result.code === 0 ? readSnapshotAnswer(result.stdout) : null;
     if (!answer) {
-      this.noteSnapshotFailure(entry, result.error ?? (result.timedOut ? 'the export timed out' : (result.stderr.trim() || `the export exited ${String(result.code)}`)));
+      this.noteSnapshotFailure(entry, result.error ?? (result.timedOut ? 'the export timed out' : (lastLine(result.stderr) || `the export exited ${String(result.code)}`)));
       return null;
     }
     entry.lastSnapshotFailure = null;
@@ -800,6 +814,14 @@ export class RemoteSessionRelay {
       entry.forwarding = false;
     }
   }
+}
+
+/**
+ * What a failed export said last, which is the reason. An interactive shell opens stderr with its own lines
+ * (`cannot set terminal process group (1199)`), which can hold a pid, so all of it would never repeat.
+ */
+function lastLine(text: string): string {
+  return text.trim().split('\n').at(-1)?.trim() ?? '';
 }
 
 /** Where an export collects as it arrives, beside the copy a reader opens. */
