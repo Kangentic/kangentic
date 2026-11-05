@@ -15,7 +15,8 @@ import path from 'node:path';
 import { HostWorktrees, createRemoteWorktreeResolver, hostWorktreePathFor } from '../../src/main/remote/remote-worktrees';
 import { runHostCommand } from '../../src/main/remote/helper/host-command';
 import { remoteWorktreeBackendForWorktree, setRemoteWorktreeResolver, type RemoteWorktreeBackend } from '../../src/main/git/remote-worktree';
-import { WorktreeManager } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, setWorktreeRemovedListener, setWorktreeRemovingListener } from '../../src/main/git/worktree-manager';
+import { tryHoldWorktreeCreation } from '../../src/main/git/worktree-creation-registry';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
 let scratch: string;
@@ -165,6 +166,19 @@ describe('making a worktree on the host', () => {
     expect(fs.existsSync(path.join(shellFolder, '.kangentic'))).toBe(false);
   });
 
+  it.each([
+    ['branch_name', { ...task, branch_name: '-fetch-hook' }, gitConfig],
+    ['base_branch', { ...task, base_branch: '--upload-pack=evil' }, gitConfig],
+    ['the default base branch', task, { ...gitConfig, defaultBaseBranch: '-evil' }],
+  ])('refuses a %s that starts with a dash before the host is asked, since git would read it as an option', async (_label, refusedTask, refusedConfig) => {
+    const run = vi.fn(async () => answer('KG:created\n'));
+    const { backend } = backendWith(run);
+
+    await expect(backend.ensureWorktree(refusedTask, refusedConfig)).rejects.toThrow('is not a usable branch name');
+    expect(run).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(shellFolder, '.kangentic'))).toBe(false);
+  });
+
   it('does not record a worktree the host never said it made', async () => {
     const { backend } = backendWith(async () => answer('some banner\n'));
 
@@ -272,6 +286,71 @@ describe('WorktreeManager for a project on a host', () => {
     expect(backend.removeWorktree).toHaveBeenCalledTimes(2);
     await expect(manager.removeWorktree(path.join(shellFolder, 'src'))).rejects.toThrow('not a direct child');
     expect(backend.removeWorktree).toHaveBeenCalledTimes(2);
+  });
+
+  describe('a removal on the host', () => {
+    const removalPath = (): string => path.join(shellFolder, '.kangentic', 'worktrees', '7');
+
+    afterEach(() => {
+      setWorktreeRemovingListener(null);
+      setWorktreeRemovedListener(null);
+    });
+
+    it.each(['removeWorktree', 'moveWorktreeAside'] as const)('%s leaves a path whose creation is in flight, and never asks the host', async (method) => {
+      const backend = fakeBackend();
+      const release = tryHoldWorktreeCreation(removalPath());
+      expect(release).not.toBeNull();
+      const removing = vi.fn(async () => undefined);
+      const removed = vi.fn(async () => undefined);
+      setWorktreeRemovingListener(removing);
+      setWorktreeRemovedListener(removed);
+      try {
+        expect(await new WorktreeManager(shellFolder)[method](removalPath())).toBe(false);
+      } finally {
+        release!();
+      }
+
+      expect(backend.removeWorktree).not.toHaveBeenCalled();
+      expect(removing).not.toHaveBeenCalled();
+      expect(removed).not.toHaveBeenCalled();
+    });
+
+    it('removes the creation\'s own path when the caller says it holds it', async () => {
+      const backend = fakeBackend();
+      const release = tryHoldWorktreeCreation(removalPath());
+      try {
+        expect(await new WorktreeManager(shellFolder).removeWorktree(removalPath(), { ownCreation: true })).toBe(true);
+      } finally {
+        release!();
+      }
+      expect(backend.removeWorktree).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells the removing listener before the host is asked, and the removed listener after it succeeds', async () => {
+      const backend = fakeBackend();
+      const order: string[] = [];
+      setWorktreeRemovingListener(async (target) => { order.push(`removing:${target}`); });
+      vi.mocked(backend.removeWorktree).mockImplementation(async () => { order.push('host'); return true; });
+      setWorktreeRemovedListener(async (target) => { order.push(`removed:${target}`); });
+
+      expect(await new WorktreeManager(shellFolder).removeWorktree(removalPath())).toBe(true);
+
+      expect(order).toEqual([`removing:${removalPath()}`, 'host', `removed:${removalPath()}`]);
+    });
+
+    it('does not tell the removed listener when the host did not remove it', async () => {
+      const backend = fakeBackend();
+      vi.mocked(backend.removeWorktree).mockResolvedValue(false);
+      const removing = vi.fn(async () => undefined);
+      const removed = vi.fn(async () => undefined);
+      setWorktreeRemovingListener(removing);
+      setWorktreeRemovedListener(removed);
+
+      expect(await new WorktreeManager(shellFolder).moveWorktreeAside(removalPath())).toBe(false);
+
+      expect(removing).toHaveBeenCalledTimes(1);
+      expect(removed).not.toHaveBeenCalled();
+    });
   });
 
   it('reports a failed host removal as not removed, so the task keeps its path', async () => {

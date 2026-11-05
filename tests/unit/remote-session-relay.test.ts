@@ -364,7 +364,14 @@ function makeFakeHost() {
     const promise = new Promise<void>((resolve) => { release = resolve; });
     return { release, promise };
   };
-  const state = { holdWrites: false, holdUnwatch: null as null | { release(): void; promise: Promise<void> }, writeCalls: 0 };
+  const state = {
+    holdWrites: false,
+    holdUnwatch: null as null | { release(): void; promise: Promise<void> },
+    writeCalls: 0,
+    /** The next `watchFiles` rejects, as when the host started tailing but its answer was lost. */
+    rejectNextWatchFiles: false,
+    unwatchFilesCalls: 0,
+  };
   const files: RemoteSessionFiles = {
     writeFiles: async (_hostId, fileList) => {
       state.writeCalls += 1;
@@ -385,8 +392,17 @@ function makeFakeHost() {
       if (state.holdUnwatch) await state.holdUnwatch.promise;
       watching.delete(sessionId);
     },
-    watchFiles: async () => ({ watching: true }),
-    unwatchFiles: async () => ({ watching: false }),
+    watchFiles: async () => {
+      if (state.rejectNextWatchFiles) {
+        state.rejectNextWatchFiles = false;
+        throw new Error('the answer was lost');
+      }
+      return { watching: true };
+    },
+    unwatchFiles: async () => {
+      state.unwatchFilesCalls += 1;
+      return { watching: false };
+    },
     removeFiles: async (_hostId, paths) => { for (const removed of paths) written.delete(removed); },
     removeEmptyDirectories: async () => undefined,
   };
@@ -509,6 +525,122 @@ describe('a session registered and released while another operation on its id is
     expect(relay.has('s1')).toBe(false);
     expect(host.written.size).toBe(0);
     expect(host.watching.size).toBe(0);
+  });
+
+  it('lets the newer of two registers started in one tick win: the older never pushes, so its files cannot land last', async () => {
+    const { host, relay } = makeRelay();
+    const { registration, settingsPath } = registrationFor();
+    fs.writeFileSync(path.join(registration.localSessionDirectory, 'older.json'), '{"which":"older"}');
+    fs.writeFileSync(path.join(registration.localSessionDirectory, 'newer.json'), '{"which":"newer"}');
+    const olderPath = '/home/dev/project/.kangentic/sessions/s1/older.json';
+    const newerPath = '/home/dev/project/.kangentic/sessions/s1/newer.json';
+
+    const older = relay.register({ ...registration, extraFiles: ['older.json'] });
+    const newer = relay.register({ ...registration, extraFiles: ['newer.json'] });
+    await Promise.all([older, newer]);
+
+    expect(host.state.writeCalls).toBe(1);
+    expect(host.written.has(olderPath)).toBe(false);
+    expect(host.written.has(newerPath)).toBe(true);
+    expect(host.written.has(settingsPath)).toBe(true);
+    expect(relay.has('s1')).toBe(true);
+  });
+
+  it('honors a release that arrives while the newer of two same-tick registers is pushing', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    try {
+      host.state.holdWrites = true;
+      const older = relay.register(registration);
+      const newer = relay.register(registration);
+      await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+
+      await relay.release('s1');
+      host.writeGates[0].release();
+      await Promise.all([older, newer]);
+
+      expect(host.state.writeCalls).toBe(1);
+      expect(host.written.size).toBe(0);
+      expect(host.watching.size).toBe(0);
+      expect(relay.has('s1')).toBe(false);
+      expect(intervals).not.toHaveBeenCalled();
+    } finally {
+      intervals.mockRestore();
+    }
+  });
+
+  it('ends a register without a push when a release arrives while it waits for an earlier one', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    host.state.holdWrites = true;
+    const earlier = relay.register(registration);
+    await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+    host.state.holdWrites = false;
+    const waiting = relay.register(registration);
+
+    await relay.release('s1');
+    host.writeGates[0].release();
+    await Promise.all([earlier, waiting]);
+
+    expect(host.state.writeCalls).toBe(1);
+    expect(host.written.size).toBe(0);
+    expect(host.watching.size).toBe(0);
+    expect(relay.has('s1')).toBe(false);
+  });
+
+  it('leaves no session and no timer when dispose runs while a register is pushing', async () => {
+    const { host, relay } = makeRelay();
+    const { registration } = registrationFor();
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    try {
+      host.state.holdWrites = true;
+      const registering = relay.register(registration);
+      await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+
+      relay.dispose();
+      host.writeGates[0].release();
+      await registering;
+
+      expect(relay.has('s1')).toBe(false);
+      expect(intervals).not.toHaveBeenCalled();
+    } finally {
+      intervals.mockRestore();
+    }
+  });
+
+  describe('with a transcript to tail', () => {
+    const transcriptFor = (): string => path.join(scratch, 'mirror', '.claude', 'projects', 'p', 'abc.jsonl');
+
+    it('still registers when the host fails to start tailing, writes no chunk, and asks the host to stop tailing once', async () => {
+      const { host, relay } = makeRelay();
+      const { registration } = registrationFor();
+      host.state.rejectNextWatchFiles = true;
+
+      await relay.register({ ...registration, transcriptFiles: [transcriptFor()] });
+
+      expect(relay.has('s1')).toBe(true);
+      relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, data: Buffer.from('x').toString('base64') });
+      expect(fs.existsSync(transcriptFor())).toBe(false);
+      // The host may have started before its answer was lost, and no release would stop it with no tails.
+      await vi.waitFor(() => expect(host.state.unwatchFilesCalls).toBe(1));
+    });
+
+    it('stops the host tailing when a release arrives during the push', async () => {
+      const { host, relay } = makeRelay();
+      const { registration } = registrationFor();
+      host.state.holdWrites = true;
+      const registering = relay.register({ ...registration, transcriptFiles: [transcriptFor()] });
+      await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+
+      await relay.release('s1');
+      host.writeGates[0].release();
+      await registering;
+
+      expect(host.state.unwatchFilesCalls).toBe(1);
+      expect(relay.has('s1')).toBe(false);
+      expect(host.watching.size).toBe(0);
+    });
   });
 
   it('counts the size of an answer in bytes, so about 90,000 CJK characters go in the raw part and arrive intact', async () => {

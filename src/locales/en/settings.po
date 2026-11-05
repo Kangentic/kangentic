@@ -7,16 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
-#. placeholder {0}: program.liveSessions
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0, plural, one {# terminal running} other {# terminals running}}"
-msgstr "{0, plural, one {# terminal running} other {# terminals running}}"
-
-#. placeholder {0}: probe.hostname
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key."
-msgstr "{0} now presents a different key."
-
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Opens the docs page."
@@ -73,6 +63,10 @@ msgstr "{displayName}, {percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr "{hostname} now presents a different key."
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
 msgstr "{hours, plural, one {# hr left} other {# hr left}}"
@@ -80,6 +74,10 @@ msgstr "{hours, plural, one {# hr left} other {# hr left}}"
 #: src/renderer/components/settings/settings-card.tsx
 msgid "{label}, always on"
 msgstr "{label}, always on"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{minutes, plural, one {# min left} other {# min left}}"

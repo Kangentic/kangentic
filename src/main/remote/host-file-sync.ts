@@ -261,7 +261,9 @@ export class HostFileSync {
       const existing = await files.readFile(excludeFile);
       const current = existing.exists && existing.content !== null ? existing.content : '';
       const have = new Set(current.split('\n').map((line) => line.trim()));
-      const wanted = created.map((file) => `/${path.relative(root.local, file.localPath).split(path.sep).join('/')}`).filter((line) => !have.has(line));
+      // Named from the working directory, not the root. Every worktree reads this file, and git anchors a
+      // leading slash to the top of the checkout it is looking at, which for a task's worktree is not the root.
+      const wanted = created.map((file) => `/${file.relative}`).filter((line) => !have.has(line));
       if (wanted.length === 0) return;
       const separator = current.length === 0 || current.endsWith('\n') ? '' : '\n';
       const marker = Array.from(have).some((line) => line.startsWith('# kangentic:')) ? '' : '# kangentic: agent runtime files (local ignore, safe to remove)\n';

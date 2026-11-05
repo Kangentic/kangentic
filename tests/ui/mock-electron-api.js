@@ -4693,7 +4693,9 @@
         return '/mock/path/test-project';
       },
       // window.__mockFilePath: the path selectFile() returns (consume-once); null is a cancel.
+      // window.__mockFileGate: a promise selectFile() awaits before it answers (a dialog the user has not closed yet).
       selectFile: async function (_options) {
+        if (window.__mockFileGate) await window.__mockFileGate;
         var override = window.__mockFilePath;
         if (override !== undefined) {
           window.__mockFilePath = undefined;
@@ -5174,7 +5176,9 @@
           if (win().__mockSshKeyFileError) throw new Error(win().__mockSshKeyFileError);
         },
         // A host whose key changed: window.__mockSshProbeResult overrides what it presents now.
+        // window.__mockSshChangedKeyError: a string that makes probeChangedKey() reject with it.
         probeChangedKey: async function (hostId) {
+          if (win().__mockSshChangedKeyError) throw new Error(win().__mockSshChangedKeyError);
           if (win().__mockSshProbeResult) return win().__mockSshProbeResult;
           return {
             hostname: 'stage.example.com', port: 22, keyType: 'ssh-ed25519',
@@ -5182,7 +5186,9 @@
             previousFingerprint: 'SHA256:b7Hc1nUe5oYw2DpQzR8kLm0XjVt3sAiG9fKq4NxE6yM',
           };
         },
+        // window.__mockSshTrustError: a string that makes trustNewKey() reject with it.
         trustNewKey: async function (hostId, shownFingerprint) {
+          if (win().__mockSshTrustError) throw new Error(win().__mockSshTrustError);
           win().__mockSshTrustedNewKey = { hostId: hostId, fingerprint: shownFingerprint };
           hosts = hosts.map(function (status) {
             return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;

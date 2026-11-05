@@ -43,7 +43,7 @@ export interface SshCliPlace {
   home: string;
   /** The host's login shell by program name, which decides how a typed command is quoted. */
   shellName: string;
-  /** This computer's folder standing in for the host's home, where readers look. Empty until a mirror exists (Phase 4). */
+  /** This computer's folder standing in for the host's home, where readers look. Empty when the place has no mirror. */
   localHome: string;
   /** Local folder to host folder: the shell folder maps to the project's folder on the host. */
   roots: ReadonlyArray<{ local: string; host: string }>;

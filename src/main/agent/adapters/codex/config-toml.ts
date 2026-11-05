@@ -53,8 +53,8 @@ const LONG_PATH_PREFIX = '\\\\?\\';
 export function codexHomeDir(place: CliPlace | null = null): string {
   // A Codex installed in a WSL distro keeps its files in the distro's home,
   // under the CODEX_HOME its own shell sets, reached through the share.
-  // A host's Codex home is not here: readers see this computer's mirror of it (empty until Phase 4's
-  // read mirror), never the local user's real `~/.codex`.
+  // A host's Codex home is not here: readers see this computer's mirror of it, never the local
+  // user's real `~/.codex`.
   if (place?.kind === 'ssh') return path.join(place.localHome, '.codex');
   if (place) {
     const distroOverride = place.facts.env.CODEX_HOME;

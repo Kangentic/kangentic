@@ -21,6 +21,15 @@ export interface InstalledProgramVersion {
   completedAtMs: number;
 }
 
+/**
+ * The version folder a running `host.js` belongs to, or null when it is not an install. The bundle sits at
+ * `<host root>/<version>/app/host.js`, and a copy run from anywhere else (a development build) reports none.
+ */
+export function programDirectoryOf(scriptPath: string): string | null {
+  const programDirectory = path.resolve(path.dirname(scriptPath), '..');
+  return path.basename(path.dirname(programDirectory)) === 'host' ? programDirectory : null;
+}
+
 /** Every complete version under `root`, oldest first. A folder with no `.complete` marker is half-installed and not listed. */
 export async function listInstalledVersions(root: string): Promise<InstalledProgramVersion[]> {
   let names: string[];

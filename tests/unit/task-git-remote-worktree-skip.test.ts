@@ -17,9 +17,11 @@
  * touches git or the filesystem; it only asserts whether `ensureWorktree()` /
  * `checkoutBranch()` were called.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from '../../src/main/ipc/helpers/task-git';
+import { spareInputsFor } from '../../src/main/ipc/helpers/spare-worktrees';
+import { setRemoteWorktreeResolver, type RemoteWorktreeBackend } from '../../src/main/git/remote-worktree';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task, AppConfig, Project } from '../../src/shared/types';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
@@ -592,6 +594,60 @@ describe('ensureTaskWorktree - setup phase outside the git queue', () => {
       { title: 'Fix the bug', worktreePath: null, rowReadsSoFar: 1 },
     ]);
     expect(setUpWorktreeMock).toHaveBeenCalledTimes(2);
+    expect(repo.recordWorktree).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a project on an SSH host runs no local spare and no local script', () => {
+  const hostBackend = { marker: 'host' } as unknown as RemoteWorktreeBackend;
+  const created = {
+    worktreePath: '/project/.kangentic/worktrees/1',
+    branchName: 'fix-the-bug-task-001',
+    worktreeFolder: '1',
+    baseBranch: 'main',
+    forkPointSha: 'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0',
+  };
+
+  function configWithScript(): AppConfig {
+    const config = makeConfig();
+    return { ...config, git: { ...config.git, worktreesEnabled: true, initScript: 'pnpm install' } };
+  }
+
+  beforeEach(() => {
+    ensureWorktreeMock.mockReset().mockResolvedValue(created);
+    setUpWorktreeMock.mockReset().mockResolvedValue(undefined);
+    prepareStaleWorktreeForCreationMock.mockReset().mockResolvedValue(false);
+    isGitRepoMock.mockReset().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    setRemoteWorktreeResolver(null);
+  });
+
+  it('has no spare inputs for a remote project even with a script configured, and has them for a local one', () => {
+    const context = makeContext(configWithScript());
+
+    expect(spareInputsFor(context, '/project')).toMatchObject({ initScript: 'pnpm install' });
+
+    setRemoteWorktreeResolver((projectPath) => (projectPath === '/project' ? hostBackend : null));
+    expect(spareInputsFor(context, '/project')).toBeNull();
+  });
+
+  it.each([
+    ['hold-prompt', 'launchAgent'],
+    ['background', 'none'],
+  ] as const)('ignores a %s script mode for a remote project, so the plain setup runs and no early agent starts', async (mode) => {
+    setRemoteWorktreeResolver((projectPath) => (projectPath === '/project' ? hostBackend : null));
+    const launchAgent = vi.fn(async () => null);
+    const initScript = mode === 'hold-prompt' ? { mode, launchAgent } : { mode };
+    const task = makeTask();
+    const repo = makeTaskRepoStub(task);
+
+    const handle = await ensureTaskWorktree(makeContext(configWithScript()), task, repo as never, '/project', { initScript });
+
+    expect(handle).toBeNull();
+    expect(launchAgent).not.toHaveBeenCalled();
+    expect(setUpWorktreeMock).toHaveBeenCalledTimes(1);
     expect(repo.recordWorktree).toHaveBeenCalledTimes(1);
   });
 });

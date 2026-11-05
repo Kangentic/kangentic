@@ -24,6 +24,7 @@ import * as fs from 'node:fs/promises';
 import { localPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { computeAutoBranchName, slugify } from '../../shared/slugify';
 import { storedWorktreeChoice, taskUsesWorktree } from '../../shared/worktree-choice';
+import { isSafeBranchName } from '../git/push-command';
 import { taskWorktreeFolderFor, taskWorktreePathFor } from '../git/task-worktree-folder';
 import type { RemoteWorktreeBackend, RemoteWorktreeResolver, RemoteWorktreeTask } from '../git/remote-worktree';
 import type { EnsureWorktreeResult } from '../git/worktree-manager';
@@ -33,9 +34,16 @@ const CREATE_TIMEOUT_MS = 240_000;
 const REMOVE_TIMEOUT_MS = 60_000;
 const LINE_PREFIX = 'KG:';
 
+/** Prints a reason as one `KG:error:` line and stops, for the two scripts that change a worktree. */
+const FAIL_FUNCTION = `fail() { printf 'KG:error:%s\\n' "$(printf '%s' "$1" | tr '\\n\\r' '  ')"; exit 3; }`;
+
+/** Clears the path, a worktree git knows or a husk it does not, then drops git's stale record of it. */
+const CLEAR_WORKTREE = `if [ -e "$worktree" ]; then git worktree remove --force "$worktree" >/dev/null 2>&1 || rm -rf "$worktree"; fi
+git worktree prune >/dev/null 2>&1`;
+
 /** Arguments are `repo worktree branch explicit candidates...`. Output is `KG:` lines, and a failure is `KG:error:`. */
 const CREATE_SCRIPT = `
-fail() { printf 'KG:error:%s\\n' "$(printf '%s' "$1" | tr '\\n\\r' '  ')"; exit 3; }
+${FAIL_FUNCTION}
 repo=$1; worktree=$2; branch=$3; explicit=$4; shift 4
 first=$1
 cd "$repo" 2>/dev/null || fail "The folder $repo does not exist on this host."
@@ -45,7 +53,7 @@ cd "$repo" 2>/dev/null || fail "The folder $repo does not exist on this host."
 git rev-parse --verify --quiet HEAD >/dev/null 2>&1 || { echo KG:skip:no-commits; exit 0; }
 fetched=0
 if git remote get-url origin >/dev/null 2>&1; then
-  GIT_TERMINAL_PROMPT=0 git fetch --quiet origin "$first" >/dev/null 2>&1 && fetched=1
+  GIT_TERMINAL_PROMPT=0 git fetch --quiet origin -- "$first" >/dev/null 2>&1 && fetched=1
 fi
 resolves() { git rev-parse --verify --quiet "$1^{commit}" >/dev/null 2>&1; }
 start=; basename=
@@ -61,8 +69,7 @@ fi
 branch_exists=0
 git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1 && branch_exists=1
 mkdir -p "\${worktree%/*}" || fail "Could not make the folder for $worktree on this host."
-if [ -e "$worktree" ]; then git worktree remove --force "$worktree" >/dev/null 2>&1 || rm -rf "$worktree"; fi
-git worktree prune >/dev/null 2>&1
+${CLEAR_WORKTREE}
 if [ "$branch_exists" = 1 ]; then
   out=$(git worktree add "$worktree" "$branch" 2>&1) || fail "$out"
   cut=0
@@ -77,11 +84,10 @@ if [ "$cut" = 1 ]; then echo "KG:base:$basename"; echo "KG:sha:$(git rev-parse "
 
 /** Arguments are `repo worktree`. Removes the worktree and git's record of it, and keeps the branch. */
 const REMOVE_SCRIPT = `
-fail() { printf 'KG:error:%s\\n' "$(printf '%s' "$1" | tr '\\n\\r' '  ')"; exit 3; }
+${FAIL_FUNCTION}
 repo=$1; worktree=$2
 cd "$repo" 2>/dev/null || fail "The folder $repo does not exist on this host."
-if [ -e "$worktree" ]; then git worktree remove --force "$worktree" >/dev/null 2>&1 || rm -rf "$worktree"; fi
-git worktree prune >/dev/null 2>&1
+${CLEAR_WORKTREE}
 [ ! -e "$worktree" ] || fail "Could not remove $worktree."
 echo KG:removed
 `.trim();
@@ -121,6 +127,18 @@ function readScriptOutput(result: HostCommandResult): ScriptOutput {
   if (failure) return { lines, error: failure.slice('error:'.length) };
   if (result.code !== 0) return { lines, error: result.stderr.trim() || `The host's shell exited with ${String(result.code)}.` };
   return { lines, error: null };
+}
+
+/** What a `key:value` line of a script's output holds, empty when there is no such line. */
+function lineValue(lines: string[], key: string): string {
+  return lines.find((line) => line.startsWith(`${key}:`))?.slice(key.length + 1).trim() ?? '';
+}
+
+/** A name that starts with a dash would reach the host's git as an option. Refused before anything runs. */
+function assertSafeBranches(names: readonly string[]): void {
+  for (const name of names) {
+    if (!isSafeBranchName(name)) throw new Error(`Could not make the worktree on the host: "${name}" is not a usable branch name.`);
+  }
 }
 
 /**
@@ -169,6 +187,7 @@ export class HostWorktrees implements RemoteWorktreeBackend {
     options?.signal?.throwIfAborted();
     const branchName = task.branch_name ?? computeAutoBranchName(slugify(task.title) || 'task', task.id.slice(0, 8));
     const { candidates, explicit } = baseCandidates(task, gitConfig.defaultBaseBranch);
+    assertSafeBranches([branchName, ...candidates]);
     const result = await this.deps.runCommand(runScriptRequest(
       CREATE_SCRIPT,
       [this.deps.hostRepoPath, hostPath, branchName, explicit ? '1' : '0', ...candidates],
@@ -189,17 +208,12 @@ export class HostWorktrees implements RemoteWorktreeBackend {
 
     // The stand-in, so the folder exists here as it does for a worktree on this computer.
     await fs.mkdir(localPath, { recursive: true });
-    const valueOf = (key: string): string | null => {
-      const line = output.lines.find((candidate) => candidate.startsWith(`${key}:`));
-      const value = line ? line.slice(key.length + 1).trim() : '';
-      return value === '' ? null : value;
-    };
     return {
       worktreePath: localPath,
-      branchName: valueOf('branch') ?? branchName,
+      branchName: lineValue(output.lines, 'branch') || branchName,
       worktreeFolder: taskWorktreeFolderFor(task),
-      baseBranch: valueOf('base'),
-      forkPointSha: valueOf('sha'),
+      baseBranch: lineValue(output.lines, 'base') || null,
+      forkPointSha: lineValue(output.lines, 'sha') || null,
     };
   }
 
@@ -208,10 +222,10 @@ export class HostWorktrees implements RemoteWorktreeBackend {
     const result = await this.deps.runCommand(runScriptRequest(PENDING_SCRIPT, [hostPath], this.deps.hostRepoPath, REMOVE_TIMEOUT_MS));
     const output = readScriptOutput(result);
     if (output.error) throw new Error(output.error);
-    const value = (key: string): string => output.lines.find((line) => line.startsWith(`${key}:`))?.slice(key.length + 1).trim() ?? '';
+    const uncommitted = lineValue(output.lines, 'uncommitted');
     // A count that cannot be read is an error, never zero: zero says the tree is clean (and `Number('')` is 0).
-    if (!/^\d+$/.test(value('uncommitted'))) throw new Error('The host did not say how many files are changed.');
-    return { uncommittedFileCount: Number(value('uncommitted')), currentBranch: value('branch') || null };
+    if (!/^\d+$/.test(uncommitted)) throw new Error('The host did not say how many files are changed.');
+    return { uncommittedFileCount: Number(uncommitted), currentBranch: lineValue(output.lines, 'branch') || null };
   }
 
   async removeWorktree(worktreePath: string): Promise<boolean> {

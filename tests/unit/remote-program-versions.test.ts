@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { listInstalledVersions, pruneOldVersions } from '../../src/main/remote/helper/program-versions';
+import { listInstalledVersions, programDirectoryOf, pruneOldVersions } from '../../src/main/remote/helper/program-versions';
 import { RemoteLink } from '../../src/main/remote/link/remote-link';
 import { dialHelper, makeHelperRig, settle } from './helpers/remote-link-rig';
 
@@ -33,6 +33,17 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe('the version folder a running host.js belongs to', () => {
+  it('is the version folder when the bundle sits at <host root>/<version>/app/host.js', () => {
+    const versionFolder = path.join(os.tmpdir(), 'home-dev', '.kangentic', 'host', '0.53.0');
+    expect(programDirectoryOf(path.join(versionFolder, 'app', 'host.js'))).toBe(versionFolder);
+  });
+
+  it('is null for a build that is not an install, such as one under dist', () => {
+    expect(programDirectoryOf(path.join(os.tmpdir(), 'checkout', 'dist', 'app', 'host.js'))).toBeNull();
+  });
 });
 
 describe('listing installed versions', () => {

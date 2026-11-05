@@ -12,7 +12,7 @@
  *   half-written last line, because the agent itself writes in the middle of one.
  * - A backfill is paced: a few chunks a scan, so a large transcript on resume streams in beside the
  *   terminal instead of in front of it. The last pass at `unwatch` is not paced, so the final entries of
- *   a session are not left behind.
+ *   a session are not left behind. It is capped, so a large backfill can end short, and says so in the log.
  * - A file that shrinks or is replaced (another inode) starts over: the first chunk says `reset`, and
  *   Kangentic empties its copy before it writes. A file that is not there yet is skipped until it is.
  *
@@ -91,10 +91,23 @@ export class FileTail {
     if (!entry) return;
     if (entry.current) await entry.current;
     await this.scan(sessionId, entry, this.options.finalChunks ?? DEFAULT_FINAL_CHUNKS);
+    await this.warnWhenBehind(sessionId, entry);
+    // A `watch` of this id during the last pass replaced this entry, and that tail goes on.
+    if (this.tailing.get(sessionId) !== entry) return;
     this.tailing.delete(sessionId);
     if (this.tailing.size === 0 && this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+  }
+
+  /** The last pass is capped, so a large file still backfilling ends short. The next session here starts over. */
+  private async warnWhenBehind(sessionId: string, entry: Tailing): Promise<void> {
+    for (const file of entry.files) {
+      const stats = await fs.stat(file.path).catch(() => null);
+      if (stats && file.sent < stats.size) {
+        console.warn(`[file-tail] ${sessionId.slice(0, 8)}: stopped ${stats.size - file.sent} bytes before the end of file ${file.key}`);
+      }
     }
   }
 

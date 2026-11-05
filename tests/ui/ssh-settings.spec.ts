@@ -52,6 +52,9 @@ async function resetMock() {
     delete mockWindow.__mockSshProbeError;
     delete mockWindow.__mockSshAddError;
     delete mockWindow.__mockSshProbeGate;
+    delete mockWindow.__mockFileGate;
+    delete mockWindow.__mockSshChangedKeyError;
+    delete mockWindow.__mockSshTrustError;
   });
 }
 
@@ -171,6 +174,38 @@ test.describe('choosing a key file', () => {
     await page.locator('[data-testid="ssh-add-key-choose"]').click();
 
     await expect(page.locator('[data-testid="ssh-add-error"]')).toContainText('has a passphrase');
+    await expect(page.locator('[data-testid="ssh-add-key-path"]')).toHaveValue('');
+    await expect(page.locator('[data-testid="ssh-add-submit"]')).toBeDisabled();
+  });
+
+  test('lands nowhere when Add host is cancelled while the file dialog is open, and a reopened form has no stale path', async () => {
+    await openKeyFileStep();
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as { __mockFileGate?: Promise<void>; __releaseFileDialog?: () => void; __mockFilePath?: string };
+      mockWindow.__mockFileGate = new Promise<void>((resolve) => { mockWindow.__releaseFileDialog = resolve; });
+      mockWindow.__mockFilePath = 'C:\\Users\\dev\\.ssh\\id_stale';
+    });
+    await page.locator('[data-testid="ssh-add-key-choose"]').click();
+    await page.locator('[data-testid="ssh-add-cancel"]').click();
+    await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
+
+    // The user closes the file dialog after the form was cancelled.
+    await page.evaluate(async () => {
+      const mockWindow = window as unknown as { __releaseFileDialog: () => void; __mockFileGate?: Promise<void> };
+      mockWindow.__releaseFileDialog();
+      mockWindow.__mockFileGate = undefined;
+      // Frames and a task after the release, which is when a late setState would have landed.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    // Reopen the form (the settings panel is still open) and walk to the key file step again.
+    await page.locator('[data-testid="ssh-add-host"]').click();
+    await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+    await page.locator('[data-testid="ssh-add-destination"]').fill('dev@lab.example.test');
+    await page.locator('[data-testid="ssh-add-continue"]').click();
+    await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+    await page.locator('[data-testid="ssh-signin-key-file"]').click();
     await expect(page.locator('[data-testid="ssh-add-key-path"]')).toHaveValue('');
     await expect(page.locator('[data-testid="ssh-add-submit"]')).toBeDisabled();
   });
@@ -319,6 +354,34 @@ test.describe('a host whose key changed', () => {
 
     await expect(page.locator('[data-testid="ssh-trust-new-key"]')).toHaveCount(0);
     expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__mockSshTrustedNewKey)).toEqual({ hostId: 'h1', fingerprint: NEW_FINGERPRINT });
+  });
+
+  test('shows the reason on the row, and opens no dialog, when the new key cannot be read', async () => {
+    await seedChangedKey();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshChangedKeyError = 'ssh-keyscan: connection refused';
+    });
+    await openSshTab();
+
+    await page.locator('[data-testid="ssh-host-trust-new-key"]').click();
+
+    await expect(page.locator('[data-testid="ssh-host-row-error"]')).toContainText('connection refused');
+    await expect(page.locator('[data-testid="ssh-trust-new-key"]')).toHaveCount(0);
+  });
+
+  test('shows the reason on the row, and closes the dialog, when trusting the new key fails', async () => {
+    await seedChangedKey();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshTrustError = 'The host key changed again.';
+    });
+    await openSshTab();
+
+    await page.locator('[data-testid="ssh-host-trust-new-key"]').click();
+    await page.locator('[data-testid="ssh-trust-new-key-confirm"]').click();
+
+    await expect(page.locator('[data-testid="ssh-host-row-error"]')).toContainText('changed again');
+    await expect(page.locator('[data-testid="ssh-trust-new-key"]')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__mockSshTrustedNewKey)).toBeUndefined();
   });
 
   test('leaves out the key before when it cannot be read, and the dialog still works', async () => {

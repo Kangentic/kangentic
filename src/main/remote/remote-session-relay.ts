@@ -138,20 +138,24 @@ export class RemoteSessionRelay {
    */
   async register(registration: RemoteSessionRegistration): Promise<void> {
     const { sessionId } = registration;
-    // A second registration of one id replaces the first. One still pushing is told to stop and waited
-    // for: both write the same host paths, and its write landing last would leave its files in place.
-    for (let earlier = this.registering.get(sessionId); earlier; earlier = this.registering.get(sessionId)) {
-      earlier.released = true;
-      await earlier.settled;
-    }
-    await this.release(sessionId);
+    // A second registration of one id replaces the first. The slot is claimed before the first await, so
+    // two calls in one tick queue too. The earlier one is told to stop and waited for: both write the
+    // same host paths, and its write landing last would leave its files in place.
     let settle = (): void => undefined;
     const pending: PendingRegistration = { released: false, settled: new Promise((resolve) => { settle = resolve; }) };
+    const earlier = this.registering.get(sessionId);
     this.registering.set(sessionId, pending);
     try {
+      if (earlier) {
+        earlier.released = true;
+        await earlier.settled;
+      }
+      await this.releaseSession(sessionId);
+      // Released, or replaced by a newer registration, while it waited its turn: there is nothing to undo.
+      if (pending.released) return;
       await this.pushSession(registration, pending);
     } finally {
-      this.registering.delete(sessionId);
+      if (this.registering.get(sessionId) === pending) this.registering.delete(sessionId);
       settle();
     }
   }
@@ -208,6 +212,8 @@ export class RemoteSessionRelay {
         } catch (error) {
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+          // The host may have started before its answer was lost, and with no tails no release would stop it.
+          void this.options.files.unwatchFiles(registration.hostId, registration.sessionId).catch(() => undefined);
         }
       }
     } catch (error) {
@@ -245,12 +251,14 @@ export class RemoteSessionRelay {
 
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
   async release(sessionId: string): Promise<void> {
+    const pending = this.registering.get(sessionId);
+    if (pending) pending.released = true;
+    await this.releaseSession(sessionId);
+  }
+
+  private async releaseSession(sessionId: string): Promise<void> {
     const entry = this.sessions.get(sessionId);
-    if (!entry) {
-      const pending = this.registering.get(sessionId);
-      if (pending) pending.released = true;
-      return;
-    }
+    if (!entry) return;
     // A repeat waits for the first: `register` must not push this id's files until the old ones are gone,
     // or the release still running deletes what it just wrote.
     entry.releaseDone ??= this.finishRelease(sessionId, entry);
@@ -264,7 +272,8 @@ export class RemoteSessionRelay {
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    // The transcript's last bytes arrive before this answers, so the copy here holds the whole of it.
+    // The host's last pass arrives before this answers, so a tail that had caught up leaves the whole
+    // transcript in the copy here. One still backfilling can stop short, and the next session here starts over.
     if (entry.tails.size > 0) {
       await this.options.files.unwatchFiles(entry.hostId, sessionId).catch((error: unknown) => {
         this.options.log?.(`could not stop the host tailing ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -363,6 +372,8 @@ export class RemoteSessionRelay {
   }
 
   dispose(): void {
+    // A push still running ends in its own released path instead of starting a timer on a shut-down link.
+    for (const pending of this.registering.values()) pending.released = true;
     for (const entry of this.sessions.values()) clearInterval(entry.timer);
     this.sessions.clear();
   }

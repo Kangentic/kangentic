@@ -160,6 +160,36 @@ afterEach(() => {
   fs.rmSync(scratch, { recursive: true, force: true });
 });
 
+describe('the host events a remote agent produces, through the manager\'s own host-event path', () => {
+  // Every relay test delivers by hand. Without this, dropping a case in the manager's host-event switch
+  // would lose every remote hook file or transcript chunk in the real app with all of those still green.
+  it('hands a hookFile event to relay.deliver and a fileChunk event to relay.deliverChunk', () => {
+    const listenerRef: { current: ((event: PtyHostEvent) => void) | null } = { current: null };
+    const transport: PtyHostTransport = {
+      hostPid: null,
+      post: () => undefined,
+      attachRendererPort: () => undefined,
+      request: () => Promise.resolve(undefined as never),
+      setEventListener: (listener) => { listenerRef.current = listener; },
+      shutdown: () => undefined,
+    };
+    const manager = new SessionManager({ ptyHostTransport: transport });
+    const relay = { deliver: vi.fn(), deliverChunk: vi.fn() };
+    manager.setRemoteSessionRelay(relay as unknown as RemoteSessionRelay);
+
+    const hookFile: PtyHostEvent = { type: 'hookFile', sessionId: 's1', folder: 'inbox', name: '1-2.rec', content: 'K1\nidle\n\n{}' };
+    const fileChunk: PtyHostEvent = { type: 'fileChunk', sessionId: 's1', key: 'transcript', offset: 0, reset: false, data: 'aGk=' };
+    expect(listenerRef.current).not.toBeNull();
+    listenerRef.current?.(hookFile);
+    listenerRef.current?.(fileChunk);
+
+    expect(relay.deliver).toHaveBeenCalledTimes(1);
+    expect(relay.deliver).toHaveBeenCalledWith(hookFile);
+    expect(relay.deliverChunk).toHaveBeenCalledTimes(1);
+    expect(relay.deliverChunk).toHaveBeenCalledWith(fileChunk);
+  });
+});
+
 describe('spawning an agent session on a host', () => {
   it('pushes the session\'s files before the agent exists, then starts the host\'s login shell in the project folder', async () => {
     const rig = await makeRig();

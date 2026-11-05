@@ -61,6 +61,12 @@ function samePath(left: string, right: string): boolean {
   return normalize(left) === normalize(right);
 }
 
+/** The app's version of the host program. A packaged app has one asset per CPU, and they all carry it. */
+function assetVersion(asset: HostAsset | readonly HostAsset[] | null | undefined): string | undefined {
+  const first = (Array.isArray(asset) ? asset[0] : asset) as HostAsset | null | undefined;
+  return first?.version;
+}
+
 export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const log = deps.log ?? ((line: string) => console.log(line));
   const hosts = new SshHostRepository();
@@ -69,8 +75,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
    * two computers on one host account never delete each other's version between connects. Best effort.
    */
   const pruneOldProgramVersions = async (hostId: string): Promise<void> => {
-    const asset = deps.hostAsset?.();
-    const appVersion = Array.isArray(asset) ? asset[0]?.version : (asset as HostAsset | null | undefined)?.version;
+    const appVersion = assetVersion(deps.hostAsset?.());
     if (!appVersion) return;
     try {
       await hostService.pruneVersions(hostId, [appVersion], PRUNE_AFTER_DAYS);
@@ -89,8 +94,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const relay = new RemoteSessionRelay({ files: hostService, log });
   deps.sessionManager.setRemoteSessionRelay(relay);
   const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
-  // A link reports its own state; a drop is a state here, never the end of a session.
   const pruned = new Set<string>();
+  // A link reports its own state; a drop is a state here, never the end of a session.
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
     status.noteLink(event.hostId, event.state, event.detail);
     // Once per host per run, when its link first comes up: tidy the versions of the program a host kept.

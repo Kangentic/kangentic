@@ -179,11 +179,16 @@ export function fingerprintOf(base64Key: string): string {
   return `SHA256:${createHash('sha256').update(Buffer.from(base64Key, 'base64')).digest('base64').replace(/=+$/, '')}`;
 }
 
-/** The key entry for a host in a known_hosts file's text, preferring the host asked for and falling back to the last line (the final hop's). */
-export function pickKnownHostsEntry(text: string, token: string): { hostField: string; keyType: string; base64: string } | null {
-  const entries = text.split(/\r?\n/)
+/** The key lines of known_hosts text as host field, key type and key, without comments or marked lines. */
+function knownHostsEntries(text: string): string[][] {
+  return text.split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/))
     .filter((parts) => parts.length >= 3 && !parts[0].startsWith('#') && !parts[0].startsWith('@'));
+}
+
+/** The key entry for a host in a known_hosts file's text, preferring the host asked for and falling back to the last line (the final hop's). */
+export function pickKnownHostsEntry(text: string, token: string): { hostField: string; keyType: string; base64: string } | null {
+  const entries = knownHostsEntries(text);
   const matched = entries.filter((parts) => parts[0].split(',').includes(token)).at(-1);
   const chosen = matched ?? entries.at(-1);
   if (!chosen) return null;
@@ -257,7 +262,10 @@ async function recordKnownHostsLine(target: ResolvedTarget, knownHostsLine: stri
   await fs.appendFile(target.userKnownHostsFile, `${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}${knownHostsLine}\n`, { mode: 0o600 });
 }
 
-/** Remove a host's recorded key, so the next connection asks again. Used when it changed and the user knows why. */
+/**
+ * Remove a host's recorded key, so the next connection asks again. The app replaces a changed key through
+ * `replaceHostKey`. This is what the setup rig calls to walk the changed-key steps one at a time.
+ */
 export async function forgetHostKey(destination: string, deps: SshSetupDeps): Promise<void> {
   await removeRecordedKey(await resolveTarget(destination, deps), deps);
 }
@@ -278,9 +286,7 @@ export async function readRecordedFingerprint(destination: string, deps: SshSetu
     const result = await deps.run(deps.sshKeygenPath, ['-F', knownHostsToken(target), '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
     if (result.code !== 0) return null;
     // `-F` prints a comment line, then the matching known_hosts line, whose host field is hashed by default.
-    const entry = result.stdout.split(/\r?\n/)
-      .map((line) => line.trim().split(/\s+/))
-      .find((parts) => parts.length >= 3 && !parts[0].startsWith('#') && !parts[0].startsWith('@'));
+    const entry = knownHostsEntries(result.stdout)[0];
     return entry ? fingerprintOf(entry[2]) : null;
   } catch {
     return null;

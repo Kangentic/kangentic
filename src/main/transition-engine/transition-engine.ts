@@ -118,6 +118,19 @@ export interface SpawnOverrides {
   earlyAgent?: EarlyAgentHandle;
 }
 
+/** What an agent spawn takes: the same list on the wrapper that holds its host file pull and on the spawn. */
+type SpawnAgentArguments = [
+  config: ActionConfig,
+  task: Task,
+  vars: Record<string, string>,
+  permissionOverride?: PermissionMode | null,
+  resumePrompt?: string,
+  signal?: AbortSignal,
+  agentOverride?: string,
+  handoffPromptPrefix?: string,
+  spawnOverrides?: SpawnOverrides,
+];
+
 /** What a spawn passes `resolveLaunch`: its decisions so far, the ids, and the command-line prompt. */
 interface LaunchInput {
   task: Task;
@@ -726,11 +739,11 @@ export class TransitionEngine {
     };
   }
 
-  private executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
-    return withHostFilePull((hostFilePull) => this.spawnAgentWithPull(hostFilePull, config, task, vars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides));
+  private executeSpawnAgent(...args: SpawnAgentArguments): Promise<SpawnOutcome> {
+    return withHostFilePull((hostFilePull) => this.spawnAgentWithPull(hostFilePull, ...args));
   }
 
-  private async spawnAgentWithPull(hostFilePull: HostFilePull, config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
+  private async spawnAgentWithPull(hostFilePull: HostFilePull, ...[config, task, vars, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides]: SpawnAgentArguments): Promise<SpawnOutcome> {
     const appConfig = this.getConfig();
 
     // Resolve which agent adapter to use.

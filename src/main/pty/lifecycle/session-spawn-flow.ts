@@ -710,8 +710,7 @@ export async function performSpawn(
   // never expected the agent to report it.
   // Not for a remote session: its filesystem pathway looks for the agent's transcript folder on THIS
   // computer, where the host's does not exist. The hook and output pathways need no init, and a
-  // caller-owned id (Claude's `--session-id`) is already known. The read mirror (Phase 4) brings the
-  // filesystem pathway back.
+  // caller-owned id (Claude's `--session-id`) is already known.
   if (!remotePlan) {
     context.sessionIdManager.init(
       id,
@@ -746,8 +745,8 @@ export async function performSpawn(
   // so a previous run's status cannot have flowed. For Claude this is the sole
   // trigger that starts the transcript fallback for a background session.
   const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
-  // Not for a remote session: the reader tails the agent's transcript under THIS computer's home,
-  // which a host's agent never writes. It joins the read mirror in Phase 4.
+  // Not for a remote session: the copy of its transcript here backfills on a resume, and the reader
+  // would count that backfill as fresh usage. The live figures come from the status line the hooks carry.
   if (input.agentSessionId && callerOwnedSessionHistory && !remotePlan) {
     context.sessionHistoryReader.attach({
       sessionId: id,

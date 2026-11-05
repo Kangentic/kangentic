@@ -6,7 +6,7 @@
  * What a user loses if it breaks: a remote conversation that shows nothing in the viewer, the search index
  * and the token ledger, or a copy that is a different file from the one the agent is writing.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -139,6 +139,75 @@ describe('the helper\'s file tail', () => {
     fs.appendFileSync(file, 'b');
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(bytesOf(events)).toBe('a'.repeat(500));
+  });
+
+  it('says reset, and starts over from byte 0, when a LONGER file replaces it under a new inode', async () => {
+    const file = path.join(folder, 'replaced.jsonl');
+    const incoming = path.join(folder, 'incoming.jsonl');
+    fs.writeFileSync(file, 'short\n');
+    const inodeBefore = fs.statSync(file).ino;
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => bytesOf(events) === 'short\n');
+
+    // The new file exists beside the old one before the old one goes, so the two cannot share an inode.
+    const replacement = 'a replacement much longer than the first file\n';
+    fs.writeFileSync(incoming, replacement);
+    fs.rmSync(file);
+    fs.renameSync(incoming, file);
+    if (fs.statSync(file).ino === inodeBefore) return; // a file system that reports no inode: only the size half exists there
+
+    await until(() => events.some((event) => event.reset));
+    const resetChunk = events.find((event) => event.reset)!;
+    expect(resetChunk.offset).toBe(0);
+    expect(Buffer.from(resetChunk.data, 'base64').toString('utf8')).toBe(replacement);
+  });
+
+  it('keeps the new tail running when a watch replaces the entry during the last pass of an unwatch', async () => {
+    const first = path.join(folder, 'first.jsonl');
+    const second = path.join(folder, 'second.jsonl');
+    fs.writeFileSync(first, 'one\n');
+    fs.writeFileSync(second, 'two\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: first }]);
+    await until(() => bytesOf(events) === 'one\n');
+
+    const stopping = tail.unwatch('s1');
+    // Synchronously after the call: the unwatch is still in its last pass.
+    tail.watch('s1', [{ key: '1', path: second }]);
+    await stopping;
+
+    expect(tail.isWatching('s1')).toBe(true);
+    await until(() => events.some((event) => event.key === '1' && Buffer.from(event.data, 'base64').toString('utf8') === 'two\n'));
+    fs.appendFileSync(second, 'more\n');
+    await until(() => events.some((event) => event.key === '1' && Buffer.from(event.data, 'base64').toString('utf8') === 'more\n'));
+  });
+
+  describe('the last pass at unwatch', () => {
+    it('logs how many bytes it left when the finalChunks cap stopped it, and logs nothing for a tail that caught up', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const big = path.join(folder, 'big.jsonl');
+        fs.writeFileSync(big, 'x'.repeat(500));
+        const capped = tailer({ chunkBytes: 100, chunksPerScan: 1, finalChunks: 2, intervalMs: 60_000 });
+        capped.tail.watch('s1', [{ key: '0', path: big }]);
+        await capped.tail.unwatch('s1');
+        expect(bytesOf(capped.events)).toBe('x'.repeat(200));
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain('300 bytes');
+
+        warn.mockClear();
+        const small = path.join(folder, 'small.jsonl');
+        fs.writeFileSync(small, 'done\n');
+        const caughtUp = tailer({ intervalMs: 60_000 });
+        caughtUp.tail.watch('s2', [{ key: '0', path: small }]);
+        await caughtUp.tail.unwatch('s2');
+        expect(bytesOf(caughtUp.events)).toBe('done\n');
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 
   it('tails several files of one session under their own keys', async () => {

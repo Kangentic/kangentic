@@ -9170,7 +9170,6 @@ export interface ElectronAPI {
     reconnectHost: (hostId: string) => Promise<SshHostStatus>;
     /** What the host's program reports. Rejects while the host is not connected, with the reason. */
     hostProgram: (hostId: string) => Promise<SshHostProgram>;
-    /** Forget the recorded key of a host whose key changed, so the next connection asks again. */
     /** Whether a key file the user chose can be used. Rejects with the reason, such as a passphrase. */
     checkKeyFile: (keyFilePath: string) => Promise<void>;
     /** The key a host whose key changed presents now, and the fingerprint trusted before when it can be read. Trusts nothing. */

@@ -112,7 +112,7 @@ describe('delivery', () => {
     const helper = makeSide('helper', { ackEveryBytes: 1 });
     connect(link, helper);
     await settle();
-    for (let n = 0; n < 5; n += 1) link.endpoint.send({ n }, Buffer.alloc(100, 1));
+    for (let index = 0; index < 5; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(100, 1));
     await settle();
     expect(link.endpoint.stats.retainedFrames).toBe(0);
     expect(link.endpoint.stats.retainedBytes).toBe(0);
@@ -125,14 +125,14 @@ describe('resuming', () => {
     const helper = makeSide('helper');
     const [linkStream] = connect(link, helper);
     await settle();
-    for (let n = 0; n < 5; n += 1) link.endpoint.send({ n });
+    for (let index = 0; index < 5; index += 1) link.endpoint.send({ n: index });
     await settle();
     linkStream.destroy();
     await settle();
     expect(link.detached).toHaveLength(1);
     expect(helper.detached).toHaveLength(1);
-    for (let n = 5; n < 10; n += 1) link.endpoint.send({ n });
-    for (let n = 100; n < 103; n += 1) helper.endpoint.send({ n });
+    for (let index = 5; index < 10; index += 1) link.endpoint.send({ n: index });
+    for (let index = 100; index < 103; index += 1) helper.endpoint.send({ n: index });
     connect(link, helper);
     await settle();
     expect(indexes(helper)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -147,7 +147,7 @@ describe('resuming', () => {
     const lossy = lossyConnect(link, helper);
     await settle();
     lossy.dropNext(1_000_000);
-    for (let n = 0; n < 4; n += 1) link.endpoint.send({ n }, Buffer.alloc(300, n));
+    for (let index = 0; index < 4; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(300, index));
     await settle();
     expect(helper.messages).toHaveLength(0);
     lossy.streams[0].destroy();
@@ -162,18 +162,18 @@ describe('resuming', () => {
     const helper = makeSide('helper');
     const lossy = lossyConnect(link, helper);
     await settle();
-    for (let n = 0; n < 6; n += 1) link.endpoint.send({ n }, Buffer.alloc(5000, n));
+    for (let index = 0; index < 6; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(5000, index));
     await settle();
     lossy.dropNext(40);
-    for (let n = 6; n < 20; n += 1) link.endpoint.send({ n }, Buffer.alloc(5000, n));
+    for (let index = 6; index < 20; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(5000, index));
     await settle();
     expect(helper.detached.some((reason) => reason.includes('damaged'))).toBe(true);
     connect(link, helper);
     await settle();
-    expect(indexes(helper)).toEqual(Array.from({ length: 20 }, (_, n) => n));
+    expect(indexes(helper)).toEqual(Array.from({ length: 20 }, (_, index) => index));
     for (const message of helper.messages) {
-      const n = (message.json as { n: number }).n;
-      expect(message.raw).toBe(String.fromCharCode(n).repeat(5000));
+      const index = (message.json as { n: number }).n;
+      expect(message.raw).toBe(String.fromCharCode(index).repeat(5000));
     }
   });
 });
@@ -188,7 +188,7 @@ describe('what cannot be replayed', () => {
     await settle();
     linkStream.destroy();
     await settle();
-    for (let n = 1; n <= 8; n += 1) link.endpoint.send({ n }, Buffer.alloc(900, n));
+    for (let index = 1; index <= 8; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(900, index));
     connect(link, helper);
     await settle();
     expect(helper.gaps).toHaveLength(1);
@@ -209,7 +209,7 @@ describe('what cannot be replayed', () => {
     const link = makeSide('link');
     connect(link, helper);
     await settle();
-    for (let n = 0; n < 3; n += 1) helper.endpoint.send({ n }, Buffer.alloc(200));
+    for (let index = 0; index < 3; index += 1) helper.endpoint.send({ n: index }, Buffer.alloc(200));
     await settle();
     link.endpoint.detach();
     await settle();
@@ -301,7 +301,7 @@ describe('liveness', () => {
     const [, helperStream] = connect(link, helper);
     await settle();
     helperStream.pause();
-    for (let n = 0; n < 12; n += 1) link.endpoint.send({ n }, Buffer.alloc(100_000, n));
+    for (let index = 0; index < 12; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(100_000, index));
     expect(link.detached.some((reason) => reason.includes('send queue'))).toBe(true);
     expect(link.endpoint.stats.retainedFrames).toBeGreaterThan(0);
   });
@@ -310,7 +310,7 @@ describe('liveness', () => {
     const link = makeSide('link');
     const helper = makeSide('helper');
     // Seven 1 MB frames, below the 8 MB default retention limit, written all at once on attach.
-    for (let n = 0; n < 7; n += 1) link.endpoint.send({ n }, Buffer.alloc(1024 * 1024, n));
+    for (let index = 0; index < 7; index += 1) link.endpoint.send({ n: index }, Buffer.alloc(1024 * 1024, index));
     const [, helperStream] = connect(link, helper);
     helperStream.pause();
     await settle();
@@ -417,7 +417,7 @@ describe('handlers that throw', () => {
     const rig = makeThrowing({ onGap: () => { throw boom; } });
     const link = makeSide('link');
     // The helper endpoint has sent more than it retains, so the link asking to resume from 0 is a gap.
-    for (let n = 0; n < 8; n += 1) rig.endpoint.send({ n }, Buffer.alloc(900, n));
+    for (let index = 0; index < 8; index += 1) rig.endpoint.send({ n: index }, Buffer.alloc(900, index));
     connect(link, { endpoint: rig.endpoint } as Side);
     await settle();
     expect(rig.errors).toContain(boom);

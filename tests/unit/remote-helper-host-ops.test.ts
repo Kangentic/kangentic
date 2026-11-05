@@ -347,4 +347,16 @@ describe('files on the host', () => {
     await settle();
     await rejected;
   });
+
+  it.each([
+    ['a path outside the home', () => '/etc/hostname'],
+    ['a path that climbs out of the home', () => path.join(home, '..', 'x')],
+  ])('refuses to tail %s, so a host file outside home is never copied', async (_name, makePath) => {
+    const rig = makeRig();
+    await settle();
+    const attempt = rig.link.requestHelper('watchFiles', { sessionId: 's1', files: [{ key: '0', path: makePath() }] });
+    const rejected = expect(attempt).rejects.toThrow('not inside the home folder');
+    await settle();
+    await rejected;
+  });
 });

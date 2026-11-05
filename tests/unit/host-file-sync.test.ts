@@ -167,6 +167,22 @@ describe('pushing what the adapter changed', () => {
     expect(exclude.match(/# kangentic:/g)).toHaveLength(1);
   });
 
+  it('names a file made in a task worktree from the worktree\'s top, because git anchors a leading slash to the checkout it reads', async () => {
+    host.directories.add('/home/dev/app/.git/info');
+    const worktreeFolder = path.join(projectFolder, '.kangentic', 'worktrees', '7');
+    await fs.mkdir(worktreeFolder, { recursive: true });
+    const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, worktreeFolder, place);
+    await fs.mkdir(path.join(worktreeFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(worktreeFolder, '.cursor', 'mcp.json'), '{}');
+
+    await sync.push();
+
+    expect(host.files.get('/home/dev/app/.kangentic/worktrees/7/.cursor/mcp.json')).toBe('{}');
+    const exclude = host.files.get('/home/dev/app/.git/info/exclude') ?? '';
+    expect(exclude.split('\n')).toContain('/.cursor/mcp.json');
+    expect(exclude).not.toContain('.kangentic/worktrees');
+  });
+
   it('adds nothing to the exclude file of a folder that is not a git checkout, and does not create .git', async () => {
     const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
     await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });

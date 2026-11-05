@@ -7,16 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: tr\n"
 
-#. placeholder {0}: program.liveSessions
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0, plural, one {# terminal running} other {# terminals running}}"
-msgstr ""
-
-#. placeholder {0}: probe.hostname
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{0} now presents a different key."
-msgstr ""
-
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #, fuzzy
 msgid "{blurb}. Opens the docs page."
@@ -87,6 +77,10 @@ msgstr "{displayName}, %{percent}"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -96,6 +90,10 @@ msgstr "{hours, plural, one {# sa kaldı} other {# sa kaldı}}"
 #, fuzzy
 msgid "{label}, always on"
 msgstr "{label}, her zaman açık"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

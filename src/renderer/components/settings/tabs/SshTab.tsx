@@ -31,7 +31,7 @@ type AddStep = 'closed' | 'details' | 'trust' | 'signin';
 /** An example address, not a sentence: it reads the same in every language. */
 const DESTINATION_EXAMPLE = 'dev@build.example.com';
 
-/** A changed host key is the one failure with its own fix: forget the old line, then connect and trust again. */
+/** A changed host key is the one failure with its own fix: the row's key icon shows the new key to trust. */
 const CHANGED_KEY_PATTERN = /REMOTE HOST IDENTIFICATION HAS CHANGED/i;
 
 function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: string; className: string; icon: ReactNode } {
@@ -52,10 +52,6 @@ function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: 
 /** How often a connected host's program is asked how many terminals it holds. */
 const PROGRAM_REFRESH_MS = 15_000;
 
-/**
- * The Kangentic program on a connected host: its version and how many terminals it is holding. Quiet when the
- * host cannot answer: the row above already says whether the host is connected, and this line is extra.
- */
 /** The key a host whose key changed presents now, shown beside the one trusted before, for the user to trust or not. */
 function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
   probe: SshHostKeyProbe;
@@ -64,6 +60,7 @@ function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
   onClose: () => void;
 }) {
   const { t } = useLingui();
+  const hostname = probe.hostname;
   return (
     <BaseDialog
       onClose={onClose}
@@ -94,7 +91,7 @@ function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
     >
       <div className="space-y-3">
         <p className="text-sm font-medium text-fg">
-          <Trans>{probe.hostname} now presents a different key.</Trans>
+          <Trans>{hostname} now presents a different key.</Trans>
         </p>
         <div className="rounded-md border border-edge bg-surface-hover/40 px-3 py-2.5">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
@@ -121,6 +118,18 @@ function NewHostKeyDialog({ probe, busy, onConfirm, onClose }: {
 /** One fact on a host row's facts line: a hairline separates it from the one before. */
 const FACT_CELL_CLASS = 'border-l border-edge pl-3';
 
+/** Whether two answers draw the same line, so a poll that changed nothing renders nothing. */
+function drawsSameLine(current: SshHostProgram | null, next: SshHostProgram): boolean {
+  return current !== null
+    && current.version === next.version
+    && current.appVersion === next.appVersion
+    && current.liveSessions === next.liveSessions;
+}
+
+/**
+ * The Kangentic program on a connected host: its version and how many terminals it is holding. Quiet when the
+ * host cannot answer: the row above already says whether the host is connected, and this line is extra.
+ */
 function HostProgramLine({ hostId }: { hostId: string }) {
   const hostProgram = useSshStore((state) => state.hostProgram);
   const [program, setProgram] = useState<SshHostProgram | null>(null);
@@ -129,7 +138,7 @@ function HostProgramLine({ hostId }: { hostId: string }) {
     let cancelled = false;
     const refresh = (): void => {
       hostProgram(hostId).then(
-        (answer) => { if (!cancelled) setProgram(answer); },
+        (answer) => { if (!cancelled) setProgram((current) => (drawsSameLine(current, answer) ? current : answer)); },
         () => { if (!cancelled) setProgram(null); },
       );
     };
@@ -144,6 +153,7 @@ function HostProgramLine({ hostId }: { hostId: string }) {
   if (!program) return null;
   const version = program.version;
   const appVersion = program.appVersion;
+  const liveSessions = program.liveSessions;
   const older = version !== null && appVersion !== null && version !== appVersion;
   return (
     <span className="flex basis-full flex-wrap items-center gap-x-3" data-testid="ssh-host-program">
@@ -155,7 +165,7 @@ function HostProgramLine({ hostId }: { hostId: string }) {
             : <Trans>Program {version}</Trans>}
       </span>
       <span className={FACT_CELL_CLASS} data-testid="ssh-host-program-sessions">
-        {plural(program.liveSessions, { one: '# terminal running', other: '# terminals running' })}
+        {plural(liveSessions, { one: '# terminal running', other: '# terminals running' })}
       </span>
     </span>
   );
@@ -210,9 +220,9 @@ export function SshTab() {
 
   async function confirmTrustNewKey(): Promise<void> {
     if (!trustTarget) return;
-    const { status, probe } = trustTarget;
+    const { status, probe: shownKey } = trustTarget;
     setTrustBusy(true);
-    await runRowAction(status.host.id, () => trustNewKey(status.host.id, probe.fingerprint));
+    await runRowAction(status.host.id, () => trustNewKey(status.host.id, shownKey.fingerprint));
     setTrustBusy(false);
     setTrustTarget(null);
   }

@@ -74,13 +74,13 @@ const SESSION_ENV_PREFIXES = ['SSH_'] as const;
 const SESSION_ENV_NAMES = new Set(['NODE_OPTIONS', 'NODE_PATH', '_']);
 const MAX_READ_BYTES = 1_000_000;
 
-/** What a file holds right now, or null when it is not there. Synchronous so a check and the call after it share one turn. */
 /** Whether `candidate` is `folder` or lies beneath it. A child named `..cache` does not climb out. */
 function isBeneath(folder: string, candidate: string): boolean {
   const relative = path.relative(folder, candidate);
   return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+/** What a file holds right now, or null when it is not there. Synchronous so a check and the call after it share one turn. */
 function readCurrentText(target: string): string | null {
   try {
     return readFileSync(target, 'utf8');
