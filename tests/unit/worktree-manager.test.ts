@@ -192,6 +192,8 @@ import { isAbortError } from '../../src/shared/abort-utils';
 import { worktreeFolderFromPath } from '../../src/shared/worktree-folder';
 import { runWorktreeCreation } from '../../src/main/git/worktree-creation-registry';
 import { taskWorktreePathFor } from '../../src/main/git/task-worktree-folder';
+import { GitUserStateError, StaleWorktreeDirectoryError } from '../../src/main/git/worktree-errors';
+import { isUserConfigurationError } from '../../src/shared/user-configuration-error';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1774,7 +1776,12 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     stubHuskRemovalFailure(mgr);
 
-    await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/preview/);
+    const creation = mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    await expect(creation).rejects.toThrow(/preview/);
+    // Its own class, and not the user's: the worktree folder is Kangentic's, so a
+    // leftover in it is reported to Sentry rather than excluded as user state.
+    await expect(creation).rejects.toBeInstanceOf(StaleWorktreeDirectoryError);
+    await creation.catch((error: unknown) => expect(isUserConfigurationError(error)).toBe(false));
 
     // No worktree add should have been attempted for a genuinely-stuck dir.
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
@@ -1792,7 +1799,9 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     stubHuskRemovalFailure(mgr);
 
-    await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'))).rejects.toThrow(/could not be removed/);
+    const creation = mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    await expect(creation).rejects.toThrow(/could not be removed/);
+    await expect(creation).rejects.toBeInstanceOf(StaleWorktreeDirectoryError);
   });
 
   it('pruneWorktrees spawns "git worktree prune"', async () => {
@@ -1961,8 +1970,10 @@ describe('WorktreeManager -- path-length error enrichment on a failed worktree a
       });
 
       const mgr = new WorktreeManager('/project');
-      await expect(mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task')))
-        .rejects.toThrow(/ran out of path/);
+      const creation = mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+      await expect(creation).rejects.toThrow(/ran out of path/);
+      // The user's to resolve (a shorter path), so it stays out of Sentry.
+      await expect(creation).rejects.toBeInstanceOf(GitUserStateError);
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
@@ -1992,6 +2003,44 @@ describe('WorktreeManager -- path-length error enrichment on a failed worktree a
     }
 
     expect(caught?.message).toBe(originalMessage);
+    // Not recognized as the user's, so it is reported: it may be ours.
+    expect(isUserConfigurationError(caught)).toBe(false);
+  });
+
+  /** A worktree add that fails with git's own `message`, on a branch that does not exist yet. */
+  async function failWorktreeAddWith(message: string): Promise<unknown> {
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('fatal: not a valid object name'));
+      }
+      if (args.includes('worktree') && args.includes('add')) {
+        return Promise.reject(new Error(message));
+      }
+      return Promise.resolve('');
+    });
+    const mgr = new WorktreeManager('/project');
+    return mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task')).then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  it('treats a branch checked out in another worktree as the repository\'s state, so it stays out of Sentry', async () => {
+    const error = await failWorktreeAddWith("fatal: 'feature/x' is already checked out at '/mock/other'");
+
+    expect(error).toBeInstanceOf(GitUserStateError);
+    expect(isUserConfigurationError(error)).toBe(true);
+    expect((error as Error).message).toContain('is already checked out at');
+  });
+
+  it.each([
+    ["fatal: a branch named 'feature/x' already exists"],
+    ["fatal: '/mock/worktrees/7' already exists"],
+  ])('keeps "already exists" a reported failure, since the folder and the branch check are Kangentic\'s: %s', async (message) => {
+    const error = await failWorktreeAddWith(message);
+
+    expect(isUserConfigurationError(error)).toBe(false);
+    expect((error as Error).message).toBe(message);
   });
 });
 

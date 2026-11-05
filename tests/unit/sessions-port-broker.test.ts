@@ -395,6 +395,20 @@ describe('sessions.ts renderer port broker', () => {
     });
   });
 
+  describe('SESSION_SPAWN', () => {
+    // A launch report carries `start_path` as a tag. The renderer's input is the
+    // one place a value could name a start path of its own choosing.
+    it('stamps the board as the start path, whatever the renderer sent', () => {
+      const spawn = vi.fn();
+      (context.sessionManager as unknown as { spawn: typeof spawn }).spawn = spawn;
+
+      findIpcHandleHandler(IPC.SESSION_SPAWN)({}, { command: 'claude', startPath: 'Fix the Acme billing' }, 'proj-1');
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ command: 'claude', projectId: 'proj-1', startPath: 'board' }));
+    });
+  });
+
   describe("sessionManager 'renderer-ports-lost' (a restarted host)", () => {
     it('re-issues a port to every renderer id, each posted its end and attached by its own id', () => {
       const firstRenderer = addRenderer(4);
