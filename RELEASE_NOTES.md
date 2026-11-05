@@ -7,7 +7,7 @@
 
 ## Bug Fixes
 
-- Long agent launch commands no longer overrun the terminal's line limit.
+- Agents on macOS start reliably again. Since v0.53.0, a launch could fail when the shell was slow to start (common with nvm or oh-my-zsh), leaving a cut-off command in the terminal while the session showed as Running. Linux and WSL had the same limit for very long launch commands. The workaround of turning off Browser automation is no longer needed.
 - A worktree session now builds its Claude settings from the worktree's own settings file.
 - The PR chip counts a ruleset bypass as ready to merge.
 - The macOS memory warning now follows the kernel's free memory percentage.
