@@ -391,10 +391,10 @@ describe('create_task routing guardrail', () => {
   it('uses the plural branch of the routing-check message when multiple projects are mentioned', async () => {
     // Simulates: title/description names two separate registered projects.
     // buildRoutingCheckMessage is not exported; exercise it through the handler.
-    mockDetectCrossProjectMention.mockReturnValue(['Kangentic', 'TWC-Website']);
+    mockDetectCrossProjectMention.mockReturnValue(['Kangentic', 'Acme-Website']);
 
     const result = await server.getHandler('kangentic_create_task')({
-      title: 'Update the kangentic and TWC-Website landing pages',
+      title: 'Update the kangentic and Acme-Website landing pages',
     });
 
     expect(result.isError).toBe(true);
@@ -402,7 +402,7 @@ describe('create_task routing guardrail', () => {
     // Plural branch: "these other registered projects" (not the singular form).
     expect(text).toContain('these other registered projects');
     // Both names embedded joined by ", ".
-    expect(text).toContain('"Kangentic", "TWC-Website"');
+    expect(text).toContain('"Kangentic", "Acme-Website"');
     // Re-run hint names the first mentioned project.
     expect(text).toContain('e.g. project: "Kangentic"');
     // Re-run hint also names the active project so the agent can confirm it.

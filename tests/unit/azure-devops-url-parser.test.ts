@@ -14,8 +14,8 @@ describe('parseAzureDevOpsUrl', () => {
     });
 
     it('parses a sprint taskboard URL with iteration path', () => {
-      const result = parseAzureDevOpsUrl('https://dev.azure.com/OklahomaDev/OCC/_sprints/taskboard/OCC%20OKIES/OCC/OCC-OKIES/2026-06');
-      expect(result.repository).toBe('OklahomaDev/OCC::OCC\\OCC-OKIES\\2026-06');
+      const result = parseAzureDevOpsUrl('https://dev.azure.com/ContosoDev/ACME/_sprints/taskboard/ACME%20PORTAL/ACME/ACME-PORTAL/2026-06');
+      expect(result.repository).toBe('ContosoDev/ACME::ACME\\ACME-PORTAL\\2026-06');
     });
 
     it('parses a sprint backlog URL with iteration path', () => {
@@ -29,8 +29,8 @@ describe('parseAzureDevOpsUrl', () => {
     });
 
     it('parses a sprint URL without specific iteration (team root)', () => {
-      const result = parseAzureDevOpsUrl('https://dev.azure.com/OklahomaDev/OCC/_sprints/taskboard/OCC%20OKIES/OCC/OCC-OKIES');
-      expect(result.repository).toBe('OklahomaDev/OCC::OCC\\OCC-OKIES');
+      const result = parseAzureDevOpsUrl('https://dev.azure.com/ContosoDev/ACME/_sprints/taskboard/ACME%20PORTAL/ACME/ACME-PORTAL');
+      expect(result.repository).toBe('ContosoDev/ACME::ACME\\ACME-PORTAL');
     });
 
     it('decodes URL-encoded org and project names', () => {
@@ -78,7 +78,7 @@ describe('buildAzureDevOpsLabel', () => {
   });
 
   it('builds a human-readable label for iteration-scoped sources', () => {
-    expect(buildAzureDevOpsLabel('OklahomaDev/OCC::OCC\\OCC-OKIES\\2026-06')).toBe('OCC / OCC-OKIES/2026-06');
+    expect(buildAzureDevOpsLabel('ContosoDev/ACME::ACME\\ACME-PORTAL\\2026-06')).toBe('ACME / ACME-PORTAL/2026-06');
   });
 
   it('strips the project prefix from the iteration display', () => {

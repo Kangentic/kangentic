@@ -25,9 +25,10 @@ import type { PlanToolApprovalHookSpec, PlanToolInputJudgedCall } from '../../sh
  *   that tool out, not by Claude.
  *
  * The rules come from the permission lists Kangentic merges into the session's
- * settings (the project's `.claude/settings.json` and `settings.local.json`,
- * the worktree's `settings.local.json`) and the user's `~/.claude/settings.json`,
- * all of which Claude applies to the session. Managed settings are not read. An
+ * settings (the session's `.claude/settings.json`, which in a worktree is its
+ * own copy, the project's `settings.local.json`, the worktree's
+ * `settings.local.json`) and the user's `~/.claude/settings.json`, all of which
+ * Claude applies to the session. Managed settings are not read. An
  * organization that sets `allowManagedPermissionRulesOnly` could see a tool run
  * that only a project rule allows, and a managed ask rule for a tool a project
  * or user rule allows is answered anyway, since the hook's allow outranks it.

@@ -1413,7 +1413,7 @@ msgstr "A nagyobb erőfeszítés lassabban válaszol, és segíthet a sok felada
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Prompt visszatartása a szkript idejére"
+msgstr "Prompt visszatartása a szkript végéig"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1530,7 +1530,7 @@ msgstr "A továbbító működése"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "A projekt így állítja le a feladatok után maradt folyamatokat."
+msgstr "Így állítja le a projekt, amit egy feladat futva hagy."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Terminálpanel megjelenítése a tábla alatt"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "A PR-t késznek jelzi, ha rendszergazdai megkerüléssel egy kötelező ellenőrzés nélkül is egyesíthető, sikertelen ellenőrzéssel soha."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "A PR-t késznek jelzi, ha megkerülheted a kötelező felülvizsgálatot, sikertelen ellenőrzéssel soha."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Leállítva"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Leállítja, amit a feladat futva hagyott tétlenség vagy kevés memória miatti szünet után vagy befejezés előtt. A kangentic.json fájlba mentve."
+msgstr "Leállítja, amit egy feladat futva hagyott tétlenség vagy kevés memória miatti szünet után, illetve befejezés előtt; a kangentic.json fájlba mentve."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Kapcsolat tesztelése"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "Az ügynök az első promptot a szkript sikeres lefutása után kapja meg, nem azonnal, a szkript futása közben."
+msgstr "Az ügynök a szkript sikeres lefutása után kapja meg az első promptot, nem pedig azonnal, a szkript futása közben."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

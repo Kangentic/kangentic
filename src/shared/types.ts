@@ -4518,10 +4518,12 @@ export interface AppConfig {
      * Count the viewer's own merge bypass as `ready`. On GitHub a PR still
      * waiting on a required review reads `BLOCKED`, or `BEHIND` once somebody
      * else's PR lands and leaves it behind the base, yet a viewer who can
-     * bypass branch protection (`viewerCanMergeAsAdmin`) merges it at once, and
+     * bypass branch protection (`viewerCanMergeAsAdmin`) or every ruleset that
+     * can stop the merge (`current_user_can_bypass`) merges it at once, and
      * the board's Merge column does exactly that with `gh pr merge --admin`
      * once every check is green. On, the GitHub connector spends one
-     * `gh api graphql` probe per such green PR per sweep and
+     * `gh api graphql` probe per such green PR per sweep, plus the ruleset
+     * reads for a viewer it refuses on a branch with no classic rule, and
      * folds the answer to `ready`. Never past a check that has not passed: the
      * bypass is a capability (it reads true on a red PR too), so the same probe
      * reads the branch's required checks and every one of them must have
@@ -5438,6 +5440,9 @@ export interface HostMemorySample {
    *  1 normal, 2 warn, 4 critical. Read off the main thread and reported a tick
    *  late. Null when unknown and on every other platform. */
   memoryPressureLevel?: number | null;
+  /** macOS kernel free memory percentage (`kern.memorystatus_level`), read the
+   *  same way. It judges the warn level. Null when unknown and off macOS. */
+  memoryFreePercent?: number | null;
 }
 
 /** Pushed when host commit headroom crosses below the warning threshold (an
@@ -6722,6 +6727,12 @@ export interface AgentParser {
    * transcript is not one plain file, or that names it only after the session starts.
    */
   remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[];
+  /**
+   * Optional: this agent reports that it started, by its SessionStart hook or
+   * its first alt-screen entry, so a session that shows neither did not start.
+   * Read at spawn onto the session row. See `AgentAdapter.reportsAgentStart`.
+   */
+  readonly reportsAgentStart?: boolean;
   /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's

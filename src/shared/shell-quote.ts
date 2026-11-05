@@ -34,11 +34,13 @@ export function isCmdShell(shellName: string): boolean {
  *
  * nushell and fish are decided by program name first, in both predicates, so
  * a nu under a directory named pwsh-tools is never PowerShell. Without that,
- * `buildSpawnClearPrelude` typed `Clear-Host;` into nushell.
+ * `buildSpawnClearPrelude` typed `Clear-Host;` into nushell. A WSL spec is its
+ * distro's shell, so a distro named `my-pwsh` is never PowerShell either.
  */
 export function isPowerShellShell(shellName: string): boolean {
   if (isNushellShell(shellName) || isFishShell(shellName)) return false;
   const lower = shellName.toLowerCase();
+  if (lower.startsWith('wsl')) return false;
   return lower.includes('powershell') || lower.includes('pwsh');
 }
 
@@ -64,7 +66,7 @@ export function isUnixLikeShell(shellName: string): boolean {
  * whole spec is the path (`pty-spawn.ts` splits arguments off a WSL spec only),
  * so a directory with a space in it stays part of the path.
  */
-function shellProgramName(shellName: string): string {
+export function shellProgramName(shellName: string): string {
   const basename = shellName.trim().toLowerCase().split(/[\\/]/).pop() ?? '';
   return basename.replace(/\.exe$/, '');
 }

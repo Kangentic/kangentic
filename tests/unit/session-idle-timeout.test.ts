@@ -78,9 +78,13 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   },
 }));
 
+// TaskRepository.getById is what the startup-failure notice reads the task from.
+// Null by default; the agent-never-started tests arrange a task.
+const mockTaskRepositoryGetById = vi.fn((_taskId?: string) => null as { id: string; title: string } | null);
+
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
-    getById = vi.fn(() => null);
+    getById = mockTaskRepositoryGetById;
   },
 }));
 
@@ -160,6 +164,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
+import { notifySpawnBlocked } from '../../src/main/ipc/helpers';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { forgetWorkflowRecovery, resetWorkflowRecoveryForTests, setRecoveryEntry } from '../../src/main/workflows/workflow-recovery-state';
 
@@ -188,10 +193,15 @@ function createMockContext() {
       findLiveSessionByTaskId: vi.fn(() => undefined),
       getSessionTaskId: vi.fn(() => null),
       getSessionProjectId: vi.fn(() => null as string | null | undefined),
+      // Read by the "Agent did not start" notice of a launch that never started.
+      getSessionAgentName: vi.fn(() => null as string | null),
+      getRawScrollback: vi.fn(async () => ''),
       killByTaskId: vi.fn(),
       removeByTaskId: vi.fn(),
       suspend: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
+      // Called by the agent-never-started listener when its pause does not land.
+      retireAgentlessSession: vi.fn(),
       getActivityCache: vi.fn((): Record<string, string> => ({})),
       // Read by the idle pause's eligibility re-check: typed text holds it off.
       getPendingDraft: vi.fn((_sessionId?: string) => null as string | null),
@@ -238,6 +248,171 @@ async function drainUntil(
     await Promise.resolve();
   }
 }
+
+// ---------------------------------------------------------------------------
+// A launch that never started pauses its task, so Resume is there to press
+// ---------------------------------------------------------------------------
+
+describe('agent-never-started listener', () => {
+  const NEVER_STARTED_SESSION = {
+    id: 'sess-never',
+    taskId: 'task-never',
+    transient: false,
+    status: 'running',
+    projectId: 'proj-1',
+  } as Session;
+
+  function registerWithLiveSession(liveSessionId: string): ReturnType<typeof createMockContext> {
+    vi.clearAllMocks();
+    capturedSessionEventHandlers.clear();
+    mockGetLatestForTask.mockReturnValue({
+      id: 'record-never',
+      task_id: 'task-never',
+      agent_session_id: 'agent-never',
+      status: 'running',
+      suspended_by: null,
+    } as SessionRecord);
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => ({ id: 'task-never', session_id: liveSessionId, swimlane_id: 'lane-doing' })),
+        update: vi.fn(),
+      },
+      swimlanes: { getById: vi.fn(() => null) },
+    });
+    const context = createMockContext();
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    context.sessionManager.getSession.mockImplementation((sessionId?: string) => (
+      sessionId === liveSessionId ? ({ ...NEVER_STARTED_SESSION, id: liveSessionId } as Session) : null
+    ));
+    mockTaskRepositoryGetById.mockReturnValue(null);
+    registerSessionHandlers(context as never);
+    return context;
+  }
+
+  const NEVER_STARTED_FALLBACK = 'The agent never reported that it started.';
+
+  async function fireNeverStarted(): Promise<void> {
+    capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
+    await withTaskLock('task-never', async () => {});
+  }
+
+  it('raises the fallback notice when a pause lands, and does not retire the session', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
+    expect(noticeError.message).toBe(NEVER_STARTED_FALLBACK);
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+    expect(context.sessionManager.retireAgentlessSession).not.toHaveBeenCalled();
+  });
+
+  it('prefers the adapter\'s named startup failure over the fallback text', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    context.sessionManager.getSessionAgentName.mockReturnValue('claude');
+    context.sessionManager.getRawScrollback.mockResolvedValue(
+      'No conversation found with session ID: 12345678-aaaa-bbbb-cccc-1234567890ab',
+    );
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
+    expect(noticeError.message).toContain('found no conversation to resume');
+    expect(noticeError.message).not.toBe(NEVER_STARTED_FALLBACK);
+  });
+
+  it('retires the session and raises no notice when the pause is declined for a newer session', async () => {
+    const context = registerWithLiveSession('sess-newer');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+    await drainUntil(() => false, 20);
+
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledWith('sess-never');
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('retires the session and raises no notice when the task has no live session', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    context.sessionManager.getSession.mockReturnValue(null);
+
+    await fireNeverStarted();
+    await drainUntil(() => false, 20);
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledWith('sess-never');
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('retires the session, with no unhandled rejection, when the pause rejects', async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => { unhandledRejections.push(reason); };
+    process.on('unhandledRejection', onUnhandledRejection);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const context = registerWithLiveSession('sess-never');
+      mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+      context.sessionManager.suspend.mockRejectedValue(new Error('suspend failed'));
+
+      await fireNeverStarted();
+
+      await vi.waitFor(() => expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledWith('sess-never'));
+      // Give a stray rejection a macrotask to surface.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledTimes(1);
+      expect(notifySpawnBlocked).not.toHaveBeenCalled();
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('retires the session without pausing when its project cannot be resolved', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    context.sessionManager.getSessionProjectId.mockReturnValue(null);
+
+    await fireNeverStarted();
+    await drainUntil(() => false, 20);
+
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalledWith('sess-never');
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('records the pause as Kangentic\'s, which holds nothing, then suspends the PTY', async () => {
+    const context = registerWithLiveSession('sess-never');
+
+    capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
+    await withTaskLock('task-never', async () => {});
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+
+    expect(markRecordSuspended).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(markRecordSuspended).mock.calls[0]).toContain('system');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+  });
+
+  it('leaves a newer session of the task alone', async () => {
+    const context = registerWithLiveSession('sess-newer');
+
+    capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
+    await withTaskLock('task-never', async () => {});
+    await drainUntil(() => false, 20);
+
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // #6 - idle-timeout listener fires DB writes when projectId is present

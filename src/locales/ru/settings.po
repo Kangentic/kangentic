@@ -1413,7 +1413,7 @@ msgstr "Чем выше уровень усилий, тем медленнее �
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Задерживать запрос до завершения скрипта"
+msgstr "Удерживать промпт до конца скрипта"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Показывать панель терминала под доской
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Показывать PR как готовый, если обход администратора позволяет слить его без обязательного ревью, но не при проваленной проверке."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Показывать PR как готовый, если вы можете обойти обязательное ревью, но не при проваленной проверке."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Остановлен"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Останавливает то, что задача оставила запущенным, после паузы из-за простоя или нехватки памяти или перед её завершением; хранится в kangentic.json."
+msgstr "Останавливает то, что задача оставила запущенным, после паузы из-за простоя или нехватки памяти или перед завершением. Сохраняется в kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Проверить подключение"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "Агент получает первый запрос после успешного завершения скрипта, а не сразу, пока скрипт ещё выполняется."
+msgstr "Агент получает первый промпт после успешного выполнения скрипта, а не сразу, пока скрипт ещё работает."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

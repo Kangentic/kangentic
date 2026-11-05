@@ -1530,7 +1530,7 @@ msgstr "リレーの仕組み"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "タスクが実行したまま残したものを、このプロジェクトで停止する方法。"
+msgstr "タスクが実行したまま残したものをプロジェクトで停止する方法。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "ボードの下にターミナルパネルを表示"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "管理者バイパスで必須レビューを越えてマージできる PR を準備完了として表示します。失敗したチェックは越えません。"
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "必須レビューをバイパスできる PR を準備完了として表示します。失敗したチェックは越えません。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "停止中"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "アイドルやメモリ不足による一時停止の後、またはタスクの完了前に、タスクが実行したまま残したものを停止します。kangentic.json に保存されます。"
+msgstr "アイドル時やメモリ不足による一時停止の後、またはタスクの完了前に、タスクが実行したまま残したものを停止します。kangentic.json に保存されます。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "接続をテスト"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "スクリプトの実行中にすぐ送るのではなく、スクリプトが成功してからエージェントに最初のプロンプトを送ります。"
+msgstr "スクリプトの実行中にすぐ送信するのではなく、スクリプトの成功後にエージェントへ最初のプロンプトを送信します。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

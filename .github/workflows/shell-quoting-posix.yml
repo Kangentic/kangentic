@@ -22,6 +22,8 @@ on:
       - 'src/main/agent/adapters/claude/command-builder.ts'
       - 'src/main/agent/adapters/codex/command-builder.ts'
       - 'src/main/agent/adapters/codex/hook-manager.ts'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'tests/unit/typed-launch-round-trip.test.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
@@ -36,6 +38,8 @@ on:
       - 'src/main/agent/adapters/claude/command-builder.ts'
       - 'src/main/agent/adapters/codex/command-builder.ts'
       - 'src/main/agent/adapters/codex/hook-manager.ts'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'tests/unit/typed-launch-round-trip.test.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
@@ -94,7 +98,7 @@ jobs:
       - name: Install fish
         run: |
           sudo apt-get update
-          sudo apt-get install -y fish
+          sudo apt-get install -y fish zsh
       - name: Install nushell
         run: |
           archive="nu-${NUSHELL_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
@@ -107,8 +111,11 @@ jobs:
       # Says which shell builds this run measured.
       - name: Report the shells under test
         run: |
+          bash --version
+          zsh --version
           fish --version
           nu --version
+          pwsh --version
       - name: Install dependencies (npm ci)
         run: npm ci
       - name: Round-trip the escapes through real shells
@@ -116,3 +123,11 @@ jobs:
         env:
           KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS: '1'
         run: npx vitest run tests/unit/command-builder.test.ts tests/unit/shell-quote.test.ts tests/unit/codex-hook-overrides.test.ts
+      # Each shell's launcher form, typed while the shell is in its startup files.
+      # pwsh is left out: its first run here never started even the typed-whole
+      # control, so the rig does not yet work for it, and nothing measured its
+      # launcher. Add it back once its rig starts the stub agent.
+      - name: Run a typed launch through each real shell
+        env:
+          KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS: 'bash,zsh,fish,nu'
+        run: npx vitest run tests/unit/typed-launch-round-trip.test.ts

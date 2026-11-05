@@ -2002,7 +2002,7 @@ msgstr "찾을 수 없음"
 #, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr "설정 안 됨"
+msgstr "설정되지 않음"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "보드 아래에 터미널 패널 표시"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "관리자 우회로 필수 리뷰를 건너뛰고 병합할 수 있는 PR을 준비됨으로 표시합니다. 실패한 검사는 건너뛰지 않습니다."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "필수 리뷰를 우회할 수 있는 PR을 준비됨으로 표시합니다. 실패한 검사는 건너뛰지 않습니다."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "중지됨"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "유휴 또는 메모리 부족으로 일시 중지된 후나 완료되기 전에 작업이 남긴 실행 중인 항목을 중지합니다. kangentic.json에 저장됩니다."
+msgstr "유휴 또는 메모리 부족으로 일시 중지된 후나 완료되기 전에 작업이 남긴 실행 항목을 중지합니다. kangentic.json에 저장됩니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "연결 테스트"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "스크립트 실행 중에 바로 보내지 않고, 스크립트가 성공하면 에이전트에 첫 프롬프트를 보냅니다."
+msgstr "에이전트는 스크립트 실행 중에 바로 첫 프롬프트를 받지 않고 스크립트가 성공한 후에 받습니다."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

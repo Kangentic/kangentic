@@ -1156,7 +1156,7 @@ msgstr "投入程度越高回答越慢，但有助於跨多個任務的計數；
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "指令碼完成前保留提示詞"
+msgstr "等待指令碼後再送出提示"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
@@ -1254,7 +1254,7 @@ msgstr "中繼的運作方式"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "此專案停止工作殘留處理程序的方式。"
+msgstr "此專案如何停止工作遺留的執行項目。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
@@ -2257,8 +2257,9 @@ msgid "Show the terminal panel below the board"
 msgstr "在看板下方顯示終端機面板"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "當管理員略過設定可讓 PR 越過必要審查合併時，顯示為就緒；但絕不會越過失敗的檢查。"
+#, fuzzy
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "當你可略過 PR 的必要審查時，顯示為就緒；但絕不會越過失敗的檢查。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
@@ -2359,7 +2360,7 @@ msgstr "已停止"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "在閒置或低記憶體暫停後，或工作完成前，停止工作遺留的執行項目；儲存於 kangentic.json。"
+msgstr "在任務因閒置或記憶體不足而暫停後或完成前，停止任務留下的執行項目，並儲存於 kangentic.json。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"
@@ -2447,7 +2448,7 @@ msgstr "測試連線"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "指令碼成功後代理才會收到第一則提示詞，而非在指令碼仍在執行時立即收到。"
+msgstr "指令碼成功後代理才會收到第一則提示，而不是在指令碼仍在執行時立即收到。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "The agent, model and permissions new sessions start with."

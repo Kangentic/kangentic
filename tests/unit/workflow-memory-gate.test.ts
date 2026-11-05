@@ -102,6 +102,31 @@ describe('WorkflowMemoryGate', () => {
     expect(gate.reading()).toEqual({ low: false, freeBytes: null });
   });
 
+  // A real report: a 36 GB Mac sat at pressure level 2 with 36% free and the
+  // workflow held every nudge. At warn the gate judges the free percentage, so
+  // it reports a byte figure and holds only when that figure is low.
+  it('judges a macOS warn level by its free percentage, not by the level', () => {
+    const macWarn = (memoryFreePercent: number) => ({
+      ...windowsSample(0),
+      platform: 'darwin' as const,
+      commitLimitBytes: null,
+      commitRemainingBytes: null,
+      physicalTotalBytes: 36 * GIBIBYTE,
+      memoryPressureLevel: 2,
+      memoryFreePercent,
+    });
+
+    gate.onSample(macWarn(36));
+    expect(gate.reading()).toEqual({ low: false, freeBytes: 36 * GIBIBYTE * 0.36 });
+    expect(gate.tryAcquire('nudge:a')).toEqual({ go: true });
+    gate.release('nudge:a');
+    now += PACE_MS;
+
+    gate.onSample(macWarn(4));
+    expect(gate.reading().low).toBe(true);
+    expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'memory-low' });
+  });
+
   it('drops a waiting key nobody asks for again, so a holder that went away blocks nothing', () => {
     gate.tryAcquire('nudge:a');
     gate.begin('nudge:a', 'session-a');

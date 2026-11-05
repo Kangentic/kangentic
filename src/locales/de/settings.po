@@ -1530,7 +1530,7 @@ msgstr "So funktioniert das Relay"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "Wie dieses Projekt beendet, was eine Aufgabe laufen lässt."
+msgstr "Wie dieses Projekt beendet, was eine Aufgabe weiterlaufen lässt."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Terminalbereich unterhalb des Boards anzeigen"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Zeigt einen PR als bereit an, wenn dein Admin-Bypass ihn trotz erforderlichem Review mergen könnte, aber nie trotz fehlgeschlagener Prüfung."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Zeigt einen PR als bereit an, wenn du sein erforderliches Review umgehen kannst, aber nie trotz fehlgeschlagener Prüfung."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Gestoppt"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Beendet, was eine Aufgabe nach einer Pause wegen Inaktivität oder Speichermangel oder vor ihrem Abschluss weiterlaufen ließ; gespeichert in kangentic.json."
+msgstr "Beendet, was eine Aufgabe nach einer Pause wegen Inaktivität oder wenig Arbeitsspeicher oder vor ihrem Abschluss noch laufen lässt; gespeichert in kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Verbindung testen"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "Der Agent erhält seinen ersten Prompt, sobald das Skript erfolgreich war, nicht schon während der Ausführung."
+msgstr "Der Agent erhält seinen ersten Prompt erst, wenn das Skript erfolgreich war, nicht schon während es noch läuft."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

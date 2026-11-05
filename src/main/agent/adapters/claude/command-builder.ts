@@ -152,6 +152,21 @@ function isPlainSettingsObject(parsed: unknown): parsed is ClaudeSettings {
 }
 
 /**
+ * The `permissions.defaultMode` values Claude refuses from a project or local
+ * settings file (its settings docs, "The file can't set that value").
+ * `--settings` ranks above those files and can set them, so the session file
+ * must not carry a value it read from one.
+ */
+const MODES_A_PROJECT_FILE_CANNOT_SET: ReadonlySet<unknown> = new Set(['auto', 'bypassPermissions']);
+
+/** `settings`, merged from project and local files, with only what those files may set. */
+function withoutRefusedDefaultMode(settings: ClaudeSettings): ClaudeSettings {
+  if (!MODES_A_PROJECT_FILE_CANNOT_SET.has(settings.permissions?.defaultMode)) return settings;
+  const { defaultMode: _refused, ...permissions } = settings.permissions ?? {};
+  return { ...settings, permissions };
+}
+
+/**
  * Merge hook arrays per event type. Local hooks come after project hooks;
  * Kangentic hooks are appended last by the caller.
  */
@@ -248,7 +263,7 @@ export class CommandBuilder {
    * on 2.1.303), which is why it is set only when no other renderer was chosen.
    */
   fullscreenByDefault(options: Pick<CommandOptions, 'cwd' | 'projectRoot' | 'cliTarget'>): boolean {
-    const projectChoice = this.readBaseSettings(options.projectRoot || options.cwd).tui;
+    const projectChoice = this.readBaseSettings(options).tui;
     const choice = projectChoice === undefined || projectChoice === null
       ? this.globalTuiChoice(options.cliTarget ?? null)
       : projectChoice;
@@ -459,17 +474,30 @@ export class CommandBuilder {
   }
 
   /**
-   * The project root's `.claude/settings.json` with its `.claude/settings.local.json`
-   * laid over it, read from disk on every call and returned as a new object the
-   * caller may change. Nothing caches it, so a commit, a pull or an edit to either
-   * file reaches the next session with no restart; two small reads cost nothing
-   * beside the spawn they serve. Kangentic adds nothing to either file, so the
-   * read is always the user's own settings.
+   * The session's `.claude/settings.json` with the project root's
+   * `.claude/settings.local.json` laid over it, read from disk on every call and
+   * returned as a new object the caller may change. Nothing caches it, so a
+   * commit, a pull or an edit to either file reaches the next session with no
+   * restart; two small reads cost nothing beside the spawn they serve. Kangentic
+   * adds nothing to either file, so the read is always the user's own settings.
+   *
+   * A worktree's checkout is the session's own project, the file Claude reads
+   * for a session started there. `--settings` ranks above that file and deny
+   * rules merge, so reading the root's copy here would keep a rule the branch
+   * removed. The root's copy is the fallback only for a worktree with no such
+   * file (one git does not track never reaches a checkout). A worktree file that
+   * exists but will not parse gives no settings, as a broken root file does:
+   * Claude skips it too, and falling back would bring back what the branch took out.
    */
-  private readBaseSettings(projectRoot: string): ClaudeSettings {
+  private readBaseSettings(options: Pick<CommandOptions, 'cwd' | 'projectRoot'>): ClaudeSettings {
+    const projectRoot = options.projectRoot || options.cwd;
+
     // 1. Read project settings (committed, shared)
     let baseSettings: ClaudeSettings = {};
-    const projectSettingsPath = path.join(projectRoot, '.claude', 'settings.json');
+    const ownSettingsPath = path.join(options.cwd, '.claude', 'settings.json');
+    const projectSettingsPath = fs.existsSync(ownSettingsPath)
+      ? ownSettingsPath
+      : path.join(projectRoot, '.claude', 'settings.json');
     try {
       const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
       // Only a plain object can be spread into the merged settings, as in the
@@ -505,15 +533,15 @@ export class CommandBuilder {
    * injects our hooks, and writes to the session directory.
    *
    * All sessions (main repo and worktree) use `--settings` pointing to
-   * `.kangentic/sessions/<sessionId>/settings.json`. For worktrees, we also
-   * read the worktree's `.claude/settings.local.json` to capture "always
-   * allow" permission grants written by Claude during the session.
+   * `.kangentic/sessions/<sessionId>/settings.json`. A worktree's base is its
+   * own `.claude/settings.json` (`readBaseSettings`), and we also read its
+   * `.claude/settings.local.json` to capture "always allow" permission grants
+   * written by Claude during the session.
    */
   private createMergedSettings(options: CommandOptions): string {
     const isWorktree = options.projectRoot != null && options.cwd !== options.projectRoot;
-    const projectRoot = options.projectRoot || options.cwd;
 
-    let baseSettings = this.readBaseSettings(projectRoot);
+    let baseSettings = this.readBaseSettings(options);
 
     // 3. For worktrees: merge permissions from the worktree's settings.local.json.
     //    Claude writes "always allow" grants here during sessions, so the session
@@ -537,6 +565,8 @@ export class CommandBuilder {
         // No worktree local settings (first run or no grants yet)
       }
     }
+
+    baseSettings = withoutRefusedDefaultMode(baseSettings);
 
     // Session directory (used for the merged Claude settings file).
     // Derived from statusOutputPath which is required by every spawn path

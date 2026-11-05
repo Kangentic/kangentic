@@ -1413,7 +1413,7 @@ msgstr "Un effort plus élevé répond plus lentement et peut fiabiliser les dé
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Retenir l'invite pendant le script"
+msgstr "Retenir le prompt pendant le script"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1530,7 +1530,7 @@ msgstr "Fonctionnement du relais"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "Comment ce projet arrête ce qu'une tâche laisse en cours."
+msgstr "Mode d'arrêt par ce projet de ce qu'une tâche laisse actif."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Afficher le panneau du terminal sous le tableau"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Affiche une PR comme prête si votre contournement administrateur peut la fusionner malgré une revue requise, jamais malgré une vérification en échec."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Affiche une PR comme prête si vous pouvez contourner sa revue requise, jamais malgré une vérification en échec."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Tester la connexion"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "L'agent reçoit sa première invite une fois le script réussi, et non immédiatement pendant son exécution."
+msgstr "L'agent reçoit son premier prompt une fois le script réussi, et non aussitôt pendant son exécution."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

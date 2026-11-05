@@ -845,6 +845,17 @@ export interface AgentAdapter {
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
 
   /**
+   * Optional: this agent reports that it started, at launch and before any
+   * prompt, by a SessionStart hook or its first alt-screen entry. A session the
+   * agent-absence sweep retires with neither then reports a launch that never
+   * started (`src/main/pty/agent-launch-report.ts`). Leave it unset for an agent
+   * that may run without showing either: its silence proves nothing.
+   *
+   * Default (if not implemented): false.
+   */
+  readonly reportsAgentStart?: boolean;
+
+  /**
    * Optional: how to tell that this agent's turn hung, and how to end it, for
    * the workflow hang check (`src/main/workflows/workflow-hang-check.ts`). A
    * running workflow task whose turn shows working, with no write to its

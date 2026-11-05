@@ -55,6 +55,12 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+const reportHandledError = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/analytics/error-reporting', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/analytics/error-reporting')>()),
+  reportHandledError,
+}));
+
 // Capture the callbacks object SessionManager hands to `new SessionTelemetry(...)`.
 // The stub carries only what the paths under test reach: a Command Terminal's
 // end goes through remove(), which clears the session's telemetry, and its
@@ -177,6 +183,114 @@ describe('SessionManager agent-absence wiring', () => {
     if (!callback) throw new Error('retireAgentlessSession was not captured');
     callback(sessionId);
   }
+
+  describe('a launch that never started', () => {
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it('reports a task session retired with no sign its agent started, once', () => {
+      seedSession({ reportsAgentStart: true });
+      retire();
+      retire();
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a Command Terminal retired at the ceiling', () => {
+      seedSession({
+        transient: true,
+        reportsAgentStart: true,
+        startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString(),
+      });
+      retire();
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not report a task session whose agent sent SessionStart and left', () => {
+      // A task session's evidence had no stamp before this report: a plain
+      // `/exit` would read as a launch that never started.
+      seedSession({ reportsAgentStart: true });
+      sendAgentEvent('session_start');
+      retire();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('does not report an adapter that reports no start', () => {
+      seedSession();
+      retire();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('hands a task to its pause instead of retiring it, so its Resume stands', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+
+      retire();
+
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+      expect(neverStarted.mock.calls[0][0]).toBe('session-1');
+      expect(session.status).toBe('running');
+      expect(session.overrideExitCode).toBeUndefined();
+      expect(killedPtys).toEqual([]);
+    });
+
+    it('retires the row when the listener calls it again after a pause that did not land, reporting once', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+
+      retire();
+      retire();
+
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(session.status).toBe('exited');
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('retires a session hidden until adopted instead of announcing it to a pause nobody may learn of', () => {
+      // `emit` returns false for a hidden session, so the listener never hears
+      // of it and the retire must fall through to the kill, or it stays a
+      // running phantom.
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1');
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('exited');
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('ends a Command Terminal as before, with no pause', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedSession({
+        transient: true,
+        reportsAgentStart: true,
+        startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString(),
+      });
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(killedPtys).toEqual([4242]);
+    });
+
+    it('keeps the exited row a workflow\'s agent restarts from', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1', reportsAgentStart: true });
+
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('exited');
+    });
+  });
 
   describe('isAgentAbsenceCandidate', () => {
     it('accepts a running, non-transient task agent past its spawn grace', () => {
@@ -556,12 +670,13 @@ describe('SessionManager agent-absence wiring', () => {
       expect(session.agentStartObservedAt).toBe(firstStart);
     });
 
-    it('never stamps start evidence on a task session', () => {
-      const session = seedSession();
+    it('stamps start evidence on a task session too, which leaves its plain grace as it was', () => {
+      const session = seedSession({ startedAt: new Date(Date.now() - 1_000).toISOString() });
 
       sendAgentEvent('session_start');
 
-      expect(session.agentStartObservedAt).toBeUndefined();
+      expect(typeof session.agentStartObservedAt).toBe('number');
+      expect(isCandidate()).toBe(false);
     });
   });
 

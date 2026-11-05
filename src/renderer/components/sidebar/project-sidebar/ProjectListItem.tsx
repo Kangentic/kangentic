@@ -155,7 +155,7 @@ function ProjectListItemImpl({
         )}
         <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
         {/* Stays in the right-aligned cluster rather than riding the project name.
-            Names vary from "kangentic" to "troy-web-operations-dashboard", so a
+            Names vary from "kangentic" to "acme-website-operations-dashboard", so a
             name-adjacent glyph lands at a different x on every row and cuts across
             the tidy count column; right-aligned, all three indicators stack into one
             tabular column. It also sits AFTER the counts so the envelope and spinner

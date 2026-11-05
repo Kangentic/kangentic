@@ -169,6 +169,9 @@ export class DroidAdapter implements AgentAdapter {
     return this.commandBuilder.interpolateTemplate(template, variables);
   }
 
+  /** The SessionStart hook in the per-session `--settings` file runs at launch. */
+  readonly reportsAgentStart = true;
+
   /**
    * PTY-based activity detection. Silence timer drives idle
    * transitions (Droid's TUI goes quiet when waiting on input);

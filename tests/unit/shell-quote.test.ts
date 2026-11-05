@@ -258,6 +258,11 @@ describe('shell predicates', () => {
     }
   });
 
+  it('does not read a WSL spec as PowerShell because its distro is named for it', () => {
+    expect(isPowerShellShell('wsl -d my-pwsh')).toBe(false);
+    expect(isUnixLikeShell('wsl -d my-pwsh')).toBe(true);
+  });
+
   it('separates cmd from PowerShell', () => {
     expect(isCmdShell('cmd.exe')).toBe(true);
     expect(isCmdShell('pwsh.exe')).toBe(false);

@@ -2223,8 +2223,8 @@ msgid "Show the terminal panel below the board"
 msgstr "Show the terminal panel below the board"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Shows a PR as ready when you can bypass its required review, never past a failing check."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"

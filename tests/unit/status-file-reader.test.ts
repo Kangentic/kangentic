@@ -115,6 +115,14 @@ describe('StatusFileReader', () => {
     reader.attach(options);
   }
 
+  /** For a test that drives every read itself. The real watcher's debounce can otherwise end
+   *  mid-read on a loaded machine and start a newer read, which drops the read the test waits
+   *  on, and that newer read lands after the test has moved on. */
+  function stopStatusWatcher(sessionId: string): void {
+    const privateReader = reader as unknown as { states: Map<string, { statusWatcher: { close(): void } | null }> };
+    privateReader.states.get(sessionId)?.statusWatcher?.close();
+  }
+
   // ---------------------------------------------------------------------------
   // attach / detach lifecycle
   // ---------------------------------------------------------------------------
@@ -379,6 +387,7 @@ describe('StatusFileReader', () => {
         eventsOutputPath: null,
         statusFileHook: { ...makeStubStatusFileHook({}), parseStatusEvents },
       });
+      stopStatusWatcher('session-1');
       const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
       return {
         // One write, one read: awaits the read and the reader's own dispatch of it.
@@ -509,6 +518,7 @@ describe('StatusFileReader', () => {
         eventsOutputPath: null,
         statusFileHook: parser,
       });
+      stopStatusWatcher('session-1');
 
       fs.writeFileSync(statusPath, 'invalid');
 
@@ -598,6 +608,7 @@ describe('StatusFileReader', () => {
         eventsOutputPath: null,
         statusFileHook: makeStubStatusFileHook({ parseStatus }),
       });
+      stopStatusWatcher('session-1');
       fs.writeFileSync(statusPath, 'invalid');
 
       const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };

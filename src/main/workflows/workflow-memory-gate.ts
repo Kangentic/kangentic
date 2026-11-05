@@ -46,7 +46,7 @@ export type GateDecision =
   | { go: true }
   | { go: false; why: 'memory-low' | 'queued' };
 
-/** What the gate reads of memory now. `freeBytes` is null where the platform reports a level, not bytes (macOS). */
+/** What the gate reads of memory now. `freeBytes` is null where the platform reports a level, not bytes (macOS at normal and critical). */
 export interface GateMemoryReading {
   low: boolean;
   freeBytes: number | null;

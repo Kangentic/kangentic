@@ -19,7 +19,7 @@ import { pickOverridableSubset } from '../../src/main/config/config-manager';
 
 describe('pickOverridableSubset', () => {
   it('drops importSources, browser, and terminal.* while keeping the setting keys', () => {
-    // Mirrors a real leaked config (TWC-Website): legit settings alongside the
+    // Mirrors a real leaked config: legit settings alongside the
     // project-specific importSources array and a per-project browser URL.
     // terminal.* is global-only (see AppConfig['terminal'] doc comments in
     // shared/types.ts), so it must never be picked as an overridable setting.
@@ -31,9 +31,9 @@ describe('pickOverridableSubset', () => {
       terminal: { shell: 'pwsh.exe', fontSize: 14, cursorStyle: 'block' },
       agent: { permissionMode: 'acceptEdits' },
       git: { worktreesEnabled: true, defaultBaseBranch: 'develop' },
-      browser: { defaultUrl: 'http://troyweb.com/' },
+      browser: { defaultUrl: 'http://example.com/' },
       importSources: [
-        { id: 'e83c7746', source: 'azure_devops', label: 'OCC / OCC-OKIES/2026-06' },
+        { id: 'e83c7746', source: 'azure_devops', label: 'ACME / ACME-PORTAL/2026-06' },
       ],
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
 

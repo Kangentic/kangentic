@@ -16,6 +16,7 @@ sources:
   - resource: src/main/agent/adapters/qwen-code/subagent-usage.ts
   - resource: src/main/agent/adapters/qwen-code/conversation-gone.ts
   - resource: src/main/agent/adapters/qwen-code/status-parser.ts
+  - resource: src/main/agent/shared/git-exclude.ts
 ---
 # Qwen Code
 
@@ -123,7 +124,7 @@ that requires user interaction, which the plan prompt does, so no hook can answe
 
 ## Settings Merge
 
-Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. As with Gemini, the project root's file is read on every spawn with Kangentic's own hooks and `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), so an edit reaches the next session and the previous spawn's entries never become the baseline. When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
+Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. As with Gemini, the base file (the project root's in the main repo, and in a worktree the branch's own tracked copy, else the root's) is read on every spawn with Kangentic's own hooks and `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), so an edit reaches the next session and the previous spawn's entries never become the baseline. In a worktree a copy git tracks is the branch's and is read instead, so a spawn never replaces it with the root's (see [Gemini's Settings Merge](gemini-cli.md#settings-merge)). When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
 
 On Windows the hook commands carry bare tokens only: `node .kangentic/qwen-event-bridge.cjs env:KANGENTIC_EVENTS_PATH <type> ...`. Qwen's Windows hook runner hands cmd an escaped command line that no quoted path survives, and a bare token also survives the Git Bash it uses under MSYS. The builder checks the bridge copy in `<cwd>/.kangentic/` on every spawn and rewrites it only when its bytes differ from the app's bridge (after an app update, for example). A spawn that finds an identical copy leaves it alone, a hook already running keeps the copy it loaded, and the events path comes from each session's own environment, so concurrent sessions in one folder each write to their own file. See [Paths in hook commands](claude-code.md#paths-in-hook-commands).
 

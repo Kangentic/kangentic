@@ -110,13 +110,22 @@ export interface ManagedSession {
    */
   agentEndSignaledAt?: number | null;
   /**
-   * For a transient session, epoch ms of the agent's first SessionStart hook.
-   * Set once and never cleared (a `/clear` starts again on a running agent).
-   * With `altScreenEnteredAt`, it is the evidence that the agent started which
-   * the agent-absence sweep waits for before it judges a Command Terminal, so
-   * a shell slow to reach the agent command is not ended as agentless.
+   * Epoch ms of the agent's first SessionStart hook, on every session. Set once
+   * and never cleared (a `/clear` starts again on a running agent). With
+   * `altScreenEnteredAt`, it is the evidence that the agent started: the
+   * agent-absence sweep waits for it before it judges a Command Terminal, so a
+   * shell slow to reach the agent command is not ended as agentless, and a
+   * session retired without it reports a launch that never started.
    */
   agentStartObservedAt?: number | null;
+  /** The agent reports its own start (`AgentParser.reportsAgentStart`, read at spawn). */
+  reportsAgentStart?: boolean;
+  /** This session's launch failure was reported, so a second retirement only retires it. */
+  launchFailureNoted?: boolean;
+  /** Bytes the spawn typed into the shell, its Enter included; null with no command. */
+  typedLineBytes?: number | null;
+  /** The typed line sourced a launcher file instead of carrying the command. */
+  launcherUsed?: boolean;
   /** Swimlane this session is isolated to (null = main session). Drives the Main/Isolated badge. */
   isolatedSwimlaneId?: string | null;
   /** Agent-reported session ID (the value passed to `--resume`). Known at

@@ -69,9 +69,11 @@ export interface PRResolveOptions {
    * default on. GitHub is the connector that pays for it: one `gh api graphql`
    * probe per PR still waiting on a required review, whether GitHub calls that
    * `BLOCKED` or `BEHIND` (every check settled green), never one per open PR
-   * per sweep, and the answer folds that PR to `ready`. The same probe reads
-   * the base branch's required checks, so a failed, in-flight, or
-   * not-yet-reported one still reads `blocked` whatever the bypass says. The
+   * per sweep, and the answer folds that PR to `ready`. A viewer the probe
+   * refuses on a branch with no classic rule falls through to REST reads of the
+   * branch's rulesets, cached per base. Both paths read the base branch's
+   * required checks, so a failed, in-flight, or not-yet-reported one still
+   * reads `blocked` whatever the bypass says. The
    * verdict becomes viewer-relative. Azure DevOps ignores it (its bypass lives
    * in the security namespace and is out of scope).
    */

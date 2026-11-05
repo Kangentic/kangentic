@@ -76,8 +76,9 @@ is room. Each platform reads its own signal:
   [low memory warning](troubleshooting.md#low-memory-warning-windows) reads. Low starts at the warning's line and ends
   at twice it.
 - **Linux:** free memory plus free swap, against RAM plus swap, through the same lines.
-- **macOS:** the system's own memory pressure level. Low starts at warn or critical and ends at
-  normal.
+- **macOS:** the system's own memory pressure level. Critical is low and normal is not. At warn,
+  the system's free memory percentage decides, through the same lines as the other platforms, so a
+  Mac that stays at warn with plenty of memory free is left alone.
 
 Only an agent that has waited on you for at least 5 minutes, idle or at a permission prompt, is
 paused. Never an agent that is working, one with text typed into its prompt, one whose terminal is

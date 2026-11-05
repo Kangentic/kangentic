@@ -567,6 +567,9 @@ export class ClaudeAdapter implements AgentAdapter {
     return platform === 'win32' || platform === 'linux';
   }
 
+  /** The SessionStart hook runs at launch, resumes included, before any prompt. */
+  readonly reportsAgentStart = true;
+
   /**
    * The conversation's transcript on a host over SSH (#913): the one file Claude appends to under
    * `~/.claude/projects/<slug>/`, in this computer's mirror of the host's home, where every Claude reader

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
-import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import { ensureLocalGitExcludes, settingsBaseDirectory } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
 import { cliPathForTarget, pulledProjectRoot, type CliTarget } from '../../shared/cli-target';
@@ -209,16 +209,16 @@ export class GeminiCommandBuilder {
   }
 
   /**
-   * The project's `.gemini/settings.json` with Kangentic's own hooks and
-   * `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), read from
-   * disk on every spawn so an edit or a pull reaches the next session with no
-   * restart. In the main repo (`cwd` is the project root) this is the file the
-   * previous spawn wrote, and the strip keeps that spawn's entries out of the
-   * user's baseline.
+   * The `.gemini/settings.json` in `directory` (`settingsBaseDirectory` picks
+   * it) with Kangentic's own hooks and `mcpServers.kangentic` entry stripped
+   * (`stripKangenticEntries`), read from disk on every spawn so an edit or a
+   * pull reaches the next session with no restart. When `directory` is the
+   * spawn's `cwd` this is the file the previous spawn wrote, and the strip keeps
+   * that spawn's entries out of the user's baseline.
    */
-  private readBaseSettings(projectRoot: string): GeminiSettings {
+  private readBaseSettings(directory: string): GeminiSettings {
     let baseSettings: GeminiSettings = {};
-    const projectSettingsPath = path.join(projectRoot, '.gemini', 'settings.json');
+    const projectSettingsPath = path.join(directory, '.gemini', 'settings.json');
     try {
       const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
       // A settings.json that parses to an array or a scalar would spread into
@@ -304,8 +304,10 @@ export class GeminiCommandBuilder {
    * variables, not a credential.
    */
   private createMergedSettings(options: GeminiCommandOptions): void {
+    // On a host only the working folder's files are pulled, so it is the root (`pulledProjectRoot`); the base
+    // directory then reads the same folder.
     const projectRoot = pulledProjectRoot(options);
-    const baseSettings = this.readBaseSettings(projectRoot);
+    const baseSettings = this.readBaseSettings(settingsBaseDirectory(options.cwd, projectRoot, '.gemini'));
 
     const merged: GeminiSettings = { ...baseSettings };
     const place = options.cliTarget ?? null;

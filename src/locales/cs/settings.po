@@ -938,7 +938,7 @@ msgstr "Zkratky se nepodařilo uložit"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Couldn't save Stop script"
-msgstr "Ukončovací skript se nepodařilo uložit"
+msgstr "Skript pro zastavení se nepodařilo uložit"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1413,7 +1413,7 @@ msgstr "Vyšší úsilí odpovídá pomaleji a může zpřesnit počty napříč
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Počkat s výzvou na skript"
+msgstr "Pozdržet výzvu kvůli skriptu"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1530,7 +1530,7 @@ msgstr "Jak relay funguje"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "Jak tento projekt ukončuje to, co po úloze zůstane spuštěné."
+msgstr "Jak tento projekt zastavuje to, co úloha nechá spuštěné."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Zobrazit panel terminálu pod nástěnkou"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Zobrazí PR jako připravený, když by ho vaše obejití správce mohlo sloučit bez požadované kontroly, nikdy však přes neúspěšnou kontrolu."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Zobrazí PR jako připravený, když můžete obejít jeho požadovanou kontrolu, nikdy však přes neúspěšnou kontrolu."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Zastaveno"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Ukončí, co úloha nechala běžet, po pozastavení kvůli nečinnosti nebo nedostatku paměti či před jejím dokončením. Uloženo v kangentic.json."
+msgstr "Zastaví, co úloha nechala běžet, po pozastavení kvůli nečinnosti nebo nedostatku paměti či před jejím dokončením; uloženo v kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Otestovat připojení"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "Agent dostane první výzvu až po úspěšném dokončení skriptu, ne hned, když skript ještě běží."
+msgstr "Agent dostane první výzvu až po úspěšném dokončení skriptu, ne hned za jeho běhu."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

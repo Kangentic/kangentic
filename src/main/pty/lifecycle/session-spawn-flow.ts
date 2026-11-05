@@ -1,3 +1,4 @@
+import { mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
@@ -20,10 +21,10 @@ import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hoo
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
-import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
 import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
 import type { RemoteSessionRegistration } from '../../remote/remote-session-relay';
+import { buildTypedLaunch, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -206,6 +207,34 @@ function pickCarryoverSource(siblings: ManagedSession[], reusedId: string): Mana
 function adapterNameOf(parser: AgentParser): string | null {
   const name = (parser as { name?: unknown }).name;
   return typeof name === 'string' ? name : null;
+}
+
+/**
+ * What `buildTypedLaunch` needs for this spawn. The session's folder comes from
+ * its output paths; a session with neither (a raw `SESSION_SPAWN`) has none.
+ */
+function typedLaunchInput(input: SpawnSessionInput, command: string, shell: string): TypedLaunchInput {
+  const outputPath = input.statusOutputPath || input.eventsOutputPath;
+  return {
+    command,
+    shell,
+    platform: process.platform,
+    sessionDirectory: outputPath ? path.dirname(outputPath) : null,
+  };
+}
+
+/** Write the launcher file a typed line sources. False when it could not be written. */
+async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, sessionId: string): Promise<boolean> {
+  try {
+    await mkdir(path.dirname(launcher.filePath), { recursive: true });
+    // Owner-only: the file holds the task's prompt.
+    await writeFile(launcher.filePath, launcher.contents, { encoding: 'utf8', mode: 0o600 });
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'unknown';
+    console.warn(`[SPAWN] Launcher file write failed (${code}) for session=${sessionId.slice(0, 8)}, typing the command`);
+    return false;
+  }
 }
 
 /**
@@ -469,6 +498,20 @@ export async function performSpawn(
     }
   }
 
+  // What the shell gets typed. A launcher file that line sources has to exist
+  // before it is typed, so it is written here; a short command never waits. One
+  // that cannot be written falls back to typing the whole command, which still
+  // works once the shell has reached its prompt. A session on a host types its
+  // own line (`remotePlan.typedLine`): the launcher is a file on this computer,
+  // and the host's login shell cannot source it.
+  const launchInput = input.command && !remotePlan ? typedLaunchInput(input, input.command, shell) : null;
+  let typedLaunch = launchInput ? buildTypedLaunch(launchInput) : null;
+  if (launchInput && typedLaunch?.launcher) {
+    const written = await writeLauncher(typedLaunch.launcher, id);
+    if (!written) typedLaunch = buildTypedLaunch({ ...launchInput, sessionDirectory: null });
+    if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
+  }
+
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
@@ -590,6 +633,7 @@ export async function performSpawn(
       : !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
     ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
     reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
+    reportsAgentStart: input.agentParser?.reportsAgentStart === true,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,
@@ -598,6 +642,8 @@ export async function performSpawn(
     ...(input.agentSessionId ? { agentSessionId: input.agentSessionId } : {}),
     cliTarget: input.cliTarget ?? null,
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
+    typedLineBytes: typedLaunch?.typedLineBytes ?? null,
+    launcherUsed: typedLaunch !== null && typedLaunch.launcher !== null,
   };
 
   context.registry.set(id, session);
@@ -893,21 +939,21 @@ export async function performSpawn(
       traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
     }
   };
-  if (input.command || cwdFixupCommand) {
+  // A session on a host types the line the remote plan quoted for the host's shell.
+  const typedLineToWrite = remotePlan && input.command ? remotePlan.typedLine(input.command) : typedLaunch?.typedLine ?? null;
+  if (typedLineToWrite !== null || cwdFixupCommand) {
     setTimeout(() => {
       if (cwdFixupCommand) {
         writeIfStillOwned(cwdFixupCommand + '\r');
       }
-      if (input.command) {
+      if (typedLineToWrite !== null) {
         // Every command typed here launches an agent: a task's, a Command
         // Terminal's (which ends with its agent, so no usable shell is left)
         // or a workflow's. Each gets the shell's own clear prefixed onto the
         // typed line, so the shell erases its startup preamble and command
         // echo at execution time - see buildSpawnClearPrelude for why this
         // beats every marker heuristic.
-        const cmd = remotePlan
-          ? remotePlan.typedLine(input.command)
-          : buildSpawnClearPrelude(shellName) + adaptCommandForShell(input.command, shellName);
+        const cmd = typedLineToWrite;
         if (cwdFixupCommand) {
           setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {

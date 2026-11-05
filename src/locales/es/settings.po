@@ -1413,7 +1413,7 @@ msgstr "Un mayor esfuerzo responde más lento y puede ayudar con recuentos en mu
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Retener la solicitud durante el script"
+msgstr "Retener el prompt durante el script"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2002,7 +2002,7 @@ msgstr "No encontrado"
 #, fuzzy
 msgctxt "hotkey"
 msgid "Not set"
-msgstr "Sin asignar"
+msgstr "Sin definir"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Mostrar el panel de terminal debajo del tablero"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Muestra un PR como listo cuando tu omisión de administrador podría fusionarlo sin una revisión obligatoria, nunca con una comprobación fallida."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Muestra un PR como listo cuando puedes omitir su revisión obligatoria, nunca con una comprobación fallida."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Detenido"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Detiene lo que una tarea dejó en ejecución tras una pausa por inactividad o poca memoria, o antes de finalizar. Se guarda en kangentic.json."
+msgstr "Detiene lo que una tarea dejó en ejecución tras una pausa por inactividad o poca memoria o antes de finalizar; se guarda en kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Probar conexión"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "El agente recibe su primera solicitud cuando el script termina correctamente, no de inmediato mientras el script sigue en ejecución."
+msgstr "El agente recibe su primer prompt cuando el script termina correctamente, no de inmediato mientras el script sigue en ejecución."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

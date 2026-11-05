@@ -1530,7 +1530,7 @@ msgstr "Röle nasıl çalışır"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "How this project stops what a task leaves running."
-msgstr "Bu projenin bir görevden kalan işlemleri nasıl durdurduğu."
+msgstr "Bu projenin, görevden kalan işlemleri nasıl durduracağı."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Terminal panelini panonun altında göster"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Yönetici atlama yetkiniz bir PR'ı gerekli incelemeyi atlayarak birleştirebiliyorsa onu hazır gösterir; başarısız bir denetimi asla atlamaz."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Gerekli incelemesini atlayabildiğiniz bir PR'ı hazır gösterir; başarısız bir denetimi asla atlamaz."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Durduruldu"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Bir görevin boşta kalma veya düşük bellek duraklatmasından sonra ya da bitmeden önce çalışır bıraktıklarını durdurur; kangentic.json dosyasına kaydedilir."
+msgstr "Görevin boşta kalma veya düşük bellek duraklatmasından sonra ya da bitmeden önce çalışır durumda bıraktıklarını durdurur; kangentic.json dosyasına kaydedilir."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

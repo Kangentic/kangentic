@@ -1413,7 +1413,7 @@ msgstr "Wyższy poziom wysiłku odpowiada wolniej i może pomóc w liczeniu w wi
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
-msgstr "Wstrzymaj monit do zakończenia skryptu"
+msgstr "Wstrzymaj prompt na czas skryptu"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2749,8 +2749,8 @@ msgstr "Pokazuj panel terminala pod tablicą"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr "Oznacza PR jako gotowy, gdy obejście administratora pozwala scalić go mimo wymaganej recenzji, ale nigdy mimo nieudanego testu."
+msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
+msgstr "Oznacza PR jako gotowy, gdy możesz obejść wymaganą recenzję, ale nigdy mimo nieudanego testu."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2850,7 +2850,7 @@ msgstr "Zatrzymuj pozostałe procesy"
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Stop script"
-msgstr "Skrypt zatrzymania"
+msgstr "Skrypt zatrzymujący"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2865,7 +2865,7 @@ msgstr "Zatrzymany"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Zatrzymuje to, co zadanie zostawiło uruchomione, po wstrzymaniu przez bezczynność lub brak pamięci albo przed zakończeniem. Zapisywany w kangentic.json."
+msgstr "Zatrzymuje to, co zadanie pozostawiło uruchomione po pauzie z powodu bezczynności lub braku pamięci albo przed zakończeniem; zapisywany w kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -2972,7 +2972,7 @@ msgstr "Testuj połączenie"
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
-msgstr "Agent dostaje pierwszy monit po pomyślnym zakończeniu skryptu, a nie od razu, gdy skrypt jeszcze działa."
+msgstr "Agent otrzymuje pierwszy prompt po pomyślnym zakończeniu skryptu, a nie od razu, gdy skrypt jeszcze działa."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
