@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
-import type { AgentParser, Session, SessionContext, SpawnSessionInput } from '../../../shared/types';
+import type { AgentParser, Session, SessionContext, SpawnSessionInput, StoredCliTarget } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
 import { toSession } from '../session-registry';
 import type { SessionTelemetry } from '../../activity-engine/session-telemetry';
@@ -23,7 +23,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
 import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
-import type { RemoteSessionRegistration } from '../../remote/remote-session-relay';
+import type { RemoteSessionRegistration, RemoteTranscriptSource } from '../../remote/remote-session-relay';
 import { buildTypedLaunch, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
@@ -141,6 +141,20 @@ export interface SpawnFlowContext {
   remoteSessions?: {
     register(registration: RemoteSessionRegistration): Promise<void>;
     release(sessionId: string): Promise<void>;
+  };
+}
+
+/**
+ * What the session's adapter says about its transcript on a host, asked again once the session's id or an
+ * index entry arrives. A remote task works in one folder for its whole life, so `cwd` and the target hold.
+ */
+function remoteTranscriptSource(parser: AgentParser | undefined, cwd: string, cliTarget: StoredCliTarget): RemoteTranscriptSource {
+  const index = parser?.remoteTranscriptIndex?.({ cwd, cliTarget }) ?? null;
+  const snapshotOf = parser?.remoteTranscriptSnapshot?.bind(parser);
+  return {
+    files: (agentSessionId) => parser?.remoteTranscriptFiles?.({ agentSessionId, cwd, cliTarget }) ?? [],
+    ...(index ? { index } : {}),
+    ...(snapshotOf ? { snapshot: (agentSessionId, runProgram) => snapshotOf({ agentSessionId, cwd, cliTarget, runProgram }) } : {}),
   };
 }
 
@@ -487,6 +501,8 @@ export async function performSpawn(
         transcriptFiles: input.agentSessionId && input.cliTarget
           ? input.agentParser?.remoteTranscriptFiles?.({ agentSessionId: input.agentSessionId, cwd: input.cwd, cliTarget: input.cliTarget }) ?? []
           : [],
+        agentSessionId: input.agentSessionId ?? null,
+        ...(input.cliTarget ? { transcripts: remoteTranscriptSource(input.agentParser, input.cwd, input.cliTarget) } : {}),
       });
     } catch (error) {
       registrationError = error instanceof Error ? error : new Error(String(error));

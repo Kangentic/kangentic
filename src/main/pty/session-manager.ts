@@ -835,6 +835,8 @@ export class SessionManager extends EventEmitter {
           session.agentSessionId = agentReportedId;
           this.emit('session-changed', sessionId, toSession(session));
         }
+        // A session on a host starts copying the transcript this id names (#913).
+        this.remoteSessionRelay?.setAgentSessionId(sessionId, agentReportedId);
         this.emit('agent-session-id', sessionId, session.taskId, session.projectId, agentReportedId);
         // Hand off to the session-history reader if the adapter declares
         // a native history hook. Fire-and-forget - the reader logs any
@@ -1262,6 +1264,8 @@ export class SessionManager extends EventEmitter {
     this.remoteSessionRelay = relay;
     this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
     this.on('remote-file-chunk', (event: Extract<PtyHostEvent, { type: 'fileChunk' }>) => relay.deliverChunk(event));
+    // An id a CLI's index names reaches the capture path every other id does, and comes back as `onAgentSessionId`.
+    relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyAgentSessionId(sessionId, agentSessionId));
   }
 
   /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */

@@ -175,9 +175,11 @@ export interface HelperRequestMap {
   /**
    * Start sending the growing files of a session (its transcript) as `fileChunk` events, from their
    * first byte (`file-tail.ts`). Paths are absolute and beneath the user's home. A file that is not
-   * there yet is sent once it exists.
+   * there yet is sent once it exists. A later call names the whole set: a file in both keeps its place.
+   * `sizes` is each file's size as the host answers, by key, so what was there before the agent ran can be
+   * told from what it adds. A file that is not there has no entry.
    */
-  watchFiles: { params: { sessionId: string; files: Array<{ key: string; path: string }> }; result: { watching: true } };
+  watchFiles: { params: { sessionId: string; files: Array<{ key: string; path: string }> }; result: { watching: true; sizes: Record<string, number> } };
   /** Stop, after one last pass that sends the end of each file. */
   unwatchFiles: { params: { sessionId: string }; result: { watching: false } };
   /** Stop, after sending what is already published. */

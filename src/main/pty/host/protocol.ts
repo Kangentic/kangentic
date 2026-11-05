@@ -436,7 +436,7 @@ export type PtyHostEvent =
   /** A piece of a file a remote agent keeps appending to on its host, its transcript (#913). `data` is
    *  base64 and goes at `offset` in Kangentic's copy; `reset` empties the copy first (the file was
    *  replaced or shortened). `key` is the name the app gave the file when it asked for it. */
-  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; data: string };
+  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; size: number; data: string };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

@@ -45,6 +45,74 @@ async function until(condition: () => boolean, timeoutMs = 3000): Promise<void> 
 }
 
 describe('the helper\'s file tail', () => {
+  it('keeps a file\'s place when a second watch names it again, so a transcript found late sends nothing twice', async () => {
+    const first = path.join(folder, 'a.jsonl');
+    const second = path.join(folder, 'b.jsonl');
+    fs.writeFileSync(first, 'one\n');
+    fs.writeFileSync(second, 'two\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: first }]);
+    await until(() => bytesOf(events) === 'one\n');
+
+    tail.watch('s1', [{ key: '0', path: first }, { key: '1', path: second }]);
+    await until(() => events.some((event) => event.key === '1'));
+    fs.appendFileSync(first, 'more\n');
+    await until(() => events.filter((event) => event.key === '0').length === 2);
+
+    expect(events.filter((event) => event.key === '0').map((event) => event.offset)).toEqual([0, 4]);
+    expect(events.find((event) => event.key === '1')?.offset).toBe(0);
+  });
+
+  it('stops a file a second watch leaves out', async () => {
+    const first = path.join(folder, 'a.jsonl');
+    fs.writeFileSync(first, 'one\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: first }]);
+    await until(() => events.length === 1);
+
+    tail.watch('s1', []);
+    fs.appendFileSync(first, 'more\n');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(events).toHaveLength(1);
+  });
+
+  it('says how large the file is on each chunk, so a copy that must be whole knows when it is', async () => {
+    const file = path.join(folder, 'whole.json');
+    fs.writeFileSync(file, 'x'.repeat(250));
+    const { tail, events } = tailer({ chunkBytes: 100 });
+    tail.watch('s1', [{ key: '0', path: file }]);
+
+    await until(() => events.length === 3);
+
+    expect(events.map((event) => event.size)).toEqual([250, 250, 250]);
+  });
+
+  it('reports what each file holds, leaving out one that is not there', async () => {
+    const file = path.join(folder, 'index.jsonl');
+    fs.writeFileSync(file, 'abcd');
+    const { tail } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }, { key: '1', path: path.join(folder, 'missing') }]);
+
+    expect(await tail.sizes('s1')).toEqual({ 0: 4 });
+  });
+
+  it('sends the whole new file when an export swaps it in, with no byte of the old one', async () => {
+    const file = path.join(folder, 'export.json');
+    fs.writeFileSync(file, '{"version":"old"}');
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => bytesOf(events) === '{"version":"old"}');
+
+    const staged = `${file}.tmp`;
+    fs.writeFileSync(staged, '{"version":"a longer new export"}');
+    fs.renameSync(staged, file);
+
+    await until(() => events.length === 2);
+    expect(events[1]).toMatchObject({ offset: 0, reset: true, size: 33 });
+    expect(Buffer.from(events[1].data, 'base64').toString('utf8')).toBe('{"version":"a longer new export"}');
+  });
+
   it('sends the bytes already in the file, then only what is appended, each chunk at its offset', async () => {
     const file = path.join(folder, 'a.jsonl');
     fs.writeFileSync(file, 'one\n');
