@@ -725,7 +725,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
    * A CLI that ended on its own and SAID why did not start; say so. The
    * adapter reads its own CLI's last words (Claude's "No conversation found
    * with session ID" on a `--resume` whose transcript is gone) and the failure
-   * rides the same "Agent did not start" notice a failed worktree or checkout
+   * rides the same "Agent didn't start" notice a failed worktree or checkout
    * raises. Without it the card simply went quiet: a dead session row was the
    * only trace. Two routes reach this, and both must: the agent-absence sweep
    * (the CLI runs under a shell that outlives it, so the PTY never exits on
