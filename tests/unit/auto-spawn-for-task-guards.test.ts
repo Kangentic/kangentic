@@ -790,6 +790,8 @@ describe('autoSpawnForTask: split lock', () => {
     expect(mockExecuteTransition).not.toHaveBeenCalled();
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', expect.objectContaining({ reason: 'auto_spawn' }));
     expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    // The sink names the start path: a caller that named none is a board start.
+    expect(mockReportHandledError.mock.calls[0][1]).toEqual(expect.objectContaining({ start_path: 'board' }));
     expect(getInFlightSpawnProgress()).toEqual({});
 
     // The release lives in the function-level finally, not inside the

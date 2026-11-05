@@ -174,6 +174,24 @@ describe('launchEarlyAgent', () => {
     expect(mockAdapter.ensureTrust).toHaveBeenCalledWith(WORKTREE, null);
   });
 
+  it('carries what started it onto the session, so a failed launch reports the real start path', async () => {
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine(sessionManager, makeSessionRepo());
+
+    await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude', startPath: 'phone' });
+
+    expect((sessionManager.spawned[0] as SpawnInput & { startPath?: string }).startPath).toBe('phone');
+  });
+
+  it('reads as a board start when nothing named another', async () => {
+    const sessionManager = makeSessionManager();
+    const { engine } = makeEngine(sessionManager, makeSessionRepo());
+
+    await engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' });
+
+    expect((sessionManager.spawned[0] as SpawnInput & { startPath?: string }).startPath).toBe('board');
+  });
+
   it('launches nothing for an agent that cannot take its first prompt typed', async () => {
     mockAdapter.firstPromptMayBeTyped = undefined;
     const sessionManager = makeSessionManager();

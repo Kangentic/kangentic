@@ -849,7 +849,7 @@ describe('PtyHostCore: a shell that exits on its own', () => {
         rig.setClock(EXITED_AT);
         expect(() => rig.fakeFor(ROOT_PID).exit(1)).not.toThrow();
 
-        expect(rig.events.filter((event) => event.type === 'exit')).toEqual([{ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 1 }]);
+        expect(rig.events.filter((event) => event.type === 'exit')).toEqual([{ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 1, signal: null }]);
         expect(sessionPtyTable(rig.core).has(1)).toBe(false);
         expect(warn).toHaveBeenCalledWith('[pty-host] could not read a PTY root\'s exit time:', 'handle gone');
         expect(release).toHaveBeenCalledTimes(1);
@@ -877,7 +877,7 @@ describe('PtyHostCore: a shell that exits on its own', () => {
       expect(() => rig.fakeFor(ROOT_PID).exit(1)).not.toThrow();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(rig.events.filter((event) => event.type === 'exit')).toEqual([{ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 1 }]);
+      expect(rig.events.filter((event) => event.type === 'exit')).toEqual([{ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 1, signal: null }]);
       expect(sessionPtyTable(rig.core).has(1)).toBe(false);
       expect(release).toHaveBeenCalledTimes(1);
       // The read survived the failed close, so the cleanup asked the agent to exit, as it does for a pin that closes cleanly.
