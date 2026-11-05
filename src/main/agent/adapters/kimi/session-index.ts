@@ -11,8 +11,13 @@ import { kimiCodeHome, kimiSessionIndexPath, kimiWorkDirCompareKey } from './kim
  * 2026-11-03): "a top-level `session_index.jsonl` index is maintained (one
  * record per line, each containing `sessionId`, `sessionDir`, and
  * `workDir`)". A deleted session appends `{sessionId, deleted: true}`
- * (`packages/agent-core-v2` session index). Built from the docs and source,
- * not yet checked against a real install.
+ * (`packages/agent-core-v2` session index).
+ *
+ * Checked against a real 2.5.1 on Linux (2026-11-05,
+ * `docs/audits/ssh-transcript-exports-audit.md`): `sessionDir` is absolute, the
+ * line is written by the session's first message and not before, and a resume
+ * adds no line. Relative folders are still read, because the docs do not rule
+ * them out. The `deleted` line was not exercised.
  */
 export interface KimiSessionIndexEntry {
   sessionId: string;
@@ -92,9 +97,9 @@ export function kimiSessionsForWorkDir(
 }
 
 /**
- * A folder from the index as a path on this machine. The docs do not say
- * whether `sessionDir` is absolute, so a relative one is read against the data
- * root it sits in.
+ * A folder from the index as a path on this machine. A real 2.5.1 writes it
+ * absolute. The docs do not promise that, so a relative one is read against the
+ * data root it sits in.
  */
 function hostSessionDir(sessionDir: string, place: CliPlace | null): string {
   const absolute = sessionDir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(sessionDir) || sessionDir.startsWith('\\\\');

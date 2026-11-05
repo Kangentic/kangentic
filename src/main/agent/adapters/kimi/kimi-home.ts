@@ -9,8 +9,9 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  * and `en/configuration/env-vars.md` (github.com/MoonshotAI/kimi-code,
  * read 2026-11-03). The data root is `$KIMI_CODE_HOME`, else `~/.kimi-code`,
  * and it holds `config.toml`, `credentials/`, `session_index.jsonl` and
- * `sessions/<workspaceId>/<sessionId>/`. Built from the docs, not yet checked
- * against a real install.
+ * `sessions/<workspaceId>/<sessionId>/`. A real 2.5.1 on Linux matches
+ * (2026-11-05, `docs/audits/ssh-transcript-exports-audit.md`), with
+ * `<workspaceId>` as `wd_<folder>_<hash>` and `<sessionId>` as `session_<uuid>`.
  *
  * A Kimi Code installed in a WSL distro (`place`) keeps its data in the
  * distro's home, under the `KIMI_CODE_HOME` its own shell sets, reached
