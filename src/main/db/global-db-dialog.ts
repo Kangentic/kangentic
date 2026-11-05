@@ -6,6 +6,7 @@ import { PATHS } from '../config/paths';
 import { IPC } from '../../shared/ipc-channels';
 import { getGlobalDb, resetGlobalDb } from './database';
 import { describeSqliteFailure } from './sqlite-error';
+import { dataDirFailureOf, type DataDirFailure, type DataDirState } from '../config/data-dir-failure';
 
 /**
  * The user-facing policy for an unreadable global database.
@@ -23,6 +24,10 @@ import { describeSqliteFailure } from './sqlite-error';
  *   - `ensureGlobalDbReadable()` at startup, before any window exists.
  *   - `notifyGlobalDbUnavailable()` for a read that degraded mid-session.
  *
+ * Sentry DESKTOP-2B/2C: the same dialog catches a data folder that could not be
+ * created, because `getGlobalDb()` runs `ensureDirs()` before it opens anything.
+ * There is no database in that case and no program holding it, so it has its own copy.
+ *
  * Always the async `dialog.showMessageBox`, never `showMessageBoxSync`: a sync
  * dialog blocks the main process, which would freeze every live PTY.
  */
@@ -34,21 +39,56 @@ function dialogsSuppressed(): boolean {
   return process.env.NODE_ENV === 'test';
 }
 
+/** The cause as a plain fact. `other` has none: the raw error is all that is known. */
+function dataDirCause(state: DataDirState): string | null {
+  switch (state) {
+    case 'drive_missing':
+      return translateText(msg`The drive for this folder is not available.`);
+    case 'dangling_link':
+      return translateText(msg`A link in this path points to a folder that does not exist.`);
+    case 'invalid_path':
+      return translateText(msg`This path has characters Windows does not allow.`);
+    case 'other':
+      return null;
+  }
+}
+
+interface DialogCopy {
+  message: string;
+  detail: string[];
+}
+
+// In both, the path and the failure text stay as written; the sentences are ours.
+function databaseCopy(error: unknown): DialogCopy {
+  return {
+    message: translateText(msg`Kangentic can't read its database`),
+    detail: [
+      PATHS.globalDb,
+      '',
+      describeSqliteFailure(error),
+      '',
+      translateText(msg`This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive.`),
+    ],
+  };
+}
+
+function dataDirCopy(error: unknown, failure: DataDirFailure): DialogCopy {
+  const cause = dataDirCause(failure.state);
+  return {
+    message: translateText(msg`Kangentic can't create its data folder`),
+    detail: [failure.path, '', describeSqliteFailure(error), ...(cause ? ['', cause] : [])],
+  };
+}
+
 async function askRetryOrQuit(error: unknown, parent: BrowserWindow | null): Promise<boolean> {
-  // The path and SQLite's own failure text stay as written; the sentences are ours.
-  const detail = [
-    PATHS.globalDb,
-    '',
-    describeSqliteFailure(error),
-    '',
-    translateText(msg`This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive.`),
-  ].join('\n');
+  const failure = dataDirFailureOf(error);
+  const copy = failure ? dataDirCopy(error, failure) : databaseCopy(error);
 
   const options: Electron.MessageBoxOptions = {
     type: 'error',
     title: 'Kangentic',
-    message: translateText(msg`Kangentic can't read its database`),
-    detail,
+    message: copy.message,
+    detail: copy.detail.join('\n'),
     buttons: [translateText(msg({ message: 'Retry', context: 'Action' })), translateText(msg`Quit`)],
     defaultId: RETRY_BUTTON,
     cancelId: 1,

@@ -47,6 +47,11 @@ msgstr "{taskTitle} — {place}"
 msgid "{workflowTitle} workflow"
 msgstr "Рабочий процесс {workflowTitle}"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Ссылка в этом пути указывает на несуществующую папку."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "Свободная системная память (коммит) на �
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic не может создать папку для данных"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic не может прочитать свою базу данных"
 
@@ -169,10 +179,20 @@ msgstr "Сбой сеанса: {label}"
 msgid "Terminals restarted"
 msgstr "Терминалы перезапущены"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "Диск с этой папкой недоступен."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Окно аварийно завершило работу ({crashReason}) и не смогло восстановиться после {attempts, plural, one {# попытки} few {# попыток} many {# попыток} other {# попытки}} за {minutes, plural, one {# минуту} few {# минуты} many {# минут} other {# минуты}}."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Этот путь содержит символы, запрещённые в Windows."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

@@ -12,6 +12,7 @@ sources:
   - resource: src/main/shared/project-roots.ts
   - resource: src/main/db/repositories/project-repository.ts
   - resource: src/main/config/write-failure-notice.ts
+  - resource: src/main/config/data-dir-failure.ts
   - resource: src/main/analytics/native-crash-event.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
@@ -370,7 +371,11 @@ in one Sentry org, one triage surface.
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
   outage: `config`, `config_dirs`, `config_project_override`, `import_source`, `browser_url`, the
   three `mobile_bridge_*` stores, `asana_credential`, plus `errno` and `syscall` tags when the
-  error carries them) - send the real error to Sentry so hidden issues
+  error carries them; `config_dirs` is the one source that is a directory creation rather than a
+  write (`ensureDirs()` at config load), and it also carries `config_dir` (`config`, `projects`, `models`),
+  `config_dir_origin` (`env`, `flag`, `appdata`, `home`) and `config_dir_state` (`drive_missing`,
+  `dangling_link`, `invalid_path`, `other`), from `src/main/config/data-dir-failure.ts`, which say
+  why a directory could not be created without sending its path) - send the real error to Sentry so hidden issues
   are diagnosable, not just counted. The guarded write is the one exception to "the real error".
   Node writes the paths a syscall touched into an fs error's message, and a project on another
   drive reached Sentry whole that way (Sentry DESKTOP-1Z). A config file a guarded write targets
@@ -384,7 +389,9 @@ in one Sentry org, one triage surface.
   filtered: it is a host condition rather than a defect, but it is also the only evidence the
   user-facing toast fires at all, and the per-source latch already caps the volume at one event
   per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code
-  change (Sentry DESKTOP-1C). The utility-worker report also
+  change (Sentry DESKTOP-1C). The user's notice has a latch of its own: a report made before any
+  window exists leaves the notice armed, so the source's next failure raises it with no second
+  Sentry event. The utility-worker report also
   carries a `utility_process` context block with the last 8 KiB of the worker's stderr (home
   directory redacted). Every worker is forked with stderr piped for this; with Electron's
   `inherit` default, a packaged GUI build sent the worker's uncaught-exception dump nowhere, so

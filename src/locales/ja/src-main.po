@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} ワークフロー"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "このパス内のリンクが、存在しないフォルダーを指しています。"
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "当時の空きシステムメモリ (コミット): {remainingMb} MB。
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic がデータ フォルダーを作成できません"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic がデータベースを読み取れません"
 
@@ -169,10 +179,20 @@ msgstr "セッションがクラッシュしました: {label}"
 msgid "Terminals restarted"
 msgstr "ターミナルを再起動しました"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "このフォルダーのドライブを利用できません。"
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "ウィンドウがクラッシュし（{crashReason}）、{minutes, plural, other {# 分}}間に {attempts, plural, other {# 回}}試行しても回復できませんでした。"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "このパスには Windows で使用できない文字が含まれています。"
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

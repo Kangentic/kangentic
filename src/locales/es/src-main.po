@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "Flujo de trabajo {workflowTitle}"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Un vínculo de esta ruta apunta a una carpeta que no existe."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "Memoria del sistema libre (commit) en ese momento: {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic no puede crear su carpeta de datos"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic no puede leer su base de datos"
 
@@ -169,10 +179,20 @@ msgstr "La sesión se bloqueó: {label}"
 msgid "Terminals restarted"
 msgstr "Terminales reiniciados"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "La unidad de esta carpeta no está disponible."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "La ventana se cerró inesperadamente ({crashReason}) y no pudo recuperarse tras {attempts, plural, one {# intento} many {# de intentos} other {# intentos}} en {minutes, plural, one {# minuto} many {# de minutos} other {# minutos}}."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Esta ruta tiene caracteres que Windows no permite."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

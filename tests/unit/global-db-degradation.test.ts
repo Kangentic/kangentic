@@ -32,6 +32,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -49,13 +50,20 @@ interface FakeWindow {
 const {
   openDatabase,
   runGlobalMigrationsMock,
+  ensureDirsMock,
   showMessageBoxMock,
   appQuitMock,
   isShuttingDownMock,
   allWindows,
+  forcedDataDirState,
 } = vi.hoisted(() => ({
+  // When set, the data-dir-failure mock below reports this state for any marked failure,
+  // because the real classifier reads the real filesystem and platform and cannot produce
+  // every state on every OS. Cleared before each test.
+  forcedDataDirState: { value: null as string | null },
   openDatabase: vi.fn(),
   runGlobalMigrationsMock: vi.fn(),
+  ensureDirsMock: vi.fn(),
   showMessageBoxMock: vi.fn(),
   appQuitMock: vi.fn(),
   isShuttingDownMock: vi.fn(() => false),
@@ -83,7 +91,7 @@ vi.mock('../../src/main/config/paths', () => ({
     globalDb: '/mock/config/index.db',
     projectDb: (id: string) => `/mock/config/projects/${id}.db`,
   },
-  ensureDirs: vi.fn(),
+  ensureDirs: (...args: unknown[]) => ensureDirsMock(...args),
 }));
 
 vi.mock('electron', () => ({
@@ -91,6 +99,21 @@ vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => allWindows },
   dialog: { showMessageBox: (...args: unknown[]) => showMessageBoxMock(...args) },
 }));
+
+// A partial mock: everything is real except that `dataDirFailureOf` swaps in the forced
+// state. vi.mock survives vi.resetModules(), and the holder is hoisted, so freshModules()
+// keeps the override.
+vi.mock('../../src/main/config/data-dir-failure', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/config/data-dir-failure')>();
+  return {
+    ...actual,
+    dataDirFailureOf: (error: unknown) => {
+      const failure = actual.dataDirFailureOf(error);
+      if (!failure || forcedDataDirState.value === null) return failure;
+      return { ...failure, state: forcedDataDirState.value as typeof failure.state };
+    },
+  };
+});
 
 vi.mock('../../src/main/shutdown-state', () => ({
   isShuttingDown: () => isShuttingDownMock(),
@@ -142,10 +165,12 @@ const originalNodeEnv = process.env.NODE_ENV;
 beforeEach(() => {
   openDatabase.mockReset();
   runGlobalMigrationsMock.mockReset();
+  ensureDirsMock.mockReset();
   showMessageBoxMock.mockReset();
   appQuitMock.mockReset();
   isShuttingDownMock.mockReturnValue(false);
   allWindows.length = 0;
+  forcedDataDirState.value = null;
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   // The dialog suppresses itself under NODE_ENV=test so E2E never hangs on a
@@ -446,6 +471,65 @@ describe('ensureGlobalDbReadable', () => {
       'the copy has to name the likely causes: the whole point is that SQLITE_IOERR is environmental and the user, not the app, is the one who can act on it',
     ).toContain('antivirus');
     expect(options.buttons).toEqual(['Retry', 'Quit']);
+  });
+
+  /** The error `ensureDirs` throws for a folder it could not create, marked as the real one is. */
+  async function failEnsureDirs(directory: string): Promise<void> {
+    const { markDataDirFailure } = await import('../../src/main/config/data-dir-failure');
+    const error = Object.assign(
+      new Error(`ENOENT: no such file or directory, mkdir '${directory}'`),
+      { code: 'ENOENT', syscall: 'mkdir' },
+    );
+    markDataDirFailure(error, { path: directory, kind: 'config', origin: 'appdata' });
+    ensureDirsMock.mockImplementation(() => { throw error; });
+  }
+
+  it('says the data folder failed, not the database, when the folder cannot be created', async () => {
+    showMessageBoxMock.mockResolvedValue({ response: QUIT });
+    const { ensureGlobalDbReadable } = await freshModules();
+    await failEnsureDirs('/mock/gone/kangentic');
+
+    await ensureGlobalDbReadable();
+
+    const [options] = showMessageBoxMock.mock.calls[0];
+    expect(options.message).toBe("Kangentic can't create its data folder");
+    expect(options.detail.split('\n')[0]).toBe('/mock/gone/kangentic');
+    expect(options.detail).toContain("ENOENT: no such file or directory, mkdir '/mock/gone/kangentic'");
+    expect(options.detail).not.toContain('index.db');
+    expect(options.detail, 'nothing holds a file that never existed').not.toContain('antivirus');
+    expect(options.buttons).toEqual(['Retry', 'Quit']);
+  });
+
+  it('adds no cause when the folder failed in a way it cannot name', async () => {
+    // Under the system temp directory, so nothing here is missing and the state is `other`.
+    showMessageBoxMock.mockResolvedValue({ response: QUIT });
+    const { ensureGlobalDbReadable } = await freshModules();
+    await failEnsureDirs(tmpdir());
+
+    await ensureGlobalDbReadable();
+
+    const [options] = showMessageBoxMock.mock.calls[0];
+    expect(options.detail.split('\n')).toHaveLength(3);
+  });
+
+  it.each([
+    ['drive_missing', 'The drive for this folder is not available.'],
+    ['dangling_link', 'A link in this path points to a folder that does not exist.'],
+    ['invalid_path', 'This path has characters Windows does not allow.'],
+  ])('shows the %s sentence as the last line of the detail, after a blank line', async (state, sentence) => {
+    showMessageBoxMock.mockResolvedValue({ response: QUIT });
+    const { ensureGlobalDbReadable } = await freshModules();
+    await failEnsureDirs('/mock/gone/kangentic');
+    forcedDataDirState.value = state;
+
+    await ensureGlobalDbReadable();
+
+    const [options] = showMessageBoxMock.mock.calls[0];
+    const lines = options.detail.split('\n');
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toBe('/mock/gone/kangentic');
+    expect(lines[3]).toBe('');
+    expect(lines[4]).toBe(sentence);
   });
 
   it('reopens for real on Retry and succeeds once the lock clears', async () => {

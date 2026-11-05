@@ -15,8 +15,85 @@ import {
   reportSyncWriteFailure,
   noteSyncWriteSuccess,
   setSyncWriteFailureNotifier,
+  createWindowNotifier,
   __resetForTest,
 } from '../../src/main/config/write-failure-notice';
+
+interface FakeNoticeWindow {
+  isDestroyed: () => boolean;
+  webContents: { isLoading: () => boolean };
+}
+
+function fakeNoticeWindow(state: { destroyed?: boolean; loading?: boolean } = {}): FakeNoticeWindow {
+  return {
+    isDestroyed: () => state.destroyed ?? false,
+    webContents: { isLoading: () => state.loading ?? false },
+  };
+}
+
+describe('createWindowNotifier', () => {
+  it('returns true and sends once with the window and message when the page has loaded', () => {
+    const window = fakeNoticeWindow();
+    const send = vi.fn();
+    const notify = createWindowNotifier({ getWindow: () => window, isShuttingDown: () => false, send });
+
+    expect(notify('the message')).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(window, 'the message');
+  });
+
+  it.each([
+    ['the app is shutting down', { window: fakeNoticeWindow(), shuttingDown: true }],
+    ['there is no window', { window: null, shuttingDown: false }],
+    ['the window is destroyed', { window: fakeNoticeWindow({ destroyed: true }), shuttingDown: false }],
+    ['the page is still loading', { window: fakeNoticeWindow({ loading: true }), shuttingDown: false }],
+  ])('returns false and sends nothing when %s', (_reason, { window, shuttingDown }) => {
+    const send = vi.fn();
+    const notify = createWindowNotifier({ getWindow: () => window, isShuttingDown: () => shuttingDown, send });
+
+    expect(notify('the message')).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('reads the window at call time, not at creation', () => {
+    let current: FakeNoticeWindow | null = null;
+    const send = vi.fn();
+    const notify = createWindowNotifier({ getWindow: () => current, isShuttingDown: () => false, send });
+
+    expect(notify('first')).toBe(false);
+    current = fakeNoticeWindow();
+    expect(notify('second')).toBe(true);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(current, 'second');
+  });
+
+  describe('through reportSyncWriteFailure', () => {
+    beforeEach(() => {
+      mocks.reportHandledErrorSpy.mockClear();
+      __resetForTest();
+    });
+
+    it('does not spend the notice on a failure while the page loads, and delivers the next one', () => {
+      let loading = true;
+      const window = fakeNoticeWindow();
+      window.webContents.isLoading = () => loading;
+      const send = vi.fn();
+      setSyncWriteFailureNotifier(createWindowNotifier({
+        getWindow: () => window,
+        isShuttingDown: () => false,
+        send,
+      }));
+
+      reportSyncWriteFailure(new Error('while loading'), 'config');
+      expect(send).not.toHaveBeenCalled();
+
+      loading = false;
+      reportSyncWriteFailure(new Error('once loaded'), 'config');
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith(window, 'It may be lost on restart.');
+    });
+  });
+});
 
 describe('write-failure-notice', () => {
   beforeEach(() => {
@@ -126,6 +203,46 @@ describe('write-failure-notice', () => {
 
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
     expect(throwingNotifier).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the user on the next failure when the first had nobody to tell', () => {
+    // windowConfigManager.load() runs at module load, so a failed save there reports
+    // before any notifier exists. It must not spend the notice for the whole outage.
+    reportSyncWriteFailure(new Error('before the notifier'), 'config');
+    const notifier = vi.fn(() => true);
+    setSyncWriteFailureNotifier(notifier);
+
+    reportSyncWriteFailure(new Error('after the notifier'), 'config');
+    reportSyncWriteFailure(new Error('still failing'), 'config');
+
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again while the notifier reports that nothing was delivered', () => {
+    // The wired notifier has no window to push through until createWindow runs.
+    const notifier = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    setSyncWriteFailureNotifier(notifier);
+
+    reportSyncWriteFailure(new Error('no window yet'), 'config');
+    reportSyncWriteFailure(new Error('window open'), 'config');
+    reportSyncWriteFailure(new Error('still failing'), 'config');
+
+    expect(notifier).toHaveBeenCalledTimes(2);
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds a caller\'s tags to the report without letting them replace its own', () => {
+    const error = Object.assign(new Error('EIO: i/o error, mkdir'), { code: 'EIO', syscall: 'mkdir' });
+
+    reportSyncWriteFailure(error, 'config_dirs', { config_dir: 'config', source: 'replaced', errno: 'replaced' });
+
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledWith(expect.any(Error), {
+      source: 'config_dirs',
+      errno: 'EIO',
+      syscall: 'mkdir',
+      config_dir: 'config',
+    });
   });
 });
 

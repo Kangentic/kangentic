@@ -1,20 +1,48 @@
 import { reportHandledError } from '../analytics/error-reporting';
 
 /**
- * Called once per newly-failing write SOURCE (see below), with the message to show
- * the user. Injected rather than imported, mirroring `setGlobalDbFailureNotifier`
+ * Called for a failing write SOURCE (see below) until the user has been told once,
+ * with the message to show them. Injected rather than imported, mirroring `setGlobalDbFailureNotifier`
  * (`src/main/db/soft-db.ts`): the low-level write helper (`safe-write.ts`) that
  * calls into this module has no `BrowserWindow` to push through, and the real
  * notifier (wired in `index.ts`) needs to read the live `mainWindow` at call time,
  * not at registration time. Left unset, a failure still reports to Sentry and still
- * logs; it just has no way to tell the user.
+ * logs; it just has no way to tell the user. Returns false when nothing reached the
+ * user, which leaves the notice for the source's next failure.
  */
-export type SyncWriteFailureNotifier = (message: string) => void;
+export type SyncWriteFailureNotifier = (message: string) => boolean;
 
 let notifier: SyncWriteFailureNotifier | null = null;
 
 export function setSyncWriteFailureNotifier(notify: SyncWriteFailureNotifier): void {
   notifier = notify;
+}
+
+/** The part of a `BrowserWindow` the notifier reads. */
+interface NoticeWindow {
+  isDestroyed(): boolean;
+  webContents: { isLoading(): boolean };
+}
+
+/**
+ * The notifier `index.ts` wires. It is built before `createWindow`, so `getWindow` reads
+ * the window at call time. A quit that closes the window mid-flush must not push to a
+ * renderer that is tearing down, and a push to a page still loading reaches no listener,
+ * so both answer false and keep the notice.
+ */
+export function createWindowNotifier<WindowType extends NoticeWindow>(options: {
+  getWindow: () => WindowType | null;
+  isShuttingDown: () => boolean;
+  send: (window: WindowType, message: string) => void;
+}): SyncWriteFailureNotifier {
+  return (message) => {
+    if (options.isShuttingDown()) return false;
+    const window = options.getWindow();
+    if (!window || window.isDestroyed()) return false;
+    if (window.webContents.isLoading()) return false;
+    options.send(window, message);
+    return true;
+  };
 }
 
 /**
@@ -26,7 +54,16 @@ export function setSyncWriteFailureNotifier(notify: SyncWriteFailureNotifier): v
  * re-toasting on every one of ITS failures. Keying by source keeps the
  * all-volumes-dead case to a single toast per source and stops that interleaving.
  */
-const failingSources = new Set<string>();
+const reportedSources = new Set<string>();
+
+/**
+ * Sources whose failure the user has been told about, apart from the set above because
+ * a report can run with nobody to tell. `windowConfigManager.load()` runs at module load,
+ * so a held or read-only `config.json` failed its one-time save before any notifier or
+ * window existed. On one set that spent the source's notice on nobody, and the rest of
+ * the outage stayed silent while the database opened fine.
+ */
+const noticedSources = new Set<string>();
 
 /**
  * How Windows refuses a rename onto a file another program holds open without delete
@@ -165,21 +202,34 @@ function toPathFreeError(error: unknown, errno: string | undefined, syscall: str
  * writer of source `config` is the window-bounds debounce, so this notice is usually
  * spent on a window move nobody was thinking about, and the second mechanism is what
  * keeps the settings save the user DID care about from being silent.
+ *
+ * A failure with nobody to tell leaves the notice armed, so the next failure of that
+ * source raises it without a second report (see `noticedSources`).
+ *
+ * `extraTags` are fixed words a caller adds to the report, never a path. They cannot
+ * replace the tags built here.
  */
-export function reportSyncWriteFailure(error: unknown, source: string): void {
-  if (failingSources.has(source)) return;
-  failingSources.add(source);
-  const errno = readErrnoCode(error);
-  const syscall = readSyscall(error);
-  // The errno and syscall ride as tags so this class stays queryable, and mutable, from
-  // the Sentry UI without a code change. ENOSPC is a host condition rather than a bug,
-  // but it is also the only evidence this user-facing path fires at all, so it is
-  // filed rather than filtered. Each is omitted entirely when the error does not carry
-  // it, rather than sent as an empty string.
-  const tags: Record<string, string> = { source };
-  if (errno) tags.errno = errno;
-  if (syscall) tags.syscall = syscall;
-  reportHandledError(toPathFreeError(error, errno, syscall), tags);
+export function reportSyncWriteFailure(
+  error: unknown,
+  source: string,
+  extraTags: Record<string, string> = {},
+): void {
+  if (!reportedSources.has(source)) {
+    reportedSources.add(source);
+    const errno = readErrnoCode(error);
+    const syscall = readSyscall(error);
+    // The errno and syscall ride as tags so this class stays queryable, and mutable, from
+    // the Sentry UI without a code change. ENOSPC is a host condition rather than a bug,
+    // but it is also the only evidence this user-facing path fires at all, so it is
+    // filed rather than filtered. Each is omitted entirely when the error does not carry
+    // it, rather than sent as an empty string.
+    const tags: Record<string, string> = { ...extraTags, source };
+    if (errno) tags.errno = errno;
+    if (syscall) tags.syscall = syscall;
+    reportHandledError(toPathFreeError(error, errno, syscall), tags);
+  }
+  if (!notifier || noticedSources.has(source)) return;
+  noticedSources.add(source);
   // The notifier is injected, so its body is not ours to trust: the wired one
   // reaches a BrowserWindow whose webContents can be gone even when the window
   // itself is not (a renderer crash). A throw here would escape safeWriteJson's
@@ -187,19 +237,21 @@ export function reportSyncWriteFailure(error: unknown, source: string): void {
   // call site now relies on - task-crud.ts dropped its own try/catch on the
   // strength of it. reportHandledError already swallows its own failures.
   try {
-    notifier?.(buildUserMessage(error));
+    if (notifier(buildUserMessage(error)) === false) noticedSources.delete(source);
   } catch {
     // Telling the user must never take down the write path it is reporting on.
   }
 }
 
-/** Clears `source`'s latch, so a later failure of that same source can report again. */
+/** Clears `source`'s latches, so a later failure of that same source can report again. */
 export function noteSyncWriteSuccess(source: string): void {
-  failingSources.delete(source);
+  reportedSources.delete(source);
+  noticedSources.delete(source);
 }
 
-/** Test-only: reset the latch and the injected notifier between cases. */
+/** Test-only: reset the latches and the injected notifier between cases. */
 export function __resetForTest(): void {
-  failingSources.clear();
+  reportedSources.clear();
+  noticedSources.clear();
   notifier = null;
 }

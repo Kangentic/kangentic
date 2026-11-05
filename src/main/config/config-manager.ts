@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 import { safeWriteJson } from '../safe-write';
 import { reportSyncWriteFailure } from './write-failure-notice';
+import { dataDirFailureTags } from './data-dir-failure';
 import { migrateLegacyGitKeys } from './legacy-git-keys';
 import { migrateLegacyIdleTimeout } from './legacy-idle-timeout';
 import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
@@ -198,7 +199,7 @@ export class ConfigManager {
     try {
       ensureDirs();
     } catch (error) {
-      reportSyncWriteFailure(error, 'config_dirs');
+      reportSyncWriteFailure(error, 'config_dirs', dataDirFailureTags(error));
     }
     let parsed: Record<string, unknown> | null = null;
     // `parsed === null` covers two very different states: there is no config file

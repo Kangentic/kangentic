@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} iş akışı"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Bu yoldaki bir bağlantı, var olmayan bir klasörü gösteriyor."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "O sırada boş sistem belleği (commit): {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic veri klasörünü oluşturamıyor"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic veritabanını okuyamıyor"
 
@@ -169,10 +179,20 @@ msgstr "Oturum çöktü: {label}"
 msgid "Terminals restarted"
 msgstr "Terminaller yeniden başlatıldı"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "Bu klasörün bulunduğu sürücü kullanılamıyor."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Pencere çöktü ({crashReason}) ve {minutes, plural, one {# dakika} other {# dakika}} içinde {attempts, plural, one {# denemeden} other {# denemeden}} sonra toparlanamadı."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Bu yol, Windows'un izin vermediği karakterler içeriyor."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
