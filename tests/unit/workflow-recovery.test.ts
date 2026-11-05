@@ -542,7 +542,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
     // It answers a "shall I go on?" rather than inviting one.
     expect(nudges()[0]).toContain('Go ahead with this step\'s own work without asking first.');
     // The one way to stop: the agent's own line, for the three things only the owner can settle.
-    expect(nudges()[0]).toContain('end your reply with the line "Needs owner: <the question>". Otherwise act on it.');
+    expect(nudges()[0]).toContain('end on the line "Needs owner: <the question>". Otherwise act on it.');
     expect(nudges()[0]).not.toContain('\n');
     expect(recoveryRows()).toEqual([expect.objectContaining({ status: 'succeeded', detail: 'Recovery 1 of 4: asked the agent to carry on.' })]);
 

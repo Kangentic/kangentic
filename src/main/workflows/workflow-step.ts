@@ -1,6 +1,6 @@
 import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
 import { automationMovesTask, automationMoveTargetName, canColumnRun, canTaskRunAutomations } from '../../shared/automation-manifest';
-import { nextOnRoute } from '../../shared/workflow-route';
+import { doneColumn, nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
 import { handleTaskMove } from '../ipc/handlers/task-move';
@@ -22,7 +22,9 @@ import {
 } from './workflow-step-condition';
 import { workflowOfTask } from './workflow-home';
 import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
+import { noChangesReason } from '../../shared/workflow-no-changes';
 import { finalMatchLine } from '../../shared/final-line-match';
+import { readWorktreeWork } from '../git/worktree-head';
 
 /**
  * A workflow task's own step, at a turn end, after the column's turn-end rows.
@@ -47,6 +49,12 @@ import { finalMatchLine } from '../../shared/final-line-match';
  *   is the agent's own call (owner's decision, 2026-10-31), and this line is
  *   the only way a workflow task stops and notifies the owner: a change from
  *   the plan, something the owner must weigh in on, or a decision to make.
+ * - A reply that ends on the `No changes needed:` line goes straight to Done,
+ *   past the rest of the route, once the branch shows it is true: no commits
+ *   ahead of the base and a clean worktree (`noChangesBlocker`). With no check
+ *   to pay for. It moves through `moveOn`, so a held background command holds
+ *   it, and a branch that has changes moves nothing and the nudge says why. The
+ *   turn-end runner reads the line before the rows (owner's decision, 2026-11-05).
  * - Not done, with work of the agent's own still open by the hook events (a
  *   background shell it holds, a subagent past its turn end), is still
  *   working. It comes from `SessionManager.getOpenWork`, never from the
@@ -117,6 +125,8 @@ export interface WorkflowStepResult {
   blockers?: WorkflowBlocker[];
   /** On `move-held`: the column the held move goes to. */
   heldMoveTo?: string;
+  /** On `move-held`: a no-change line's move, whose branch is checked again at the release. */
+  heldNoChanges?: boolean;
   /** On `working`: the reply's final line as a Text match reads it (`finalMatchLine`), or null for none. */
   finalLine?: string | null;
 }
@@ -198,6 +208,32 @@ export function heldBackgroundShells(context: IpcContext, sessionId: string): Op
 }
 
 /**
+ * Why a `No changes needed:` line does not hold for this task's branch, as a
+ * sentence the nudge repeats to the agent, or null when it does. A task with no
+ * worktree has nothing to compare, so the agent's word stands. A branch that
+ * cannot be read moves nothing: the line ends the task, and "cannot tell" is
+ * not "nothing there". `readWorktreeWork` runs through the git client, off main.
+ */
+export async function noChangesBlocker(context: IpcContext, projectPath: string | null, task: Task): Promise<string | null> {
+  if (!task.worktree_path) return null;
+  const baseBranch = task.resolved_base_branch || task.base_branch
+    || (projectPath ? context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch : null)
+    || 'main';
+  const work = await readWorktreeWork(task.worktree_path, baseBranch);
+  if (work === null || work.commitsNotOnBase === null) {
+    return `your "No changes needed" line moved nothing, because this branch could not be read against ${baseBranch}`;
+  }
+  const facts: string[] = [];
+  if (work.commitsNotOnBase > 0) facts.push(`${work.commitsNotOnBase} ${work.commitsNotOnBase === 1 ? 'commit' : 'commits'} that ${baseBranch} does not have`);
+  if (work.uncommittedFiles > 0) facts.push(`${work.uncommittedFiles} uncommitted ${work.uncommittedFiles === 1 ? 'file' : 'files'}`);
+  if (facts.length === 0) return null;
+  return `your "No changes needed" line moved nothing, because this branch has ${facts.join(' and ')}. Remove what is not needed and end on that line again, or finish the step`;
+}
+
+/** The step's answer when a no-change line's held move goes ahead with no line in the reply. */
+const HELD_NO_CHANGES_RELEASED_REASON = 'The agent said no change was needed when its move was held, and the background work that held it has ended.';
+
+/**
  * Does this task's turn end get a workflow step check? Cheap: one row read. Not
  * while the task's own automations are paused: a person is working it by hand,
  * so its workflow neither judges, nudges nor moves it, and its recovery stops.
@@ -248,9 +284,10 @@ export async function runWorkflowStep(
      * The step's move was held at an earlier turn end of this visit, judged
      * done then. Move now, with no check: the reply is the agent's answer to
      * the nudge about its background work, which need not repeat its exit line.
-     * Only a `Needs owner:` line in it still stops the move.
+     * Only a `Needs owner:` line in it still stops the move. A no-change line's
+     * move (`'no-changes'`) checks the branch again: the agent may have committed.
      */
-    releaseHeldMove?: boolean;
+    releaseHeldMove?: 'step' | 'no-changes';
   },
 ): Promise<WorkflowStepResult | 'newer-turn' | undefined> {
   const { payload } = input;
@@ -296,7 +333,7 @@ export async function runWorkflowStep(
     agentReply,
     rows,
   });
-  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit' | 'blockers' | 'heldMoveTo' | 'finalLine'> = {}): WorkflowStepResult => (
+  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit' | 'blockers' | 'heldMoveTo' | 'heldNoChanges' | 'finalLine'> = {}): WorkflowStepResult => (
     { verdict, reason, workSerial: payload.workSerial, ...extra }
   );
   const record = (row: {
@@ -341,6 +378,24 @@ export async function runWorkflowStep(
     const waitingReason = ownerQuestion || 'the agent needs the owner to decide something.';
     record({ met: false, reason: null, detail: `Waiting on you: ${waitingReason}` });
     return result('waiting', waitingReason);
+  }
+
+  // The agent's word that the task needs no change, read in code as the owner
+  // line is. It stands only if the branch agrees, and no check can overrule it.
+  const noChangesWhy = noChangesReason(agentReply)
+    ?? (input.releaseHeldMove === 'no-changes' ? HELD_NO_CHANGES_RELEASED_REASON : null);
+  if (noChangesWhy !== null) {
+    const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
+    const blocker = await noChangesBlocker(context, projectPath, task);
+    if (input.signal.aborted) return;
+    const afterBranchRead = settled();
+    if (afterBranchRead === null) return;
+    if (afterBranchRead === 'newer-turn') return afterBranchRead;
+    if (blocker !== null) {
+      record({ met: false, reason: blocker, detail: `Not done yet: ${blocker}` });
+      return result('stopped', blocker, { blockers: [] });
+    }
+    return moveOn({ met: true, reason: noChangesWhy }, null, afterBranchRead.task, repos.swimlanes.list(), { noChanges: true });
   }
 
   if (input.releaseHeldMove) {
@@ -390,14 +445,19 @@ export async function runWorkflowStep(
   if (!answer.met) return judgeWhyNotDone();
   return moveOn(answer, answerCallId ?? null, after.task, columns);
 
-  /** Done: move the task to the next column on its route, unless background work holds the move. */
+  /**
+   * Done: move the task to the next column on its route, or straight to Done
+   * for a no-change line, unless background work holds the move.
+   */
   async function moveOn(
     answer: { met: boolean; reason: string | null },
     answerCallId: string | null,
     afterTask: Task,
     columns: Swimlane[],
+    options: { noChanges?: boolean } = {},
   ): Promise<WorkflowStepResult | 'newer-turn' | undefined> {
-    const next = nextOnRoute(columns, afterTask, column.id);
+    const noChanges = options.noChanges === true;
+    const next = noChanges ? doneColumn(columns) : nextOnRoute(columns, afterTask, column.id);
     if (!next) {
       record({ met: true, reason: answer.reason, detail: 'Done, with nowhere left to go on this board.', backgroundCallId: answerCallId });
       return result('done', answer.reason);
@@ -405,7 +465,7 @@ export async function runWorkflowStep(
     const held = heldMoveReason(context, payload.sessionId);
     if (held) {
       record({ met: true, reason: answer.reason, detail: `Step done. ${held}`, backgroundCallId: answerCallId });
-      return result('move-held', answer.reason, { heldMoveTo: next.name });
+      return result('move-held', answer.reason, { heldMoveTo: next.name, ...(noChanges ? { heldNoChanges: true } : {}) });
     }
     const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
     // Recorded once the move has an outcome, so the log never says a task moved
@@ -437,12 +497,10 @@ export async function runWorkflowStep(
       record({ met: true, reason: answer.reason, detail: `Step done, but the task was moved elsewhere before it reached ${next.name}.`, backgroundCallId: answerCallId });
       return result('done', answer.reason);
     }
-    record({
-      met: true,
-      reason: answer.reason,
-      detail: next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`,
-      backgroundCallId: answerCallId,
-    });
+    const movedDetail = noChanges
+      ? 'The agent said no change was needed, and the branch agrees, so the task moved to Done.'
+      : next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`;
+    record({ met: true, reason: answer.reason, detail: movedDetail, backgroundCallId: answerCallId });
     return result('done', answer.reason);
   }
 
