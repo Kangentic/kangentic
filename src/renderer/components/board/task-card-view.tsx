@@ -22,7 +22,7 @@ import type {
 } from '../../../shared/types';
 import { activityReasonIcon } from './ActivityReasonTooltip';
 import { formatActivityReasonText } from './activity-reason-text';
-import { agentActivityMark, type AgentActivityMarkName } from './agent-wait';
+import { agentActivityMark, isStoppedReason, type AgentActivityMarkName } from './agent-wait';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
@@ -471,12 +471,15 @@ interface TitleRowActivityMarkProps {
  */
 function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking }: TitleRowActivityMarkProps) {
   const { t } = useLingui();
-  const now = useNow(WAIT_ELAPSED_TICK_MS, isIdle && Boolean(activityReason));
+  const stopped = isStoppedReason(activityReason);
+  const now = useNow(WAIT_ELAPSED_TICK_MS, isIdle && Boolean(activityReason) && !stopped);
   // Read once per render: the mark's name and its tip must match. A wait that
   // began after the last tick reads "0s" until the next one, at most a second.
   const reasonText = activityReason ? formatActivityReasonText(activityReason, now) : '';
   return (
-    <Tooltip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
+    // A stopped card has no tip: a person opens the task to read why, and the
+    // mark keeps "Stopped" as its name. An empty label holds the tip shut.
+    <Tooltip label={stopped ? '' : reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
       <ActivityMark
         mark={activityMark}
         size={16}

@@ -59,6 +59,7 @@ import type {
 } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import { DEFAULT_CONFIG, EventType } from '../../shared/types';
+import { isActive } from '../../shared/activity-state';
 import type {
   PermissionMode,
   Session,
@@ -258,6 +259,9 @@ export interface TurnEndedPayload {
    */
   heldReported?: boolean;
 }
+
+/** How long the board's stop of a task lasts (`SessionManager.setTaskStopped`). */
+export type TaskStop = 'turn' | 'visit';
 
 /**
  * The `'session-resumed'` event's payload: a task session spawned to resume a
@@ -582,6 +586,8 @@ export class SessionManager extends EventEmitter {
    * has yet to land (see transcriptReadLanded).
    */
   private idleTranscriptAnchors = new Map<string, TranscriptPositionSample>();
+  /** The tasks the board has stopped, and how long each stop lasts (`setTaskStopped`). */
+  private stoppedTasks = new Map<string, TaskStop>();
   /** The anchor of each session's current turn (see noteTurnStarted). */
   private turnTranscriptAnchors = new Map<string, TurnTranscriptAnchor>();
   /**
@@ -707,7 +713,8 @@ export class SessionManager extends EventEmitter {
         // activity-state-ok: granular, only a commit to idle ends a turn; a
         // permission prompt is the same turn and must not move its anchor.
         if (activity === 'idle') this.idleTranscriptAnchors.set(sessionId, this.sampleTranscriptPosition(sessionId));
-        this.emit('activity', sessionId, activity, reason);
+        if (isActive(activity)) this.releaseTurnStop(sessionId);
+        this.emit('activity', sessionId, activity, this.withStoppedMark(sessionId, reason));
       },
       // A separate event, not 'activity', and that separation is load-bearing
       // rather than tidy. Ten listeners read 'activity' as "the state changed",
@@ -719,7 +726,7 @@ export class SessionManager extends EventEmitter {
       // routing these onto 'activity' would fire all of that on a refresh whose
       // only new information is which reason to draw.
       onReasonChange: (sessionId, activity, reason) =>
-        this.emit('activity-reason', sessionId, activity, reason),
+        this.emit('activity-reason', sessionId, activity, this.withStoppedMark(sessionId, reason)),
       // Its own event too, not an 'activity' idle: that idle also comes from an
       // interrupt, a failed turn, PTY silence and the watchdogs, and the
       // listeners here (column automations, workflow steps) act only on a turn
@@ -1288,7 +1295,7 @@ export class SessionManager extends EventEmitter {
     this.emit('session-changed', sessionId, toSession(session));
     if (!this.telemetry.restartIdleClock(sessionId)) {
       const activity = this.telemetry.getActivityCache()[sessionId];
-      if (activity) this.emit('activity', sessionId, activity, this.telemetry.getActivityReason(sessionId));
+      if (activity) this.emit('activity', sessionId, activity, this.getActivityReason(sessionId));
     }
     const usage = this.telemetry.getUsageCache()[sessionId];
     if (usage) this.emit('usage', sessionId, usage);
@@ -3003,6 +3010,7 @@ export class SessionManager extends EventEmitter {
    */
   removeByTaskId(taskId: string): Promise<void> {
     this.cancelTaskSpawnsInFlight(taskId);
+    this.stoppedTasks.delete(taskId);
     // Each row's exit, captured while the row still exists (an exit wait made
     // after the remove finds no row and resolves at once): a young session's
     // kill waits out its exit-sequence grace, and its PTY holds the working
@@ -4268,7 +4276,53 @@ export class SessionManager extends EventEmitter {
 
   /** Return the latest ActivityReason for a session, or null if unknown. */
   getActivityReason(sessionId: string): ActivityReason | null {
-    return this.telemetry.getActivityReason(sessionId);
+    const reason = this.telemetry.getActivityReason(sessionId);
+    return reason && this.withStoppedMark(sessionId, reason);
+  }
+
+  /**
+   * Say whether the board has stopped this task (`automations/stopped-mark.ts`,
+   * which decides from the run log). Keyed on the task, not the session: a
+   * resume gives the same stop a new session. A change goes out as a
+   * reason-only refresh on the task's idle session, because the idle's own push
+   * left before the turn-end rows ran. A session that is not idle shows it at
+   * its next idle.
+   *
+   * `'turn'` lasts until the agent's next turn begins: that turn's idle lands
+   * before its pass has judged it, and a mark that said stopped there would
+   * claim something nobody knows yet. Its pass sets the stop again if it holds,
+   * so a `'turn'` stop read from the log while that turn runs counts for
+   * nothing: the pass that read it can finish after the turn began.
+   * `'visit'` is a spent row's, which no later turn can change.
+   */
+  setTaskStopped(taskId: string, stop: TaskStop | null): void {
+    const wasStopped = this.stoppedTasks.has(taskId);
+    const activities = this.telemetry.getActivityCache();
+    const sessions = this.registry.listByTaskId(taskId);
+    const turnRunning = sessions.some((session) => isActive(activities[session.id]));
+    const standing = stop === 'turn' && turnRunning ? null : stop;
+    if (standing === null) this.stoppedTasks.delete(taskId);
+    else this.stoppedTasks.set(taskId, standing);
+    if (wasStopped === (standing !== null)) return;
+    for (const session of sessions) {
+      // activity-state-ok: granular, only an idle reason carries the flag.
+      if (activities[session.id] !== 'idle' || this.hiddenUntilAdopted.has(session.id)) continue;
+      const reason = this.getActivityReason(session.id);
+      if (reason) this.emit('activity-reason', session.id, 'idle', reason);
+    }
+  }
+
+  /** The reason with `stopped` set or left off, for a finished turn only. */
+  private withStoppedMark(sessionId: string, reason: ActivityReason): ActivityReason {
+    if (reason.kind !== 'idle') return reason;
+    const taskId = this.registry.get(sessionId)?.taskId;
+    return taskId !== undefined && this.stoppedTasks.has(taskId) ? { ...reason, stopped: true } : reason;
+  }
+
+  /** The agent began a turn, so a stop that lasts one turn is unknown until that turn is judged. */
+  private releaseTurnStop(sessionId: string): void {
+    const taskId = this.registry.get(sessionId)?.taskId;
+    if (taskId !== undefined && this.stoppedTasks.get(taskId) === 'turn') this.stoppedTasks.delete(taskId);
   }
 
   /**
@@ -4420,7 +4474,8 @@ export class SessionManager extends EventEmitter {
 
   /** Return cached ActivityReason for all sessions (HMR/full-reload reconcile). */
   getActivityReasonsCache(): Record<string, ActivityReason> {
-    return this.withoutHidden(this.telemetry.getActivityReasonsCache());
+    const reasons = this.withoutHidden(this.telemetry.getActivityReasonsCache());
+    return Object.fromEntries(Object.entries(reasons).map(([sessionId, reason]) => [sessionId, this.withStoppedMark(sessionId, reason)]));
   }
 
   /**

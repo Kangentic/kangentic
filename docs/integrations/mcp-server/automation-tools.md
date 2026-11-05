@@ -184,6 +184,13 @@ Text match shows `[text match met: ...]` or `[text match not met: ...]` with the
 type and takes no foreign key to the automation, so renaming or deleting one does not empty its
 history.
 
+The log also holds rows the app writes for itself, listed with their type and no Condition line:
+a workflow's step, recovery, stall and wait rows (`workflow_step`, `workflow_recovery`,
+`workflow_stalled`, `workflow_waiting`), and a stopped card's (`column_stopped`, with why the board
+stopped it, and `column_stop_cleared` when a later turn took it back). A stopped card has no tooltip
+on the board, so this is where an agent reads the reason. Both are `skipped`, never counted by a
+Frequency limit.
+
 A run a check answered (or a check that ran without answering, such as a timeout) gets one more line
 naming that call, from `background_calls`: the agent and model (what the CLI reported, else what was
 asked for), the effort, the four token counts and cost as the CLI reported them, how long it took,

@@ -1947,6 +1947,15 @@ export type ActivityReason =
        * raises no toast and takes no auto-focus.
        */
       inOwnCall?: true;
+      /**
+       * Set by main while the board has stopped this session's task: its agent
+       * finished, and nothing will move the card until a person acts
+       * (`automations/stopped-mark.ts`). It draws `agent-stopped` in place of
+       * the envelope. Only the idle variant carries it, so a working or
+       * prompting agent shows its own mark and the pennant returns at the next
+       * idle. `toActivityReasonWire` leaves it off the phone's wire reason.
+       */
+      stopped?: true;
     }
   | {
       kind: 'permission';

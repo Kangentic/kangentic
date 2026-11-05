@@ -202,6 +202,9 @@ export function toActivityReasonWire(reason: ActivityReason): ActivityReasonWire
     // a reason whose agent did not say what it waits for carries no `waitKind`.
     case 'permission':
       return { kind: 'permission', since: reason.since, ...(reason.waitKind ? { waitKind: reason.waitKind } : {}) };
+    // `stopped` and `inOwnCall` are desktop facts the protocol does not define.
+    case 'idle':
+      return { kind: 'idle', since: reason.since };
     default:
       return reason;
   }

@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Activity marks
-description: Why the eleven activity glyphs live upstream in @kangentic/branding, how a question, an approval and a finished turn each get their own mark, why motion must be composited, the cascade and swallowed-click incidents, why the OS reduced-motion preference never stops motion, mark sizing, color, and what stays lucide.
+description: Why the twelve activity glyphs live upstream in @kangentic/branding, how a question, an approval, a finished turn and a stopped card each get their own mark, why motion must be composited, the cascade and swallowed-click incidents, why the OS reduced-motion preference never stops motion, mark sizing, color, and what stays lucide.
 tags: [activity-marks, branding, motion, design]
 sources:
   - resource: src/renderer/components/ActivityMark.tsx
@@ -12,7 +12,7 @@ sources:
 ---
 # Activity marks
 
-The eleven glyphs that express agent and terminal activity. This document records why they look
+The twelve glyphs that express agent and terminal activity. This document records why they look
 and move the way they do, and the measurements behind each choice. The prescriptive version,
 which is what you need when editing a mark consumer, is
 [`.claude/rules/activity-marks.md`](../../../.claude/rules/activity-marks.md).
@@ -29,19 +29,30 @@ The root has to be React-authored rather than `BrandMark`'s wrapper-`<span>` for
 the element a caller's Tooltip wraps: `TaskCard` shows the activity reason that way, so the root
 `<svg>` takes the tip's handlers itself. It used to carry a native `<title>` child for the same job.
 
-## Three waits, three marks
+## Four waits, four marks
 
 An agent waiting on the user used to wear one amber envelope whether it finished its turn, asked
-a question or wanted a tool approved. Since branding 2.12.0 the shape says which (GitHub #452):
+a question or wanted a tool approved. Since branding 2.12.0 the shape says which (GitHub #452), and
+since 2.13.0 a card the board has stopped has a mark of its own:
 
 | The agent | Mark | Tooltip |
 |-----------|------|---------|
 | Finished its turn | `agent-idle`, the envelope | "Idle for 3m" |
+| Finished, and the board will not move the card until a person acts | `agent-stopped`, a pennant | None |
 | Asked a question | `agent-question`, a speech bubble | "Asking you a question for 2m" |
-| Wants a tool or a plan approved | `agent-approval`, a crested shield | "Waiting for your approval for 1m" |
+| Wants a tool or a plan approved | `agent-approval`, a quartered shield | "Waiting for your approval for 1m" |
 | Waits, kind not reported | `agent-question` | "Waiting on you for 2m" |
 
-All three stay amber. The kind comes from the engine's permission reason (`waitKind`, see
+The envelope alone cannot say a card has stopped, because it looks the same on a card a row moves
+seconds later and on one nothing will move. Tasks 984 and 985 sat in Code Review that way, and their
+stop read as an automation that did not fire. `agent-stopped` shows only when we know: a pass off a
+workflow asks after its rows have run and none moved the card or messaged the agent
+(`automations/turn-end/column-stop.ts`), a workflow task shows it when it waits on its owner or
+stalled, and `automations/stopped-mark.ts` reads the answer from the run log, so it survives a
+restart. Main sets `stopped` on the idle reason, and the phone's wire reason leaves it off. The mark
+has no tooltip, because a person opens the task to read why, and its accessible name is "Stopped".
+
+All four stay amber. The kind comes from the engine's permission reason (`waitKind`, see
 [the activity engine](../activity/activity-engine.md)), and one function picks the mark for every
 surface that draws an agent's: `agentActivityMark` in `components/board/agent-wait.ts`, read by
 `TaskCard`, the Workflows inspector and agent pane, and `monitorActivityMark` (the Agent Monitor's
@@ -51,7 +62,7 @@ the bubble, the general "waiting on your answer", as its notification falls back
 your input".
 
 The sidebar's count and the Monitor's Idle tile do not split. They keep one envelope count for all
-three waits; opening the project shows which is which on the cards. A Command Terminal keeps its
+four waits; opening the project shows which is which on the cards. A Command Terminal keeps its
 terminal chip, since the terminal family has no wait marks.
 
 The shield's ink is 18 wide by 20 tall, a unit taller than its siblings on purpose: its pointed

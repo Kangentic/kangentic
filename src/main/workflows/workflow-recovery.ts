@@ -11,6 +11,7 @@ import { resolveInjectionVerifier } from '../ipc/helpers/agent-spawn';
 import { deliverMessageToSession } from '../automations/turn-end/deliver-message';
 import { tryReadSessionFinalReply } from '../automations/turn-end/final-reply-reader';
 import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
+import { refreshStoppedMark } from '../automations/stopped-mark';
 import { isSessionInOwnCall } from '../ipc/handlers/own-call-turn-wait';
 import { automatedKeysRefusal, KeysReachedPermissionPromptError } from '../pty/automated-keys-guard';
 import { isTurnSettled } from '../pty/turn-settled';
@@ -1326,6 +1327,7 @@ export function announceWorkflowStall(
     console.warn('[WORKFLOW] Could not record a stall:', error);
   }
   console.warn(`[WORKFLOW] Task ${stall.taskId.slice(0, 8)} stalled: ${stall.reason}`);
+  refreshStoppedMark(context, stall.projectId, stall.taskId);
   sendNotice(context, { projectId: stall.projectId, taskId: stall.taskId, kind: 'stalled', reason: stall.reason });
   const event: WorkflowStalledEvent = { workflowId: stall.workflowId, projectId: stall.projectId, taskId: stall.taskId, taskTitle, reason: stall.reason };
   sendToRenderer(context.mainWindow, IPC.WORKFLOW_STALLED, event);
@@ -1344,6 +1346,7 @@ function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: stri
   } catch (error) {
     console.warn('[WORKFLOW] Could not record a wait on the user:', error);
   }
+  refreshStoppedMark(context, target.projectId, target.taskId);
   sendNotice(context, { projectId: target.projectId, taskId: target.taskId, sessionId: target.sessionId, kind: 'waiting', reason });
 }
 

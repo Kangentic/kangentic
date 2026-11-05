@@ -147,6 +147,23 @@ const PERSON_MOVE_ORIGINS_SQL = Object.entries(MOVED_BY_A_PERSON)
 const WORKFLOW_RUN_TYPES_SQL = "type IN ('workflow_step', 'workflow_recovery', 'workflow_stalled', 'workflow_waiting', "
   + "'workflow_recovery_start', 'workflow_interrupt')";
 
+/** The rows the board writes when it stops a card, and when that stop is answered (`columnStop`). */
+const COLUMN_STOP_TYPES_SQL = "type IN ('column_stopped', 'column_stop_cleared')";
+
+/**
+ * Why the board stopped a card. `spent-row` is sticky for the visit: the row
+ * that would have moved it has run its limit, and only a person's move starts
+ * that count over. `reply` came from what the agent said, so the next judged
+ * turn replaces it.
+ */
+export type ColumnStopCause = 'spent-row' | 'reply';
+
+/** The stop a task's visit to a column stands on, from its newest stop row. */
+export interface ColumnStop {
+  cause: ColumnStopCause;
+  reason: string | null;
+}
+
 /** The column roles that never start an agent, from the one list the startup pass also reads. */
 const NEVER_AUTO_SPAWN_ROLES_SQL = [...NEVER_AUTO_SPAWN_ROLES].map((role) => `'${role}'`).join(', ');
 
@@ -375,6 +392,64 @@ export class AutomationRunRepository {
   }
 
   /**
+   * Record that the board stopped this card: its agent finished, and nothing
+   * will move it until a person acts. The row is what `agent-stopped` is drawn
+   * from (`automations/stopped-mark.ts`), so the mark survives a restart, and
+   * `kangentic_get_automation_runs` shows why. Its automation id names the
+   * cause, never a column automation, so no Frequency counts it.
+   */
+  recordColumnStop(input: { taskId: string; swimlaneId: string; cause: ColumnStopCause; reason: string; backgroundCallId?: string | null }): void {
+    this.insertTrackedRow({
+      type: 'column_stopped',
+      name: 'Stopped',
+      automationId: `column-stop:${input.cause}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'skipped',
+      detail: `Stopped: ${input.reason}`,
+      attempts: 0,
+      conditionReason: input.reason,
+      backgroundCallId: input.backgroundCallId,
+    });
+  }
+
+  /** Record that a later turn answered a `reply` stop, so the card reads as moving again. */
+  recordColumnStopCleared(input: { taskId: string; swimlaneId: string; reason: string; backgroundCallId?: string | null }): void {
+    this.insertTrackedRow({
+      type: 'column_stop_cleared',
+      name: 'Stopped',
+      automationId: 'column-stop:cleared',
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'skipped',
+      detail: `No longer stopped: ${input.reason}`,
+      attempts: 0,
+      conditionReason: input.reason,
+      backgroundCallId: input.backgroundCallId,
+    });
+  }
+
+  /**
+   * The stop this visit stands on, or null. Its newest stop row decides, so a
+   * cleared stop reads as none. `rowid` breaks a tie, since two rows written in
+   * one millisecond must read in the order they were written.
+   */
+  columnStop(taskId: string, swimlaneId: string, since: string | null): ColumnStop | null {
+    const row = this.db
+      .prepare(`
+        SELECT type, automation_id, condition_reason FROM automation_runs
+        WHERE ${COLUMN_STOP_TYPES_SQL} AND task_id = ? AND swimlane_id = ? AND started_at >= ?
+        ORDER BY started_at DESC, rowid DESC LIMIT 1
+      `)
+      .get(taskId, swimlaneId, since ?? '') as { type: string; automation_id: string; condition_reason: string | null } | undefined;
+    if (!row || row.type !== 'column_stopped') return null;
+    return {
+      cause: row.automation_id === 'column-stop:spent-row' ? 'spent-row' : 'reply',
+      reason: row.condition_reason,
+    };
+  }
+
+  /**
    * Record that a workflow task's recovery starts over: after a stall, a turn
    * recovery did not start stopped again, or the hang check ended a hung turn,
    * so what comes next is a new stall with its own nudges and its own notice.
@@ -395,15 +470,22 @@ export class AutomationRunRepository {
     });
   }
 
-  /**
-   * One row a workflow writes for itself beside its step answers, finished as
-   * it is written. Its automation id names the workflow, never a column
-   * automation, and its trigger is `turn_end`, as the step's is. `at` defaults
-   * to now; it is a `Date` so the stored text is always the ISO form the
-   * boundary queries compare. Returns the row's id.
-   */
-  private insertWorkflowRow(row: {
+  /** A workflow's own row (`insertTrackedRow`). */
+  private insertWorkflowRow(row: Parameters<AutomationRunRepository['insertTrackedRow']>[0] & {
     type: 'workflow_recovery' | 'workflow_interrupt' | 'workflow_stalled' | 'workflow_waiting' | 'workflow_recovery_start';
+  }): string {
+    return this.insertTrackedRow(row);
+  }
+
+  /**
+   * One row the app writes for itself beside the column's runs, finished as it
+   * is written. Its automation id never names a column automation, and its
+   * trigger is `turn_end`, as a step's is. `at` defaults to now; it is a `Date`
+   * so the stored text is always the ISO form the boundary queries compare.
+   * Returns the row's id.
+   */
+  private insertTrackedRow(row: {
+    type: string;
     name: string;
     automationId: string;
     taskId: string;
@@ -412,6 +494,8 @@ export class AutomationRunRepository {
     detail: string;
     attempts: number;
     conditionReason?: string;
+    /** The model call behind the row, so its cost reads from the run log. */
+    backgroundCallId?: string | null;
     at?: Date;
   }): string {
     const id = uuidv4();
@@ -419,8 +503,8 @@ export class AutomationRunRepository {
     this.db.prepare(`
       INSERT INTO automation_runs
         (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
-         started_at, finished_at, condition_reason)
-      VALUES (?, ?, ?, ?, ?, ?, 'turn_end', ?, ?, ?, ?, ?, ?)
+         started_at, finished_at, condition_reason, background_call_id)
+      VALUES (?, ?, ?, ?, ?, ?, 'turn_end', ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       row.automationId,
@@ -434,6 +518,7 @@ export class AutomationRunRepository {
       at,
       at,
       row.conditionReason ?? null,
+      row.backgroundCallId ?? null,
     );
     return id;
   }
@@ -524,12 +609,24 @@ export class AutomationRunRepository {
    * check has judged a turn and no nudge has run after it. One read per board.
    */
   listStalledTasks(): Map<string, string> {
-    const rows = this.db.prepare(`
+    const rows = this.stalledRows(null);
+    return new Map(rows.map((row) => [row.task_id, row.reason ?? 'its step did not finish']));
+  }
+
+  /** `listStalledTasks` for one task, read at each of its turn ends, so never the whole board. */
+  isStalled(taskId: string): boolean {
+    return this.stalledRows(taskId).length > 0;
+  }
+
+  private stalledRows(taskId: string | null): Array<{ task_id: string; reason: string | null }> {
+    // Two statements: an `@taskId IS NULL OR` in one scans every task on the board.
+    const statement = this.db.prepare(`
       SELECT stall.task_id AS task_id, stall.condition_reason AS reason
       FROM automation_runs stall
       JOIN tasks task ON task.id = stall.task_id AND task.swimlane_id = stall.swimlane_id
       WHERE stall.type = 'workflow_stalled'
         AND task.archived_at IS NULL
+        ${taskId === null ? '' : 'AND stall.task_id = ?'}
         AND stall.started_at = (
           SELECT MAX(newest.started_at) FROM automation_runs newest
           WHERE newest.type = 'workflow_stalled' AND newest.task_id = stall.task_id AND newest.swimlane_id = stall.swimlane_id
@@ -543,8 +640,8 @@ export class AutomationRunRepository {
             AND ((later.type = 'workflow_step' AND later.condition_met IS NOT NULL)
               OR (later.type = 'workflow_recovery' AND later.status = 'succeeded'))
         )
-    `).all() as Array<{ task_id: string; reason: string | null }>;
-    return new Map(rows.map((row) => [row.task_id, row.reason ?? 'its step did not finish']));
+    `);
+    return (taskId === null ? statement.all() : statement.all(taskId)) as Array<{ task_id: string; reason: string | null }>;
   }
 
   /**
@@ -691,6 +788,10 @@ export class AutomationRunRepository {
    * are read, so those are all that is kept; they go once the task moves on
    * or is archived.
    *
+   * And a task's stop rows in the column it is in now, for the same reason: a
+   * pruned stop row would take the stopped card's mark with it at the restart
+   * that reads it (`columnStop`).
+   *
    * And the newest enter run of a task that never had an agent, in the column
    * it is in now, when that column can start one. The startup pass reads it
    * (`hasEnterRunSince`) to tell a move a quit cut short before its enter group
@@ -725,6 +826,15 @@ export class AutomationRunRepository {
               WHERE task.id = automation_runs.task_id
                 AND task.archived_at IS NULL
                 AND task.workflow_id IS NOT NULL
+                AND task.swimlane_id = automation_runs.swimlane_id
+            )
+          )
+          AND NOT (
+            ${COLUMN_STOP_TYPES_SQL}
+            AND EXISTS (
+              SELECT 1 FROM tasks task
+              WHERE task.id = automation_runs.task_id
+                AND task.archived_at IS NULL
                 AND task.swimlane_id = automation_runs.swimlane_id
             )
           )

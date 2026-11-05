@@ -11,6 +11,7 @@ const question: ActivityReason = { kind: 'permission', since: 0, waitKind: 'ques
 const approval: ActivityReason = { kind: 'permission', since: 0, waitKind: 'approval' };
 const unknownWait: ActivityReason = { kind: 'permission', since: 0 };
 const finishedTurn: ActivityReason = { kind: 'idle', since: 0 };
+const stoppedTurn: ActivityReason = { kind: 'idle', since: 0, stopped: true };
 
 describe('agentActivityMark', () => {
   it('draws the working ring for a working agent, whatever the reason', () => {
@@ -27,8 +28,18 @@ describe('agentActivityMark', () => {
     expect(agentActivityMark('permission', question)).toBe('agent-question');
   });
 
-  it('draws the crested shield for an approval', () => {
+  it('draws the quartered shield for an approval', () => {
     expect(agentActivityMark('permission', approval)).toBe('agent-approval');
+  });
+
+  it('draws the pennant for a finished turn the board has stopped on', () => {
+    expect(agentActivityMark('idle', stoppedTurn)).toBe('agent-stopped');
+  });
+
+  it('never lets a stop outrank what the agent is doing now', () => {
+    // A person answered and the agent works, or a new prompt opened: the stop returns at the next idle.
+    expect(agentActivityMark('thinking', stoppedTurn)).toBe('agent-working');
+    expect(agentActivityMark('permission', stoppedTurn)).toBe('agent-question');
   });
 
   it('draws the bubble for a wait whose kind the agent did not report', () => {
