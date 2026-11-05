@@ -24,6 +24,9 @@ sources:
   - resource: src/main/remote/helper/file-tail.ts
   - resource: src/main/remote/remote-worktrees.ts
   - resource: src/main/git/remote-worktree.ts
+  - resource: src/main/git/remote-git.ts
+  - resource: src/main/remote/host-git.ts
+  - resource: src/main/git/diff-watcher.ts
   - resource: src/main/agent/shared/remote-files.ts
   - resource: src/main/agent/adapters/goose/export-reader.ts
   - resource: src/main/agent/adapters/opencode/export-reader.ts
@@ -110,7 +113,18 @@ A task in a remote project works in its own git worktree on the host, as a local
 - **Removal.** Done, delete and a project's removal run `git worktree remove --force` and `git worktree prune` on the host, and delete the stand-in. The branch is kept, as for a local task. The path must be exactly one folder below `.kangentic/worktrees/`, checked before the script runs, because the script deletes it. A host that cannot be reached leaves the worktree and the task's path in place, and the task retries later.
 - **The Done drop asks the host first.** The pending-changes check counts the worktree's uncommitted files with the host's git, so the confirm dialog names them before the forced removal. A host that cannot answer is read as "there are changes", never as clean.
 - **Not done on a host.** The Post-Worktree Script (it is shell text for this computer, so it never runs here), the files copied from the project root, the node_modules link, the sparse checkout that leaves out `.claude/commands/`, and spare worktrees. An agent installs its own dependencies in the worktree.
-- **Still local-only.** The Changes panel, the branch summary, PR linking and the branch switcher read git on this computer, where the stand-in is an empty folder, so they find no repository for a remote task, as they did for the shell folder. A worktree the user deletes on the host leaves the task pointing at a folder the agent cannot start in.
+- **Still local-only.** PR linking and the branch switcher read git on this computer, where the stand-in is an empty folder, so they find no repository for a remote task. A worktree the user deletes on the host leaves the task pointing at a folder the agent cannot start in.
+
+## Git reads on a host
+
+The Changes panel, the branch header, blame, file history and the commit graph for a task on a host read the host's git, not the empty stand-in here. A git call in a folder that sits under a remote project's shell folder goes to the host, and any other folder goes to this computer's git as before. There are three entry points, and each asks one resolver first (`git/remote-git.ts`, registered in `remote-hosting.ts`, built in `remote/host-git.ts`): `gitAt`, `openSimpleGit` and `runGitWithTimeout`. A new git call site needs no change to work for a host.
+
+- **One read is one `sh` script** that the helper runs with `runCommand`. Git's arguments are arguments of the script, never shell text. It sets `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`, so a read never takes the index lock the agent's own git needs and never prompts. No environment of this computer is sent.
+- **A reply is one frame, and a frame's JSON body is 256 KiB,** so the script writes its output to a file under `~/.kangentic/tmp/` and returns the first 96 KiB as base64 with the size. A second script pulls the rest in 144 KiB pieces and removes the file with the last one. A diff, a blame or a file of any size comes back byte for byte, binary included, and a piece that is short or an id that is gone is an error, never a partial answer. More than 64 MiB is refused. The host sweeps files left by a link that never came back after two hours.
+- **An answer that did not come is never an empty one.** A down link, a timeout, a host that cannot start `sh` all reject with `RemoteGitUnavailableError`. The branch header then keeps what it showed, instead of drawing "Detached HEAD" and no commits ahead, and a file's content rejects instead of showing an empty file.
+- **The working tree is read on the host too.** The line counts of untracked files, the working-tree side of a file and a changed image come from the host (`HostGit.countUntracked`, `readWorkingFile`, `readObject`). A path that is absolute, climbs out of the folder or is a symlink reads as missing, so a read never leaves the repository. An image reads at the same size cap as a local one.
+- **A simple-git method other than `raw`, `revparse`, `show` and `diff` is refused for a host** with "is not available for a project on a host yet", so a caller that would have run git in the stand-in fails with a sentence. The branch switcher and Update from base are among them.
+- **Live updates are polled.** The host's disk cannot be watched from here, so `DiffWatcher` asks the host every 2 seconds for a fingerprint: HEAD, git's status, and the modified time (to the nanosecond) and size of every changed or untracked file, in one request, taking no lock. A second edit to a file that was already modified moves it, which git's status alone would not. The first answer is the baseline, polls never overlap, and the answer after an outage always refreshes the panel, because a change made meanwhile is unknown. Measured on a repository of 5,684 tracked files with a 46,885-file `node_modules`: 3 to 7 ms of the host's time per poll. A watcher in the helper (Node's `fs.watch` with the `ignore` option, which took 361 inotify watches against 6,206 unfiltered) would make an update instant and is not built.
 
 ## Dev servers on a host
 

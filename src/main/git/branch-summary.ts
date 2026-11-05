@@ -1,5 +1,6 @@
 import { openSimpleGit } from './simple-git-client';
 import { readWorktreeHeadUnqueued } from './worktree-head';
+import { RemoteGitUnavailableError } from './remote-git';
 import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared/types';
 
 /**
@@ -19,7 +20,10 @@ import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared
  * falls back to the local `<base>`.
  *
  * Fails SAFE: any git error yields an all-empty summary so the header simply
- * omits the context rather than surfacing an error.
+ * omits the context rather than surfacing an error. The one exception is a
+ * project on an SSH host whose git could not be asked (#913): that REJECTS,
+ * and the panel keeps the header it already had. An empty answer for a down
+ * link would read as "no branch" ("Detached HEAD") and "nothing ahead".
  */
 export async function getBranchSummary(input: GitBranchSummaryInput): Promise<GitBranchSummaryResult> {
   const workingDirectory = input.worktreePath ?? input.projectPath;
@@ -29,7 +33,7 @@ export async function getBranchSummary(input: GitBranchSummaryInput): Promise<Gi
     const git = openSimpleGit(workingDirectory);
     // Unqueued: this interactive panel refresh stays off the global read cap
     // (a queued read would wait behind a BACKGROUND churn capture's slot).
-    const { branch: currentBranch } = await readWorktreeHeadUnqueued(workingDirectory);
+    const { branch: currentBranch } = await readWorktreeHeadUnqueued(workingDirectory, { rethrowUnavailable: true });
 
     let ahead = 0;
     let behind = 0;
@@ -40,7 +44,8 @@ export async function getBranchSummary(input: GitBranchSummaryInput): Promise<Gi
         behind = Number.parseInt(behindCount, 10) || 0;
         ahead = Number.parseInt(aheadCount, 10) || 0;
         break;
-      } catch {
+      } catch (error) {
+        if (error instanceof RemoteGitUnavailableError) throw error;
         // Base ref does not exist (e.g. repo uses 'master', or no remote) - try the next.
         continue;
       }
@@ -57,12 +62,14 @@ export async function getBranchSummary(input: GitBranchSummaryInput): Promise<Gi
           lastCommit = { hash, subject: subject ?? '', timestamp: timestamp ?? '' };
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof RemoteGitUnavailableError) throw error;
       // Unborn branch (no commits yet) - leave lastCommit null.
     }
 
     return { currentBranch, ahead, behind, lastCommit };
-  } catch {
+  } catch (error) {
+    if (error instanceof RemoteGitUnavailableError) throw error;
     return emptySummary;
   }
 }

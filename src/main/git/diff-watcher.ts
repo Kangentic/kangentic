@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { openSimpleGit } from './simple-git-client';
 import { replacePathPrefix } from '../../shared/paths';
+import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
 const DEBOUNCE_MS = 500;
 
@@ -56,8 +57,17 @@ interface WatchOptionsWithIgnore extends fs.WatchOptions {
  */
 const GIT_META_FILES = new Set(['index', 'HEAD', 'ORIG_HEAD', 'MERGE_HEAD', 'packed-refs']);
 
+/**
+ * How often a checkout on an SSH host is asked whether it changed (#913). The host's disk cannot be watched from
+ * here, so the panel polls a one-request fingerprint (5 ms of the host's time on a 5,700-file repository, no git
+ * lock). Two seconds is the longest a change waits, which a panel the user is looking at can live with.
+ */
+export const REMOTE_POLL_MS = 2000;
+
 interface WatcherEntry {
   watchers: fs.FSWatcher[];
+  /** Ends the poll of a checkout on a host. Null for a local path, which is watched. */
+  stopPolling: (() => void) | null;
   debounceTimer: ReturnType<typeof setTimeout> | null;
   /** When the current pending run started, for the MAX_DEBOUNCE_WAIT_MS cap.
    *  Only meaningful while `debounceTimer` is non-null. */
@@ -107,6 +117,7 @@ export class DiffWatcher {
 
     const entry: WatcherEntry = {
       watchers: [],
+      stopPolling: null,
       debounceTimer: null,
       pendingSince: 0,
       callbacks: new Set([callback]),
@@ -143,6 +154,14 @@ export class DiffWatcher {
       }, DEBOUNCE_MS);
     };
 
+    // A checkout on an SSH host is an empty stand-in here: watching it would arm and never fire, a panel that
+    // looks live and is frozen. Ask the host instead.
+    const remote = remoteGitRunnerFor(worktreePath);
+    if (remote) {
+      entry.stopPolling = this.pollHost(remote, entry, worktreePath, fire);
+      return () => this.removeCallback(worktreePath, callback);
+    }
+
     // 1. Working tree (recursive), ignoring .git/, node_modules/, .kangentic/.
     //    `ignore` keeps Linux's walk out of those trees (WatchOptionsWithIgnore);
     //    the callback's own check stays for a runtime that only filters events.
@@ -164,6 +183,39 @@ export class DiffWatcher {
     this.watchGitMetadata(worktreePath, entry, fire);
 
     return () => this.removeCallback(worktreePath, callback);
+  }
+
+  /**
+   * Poll a checkout on a host and fire when its fingerprint moves. The first answer is the baseline, since the
+   * panel has just read the checkout itself. A poll that fails keeps the last fingerprint, and the next answer
+   * after a failure fires whether it moved or not: a change made while the host was out of reach is unknown, so
+   * the panel reads again instead of trusting what it last drew. Polls never overlap, so a slow host is asked
+   * once, not once per interval. Returns the stop.
+   */
+  private pollHost(remote: RemoteGitRunner, entry: WatcherEntry, worktreePath: string, fire: () => void): () => void {
+    let last: string | null = null;
+    let failed = false;
+    let running = false;
+    const poll = async (): Promise<void> => {
+      if (running) return;
+      running = true;
+      try {
+        const current = await remote.fingerprint();
+        // Torn down while the host was answering.
+        if (this.watchers.get(worktreePath) !== entry) return;
+        if (failed || (last !== null && current !== last)) fire();
+        failed = false;
+        last = current;
+      } catch {
+        failed = true;
+      } finally {
+        running = false;
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), REMOTE_POLL_MS);
+    timer.unref?.();
+    return () => clearInterval(timer);
   }
 
   /**
@@ -263,6 +315,7 @@ export class DiffWatcher {
     if (entry.debounceTimer !== null) {
       clearTimeout(entry.debounceTimer);
     }
+    entry.stopPolling?.();
     for (const watcher of entry.watchers) {
       try {
         watcher.close();

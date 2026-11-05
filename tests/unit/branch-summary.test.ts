@@ -287,8 +287,10 @@ describe('getBranchSummary', () => {
         baseBranch: 'main',
       });
 
+      // It asks to hear a host that cannot answer (#913), so a down link is not read as a detached HEAD.
       expect(mockReadWorktreeHead).toHaveBeenCalledWith(
         '/mock/project/.kangentic/worktrees/feat-branch',
+        { rethrowUnavailable: true },
       );
     });
 
@@ -300,7 +302,7 @@ describe('getBranchSummary', () => {
 
       await getBranchSummary({ projectPath: '/mock/project', baseBranch: 'main' });
 
-      expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/project');
+      expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/project', { rethrowUnavailable: true });
     });
   });
 

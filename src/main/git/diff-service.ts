@@ -6,6 +6,10 @@ import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-pre
 import { countFileLines } from './line-count/count-lines';
 import { readGitObject } from './git-object-reader';
 import { lineCountClient } from './line-count/line-count-client';
+import { remoteGitRunnerFor, RemoteGitUnavailableError, type RemoteGitRunner } from './remote-git';
+
+/** The most of a working-tree file read from a host as text. Past it the side reads empty, as an unreadable file does. */
+const REMOTE_TEXT_MAX_BYTES = 64 * 1024 * 1024;
 
 /** Above this combined untracked-file byte size, counting is delegated to the
  *  line-count utilityProcess worker instead of running inline, so a large or
@@ -351,6 +355,14 @@ export class DiffService {
   private async countUntrackedEntries(untrackedPaths: string[]): Promise<GitDiffFileEntry[]> {
     if (untrackedPaths.length === 0) return [];
 
+    // A project on an SSH host (#913): the files are on the host, so the host counts them. An answer that
+    // could not come rejects, so a down link never reads as "no new lines".
+    const remote = remoteGitRunnerFor(this.gitDirectory);
+    if (remote) {
+      const counts = await remote.countUntracked(untrackedPaths);
+      return untrackedPaths.map((filePath, index) => ({ path: filePath, status: 'U' as const, insertions: counts[index].insertions, deletions: 0, binary: counts[index].binary }));
+    }
+
     const absolutePaths = untrackedPaths.map((filePath) => path.join(this.gitDirectory, filePath));
     const sizes = await Promise.all(
       absolutePaths.map(async (absolutePath) => {
@@ -415,9 +427,10 @@ export class DiffService {
 
     // Fetch original and modified in parallel - independent I/O whose overlap
     // cuts latency for modified files (the common case) by ~30-50%.
+    const remote = remoteGitRunnerFor(this.gitDirectory);
     const [original, modified] = await Promise.all([
-      needsOriginal ? readSideAsText(git, () => this.resolveOriginalSource(git, input)) : '',
-      needsModified ? readSideAsText(git, () => resolveModifiedSource(input)) : '',
+      needsOriginal ? readSideAsText(git, remote, () => this.resolveOriginalSource(git, input)) : '',
+      needsModified ? readSideAsText(git, remote, () => resolveModifiedSource(input)) : '',
     ]);
 
     return { original, modified, language };
@@ -440,9 +453,10 @@ export class DiffService {
     const git = gitAt(this.gitDirectory);
     const known = input.knownFingerprints;
 
+    const remote = remoteGitRunnerFor(this.gitDirectory);
     const [original, modified] = await Promise.all([
-      needsOriginal ? readSideAsImage(this.gitDirectory, () => this.resolveOriginalSource(git, input), known?.original) : null,
-      needsModified ? readSideAsImage(this.gitDirectory, () => resolveModifiedSource(input), known?.modified) : null,
+      needsOriginal ? readSideAsImage(this.gitDirectory, remote, () => this.resolveOriginalSource(git, input), known?.original) : null,
+      needsModified ? readSideAsImage(this.gitDirectory, remote, () => resolveModifiedSource(input), known?.modified) : null,
     ]);
 
     return { original, modified };
@@ -479,7 +493,7 @@ export class DiffService {
  */
 type FileSideSource =
   | { kind: 'revision'; spec: string }
-  | { kind: 'disk'; absolutePath: string };
+  | { kind: 'disk'; absolutePath: string; relativePath: string };
 
 /** Added and Untracked files have no original side; Deleted files have no modified side. */
 function sidesForStatus(status: GitDiffStatus): { needsOriginal: boolean; needsModified: boolean } {
@@ -545,19 +559,27 @@ function resolveModifiedSource(input: GitFileContentInput): FileSideSource {
   if (input.range) return { kind: 'revision', spec: `${input.range.head}:${input.filePath}` };
   if ((input.scope ?? 'branch') === 'staged') return { kind: 'revision', spec: `:${input.filePath}` };
   const workingDirectory = input.worktreePath ?? input.projectPath;
-  return { kind: 'disk', absolutePath: path.join(workingDirectory, input.filePath) };
+  return { kind: 'disk', absolutePath: path.join(workingDirectory, input.filePath), relativePath: input.filePath };
 }
 
 /** Where a side lives. The original side can need git to say (a merge base, a parent commit), so it may be async. */
 type SideSourceResolver = () => FileSideSource | Promise<FileSideSource>;
 
-/** Any failure (missing object, missing file, unresolvable merge base) reads as empty text. */
-async function readSideAsText(git: GitClient, resolveSource: SideSourceResolver): Promise<string> {
+/**
+ * Any failure (missing object, missing file, unresolvable merge base) reads as empty text. The one exception is
+ * a host that could not be asked (#913): that rejects, so the panel says so instead of showing an empty file.
+ */
+async function readSideAsText(git: GitClient, remote: RemoteGitRunner | null, resolveSource: SideSourceResolver): Promise<string> {
   try {
     const source = await resolveSource();
     if (source.kind === 'revision') return await git.show([source.spec]);
+    if (remote) {
+      const file = await remote.readWorkingFile(source.relativePath, REMOTE_TEXT_MAX_BYTES);
+      return file.kind === 'bytes' ? file.bytes.toString('utf8') : '';
+    }
     return await fs.promises.readFile(source.absolutePath, 'utf-8');
-  } catch {
+  } catch (error) {
+    if (error instanceof RemoteGitUnavailableError) throw error;
     return '';
   }
 }
@@ -586,13 +608,15 @@ const BLOB_FINGERPRINT_PREFIX = 'blob:';
  */
 async function readSideAsImage(
   gitDirectory: string,
+  remote: RemoteGitRunner | null,
   resolveSource: SideSourceResolver,
   knownFingerprint: string | undefined,
 ): Promise<GitImageSide> {
   try {
     const source = await resolveSource();
-    return source.kind === 'revision'
-      ? await readRevisionImage(gitDirectory, source.spec, knownFingerprint)
+    if (source.kind === 'revision') return await readRevisionImage(gitDirectory, source.spec, knownFingerprint);
+    return remote
+      ? await readRemoteWorkingTreeImage(remote, source.relativePath, knownFingerprint)
       : await readWorkingTreeImage(source.absolutePath, knownFingerprint);
   } catch (error) {
     if (!isMissingPathError(error)) console.warn('[DIFF] Could not read an image side:', error);
@@ -624,6 +648,22 @@ async function readWorkingTreeImage(absolutePath: string, knownFingerprint: stri
   // No encoding: the bytes must arrive untouched. Electron delivers a Buffer
   // to the renderer as a Uint8Array.
   return imageSideFromBytes(await fs.promises.readFile(absolutePath), fingerprint);
+}
+
+/**
+ * A working-tree image on an SSH host (#913), with the same fingerprint and racy-window rules as a local file.
+ * The host reports a modified time in whole seconds, which is finer than the window that matters (two seconds).
+ */
+async function readRemoteWorkingTreeImage(remote: RemoteGitRunner, relativePath: string, knownFingerprint: string | undefined): Promise<GitImageSide> {
+  const file = await remote.readWorkingFile(relativePath, IMAGE_PREVIEW_MAX_BYTES);
+  if (file.kind === 'missing') return { kind: 'unreadable' };
+  const size = file.kind === 'bytes' ? file.bytes.length : file.size;
+  const settledFingerprint = `file:${size}:${file.mtimeMs}`;
+  const writtenRecently = Date.now() - file.mtimeMs < RECENT_WRITE_WINDOW_MS;
+  if (settledFingerprint === knownFingerprint && !writtenRecently) return { kind: 'unchanged', fingerprint: settledFingerprint };
+  const fingerprint = writtenRecently ? `${settledFingerprint}${RACY_FINGERPRINT_SUFFIX}` : settledFingerprint;
+  if (file.kind === 'too-large') return { kind: 'too-large', size: file.size, fingerprint };
+  return imageSideFromBytes(file.bytes, fingerprint);
 }
 
 function imageSideFromBytes(bytes: Buffer, fingerprint: string): GitImageSide {

@@ -23,6 +23,8 @@ import { PortForwardPlan, setPortForwardPlan } from './port-forward-plan';
 import { createRemoteLaunchResolver, setRemoteLaunchResolver } from './remote-launch';
 import { setRemoteWorktreeResolver } from '../git/remote-worktree';
 import { createRemoteWorktreeResolver } from './remote-worktrees';
+import { setRemoteGitResolver } from '../git/remote-git';
+import { createRemoteGitResolver } from './host-git';
 import { RemoteHostService } from './remote-host-service';
 import { RemoteSessionRelay } from './remote-session-relay';
 
@@ -113,6 +115,11 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     runCommand: (hostId, request) => hostService.runCommand(hostId, request),
     pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
     log,
+  }));
+  // Every read of git for a remote project's folder runs on its host (`gitAt` and `openSimpleGit` ask this first).
+  setRemoteGitResolver(createRemoteGitResolver({
+    remoteProjects: () => deps.projects().list().flatMap((project) => (project.remote ? [{ path: project.path, remote: project.remote }] : [])),
+    runCommand: (hostId, request) => hostService.runCommand(hostId, request),
   }));
   setRemoteLaunchResolver(createRemoteLaunchResolver({
     remoteOfProjectPath,

@@ -1,4 +1,5 @@
 import { spawnWithAbort, type SpawnWithAbortOptions } from './spawn-with-abort';
+import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
 /**
  * Run a `git` subcommand with kill-on-timeout and optional external
@@ -25,6 +26,12 @@ export function runGitWithTimeout(
   args: readonly string[],
   options: GitSpawnOptions,
 ): Promise<{ stdout: string; stderr: string }> {
+  // A project on an SSH host (#913): the fetch, the identity read and the rest run on the host, where the
+  // repository is. A failed run rejects, as a local one does. The host's git never prompts (the run script sets
+  // GIT_TERMINAL_PROMPT=0), so there is no interactive variant to choose; `env` is this computer's, and none of
+  // it is sent.
+  const remote = remoteGitRunnerFor(cwd);
+  if (remote) return runOnHost(remote, args, options);
   return spawnWithAbort(
     {
       command: 'git',
@@ -35,6 +42,20 @@ export function runGitWithTimeout(
     },
     options satisfies SpawnWithAbortOptions,
   );
+}
+
+async function runOnHost(
+  remote: RemoteGitRunner,
+  args: readonly string[],
+  options: GitSpawnOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  const label = `git ${args.join(' ')}`;
+  if (options.signal?.aborted) throw new Error(`${label} aborted before spawn`);
+  // The signal cannot stop a run already on the host; the timeout does, there.
+  const result = await remote.run(args, { timeoutMs: options.timeoutMs });
+  const stdout = result.stdout.toString('utf8');
+  if (result.code !== 0) throw new Error(`${label} exited with code ${result.code}: ${result.stderr.trim() || stdout.trim()}`);
+  return { stdout, stderr: result.stderr };
 }
 
 /**

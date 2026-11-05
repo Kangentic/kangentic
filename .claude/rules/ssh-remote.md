@@ -71,6 +71,16 @@ process, a path tested against the wrong disk, an environment that overwrites th
   before it is sent, and a task title never reaches the shell as code (every value is an argument).
   A removal is forced only because the Done move asks the host for the uncommitted count first
   (`probePendingChanges`), and a host that cannot answer reads as "there are changes".
+- **A git read for a project on a host runs on the host, and a host that cannot answer is an error,
+  never an empty answer.** `gitAt`, `openSimpleGit` and `runGitWithTimeout` each ask the resolver in
+  `git/remote-git.ts` first, so a folder under a remote project's shell folder reaches `HostGit`
+  (`remote/host-git.ts`) and never this computer's git, which would run in the empty stand-in or in
+  whatever repository the stand-in sits inside. The script sets `GIT_OPTIONAL_LOCKS=0` (a read never
+  takes the index lock the agent's git needs) and returns output larger than a frame in pieces, so no
+  reader sees a cut-short answer. A caller that shows git's answer lets `RemoteGitUnavailableError`
+  through (`getBranchSummary`, a file's content) so the panel keeps what it had. A new reader of a
+  working-tree file uses `readWorkingFile`, not `fs`. The panel's live refresh polls the host
+  (`DiffWatcher`), because a watch on the stand-in arms and never fires.
 - **A drop is a state, never an exit.** The link reports `remoteLink`, and agents on the host keep
   running. A session ends only when the host reports its exit, or reports it gone after a restart
   (`remoteSessions`, `lost`), which resumes it through the recovery path.
@@ -134,6 +144,15 @@ process, a path tested against the wrong disk, an environment that overwrites th
   the stand-in, `WorktreeManager`'s delegation (no local script, copy or link), and, with a POSIX shell and
   git, the real script on real repositories: two tasks with two checkouts, the base fallbacks, a husk, a
   nested worktree, a branch kept after removal, and a hostile title.
+- **Tests (git reads):** `tests/unit/remote-host-git.test.ts` pins the directory mapping (longest shell
+  folder, never a sibling), that git's arguments stay arguments, every shape of an answer that did not come, that
+  `gitAt`, `openSimpleGit` and `runGitWithTimeout` never start this computer's git for a remote folder, and,
+  with a POSIX shell and git, the real scripts: output past a frame byte for byte and every reply under the
+  frame cap, binary and multi-byte text, a hostile argument, and no index lock taken.
+  `tests/unit/remote-host-git-parity.test.ts` reads one real repository locally and through the host and compares
+  the file lists and counts in every scope, file content, images, the branch header and the fingerprint.
+  `tests/unit/diff-watcher-remote.test.ts` pins the poll (baseline, one fire per change, the refresh after an
+  outage, no overlap, one poll for many subscribers, no `fs.watch` on the stand-in).
 - **Tests (transcripts):** `tests/unit/remote-transcript-tail.test.ts` pins the file tail on real files (the
   backfill, the pace, a chunk edge inside a multi-byte character, a replaced or emptied file, the unpaced
   last pass) and Claude's declared file, and `tests/unit/remote-session-relay.test.ts` runs the whole path
