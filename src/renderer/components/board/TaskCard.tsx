@@ -24,7 +24,7 @@ import { RESTING_TRANSFORM } from './resting-transform';
 import { OpenWorkflowMenuItem } from './workflow-menu-items';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
-import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
+import { boardWorkflowNow, refusedBoardMove, taskStoppedNow } from '../../utils/workflow-refusal';
 import { toggleTaskAutomations } from '../../utils/task-automations';
 import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
@@ -304,7 +304,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             ? { ...menuSessionToggle, onToggle: () => handleToggleSession(menuSessionToggle.direction) }
             : undefined}
           moveRefusal={menuWorkflow ? (laneId) => refusedBoardMove(task, laneId, useBoardStore.getState().swimlanes) : undefined}
-          sendAwayRefusal={sendAwayRefusal(menuWorkflow, task)}
+          sendAwayRefusal={sendAwayRefusal(menuWorkflow, task, taskStoppedNow(task, menuLaneRole))}
           onNewWorkflow={offersNewWorkflow ? handleNewWorkflow : undefined}
           onEdit={() => setDetailTaskId(task.id, { initialEdit: true })}
           onShowChanges={() => setShowChanges(true)}

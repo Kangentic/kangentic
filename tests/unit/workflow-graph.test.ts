@@ -97,11 +97,11 @@ describe('workflow rules in the view', () => {
       { state: 'paused', links: [['b', 'e']], waitingFor: ['#413', 'a task'] },
     ];
     for (const { state, links, waitingFor } of cases) {
-      const board: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state, waitingFor, humanGateTargetId: null, hasLinks: true, stallReason: null };
+      const board: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state, waitingFor, hasLinks: true, stallReason: null };
       expect(waitingOf(detail(state, withTasks, links), waiting)).toEqual(boardWaiting(board, { automations_disabled: false }));
     }
     const single = viewTask('f', 417, 'todo');
-    const live: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running', waitingFor: ['#413'], humanGateTargetId: null, hasLinks: true, stallReason: null };
+    const live: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running', waitingFor: ['#413'], hasLinks: true, stallReason: null };
     expect(waitingOf(detail('running', [...tasks, single], [['b', 'f']]), single)).toEqual(boardWaiting(live, { automations_disabled: false }));
   });
 
@@ -144,7 +144,7 @@ describe('workflow rules in the view', () => {
       const blocker = viewTask('b', 413, 'working');
       const board: BoardWorkflow = {
         workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running',
-        waitingFor: [], humanGateTargetId: null, hasLinks: true, stallReason: null,
+        waitingFor: [], hasLinks: true, stallReason: null,
       };
       expect(waitingOf(detail('running', [held], []), held)).toEqual(boardWaiting(board, { automations_disabled: true }));
       expect(waitingOf(detail('running', [blocker, held], [['b', 'h']]), held))

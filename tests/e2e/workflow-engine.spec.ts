@@ -313,7 +313,7 @@ test.describe('Workflow engine', () => {
     expect(await workflowState(workflow)).toBe('running');
   });
 
-  test('main refuses a move of a locked task, and the task stays where it is', async () => {
+  test('main refuses a hand on a task in To Do, and a stopped card is the owner\'s: the move lands and the column\'s enter row runs', async () => {
     test.setTimeout(90_000);
     const running = `needs-you locked running ${runId}`;
     const waiting = `Locked waiting ${runId}`;
@@ -340,12 +340,21 @@ test.describe('Workflow engine', () => {
       }, { id: taskId!, target: column });
     };
 
-    // A task waiting on another, and a running one whose column an agent
-    // judges: neither moves by hand while the workflow runs.
+    // A task waiting on another stays locked: only the engine starts it.
     expect(await attempt(waiting, 'Executing')).toMatch(/is locked while Engine .* runs\./);
-    expect(await attempt(running, 'Code Review')).toMatch(/is locked while Engine .* runs\./);
     expect(await columnOf(workflow, waiting)).toBe('To Do');
-    expect(await columnOf(workflow, running)).toBe('Executing');
+
+    // The running one's turn ends on a reply the step reads as not done, so
+    // nothing moves it on. Once that pass lets go the card has stopped, and a
+    // hand takes it into a column its route skips.
+    const { taskId } = await taskState(workflow, running);
+    await expect.poll(() => stepRuns(taskId!), { timeout: 30_000 }).toEqual(['skipped:no']);
+    await expect.poll(() => attempt(running, 'Code Review'), { timeout: 20_000 }).toBeNull();
+    await expectColumn(workflow, running, 'Code Review');
+
+    // A hand move keeps the column's automations: Code Review's enter row types
+    // its message, and the turn that starts ends in a second step check.
+    await expect.poll(() => stepRuns(taskId!), { timeout: 30_000 }).toEqual(['skipped:no', 'skipped:no']);
   });
 
   test('Pause stops every task, a paused card moves by hand, and Resume starts its dependent from fresh code', async () => {

@@ -570,16 +570,17 @@ export interface BoardTaskWorkflowWire {
   waiting_for: string[];
   /**
    * While the card is locked (its workflow runs, its automations are not
-   * paused, and it is not waiting in a human gate), the desktop's sentence for
-   * a refused move; null otherwise,
-   * which is when the desktop draws no lock. An unlocked card still never
-   * moves into To Do, and while `gate_target_id` is set it moves only there.
+   * paused, and it is in motion: the agent is working or at a prompt, a message
+   * is on its way, or it is starting), the desktop's sentence for a refused
+   * move; null otherwise, which is when the desktop draws no lock. An unlocked
+   * card still never moves into To Do.
    */
   lock_reason: string | null;
   /**
-   * While the workflow runs and the card waits in a column no agent judges
-   * (a human gate): the one column a hand may move it to, the next on its
-   * route. Moving it there is how the person reports the step done. Null otherwise.
+   * While the workflow runs and the card has stopped: the next column on its
+   * route, the move a person is most likely waiting to make. The desktop lets
+   * a hand take a stopped card to any column but To Do, so a client that wants
+   * more than this one column reads `lock_reason` being null. Null otherwise.
    */
   gate_target_id: string | null;
   /**

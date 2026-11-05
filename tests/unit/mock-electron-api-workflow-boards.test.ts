@@ -92,7 +92,6 @@ interface WorkflowDetail {
 
 interface WorkflowSummary {
   workflow: { id: string };
-  boardTasks: Record<string, { humanGateTargetId: string | null }>;
 }
 
 interface Supersession {
@@ -509,30 +508,6 @@ describe.each(LANE_ORDERS)('workflows on a mock with two tagged boards, $name', 
     });
   });
 
-  describe('the board summary\'s human gate', () => {
-    it('targets the next route column on the task\'s own board, or that board\'s Done after the last', async () => {
-      const scenario = loadScenario({
-        otherBoardFirst,
-        workflow: runningSeed(),
-        tasks: [
-          taskRow({ id: 'task-b-build', displayId: 1, swimlaneId: 'b-build', boardId: OTHER_BOARD, workflowId: WORKFLOW_ID }),
-          taskRow({ id: 'task-b-ship', displayId: 2, swimlaneId: 'b-ship', boardId: OTHER_BOARD, workflowId: WORKFLOW_ID }),
-          taskRow({ id: 'task-a-plan', displayId: 3, swimlaneId: 'a-plan', boardId: HOME_BOARD, workflowId: WORKFLOW_ID }),
-          taskRow({ id: 'task-a-review', displayId: 4, swimlaneId: 'a-review', boardId: HOME_BOARD, workflowId: WORKFLOW_ID }),
-        ],
-      });
-
-      const summaries = plain(await scenario.workflows.list(HOME_BOARD));
-      const summary = summaries.find((entry) => entry.workflow.id === WORKFLOW_ID);
-      const gateOf = (taskId: string) => summary?.boardTasks[taskId]?.humanGateTargetId;
-
-      expect(gateOf('task-b-build')).toBe('b-review');
-      expect(gateOf('task-b-ship')).toBe('b-done');
-      expect(gateOf('task-a-plan')).toBe('a-review');
-      expect(gateOf('task-a-review')).toBe('a-done');
-    });
-  });
-
   describe('the workflow detail\'s board ends', () => {
     it('names each board\'s own To Do and Done', async () => {
       const scenario = loadScenario({
@@ -596,18 +571,5 @@ describe.each(LANE_ORDERS)('workflows on a mock with two tagged boards, $name', 
       expect(detail.boardEnds[HOME_BOARD]?.done?.swimlaneId).toBe('a-done');
     });
 
-    it('is not the human gate target after the last route column', async () => {
-      const scenario = loadScenario({
-        otherBoardFirst,
-        homeGhosts: true,
-        workflow: runningSeed(),
-        tasks: [taskRow({ id: 'task-a-review', displayId: 4, swimlaneId: 'a-review', boardId: HOME_BOARD, workflowId: WORKFLOW_ID })],
-      });
-
-      const summaries = plain(await scenario.workflows.list(HOME_BOARD));
-      const summary = summaries.find((entry) => entry.workflow.id === WORKFLOW_ID);
-
-      expect(summary?.boardTasks['task-a-review']?.humanGateTargetId).toBe('a-done');
-    });
   });
 });

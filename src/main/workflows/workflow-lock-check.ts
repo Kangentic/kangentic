@@ -1,12 +1,11 @@
 import type { Swimlane, Task } from '../../shared/types';
-import { DEFAULT_AGENT } from '../../shared/types';
-import { automationAgentChoice } from '../../shared/answer-agent';
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
-import { nextOnRoute } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
-import { agentRegistry } from '../agent/agent-registry';
+import { hasMoveFollowUp, hasPendingMessageDelivery, hasTurnEndGroup } from '../automations/turn-end/turn-end-passes';
+import { isTurnSettled } from '../pty/turn-settled';
+import { getInFlightSpawnProgress } from '../transition-engine/spawn-progress';
 import type { IpcContext } from '../ipc/ipc-context';
 import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workflow-lock';
 import { isMoveByAPerson } from '../../shared/task-move-origin';
@@ -53,16 +52,8 @@ export function checkWorkflowMove(
   const toLane = swimlanes.find((lane) => lane.id === args.toSwimlaneId) ?? null;
   const fromLane = swimlanes.find((lane) => lane.id === task.swimlane_id) ?? null;
   const byHand = isMoveByAPerson(args.origin);
-  // A gate is a column of the route a started task sits in. To Do runs no
-  // agent either, but it is the queue: only the engine starts a task from it,
-  // once its blockers are done, so a hand never drags one out. The board's
-  // lock reads the same rule (`humanGateExit` in workflow-view-service.ts asks
-  // only for a started task).
-  const humanGateTargetId = byHand && workflowState === 'running' && fromLane
-    && fromLane.role !== 'todo' && fromLane.role !== 'done'
-    && isHumanGate(context, args.projectId, task, fromLane)
-    ? nextOnRoute(swimlanes, task, fromLane.id)?.id ?? null
-    : null;
+  const taskStopped = byHand && workflowState === 'running' && fromLane !== null
+    && isWorkflowTaskStopped(context, task, fromLane);
   return workflowMoveRefusal({
     displayId: task.display_id,
     workflowTitle,
@@ -73,14 +64,14 @@ export function checkWorkflowMove(
     toRole: toLane?.role ?? null,
     moverIsTaskAgent: args.moverIsTaskAgent,
     taskHeld: !canTaskRunAutomations(task).ok,
-    humanGateTargetId,
+    taskStopped,
   });
 }
 
 /**
  * The lock for an agent's move (`kangentic_move_task`), asked by its handler
- * before it fires the move. An agent never drags out of a human gate, so this
- * needs no IPC context: only the task, its workflow and the destination.
+ * before it fires the move. Only a person takes a stopped card, so this needs
+ * no IPC context: only the task, its workflow and the destination.
  */
 export function checkWorkflowMoveForAgent(
   projectId: string,
@@ -103,7 +94,7 @@ export function checkWorkflowMoveForAgent(
       toRole: toLane?.role ?? null,
       moverIsTaskAgent,
       taskHeld: !canTaskRunAutomations(task).ok,
-      humanGateTargetId: null,
+      taskStopped: false,
     });
   } catch {
     // Fails open on purpose: the move path asks again inside the task lock,
@@ -139,17 +130,29 @@ export function readTaskForWorkflowPrecheck(projectId: string, taskId: string): 
 }
 
 /**
- * A column whose work no agent can judge, so a person moves the task on: no
- * agent works there, its agent does not report when a turn ends, or no
- * Automation agent is set up to judge the work. The check reads config only
- * (whether an agent is chosen), never probes a CLI, so a drag is never slowed.
+ * Has this running workflow task stopped, so a person may move it? Main's whole
+ * answer, asked again under the task lock on every hand move, and read by the
+ * phone. In motion, locked; stopped, the owner's (owner's decision, 2026-11-05).
+ *
+ * In motion: the agent is working, a turn background work holds included; it sits
+ * at a permission prompt, a question or a plan approval; a turn-end pass is
+ * acting on its reply; a message is on its way to it; or it is starting or
+ * queued for a slot. Anything else is stopped, a task with no agent included,
+ * and so is an agent that ended on `Needs owner:`, which ends its turn.
+ *
+ * To Do is not stopped: no agent runs there, but only the engine starts a card
+ * from it, once its blockers are done. Nor is Done: moving a card out would
+ * un-finish a blocker its dependents already started on.
  */
-export function isHumanGate(context: IpcContext, projectId: string, task: Task, column: Swimlane): boolean {
-  if (!column.auto_spawn) return true;
-  const config = context.configManager.load();
-  if (!automationAgentChoice(config.automation).agent) return true;
-  const projectDefault = context.projectRepo.getById(projectId)?.default_agent ?? null;
-  const agentName = task.agent_override ?? column.agent_override ?? projectDefault ?? DEFAULT_AGENT;
-  const adapter = agentRegistry.get(agentName);
-  return adapter ? !adapter.runtime.reportsTurnEnd : true;
+export function isWorkflowTaskStopped(context: IpcContext, task: Task, column: Swimlane): boolean {
+  if (column.role === 'todo' || column.role === 'done') return false;
+  const { sessionManager } = context;
+  if (hasTurnEndGroup(task.id) || hasMoveFollowUp(task.id) || hasPendingMessageDelivery(task.id)) return false;
+  if (context.terminalSubmitScheduler.hasPending(task.id)) return false;
+  if (task.id in getInFlightSpawnProgress()) return false;
+  const session = sessionManager.findLiveSessionByTaskId(task.id);
+  // No live session of its own, though one may be starting.
+  if (!session) return !sessionManager.hasLiveOrStartingSession(task.id);
+  if (session.status === 'queued') return false;
+  return isTurnSettled(sessionManager, session.id) && sessionManager.automatedKeysBlocker(session.id) === null;
 }

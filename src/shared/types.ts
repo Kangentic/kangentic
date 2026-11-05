@@ -6256,11 +6256,6 @@ export interface WorkflowBoardTask {
    * or "a task" for one whose project's database would not open.
    */
   waitingFor: string[];
-  /**
-   * While the workflow runs and the task sits in a human gate (a column whose
-   * work no agent can judge): the column a person may drag it to. Null otherwise.
-   */
-  humanGateTargetId: string | null;
   /** It has a link, either way: the strip's links button and hover show them only then. */
   hasLinks: boolean;
   /** Why its running workflow stalled on it, while that holds; null otherwise. */

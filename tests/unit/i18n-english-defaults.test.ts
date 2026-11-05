@@ -52,7 +52,6 @@ describe('the board', () => {
     colorSlot: 0,
     state: 'running',
     waitingFor: [],
-    humanGateTargetId: null,
     hasLinks: false,
     stallReason: null,
   };

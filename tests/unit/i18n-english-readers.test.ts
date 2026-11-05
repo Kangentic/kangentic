@@ -135,7 +135,6 @@ describe('the workflow move lock (what the move handlers and the MCP move tool t
     toSwimlaneId: 'review',
     toRole: null,
     moverIsTaskAgent: false,
-    humanGateTargetId: null,
   };
 
   it('throws English while the board shows the translation', () => {

@@ -40,8 +40,13 @@ const LOCKED = '#414 is locked while Usage budgets runs.';
 interface Options {
   /** `done`: the workflow finished, so every one of its tasks is in Done and it leaves the picker. */
   state?: 'running' | 'paused' | 'done';
-  /** Lane indexes whose column starts no agent: a human gate. */
+  /** Lane indexes whose column starts no agent. */
   gateLanes?: number[];
+  /**
+   * The tasks with a running agent, by number, as its activity. A card with none
+   * has stopped, so a person may move it: a test of the lock names its card here.
+   */
+  agents?: Record<number, 'thinking' | 'permission' | 'idle'>;
   /** Override where #414 sits. */
   lane414?: number;
   /** The workflow was made from #409, which Start moved to Done (board 7's superseded row). */
@@ -145,6 +150,16 @@ function seedScript(options: Options): string {
       });
       // The To Do task the workflow was made from, closed into Done at Start.
       if (supersededSource) state.archivedTasks.push(row(409, 'Usage budgets and a hard cap', 6, null));
+      var agents = ${JSON.stringify(options.agents ?? {})};
+      Object.keys(agents).forEach(function (id) {
+        var sessionId = 'sess-agent-' + id;
+        state.tasks.find(function (task) { return task.display_id === Number(id); }).session_id = sessionId;
+        state.sessions.push({
+          id: sessionId, taskId: 't' + id, projectId: '${PROJECT_ID}',
+          pid: 9000, status: 'running', shell: 'bash', cwd: '/mock/kangentic', startedAt: ts, exitCode: null,
+        });
+        state.activityCache[sessionId] = agents[id];
+      });
       if (${options.session414 ? 'true' : 'false'}) {
         state.tasks.find(function (task) { return task.id === 't414'; }).session_id = 'sess-414';
         state.sessions.push({
@@ -355,7 +370,7 @@ test.describe('Workflow tasks on the board', () => {
   });
 
   test('the menu of a running workflow card offers its workflow and keeps its locked rows, disabled with the reason', async () => {
-    const { browser, page } = await launch();
+    const { browser, page } = await launch({ agents: { 414: 'thinking' } });
     try {
       await openMenu(page, 't414');
       const menu = byTestId(page, 'task-context-menu');
@@ -410,18 +425,45 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('in a human gate, a person may drag the card on to the next column of its route, and nowhere else', async () => {
-    // Code Review starts no agent here, so no agent judges its work.
-    const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
+  test('a card whose agent stopped is the person\'s: a drag takes it to any column, one its route skips included', async () => {
+    const { browser, page } = await launch({ agents: { 414: 'idle' } });
     try {
-      await openMenu(page, 't414');
-      const rows = byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]');
-      await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
-      await expect(rows.filter({ hasText: 'Executing' })).toHaveAccessibleDescription(LOCKED);
+      await dragToColumn(page, 't414', 'Testing');
+      await expect(page.locator('[data-swimlane-name="Testing"] [data-task-id="t414"]')).toBeVisible();
+      await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
+
+  test('a stopped card\'s menu moves it to any column but To Do, and says to remove it first for To Do and Archive', async () => {
+    // Code Review starts no agent here, so no agent runs on the card at all.
+    const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
+    try {
+      await openMenu(page, 't414');
+      const menu = byTestId(page, 'task-context-menu');
+      const rows = menu.locator('[data-testid="context-move-to"]');
+      await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(rows.filter({ hasText: 'Executing' })).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(rows.filter({ hasText: 'To Do' })).toHaveAccessibleDescription('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+      await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  for (const activity of ['thinking', 'permission'] as const) {
+    test(`a drag stays in its own column while the card's agent is ${activity === 'thinking' ? 'working' : 'at a permission prompt'}`, async () => {
+      const { browser, page } = await launch({ agents: { 414: activity } });
+      try {
+        await dragToColumn(page, 't414', 'Testing');
+        await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+        await expect(page.locator('[data-swimlane-name="Testing"] [data-task-id="t414"]')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
 
   // A person's hold on one workflow task (#923): its automations paused, so the rest of the
   // workflow runs while the person works this card by hand. Each case is paired with the same
@@ -461,9 +503,9 @@ test.describe('Workflow tasks on the board', () => {
     });
 
     test('its menu moves it by hand to any column but To Do, and says to remove it first for To Do, Backlog and Archive', async () => {
-      const { browser, page } = await launch({ held: [414] });
+      const { browser, page } = await launch({ held: [414], agents: { 413: 'thinking' } });
       try {
-        // The control, the same workflow's other started card, not held: every row says the lock.
+        // The control, the same workflow's other started card, not held and working: every row says the lock.
         await openMenu(page, 't413');
         const controlRows = byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]');
         await expect(controlRows.filter({ hasText: 'Code Review' })).toHaveAttribute('aria-disabled', 'true');
@@ -598,7 +640,7 @@ test.describe('Workflow tasks on the board', () => {
   });
 
   test('a locked card drags only within its own column: it never reaches another, and its links stay with it', async () => {
-    const { browser, page } = await launch();
+    const { browser, page } = await launch({ agents: { 414: 'thinking' } });
     try {
       // #414 runs in Executing, so only its workflow moves it. Its links are kept.
       await keepLinks(page, 't414');
@@ -688,15 +730,16 @@ test.describe('Workflow tasks on the board', () => {
   });
 
   test('a refused drag stays in its column, says why in a toast that opens the workflow, and shows the card\'s links', async () => {
-    // #414 waits in a human gate (Code Review starts no agent), so a person may
-    // drag it on to Testing, the next column of its route, and nowhere else.
+    // #414 has stopped in Code Review, which starts no agent, so a person may drag
+    // it anywhere but To Do.
     const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
+    const refusal = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
     try {
-      await dragToColumn(page, 't414', 'Merge');
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: LOCKED });
+      await dragToColumn(page, 't414', 'To Do');
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: refusal });
       await expect(toast).toBeVisible();
       await expect(toast.getByTestId('toast-title')).toHaveText('Workflow controls this task');
-      await expect(toast.getByTestId('toast-body')).toHaveText(LOCKED);
+      await expect(toast.getByTestId('toast-body')).toHaveText(refusal);
       // A timed toast has no button: the card itself opens the workflow, so it
       // takes clicks. The click is the next test's; here the links stay up.
       await expect(toast).toHaveCSS('cursor', 'pointer');
@@ -1041,7 +1084,7 @@ test.describe('Workflow tasks on the board', () => {
     });
 
     test('a previewed card keeps its lines while it is dragged, and they go when it is let go away from it', async () => {
-      const { browser, page } = await launch();
+      const { browser, page } = await launch({ agents: { 414: 'thinking' } });
       try {
         await restOnCard(page, 't414');
         const overlay = overlayOf(page);

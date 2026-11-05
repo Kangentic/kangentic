@@ -313,7 +313,7 @@ describe('the move lock', () => {
       toRole: null,
       moverIsTaskAgent: false,
       taskHeld: false,
-      humanGateTargetId: null,
+      taskStopped: false,
       ...extra,
     };
   }
@@ -334,9 +334,34 @@ describe('the move lock', () => {
     expect(workflowMoveRefusal(check({ origin: 'mobile' }))).not.toBeNull();
   });
 
-  it('lets a person drag a card out of a human gate, only to the next column on its route', () => {
-    expect(workflowMoveRefusal(check({ humanGateTargetId: 'review' }))).toBeNull();
-    expect(workflowMoveRefusal(check({ humanGateTargetId: 'testing' }))).not.toBeNull();
+  describe('a stopped card, which is the owner\'s to move', () => {
+    const LOCKED = '#414 is locked while Usage budgets runs.';
+    const REMOVE_FIRST = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
+
+    it.each(['renderer', 'mobile'] as const)('lets a person (%s) move it to any column, a column its route skips included', (origin) => {
+      for (const toSwimlaneId of ['review', 'testing', 'merge']) {
+        expect(workflowMoveRefusal(check({ origin, toSwimlaneId, taskStopped: false }))).toBe(LOCKED);
+        expect(workflowMoveRefusal(check({ origin, toSwimlaneId, taskStopped: true }))).toBeNull();
+      }
+    });
+
+    it('lets a person move it to Done', () => {
+      const toDone = { toSwimlaneId: 'done', toRole: 'done' as const };
+      expect(workflowMoveRefusal(check({ ...toDone, taskStopped: false }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ ...toDone, taskStopped: true }))).toBeNull();
+    });
+
+    it('still refuses To Do, with the sentence that says to remove it first', () => {
+      expect(workflowMoveRefusal(check({ toSwimlaneId: 'todo', toRole: 'todo', taskStopped: true }))).toBe(REMOVE_FIRST);
+    });
+
+    it('still refuses another task\'s agent: only a person may take a stopped card', () => {
+      expect(workflowMoveRefusal(check({ origin: 'agent', taskStopped: true }))).toBe(LOCKED);
+    });
+
+    it('reads the same for a paused workflow, whose cards a person moves anyway', () => {
+      expect(workflowMoveRefusal(check({ workflowState: 'paused', taskStopped: true }))).toBeNull();
+    });
   });
 
   it('lets a paused workflow\'s cards move by hand, but never into To Do', () => {
@@ -397,7 +422,6 @@ describe('the move lock', () => {
       ['a person dragging a running workflow task', {}, LOCKED],
       ['the phone moving a running workflow task', { origin: 'mobile' }, LOCKED],
       ['another agent moving a running workflow task', { origin: 'agent' }, LOCKED],
-      ['a person dragging out of a human gate to a column that is not the next one', { humanGateTargetId: 'testing' }, LOCKED],
       ['a person moving a running workflow task to To Do', toDo, LOCKED],
       ['the phone moving a running workflow task to To Do', { ...toDo, origin: 'mobile' }, LOCKED],
       ['an agent moving a running workflow task to To Do', { ...toDo, origin: 'agent' }, TO_DO_NEEDS_REMOVE],
@@ -417,7 +441,8 @@ describe('the move lock', () => {
       ['the task\'s own agent', { origin: 'agent', moverIsTaskAgent: true }],
       ['a person moving a paused workflow task by hand', { workflowState: 'paused' }],
       ['the phone moving a paused workflow task by hand', { workflowState: 'paused', origin: 'mobile' }],
-      ['a person dragging out of a human gate to the next column', { humanGateTargetId: 'review' }],
+      ['a person moving a stopped card to any other column', { taskStopped: true }],
+      ['the phone moving a stopped card to any other column', { taskStopped: true, origin: 'mobile' }],
     ];
 
     it.each(REFUSING)('%s is refused with its sentence', (_name, extra, expected) => {
@@ -452,12 +477,6 @@ describe('the move lock', () => {
       const toDone = { origin, toSwimlaneId: 'done', toRole: 'done' as const };
       expect(workflowMoveRefusal(check({ ...toDone, taskHeld: false }))).toBe(LOCKED);
       expect(workflowMoveRefusal(check({ ...toDone, taskHeld: true }))).toBeNull();
-    });
-
-    it('lets a person move it out of a human gate to any column, not only the gate\'s target', () => {
-      const gate = { humanGateTargetId: 'review', toSwimlaneId: 'testing' };
-      expect(workflowMoveRefusal(check({ ...gate, taskHeld: false }))).toBe(LOCKED);
-      expect(workflowMoveRefusal(check({ ...gate, taskHeld: true }))).toBeNull();
     });
 
     it.each(['renderer', 'mobile'] as const)('still refuses a person (%s) To Do, with the sentence that says to remove it first, not the lock\'s', (origin) => {
