@@ -154,11 +154,12 @@ A Goose installed in a WSL distro runs there (`supportsWslCli`) when its CLI pat
 
 ## SSH
 
-A Goose on a remote host over SSH (#913) runs as `goose`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. It is checked only against a fake host in `tests/unit/goose-ssh-remote.test.ts`, never against a real Goose or host.
+A Goose on a remote host over SSH (#913) runs as `goose`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. A spawn is checked against a fake host in `tests/unit/goose-ssh-remote.test.ts`, and its transcript against a real 1.57.0 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig.
 
 - **Synced files.** `remoteFiles()` declares the plugin Kangentic owns (`.agents/plugins/kangentic-goose/plugin.json` and `hooks/hooks.json`) and the folder's copy of the hook transport's script (`.kangentic/goose-wsl-hook.sh`). The hook commands run that script on the host, so the host needs no node, and the files are removed again when the session releases.
 - `GOOSE_MODE` travels as the spawn's environment (the host's own variables are kept), and the provider and model stay in the host's Goose config. Goose is handed no MCP server, as locally.
-- **Unavailable over SSH.** The session database is on the host, so the transcript, usage and session id readers show nothing and do not wait. `tests/fixtures/mock-goose.js` is a mock that prints the prompt, the OSC 7501 states and the exit behavior the adapter keys on.
+- **Transcript.** The session database is on the host and is never copied. `remoteTranscriptSnapshot()` names `goose session export --name <name> --format json`, which the relay runs into a file and copies whole when it changes ([SSH remote hosts](../../platforms/ssh-remote.md#transcripts)). The copy is `<mirror>/.kangentic/transcripts/goose/<name>.json`, and `locateSessionHistoryFile` returns it, since that file is the conversation's own. `export-reader.ts` makes each message of the export a row for `mapGooseRows`, so the viewer, the tool counts and the usage read what they read locally, and the ledger takes `accumulated_usage`. The name is known from the spawn, so no late id is involved. Goose has no `parseTranscriptWindow`, so the index keeps the 16 MB tail it has locally, and a page answers `unsupported_agent`.
+- **Unavailable over SSH.** The live model, context and cost on the card, read from the database locally. `tests/fixtures/mock-goose.js` is a mock that prints the prompt, the OSC 7501 states and the exit behavior the adapter keys on.
 
 ## Limitations
 

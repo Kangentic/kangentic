@@ -78,6 +78,23 @@ The long sessions are real rows repeated in a copy of the database. Three Goose 
 session, beside a process inserting into that database, each took under 450 ms and printed valid JSON.
 OpenCode's first 500 ms is its own start.
 
+## End to end
+
+`tests/unit/remote-transcript-real-cli.test.ts` runs in the rig (`scripts/probe-ssh-rig/transcript-clis.sh`,
+whose header has the commands), on Node 24.22.2 in a `node:24-bookworm` container. Each real CLI holds a real
+conversation, then the real helper, export script, tail and relay bring it to a mirror, and the adapter's own
+readers read it there. All four pass: Kimi 2.5.1 with a fresh id found from the index, Goose 1.57.0 with a
+resume replacing the copy with the longer conversation, and OpenCode 1.19.5 and 2.2.5 with an id arriving
+after the start. No export file was left on the host.
+
+It runs the helper in-process over an in-memory link, with the CLI started by the test. It proves the path from
+a CLI's files to a reader, not a spawn through the app or a real `ssh`.
+
+The first run of it found what fakes could not. A login shell on that image does not add `~/.local/bin`, so
+`goose` was not found through the helper's shell, and the run's failure line was bash's own opening lines. The
+first was the rig's: the real agent PTY starts through the same shell. The second was a fault, since those lines
+can hold a pid and would defeat the log-once check, so a failed export now logs stderr's last line.
+
 ## Result
 
 - Nothing needs a read of a CLI's private database on the host. Goose's and OpenCode's own exports carry
@@ -85,5 +102,7 @@ OpenCode's first 500 ms is its own start.
 - An export is cheap and the copy is not: 100 MB takes a second to write and over a minute to send at the
   tail's paced rate. So the schedule is paced by the last export's size, and an unchanged export sends
   nothing.
+- A 12-second bound on an export sits inside the 15 seconds a request to the pty host gets, so no timeout
+  needed raising.
 - A fresh Kimi session has to find its id from the index, because the exit hint can land after the session
   is released, and never lands after a force kill.
