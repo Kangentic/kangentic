@@ -1,6 +1,6 @@
 import type { Swimlane, Task } from '../../shared/types';
 import { finalMatchLine, lineMatchesPattern, shownFinalLine, textMatchCanMatch } from '../../shared/final-line-match';
-import { doneColumn, nextOnRoute, routeCandidates, routeColumns } from '../../shared/workflow-route';
+import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns } from '../../shared/workflow-route';
 
 /**
  * What the workflow's step check asks the Automation agent at a turn end, and
@@ -147,8 +147,9 @@ export type StepExitVerdict = { accepted: true } | { accepted: false; reason: st
  *
  * - A final line a row that moves the task forward matches: accepted, and the
  *   check's answer stands. Forward is Done or a later column by position, not
- *   the route's next column, so a route that skips the column a row names still
- *   accepts that row's line.
+ *   the route's next column. A row's target here is where the row really sends
+ *   the task (`resolveMoveTarget`), so a route that skips the column a row names
+ *   still accepts that row's line, and the row lands on the route's next column.
  * - A final line only a row sending the task back matches: refused. The row
  *   moved the task already, unless its Frequency is spent or no row ran (a
  *   resume's catch-up, recovery), and then the step must not send it forward.
@@ -167,7 +168,7 @@ export function stepExitVerdict(
 ): StepExitVerdict | null {
   const exits = exitRows.filter((row) => textMatchCanMatch(row.finalLine));
   if (exits.length === 0) return null;
-  const isForward = (row: StepExitRow): boolean => row.target !== null && (row.target.role === 'done' || row.target.position > column.position);
+  const isForward = (row: StepExitRow): boolean => row.target !== null && isForwardOf(row.target, column);
   const line = finalMatchLine(agentReply);
   const matched = line === null ? [] : exits.filter((row) => lineMatchesPattern(row.finalLine, line));
   if (matched.some(isForward)) return { accepted: true };

@@ -1,5 +1,5 @@
 import type { Swimlane } from '../../shared/types';
-import { nextOnRoute, type RouteFields } from '../../shared/workflow-route';
+import { isForwardOf, isOnRoute, nextOnRoute, type RouteFields } from '../../shared/workflow-route';
 
 /**
  * Where a "move this task" request lands: a column named by the caller, or the
@@ -10,6 +10,14 @@ import { nextOnRoute, type RouteFields } from '../../shared/workflow-route';
  * in the same column. For a workflow task (`route` given) the next column is
  * the next one on its route, which can be Done; outside a workflow it is the
  * next column on the board, by position.
+ *
+ * The route also wins over a column a row names (owner's rule, 2026-10-04): a
+ * forward row whose column the route does not visit lands on the route's next
+ * column instead. Rows ran before the step, so a row that went by its name
+ * walked a planned-and-executed task into a Code Review its route skips, where
+ * an empty diff sent it back, up to four times in six minutes. A send-back keeps
+ * the column it names. An agent's or a person's named move never comes through
+ * here (`column-resolver.ts`, the move handlers), so it stays as it was asked.
  *
  * A column a user archived and a ghost column are never a destination: neither
  * is on the board a person sees. Done is, although it is stored archived (the
@@ -61,6 +69,11 @@ export function resolveMoveTarget(
     return { ok: false, reason: `No column named "${requested.trim()}" on this board. Columns: ${names}.` };
   }
   if (from && named.id === from.id) return { ok: false, reason: `The task is already in ${named.name}.` };
+  if (route && from && isForwardOf(named, from) && !isOnRoute(columns, route, named.id)) {
+    // Null only for a task in Done or on a board with no Done column, and then
+    // the row's own column is the one left.
+    return { ok: true, column: nextOnRoute(columns, route, from.id) ?? named };
+  }
   return { ok: true, column: named };
 }
 

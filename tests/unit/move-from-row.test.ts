@@ -36,7 +36,8 @@ function column(id: string, name: string, position: number): Swimlane {
 const REVIEW = column('lane-review', 'Code Review', 3);
 const TESTING = column('lane-testing', 'Testing', 4);
 const MERGE = column('lane-merge', 'Merge', 5);
-const COLUMNS = [REVIEW, TESTING, MERGE];
+const DONE = { ...column('lane-done', 'Done', 6), role: 'done', is_archived: true } as unknown as Swimlane;
+const COLUMNS = [REVIEW, TESTING, MERGE, DONE];
 
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
   getProjectRepos: vi.fn(() => ({
@@ -151,6 +152,40 @@ describe('moveTaskFromRow', () => {
 
       expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
       expect(hoisted.deliverMessageAfterMove).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a workflow task whose route ends in the row\'s column', () => {
+    const ROUTED_TASK = {
+      ...TASK,
+      workflow_id: 'workflow-1',
+      route_start_swimlane_id: REVIEW.id,
+      route_last_swimlane_id: REVIEW.id,
+      skipped_swimlane_ids: [],
+    } as unknown as Task;
+
+    function runRouted(move: ReturnType<typeof moveInput>) {
+      return moveTaskFromRow(context, { projectId: PROJECT_ID, projectPath: PROJECT_PATH, task: ROUTED_TASK, fromColumn: REVIEW, move, fromTurnEndGroup: true });
+    }
+
+    it('moves to Done rather than into the column its route skips, however the row names it', async () => {
+      const result = await runRouted(moveInput());
+
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ targetSwimlaneId: DONE.id }),
+        'automation',
+        PROJECT_ID,
+        PROJECT_PATH,
+        expect.objectContaining({ expectedFromSwimlaneId: REVIEW.id }),
+      );
+      expect(result).toEqual({ columnName: 'Done' });
+    });
+
+    it('hands the row\'s message to the delivery as bound for Done, which drops it there', async () => {
+      await runRouted(moveInput({ message: 'Open the PR.' }));
+
+      expect(hoisted.deliverMessageAfterMove).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID, 'Done', 'Open the PR.');
     });
   });
 

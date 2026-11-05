@@ -158,3 +158,52 @@ describe('routeOf', () => {
     expect(resolveMoveTarget(columns, 'exec', null, routeOf(withWorkflowId('')))).toMatchObject({ ok: true, column: { id: 'review' } });
   });
 });
+
+describe('resolveMoveTarget, a row that names a column of a workflow task', () => {
+  const columns = [
+    column('todo', 'To Do', 0, { role: 'todo' }),
+    column('plan', 'Planning', 1),
+    column('exec', 'Executing', 2),
+    column('review', 'Code Review', 3),
+    column('testing', 'Testing', 4),
+    column('done', 'Done', 5, { role: 'done', is_archived: true }),
+  ];
+  const planThenExecute = { route_start_swimlane_id: 'plan', route_last_swimlane_id: 'exec', skipped_swimlane_ids: [] };
+  const skipsReview = { route_start_swimlane_id: 'plan', route_last_swimlane_id: 'testing', skipped_swimlane_ids: ['review'] };
+
+  it('goes to the next column on the route when the route skips the one it names', () => {
+    expect(resolveMoveTarget(columns, 'exec', 'Code Review', skipsReview)).toMatchObject({ ok: true, column: { id: 'testing' } });
+  });
+
+  it('goes to Done when the column it names lies past the route\'s last column', () => {
+    expect(resolveMoveTarget(columns, 'exec', 'Code Review', planThenExecute)).toMatchObject({ ok: true, column: { id: 'done' } });
+    expect(resolveMoveTarget(columns, 'exec', 'Testing', planThenExecute)).toMatchObject({ ok: true, column: { id: 'done' } });
+  });
+
+  it('keeps a send-back, which is never on the task\'s way forward', () => {
+    expect(resolveMoveTarget(columns, 'testing', 'Executing', skipsReview)).toMatchObject({ ok: true, column: { id: 'exec' } });
+    // A send-back to a column the route skips still goes there: only forward is the route's to decide.
+    expect(resolveMoveTarget(columns, 'testing', 'Code Review', skipsReview)).toMatchObject({ ok: true, column: { id: 'review' } });
+  });
+
+  it('takes the next route column over a row that names Done, which would skip the rest of the route', () => {
+    expect(resolveMoveTarget(columns, 'plan', 'Done', planThenExecute)).toMatchObject({ ok: true, column: { id: 'exec' } });
+  });
+
+  it('keeps a row that names Done from the route\'s last column', () => {
+    expect(resolveMoveTarget(columns, 'exec', 'Done', planThenExecute)).toMatchObject({ ok: true, column: { id: 'done' } });
+  });
+
+  it('keeps a named column further along the route, which the route does visit', () => {
+    expect(resolveMoveTarget(columns, 'plan', 'Testing', skipsReview)).toMatchObject({ ok: true, column: { id: 'testing' } });
+  });
+
+  it('leaves a task outside a workflow on the column the row names', () => {
+    expect(resolveMoveTarget(columns, 'exec', 'Code Review')).toMatchObject({ ok: true, column: { id: 'review' } });
+  });
+
+  it('still refuses a column that does not exist, and the column the task is in', () => {
+    expect(resolveMoveTarget(columns, 'exec', 'Nowhere', planThenExecute).ok).toBe(false);
+    expect(resolveMoveTarget(columns, 'exec', 'Executing', planThenExecute)).toEqual({ ok: false, reason: 'The task is already in Executing.' });
+  });
+});
