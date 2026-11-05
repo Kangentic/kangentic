@@ -163,11 +163,12 @@ describe('killAll with a session on a remote host', () => {
     expect(report.killedCount).toBe(1);
   });
 
-  it('does not hold the quit on the host process when nothing at all is running', () => {
+  it('counts the live host process even when nothing at all is running, as main does for every quit', () => {
     const manager = new SessionManager();
     giveHostAPid(manager, 4_321);
 
-    expect(manager.killAll()).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+    // An idle host exits at once, so the wait costs only the drain's settle.
+    expect(manager.killAll()).toEqual({ pids: [4_321], killedCount: 1, deferredCount: 0 });
   });
 
   it('still kills and counts a local session beside a remote one', async () => {
