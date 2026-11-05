@@ -209,7 +209,9 @@ function killRun(child) {
  */
 async function seedClaudeTrust(trust, cwd) {
   await trust.ensureWorktreeTrust(cwd);
-  const key = path.resolve(cwd).replace(/\\/g, '/');
+  // The writer's key: the physical path on POSIX, the path as given on Windows.
+  const realCwd = process.platform === 'win32' ? path.resolve(cwd) : fs.realpathSync(cwd);
+  const key = realCwd.replace(/\\/g, '/');
   const data = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf-8'));
   if (data.projects?.[key]?.hasTrustDialogAccepted !== true) {
     throw new Error(`${cwd} is not trusted in ~/.claude.json (the lock was held, or the file did not parse); the run would ignore the allow list`);

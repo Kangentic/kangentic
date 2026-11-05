@@ -25,6 +25,13 @@ vi.mock('node:os', async () => {
   };
 });
 
+// A writer reads the physical path, real I/O on POSIX, before it takes the lock.
+// The fake clock below would run out before that read landed and the retry timer
+// would never fire. These cases are about the lock, so the path stays as given.
+vi.mock('../../src/main/agent/adapters/claude/physical-path', () => ({
+  physicalPath: async (resolvedPath: string) => resolvedPath,
+}));
+
 import {
   acquireClaudeJsonFileLock,
   claudeJsonLockPath,
