@@ -396,6 +396,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       const adapter = agentRegistry.get(agentName);
       if (!adapter || !canResumeConversationById(adapter)) return false;
       const place = placeOfRecord({ cli_target: cliTarget });
+      // Only the host proves a conversation gone. What this computer holds of one is a copy that is empty
+      // until it arrives, so the row stays, and a resume finds out on the host.
+      if (place?.kind === 'ssh') return true;
       // Looking in a stopped WSL distro would start it just to draw the list:
       // its row stays, and a resume finds out when it starts the distro anyway.
       if (!(await mayReadPlaceUnattended(place))) return true;

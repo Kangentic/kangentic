@@ -368,6 +368,35 @@ describe('an exported transcript', () => {
     expect(host.removed).toContain('/home/dev/.kangentic/transcripts/agent/abc.json');
   });
 
+  it('lets a reader wait for the last export of a session that is ending, and for no other', async () => {
+    const { relay } = makeRelay();
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await relay.register(registrationOf('s2', { files: () => [] }));
+    expect(relay.transcriptSettled('s2')).toBeNull();
+
+    const settled = relay.transcriptSettled('s1');
+    let landed = false;
+    void settled?.then(() => { landed = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(landed).toBe(false);
+
+    await relay.release('s1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(landed).toBe(true);
+    expect(relay.transcriptSettled('s1')).toBeNull();
+  });
+
+  it('never holds a reader for long when the release is held up', async () => {
+    const { relay } = makeRelay();
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+
+    let landed = false;
+    void relay.transcriptSettled('s1')?.then(() => { landed = true; });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(landed).toBe(true);
+  });
+
   it('leaves the copy alone when the export fails, logs the reason once, and tries again', async () => {
     const host = fakeHost();
     const lines: string[] = [];

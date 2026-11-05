@@ -103,6 +103,27 @@ describe('a conversation that ran on a host', () => {
     expect(verdict).toBe('unknown');
   });
 
+  it('reads the same whatever copy this computer holds: empty, stale, or none, since only the host can say', async () => {
+    const copy = path.join(projectPath, 'mirror', '.kangentic', 'transcripts', 'agent', `${AGENT_SESSION_ID}.json`);
+    const assess = (): ReturnType<typeof assessResumeConversation> => assessResumeConversation({
+      adapter: adapterWithProof(vi.fn().mockResolvedValue(true)),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [recordOn('host-a', { transcript_path: copy })],
+      cwd: projectPath,
+      projectPath,
+      place: sshPlace('host-a'),
+    });
+
+    await expect(assess()).resolves.toBe('unknown');
+
+    fs.mkdirSync(path.dirname(copy), { recursive: true });
+    fs.writeFileSync(copy, '');
+    await expect(assess()).resolves.toBe('unknown');
+
+    fs.writeFileSync(copy, '{"conversation":"an old export"}');
+    await expect(assess()).resolves.toBe('unknown');
+  });
+
   it('still cannot be resumed on a different host, where its files are not: that needs no file to decide', async () => {
     const verdict = await assessResumeConversation({
       adapter: adapterWithProof(vi.fn().mockResolvedValue(false)),

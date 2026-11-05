@@ -1268,6 +1268,14 @@ export class SessionManager extends EventEmitter {
     relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyAgentSessionId(sessionId, agentSessionId));
   }
 
+  /**
+   * For a reader of an ending session's transcript: resolves once a session on a host has its last export
+   * here, bounded. Null when there is nothing to wait for, which is every session that is not exported.
+   */
+  remoteTranscriptSettled(sessionId: string): Promise<void> | null {
+    return this.remoteSessionRelay?.transcriptSettled(sessionId) ?? null;
+  }
+
   /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
   remoteHostRequest(request: RemoteHostRequest): Promise<unknown> {
     return this.host.remote(request);

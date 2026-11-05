@@ -53,6 +53,7 @@ describe('refineTranscriptToolCounts for a record with no agent session id', () 
       getSessionAgentName: vi.fn(() => 'unscoped-agent'),
       getUsageCache: vi.fn(() => ({ 'session-1': { transcriptPath: '/path/to/transcript.jsonl' } })),
       getSession: vi.fn(() => ({ startedAt: RUN_STARTED_AT })),
+      remoteTranscriptSettled: vi.fn(() => null),
     } as unknown as SessionManager;
   }
 

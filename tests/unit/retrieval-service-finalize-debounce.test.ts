@@ -109,6 +109,13 @@ class FakeSessionManager extends EventEmitter {
   getSessionProjectId(sessionId: string): string | undefined {
     return this.projectIdBySession.get(sessionId);
   }
+
+  /** What a session on a host waits on for its last export. Null for one that exports nothing. */
+  settled: Promise<void> | null = null;
+
+  remoteTranscriptSettled(_sessionId: string): Promise<void> | null {
+    return this.settled;
+  }
 }
 
 function makeContext(sessionManager: FakeSessionManager, boardEvents = new BoardEventBus()): IpcContext {
@@ -167,6 +174,23 @@ describe('retrievalService - per-session finalize debounce', () => {
     expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
     expect(embedEngineMock.markDirty).toHaveBeenCalledTimes(1);
     expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('holds the finished pass for a session on a host until its last export is here', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-1', 'proj-1');
+    let settle = (): void => undefined;
+    sessionManager.settled = new Promise((resolve) => { settle = resolve; });
+
+    sessionManager.emit('exit', 'sess-1');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(conversationIndexerMock.indexSession).not.toHaveBeenCalled();
+
+    settle();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
   });
 
   it('debounces per session, not globally: two DIFFERENT sessions each get their own indexSession call', async () => {

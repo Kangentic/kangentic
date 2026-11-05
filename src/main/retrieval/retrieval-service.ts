@@ -288,7 +288,10 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
     if (context.sessionManager.getSession(sessionId)?.transient) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) return;
+    // A session on a host whose transcript is an export has its last one on the way.
+    const settled = context.sessionManager.remoteTranscriptSettled(sessionId);
     chain(async () => {
+      if (settled) await settled;
       // Finished: the worker also walks the subagents' token usage, which
       // happens HERE and in the project-open sweep, never on the live
       // turn-boundary path (a running fan-out rewrites its subagent directory
