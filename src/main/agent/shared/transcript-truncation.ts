@@ -140,3 +140,22 @@ export function prependTruncationMarker(
   entries.unshift(buildTruncationMarker(omittedBytes, totalBytes, entries[0]?.ts, history));
   return entries;
 }
+
+/**
+ * Bound a conversation read whole, with no pager behind it (a server's message API, a copy of a CLI's export),
+ * the way every windowed read is bounded: the newest entries within `parseWindowBytes()` of JSON, behind the
+ * notice. The notice carries no cursor, so what it left out stays out of the viewer.
+ */
+export function capToNewestEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
+  const sizes = entries.map((entry) => JSON.stringify(entry).length);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  const budget = parseWindowBytes();
+  if (total <= budget) return entries;
+  let start = entries.length - 1;
+  let kept = sizes[start];
+  while (start > 0 && kept + sizes[start - 1] <= budget) {
+    start -= 1;
+    kept += sizes[start];
+  }
+  return prependTruncationMarker(entries.slice(start), total - kept, total);
+}

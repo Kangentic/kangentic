@@ -26,7 +26,8 @@ import { findGooseSession, withGooseDatabase } from './session-store';
  * `metadata_json`'s `userVisible: false` marks a message Goose keeps for the
  * model only (a compaction summary); the viewer skips it, as Goose's own does.
  *
- * Built from Goose's source; no real Goose database was read.
+ * Built from Goose's source. The tables and these block shapes match a real
+ * Goose 1.57.0 (2026-11-05, `docs/audits/ssh-transcript-exports-audit.md`).
  *
  * Positions are the bytes of `content_json`, in message order, the unit the
  * page and tail budgets are in: the Conversation viewer places an entry on a
@@ -364,19 +365,14 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-interface ToolCallTally {
+export interface ToolCallTally {
   callCountByTool: Map<string, number>;
   resultTokensByTool: Map<string, number>;
 }
 
 /**
- * Count a session's tool calls made at or after `sinceMs` and before
- * `untilMs`, by a message's `created_timestamp`, and the tokens of the
- * responses that arrived in that window. Distinct `toolRequest` ids: a call is
- * counted once whatever re-emits it. A response in the window is named by its
- * request wherever that request sits, so a call made just before `sinceMs`
- * still has its result tokens counted. Only rows that carry a tool block are
- * read, and the window is applied to each row here rather than in the query.
+ * Only rows that carry a tool block are read, and the window is applied to each
+ * row by `tallyToolRows` rather than in the query.
  */
 function tallyToolCalls(database: DatabaseType.Database, sessionId: string, sinceMs: number | null, untilMs: number | null): ToolCallTally {
   const rows = database
@@ -384,7 +380,22 @@ function tallyToolCalls(database: DatabaseType.Database, sessionId: string, sinc
       "SELECT content_json, created_timestamp FROM messages WHERE session_id = ? AND (content_json LIKE '%\"toolRequest\"%' OR content_json LIKE '%\"toolResponse\"%') ORDER BY id ASC",
     )
     .all(sessionId);
+  return tallyToolRows(rows, sinceMs, untilMs);
+}
 
+/**
+ * Count the tool calls made at or after `sinceMs` and before `untilMs`, by a
+ * message's `created_timestamp`, and the tokens of the responses that arrived in
+ * that window. Distinct `toolRequest` ids: a call is counted once whatever
+ * re-emits it. A response in the window is named by its request wherever that
+ * request sits, so a call made just before `sinceMs` still has its result tokens
+ * counted. Pure, so a copy of a session's export reads as its rows do.
+ */
+export function tallyToolRows(
+  rows: ReadonlyArray<Pick<GooseMessageRow, 'content_json' | 'created_timestamp'>>,
+  sinceMs: number | null,
+  untilMs: number | null,
+): ToolCallTally {
   const toolById = new Map<string, string>();
   const countedCallIds = new Set<string>();
   const callCountByTool = new Map<string, number>();
@@ -421,18 +432,22 @@ export function readGooseToolCounts(
   return withGooseDatabase(dbPath, null, (database) => {
     const session = findGooseSession(database, sessionName);
     if (!session) return null;
-    const { callCountByTool, resultTokensByTool } = tallyToolCalls(database, session.id, sinceMs, untilMs);
-    if (callCountByTool.size === 0) return null;
-    const toolBreakdown: PerToolStat[] = [...callCountByTool].map(([toolName, callCount]) => ({
-      toolName,
-      callCount,
-      totalDurationMs: 0,
-      interruptedCount: 0,
-      ...(resultTokensByTool.has(toolName) ? { resultTokens: resultTokensByTool.get(toolName) } : {}),
-    }));
-    const toolCallCount = toolBreakdown.reduce((sum, row) => sum + row.callCount, 0);
-    return { toolCallCount, toolBreakdown };
+    return toolCountsOf(tallyToolCalls(database, session.id, sinceMs, untilMs));
   });
+}
+
+/** A tally as the tool-count answer. Null when nothing was called, so the caller keeps its live count. */
+export function toolCountsOf({ callCountByTool, resultTokensByTool }: ToolCallTally): TranscriptToolCounts | null {
+  if (callCountByTool.size === 0) return null;
+  const toolBreakdown: PerToolStat[] = [...callCountByTool].map(([toolName, callCount]) => ({
+    toolName,
+    callCount,
+    totalDurationMs: 0,
+    interruptedCount: 0,
+    ...(resultTokensByTool.has(toolName) ? { resultTokens: resultTokensByTool.get(toolName) } : {}),
+  }));
+  const toolCallCount = toolBreakdown.reduce((sum, row) => sum + row.callCount, 0);
+  return { toolCallCount, toolBreakdown };
 }
 
 /**

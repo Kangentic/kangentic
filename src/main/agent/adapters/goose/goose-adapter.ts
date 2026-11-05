@@ -1,8 +1,9 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { GooseDetector } from './detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
-import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, placeFromStored, remoteExportPath, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
@@ -23,8 +24,10 @@ import type {
   AgentPermissionEntry,
   PermissionMode,
   AdapterRuntimeStrategy,
+  RemoteTranscriptSnapshot,
   SessionAttachment,
   SessionContext,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   TranscriptToolCounts,
@@ -48,6 +51,12 @@ import {
   readGooseTranscriptPage,
   readGooseTranscriptUsage,
 } from './transcript-parser';
+import { gooseExportEntries, gooseExportToolCounts, gooseExportToolResultTokens, readGooseExportFile } from './export-reader';
+
+/** The copy of a host session's export on this computer, or null for a session not on a host. */
+function hostExportPath(agentSessionId: string | null | undefined, place: CliPlace | null | undefined): string | null {
+  return agentSessionId && place?.kind === 'ssh' ? remoteExportPath(place, 'goose', agentSessionId) : null;
+}
 
 /**
  * Goose CLI adapter - integrates Block's Goose agent CLI (`goose`)
@@ -55,7 +64,9 @@ import {
  * interface.
  *
  * What each part is built from (Goose 1.57.0, the latest release when this was
- * written; none of it was run against a real Goose, which was not installed):
+ * written). The session store and the export were checked against a real Goose
+ * (`docs/audits/ssh-transcript-exports-audit.md`); the rest has not been run
+ * against one:
  *
  * - Hooks (`hook-manager.ts`): Goose's hooks guide,
  *   https://goose-docs.ai/docs/guides/context-engineering/hooks . A plugin in
@@ -393,7 +404,10 @@ export class GooseAdapter implements AgentAdapter {
     return data.length > 0;
   }
 
-  async locateSessionHistoryFile(_agentSessionId: string, _cwd: string): Promise<string | null> {
+  async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // A session on a host has a file of its own here, once its export has arrived.
+    const exported = hostExportPath(agentSessionId, place);
+    if (exported) return fs.existsSync(exported) ? exported : null;
     // Goose keeps every session in one shared database, so no file is this
     // session's own: its mtime moves with every other Goose session, and a
     // reader that keyed staleness or a resume check on it would be misled. The
@@ -403,12 +417,38 @@ export class GooseAdapter implements AgentAdapter {
   }
 
   /**
-   * The conversation from Goose's session database (`transcript-parser.ts`). A
-   * Goose in a WSL distro keeps its database in the distro, which is not read
-   * from Windows (a WAL database over the distro's file share is not safe to
-   * open), so its conversation reads as none yet.
+   * How to copy a conversation out of the host's shared database: Goose's own export, by the name Kangentic
+   * passed (`RemoteSessionRelay` runs it into a file and tails that). The name is known from the spawn, so
+   * this needs no late id. Before the session's row exists the export exits 1, and the next tick runs it again.
+   */
+  async remoteTranscriptSnapshot(options: {
+    agentSessionId: string;
+    cwd: string;
+    cliTarget: StoredCliTarget;
+  }): Promise<RemoteTranscriptSnapshot | null> {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return null;
+    return {
+      file: place.linuxCliPath ?? this.remoteCliName,
+      args: ['session', 'export', '--name', options.agentSessionId, '--format', 'json'],
+      cwd: cliPathForTarget(options.cwd, place),
+      localPath: remoteExportPath(place, this.name, options.agentSessionId),
+    };
+  }
+
+  /**
+   * The conversation from Goose's session database (`transcript-parser.ts`), or
+   * from a host session's export (`export-reader.ts`). A Goose in a WSL distro
+   * keeps its database in the distro, which is not read from Windows (a WAL
+   * database over the distro's file share is not safe to open), so its
+   * conversation reads as none yet.
    */
   async parseTranscript(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const exportedPath = hostExportPath(agentSessionId, place);
+    if (exportedPath) {
+      const exported = readGooseExportFile(exportedPath);
+      return exported ? { entries: gooseExportEntries(exported), sourcePath: exportedPath } : { entries: [], sourcePath: null };
+    }
     if (place) return { entries: [], sourcePath: null };
     const dbPath = gooseSessionsDatabasePath();
     const { entries, totalPosition } = readGooseTail(dbPath, agentSessionId);
@@ -416,7 +456,7 @@ export class GooseAdapter implements AgentAdapter {
     return { entries, sourcePath: dbPath, totalPosition };
   }
 
-  /** One page of a session's history for the Conversation viewer; a distro's does not page. */
+  /** One page of a session's history for the Conversation viewer; a distro's or a host's does not page. */
   async readTranscriptPage(
     agentSessionId: string,
     _cwd: string,
@@ -429,6 +469,8 @@ export class GooseAdapter implements AgentAdapter {
 
   /** Lifetime tokens, from the session row's `accumulated_*` sums. */
   async transcriptUsage(input: { agentSessionId?: string | null; place?: CliPlace | null }): Promise<TranscriptUsage | null> {
+    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    if (exportedPath) return readGooseExportFile(exportedPath)?.usage ?? null;
     if (input.place || !input.agentSessionId) return null;
     return readGooseTranscriptUsage(gooseSessionsDatabasePath(), input.agentSessionId);
   }
@@ -440,6 +482,11 @@ export class GooseAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
+    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    if (exportedPath) {
+      const exported = readGooseExportFile(exportedPath);
+      return exported ? gooseExportToolCounts(exported, input.sinceMs ?? null, input.untilMs ?? null) : null;
+    }
     if (input.place || !input.agentSessionId) return null;
     return readGooseToolCounts(gooseSessionsDatabasePath(), input.agentSessionId, input.sinceMs ?? null, input.untilMs ?? null);
   }
@@ -451,6 +498,11 @@ export class GooseAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<Record<string, number> | null> {
+    const exportedPath = hostExportPath(input.agentSessionId, input.place);
+    if (exportedPath) {
+      const exported = readGooseExportFile(exportedPath);
+      return exported ? gooseExportToolResultTokens(exported, input.sinceMs ?? null, input.untilMs ?? null) : null;
+    }
     if (input.place || !input.agentSessionId) return null;
     return readGooseToolResultTokens(gooseSessionsDatabasePath(), input.agentSessionId, input.sinceMs ?? null, input.untilMs ?? null);
   }

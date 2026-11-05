@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import type DatabaseType from 'better-sqlite3';
 import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
-import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { capToNewestEntries, parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
 import { openCodeV2RowEntries, type OpenCodeV2MessageRow } from './v2-messages';
@@ -576,17 +576,7 @@ export function mapOpenCodeRemoteEntries(messages: OpenCodeRemoteMessageEntry[])
  * carries no cursor and the left-out history stays out of the viewer.
  */
 export function capOpenCodeRemoteEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  const sizes = entries.map((entry) => JSON.stringify(entry).length);
-  const total = sizes.reduce((sum, size) => sum + size, 0);
-  const budget = parseWindowBytes();
-  if (total <= budget) return entries;
-  let start = entries.length - 1;
-  let kept = sizes[start];
-  while (start > 0 && kept + sizes[start - 1] <= budget) {
-    start -= 1;
-    kept += sizes[start];
-  }
-  return prependTruncationMarker(entries.slice(start), total - kept, total);
+  return capToNewestEntries(entries);
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
