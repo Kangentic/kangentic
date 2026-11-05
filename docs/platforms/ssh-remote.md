@@ -36,7 +36,7 @@ sources:
 ---
 # SSH remote hosts
 
-**Beta.** The feature is labelled Beta until it has run on a real host for Claude Code and Cursor. Today only Claude Code runs on a host, and no build installs the host program for a user yet (see [Known limits](#known-limits)).
+**Beta.** The feature is labelled Beta until it has run on a real host for Claude Code and Cursor. Every adapter that declares `supportsWslCli` runs on a host (see [Agents](#agents)), and no build installs the host program for a user yet (see [Known limits](#known-limits)).
 
 Kangentic can run an agent on a Linux machine over SSH. The repo, the agent, its edits, builds and tests all stay on the host. This computer runs the UI and the board and needs no clone, no local CLI and no local login for that project.
 
