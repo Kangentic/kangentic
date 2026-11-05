@@ -186,10 +186,10 @@ describe('mock tasks.update: the per-task automations hold', () => {
     return task.automations_disabled;
   }
 
-  it('holds and releases a workflow task, and holds an ordinary task', async () => {
+  it('refuses a hold on a running workflow task, as main does, and holds an ordinary task', async () => {
     const bridge = holdScenario();
 
-    expect(await holdOf(bridge, WORKFLOW_TASK_ID, true)).toBe(true);
+    await expect(holdOf(bridge, WORKFLOW_TASK_ID, true)).rejects.toThrow(/so its automations cannot be paused/);
     expect(await holdOf(bridge, WORKFLOW_TASK_ID, false)).toBe(false);
     expect(await holdOf(bridge, ORDINARY_TASK_ID, true)).toBe(true);
 

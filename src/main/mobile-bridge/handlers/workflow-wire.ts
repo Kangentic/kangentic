@@ -86,7 +86,7 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       gate_target_id: gateTargetId,
       // A running or paused workflow's task cannot pause its automations. The
       // phone offers the switch on a workflow task only while this is true.
-      automations_pausable: workflow.state === 'done',
+      automations_pausable: workflow.state !== 'running' && workflow.state !== 'paused',
     });
   }
   return facts;

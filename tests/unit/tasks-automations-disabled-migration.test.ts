@@ -124,8 +124,26 @@ describe('tasks.automations_disabled migration and round trip', () => {
       canvas_y: null,
     });
     const workingLaneId = () => new SwimlaneRepository(database).list().find((lane) => lane.role === null)!.id;
-    const holdIt = (taskId: string) => database.prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(taskId);
+    /** A hold from before the rule: this database has not run the release yet. */
+    const holdIt = (taskId: string) => {
+      database.prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(taskId);
+      database.prepare("DELETE FROM schema_meta WHERE key = 'workflow_task_holds_released_at'").run();
+    };
     const planApproval = (taskId: string) => (database.prepare('SELECT plan_approval FROM tasks WHERE id = ?').get(taskId) as { plan_approval: string | null }).plan_approval;
+
+    // The app migrates on every project open, and a task whose workflow is gone or
+    // finished may be held again. A repeat run must leave that hold, and its plan
+    // approval, alone.
+    it('runs once, so a hold set after it survives the next open', () => {
+      const task = tasks.create({ title: 'Orphan', description: '', swimlane_id: todoLaneId, workflow: membership('home') });
+      runProjectMigrations(database);
+      tasks.update({ id: task.id, automations_disabled: true });
+
+      runProjectMigrations(database);
+
+      expect(storedValue(task.id)).toBe(1);
+      expect(planApproval(task.id)).toBeNull();
+    });
 
     it.each([
       ['in To Do', () => todoLaneId],
