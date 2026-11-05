@@ -28,6 +28,8 @@ Detection follows the standard pattern: check `config.agent.cliPaths.copilot`, f
 
 `src/main/agent/adapters/copilot/command-builder.ts`
 
+A column or task effort passes `--reasoning-effort <level>`.
+
 Copilot CLI 1.0.51+ supports caller-owned session IDs via `--session-id <uuid>` (same semantics as Claude's `--session-id`): passing a new UUID starts a fresh session with that ID, passing an existing UUID resumes it. The builder used `--resume <uuid>`, which 1.0.97 refuses for an id it has not seen ("No session, task, or name matched"), so no new Copilot task started.
 
 A resume carries no prompt. `-i <prompt>` starts an interactive session with one, but neither `copilot --help` nor GitHub's docs say it runs on a session resumed by `--session-id`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic keeps a resume's message (a column's message, held messages) off the command line and types it in once Copilot is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).

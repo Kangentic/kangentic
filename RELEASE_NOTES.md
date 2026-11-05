@@ -1,7 +1,13 @@
 ## What's New
 
-- Each Command Terminal has its own Browser pane. Open it from the globe in the terminal's header or with Ctrl+Shift+B, and the terminal's agent can open and drive it to check your app. The page stays loaded while the panel is hidden and comes back after a restart.
-- The Agent Browser is now the only browser agents drive. While Enable Browser Automation is on in Settings > Agent Browser, Claude Code agents are refused other browser tools (Playwright, Puppeteer or Chrome DevTools MCP servers, and Claude in Chrome) and pointed at the Browser pane instead. If you rely on one of those, turn the switch off; a running session sees the change on its next call. Agents can also save browser screenshots and DOM reads to a file.
-- The Command Terminal panel keeps a separate place for one, two, and three or four terminals, so adding or stopping a terminal puts the panel back where you arranged it for that count.
-- OpenCode 2 is supported. Kangentic launches it, tracks its activity and sessions, and reads its history, including sessions continued from OpenCode 1. Remote mode still needs OpenCode 1, and Test connection now names an OpenCode 2 server as a version mismatch.
-- Workflow tasks no longer sit on a background command that never exits. The agent's reply is judged when it stops, a finished step waits for the command before its card moves and the agent is told which command holds it, and a watch started with Claude Code's Monitor tool ends at its own timeout.
+- Fourteen more agents now match much more of what Kangentic does with Claude Code, as far as each CLI's own docs support it. Depending on the agent, that adds activity hooks, turn end detection, plan mode, permission modes, model and effort pickers, resume and transcripts.
+- Kimi now runs on the Kimi Code CLI 2.x. The older Python kimi-cli no longer runs agents.
+- Aider sessions each keep their own chat history, so a session resumes its own conversation and shows its transcript, model and usage.
+- A task whose agent never starts now pauses with an "Agent did not start" notice, instead of sitting in its column with nothing to press. Resume tries the launch again.
+
+## Bug Fixes
+
+- Long agent launch commands no longer overrun the terminal's line limit.
+- A worktree session now builds its Claude settings from the worktree's own settings file.
+- The PR chip counts a ruleset bypass as ready to merge.
+- The macOS memory warning now follows the kernel's free memory percentage.
