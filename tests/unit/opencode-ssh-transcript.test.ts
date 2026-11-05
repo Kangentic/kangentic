@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import { forgetDistroOpenCodeVersions } from '../../src/main/agent/adapters/opencode/distro-sessions';
+import { getCachedTranscript } from '../../src/main/agent/transcript-cache';
 import { remoteExportPath, toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import type { RemoteProgramRunner } from '../../src/shared/types';
 
@@ -127,6 +128,24 @@ describe.each([
     const counts = await adapter.transcriptToolCounts({ agentSessionId: SESSION_ID, place, sinceMs: Number.MAX_SAFE_INTEGER });
 
     expect(counts).toBeNull();
+  });
+});
+
+describe('the conversation viewer, through its cache', () => {
+  const read = () => getCachedTranscript('opencode', SESSION_ID, () => adapter.parseTranscript(SESSION_ID, shellFolder, place));
+
+  it('shows the conversation once it arrives, after an open that found none, and a replaced export after that', async () => {
+    await expect(read()).resolves.toMatchObject({ entries: [], sourcePath: null });
+
+    arrive(V1_EXPORT);
+    const arrived = await read();
+    expect(JSON.stringify(arrived.entries)).toContain('Stub reply from the probe model.');
+
+    const document = JSON.parse(V1_EXPORT) as { messages: Array<{ parts: Array<{ text?: string }> }> };
+    document.messages.at(-1)?.parts.filter((part) => part.text).forEach((part) => { part.text = 'A newer answer than the last export held.'; });
+    arrive(JSON.stringify(document));
+
+    expect(JSON.stringify((await read()).entries)).toContain('A newer answer than the last export held.');
   });
 });
 

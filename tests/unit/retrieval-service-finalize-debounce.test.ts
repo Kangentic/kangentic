@@ -110,11 +110,11 @@ class FakeSessionManager extends EventEmitter {
     return this.projectIdBySession.get(sessionId);
   }
 
-  /** What a session on a host waits on for its last export. Null for one that exports nothing. */
-  settled: Promise<void> | null = null;
+  /** What a session on a host waits on for its last export. Absent for one that exports nothing. */
+  readonly settled = new Map<string, Promise<void>>();
 
-  remoteTranscriptSettled(_sessionId: string): Promise<void> | null {
-    return this.settled;
+  remoteTranscriptSettled(sessionId: string): Promise<void> | null {
+    return this.settled.get(sessionId) ?? null;
   }
 }
 
@@ -181,7 +181,7 @@ describe('retrievalService - per-session finalize debounce', () => {
     retrievalService.attach(context);
     sessionManager.registerSession('sess-1', 'proj-1');
     let settle = (): void => undefined;
-    sessionManager.settled = new Promise((resolve) => { settle = resolve; });
+    sessionManager.settled.set('sess-1', new Promise((resolve) => { settle = resolve; }));
 
     sessionManager.emit('exit', 'sess-1');
     await vi.advanceTimersByTimeAsync(5000);
@@ -191,6 +191,21 @@ describe('retrievalService - per-session finalize debounce', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
+  });
+
+  it('holds no other project\'s indexing behind a session whose last export is held up', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-held', 'proj-held');
+    sessionManager.registerSession('sess-other', 'proj-other');
+    sessionManager.settled.set('sess-held', new Promise(() => undefined));
+
+    sessionManager.emit('exit', 'sess-held');
+    sessionManager.emit('exit', 'sess-other');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledTimes(1);
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-other', 'sess-other');
   });
 
   it('debounces per session, not globally: two DIFFERENT sessions each get their own indexSession call', async () => {

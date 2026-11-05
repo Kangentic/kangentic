@@ -143,11 +143,17 @@ const SETTLE_WAIT_MS = 30_000;
  * sends it whole) exactly when there is something new. The export never crosses the link as output: a reply
  * is one frame, capped at 256 KiB. Every value is an argument, and the script holds none of the caller's text.
  * A `cmp` that is missing reads as a difference, which only costs one send. stderr is kept for the reason.
+ *
+ * The folder and the files are owner-only, because a CLI keeps these conversations in a folder that is, and a
+ * host may be shared. The mask is put back before the CLI runs, so it writes its own store with its own modes.
  */
 const SNAPSHOT_SCRIPT = [
   'target=$1; shift',
+  'mask=$(umask); umask 077',
   'mkdir -p "${target%/*}" || exit 70',
   'staged="$target.$$.tmp"',
+  ': > "$staged" && : > "$staged.err" || exit 70',
+  'umask "$mask"',
   '"$@" > "$staged" 2> "$staged.err"',
   'status=$?',
   'if [ "$status" -eq 0 ] && [ ! -s "$staged" ]; then status=71; fi',
@@ -220,6 +226,8 @@ interface Registered extends RemoteSessionRegistration {
   markReleased: () => void;
   /** The last export failure logged, so one that repeats every tick is logged once. */
   lastSnapshotFailure: string | null;
+  /** An export's chunk came with no size, which has been logged. */
+  warnedNoSize: boolean;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -347,9 +355,12 @@ export class RemoteSessionRelay {
       if (tailRequest.length > 0) {
         try {
           const answer = await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest);
-          // Read before the agent starts, so what lies past it is what this session's agent adds.
+          // Read before the agent starts, so what lies past it is what this session's agent adds. A file with
+          // no entry is not there yet. No sizes at all is an older program on the host, and with nothing to
+          // tell new lines from old, no id is taken: a wrong one would stick, and resume someone else's.
           const indexKey = [...tails].find(([, tail]) => tail.kind === 'index')?.[0];
-          if (indexKey !== undefined) indexBaseline = sizesOf(answer)?.[indexKey] ?? 0;
+          const sizes = sizesOf(answer);
+          if (indexKey !== undefined) indexBaseline = sizes ? sizes[indexKey] ?? 0 : null;
         } catch (error) {
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -398,6 +409,7 @@ export class RemoteSessionRelay {
       snapshotTimer: null,
       snapshotRunning: null,
       lastSnapshotFailure: null,
+      warnedNoSize: false,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
@@ -696,7 +708,15 @@ export class RemoteSessionRelay {
       this.options.log?.(`could not write the transcript for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
-    if (tail.kind === 'snapshot' && event.size > 0 && written === event.size) this.promoteSnapshot(entry, tail.localPath);
+    if (tail.kind === 'snapshot') {
+      if (typeof event.size !== 'number') {
+        // An older program on the host: the daemon outlives an update of the app, and joins under one version.
+        if (!entry.warnedNoSize) this.options.log?.(`the host's program sends no file size, so the transcript of ${entry.sessionId.slice(0, 8)} cannot be told whole. Restart the program on the host.`);
+        entry.warnedNoSize = true;
+      } else if (event.size > 0 && written === event.size) {
+        this.promoteSnapshot(entry, tail.localPath);
+      }
+    }
     if (tail.kind === 'index') {
       // A reset means a line past the baseline need not be new, so the id is left to the agent's exit.
       if (event.reset) entry.indexBaseline = null;
