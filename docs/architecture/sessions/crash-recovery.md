@@ -119,7 +119,7 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
-  main by pid, since with no terminal open the quit does not wait for the host. A spawn used to
+  main by pid, since a host that runs out its exit wait may never read its stop. A spawn used to
   hold the host's only thread, the one that flushes every terminal: on the dogfooding machine
   `cli:spawn` held it 105 times in 20 hours, for 16 to 291 ms each (2026-10-24), and under disk load
   one git start held it 454 ms. So every one of them now starts on the host's spawn worker

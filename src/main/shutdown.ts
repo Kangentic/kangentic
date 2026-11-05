@@ -41,8 +41,9 @@ interface ShutdownDependencies {
    * Whether a young session's force-kill may ride the before-quit drain's
    * timer (see SessionManager.killAll). True only on a route where that drain
    * runs: a user quit and the macOS/Linux powerMonitor shutdown. False for a
-   * Windows session-end and for SIGINT/SIGTERM, which exit with no drain and
-   * so must leave nothing deferred.
+   * Windows session-end, which exits with no drain, and for a signal, whose
+   * drain waits only for exits already on their way, so neither may leave
+   * anything deferred.
    */
   allowGrace: boolean;
 }

@@ -39,6 +39,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
+import { createBeforeQuitHandler } from '../../src/main/pty/shutdown/before-quit-handler';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
 import { SharedFolderHolds } from '../../src/main/agent/shared/shared-folder-holds';
@@ -613,10 +615,89 @@ describe('killAll() and dispose() with a utility pty host', () => {
     expect(shutdown).toHaveBeenCalledWith(1300);
   });
 
-  it('leaves the report alone when nothing was killed, so a quit with no terminals is not held', () => {
+  it('still tells the host to shut down, with the bound killAll set, when the telemetry dispose throws', async () => {
+    const manager = new SessionManager();
+    await spawnSession(manager, 'task-young-throwing-dispose', 2222);
+    const shutdown = asUtilityHost(manager, 9999);
+    const telemetry = (manager as unknown as { telemetry: { dispose: () => void } }).telemetry;
+    vi.spyOn(telemetry, 'dispose').mockImplementation(() => {
+      throw new Error('telemetry dispose failed');
+    });
+
+    manager.killAll({ allowGrace: true });
+
+    // The error still reaches the caller (shutdown.ts wraps dispose in runCleanupStep).
+    expect(() => manager.dispose()).toThrow('telemetry dispose failed');
+    // A host never told to exit would hold the quit to the drain's deadline.
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledWith(2800);
+  });
+
+  it('adds an idle host too: its exit is what proves nothing is left to land', () => {
     const manager = new SessionManager();
     asUtilityHost(manager, 9999);
+    expect(manager.killAll({ allowGrace: true })).toEqual({ pids: [9999], killedCount: 1, deferredCount: 0 });
+  });
+
+  it('leaves the report alone with no host process, so an in-process quit is not held', () => {
+    const manager = new SessionManager();
     expect(manager.killAll({ allowGrace: true })).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+  });
+
+  /**
+   * Sentry DESKTOP-2A. A raw PTY is a probe no session row holds, so main killed
+   * nothing and let the quit through with the host still alive. The pipe closed,
+   * and the probe's exit dispatched after Node stopped. The report here is the
+   * real killAll()'s and the handler the real one, so the pair fails if either
+   * side stops carrying the host.
+   */
+  it('holds the quit for the host while a raw PTY is live and no session exists', async () => {
+    const manager = new SessionManager();
+    const rawMock = createMockPty(3333);
+    vi.mocked(pty.spawn).mockReturnValue(rawMock.mockPty as unknown as pty.IPty);
+    const host = (manager as unknown as { host: PtyHostClient }).host;
+    const rawPty = await host.spawnRaw('/bin/bash', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: tmpDir });
+    const exitListener = vi.fn();
+    rawPty.onExit(exitListener);
+    asUtilityHost(manager, 9999);
+
+    const report = manager.killAll({ allowGrace: true });
+
+    expect(exitListener).not.toHaveBeenCalled();
+    const drainPtyExitCallbacks = vi.fn(() => Promise.resolve({
+      timedOut: false, elapsedMs: 125, lingeringPids: [], unprobedKillCount: 0,
+    }));
+    const handleBeforeQuit = createBeforeQuitHandler({
+      performShutdown: () => true,
+      isOsInitiatedShutdown: () => false,
+      getPtyKillReport: () => report,
+      drainPtyExitCallbacks,
+      hideAllWindows: () => undefined,
+      requestQuit: () => undefined,
+      log: () => undefined,
+    });
+    const event = { preventDefault: vi.fn() };
+    handleBeforeQuit(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(drainPtyExitCallbacks).toHaveBeenCalledWith({ pids: [9999], killedCount: 1, deferredCount: 0 });
+  });
+
+  /**
+   * The other way a quit found nothing of its own to kill. Past the young bound
+   * so kill() lands at once: a young kill is parked, and killAll() counts a
+   * parked PTY whatever the host does, which would pass with the host left out.
+   */
+  it('holds the quit for the host when a session was killed just before it', async () => {
+    const manager = new SessionManager();
+    const { session } = await spawnSession(manager, 'task-just-killed', 1111);
+    await vi.advanceTimersByTimeAsync(YOUNG_SINCE_SPAWN_MS);
+    asUtilityHost(manager, 9999);
+
+    manager.kill(session.id);
+    expect(registryRow(manager, session.id)?.pty).toBeNull();
+
+    expect(manager.killAll({ allowGrace: true })).toEqual({ pids: [9999], killedCount: 1, deferredCount: 0 });
   });
 });
 

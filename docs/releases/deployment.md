@@ -282,7 +282,7 @@ Test the packaged app locally before releasing:
 | Command | What it does |
 |---------|-------------|
 | `npm run make` | Creates platform installers in `out/make/` |
-| `npm run package`, then `node scripts/package-smoke.mjs` | Runs the unpacked app in `out/` isolated (scratch data, user data and project) and checks a terminal, a Knowledge Graph read, a task reap and a clean quit, as the `package-smoke` workflow does. A local package never uploads symbols, even with a token set; only CI or `KANGENTIC_SENTRY_UPLOAD=1` does |
+| `npm run package`, then `node scripts/package-smoke.mjs` | Runs the unpacked app in `out/` isolated (scratch data, user data and project) and checks a terminal, a Knowledge Graph read, a task reap and a clean quit, as the `package-smoke` workflow does. It prints the quit's `[SHUTDOWN] pty-drain:*` lines and fails on `pty-drain:timeout`, which means the quit gave up with the pty host still alive. A local package never uploads symbols, even with a token set; only CI or `KANGENTIC_SENTRY_UPLOAD=1` does |
 | `npm run publish -- --dry-run` | Builds installers + simulates publishing (no upload) |
 | `npm run publish -- --from-dry-run` | Uploads previously dry-run artifacts |
 

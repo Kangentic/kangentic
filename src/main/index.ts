@@ -81,8 +81,9 @@ import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-clea
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
-import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
+import { drainPtyExitCallbacks, type PtyExitDrainResult } from './pty/shutdown/exit-callback-drain';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
+import { createSignalExitHandler } from './pty/shutdown/signal-exit';
 import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
@@ -2544,9 +2545,9 @@ let osShutdownCannotBeDelayed = false;
  * before-quit drain's timer (SessionManager.killAll). Only a route the drain
  * follows may pass it: before-quit itself (unless a Windows session-end
  * disarmed the drain) and the powerMonitor shutdown. The signal handlers and
- * session-end call this bare, so nothing stays deferred on a route that
- * exits without the loop. First caller wins: the route that starts the
- * shutdown decides.
+ * session-end call this bare, so nothing stays deferred on a route that was
+ * asked to end now. First caller wins: the route that starts the shutdown
+ * decides.
  */
 interface PerformShutdownOptions {
   allowGrace?: boolean;
@@ -2583,6 +2584,23 @@ function performShutdown(options?: PerformShutdownOptions): boolean {
   return true;
 }
 
+/** The wait both quit routes share: every killed child and the pty host gone. */
+function drainReportedPtyExits(report: PtyKillReport): Promise<PtyExitDrainResult> {
+  return drainPtyExitCallbacks({
+    pids: report.pids,
+    killedCount: report.killedCount,
+    deferredCount: report.deferredCount,
+    isProcessAlive,
+  });
+}
+
+/** Both quit routes hide the app for the wait, so it looks quit while it drains. */
+function hideAllWindows(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.hide();
+  }
+}
+
 // The synchronous cleanup, then the one sanctioned event.preventDefault() in
 // the quit path: a timer-bounded drain that lets node-pty dispatch the killed
 // children's exit callbacks while JS is still callable, then app.quit() again.
@@ -2594,17 +2612,8 @@ app.on('before-quit', createBeforeQuitHandler({
   performShutdown: () => performShutdown({ allowGrace: !osShutdownCannotBeDelayed }),
   isOsInitiatedShutdown: () => osShutdownCannotBeDelayed,
   getPtyKillReport: () => ptyKillReport,
-  drainPtyExitCallbacks: (report) => drainPtyExitCallbacks({
-    pids: report.pids,
-    killedCount: report.killedCount,
-    deferredCount: report.deferredCount,
-    isProcessAlive,
-  }),
-  hideAllWindows: () => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.hide();
-    }
-  },
+  drainPtyExitCallbacks: drainReportedPtyExits,
+  hideAllWindows,
   requestQuit: () => app.quit(),
 }));
 
@@ -2614,31 +2623,28 @@ app.on('before-quit', createBeforeQuitHandler({
 // that process.exit never reaches, so everything this shutdown logs, from
 // `[SHUTDOWN] cleanup:start` to `cleanup:done`, used to be lost and a closed
 // terminal read like a crash. A dev build writes them synchronously first.
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    if (performShutdown()) {
-      if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
-      process.exit(0);
-    }
-  });
-}
-
-// The terminal hosting the app closed. On macOS and Linux that is a real
+//
+// SIGHUP: the terminal hosting the app closed. On macOS and Linux that is a real
 // SIGHUP. On Windows, libuv maps the console's CTRL_CLOSE_EVENT to it and holds
 // the console handler open so this can run. Without a listener, the default
 // action ends the process with no exit recorded, and an `npm start` session
 // whose terminal closed read as `abrupt` on its next launch. Whether a Windows
 // shutdown or log-off under a terminal delivers CTRL_CLOSE to this process
 // before killing it is unverified. The GPU check does not depend on it:
-// session-teardown exits never count as GPU faults (gpu-health.ts). Its own
-// statement rather than a third entry in the tuple above, whose literal
-// before-quit-drain-wiring.test.ts anchors on.
-process.on('SIGHUP', () => {
-  if (performShutdown()) {
+// session-teardown exits never count as GPU faults (gpu-health.ts).
+const exitOnSignal = createSignalExitHandler({
+  performShutdown: () => performShutdown(),
+  getPtyKillReport: () => ptyKillReport,
+  drainPtyExitCallbacks: drainReportedPtyExits,
+  hideAllWindows,
+  writeQueuedLogs: () => {
     if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
-    process.exit(0);
-  }
+  },
+  exit: () => process.exit(0),
 });
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, exitOnSignal);
+}
 
 // Dev-only backstop for any other process.exit. An 'exit' listener runs
 // synchronously, so the queued lines can still be written. After the signal

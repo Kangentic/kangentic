@@ -37,8 +37,9 @@ boot-canary window, see [[pty-teardown-grace]]) is the one exception, and it cos
 `await`: `killAll({ allowGrace: true })` writes its exit sequence and parks its force-kill on the
 deferred registry's 1500 ms timer, which fires INSIDE the drain below. The report's `deferredCount`
 extends the drain deadline by that grace, so the quit is still held until the child is gone.
-`allowGrace` is passed only where the drain follows; a Windows `session-end` and the signal
-handlers call `performShutdown()` bare and flush every parked PTY at once. An agent whose console
+`allowGrace` is passed only where a drain follows a quit that can wait out the grace; a Windows
+`session-end` and the signal handlers call `performShutdown()` bare and flush every parked PTY at
+once, and a signal's drain below waits only for exits already under way. An agent whose console
 close is its own graceful exit (Claude on Windows and Linux, `consoleCloseIsGraceful`) is not
 typed into or parked at any age: the close is the ask, and it runs its own exit after it. The
 in-app quit was checked on Windows only (a `/preview` with young sessions, records withdrawn and
@@ -54,14 +55,29 @@ PTY shell runs in its own session, out of reach of the shutdown failsafe's proce
 PTYs, the handler calls `event.preventDefault()`, polls the killed children's pids every 25ms
 until every one is gone plus 100ms of further loop turns (deadline 1500ms, plus the 1500ms kill
 grace when the report says a young session's kill is deferred to a timer inside the drain), then
-calls `app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With no
-PTY killed, the quit is the plain synchronous one.
+calls `app.quit()` again. The second `before-quit` pass is a no-op and Electron proceeds. With an
+empty report, which means no host process and no PTY killed, the quit is the plain synchronous one.
 
 Every PTY runs in the `kangentic-pty-host` utility process ([[pty-host-out-of-process]]), so the
-exit callbacks land there. When any PTY was killed, `SessionManager.killAll()` adds the host's pid
-to the report as one more kill, and `dispose()` posts the host's `shutdown` with a wait bound of the
-drain's deadline less 200 ms: the host exits itself once its last exit callback has run, inside the
-window main is still waiting.
+exit callbacks land there. `SessionManager.killAll()` adds a live host's pid to the report as one
+more kill on every quit, whatever main killed, and `dispose()` posts the host's `shutdown` with a
+wait bound of the drain's deadline less 200 ms: the host exits itself once its last exit callback
+has run, inside the window main is still waiting. An empty kill report says nothing about the host.
+A raw probe PTY (`spawnRaw`), a session killed just before the quit (its `session.pty` is already
+null) and a spawn in its round trip each have an exit to land and no row for `killAllSessions` to
+count, and a quit that left on that count let the host abort in Node's teardown (Sentry DESKTOP-2A).
+An idle host exits at once, so a quit with nothing running costs the drain's poll and settle: 153
+to 161 ms measured on Windows, with the windows hidden for all of it. A quit 3 s after launch on a
+fresh data dir found the host holding a live model-picker probe, so this is an ordinary path, not a
+rare one, and that quit waited 438 to 1034 ms for the probe's exit.
+
+A POSIX signal takes the same drain through `createSignalExitHandler`
+(`src/main/pty/shutdown/signal-exit.ts`), then calls `process.exit(0)`: exiting main at once closes
+the host's service pipe with every exit in flight. It hides the windows for the wait, as a user's
+quit does. It holds no `before-quit`, so it needs no `preventDefault`, and `performShutdown()` stays
+bare. On Windows the handler exits at once and logs `pty-drain:skip reason=windows-signal`: a
+packaged Windows build has no console, so no signal reaches it, and these routes run there only
+under `npm start`. On macOS and Linux a packaged build does receive them.
 
 A killed PTY whose child pid was unreadable has no probe, so the drain spends a fixed 400ms blind
 budget for it instead of waiting on liveness. `killAllSessions` therefore returns a `PtyKillReport`
@@ -88,9 +104,9 @@ finalizer joins the waiting thread, so an un-killed child hangs teardown until t
 
 Why it does not reintroduce the zombie problem: it is timer-only (`setTimeout` plus
 `process.kill(pid, 0)`), never awaits network, PTY output, IPC, or DB work, is deadline-bounded,
-re-enters through `app.quit()` (never `process.exit()`, so Electron's own teardown runs), runs
-only when the cleanup actually killed a PTY, never runs after an OS shutdown the app cannot ask to
-be delayed, and the hard failsafe is armed inside `performShutdown()` before the drain starts.
+re-enters through `app.quit()` (never `process.exit()`, so Electron's own teardown runs), never
+runs after an OS shutdown the app cannot ask to be delayed, and the hard failsafe is armed inside
+`performShutdown()` before the drain starts.
 
 Which OS shutdowns those are is per platform, and each route must pick a side. Windows
 `session-end` is documented by Electron as unpreventable ("once this event fires, there is no way
@@ -116,7 +132,11 @@ empty pid list, precisely so its skip reason is distinguishable from "nothing wa
   once, pass the second time), the skip-reason breadcrumbs, the kill-report wiring, and scans
   `src/main/index.ts` for the `createBeforeQuitHandler` registration, the `app.quit()` re-entry, the
   absence of `process.exit` there, and the per-platform OS-shutdown pairing (Windows disarms and
-  never calls `preventDefault`; powerMonitor calls `preventDefault` and never disarms);
+  never calls `preventDefault`; powerMonitor calls `preventDefault` and never disarms), and that all
+  three signals reach the handler; `tests/unit/signal-exit.test.ts` pins that a POSIX signal exits
+  only after the drain, with the windows hidden, and that Windows exits at once and names its skip;
+  `tests/unit/session-manager-deferred-kill.test.ts` pins that `killAll()` carries a live host with
+  no session PTY, for a raw PTY and for a session killed just before the quit;
   `tests/unit/session-shutdown-flow.test.ts` pins that `killAllSessions` returns a `PtyKillReport`
   counting every kill, including one whose child pid was unreadable;
   `tests/unit/shutdown-history-wiring.test.ts` pins that a throwing cleanup step still reaches the
