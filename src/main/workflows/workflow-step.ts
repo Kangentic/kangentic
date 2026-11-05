@@ -14,6 +14,7 @@ import { resolveMoveTarget, routeOf } from '../automations/move-target';
 import { hasFinalLine } from '../automations/row-guards';
 import {
   describeStepRoute,
+  isSendBackOnly,
   stepExitVerdict,
   workflowBlockerConditions,
   workflowStepCondition,
@@ -74,6 +75,11 @@ import { readWorktreeWork } from '../git/worktree-head';
  *   move on (`workflow-recovery.ts`).
  * - The check is told the route, and at the route's last column it asks only
  *   whether the agent still needs the user (`workflow-step-condition.ts`).
+ * - A column whose only exit rows send a task back is a person's gate: the step
+ *   never moves a task out of one (owner's decision, 2026-11-05). The check asks
+ *   whether the agent finished what it can do alone, and a yes stops the card
+ *   with one notice and no nudge. A person moves it on (`workflow-lock.ts`). A
+ *   no is a real stall, and gets its nudge.
  * - A column's own exit rows (turn-end Move to column rows behind a Text match)
  *   outrank the check's yes (`stepExitVerdict`). A reply whose final line no
  *   forward row matches, or that only a send-back row matches, is not done, and
@@ -103,8 +109,9 @@ const WORKFLOW_BLOCKER_ROW_ID_PREFIX = 'workflow-step-blocker:';
  *   events (a background shell it holds, a background subagent).
  * - `stopped`: not done, with nothing of its own running: the agent is nudged,
  *   at what `blockers` names when the reply named something.
- * - `waiting`: the reply ends on the `Needs owner:` line: only the owner can
- *   settle it.
+ * - `waiting`: the reply ends on the `Needs owner:` line, or the agent finished
+ *   what it can do alone in a column only a person moves a task on from: only
+ *   the owner can settle it.
  * - `check-failed`: the check could not run this time.
  * - `human-gate`: no Automation agent can judge it, so a person moves the card.
  * - `move-held`: judged done, but background work the agent left is still
@@ -119,7 +126,7 @@ export interface WorkflowStepResult {
   reason: string | null;
   /** The turn the verdict judged (`TurnEndedPayload.workSerial`). */
   workSerial: number;
-  /** A human gate's first word this visit, which is when it gets its notice. */
+  /** A human gate's or a person's gate's first word this visit, which is when it gets its notice. */
   firstThisVisit?: boolean;
   /** On `stopped`: what the reply says the agent is stuck on, for the nudge to aim at. */
   blockers?: WorkflowBlocker[];
@@ -229,6 +236,9 @@ export async function noChangesBlocker(context: IpcContext, projectPath: string 
   if (facts.length === 0) return null;
   return `your "No changes needed" line moved nothing, because this branch has ${facts.join(' and ')}. Remove what is not needed and end on that line again, or finish the step`;
 }
+
+/** The run log's line for a yes that stops the card, which is how a visit's first one is told from the rest. */
+const STOPPED_FOR_A_PERSON_DETAIL = 'Finished what it can do alone. Only a person moves this card on.';
 
 /** The step's answer when a no-change line's held move goes ahead with no line in the reply. */
 const HELD_NO_CHANGES_RELEASED_REASON = 'The agent said no change was needed when its move was held, and the background work that held it has ended.';
@@ -405,9 +415,12 @@ export async function runWorkflowStep(
     return moveOn({ met: true, reason: HELD_MOVE_RELEASED_REASON }, null, afterRead.task, repos.swimlanes.list());
   }
 
+  // Read before the check, whose question it decides. The answer below reads
+  // the rows again, so a column added or renamed during the check counts.
+  const sendBackOnly = isSendBackOnly(column, columnExitRows(repos, repos.swimlanes.list(), column, task));
   const outcome = await checkAutomationConditions(
     deps,
-    ask([{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route) }]),
+    ask([{ automationId: WORKFLOW_STEP_CHECK_ID, name: 'Step done', condition: workflowStepCondition(column, route, { sendBackOnly }) }]),
     { signal: input.signal },
     call,
   );
@@ -443,6 +456,7 @@ export async function runWorkflowStep(
   // The call that gave this answer: a retry's, when the first reply skipped it.
   const answerCallId = answer.callId ?? outcome.callId;
   if (!answer.met) return judgeWhyNotDone();
+  if (exits?.accepted && exits.stopsHere) return stopForAPerson();
   return moveOn(answer, answerCallId ?? null, after.task, columns);
 
   /**
@@ -502,6 +516,18 @@ export async function runWorkflowStep(
       : next.role === 'done' ? 'Step done. The route is finished, so the task moved to Done.' : `Step done. Moved on to ${next.name}.`;
     record({ met: true, reason: answer.reason, detail: movedDetail, backgroundCallId: answerCallId });
     return result('done', answer.reason);
+  }
+
+  /**
+   * The agent has finished what it can do alone in a column only a person moves
+   * a task on from. The wait on the owner, told once a visit: a person can keep
+   * talking to the agent here, and each turn is judged again.
+   */
+  function stopForAPerson(): WorkflowStepResult {
+    const visitStartedAt = repos.taskMoves.visitStartedAt(task.id, column.id);
+    const firstThisVisit = !repos.automationRuns.hasWorkflowStepDetailSince(task.id, column.id, visitStartedAt, STOPPED_FOR_A_PERSON_DETAIL);
+    record({ met: true, reason: answer.reason, detail: STOPPED_FOR_A_PERSON_DETAIL, backgroundCallId: answerCallId ?? null });
+    return result('waiting', `the agent has finished what it can do in ${column.name}, so move the card on when it is ready.`, { firstThisVisit });
   }
 
   /**

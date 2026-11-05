@@ -19,6 +19,8 @@ import { doneColumn, isForwardOf, nextOnRoute, routeCandidates, routeColumns } f
  * - Before the last column it judges the column's work, given the route, so a
  *   turn that ends early (a progress note mid-work) does not skip the work.
  * - A column's own Text match exit rows outrank its yes (`stepExitVerdict`).
+ * - A column whose only exit rows send a task back is a person's gate, so the
+ *   check asks a different question there (`personGateCondition`).
  */
 
 /** Where the task's route goes from the column it is in, for the check to read. */
@@ -59,6 +61,26 @@ function routeLine(route: StepRoute, currentName: string): string {
 const WAITS_ON_NO_ONE = 'the final message is not waiting on the user for an answer, a decision or an approval';
 
 /**
+ * The check in a column whose only exit rows send a task back. Its yes moves
+ * nothing: it means the agent has finished what it can do alone, so the card
+ * stops and the owner is told (owner's decision, 2026-11-05). The usual wording
+ * asks whether the step is done, and a column that says "stays until a reviewer
+ * approves" made that a coin toss: on one PR state it held six tasks and moved
+ * three on, and each no sent an agent with nothing left to do a nudge to carry
+ * on. So a wait on a person is a yes here, and only work the agent can still do
+ * is a no. Measured with `scripts/eval-condition-check.mjs` on 15 real turn
+ * endings from such a column, three runs each on Haiku at low, against hand
+ * labels: 43 of 45 right, where the usual wording got 17 of 45.
+ */
+function personGateCondition(column: Pick<Swimlane, 'name' | 'description'>, route: StepRoute): string {
+  const purpose = column.description?.trim();
+  return `The agent has finished what it can do alone in the ${column.name} step${purpose ? ` (the column's purpose: ${purpose})` : ''}: `
+    + 'what is left, if anything, waits on a person or on something outside the agent\'s control, such as a review or an approval. '
+    + 'A person moves this card on, so a step that still waits for that counts as finished here. It is not finished while something the '
+    + `agent can still fix or do itself is left, such as a failing check or uncommitted work. The task's route: ${routeLine(route, column.name)}.`;
+}
+
+/**
  * The last column's wording was measured (2026-10-04) on 90 real turn endings
  * from this repo's own task sessions plus 16 written ones, three runs each on
  * Haiku at low effort, against a version that asked only whether the message
@@ -67,7 +89,12 @@ const WAITS_ON_NO_ONE = 'the final message is not waiting on the user for an ans
  * every written finished report, held every written question and progress
  * note, and misjudged 2 of 68 real asks or progress notes in at least one run.
  */
-export function workflowStepCondition(column: Pick<Swimlane, 'name' | 'description'>, route: StepRoute): string {
+export function workflowStepCondition(
+  column: Pick<Swimlane, 'name' | 'description'>,
+  route: StepRoute,
+  options: { sendBackOnly?: boolean } = {},
+): string {
+  if (options.sendBackOnly) return personGateCondition(column, route);
   if (route.isLast) {
     return `The ${column.name} step is the last on the task's route (${routeLine(route, column.name)}). The task is finished when `
       + 'the agent\'s final message reports its work as done, not as still under way (a progress note such as "running the tests '
@@ -135,7 +162,25 @@ export interface StepExitRow {
   target: Pick<Swimlane, 'name' | 'position' | 'role'> | null;
 }
 
-export type StepExitVerdict = { accepted: true } | { accepted: false; reason: string };
+/**
+ * `stopsHere`: the check's yes stands, but only a person moves the card on, so
+ * the task stops rather than moves.
+ */
+export type StepExitVerdict = { accepted: true; stopsHere?: true } | { accepted: false; reason: string };
+
+/** A row that can run, whose Text match can match a line. */
+function liveExitRows(exitRows: readonly StepExitRow[]): StepExitRow[] {
+  return exitRows.filter((row) => textMatchCanMatch(row.finalLine));
+}
+
+/**
+ * Does this column say how a task goes back, and leave the way on to a person?
+ * Its exit rows send a task to a known column, and none of them sends it forward.
+ */
+export function isSendBackOnly(column: Pick<Swimlane, 'position'>, exitRows: readonly StepExitRow[]): boolean {
+  const targets = liveExitRows(exitRows).flatMap((row) => (row.target ? [row.target] : []));
+  return targets.length > 0 && !targets.some((target) => isForwardOf(target, column));
+}
 
 /**
  * What a column's own exit rows make of the reply the step check judged done.
@@ -154,8 +199,12 @@ export type StepExitVerdict = { accepted: true } | { accepted: false; reason: st
  *   moved the task already, unless its Frequency is spent or no row ran (a
  *   resume's catch-up, recovery), and then the step must not send it forward.
  * - No match, in a column with a forward row: refused.
- * - Null otherwise (no exit rows, or only send-back rows and no match): the
- *   check alone judges, as on a column whose forward exit is the step itself.
+ * - No match, in a column with only send-back rows: a yes that stops the card
+ *   (`stopsHere`). The step never moves a task out of such a column, so a review
+ *   gate has one deterministic answer and an unattended run cannot merge past it.
+ *   A board that wants that says so with a forward row.
+ * - Null otherwise (no exit rows, or rows with no column): the check alone
+ *   judges, as on a column whose forward exit is the step itself.
  *
  * The reason is a fact, never the line to type: a reviewer nudged with "end on
  * Verdict: Ready" could type just that. A row whose Text match can match no
@@ -166,7 +215,7 @@ export function stepExitVerdict(
   exitRows: readonly StepExitRow[],
   agentReply: string | null,
 ): StepExitVerdict | null {
-  const exits = exitRows.filter((row) => textMatchCanMatch(row.finalLine));
+  const exits = liveExitRows(exitRows);
   if (exits.length === 0) return null;
   const isForward = (row: StepExitRow): boolean => row.target !== null && isForwardOf(row.target, column);
   const line = finalMatchLine(agentReply);
@@ -176,6 +225,7 @@ export function stepExitVerdict(
   if (line !== null && sendBack?.target) {
     return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", sends the task back to ${sendBack.target.name}` };
   }
+  if (isSendBackOnly(column, exits)) return { accepted: true, stopsHere: true };
   if (!exits.some(isForward)) return null;
   if (line === null) return { accepted: false, reason: 'the turn ended without a final message' };
   return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", is not one ${column.name} moves the task on from` };
