@@ -461,6 +461,25 @@ describe('a session registered and released while another operation on its id is
     expect(relay.has('s1')).toBe(true);
   });
 
+  it('goes on with a newer register when the session it replaces ends meanwhile, as a resume does while the old spawn exits', async () => {
+    const { host, relay } = makeRelay();
+    const { registration, settingsPath } = registrationFor();
+    await relay.register(registration);
+
+    const slowUnwatch = host.gate();
+    host.state.holdUnwatch = slowUnwatch;
+    const writesBefore = host.state.writeCalls;
+    const newerSpawn = relay.register(registration);
+    const oldSpawnExit = relay.release('s1');
+
+    slowUnwatch.release();
+    await Promise.all([newerSpawn, oldSpawnExit]);
+    expect(host.state.writeCalls).toBe(writesBefore + 1);
+    expect(host.written.get(settingsPath)).toBe('{"version":1}');
+    expect(host.watching.has('s1')).toBe(true);
+    expect(relay.has('s1')).toBe(true);
+  });
+
   it('leaves nothing on the host, no watcher and no timer when a release arrives during the push', async () => {
     const { host, relay } = makeRelay();
     const { registration } = registrationFor();

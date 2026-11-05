@@ -251,8 +251,12 @@ export class RemoteSessionRelay {
 
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
   async release(sessionId: string): Promise<void> {
-    const pending = this.registering.get(sessionId);
-    if (pending) pending.released = true;
+    // With a session running, this is that session ending. A registration queued behind it is a newer spawn
+    // of the id, as a resume is, and it goes on: cancelled here it would start an agent with no hooks.
+    if (!this.sessions.has(sessionId)) {
+      const pending = this.registering.get(sessionId);
+      if (pending) pending.released = true;
+    }
     await this.releaseSession(sessionId);
   }
 
