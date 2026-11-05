@@ -9,9 +9,18 @@ import { openTaskFromNotification } from './open-task-from-notification';
 import { resyncBoardAfterMonitorWrite } from '../components/monitor/resync-board-after-monitor-write';
 
 /**
+ * Does this task's menu offer the switch? A running or paused workflow's task
+ * cannot pause its automations, so it offers nothing, unless a hold is left on
+ * it, which keeps its Resume. Main refuses on its own (`taskHoldRefusal`).
+ */
+export function offersAutomationsSwitch(task: Pick<Task, 'automations_disabled'>, inOpenWorkflow: boolean): boolean {
+  return task.automations_disabled || !inOpenWorkflow;
+}
+
+/**
  * Pause or resume a task's automations, the one write behind every place that
- * offers it: the board card's menu, the Agent Monitor's row menu, the Workflows
- * canvas card's menu and the inspector's Resume.
+ * offers it: the board card's menu, the Agent Monitor's row menu and the
+ * Workflows canvas card's menu.
  *
  * A task of the open project writes through the board store, so its card gains
  * or loses its strip without a board reload. A task of another project writes

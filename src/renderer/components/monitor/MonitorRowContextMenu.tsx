@@ -35,7 +35,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { requestMonitorDetail } from './MonitorDetailLayer';
 import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
-import { toggleTaskAutomations } from '../../utils/task-automations';
+import { offersAutomationsSwitch, toggleTaskAutomations } from '../../utils/task-automations';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
@@ -223,11 +223,11 @@ export function MonitorRowContextMenu({
       } : undefined}
       // Stamped with the row's own project (`toggleTaskAutomations` says where it
       // writes), then the rows catch up.
-      onToggleAutomations={() => {
+      onToggleAutomations={offersAutomationsSwitch(resolved.task, row.workflow !== null) ? () => {
         void toggleTaskAutomations(resolved.task, row.projectId).then((landed) => {
           if (landed) refreshRows();
         });
-      }}
+      } : undefined}
       // Opens the detail HERE, in edit mode - the same destination a plain row
       // click uses, so the menu never teleports the user somewhere else.
       onEdit={() => requestMonitorDetail(row.projectId, row.taskId, { initialEdit: true })}

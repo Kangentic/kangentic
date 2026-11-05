@@ -185,8 +185,8 @@ command. The card shows an **Automations paused** strip across its top, and so d
 the [Agent Monitor](agent-monitor.md#agent-monitor), whose list row and table mark it too. The run log records
 each skipped automation with "Automations are paused for this task." Choose **Resume automations**
 to turn them back on; nothing that was skipped is replayed. Adding the task to a workflow resumes
-them. A task moved or restored out of Done keeps its automations paused. On a task in a workflow
-the same row holds it out of its workflow while the rest runs (see
+them. A task moved or restored out of Done keeps its automations paused. A running or paused workflow's
+card offers no such row: to stop work there, pause the workflow (see
 [Workflows](workflows.md#workflows)).
 An agent can do the same for its own task with `kangentic_update_task`'s `automationsDisabled`.
 

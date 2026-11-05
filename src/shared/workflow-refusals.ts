@@ -66,6 +66,12 @@ export const WORKFLOW_REFUSAL_MESSAGES = {
    */
   pausedForAgents: (label: string, workflowTitle: string) =>
     withValues(msg({ message: '{label} is in {workflowTitle}, which is paused. Resume it to move its tasks.' }), { label, workflowTitle }),
+  /**
+   * Pausing a workflow task's own automations. An agent reaches for this switch
+   * to make a task wait, so the sentence says what to use instead.
+   */
+  noTaskHold: (label: string, workflowTitle: string) =>
+    withValues(msg({ message: '{label} is in {workflowTitle}, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the "Needs owner:" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow.' }), { label, workflowTitle }),
   /** Sending a workflow task to the backlog or the archive. */
   removeFirst: (label: string, workflowTitle: string) =>
     withValues(msg({ message: 'Remove {label} from {workflowTitle} first.' }), { label, workflowTitle }),

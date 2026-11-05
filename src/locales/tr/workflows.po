@@ -570,22 +570,11 @@ msgstr "İş akışını yeniden adlandır"
 msgid "Resize the workflow agent"
 msgstr "İş akışı ajanını yeniden boyutlandır"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgctxt "automations"
-msgid "Resume"
-msgstr "Sürdür"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "Sürdür"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Resume automations"
-msgstr "Otomasyonları sürdür"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy

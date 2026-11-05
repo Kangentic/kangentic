@@ -275,7 +275,7 @@ function WorkflowLabel({ row, testId, className }: { row: MonitorSessionRow; tes
 function MonitorCardStrips({ row, density }: { row: MonitorSessionRow; density: AppConfig['cardDensity'] }) {
   return (
     <div className={cardStripBleedClass(density)}>
-      {row.automationsDisabled && <AutomationsDisabledCardStrip testId="monitor-card-automations-disabled" inWorkflow={row.workflow !== null} />}
+      {row.automationsDisabled && <AutomationsDisabledCardStrip testId="monitor-card-automations-disabled" />}
       <CardStrip data-testid="monitor-card-strip">
         <span className="flex items-center gap-2.5 min-w-0">
           {row.isCommandTerminal ? (
@@ -318,7 +318,7 @@ function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
   if (!row.automationsDisabled && !row.workflow) return null;
   return (
     <>
-      {row.automationsDisabled && <AutomationsPausedSlice className={`${shell} gap-[5px]`} inWorkflow={row.workflow !== null} />}
+      {row.automationsDisabled && <AutomationsPausedSlice className={`${shell} gap-[5px]`} />}
       {row.workflow && (
         <span className={`${shell} gap-2.5`} data-testid="monitor-row-workflow">
           <WorkflowLabel row={row} testId="monitor-row-workflow-name" className="gap-[5px] text-fg-muted max-w-[22ch]" />
@@ -329,8 +329,8 @@ function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
   );
 }
 
-function AutomationsPausedSlice({ className, inWorkflow }: { className: string; inWorkflow: boolean }) {
-  const { label, tip } = useAutomationsPausedText(inWorkflow);
+function AutomationsPausedSlice({ className }: { className: string }) {
+  const { label, tip } = useAutomationsPausedText();
   return (
     <Tooltip label={tip}>
       <span className={className} data-testid="monitor-row-automations-disabled">

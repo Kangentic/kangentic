@@ -111,7 +111,7 @@ vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
 vi.mock('../../src/main/automations/condition-check/condition-check', () => ({ checkAutomationConditions: hoisted.check }));
 vi.mock('../../src/main/workflows/workflow-home', () => ({
   workflowOfTask: vi.fn(() => ({ id: 'workflow-1', state: hoisted.workflowState })),
-  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running' && !hoisted.task.automations_disabled),
+  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running'),
   isInWorkflow: vi.fn(() => true),
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowChanged: vi.fn(), notifyWorkflowOfTask: vi.fn() }));

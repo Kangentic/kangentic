@@ -178,10 +178,6 @@ msgid "Changes detected in kangentic.json. Apply the updated board configuration
 msgstr "偵測到 kangentic.json 有變更。要套用更新後的看板設定嗎？"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "此任務不會執行欄自動化，其工作流程也不會移動它。可從卡片選單恢復自動化。"
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "此任務不會執行欄自動化。可從卡片選單恢復自動化。"
 

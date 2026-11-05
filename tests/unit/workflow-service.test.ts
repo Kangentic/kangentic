@@ -423,22 +423,6 @@ describe('workflow operations', () => {
       });
     });
 
-    it('pauses a held task\'s agent too: a workflow set down frees every agent it holds', async () => {
-      // Decided 2026-10-27 (#925): #923's hold never suspends an agent by itself, but
-      // the workflow's own Pause does, for every task.
-      const { workflowId, taskIdOf } = await startedWith(['held', 'free']);
-      place(taskIdOf('held'), 'Executing');
-      place(taskIdOf('free'), 'Executing');
-      homeDb().prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(taskIdOf('held'));
-      vi.mocked(pauseTaskSession).mockResolvedValue('paused');
-
-      const result = await service.pauseWorkflow(context, 'home', workflowId, 'a test');
-
-      expect(vi.mocked(pauseTaskSession).mock.calls.map(([, taskId]) => taskId).sort())
-        .toEqual([taskIdOf('held'), taskIdOf('free')].sort());
-      expect(result).toMatchObject({ paused: 2, failed: [] });
-    });
-
     it('resumes a paused agent in any working column, starts one where there is none, and leaves a live one alone', async () => {
       const { workflowId, taskIdOf } = await startedWith(['paused', 'gate', 'empty', 'quiet', 'live', 'waiting', 'done']);
       place(taskIdOf('paused'), 'Executing');
@@ -495,27 +479,6 @@ describe('workflow operations', () => {
         workSerial: 7,
         resumedBy: 'user',
       }]);
-    });
-
-    it('brings back a held task\'s paused agent, and starts none for a held task with no agent', async () => {
-      const { workflowId, taskIdOf } = await startedWith(['held paused', 'held empty']);
-      place(taskIdOf('held paused'), 'Executing');
-      place(taskIdOf('held empty'), 'Executing');
-      homeDb().prepare('UPDATE tasks SET automations_disabled = 1 WHERE id IN (?, ?)').run(taskIdOf('held paused'), taskIdOf('held empty'));
-      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
-
-      const runtime = withSessions([taskIdOf('held paused')], new Set());
-      vi.mocked(reconcileTaskSessionRef).mockImplementation((_context, _projectId, taskId) => ({
-        task: tasksOf('home').getById(taskId)!,
-        liveSession: null,
-      }));
-      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => ({ id: `resumed-${taskId}` }) as never);
-
-      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
-
-      expect(vi.mocked(resumeTaskSession).mock.calls.map(([, taskId]) => taskId)).toEqual([taskIdOf('held paused')]);
-      expect(autoSpawnForTask).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ resumed: 1, started: 0 });
     });
 
     it('counts no resume another action cancelled, and reports one that failed', async () => {

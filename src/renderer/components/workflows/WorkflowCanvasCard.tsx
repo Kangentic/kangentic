@@ -4,8 +4,6 @@ import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
 import { ProjectStripLabel, WorkflowCardStrip } from './WorkflowStrip';
-import { AutomationsDisabledCardStrip } from '../board/AutomationsDisabledStrip';
-import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 
 /**
  * A workflow task's card on the canvas: the board's own card content
@@ -176,9 +174,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
       data-selected={selected}
       data-testid="workflow-canvas-card"
     >
-      {/* The held strip stacks over the workflow's own, as on the board card. */}
       <div className={headerInset}>
-        {!canTaskRunAutomations(task).ok && <AutomationsDisabledCardStrip testId="workflow-card-automations-disabled" inWorkflow />}
         {strip}
       </div>
       <TaskCardBody
@@ -187,7 +183,6 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
         density={view.cardDensity}
         hideDisplayId={planned}
         idleFooter={idleFooter}
-        hostDrawsAutomationsStrip
       />
     </div>
   );

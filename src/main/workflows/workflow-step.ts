@@ -1,5 +1,5 @@
 import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
-import { automationMovesTask, automationMoveTargetName, canColumnRun, canTaskRunAutomations } from '../../shared/automation-manifest';
+import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
 import { doneColumn, nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
@@ -244,12 +244,10 @@ const STOPPED_FOR_A_PERSON_DETAIL = 'Finished what it can do alone. Only a perso
 const HELD_NO_CHANGES_RELEASED_REASON = 'The agent said no change was needed when its move was held, and the background work that held it has ended.';
 
 /**
- * Does this task's turn end get a workflow step check? Cheap: one row read. Not
- * while the task's own automations are paused: a person is working it by hand,
- * so its workflow neither judges, nudges nor moves it, and its recovery stops.
+ * Does this task's turn end get a workflow step check? Cheap: one row read.
  */
-export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id' | 'automations_disabled'>, projectId: string): boolean {
-  if (!task.workflow_id || !canTaskRunAutomations(task).ok) return false;
+export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): boolean {
+  if (!task.workflow_id) return false;
   try {
     return workflowOfTask(task, projectId)?.state === 'running';
   } catch {

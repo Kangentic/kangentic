@@ -1,5 +1,4 @@
 import type { Swimlane, Task } from '../../shared/types';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -9,6 +8,7 @@ import { getInFlightSpawnProgress } from '../transition-engine/spawn-progress';
 import type { IpcContext } from '../ipc/ipc-context';
 import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workflow-lock';
 import { isMoveByAPerson } from '../../shared/task-move-origin';
+import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { workflowOfTask } from './workflow-home';
 
 /**
@@ -63,7 +63,6 @@ export function checkWorkflowMove(
     toSwimlaneId: args.toSwimlaneId,
     toRole: toLane?.role ?? null,
     moverIsTaskAgent: args.moverIsTaskAgent,
-    taskHeld: !canTaskRunAutomations(task).ok,
     taskStopped,
   });
 }
@@ -93,7 +92,6 @@ export function checkWorkflowMoveForAgent(
       toSwimlaneId,
       toRole: toLane?.role ?? null,
       moverIsTaskAgent,
-      taskHeld: !canTaskRunAutomations(task).ok,
       taskStopped: false,
     });
   } catch {
@@ -112,6 +110,29 @@ export function workflowTitleOf(task: Pick<Task, 'workflow_id' | 'workflow_proje
     return workflowOfTask(task, projectId)?.title ?? 'its workflow';
   } catch {
     return 'its workflow';
+  }
+}
+
+/**
+ * Why this task's automations may not be paused, or null when they may. A
+ * running or paused workflow's task cannot pause them (owner's decision,
+ * 2026-11-05): one switch on one card could quietly stop a workflow that was
+ * built to be left alone, with its tab still reading Running. To stop work,
+ * pause the workflow. Resuming is never refused, so a card left held has a way
+ * back. A workflow that has finished or is gone leaves an ordinary task.
+ *
+ * Fails closed, unlike the lock: refusing costs one switch, and a wrong yes
+ * stops a running workflow with nothing on screen to say why.
+ */
+export function taskHoldRefusal(task: Pick<Task, 'display_id' | 'workflow_id' | 'workflow_project_id'>, projectId: string): string | null {
+  if (!task.workflow_id) return null;
+  const label = `#${task.display_id}`;
+  try {
+    const workflow = workflowOfTask(task, projectId);
+    if (!workflow || workflow.state === 'done') return null;
+    return WORKFLOW_REFUSALS.noTaskHold(label, workflow.title);
+  } catch {
+    return WORKFLOW_REFUSALS.noTaskHold(label, 'its workflow');
   }
 }
 

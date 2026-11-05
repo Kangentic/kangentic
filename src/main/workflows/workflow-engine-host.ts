@@ -1,7 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { Swimlane, Task, Workflow } from '../../shared/types';
 import { startColumn } from '../../shared/workflow-route';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getExistingProjectDb, getOpenProjectDb, getProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -608,9 +607,8 @@ export class WorkflowEngineHost {
     const tasks = new TaskRepository(db);
     const task = tasks.getById(intent.taskId);
     // Re-checked here, not trusted from the plan: a person may have removed it
-    // from the workflow, paused its automations, or paused the workflow, since
-    // the pass read it.
-    if (!task || task.workflow_id !== intent.workflowId || task.archived_at || !canTaskRunAutomations(task).ok) return;
+    // from the workflow, or paused the workflow, since the pass read it.
+    if (!task || task.workflow_id !== intent.workflowId || task.archived_at) return;
     const lanes = new SwimlaneRepository(db).list();
     if (lanes.find((lane) => lane.id === task.swimlane_id)?.role !== 'todo') return;
     const workflow = new WorkflowRepository(getProjectDb(intent.homeProjectId)).getById(intent.workflowId);
@@ -684,7 +682,6 @@ function coreTask(projectId: string, task: Task, lanes: Swimlane[]): CoreTask {
     todoPosition: task.position,
     startColumnId: start?.id ?? null,
     startTakesSlot: start?.auto_spawn ?? false,
-    held: !canTaskRunAutomations(task).ok,
   };
 }
 

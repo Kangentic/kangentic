@@ -113,7 +113,7 @@ describe('workflowWireFacts', () => {
       waiting_for: [],
       lock_reason: null,
       gate_target_id: 'review',
-      automations_pausable: true,
+      automations_pausable: false,
     });
     expect(facts.get('t-2')).toMatchObject({
       waiting_for: ['#414'],
@@ -140,29 +140,12 @@ describe('workflowWireFacts', () => {
     expect(facts.get('t-1')).toMatchObject({ lock_reason: null, gate_target_id: 'done' });
   });
 
-  it('leaves a held task of a running workflow unlocked, since a hand may move it, and a twin not held locked', () => {
-    // Two tasks of one running workflow, each with a working agent, that differ
-    // only in their own automations switch.
-    listSummaries.mockReturnValue([
-      summary(workflow({}), { 't-1': { waitingFor: [] }, 't-2': { waitingFor: [] } }),
-    ]);
-    agents.set('t-1', 'thinking');
-    agents.set('t-2', 'thinking');
-    const facts = workflowWireFacts(context, 'proj-1', [
-      task({ workflow_id: 'wf-1', automations_disabled: true }),
-      task({ id: 't-2', display_id: 415, workflow_id: 'wf-1', automations_disabled: false }),
-    ]);
-
-    expect(facts.get('t-1')).toMatchObject({ state: 'running', lock_reason: null, gate_target_id: null });
-    expect(facts.get('t-2')).toMatchObject({ state: 'running', lock_reason: '#415 is locked while Usage budgets runs.' });
-  });
-
-  it('marks every workflow fact automations_pausable, whatever the workflow state, so a phone offers the switch', () => {
+  it('offers a phone the automations switch only on a finished workflow\'s task', () => {
     listSummaries.mockReturnValue([summary(workflow({}), { 't-1': { waitingFor: [] } })]);
-    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(true);
+    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(false);
 
     listSummaries.mockReturnValue([summary(workflow({ state: 'paused' }), { 't-1': { waitingFor: [] } })]);
-    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(true);
+    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(false);
 
     listSummaries.mockReturnValue([]);
     workflowGetById.mockReturnValue(workflow({ state: 'done' }));

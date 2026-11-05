@@ -42,6 +42,7 @@ const PRE_CHANGE_KEYS = [
   'locked',
   'toDoNeedsRemove',
   'pausedForAgents',
+  'noTaskHold',
   'removeFirst',
   'notFound',
 ];
@@ -92,6 +93,11 @@ const ROWS: RefusalRow[] = [
     key: 'pausedForAgents',
     args: ['#414', 'Usage budgets'],
     expected: '#414 is in Usage budgets, which is paused. Resume it to move its tasks.',
+  },
+  {
+    key: 'noTaskHold',
+    args: ['#414', 'Usage budgets'],
+    expected: '#414 is in Usage budgets, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the "Needs owner:" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow.',
   },
   { key: 'removeFirst', args: ['#414', 'Usage budgets'], expected: 'Remove #414 from Usage budgets first.' },
   { key: 'notFound', args: ['release-train'], expected: 'No workflow "release-train" in this project.' },

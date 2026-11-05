@@ -34,8 +34,6 @@ function boardWorkflow(overrides: Partial<BoardWorkflow> = {}): BoardWorkflow {
 }
 
 const TASK = { id: 't414', display_id: 414, swimlane_id: 'executing', automations_disabled: false };
-// The same card with its own automations paused: a person's hold on it.
-const HELD_TASK = { ...TASK, automations_disabled: true };
 
 describe('boardWorkflowOf', () => {
   const own = summary('w', 'running', { t414: { waitingFor: ['#413'], hasLinks: true } });
@@ -71,37 +69,13 @@ describe('the footer of a card in To Do', () => {
     expect(boardWaiting(boardWorkflow(), TASK)).toEqual({ label: 'Queued...', paused: false });
     expect(boardWaiting(null, TASK)).toBeNull();
   });
-
-  describe('a card whose own automations are paused', () => {
-    // The engine starts neither a held task nor, while it is held, anything it
-    // alone would unblock, so a running workflow's footer reads Paused for it.
-    // Each case pairs with the same workflow read for a task that is not held.
-    it('reads Paused in a running workflow with nothing it waits for, where an ordinary card reads Queued', () => {
-      expect(boardWaiting(boardWorkflow(), TASK)).toEqual({ label: 'Queued...', paused: false });
-      expect(boardWaiting(boardWorkflow(), HELD_TASK)).toEqual({ label: 'Paused', paused: true });
-    });
-
-    it('still names what it waits for before it says Paused', () => {
-      expect(boardWaiting(boardWorkflow({ waitingFor: ['#413'] }), HELD_TASK)).toEqual({ label: 'Blocked by #413...', paused: false });
-      expect(boardWaiting(boardWorkflow({ waitingFor: ['#1', '#2'] }), HELD_TASK)).toEqual({ label: 'Blocked by 2 tasks...', paused: false });
-    });
-
-    it('reads Paused in a paused workflow as an ordinary card does', () => {
-      expect(boardWaiting(boardWorkflow({ state: 'paused' }), HELD_TASK)).toEqual({ label: 'Paused', paused: true });
-    });
-
-    it('says nothing in a draft or a finished workflow', () => {
-      expect(boardWaiting(boardWorkflow({ state: 'draft' }), HELD_TASK)).toBeNull();
-      expect(boardWaiting(boardWorkflow({ state: 'done' }), HELD_TASK)).toBeNull();
-    });
-  });
 });
 
 describe('the lock on the board', () => {
   it('refuses every move of a running workflow\'s card with the lock\'s sentence, To Do included', () => {
     const workflow = boardWorkflow();
     // Locked: a drag of it stays in its own column.
-    expect(isLockedOnBoard(workflow, TASK)).toBe(true);
+    expect(isLockedOnBoard(workflow, false)).toBe(true);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBe('#414 is locked while Usage budgets runs.');
     expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' })).toBe('#414 is locked while Usage budgets runs.');
     // Reordering in its own column is never refused.
@@ -110,7 +84,7 @@ describe('the lock on the board', () => {
 
   it('lets a person move a stopped card to any column but To Do', () => {
     const workflow = boardWorkflow();
-    expect(isLockedOnBoard(workflow, TASK, true)).toBe(false);
+    expect(isLockedOnBoard(workflow, true)).toBe(false);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null }, true)).toBeNull();
     expect(boardMoveRefusal(workflow, TASK, { id: 'testing', role: null }, true)).toBeNull();
     expect(boardMoveRefusal(workflow, TASK, { id: 'done', role: 'done' }, true)).toBeNull();
@@ -124,64 +98,16 @@ describe('the lock on the board', () => {
 
   it('lets a paused workflow\'s card move by hand except into To Do', () => {
     const workflow = boardWorkflow({ state: 'paused' });
-    expect(isLockedOnBoard(workflow, TASK)).toBe(false);
+    expect(isLockedOnBoard(workflow, false)).toBe(false);
     expect(boardMoveRefusal(workflow, TASK, { id: 'review', role: null })).toBeNull();
     expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' }))
       .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
-  });
-
-  describe('a card whose own automations are paused', () => {
-    // A person's hold: the rest of the workflow runs, and this card moves by hand
-    // as a paused workflow's does. Every case pairs with the same workflow read
-    // for the same card not held, which stays locked.
-    const REMOVE_FIRST_TO_DO = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
-
-    it('is not locked on the board in a running workflow, where an ordinary card is', () => {
-      const workflow = boardWorkflow();
-      expect(isLockedOnBoard(workflow, TASK)).toBe(true);
-      expect(isLockedOnBoard(workflow, HELD_TASK)).toBe(false);
-    });
-
-    it.each([
-      ['another working column', { id: 'testing', role: null }],
-      ['the next column on its route', { id: 'review', role: null }],
-      ['Done', { id: 'done', role: 'done' }],
-    ] as const)('may be dragged by hand to %s in a running workflow', (_label, target) => {
-      const workflow = boardWorkflow();
-      expect(boardMoveRefusal(workflow, TASK, target)).toBe('#414 is locked while Usage budgets runs.');
-      expect(boardMoveRefusal(workflow, HELD_TASK, target)).toBeNull();
-    });
-
-    it('is still refused To Do, in the sentence that says what to do instead of the lock\'s', () => {
-      const workflow = boardWorkflow();
-      expect(boardMoveRefusal(workflow, TASK, { id: 'todo', role: 'todo' })).toBe('#414 is locked while Usage budgets runs.');
-      expect(boardMoveRefusal(workflow, HELD_TASK, { id: 'todo', role: 'todo' })).toBe(REMOVE_FIRST_TO_DO);
-    });
-
-    it('moves exactly as a paused workflow\'s card does', () => {
-      const running = boardWorkflow();
-      const paused = boardWorkflow({ state: 'paused' });
-      for (const target of [{ id: 'review', role: null }, { id: 'todo', role: 'todo' }, { id: 'done', role: 'done' }] as const) {
-        expect(boardMoveRefusal(running, HELD_TASK, target)).toBe(boardMoveRefusal(paused, TASK, target));
-      }
-    });
-
-    it('may reorder in its own column', () => {
-      expect(boardMoveRefusal(boardWorkflow(), HELD_TASK, { id: 'executing', role: null })).toBeNull();
-    });
   });
 
   it('keeps Backlog and Archive from taking a task out of its workflow', () => {
     expect(sendAwayRefusal(boardWorkflow(), TASK)).toBe('#414 is locked while Usage budgets runs.');
     expect(sendAwayRefusal(boardWorkflow({ state: 'paused' }), TASK)).toBe('Remove #414 from Usage budgets first.');
     expect(sendAwayRefusal(null, TASK)).toBeNull();
-  });
-
-  it('tells a held card in a running workflow to remove it first, not that it is locked', () => {
-    // Not held: the workflow's lock. Held: nothing locks it, but only Remove takes it out.
-    expect(sendAwayRefusal(boardWorkflow(), TASK)).toBe('#414 is locked while Usage budgets runs.');
-    expect(sendAwayRefusal(boardWorkflow(), HELD_TASK)).toBe('Remove #414 from Usage budgets first.');
-    expect(sendAwayRefusal(null, HELD_TASK)).toBeNull();
   });
 
   it('tells main\'s lock refusals from any other failure', () => {

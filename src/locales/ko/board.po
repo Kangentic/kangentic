@@ -220,11 +220,6 @@ msgstr "kangentic.json에서 변경 사항이 감지되었습니다. 업데이�
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "이 작업에는 열 자동화가 실행되지 않으며 워크플로도 이 작업을 이동하지 않습니다. 카드 메뉴에서 다시 시작하세요."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "이 작업에는 열 자동화가 실행되지 않습니다. 카드 메뉴에서 다시 시작하세요."
 

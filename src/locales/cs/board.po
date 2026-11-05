@@ -220,11 +220,6 @@ msgstr "V souboru kangentic.json byly zjištěny změny. Použít aktualizovanou
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "Automatizace sloupců se pro tento úkol nespouštějí a jeho pracovní postup ho nepřesouvá. Obnovte je z nabídky karty."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "Automatizace sloupců se pro tento úkol nespouštějí. Obnovte je z nabídky karty."
 

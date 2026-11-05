@@ -222,8 +222,8 @@ every column's automations: see [Automation triggers > Disabling automations for
 task](../architecture/automations/triggers.md#disabling-automations-for-one-task). It is written by `create()` and
 `update()`, and with no caller asking it is cleared only when the task joins a workflow
 (`setWorkflowMembership()`). `move()` and `unarchive()` never touch it, out of a `done` column
-too. A task already in a workflow can carry it: there it is the task's own hold out of its
-workflow.
+too. A running or paused workflow's task cannot set it, and a migration cleared it on every
+workflow task outside Done, writing `plan_approval = 'manual'`, since a hold read Automatic as Manual.
 
 ## schema_meta table
 

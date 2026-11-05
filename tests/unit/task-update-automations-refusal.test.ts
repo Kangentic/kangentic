@@ -2,43 +2,15 @@
  * Unit tests for the automations switch on the TASK_UPDATE IPC handler.
  *
  * A task carries a per-task `automations_disabled` switch (see `Task` in
- * src/shared/types.ts). On a workflow task it is the task's own hold: the
- * workflow neither judges, moves nor starts it while a person works it by hand.
- * TASK_UPDATE therefore accepts the switch on a workflow task as on any other
- * (src/main/ipc/handlers/task-crud.ts), and after the write it hands the row as
- * it stood and the row as written to `applyAutomationsHoldChange`
- * (src/main/workflows/workflow-task-hold.ts), which does what the flip must do
- * for a workflow task. That module is pinned in workflow-task-hold.test.ts; here
- * it is mocked so these tests pin only what the handler passes it. The MCP task
- * tools are pinned in task-commands-automations-disabled.test.ts.
- *
- * The file keeps its original name, from when the handler refused the switch on
- * a workflow task.
+ * src/shared/types.ts). A running or paused workflow's task cannot pause its
+ * automations (owner's decision, 2026-11-05): to stop work, pause the workflow.
+ * So TASK_UPDATE refuses `true` on one, before it writes anything, and always
+ * takes `false`, so a card left held has a way back. The MCP task tools are
+ * pinned in task-commands-automations-disabled.test.ts.
  *
  * Pattern mirrors task-update-pr-resolve.test.ts: capture the function
  * registered with ipcMain.handle and invoke it directly, with every dependency
  * mocked so no Electron binary or real filesystem is needed.
- *
- * Covers:
- *   - `true` on a workflow task reaches `tasks.update` (alone and with other edits)
- *   - `false` on a workflow task reaches `tasks.update`
- *   - an edit that does not touch the switch reaches `tasks.update` for a workflow task
- *   - `true` on an ordinary task reaches `tasks.update`
- *   - the hold module gets (context, projectId, before, after) once per write, after
- *     the row holds the new value, and never for a task the repository does not know
- *   - `before` is the row as it stood right before the write, not at the top of the
- *     handler: a hold another writer sets during the branch rename's await is already
- *     in `before`, so it does not read as this write's flip
- *   - a flip from the card menu, the Workflows canvas menu or the Agent Monitor row
- *     emits `task-updated` on the board-changed bus once, after the row holds the new
- *     value, so a paired phone's re-read shows it, for a workflow task too
- *
- * Red-green: the previous handler threw the workflow reason for `true` on a
- * workflow task before it wrote anything, so each `true` test below on a workflow
- * task read red against it (the call rejected, `tasks.update` was never reached,
- * no `task-updated` was emitted). The `false` and edit-only tests pass on both
- * versions on purpose: they pin that the handler never refuses more than it
- * should. The hold-module tests read red against a handler that does not call it.
  */
 
 import os from 'node:os';
@@ -101,12 +73,11 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),
 }));
 
-// The hold module reaches the turn-end runner and the recovery engine; its own
-// behavior is pinned in workflow-task-hold.test.ts. Called lazily, so the const
-// below is initialized by the time the handler runs.
-const mockApplyAutomationsHoldChange = vi.fn();
-vi.mock('../../src/main/workflows/workflow-task-hold', () => ({
-  applyAutomationsHoldChange: (...args: unknown[]) => mockApplyAutomationsHoldChange(...args),
+// The task's workflow, as the refusal reads it. Called lazily, so the const below
+// is initialized by the time the handler runs.
+const mockWorkflowOfTask = vi.fn();
+vi.mock('../../src/main/workflows/workflow-home', () => ({
+  workflowOfTask: (...args: unknown[]) => mockWorkflowOfTask(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -199,9 +170,8 @@ describe('TASK_UPDATE automations switch', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // clearAllMocks keeps an implementation a test installed; the hold hand-off
-    // block installs one, and it must not reach the other blocks.
-    mockApplyAutomationsHoldChange.mockReset();
+    mockWorkflowOfTask.mockReset();
+    mockWorkflowOfTask.mockReturnValue({ title: 'Usage budgets', state: 'running' });
     renameBranchBehavior.run = null;
     capturedHandlers.clear();
   });
@@ -211,25 +181,37 @@ describe('TASK_UPDATE automations switch', () => {
       arrange(createExistingTask({ workflow_id: 'workflow-1' }));
     });
 
-    it('accepts automations_disabled: true, its own hold, and writes it', async () => {
-      const result = await callUpdateHandler({ id: 'task-1', automations_disabled: true });
+    it.each(['running', 'paused'])('refuses automations_disabled: true in a %s workflow, and writes nothing', async (state) => {
+      mockWorkflowOfTask.mockReturnValue({ title: 'Usage budgets', state });
 
-      expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
-      expect(mockTaskUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', automations_disabled: true }));
-      expect(result).toMatchObject({ id: 'task-1', workflow_id: 'workflow-1', automations_disabled: true });
+      await expect(callUpdateHandler({ id: 'task-1', automations_disabled: true })).rejects.toThrow('its automations cannot be paused');
+
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
     });
 
-    it('accepts the hold when it rides along with other edits, and writes them all', async () => {
-      const result = await callUpdateHandler({ id: 'task-1', title: 'Renamed', automations_disabled: true });
+    it('refuses the switch when it rides along with other edits, and writes none of them', async () => {
+      await expect(callUpdateHandler({ id: 'task-1', title: 'Renamed', automations_disabled: true })).rejects.toThrow('its automations cannot be paused');
 
-      expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
-      expect(mockTaskUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'task-1', title: 'Renamed', automations_disabled: true }),
-      );
-      expect(result).toMatchObject({ title: 'Renamed', automations_disabled: true });
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
     });
 
-    it('accepts automations_disabled: false, which resumes its automations', async () => {
+    it('takes the switch once the workflow has finished: its tasks are ordinary again', async () => {
+      mockWorkflowOfTask.mockReturnValue({ title: 'Usage budgets', state: 'done' });
+
+      await callUpdateHandler({ id: 'task-1', automations_disabled: true });
+
+      expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes the switch when the workflow is gone: a task left behind is ordinary', async () => {
+      mockWorkflowOfTask.mockReturnValue(null);
+
+      await callUpdateHandler({ id: 'task-1', automations_disabled: true });
+
+      expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts automations_disabled: false, so a card left held has a way back', async () => {
       const result = await callUpdateHandler({ id: 'task-1', automations_disabled: false });
 
       expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
@@ -263,104 +245,6 @@ describe('TASK_UPDATE automations switch', () => {
 
       expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
       expect(mockTaskUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', automations_disabled: false }));
-    });
-  });
-
-  describe('the hold hand-off', () => {
-    // The handler does not decide whether the flag changed or whether the task
-    // is in a workflow: it hands over the row as it stood and the row as
-    // written, and the hold module compares them. The pair must be two
-    // different objects, or a handler that read the row after the write would
-    // hand over a `before` that already holds the new value and the hold would
-    // never see a change.
-    let storedRow: Record<string, unknown>;
-    let rowAtHold: Record<string, unknown> | undefined;
-
-    beforeEach(() => {
-      storedRow = createExistingTask({ workflow_id: 'workflow-1' });
-      rowAtHold = undefined;
-      mockTaskUpdate = vi.fn((patch: Record<string, unknown>) => {
-        Object.assign(storedRow, patch);
-        return { ...storedRow };
-      });
-      mockGetProjectRepos.mockReturnValue({
-        tasks: { getById: vi.fn(() => ({ ...storedRow })), update: mockTaskUpdate },
-      });
-      mockApplyAutomationsHoldChange.mockImplementation(() => {
-        rowAtHold = { ...storedRow };
-      });
-    });
-
-    it('hands the row before and the row after the write to the hold module, once', async () => {
-      const context = createMockContext();
-      registerTaskCrudHandlers(context as never);
-
-      await callUpdateHandler({ id: 'task-1', automations_disabled: true });
-
-      expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
-      const [passedContext, projectId, before, after] = mockApplyAutomationsHoldChange.mock.calls[0];
-      expect(passedContext).toBe(context);
-      expect(projectId).toBe('proj-123');
-      expect(before).toMatchObject({ id: 'task-1', workflow_id: 'workflow-1', automations_disabled: false });
-      expect(after).toMatchObject({ id: 'task-1', workflow_id: 'workflow-1', automations_disabled: true });
-    });
-
-    it('hands over a release the same way: the held row before, the resumed row after', async () => {
-      storedRow.automations_disabled = true;
-      registerTaskCrudHandlers(createMockContext() as never);
-
-      await callUpdateHandler({ id: 'task-1', automations_disabled: false });
-
-      expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
-      const [, , before, after] = mockApplyAutomationsHoldChange.mock.calls[0];
-      expect(before).toMatchObject({ automations_disabled: true });
-      expect(after).toMatchObject({ automations_disabled: false });
-    });
-
-    it('applies the hold after the row holds the new value', async () => {
-      registerTaskCrudHandlers(createMockContext() as never);
-
-      await callUpdateHandler({ id: 'task-1', automations_disabled: true });
-
-      expect(rowAtHold).toMatchObject({ automations_disabled: true });
-    });
-
-    it('hands over the row as it stood right before the write, so a hold set during the branch rename is not this write\'s flip', async () => {
-      // A title change on a task with an auto-generated branch and a worktree
-      // renames the branch first, and the rename awaits. The guard asks the
-      // worktree path to exist (the temp folder does), no agent to be running
-      // (the mock context has none) and no PR to be linked.
-      storedRow.branch_name = 'triage-the-report-task-1';
-      storedRow.worktree_path = os.tmpdir();
-      let renames = 0;
-      renameBranchBehavior.run = () => {
-        renames += 1;
-        // Another writer (an MCP update_task call) pauses the task meanwhile.
-        storedRow.automations_disabled = true;
-        return 'renamed-report-task-1';
-      };
-      registerTaskCrudHandlers(createMockContext() as never);
-
-      // The call carries only the new title: it does not touch the switch.
-      await callUpdateHandler({ id: 'task-1', title: 'Renamed report' });
-
-      expect(renames).toBe(1);
-      expect(mockTaskUpdate.mock.calls[0][0]).not.toHaveProperty('automations_disabled');
-      expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
-      const [, , before, after] = mockApplyAutomationsHoldChange.mock.calls[0];
-      // Read before the rename, `before` would say the task was free, and this
-      // title edit would read as the write that paused it.
-      expect(before).toMatchObject({ id: 'task-1', title: 'Triage the report', automations_disabled: true });
-      expect(after).toMatchObject({ id: 'task-1', title: 'Renamed report', automations_disabled: true });
-    });
-
-    it('routes the hold by the explicit project id the call carried, not the open project', async () => {
-      registerTaskCrudHandlers(createMockContext() as never);
-
-      await callUpdateHandler({ id: 'task-1', automations_disabled: true }, 'proj-other');
-
-      expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
-      expect(mockApplyAutomationsHoldChange.mock.calls[0][1]).toBe('proj-other');
     });
   });
 
@@ -411,27 +295,16 @@ describe('TASK_UPDATE automations switch', () => {
       expect(emitBoardChanged).toHaveBeenCalledTimes(1);
       expect(flagAtEmit).toBe(false);
     });
-
-    it('pausing a workflow task emits task-updated once, after the write, as any other task does', async () => {
-      storedRow.workflow_id = 'workflow-1';
-
-      await callUpdateHandler({ id: 'task-1', automations_disabled: true });
-
-      expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
-      expect(emitBoardChanged.mock.calls).toEqual([[{ projectId: 'proj-123', change: 'task-updated', ids: ['task-1'] }]]);
-      expect(flagAtEmit).toBe(true);
-    });
   });
 
   describe('a task the repository does not know', () => {
-    it('leaves the write to tasks.update and applies no hold, since there is no row to compare', async () => {
+    it('leaves the write to tasks.update, since there is no row to read a workflow from', async () => {
       arrange(undefined);
 
       await callUpdateHandler({ id: 'task-missing', automations_disabled: true });
 
       expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
       expect(mockTaskUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-missing', automations_disabled: true }));
-      expect(mockApplyAutomationsHoldChange).not.toHaveBeenCalled();
     });
   });
 });

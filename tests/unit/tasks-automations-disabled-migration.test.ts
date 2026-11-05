@@ -111,6 +111,75 @@ describe('tasks.automations_disabled migration and round trip', () => {
     });
   });
 
+  // A workflow task cannot pause its automations (owner's decision, 2026-11-05),
+  // so a card held before that has no switch left to release it with.
+  describe('a held card in a workflow', () => {
+    const membership = (projectId: string | null) => ({
+      workflow_id: 'workflow-1',
+      workflow_project_id: projectId,
+      route_start_swimlane_id: null,
+      route_last_swimlane_id: null,
+      skipped_swimlane_ids: [],
+      canvas_x: null,
+      canvas_y: null,
+    });
+    const workingLaneId = () => new SwimlaneRepository(database).list().find((lane) => lane.role === null)!.id;
+    const holdIt = (taskId: string) => database.prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(taskId);
+    const planApproval = (taskId: string) => (database.prepare('SELECT plan_approval FROM tasks WHERE id = ?').get(taskId) as { plan_approval: string | null }).plan_approval;
+
+    it.each([
+      ['in To Do', () => todoLaneId],
+      ['in a working column', workingLaneId],
+    ])('is released %s', (_label, laneId) => {
+      const task = tasks.create({ title: 'Held', description: '', swimlane_id: laneId(), workflow: membership('home') });
+      holdIt(task.id);
+
+      runProjectMigrations(database);
+
+      expect(storedValue(task.id)).toBe(0);
+    });
+
+    it('is released when its workflow lives in another project, which this database cannot read', () => {
+      const task = tasks.create({ title: 'Held', description: '', swimlane_id: todoLaneId, workflow: membership('another-project') });
+      holdIt(task.id);
+
+      runProjectMigrations(database);
+
+      expect(storedValue(task.id)).toBe(0);
+    });
+
+    // A held card's Automatic plan approval read as Manual, so lifting the hold
+    // alone would have Kangentic approve a plan a person meant to review.
+    it('keeps its plan for a person to review', () => {
+      const task = tasks.create({ title: 'Held', description: '', swimlane_id: todoLaneId, workflow: membership('home') });
+      holdIt(task.id);
+
+      runProjectMigrations(database);
+
+      expect(planApproval(task.id)).toBe('manual');
+    });
+
+    it('stays as it is in Done, where nothing moves it', () => {
+      const task = tasks.create({ title: 'Held', description: '', swimlane_id: doneLaneId, workflow: membership('home') });
+      holdIt(task.id);
+
+      runProjectMigrations(database);
+
+      expect(storedValue(task.id)).toBe(1);
+      expect(planApproval(task.id)).toBeNull();
+    });
+
+    it('leaves an ordinary held task alone, and a workflow task nobody held', () => {
+      const ordinary = tasks.create({ title: 'Held', description: '', swimlane_id: todoLaneId, automations_disabled: true });
+      const free = tasks.create({ title: 'Free', description: '', swimlane_id: todoLaneId, workflow: membership('home') });
+
+      runProjectMigrations(database);
+
+      expect(storedValue(ordinary.id)).toBe(1);
+      expect(planApproval(free.id)).toBeNull();
+    });
+  });
+
   describe('create', () => {
     it('stores 0 and reads false when the field is omitted', () => {
       const created = tasks.create({ title: 'Plain', description: '', swimlane_id: todoLaneId });
