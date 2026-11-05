@@ -202,7 +202,8 @@ export function isSendBackOnly(column: Pick<Swimlane, 'position'>, exitRows: rea
  * - No match, in a column with only send-back rows: a yes that stops the card
  *   (`stopsHere`). The step never moves a task out of such a column, so a review
  *   gate has one deterministic answer and an unattended run cannot merge past it.
- *   A board that wants that says so with a forward row.
+ *   A board that wants that says so with a forward row. An empty reply is refused
+ *   there too, as a stall: telling a person the agent finished needs a reply.
  * - Null otherwise (no exit rows, or rows with no column): the check alone
  *   judges, as on a column whose forward exit is the step itself.
  *
@@ -225,8 +226,9 @@ export function stepExitVerdict(
   if (line !== null && sendBack?.target) {
     return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", sends the task back to ${sendBack.target.name}` };
   }
-  if (isSendBackOnly(column, exits)) return { accepted: true, stopsHere: true };
-  if (!exits.some(isForward)) return null;
+  const sendBackOnly = isSendBackOnly(column, exits);
+  if (!sendBackOnly && !exits.some(isForward)) return null;
   if (line === null) return { accepted: false, reason: 'the turn ended without a final message' };
+  if (sendBackOnly) return { accepted: true, stopsHere: true };
   return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", is not one ${column.name} moves the task on from` };
 }

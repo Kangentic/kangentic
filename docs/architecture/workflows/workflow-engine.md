@@ -200,7 +200,10 @@ src/main/workflows/
     has nothing to compare, so the agent's word stands. A branch with changes, or one that cannot be
     read, moves nothing, and the reason is the nudge's. Neither signal is enough alone: an empty
     branch can reach a review column with its work not yet built, and an agent's word alone could
-    skip review on real code. The move goes through `moveOn`, so a background command holds it
+    skip review on real code. A plan column's branch is always empty, so there the check proves nothing:
+    the line in a Manual plan approval column ends the task on the agent's word, by decision, since
+    the line works in any column. A tracked file an adapter rewrites reads as uncommitted, so the line
+    fails safe there and the nudge says so. The move goes through `moveOn`, so a background command holds it
     (`HeldMove.kind` `no-changes`), and its release checks the branch again.
   - **The step never moves a task out of a column with only send-back rows** (owner's decision,
     2026-11-05). With no matching row the check alone used to decide, and on one PR state it held
@@ -209,8 +212,9 @@ src/main/workflows/
     (`personGateCondition`), and a yes stops the card: `stepExitVerdict` answers `stopsHere`, and
     the step returns `waiting`, with one notice a visit and no nudge. Measured on 15 real turn
     endings, three runs each on Haiku at low: 43 of 45 right against hand labels, where the usual
-    wording got 17 of 45. A no is a real stall and gets its nudge. A board that wants unattended
-    merges says so with a forward row.
+    wording got 17 of 45. A no is a real stall and gets its nudge, and so does a yes on a turn with no
+    final message, which gives a person nothing to act on. A board that wants unattended merges says
+    so with a forward row.
   - **Only the agent's own word stops a task** (owner's decision, 2026-10-31). A reply whose last
     line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
     (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works

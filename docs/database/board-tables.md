@@ -253,7 +253,8 @@ the key is deleted when the repair flag is written.
 
 `workflow_task_holds_released_at` marks the one run of `releaseWorkflowTaskHolds`, which clears
 holds left on workflow tasks. A task whose workflow is gone or finished may be held again, so a
-repeat run could not tell that hold from the old kind.
+repeat run could not tell that hold from the old kind. That one run cannot tell either, since a
+task's workflow can live in another database, so it also releases such a task once.
 
 Distinct from `project_meta`, which holds live per-project state (the `display_id` high-water
 mark) rather than migration bookkeeping.

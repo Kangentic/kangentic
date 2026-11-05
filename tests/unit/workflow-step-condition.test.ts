@@ -290,8 +290,11 @@ describe('stepExitVerdict', () => {
     expect(stepExitVerdict(codeReview, rows, 'PR open, checks green.\n\nPR: awaiting review')).toEqual({ accepted: true, stopsHere: true });
   });
 
-  it('stops the card there on an empty reply too: no row moves it, and the check said it is finished', () => {
-    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], null)).toEqual({ accepted: true, stopsHere: true });
+  // A yes on a turn with no final message would tell a person the agent finished
+  // with nothing to show for it. Refused, it is a stall and gets its nudge.
+  it('refuses an empty reply there too, so it is nudged rather than handed to a person', () => {
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], null)).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], '   \n')).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
   });
 
   it('counts a send-back with a Text match that can match no line as no exit at all', () => {

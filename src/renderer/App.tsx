@@ -12,6 +12,7 @@ import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useWorkflowStore } from './stores/workflow-store';
+import { boardWorkflowNow } from './utils/workflow-refusal';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
@@ -788,6 +789,7 @@ export function App() {
               sessionIdShort: sessionId.slice(0, 8),
               endsOwnCall,
               reason,
+              inRunningWorkflow: toastTask !== undefined && boardWorkflowNow(toastTask)?.state === 'running',
             });
             if (idleToast) {
               const openProjectId = toastSession.projectId;
