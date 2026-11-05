@@ -10,6 +10,7 @@ import {
 } from '../../shared/relocation-utils';
 import { claudeProjectSlug } from './transcript-parser';
 import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
+import { physicalPath } from './physical-path';
 
 /**
  * Migrate Claude Code's per-project data when a Kangentic project is relocated.
@@ -51,21 +52,33 @@ import { isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
  * final-ELOCKED policy), which degrades to the orphaned-data behavior.
  */
 export async function migrateClaudeProjectData(oldProjectPath: string, newProjectPath: string): Promise<void> {
+  const oldResolved = path.resolve(oldProjectPath);
+  const newResolved = path.resolve(newProjectPath);
+  // Claude files both stores under its real cwd, so a project reached through a
+  // symlink is keyed by its physical path. The old folder may be gone by now,
+  // which `physicalPath` resolves through its parents. One left out here is a
+  // project folder that was itself the symlink: nothing is left to read.
+  const [oldPhysical, newPhysical] = await Promise.all([physicalPath(oldResolved), physicalPath(newResolved)]);
+  const asGiven: RelocationPathPair = { oldAbsolute: oldResolved, newAbsolute: newResolved };
+  // The first pair that matches a key or a transcript folder takes it, and Claude
+  // reads both under the physical new path, so the physical pair goes first.
+  const moves = oldPhysical === oldResolved && newPhysical === newResolved
+    ? [asGiven]
+    : [{ oldAbsolute: oldPhysical, newAbsolute: newPhysical }, asGiven];
   try {
-    await withClaudeJsonLock(() => migrateClaudeProjectDataSync(oldProjectPath, newProjectPath));
+    await withClaudeJsonLock(() => migrateClaudeProjectDataSync(moves));
   } catch (error) {
     if (!isClaudeJsonLockError(error)) throw error;
     console.warn(`[CLAUDE_RELOCATE] Skipping the ~/.claude.json migration; ${error.message}`);
   }
 }
 
-function migrateClaudeProjectDataSync(oldProjectPath: string, newProjectPath: string): void {
-  const oldResolved = path.resolve(oldProjectPath);
-  const newResolved = path.resolve(newProjectPath);
-
-  const pairs = collectRelocationPairs(oldResolved, newResolved, readClaudeJsonProjectKeys());
-  migrateTranscriptDirectories(pairs);
-  rewriteClaudeJson(oldResolved, newResolved);
+function migrateClaudeProjectDataSync(moves: RelocationPathPair[]): void {
+  const claudeJsonKeys = readClaudeJsonProjectKeys();
+  for (const move of moves) {
+    migrateTranscriptDirectories(collectRelocationPairs(move.oldAbsolute, move.newAbsolute, claudeJsonKeys));
+  }
+  rewriteClaudeJson(moves);
 }
 
 /**
@@ -130,7 +143,7 @@ function resolveSourceTranscriptDir(projectsRoot: string, oldAbsolute: string): 
  * the file up first and writing atomically. Keys are re-emitted in forward-slash
  * form (Claude's convention on all platforms) with their values carried verbatim.
  */
-function rewriteClaudeJson(oldResolved: string, newResolved: string): void {
+function rewriteClaudeJson(moves: RelocationPathPair[]): void {
   const claudeJsonPath = path.join(os.homedir(), '.claude.json');
 
   let data: Record<string, unknown>;
@@ -147,8 +160,12 @@ function rewriteClaudeJson(oldResolved: string, newResolved: string): void {
   // Compute rewrites first; if nothing matches, do not touch the file at all.
   const rewrites = new Map<string, string>();
   for (const key of Object.keys(projectEntries)) {
-    const rewritten = replacePathPrefix(key, oldResolved, newResolved);
-    if (rewritten) rewrites.set(key, toForwardSlash(rewritten));
+    for (const move of moves) {
+      const rewritten = replacePathPrefix(key, move.oldAbsolute, move.newAbsolute);
+      if (!rewritten) continue;
+      rewrites.set(key, toForwardSlash(rewritten));
+      break;
+    }
   }
   if (rewrites.size === 0) return;
 

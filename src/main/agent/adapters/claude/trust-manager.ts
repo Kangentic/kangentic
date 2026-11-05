@@ -4,6 +4,7 @@ import { toForwardSlash } from '../../../../shared/paths';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import { claudeJsonPath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { applyDiffPanelClosed } from './diff-panel';
+import { physicalPath } from './physical-path';
 
 // Every ~/.claude.json read-modify-write in this adapter runs under one lock:
 // an in-process chain against our own writers, plus Claude's own
@@ -16,20 +17,22 @@ const LOG_TAG = '[CLAUDE_TRUST]';
 
 /**
  * The key ~/.claude.json files a directory under: the path as the CLI sees its
- * working directory. Forward slashes on this machine, and the distro's view
- * (`/mnt/c/...`) for a Claude installed in a WSL distro.
+ * working directory. The physical path with forward slashes on this machine,
+ * because Claude keys trust by its real cwd and ignores an entry under a symlink
+ * (measured with a symlinked cwd on Linux Claude 2.1.311: the trust dialog
+ * shows). The distro's view (`/mnt/c/...`) for a Claude installed in a WSL
+ * distro. Read before the lock is taken, so no I/O runs under it.
  */
-function trustKey(directory: string, place: CliPlace | null): string {
+async function trustKey(directory: string, place: CliPlace | null): Promise<string> {
   const resolved = path.resolve(directory);
-  return place ? cliPathForTarget(resolved, place) : toForwardSlash(resolved);
+  return place ? cliPathForTarget(resolved, place) : toForwardSlash(await physicalPath(resolved));
 }
 
 /**
  * Mark a worktree trusted in a parsed ~/.claude.json, copying MCP server
  * approvals from its parent project entry. True when it changed anything.
  */
-function applyWorktreeTrust(data: Record<string, unknown>, worktreePath: string, place: CliPlace | null = null): boolean {
-  const resolvedPath = trustKey(worktreePath, place);
+function applyWorktreeTrust(data: Record<string, unknown>, resolvedPath: string): boolean {
   if (!data.projects || typeof data.projects !== 'object') {
     data.projects = {};
   }
@@ -64,8 +67,7 @@ function applyWorktreeTrust(data: Record<string, unknown>, worktreePath: string,
 
 /** List the "kangentic" MCP server as enabled for a project in a parsed
  *  ~/.claude.json. True when it changed anything. */
-function applyMcpServerTrust(data: Record<string, unknown>, projectPath: string, place: CliPlace | null = null): boolean {
-  const resolvedPath = trustKey(projectPath, place);
+function applyMcpServerTrust(data: Record<string, unknown>, resolvedPath: string): boolean {
   if (!data.projects || typeof data.projects !== 'object') {
     data.projects = {};
   }
@@ -216,7 +218,8 @@ async function updateClaudeJson(
  * whose own ~/.claude.json holds its trust.
  */
 export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
-  await updateClaudeJson('worktree trust', (data) => applyWorktreeTrust(data, worktreePath, place), place);
+  const key = await trustKey(worktreePath, place);
+  await updateClaudeJson('worktree trust', (data) => applyWorktreeTrust(data, key), place);
 }
 
 /**
@@ -224,7 +227,8 @@ export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace 
  * for a project path so Claude Code auto-enables it without prompting.
  */
 export async function ensureMcpServerTrust(projectPath: string): Promise<void> {
-  await updateClaudeJson('MCP server trust', (data) => applyMcpServerTrust(data, projectPath));
+  const key = await trustKey(projectPath, null);
+  await updateClaudeJson('MCP server trust', (data) => applyMcpServerTrust(data, key));
 }
 
 /**
@@ -244,11 +248,12 @@ export async function ensureMcpServerTrust(projectPath: string): Promise<void> {
  * keyed by the directory as the distro sees it.
  */
 export async function ensureClaudeSpawnConfig(workingDirectory: string, place: CliPlace | null = null): Promise<void> {
+  const key = await trustKey(workingDirectory, place);
   await updateClaudeJson('spawn config', (data) => {
     // Every change applied, then one write if any changed.
     const changes = [
-      applyWorktreeTrust(data, workingDirectory, place),
-      applyMcpServerTrust(data, workingDirectory, place),
+      applyWorktreeTrust(data, key),
+      applyMcpServerTrust(data, key),
       applyDiffPanelClosed(data),
     ];
     return changes.some(Boolean);

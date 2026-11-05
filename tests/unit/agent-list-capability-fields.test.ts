@@ -47,6 +47,25 @@ beforeEach(() => {
   mockGetOrThrow.mockReturnValue(buildFakeAdapter());
 });
 
+describe('listAgents - a capability read that lands late', () => {
+  it('rebuilds on the next call, and subscribes to each adapter once', async () => {
+    let tellInventory: () => void = () => undefined;
+    const onCapabilitiesChanged = vi.fn((listener: () => void) => { tellInventory = listener; });
+    const detect = vi.fn(async () => ({ found: false, path: null, version: null }));
+    mockGetOrThrow.mockReturnValue({ ...buildFakeAdapter(), detect, onCapabilitiesChanged });
+
+    await listAgents({});
+    await listAgents({});
+    expect(detect).toHaveBeenCalledTimes(1);
+
+    tellInventory();
+    await listAgents({});
+
+    expect(detect).toHaveBeenCalledTimes(2);
+    expect(onCapabilitiesChanged).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('listAgents - pasted-image capability fields', () => {
   it('carries the adapter\'s pastedImageNativeExtensions and pastedImageReferenceTemplate onto the entry', async () => {
     const agents = await listAgents({});

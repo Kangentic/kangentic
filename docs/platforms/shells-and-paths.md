@@ -334,7 +334,7 @@ no TERM at all and capability-detecting TUIs (Antigravity's agy) render monochro
 gives Windows children the same environment POSIX children already get; an explicit TERM in the
 environment always wins.
 
-The Claude `/model` picker probe (`model-picker-probe.ts`) does not use `buildSpawnEnv` and sets
+The Claude `/model` picker fallback (`model-picker-probe.ts`) does not use `buildSpawnEnv` and sets
 `TERM=xterm-256color` unconditionally instead of defaulting it. Its PTY's terminal is Kangentic's
 own `VirtualScreen` grid, so a user's TERM describes a terminal it is not. TERM matters to it for
 the glyph, not for color: Claude Code draws its prompt and select-row markers with the `figures`

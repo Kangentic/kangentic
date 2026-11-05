@@ -517,6 +517,82 @@ afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
+/**
+ * Claude keys trust by its real cwd and ignores an entry under a symlink, so the
+ * trust dialog shows. macOS's temp folder is behind one (`/var` -> `/private/var`),
+ * which stopped the model probe on every Mac, and any project opened through a
+ * link hits the same dialog. Linking a directory needs a privilege on Windows,
+ * and a Windows key stays the path as given, so these run on POSIX.
+ */
+describe.skipIf(process.platform === 'win32')('the trust key of a directory reached through a symlink', () => {
+  let realDirectory: string;
+  let linkedDirectory: string;
+
+  beforeEach(() => {
+    realDirectory = path.join(fs.realpathSync(tmpHome), 'real-parent', 'project');
+    fs.mkdirSync(realDirectory, { recursive: true });
+    const linkedParent = path.join(tmpHome, 'linked-parent');
+    fs.symlinkSync(path.dirname(realDirectory), linkedParent);
+    linkedDirectory = path.join(linkedParent, 'project');
+  });
+
+  function trustedKeys(): string[] {
+    return Object.keys(readClaudeJson().projects as Record<string, unknown>);
+  }
+
+  it('files ensureWorktreeTrust under the physical path', async () => {
+    await ensureWorktreeTrust(linkedDirectory);
+    expect(trustedKeys()).toEqual([realDirectory]);
+  });
+
+  it('files a spawn under the physical path, trust and MCP approval on one entry', async () => {
+    await ensureClaudeSpawnConfig(linkedDirectory);
+    expect(trustedKeys()).toEqual([realDirectory]);
+    const entry = (readClaudeJson().projects as Record<string, Record<string, unknown>>)[realDirectory];
+    expect(entry.hasTrustDialogAccepted).toBe(true);
+    expect(entry.enabledMcpjsonServers).toEqual(['kangentic']);
+  });
+
+  it('files ensureMcpServerTrust under the physical path', async () => {
+    await ensureMcpServerTrust(linkedDirectory);
+    expect(trustedKeys()).toEqual([realDirectory]);
+  });
+
+  it('finds a worktree\'s parent project by the physical path', async () => {
+    fs.writeFileSync(claudeJsonPath(), JSON.stringify({
+      projects: { [realDirectory]: { enabledMcpjsonServers: ['kept-server'] } },
+    }));
+    const worktree = path.join(linkedDirectory, '.kangentic', 'worktrees', 'fix-bug');
+    fs.mkdirSync(worktree, { recursive: true });
+
+    await ensureWorktreeTrust(worktree);
+
+    const projects = readClaudeJson().projects as Record<string, Record<string, unknown>>;
+    expect(projects[path.join(realDirectory, '.kangentic', 'worktrees', 'fix-bug')].enabledMcpjsonServers).toEqual(['kept-server']);
+  });
+
+  it('resolves a folder that does not exist yet through its nearest existing parent', async () => {
+    await ensureWorktreeTrust(path.join(linkedDirectory, 'not-created-yet'));
+    expect(trustedKeys()).toEqual([path.join(realDirectory, 'not-created-yet')]);
+  });
+
+  it('leaves a plain directory\'s key as it always was', async () => {
+    await ensureWorktreeTrust(realDirectory);
+    expect(trustedKeys()).toEqual([path.resolve(realDirectory)]);
+  });
+
+  it('leaves the path as given on Windows, where realpath would follow a junction or a subst drive', async () => {
+    const realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await ensureWorktreeTrust(linkedDirectory);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: realPlatform });
+    }
+    expect(trustedKeys()).toEqual([linkedDirectory]);
+  });
+});
+
 describe('ensureWorktreeTrust', () => {
   it('creates ~/.claude.json with trust entry when file does not exist', async () => {
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';

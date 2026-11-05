@@ -73,6 +73,34 @@ describe('claudeBrowserServerNames: a realistic ~/.claude.json', () => {
   });
 });
 
+// Linking a directory needs a privilege on Windows, where a key stays the path as given.
+describe.skipIf(process.platform === 'win32')('claudeBrowserServerNames: a project reached through a symlink', () => {
+  it('finds a server under the physical path Claude keys it by', () => {
+    const physicalProject = path.join(fs.realpathSync(workspace), 'physical-project');
+    fs.mkdirSync(physicalProject);
+    const linkedProject = path.join(workspace, 'linked-project');
+    fs.symlinkSync(physicalProject, linkedProject);
+    fs.writeFileSync(path.join(homeDir, '.claude.json'), JSON.stringify({
+      projects: { [physicalProject]: { mcpServers: { 'e2e-browser': browserServerJson('@playwright/mcp') } } },
+    }));
+
+    expect(claudeBrowserServerNames({ cwd: linkedProject, place: null })).toContain('e2e-browser');
+  });
+
+  it('finds a server for a cwd that does not exist yet, keyed by the physical parent plus the missing segment', () => {
+    const physicalParent = path.join(fs.realpathSync(workspace), 'physical-parent');
+    fs.mkdirSync(physicalParent);
+    const linkedParent = path.join(workspace, 'linked-parent');
+    fs.symlinkSync(physicalParent, linkedParent);
+    fs.writeFileSync(path.join(homeDir, '.claude.json'), JSON.stringify({
+      projects: { [path.join(physicalParent, 'not-created-yet')]: { mcpServers: { 'e2e-browser': browserServerJson('@playwright/mcp') } } },
+    }));
+
+    // The folder is not on disk, so only a resolve through its parent reaches the key.
+    expect(claudeBrowserServerNames({ cwd: path.join(linkedParent, 'not-created-yet'), place: null })).toContain('e2e-browser');
+  });
+});
+
 describe('claudeBrowserServerNames: a WSL place', () => {
   it('reads the distro\'s home and keys the project by the path the distro sees', () => {
     const distroHome = path.join(workspace, 'distro-home');
