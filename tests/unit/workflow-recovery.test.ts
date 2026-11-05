@@ -103,7 +103,7 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: {
 vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
-vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(), routeOf: vi.fn() }));
+vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(() => ({ ok: false, reason: 'No such column.' })), routeOf: vi.fn() }));
 vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageToSession: hoisted.deliverMessageToSession,
   deliverMessageAfterMove: vi.fn(),

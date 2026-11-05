@@ -651,6 +651,68 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
     });
   });
 
+  describe('a column whose only exit rows send the task back', () => {
+    const SEND_BACK_ROW_ID = 'row-checks-failing';
+    const AWAITING_REVIEW_REPLY = `PR open, checks green.\n\n${MARKER}`;
+
+    beforeEach(() => {
+      const earlierLane = lanes.find((lane) => lane.role === 'todo')!;
+      hoisted.resolveMoveTarget.mockImplementation(() => ({ ok: true, column: earlierLane }));
+      hoisted.rows = [{ ...moveRow(), id: SEND_BACK_ROW_ID, name: 'Checks failing', final_line: 'PR: checks failing', config: { targetColumn: earlierLane.name } }];
+    });
+
+    it('stops the card on a yes: no move, one notice, and no nudge however long it waits', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting' }));
+
+      await vi.advanceTimersByTimeAsync(120 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).not.toHaveBeenCalled();
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks the check its own question there', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      const [, input] = hoisted.check.mock.calls[0] as [unknown, CheckInput];
+      expect(input.rows[0].condition).toContain('finished what it can do alone');
+    });
+
+    it('tells the owner once a visit, and stays quiet across a person\'s later turns there', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+      startTurn(42);
+      await endTurn(42, AWAITING_REVIEW_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(120 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).not.toHaveBeenCalled();
+    });
+
+    it('still nudges a real stall, which the check answers no', async () => {
+      await endTurn(41, STALLED_REPLY);
+
+      expect(notifyDesktop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('never holds a step move there: a yes with a command still open only stops', async () => {
+      leaveShellOpen();
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      expect(getHeldMove(taskId)).toBeUndefined();
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+    });
+  });
+
   describe('a hold that belongs elsewhere', () => {
     it('does not run a hold for another column: the reply is judged as any other', async () => {
       setHeldMove(taskId, { columnId: 'another-column', sessionId: SESSION_ID, kind: 'step', rowId: null, targetName: null });

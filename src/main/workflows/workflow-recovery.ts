@@ -173,7 +173,7 @@ function handleVerdict(
       return;
     case 'waiting':
       forgetWorkflowRecovery(target.taskId);
-      noticeWaiting(context, target, result.reason ?? 'the agent asked something.');
+      noticeWaiting(context, target, result.reason ?? 'the agent asked something.', { notify: result.firstThisVisit !== false });
       return;
     case 'human-gate':
       forgetWorkflowRecovery(target.taskId);
@@ -1314,8 +1314,13 @@ export function announceWorkflowStall(
   notifyWorkflowChanged(homeProjectId, stall.workflowId);
 }
 
-/** A wait on the user: its row, then the notice, which stands in for the idle one. */
-function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: string): void {
+/**
+ * A wait on the user: its row, then the notice, which stands in for the idle
+ * one. The row is written even when the notice is not (`notify`): it is the
+ * latch that keeps recovery off a task waiting on a person, and each step check
+ * that judged a turn ends the last one (`isWaitingOnUser`).
+ */
+function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: string, options: { notify?: boolean } = {}): void {
   try {
     getProjectRepos(context, target.projectId).automationRuns.recordWorkflowWaiting({
       taskId: target.taskId,
@@ -1327,6 +1332,7 @@ function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: stri
     console.warn('[WORKFLOW] Could not record a wait on the user:', error);
   }
   refreshStoppedMark(context, target.projectId, target.taskId);
+  if (options.notify === false) return;
   sendNotice(context, { projectId: target.projectId, taskId: target.taskId, sessionId: target.sessionId, kind: 'waiting', reason });
 }
 
