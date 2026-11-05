@@ -827,8 +827,9 @@ export class SessionManager extends EventEmitter {
         // recoverStaleSessionId() handles all cases - emit unconditionally.
         const session = this.registry.get(sessionId);
         if (!session) return;
-        // The host can stop scanning this session's output for an id.
-        this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
+        // The host can stop scanning this session's output for an id, unless this one was only worked
+        // out, when the agent's own report is still wanted to confirm it.
+        if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
         // tests) can observe it via sessions.list() without a DB round-trip.
         if (session.agentSessionId !== agentReportedId) {
@@ -1264,8 +1265,8 @@ export class SessionManager extends EventEmitter {
     this.remoteSessionRelay = relay;
     this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
     this.on('remote-file-chunk', (event: Extract<PtyHostEvent, { type: 'fileChunk' }>) => relay.deliverChunk(event));
-    // An id a CLI's index names reaches the capture path every other id does, and comes back as `onAgentSessionId`.
-    relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyAgentSessionId(sessionId, agentSessionId));
+    // An id a CLI's index names comes back as `onAgentSessionId`, like any other, and stays open to the agent's own report.
+    relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyInferredAgentSessionId(sessionId, agentSessionId));
   }
 
   /**

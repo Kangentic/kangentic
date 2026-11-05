@@ -28,7 +28,7 @@ import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from '
 import { activityPluginRoot, installsActivityPlugin, openCodeKangenticMcpEntry, openCodeModelFromCommand } from './command-builder';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
 import { captureDistroOpenCodeSessionId, distroSessionExportArgs, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions, isDistroOpenCodeV2, isSessionId } from './distro-sessions';
-import { openCodeExportToolCounts, openCodeExportToolResultTokens, openCodeExportUsage, readOpenCodeExportFile } from './export-reader';
+import { openCodeExportFrom, openCodeExportToolCounts, openCodeExportToolResultTokens, openCodeExportUsage, readOpenCodeExportFile } from './export-reader';
 import { cliPathForTarget, execCliForTarget, hostPathForTarget, parseWslCliPath, placeFromStored, remoteExportPath, resolveCliTarget, targetOfPlace, type CliPlace, type SshCliPlace } from '../../shared/cli-target';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
@@ -120,18 +120,22 @@ function hostExportPath(agentSessionId: string | null | undefined, place: CliPla
   return agentSessionId && place?.kind === 'ssh' ? remoteExportPath(place, 'opencode', agentSessionId) : null;
 }
 
-/** An export as the indexer walks a file: one document is one window, whatever the size. */
-function readExportWindow(filePath: string, startByte: number): ParsedTranscriptWindow {
-  const empty = { entries: [], sourcePath: null, nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };
-  let size: number;
-  try {
-    size = fs.statSync(filePath).size;
-  } catch {
-    return empty;
-  }
-  if (startByte >= size) return { ...empty, sourcePath: filePath, totalBytes: size };
-  const entries = mapOpenCodeRemoteEntries(readOpenCodeExportFile(filePath));
-  return { entries, sourcePath: filePath, nextByteOffset: size, totalBytes: size, firstByteOffset: 0, endByte: size };
+/**
+ * An export as a walk reads a file: everything from `startPosition` is one window, whatever the size, in the
+ * positions `openCodeExportFrom` gives. A copy that is not here yet is an empty window with no source.
+ */
+function readExportWindow(filePath: string, startPosition: number): ParsedTranscriptWindow {
+  const all = readOpenCodeExportFile(filePath);
+  if (all.length === 0) return { entries: [], sourcePath: null, nextByteOffset: startPosition, totalBytes: 0, firstByteOffset: startPosition, endByte: startPosition };
+  const { messages, firstPosition, totalPosition } = openCodeExportFrom(all, startPosition);
+  return {
+    entries: mapOpenCodeRemoteEntries(messages),
+    sourcePath: filePath,
+    nextByteOffset: Math.max(startPosition, totalPosition),
+    totalBytes: totalPosition,
+    firstByteOffset: firstPosition,
+    endByte: totalPosition,
+  };
 }
 
 /**
@@ -838,8 +842,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * One window of a local session for the conversation indexer, in the
    * transcript reader's position unit (`readOpenCodeTranscriptWindowAtPath`).
    * A remote or distro session has no local database to walk, so it reads as
-   * empty. A host session's export is one document, so it is one window, in the
-   * file's own bytes.
+   * empty. A host session's export is one document, so what lies past `startByte`
+   * is one window, in positions that hold across exports (`openCodeExportFrom`).
    */
   async parseTranscriptWindow(
     agentSessionId: string,

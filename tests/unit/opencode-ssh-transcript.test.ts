@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import { forgetDistroOpenCodeVersions } from '../../src/main/agent/adapters/opencode/distro-sessions';
+import { readTrail } from '../../src/main/agent/message-trail-read';
 import { getCachedTranscript } from '../../src/main/agent/transcript-cache';
 import { remoteExportPath, toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import type { RemoteProgramRunner } from '../../src/shared/types';
@@ -101,12 +102,12 @@ describe.each([
 
   it('is one window for the search index, or the index would hold nothing', async () => {
     const window = await adapter.parseTranscriptWindow(SESSION_ID, shellFolder, 0, 1024 * 1024, new Set<string>(), place);
-    const size = fs.statSync(copyPath()).size;
 
     expect(window.entries.length).toBeGreaterThan(0);
-    expect(window).toMatchObject({ sourcePath: copyPath(), nextByteOffset: size, totalBytes: size, firstByteOffset: 0, endByte: size });
+    expect(window.totalBytes).toBeGreaterThan(0);
+    expect(window).toMatchObject({ sourcePath: copyPath(), nextByteOffset: window.totalBytes, firstByteOffset: 0, endByte: window.totalBytes });
 
-    const next = await adapter.parseTranscriptWindow(SESSION_ID, shellFolder, size, 1024 * 1024, new Set<string>(), place);
+    const next = await adapter.parseTranscriptWindow(SESSION_ID, shellFolder, window.totalBytes, 1024 * 1024, new Set<string>(), place);
     expect(next.entries).toEqual([]);
   });
 
@@ -128,6 +129,40 @@ describe.each([
     const counts = await adapter.transcriptToolCounts({ agentSessionId: SESSION_ID, place, sinceMs: Number.MAX_SAFE_INTEGER });
 
     expect(counts).toBeNull();
+  });
+});
+
+describe('the card\'s message trail, which reads on from where it stopped', () => {
+  const facts = () => ({ sessionType: 'opencode', agentSessionId: SESSION_ID, cwd: shellFolder, cliTarget: toStoredCliTarget(place) });
+
+  it('reads the conversation once, and nothing again from the cursor it left', async () => {
+    arrive(V1_EXPORT);
+
+    const first = await readTrail(adapter, facts(), null);
+    expect(first.previews.length).toBeGreaterThan(0);
+
+    const second = await readTrail(adapter, facts(), first.cursor);
+    expect(second.previews).toEqual([]);
+  });
+
+  it('reads on past a cursor into a longer export, and only what came after it', async () => {
+    arrive(V1_EXPORT);
+    const first = await readTrail(adapter, facts(), null);
+
+    const document = JSON.parse(V1_EXPORT) as { messages: Array<{ info: { id: string; time: { created: number } }; parts: Array<{ id?: string; text?: string; type: string }> }> };
+    const last = document.messages[document.messages.length - 1];
+    const later = JSON.parse(JSON.stringify(last)) as typeof last;
+    later.info.id = 'msg_later';
+    later.info.time.created += 1000;
+    later.parts = later.parts.filter((part) => part.type === 'text').map((part) => ({ ...part, text: 'A later answer.' }));
+    document.messages.push(later);
+    arrive(JSON.stringify(document, null, 2));
+
+    const second = await readTrail(adapter, facts(), first.cursor);
+    const text = JSON.stringify(second.previews);
+
+    expect(text).toContain('A later answer.');
+    expect(text).not.toContain('Stub reply from the probe model.');
   });
 });
 

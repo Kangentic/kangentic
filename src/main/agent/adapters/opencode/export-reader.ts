@@ -29,6 +29,29 @@ export function readOpenCodeExportFile(filePath: string): OpenCodeRemoteMessageE
   }
 }
 
+/**
+ * The messages at or past `startPosition`. A position is the compact JSON of every message before, not a byte
+ * of the file: each export is a new file, so its bytes mean nothing to a cursor from the last one, while a message
+ * keeps its position as the conversation grows. That is what lets the message trail read on from where it
+ * stopped. Finished messages are not rewritten, so only one still being written can shift what follows it.
+ */
+export function openCodeExportFrom(
+  messages: readonly OpenCodeRemoteMessageEntry[],
+  startPosition: number,
+): { messages: OpenCodeRemoteMessageEntry[]; firstPosition: number; totalPosition: number } {
+  let position = 0;
+  let firstIndex = -1;
+  let firstPosition = startPosition;
+  for (const [index, message] of messages.entries()) {
+    if (firstIndex === -1 && position >= startPosition) {
+      firstIndex = index;
+      firstPosition = position;
+    }
+    position += JSON.stringify(message).length;
+  }
+  return { messages: firstIndex === -1 ? [] : messages.slice(firstIndex), firstPosition, totalPosition: position };
+}
+
 /** Lifetime tokens, the way a local session's are counted. Null with no message that has usage yet. */
 export function openCodeExportUsage(messages: readonly OpenCodeRemoteMessageEntry[]): TranscriptUsage | null {
   let messagesWithUsage = 0;

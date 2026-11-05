@@ -206,6 +206,23 @@ describe('an id found after a session on a host has started', () => {
     expect(told).toHaveBeenCalledWith('s1', 'agent-from-index');
     foundListener.mockRestore();
   });
+
+  // A hand-run CLI in the same folder can write the only new line. Latched, that wrong id would resume someone else's conversation.
+  it('stays open to the agent\'s own report, which replaces it when the two differ', async () => {
+    const foundListener = vi.spyOn(RemoteSessionRelay.prototype, 'onSessionIdFound');
+    const rig = await makeRig();
+    await spawnRemote(rig);
+    const reportFound = foundListener.mock.lastCall?.[0];
+    const told = vi.spyOn(rig.relay, 'setAgentSessionId');
+
+    reportFound?.('s1', 'agent-from-index');
+    // The call the pty host's output scan makes for the exit hint (`agentSessionId` in `handleHostEvent`).
+    (rig.manager as unknown as { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } }).telemetry.notifyAgentSessionId('s1', 'agent-from-exit-hint');
+
+    expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-from-exit-hint');
+    expect(told).toHaveBeenLastCalledWith('s1', 'agent-from-exit-hint');
+    foundListener.mockRestore();
+  });
 });
 
 describe('spawning an agent session on a host', () => {
