@@ -88,8 +88,8 @@ export function supersedeMessageDeliveries(taskId: string): void {
 
 /**
  * Whether a column message is still waiting to be pasted into the task's
- * agent. The low-memory pause skips such an agent: it is about to get work,
- * so it is not one that is only waiting on the user.
+ * agent: it is about to get work, so it is not one that is only waiting on
+ * the user.
  */
 export function hasPendingMessageDelivery(taskId: string): boolean {
   const controllers = messageDeliveryControllers.get(taskId);

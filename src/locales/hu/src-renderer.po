@@ -174,51 +174,6 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, # napot várt} other {{projectName}, # napot várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, # órát várt} other {{projectName}, # órát várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, # percet várt} other {{projectName}, # percet várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {# napot várt} other {# napot várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {# napot várt} other {# napot várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {# órát várt} other {# órát várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {# órát várt} other {# órát várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {# percet várt} other {# percet várt}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {# percet várt} other {# percet várt}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -243,16 +198,6 @@ msgstr "{branchPill} egy új worktree-ben jön létre, alapja: {basePill}"
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{branchPill} a projektmappában jön létre, alapja: {basePill}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Tétlen ügynök szüneteltetve} one {# tétlen ügynök szüneteltetve} other {# tétlen ügynök szüneteltetve}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {A Kangentic szüneteltette a memória felszabadításához.} one {A Kangentic szüneteltette őket a memória felszabadításához.} other {A Kangentic szüneteltette őket a memória felszabadításához.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -328,11 +273,6 @@ msgstr "{processCount, plural, one {„{taskTitle}” # futó folyamatot hagyott
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {{taskCount, plural, one {# feladat} other {# feladat}} # futó folyamatot hagyott hátra.} other {{taskCount, plural, one {# feladat} other {# feladat}} # futó folyamatot hagyott hátra.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "A memóriafoglalásokból {remaining} maradt."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -464,11 +404,6 @@ msgstr "Ágens folytatva"
 #, fuzzy
 msgid "Agent started"
 msgstr "Az ügynök elindult"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "Szinte nem maradt memóriafoglalás."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1138,11 +1073,6 @@ msgstr "Visszamaradt folyamatok"
 msgid "Leftover processes stopped"
 msgstr "Visszamaradt folyamatok leállítva"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "Kevés a memória"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1523,7 +1453,6 @@ msgid "Retry"
 msgstr "Újra"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "Áttekintés"
@@ -1594,7 +1523,6 @@ msgid "Session ended"
 msgstr "Munkamenet befejeződött"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "Beállítások"

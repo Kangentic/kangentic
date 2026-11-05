@@ -13,7 +13,6 @@ import type {
   ColumnAutomation,
   ConversationExpiredNotice,
   NotificationInput,
-  SessionResumer,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import { automationNeedsAgent, canTaskRunAutomations } from '../../shared/automation-manifest';
@@ -108,11 +107,6 @@ export interface SpawnOverrides {
    * an 'always_spawn_new' column. Defaults to false (resume if one exists).
    */
   forceFresh?: boolean;
-  /**
-   * Who resumes the session when it is not a person (`SpawnSessionInput.resumedBy`):
-   * the workflow's memory resume passes `'memory'`.
-   */
-  resumedBy?: SessionResumer;
   /**
    * An agent launched while the task's worktree ran its setup script
    * (`launchEarlyAgent`). A fresh spawn whose launch matches it adopts it
@@ -1034,7 +1028,6 @@ export class TransitionEngine {
       statusOutputPath,
       eventsOutputPath,
       resuming: canResume,
-      ...(canResume && spawnOverrides?.resumedBy ? { resumedBy: spawnOverrides.resumedBy } : {}),
       agentParser: adapter,
       agentName: adapter.name,
       agentSessionId,

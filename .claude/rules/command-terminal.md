@@ -199,11 +199,11 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   and purges, so a quit loses nothing. Never add it to `EMBEDDED_CORPORA`. Whether text was searched
   is `isIndexingEnabled`, the sweep's own gate.
 - **No pause reaches a Command Terminal.** A suspend still ends one (its conversation lands in
-  Earlier like any other end, so nothing is lost, but the user did not ask). The low-memory pause
-  never picks one (`isPauseEligible`), and the When idle sweep skips one before either of its
-  callbacks (`isIdleTimeoutExempt`, answered with `isCommandTerminalSession`): an idle-timeout
-  report alone makes the renderer mark the live row suspended. A workflow's own agent stays in
-  the sweep. A new automatic pause or suspend path skips Command Terminals too.
+  Earlier like any other end, so nothing is lost, but the user did not ask). The When idle sweep
+  skips one before either of its callbacks (`isIdleTimeoutExempt`, answered with
+  `isCommandTerminalSession`): an idle-timeout report alone makes the renderer mark the live row
+  suspended. A workflow's own agent stays in the sweep. A new automatic pause or suspend path skips
+  Command Terminals too.
 - **The agent-absence sweep judges Command Terminals, and the SessionEnd hook fast-paths it.** Do
   not reintroduce a transient exclusion in `isAgentAbsenceCandidate`. The sweep judges a terminal
   only once its agent showed it started (its first SessionStart, or its first alt-screen entry) or
@@ -494,9 +494,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
 - **Test (no pause):** `tests/unit/session-telemetry-activity-decisions.test.ts` (the sweep times
   out neither callback for an exempt session, and still does for a task beside it),
   `session-manager-idle-suspend-wiring.test.ts` (a Command Terminal is exempt and never
-  suspended; a task's agent and a workflow's agent are not exempt), `session-idle-timeout.test.ts`
-  (a late report for a terminal is dropped unannounced), and `idle-agent-pause.test.ts` (the
-  low-memory pause). This rule's `paths:` do not cover the sweep files, so these tests are what
+  suspended; a task's agent and a workflow's agent are not exempt), and
+  `session-idle-timeout.test.ts` (a late report for a terminal is dropped unannounced). This rule's
+  `paths:` do not cover the sweep files, so these tests are what
   catches a change there.
 - **Test (detached window):** `tests/unit/pop-out.test.ts` (the project key and its parser),
   `tests/unit/pop-out-window-manager.test.ts` (the project params check) and

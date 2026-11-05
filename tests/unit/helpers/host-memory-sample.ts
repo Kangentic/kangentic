@@ -4,8 +4,8 @@ export const GIBIBYTE = 1024 * 1024 * 1024;
 
 /**
  * A Windows memory sample with this much commit left of a 64 GB limit. On that
- * limit the low-memory pause reads pressure below 2 GB and recovery past 4 GB
- * (`memoryHeadroom`, `evaluateMemoryRelief`).
+ * limit memory reads low below 2 GB and recovered past 4 GB
+ * (`memoryHeadroom`, `updateLowMemoryLatch`).
  */
 export function windowsSample(remainingBytes: number, ts: string = new Date().toISOString()): HostMemorySample {
   return {

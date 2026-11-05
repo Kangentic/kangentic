@@ -181,14 +181,6 @@ export const SETTINGS_SNAPSHOT_ALLOWLIST: readonly SettingsSnapshotEntry[] = [
     read: (config) => config.agent?.idleTimeoutMinutes,
   },
   {
-    // A contested default (on): whether people turn the low-memory pause off
-    // decides whether it stays on.
-    id: 'agent.pauseIdleAgentsOnLowMemory',
-    kind: 'boolean',
-    defaultValue: DEFAULT_CONFIG.agent.pauseIdleAgentsOnLowMemory,
-    read: (config) => config.agent?.pauseIdleAgentsOnLowMemory,
-  },
-  {
     id: 'browserAutomation.enabled',
     kind: 'boolean',
     defaultValue: browserAutomationDefaults.enabled,

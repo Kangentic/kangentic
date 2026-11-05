@@ -174,51 +174,6 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, čekáno # den} few {{projectName}, čekáno # dny} many {{projectName}, čekáno # dne} other {{projectName}, čekáno # dní}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, čekáno # hodinu} few {{projectName}, čekáno # hodiny} many {{projectName}, čekáno # hodiny} other {{projectName}, čekáno # hodin}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, čekáno # minutu} few {{projectName}, čekáno # minuty} many {{projectName}, čekáno # minuty} other {{projectName}, čekáno # minut}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {čekáno # den} few {čekáno # dny} many {čekáno # dne} other {čekáno # dní}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {Čekáno # den} few {Čekáno # dny} many {Čekáno # dne} other {Čekáno # dní}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {čekáno # hodinu} few {čekáno # hodiny} many {čekáno # hodiny} other {čekáno # hodin}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {Čekáno # hodinu} few {Čekáno # hodiny} many {Čekáno # hodiny} other {Čekáno # hodin}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {čekáno # minutu} few {čekáno # minuty} many {čekáno # minuty} other {čekáno # minut}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {Čekáno # minutu} few {Čekáno # minuty} many {Čekáno # minuty} other {Čekáno # minut}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -243,16 +198,6 @@ msgstr "{branchPill} se vytvoří z {basePill} v novém pracovním stromu"
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{branchPill} se vytvoří z {basePill} ve složce projektu"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Nečinný agent pozastaven} one {# nečinný agent pozastaven} few {# nečinní agenti pozastaveni} many {# nečinného agenta pozastaveno} other {# nečinných agentů pozastaveno}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic jej pozastavil, aby uvolnil paměť.} one {Kangentic jej pozastavil, aby uvolnil paměť.} few {Kangentic je pozastavil, aby uvolnil paměť.} many {Kangentic je pozastavil, aby uvolnil paměť.} other {Kangentic je pozastavil, aby uvolnil paměť.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -328,11 +273,6 @@ msgstr "{processCount, plural, one {Po úloze „{taskTitle}“ zůstal běžet 
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {Po {taskCount, plural, one {# úloze} few {# úlohách} many {# úlohy} other {# úlohách}} zůstal běžet # proces.} few {Po {taskCount, plural, one {# úloze} few {# úlohách} many {# úlohy} other {# úlohách}} zůstaly běžet # procesy.} many {Po {taskCount, plural, one {# úloze} few {# úlohách} many {# úlohy} other {# úlohách}} zůstalo běžet # procesu.} other {Po {taskCount, plural, one {# úloze} few {# úlohách} many {# úlohy} other {# úlohách}} zůstalo běžet # procesů.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "Zbývá {remaining} rezervací paměti."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -464,11 +404,6 @@ msgstr "Agent obnoven"
 #, fuzzy
 msgid "Agent started"
 msgstr "Agent spuštěn"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "Nezbývají téměř žádné rezervace paměti."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1138,11 +1073,6 @@ msgstr "Zbylé procesy"
 msgid "Leftover processes stopped"
 msgstr "Zbylé procesy zastaveny"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "Nedostatek paměti"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1523,7 +1453,6 @@ msgid "Retry"
 msgstr "Zkusit znovu"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "Zkontrolovat"
@@ -1594,7 +1523,6 @@ msgid "Session ended"
 msgstr "Relace ukončena"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "Nastavení"

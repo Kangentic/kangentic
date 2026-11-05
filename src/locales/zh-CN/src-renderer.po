@@ -147,42 +147,6 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 小时}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 分钟}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, other {已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, other {已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, other {已等待 # 小时}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, other {已等待 # 小时}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, other {已等待 # 分钟}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, other {已等待 # 分钟}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
 msgstr "{basePill} 将在项目文件夹中检出"
@@ -202,14 +166,6 @@ msgstr "将在新工作树中基于 {basePill} 创建 {branchPill}"
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "将在项目文件夹中基于 {basePill} 创建 {branchPill}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, other {已暂停 # 个空闲智能体}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, other {Kangentic 已将其暂停以释放内存。}}"
 
 #: src/renderer/stores/workflow-store.ts
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
@@ -270,10 +226,6 @@ msgstr "{processCount, plural, other {「{taskTitle}」留下了 # 个仍在运�
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, other {{taskCount, plural, other {# 个任务}}留下了 # 个仍在运行的进程。}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{remaining} of memory reservations left."
-msgstr "内存预留剩余 {remaining}。"
 
 #: src/renderer/utils/format-session.ts
 msgid "{seconds}s"
@@ -385,10 +337,6 @@ msgstr "智能体已恢复"
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Agent started"
 msgstr "智能体已启动"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "Almost no memory reservations left."
-msgstr "内存预留几乎用尽。"
 
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
@@ -927,10 +875,6 @@ msgstr "残留进程"
 msgid "Leftover processes stopped"
 msgstr "残留进程已停止"
 
-#: src/renderer/stores/host-memory-store.ts
-msgid "Low on memory"
-msgstr "内存不足"
-
 #: src/renderer/hooks/useAddProject.ts
 msgid "Make a first commit so each task gets its own worktree."
 msgstr "请先创建首次提交，让每个任务拥有自己的工作树。"
@@ -1238,7 +1182,6 @@ msgid "Retry"
 msgstr "重试"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Review"
 msgstr "查看"
 
@@ -1295,7 +1238,6 @@ msgid "Session ended"
 msgstr "会话已结束"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "设置"
 

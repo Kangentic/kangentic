@@ -165,7 +165,7 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
 - **A queued resume keeps its conversation.** The record it resumed was retired when it queued, so `settleQueuedRecord` suspends it rather than exiting it on a quit, a pause or a move. A queued fresh start still exits, and gives up its minted `agent_session_id`: no CLI wrote that conversation, and the resume guard needs an agent's own report to tell, so keeping the id would `--resume` into "No conversation found".
 - **Drains:** a move's Phase 1 `.finally` (a task that kept its agent frees its old column with no process ending), a rollback, `propagateStrategyToLiveSessions`, an MCP column update, and an applied `kangentic.json`.
 - **Startup** spawns a project's tasks in column-entry order (`orderByColumnEntry`), and a closed project's tasks are admitted, since a limit nothing can read must not strand them.
-- **Known order gaps:** a task still building its worktree can be overtaken on an idle column, a memory-paused task rejoins behind queued peers, and a pty host loss can reorder a column. The limit and the conversations hold in all three.
+- **Known order gaps:** a task still building its worktree can be overtaken on an idle column, and a pty host loss can reorder a column. The limit and the conversations hold in both.
 
 ## Isolated Sessions (Per-Column Session Model)
 

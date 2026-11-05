@@ -105,7 +105,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `windowLightDismiss`
 - `contextBar.*` (all context bar visibility toggles; Task tab)
 - `notifications.*` (all notification settings)
-- `agent.pauseIdleAgentsOnLowMemory`, `agent.idleTimeoutEnabled`, `agent.idleTimeoutMinutes` (the Pausing agents card, in the Performance tab)
+- `agent.idleTimeoutEnabled`, `agent.idleTimeoutMinutes` (the Pausing agents card, in the Performance tab)
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`, `developer.stallProfiler`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers Agent evaluations and names tasks and Command Terminals, in the Workflows tab; see [Automation agent](../architecture/automations/automation-agent.md))

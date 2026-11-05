@@ -2664,8 +2664,8 @@ msgstr "Encerra o que um agente deixou em execução na pasta quando a tarefa é
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Encerra o que uma tarefa deixou em execução após uma pausa por inatividade ou pouca memória ou antes de terminar; salvo em kangentic.json."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Encerra o que uma tarefa deixou em execução após uma pausa por inatividade ou antes de terminar; salvo em kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3094,16 +3094,6 @@ msgstr "Quando ocioso"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Quando o Kangentic pausa agentes que aguardam sua ação."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "Quando a memória estiver baixa"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "Quando a memória estiver baixa, pausa o agente que está esperando por você há mais tempo, um por minuto, até liberar espaço."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

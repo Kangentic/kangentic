@@ -180,10 +180,7 @@ When the nudges run out, or a check cannot run for a whole schedule, you get one
 stalled", on your desktop and your paired phone. The card and the Workflows view's header show
 Stalled with why on hover. Through an outage Kangentic keeps checking every hour, so when the
 service comes back the task moves on by itself. If you answer a stalled task and it stops again
-later, recovery starts over for it, with its own notice. A task the low-memory pause stops comes
-back by itself once memory recovers, one at a time. After three such returns in a day it stays
-paused, and gets the same notice, until you resume it or the first of those returns is a day old.
-A return that fails does not count; the next try waits half an hour. A start that keeps failing for 30
+later, recovery starts over for it, with its own notice. A start that keeps failing for 30
 minutes and a hung turn the interrupt does not end get the notice too. Pausing the workflow
 cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
 **Workflow stalled** switch is in Settings > Notifications.

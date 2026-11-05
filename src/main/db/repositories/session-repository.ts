@@ -527,48 +527,6 @@ export class SessionRepository {
     return new Set(rows.map(r => r.task_id));
   }
 
-  /**
-   * Tasks whose latest session is a low-memory pause (`suspended_by =
-   * 'low_memory'`), with when it was paused, oldest first. For the workflow's
-   * memory resume, which brings a running workflow's tasks back one at a time
-   * once memory recovers (`workflow-memory-resume.ts`). Read on every memory
-   * sampler tick, so it starts from the suspended rows (`idx_sessions_status`)
-   * and checks each is its task's latest (`idx_sessions_task_started`), never
-   * grouping the whole table.
-   */
-  listMemoryPausedTasks(): Array<{ taskId: string; suspendedAt: string | null }> {
-    const rows = this.db.prepare(`
-      SELECT s.task_id, s.suspended_at FROM sessions s
-      WHERE s.status = 'suspended' AND s.suspended_by = 'low_memory'
-        AND NOT EXISTS (
-          SELECT 1 FROM sessions newer
-          WHERE newer.task_id = s.task_id AND newer.started_at > s.started_at
-        )
-      ORDER BY s.suspended_at ASC
-    `).all() as Array<{ task_id: string; suspended_at: string | null }>;
-    return rows.map((row) => ({ taskId: row.task_id, suspendedAt: row.suspended_at }));
-  }
-
-  /**
-   * Tasks whose latest session is a pause Kangentic made (`'auto'`, the idle
-   * timeout, or `'low_memory'`): the parked tasks a project's Stop script may
-   * stop under low memory. A user's Pause and a move's suspend stay out, since a
-   * parked task the user left there may be under test. Same shape of query as
-   * `listMemoryPausedTasks`, for the same reason.
-   */
-  listStopEligiblePausedTasks(): string[] {
-    const rows = this.db.prepare(`
-      SELECT s.task_id FROM sessions s
-      WHERE s.status = 'suspended' AND s.suspended_by IN ('auto', 'low_memory')
-        AND NOT EXISTS (
-          SELECT 1 FROM sessions newer
-          WHERE newer.task_id = s.task_id AND newer.started_at > s.started_at
-        )
-      ORDER BY s.suspended_at ASC
-    `).all() as Array<{ task_id: string }>;
-    return rows.map((row) => row.task_id);
-  }
-
   /** Get all distinct session record IDs (for stale directory cleanup). */
   listAllSessionIds(): string[] {
     const rows = this.db.prepare(

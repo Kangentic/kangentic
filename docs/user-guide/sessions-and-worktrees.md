@@ -1,13 +1,11 @@
 ---
 type: Guide
 title: Sessions and worktrees
-description: "Where an agent runs and how its session survives: per-task git worktrees versus the project folder, branch naming and base branch order, the FIFO session queue, resume after restart and user-paused sessions, and pausing idle agents when memory is low or after an idle timer."
+description: "Where an agent runs and how its session survives: per-task git worktrees versus the project folder, branch naming and base branch order, the FIFO session queue, resume after restart and user-paused sessions, and pausing idle agents after an idle timer."
 tags: [sessions, worktrees, queue, resume, pausing]
 sources:
   - resource: src/main/git/worktree-manager.ts
   - resource: src/main/pty/session-queue.ts
-  - resource: src/main/diagnostics/low-memory-agent-pauser.ts
-  - resource: src/main/diagnostics/idle-agent-pause.ts
 ---
 # Sessions and worktrees
 
@@ -45,7 +43,7 @@ The base is not part of the branch name; the task's worktree records it as `kang
 
 When the max concurrent sessions limit is reached, new sessions are queued automatically. Queued tasks show their place in line on their card, such as "Queued 2/5...", and the task window lists the whole line. When a running session exits or is suspended, the next queued session promotes automatically (FIFO order). A column can also [run one agent at a time](columns-and-automations.md#running-one-agent-at-a-time), and its tasks then wait in the order they entered it.
 
-The limit counts agents, not memory. On Windows each running agent reserves about 1 GB of commit, so a high limit can run the machine short before it fills. See [Low memory warning](troubleshooting.md#low-memory-warning-windows).
+The limit counts agents, not memory.
 
 ## Session Persistence
 
@@ -61,56 +59,20 @@ If Claude Code has already deleted a conversation (it removes transcripts older 
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you, for low memory or the idle timer (see [Pausing agents](#pausing-agents)), stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Pausing agents
 
 An agent waiting on you holds all the memory it reserved: about 1 GB for each Claude Code agent on
-Windows. Kangentic can pause one for you, two ways, both in Settings > Performance > Pausing agents.
-
-**When memory runs low** (on by default). Once a minute, while memory is low, Kangentic pauses the
-agent that has waited on you longest, then reads memory again before the next. It stops once there
-is room. Each platform reads its own signal:
-
-- **Windows:** the room left under the commit limit, the same figure the
-  [low memory warning](troubleshooting.md#low-memory-warning-windows) reads. Low starts at the warning's line and ends
-  at twice it.
-- **Linux:** free memory plus free swap, against RAM plus swap, through the same lines.
-- **macOS:** the system's own memory pressure level. Critical is low and normal is not. At warn,
-  the system's free memory percentage decides, through the same lines as the other platforms, so a
-  Mac that stays at warn with plenty of memory free is left alone.
-
-Only an agent that has waited on you for at least 5 minutes, idle or at a permission prompt, is
-paused. Never an agent that is working, one with text typed into its prompt, one whose terminal is
-on screen, or one with a column command or message on its way to it. Never one waiting on its own
-work either: a background command it started, or a subagent still running past its turn, even
-when its card reads idle. A workflow task its step check found still working in the last hour is
-left alone too. Command Terminals and a workflow's own agent are never paused. An agent paused at a
-permission prompt does not run the tool it was asking about.
+Windows. Kangentic can pause one for you on a timer, in Settings > Performance > Pausing agents.
 
 **When idle** (off by default). Pauses any agent that has waited on you for the minutes you set (30
 by default). It counts idle waits only, not a permission prompt. It never pauses a Command
 Terminal: a pause would end the terminal, and its conversation with it.
 
-Either way the agent stays paused until you resume it: a restart does not bring it back, and
-neither does memory recovering or a move into a column that starts agents. Resume it from its card
-or its task window, as you would one you paused yourself. The conversation picks up where it
-stopped. Pausing frees a slot, so a queued task can start in it.
+The agent stays paused until you resume it: a restart does not bring it back, and neither does a
+move into a column that starts agents. Resume it from its card or its task window, as you would one
+you paused yourself. The conversation picks up where it stopped. Pausing frees a slot, so a queued
+task can start in it.
 
-A running workflow's task is the one exception. Nobody is there overnight to resume it, so once
-memory recovers Kangentic brings its memory-paused tasks back by itself, one at a time and only
-into a free agent slot. A task waiting on you, or one you are resuming yourself, is left alone. A
-task paused again soon after waits longer each time, and after three times in a day it stays
-paused, with one notice, until you resume it or the first of those returns is a day old. See
-[Workflows](workflows.md).
-
-A memory pause says so: a toast reads "Idle agent paused", and as more are paused it counts them
-("3 idle agents paused") in place rather than stacking. Its **Review** button lists them, longest
-wait first, with each project's name when they come from more than one. Each row has its own
-**Resume**, which brings that agent back without opening the task, and the row then reads Running.
-There is no Resume all, since bringing every agent back at once would fill the memory that was
-just freed. The toast counts down as agents come back, from its list, from a card, window or
-move, or by themselves in a running workflow, and as their tasks move to To Do or are deleted. It closes once none on it is still paused.
-An open list stays up until you close it. Closing the toast yourself clears the list too, and the
-next pause starts a new one. An idle timer pause shows a short "Agent paused" toast for its task
-instead.
+A short "Agent paused" toast names the task.

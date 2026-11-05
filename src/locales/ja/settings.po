@@ -2664,8 +2664,8 @@ msgstr "タスクの完了時、To Do への戻し時、削除時、またはコ
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "アイドル時やメモリ不足による一時停止の後、またはタスクの完了前に、タスクが実行したまま残したものを停止します。kangentic.json に保存されます。"
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "アイドルによる一時停止の後、またはタスクの完了前に、タスクが実行したまま残したものを停止します。kangentic.json に保存されます。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3094,16 +3094,6 @@ msgstr "アイドル時"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic が入力待ちのエージェントを一時停止するタイミング。"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "メモリ不足時"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "メモリが不足したら、空きができるまで、最も長く応答を待っているエージェントを 1 分に 1 つずつ一時停止します。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

@@ -37,10 +37,9 @@ export const HEAVY_IDLE_SHUTDOWN_MS = 2 * 60_000;
  * as a number. Both callers read a null as "not over the ceiling", so the
  * short window is a Windows-only escalation and every other platform keeps
  * the standard idle recycle. That is the intended shape, not a gap to close
- * with `workingSetSize`: commit is a Windows accounting concept, and the
- * low-memory warning this ceiling serves is itself gated to win32
+ * with `workingSetSize`: commit is a Windows accounting concept
  * (`hasVerifiedCommitReading` in diagnostics/host-memory.ts), so the
- * escalation is absent exactly where the pressure it answers cannot be read.
+ * escalation is absent exactly where the figure it answers cannot be read.
  */
 export function readProcessCommitBytes(pid: number): number | null {
   for (const entry of app.getAppMetrics()) {

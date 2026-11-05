@@ -126,7 +126,6 @@ vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() 
 const { registerTurnEndAutomations, catchUpAfterResume } = await import('../../src/main/automations/turn-end/turn-end-runner');
 const {
   announceWorkflowStall,
-  noteWorkflowTaskPaused,
   nudgeMessage,
   RECOVERY_DELAYS_MS,
   OUTAGE_RETRY_MS,
@@ -1201,42 +1200,6 @@ describe('a running workflow task whose turn ends without its step done', () => 
     await wait(RECOVERY_DELAYS_MS[1]);
     expect(nudges()).toHaveLength(2);
     expect(nudges()[1]).not.toContain('Kangentic restarted');
-  });
-
-  // Red before (seen live): the resumed session's first idle armed the
-  // schedule's first step, the memory resume's catch-up kept that timer, and
-  // the nudge came five minutes after the agent was back.
-  it('after a memory resume, nudges at once even when the resumed session\'s first idle armed the schedule first', async () => {
-    await endTurn(41, STALLED_REPLY);
-    noteWorkflowTaskPaused(context, taskId);
-    replyAt = Date.now() - MINUTE;
-    await wait(10 * MINUTE);
-
-    // The resumed session commits idle before its catch-up has read the reply.
-    sessionManager.emit('activity', SESSION_ID, 'idle');
-    await settle();
-    expect(isUnderWorkflowRecovery(taskId)).toBe(true);
-    await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial, resumedBy: 'memory' });
-    await settle();
-    await wait(1_000);
-
-    expect(nudges()).toHaveLength(1);
-    expect(nudges()[0]).not.toContain('Kangentic restarted');
-  });
-
-  it('stops recovery quietly when low memory pauses a task under recovery: its agent comes back by itself', async () => {
-    await endTurn(41, STALLED_REPLY);
-
-    noteWorkflowTaskPaused(context, taskId);
-
-    expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-    // No notice: a running workflow's task resumes on its own once memory recovers.
-    expect(stallNotices()).toHaveLength(0);
-    // A boundary, so the agent that comes back starts its recovery from the first step.
-    expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_recovery_start'
-      && run.detail?.includes('Paused to free memory'))).toBe(true);
-    await wait(2 * 60 * MINUTE);
-    expect(nudges()).toHaveLength(0);
   });
 
   // A turn that never ends keeps the session busy at every attempt. Recovery

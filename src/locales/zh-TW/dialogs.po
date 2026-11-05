@@ -39,14 +39,6 @@ msgstr "「{taskTitle}」已在看板上。"
 msgid "({deleteFailureCount} failed)"
 msgstr "（{deleteFailureCount} 個失敗）"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, other {已暫停 # 個代理以釋放記憶體}}"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr ""
-
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{ahead} ahead, {behind} behind base branch"
 msgstr "領先基礎分支 {ahead}，落後 {behind}"
@@ -561,7 +553,6 @@ msgstr "清除"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
 msgctxt "button"
@@ -2028,24 +2019,10 @@ msgstr "還原至"
 msgid "Restore to board"
 msgstr "還原至看板"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task action"
-msgid "Resume"
-msgstr "繼續"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "Resume {taskTitle}"
-msgstr "繼續 {taskTitle}"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Resume session"
 msgstr "恢復工作階段"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task status"
-msgid "Resuming"
-msgstr "正在繼續"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Resuming agent..."
@@ -2077,11 +2054,6 @@ msgstr "在專案資料夾中執行"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Run one agent in this column at a time"
 msgstr ""
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task status"
-msgid "Running"
-msgstr "執行中"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "completed task card"
@@ -2627,10 +2599,6 @@ msgstr "未命名"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Untitled column"
 msgstr "未命名欄"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "Untitled task"
-msgstr "未命名任務"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"
