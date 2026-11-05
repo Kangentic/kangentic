@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
+import { Check, CircleAlert, KeyRound, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -15,6 +15,7 @@ import { Pill } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
+import { BaseDialog } from '../../dialogs/BaseDialog';
 
 /**
  * The SSH tab (#913): Linux machines Kangentic runs agents on, and the `ssh` program it connects with.
@@ -109,7 +110,8 @@ export function SshTab() {
   const removeHost = useSshStore((state) => state.removeHost);
   const renameHost = useSshStore((state) => state.renameHost);
   const reconnectHost = useSshStore((state) => state.reconnectHost);
-  const forgetHostKey = useSshStore((state) => state.forgetHostKey);
+  const probeChangedKey = useSshStore((state) => state.probeChangedKey);
+  const trustNewKey = useSshStore((state) => state.trustNewKey);
 
   const hostsHeading = settingProps('ssh.hosts');
   const clientHeading = settingProps('ssh.client');
@@ -128,6 +130,27 @@ export function SshTab() {
   const [renameDraft, setRenameDraft] = useState('');
   const [rowError, setRowError] = useState<{ hostId: string; message: string } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<SshHostStatus | null>(null);
+  /** A host whose key changed, with the key it presents now, while the user decides whether to trust it. */
+  const [trustTarget, setTrustTarget] = useState<{ status: SshHostStatus; probe: SshHostKeyProbe } | null>(null);
+  const [trustBusy, setTrustBusy] = useState(false);
+
+  async function openTrustNewKey(status: SshHostStatus): Promise<void> {
+    setRowError(null);
+    try {
+      setTrustTarget({ status, probe: await probeChangedKey(status.host.id) });
+    } catch (error) {
+      setRowError({ hostId: status.host.id, message: describeIpcError(error) });
+    }
+  }
+
+  async function confirmTrustNewKey(): Promise<void> {
+    if (!trustTarget) return;
+    const { status, probe } = trustTarget;
+    setTrustBusy(true);
+    await runRowAction(status.host.id, () => trustNewKey(status.host.id, probe.fingerprint));
+    setTrustBusy(false);
+    setTrustTarget(null);
+  }
   /**
    * Counts Add host sessions. Cancel can run while a probe or an add is in flight, and the answer must
    * then land nowhere: not reopen the form on the trust step, not write an error into a closed one.
@@ -313,6 +336,19 @@ export function SshTab() {
                             </Tooltip>
                           </div>
                           <div className="shrink-0 flex items-center gap-1">
+                            {changedKey ? (
+                              <Tooltip label={t`Trust new key`}>
+                                <button
+                                  type="button"
+                                  className="rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
+                                  aria-label={t`Trust new key`}
+                                  data-testid="ssh-host-trust-new-key"
+                                  onClick={() => void openTrustNewKey(status)}
+                                >
+                                  <KeyRound size={14} />
+                                </button>
+                              </Tooltip>
+                            ) : null}
                             {status.state !== 'connected' ? (
                               <Tooltip label={t`Reconnect`}>
                                 <button
@@ -374,16 +410,6 @@ export function SshTab() {
                     {detail ? (
                       <div>
                         <ReportedError error={detail} testId="ssh-host-error" />
-                        {changedKey ? (
-                          <button
-                            type="button"
-                            className="mt-2 rounded-md border border-edge px-3 py-1 text-xs text-fg-secondary hover:bg-surface-hover transition-colors"
-                            data-testid="ssh-host-forget-key"
-                            onClick={() => void runRowAction(host.id, () => forgetHostKey(host.id))}
-                          >
-                            <Trans>Forget old key</Trans>
-                          </button>
-                        ) : null}
                       </div>
                     ) : null}
                     {rowError?.hostId === host.id ? <ReportedError error={rowError.message} testId="ssh-host-row-error" /> : null}
@@ -577,6 +603,57 @@ export function SshTab() {
           <CardStatusRow label={t`ssh not found`} value={client.error ?? ''} tone="failure" testId="ssh-client-status" />
         )}
       </SettingsCard>
+
+      {trustTarget ? (
+        <BaseDialog
+          onClose={() => setTrustTarget(null)}
+          title={t`New host key`}
+          testId="ssh-trust-new-key"
+          footer={
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setTrustTarget(null)}
+                className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+                data-testid="ssh-trust-new-key-cancel"
+              >
+                <Trans>Cancel</Trans>
+              </button>
+              <button
+                type="button"
+                disabled={trustBusy}
+                onClick={() => void confirmTrustNewKey()}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on disabled:opacity-50"
+                data-testid="ssh-trust-new-key-confirm"
+              >
+                {trustBusy ? <Loader2 size={12} className="animate-spin" /> : null}
+                <Trans>Trust new key</Trans>
+              </button>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-fg-secondary">
+              <Trans>{trustTarget.probe.hostname} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled.</Trans>
+            </p>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              <dt className="text-fg-faint"><Trans>Type</Trans></dt>
+              <dd className="font-mono text-fg-secondary">{trustTarget.probe.keyType}</dd>
+              {trustTarget.probe.previousFingerprint ? (
+                <>
+                  <dt className="text-fg-faint"><Trans>Before</Trans></dt>
+                  <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-previous-fingerprint">{trustTarget.probe.previousFingerprint}</dd>
+                </>
+              ) : null}
+              <dt className="text-fg-faint"><Trans>Now</Trans></dt>
+              <dd className="font-mono text-fg-secondary select-text [overflow-wrap:anywhere]" data-testid="ssh-trust-new-fingerprint">{trustTarget.probe.fingerprint}</dd>
+            </dl>
+            <p className="text-xs text-fg-faint">
+              <Trans>Kangentic records it once and connects. Its other hosts are not affected.</Trans>
+            </p>
+          </div>
+        </BaseDialog>
+      ) : null}
 
       {removeTarget ? (
         <ConfirmDialog

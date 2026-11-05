@@ -245,18 +245,62 @@ export async function trustHostKey(destination: string, shownFingerprint: string
   if (probe.fingerprint !== shownFingerprint) {
     throw new Error('The host presented a different key than the one you were shown, so nothing was trusted. Try again, and compare the fingerprint.');
   }
+  await recordKnownHostsLine(target, probe.knownHostsLine);
+  return probe;
+}
+
+/** Add a key line to the user's own known_hosts, once. */
+async function recordKnownHostsLine(target: ResolvedTarget, knownHostsLine: string): Promise<void> {
   await fs.mkdir(path.dirname(target.userKnownHostsFile), { recursive: true, mode: 0o700 });
   const existing = await fs.readFile(target.userKnownHostsFile, 'utf8').catch(() => '');
-  if (existing.split(/\r?\n/).some((line) => line.trim() === probe.knownHostsLine)) return probe;
-  await fs.appendFile(target.userKnownHostsFile, `${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}${probe.knownHostsLine}\n`, { mode: 0o600 });
-  return probe;
+  if (existing.split(/\r?\n/).some((line) => line.trim() === knownHostsLine)) return;
+  await fs.appendFile(target.userKnownHostsFile, `${existing.length > 0 && !existing.endsWith('\n') ? '\n' : ''}${knownHostsLine}\n`, { mode: 0o600 });
 }
 
 /** Remove a host's recorded key, so the next connection asks again. Used when it changed and the user knows why. */
 export async function forgetHostKey(destination: string, deps: SshSetupDeps): Promise<void> {
-  const target = await resolveTarget(destination, deps);
+  await removeRecordedKey(await resolveTarget(destination, deps), deps);
+}
+
+async function removeRecordedKey(target: ResolvedTarget, deps: SshSetupDeps): Promise<void> {
   const result = await deps.run(deps.sshKeygenPath, ['-R', knownHostsToken(target), '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
   if (result.code !== 0 && !/not found/i.test(result.stdout + result.stderr)) throw new Error(result.stderr.trim() || 'ssh-keygen could not remove the old key.');
+}
+
+/**
+ * The fingerprint the user trusted for a host before its key changed, read from their own known_hosts with
+ * `ssh-keygen -F`, or null when there is none or it cannot be read. Never throws: it only adds a line to a
+ * dialog that works without it.
+ */
+export async function readRecordedFingerprint(destination: string, deps: SshSetupDeps): Promise<string | null> {
+  try {
+    const target = await resolveTarget(destination, deps);
+    const result = await deps.run(deps.sshKeygenPath, ['-F', knownHostsToken(target), '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
+    if (result.code !== 0) return null;
+    // `-F` prints a comment line, then the matching known_hosts line, whose host field is hashed by default.
+    const entry = result.stdout.split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/))
+      .find((parts) => parts.length >= 3 && !parts[0].startsWith('#') && !parts[0].startsWith('@'));
+    return entry ? fingerprintOf(entry[2]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A host's key changed and the user, shown the new fingerprint, trusts it: forget the old key and record the
+ * new one. The key is read again and must still carry the fingerprint the user was shown, or nothing is
+ * touched, so the old key is never removed for a key the user did not see.
+ */
+export async function replaceHostKey(destination: string, shownFingerprint: string, deps: SshSetupDeps): Promise<HostKeyProbe> {
+  const target = await resolveTarget(destination, deps);
+  const probe = await probeHostKey(destination, deps, target);
+  if (probe.fingerprint !== shownFingerprint) {
+    throw new Error('The host presented a different key than the one you were shown, so nothing was changed. Try again, and compare the fingerprint.');
+  }
+  await removeRecordedKey(target, deps);
+  await recordKnownHostsLine(target, probe.knownHostsLine);
+  return probe;
 }
 
 // ---------------------------------------------------------------------------------------------

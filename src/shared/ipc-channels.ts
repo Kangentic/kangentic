@@ -338,7 +338,8 @@ export const IPC = {
   SSH_RENAME_HOST: 'ssh:renameHost',
   SSH_RECONNECT_HOST: 'ssh:reconnectHost',
   SSH_HOST_PROGRAM: 'ssh:hostProgram',
-  SSH_FORGET_HOST_KEY: 'ssh:forgetHostKey',
+  SSH_PROBE_CHANGED_KEY: 'ssh:probeChangedKey',
+  SSH_TRUST_NEW_KEY: 'ssh:trustNewKey',
   SSH_PROBE_REMOTE_FOLDER: 'ssh:probeRemoteFolder',
   SSH_HOSTS_CHANGED: 'ssh:hostsChanged',
 

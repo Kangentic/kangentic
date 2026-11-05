@@ -406,6 +406,43 @@ describe('removing a host', () => {
   });
 });
 
+describe('a host whose key changed', () => {
+  it('reads the key it presents now, with no fingerprint before when none is recorded, and trusts nothing', async () => {
+    const rig = makeRig();
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'dev@lab.example.test', key_path: null, key_created: false, created_at: '' });
+
+    const probe = await rig.admin.probeChangedHostKey('h1');
+
+    expect(probe).toEqual({ hostname: 'lab.example.test', port: 22, keyType: 'ssh-ed25519', fingerprint: FINGERPRINT, previousFingerprint: null });
+    expect(rig.connectHost).not.toHaveBeenCalled();
+  });
+
+  it('trusts the key the user was shown and connects the host', async () => {
+    const rig = makeRig();
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'dev@lab.example.test', key_path: null, key_created: false, created_at: '' });
+
+    const status = await rig.admin.trustNewHostKey('h1', FINGERPRINT);
+
+    expect(rig.connectHost).toHaveBeenCalledWith('h1');
+    expect(status.host.id).toBe('h1');
+  });
+
+  it('connects nothing when the host now presents a different key than the one shown', async () => {
+    const rig = makeRig({ keyBlob: Buffer.from('another key blob that is not the one the user was shown').toString('base64') });
+    rig.hosts.push({ id: 'h1', name: 'Lab', destination: 'dev@lab.example.test', key_path: null, key_created: false, created_at: '' });
+
+    await expect(rig.admin.trustNewHostKey('h1', FINGERPRINT)).rejects.toThrow('different key than the one you were shown');
+
+    expect(rig.connectHost).not.toHaveBeenCalled();
+  });
+
+  it('refuses a host that is not set up', async () => {
+    const rig = makeRig();
+    await expect(rig.admin.probeChangedHostKey('missing')).rejects.toThrow('not set up');
+    await expect(rig.admin.trustNewHostKey('missing', FINGERPRINT)).rejects.toThrow('not set up');
+  });
+});
+
 describe('the program on a host', () => {
   it('reports the host\'s program with this app\'s version beside it', async () => {
     const rig = makeRig();

@@ -61,7 +61,8 @@ export function registerSshHostHandlers(context: IpcContext): SshHostAdmin | nul
   ipcMain.handle(IPC.SSH_RENAME_HOST, (_event, hostId: string, name: string): void => admin.renameHost(hostId, name));
   ipcMain.handle(IPC.SSH_RECONNECT_HOST, (_event, hostId: string): Promise<SshHostStatus> => admin.reconnectHost(hostId));
   ipcMain.handle(IPC.SSH_HOST_PROGRAM, (_event, hostId: string): Promise<SshHostProgram> => admin.hostProgram(hostId));
-  ipcMain.handle(IPC.SSH_FORGET_HOST_KEY, (_event, hostId: string): Promise<void> => admin.forgetHostKey(hostId));
+  ipcMain.handle(IPC.SSH_PROBE_CHANGED_KEY, (_event, hostId: string): Promise<SshHostKeyProbe> => admin.probeChangedHostKey(hostId));
+  ipcMain.handle(IPC.SSH_TRUST_NEW_KEY, (_event, hostId: string, shownFingerprint: string): Promise<SshHostStatus> => admin.trustNewHostKey(hostId, shownFingerprint));
   ipcMain.handle(IPC.SSH_PROBE_REMOTE_FOLDER, (_event, hostId: string, folderPath: string): Promise<SshRemoteFolderProbe> => admin.probeRemoteFolder(hostId, folderPath));
   return admin;
 }

@@ -830,7 +830,8 @@ const api: ElectronAPI = {
     renameHost: (hostId, name) => ipcRenderer.invoke(IPC.SSH_RENAME_HOST, hostId, name),
     reconnectHost: (hostId) => ipcRenderer.invoke(IPC.SSH_RECONNECT_HOST, hostId),
     hostProgram: (hostId) => ipcRenderer.invoke(IPC.SSH_HOST_PROGRAM, hostId),
-    forgetHostKey: (hostId) => ipcRenderer.invoke(IPC.SSH_FORGET_HOST_KEY, hostId),
+    probeChangedKey: (hostId) => ipcRenderer.invoke(IPC.SSH_PROBE_CHANGED_KEY, hostId),
+    trustNewKey: (hostId, shownFingerprint) => ipcRenderer.invoke(IPC.SSH_TRUST_NEW_KEY, hostId, shownFingerprint),
     probeRemoteFolder: (hostId, folderPath) => ipcRenderer.invoke(IPC.SSH_PROBE_REMOTE_FOLDER, hostId, folderPath),
     onHostsChanged: (callback) => {
       const handler = () => callback();

@@ -12,6 +12,11 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
+#. placeholder {0}: trustTarget.probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #, fuzzy
 msgid "{blurb}. Opens the docs page."
@@ -496,6 +501,10 @@ msgstr "막대"
 #, fuzzy
 msgid "Basic accuracy"
 msgstr "기본 정확도"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
 
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
@@ -1332,11 +1341,6 @@ msgstr "글꼴 크기"
 msgid "Foreground"
 msgstr "전경"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Forget old key"
-msgstr "이전 키 삭제"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
@@ -1622,6 +1626,10 @@ msgstr "Kangentic이 사본을 보관합니다. 암호 구문이 있는 키는 S
 #, fuzzy
 msgid "Kangentic Mobile"
 msgstr "Kangentic 모바일"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once and connects. Its other hosts are not affected."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -1942,6 +1950,10 @@ msgstr "인덱싱 필요"
 msgid "Needs the Knowledge Graph"
 msgstr "Knowledge Graph 필요"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
@@ -2023,6 +2035,10 @@ msgstr "아직 커밋된 항목 없음"
 #, fuzzy
 msgid "Notifications"
 msgstr "알림"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -3154,6 +3170,10 @@ msgstr "음성 변환"
 #, fuzzy
 msgid "Transition and motion effects."
 msgstr "전환 및 모션 효과입니다."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy

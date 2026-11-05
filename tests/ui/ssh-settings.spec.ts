@@ -195,29 +195,92 @@ test('shows an unreachable host with ssh\'s words, and reconnecting clears it', 
   await expect(row.locator('[data-testid="ssh-host-error"]')).toContainText('Connection timed out');
   await expect(row.locator('[data-testid="ssh-host-project-count"]')).toHaveText('2 projects');
   await expect(row.locator('[data-testid="ssh-host-reconnect"]')).toBeVisible();
-  await expect(row.locator('[data-testid="ssh-host-forget-key"]')).toHaveCount(0);
+  await expect(row.locator('[data-testid="ssh-host-trust-new-key"]')).toHaveCount(0);
 
   await page.evaluate(() => {
     delete (window as unknown as Record<string, unknown>).__mockSshHosts;
   });
 });
 
-test('offers Forget old key only when the host\'s key has changed', async () => {
-  await page.evaluate(() => {
-    (window as unknown as Record<string, unknown>).__mockSshHosts = [{
-      host: { id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '2026-11-03T00:00:00.000Z' },
-      state: 'unreachable',
-      detail: '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@',
-      since: '2026-11-03T00:00:00.000Z',
-      projectCount: 0,
-    }];
+test.describe('a host whose key changed', () => {
+  const NEW_FINGERPRINT = 'SHA256:Zk3Qn8vL0t1mXq5bPcR7yHdE2uWf9aJsKoT4iVgN6xA';
+  const OLD_FINGERPRINT = 'SHA256:b7Hc1nUe5oYw2DpQzR8kLm0XjVt3sAiG9fKq4NxE6yM';
+
+  async function seedChangedKey() {
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as Record<string, unknown>;
+      mockWindow.__mockSshHosts = [{
+        host: { id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '2026-11-03T00:00:00.000Z' },
+        state: 'unreachable',
+        detail: '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@',
+        since: '2026-11-03T00:00:00.000Z',
+        projectCount: 0,
+      }];
+      delete mockWindow.__mockSshTrustedNewKey;
+    });
+  }
+
+  test.afterEach(async () => {
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as Record<string, unknown>;
+      delete mockWindow.__mockSshHosts;
+      delete mockWindow.__mockSshTrustedNewKey;
+    });
   });
-  await openSshTab();
 
-  await expect(page.locator('[data-testid="ssh-host-forget-key"]')).toBeVisible();
+  test('offers Trust new key only when the host\'s key has changed', async () => {
+    await seedChangedKey();
+    await openSshTab();
 
-  await page.evaluate(() => {
-    delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+    await expect(page.locator('[data-testid="ssh-host-trust-new-key"]')).toBeVisible();
+    // There is no block under the error: the action is an icon with the row's other actions.
+    await expect(page.locator('[data-testid="ssh-host-error"]').locator('button')).toHaveCount(0);
+  });
+
+  test('shows the key before and now, and trusts nothing until the user confirms', async () => {
+    await seedChangedKey();
+    await openSshTab();
+
+    await page.locator('[data-testid="ssh-host-trust-new-key"]').click();
+
+    const dialog = page.locator('[data-testid="ssh-trust-new-key"]');
+    await expect(dialog).toContainText('New host key');
+    await expect(dialog.locator('[data-testid="ssh-trust-previous-fingerprint"]')).toHaveText(OLD_FINGERPRINT);
+    await expect(dialog.locator('[data-testid="ssh-trust-new-fingerprint"]')).toHaveText(NEW_FINGERPRINT);
+
+    await dialog.locator('[data-testid="ssh-trust-new-key-cancel"]').click();
+    await expect(dialog).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__mockSshTrustedNewKey)).toBeUndefined();
+  });
+
+  test('trusts the fingerprint it showed, and closes', async () => {
+    await seedChangedKey();
+    await openSshTab();
+
+    await page.locator('[data-testid="ssh-host-trust-new-key"]').click();
+    await page.locator('[data-testid="ssh-trust-new-key-confirm"]').click();
+
+    await expect(page.locator('[data-testid="ssh-trust-new-key"]')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__mockSshTrustedNewKey)).toEqual({ hostId: 'h1', fingerprint: NEW_FINGERPRINT });
+  });
+
+  test('leaves out the key before when it cannot be read, and the dialog still works', async () => {
+    await seedChangedKey();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshProbeResult = {
+        hostname: 'lab', port: 22, keyType: 'ssh-ed25519', fingerprint: 'SHA256:Zk3Qn8vL0t1mXq5bPcR7yHdE2uWf9aJsKoT4iVgN6xA', previousFingerprint: null,
+      };
+    });
+    await openSshTab();
+
+    await page.locator('[data-testid="ssh-host-trust-new-key"]').click();
+
+    await expect(page.locator('[data-testid="ssh-trust-new-fingerprint"]')).toBeVisible();
+    await expect(page.locator('[data-testid="ssh-trust-previous-fingerprint"]')).toHaveCount(0);
+    await page.locator('[data-testid="ssh-trust-new-key-cancel"]').click();
+    await page.evaluate(() => {
+      delete (window as unknown as Record<string, unknown>).__mockSshProbeResult;
+    });
   });
 });
 

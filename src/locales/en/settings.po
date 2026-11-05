@@ -12,6 +12,11 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr "{0, plural, one {# terminal running} other {# terminals running}}"
 
+#. placeholder {0}: trustTarget.probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgstr "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Opens the docs page."
@@ -401,6 +406,10 @@ msgstr "Bar"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Basic accuracy"
 msgstr "Basic accuracy"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr "Before"
 
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Behavior"
@@ -1077,10 +1086,6 @@ msgstr "Font size"
 msgid "Foreground"
 msgstr "Foreground"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Forget old key"
-msgstr "Forget old key"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Forwards encrypted traffic and never holds your keys."
 msgstr "Forwards encrypted traffic and never holds your keys."
@@ -1310,6 +1315,10 @@ msgstr "Kangentic keeps a copy. A key with a passphrase must be in your SSH agen
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once and connects. Its other hosts are not affected."
+msgstr "Kangentic records it once and connects. Its other hosts are not affected."
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
@@ -1569,6 +1578,10 @@ msgstr "Needs indexing"
 msgid "Needs the Knowledge Graph"
 msgstr "Needs the Knowledge Graph"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr "New host key"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No camera? Copy the link and paste it into the app."
 msgstr "No camera? Copy the link and paste it into the app."
@@ -1634,6 +1647,10 @@ msgstr "Nothing committed yet"
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Notifications"
 msgstr "Notifications"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr "Now"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "close on outside click"
@@ -2551,6 +2568,10 @@ msgstr "Transcription"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Transition and motion effects."
 msgstr "Transition and motion effects."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr "Trust new key"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust this key"

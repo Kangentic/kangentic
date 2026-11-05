@@ -29,11 +29,12 @@ import {
   createHostKey,
   deleteHostKeys,
   detectSshClient,
-  forgetHostKey,
   importHostKey,
   installPublicKeyWithPassword,
   probeHostKey,
+  readRecordedFingerprint,
   removeKeyCommand,
+  replaceHostKey,
   trustHostKey,
   type SshSetupDeps,
 } from './ssh-setup';
@@ -164,8 +165,23 @@ export class SshHostAdmin {
     };
   }
 
-  async forgetHostKey(hostId: string): Promise<void> {
-    await forgetHostKey(this.requireHost(hostId).destination, this.deps.setup);
+  /**
+   * The key a host whose key changed presents now, with the fingerprint the user trusted before when it can
+   * be read. Trusts nothing: the dialog shows it and the user decides.
+   */
+  async probeChangedHostKey(hostId: string): Promise<SshHostKeyProbe> {
+    const host = this.requireHost(hostId);
+    const probe = await probeHostKey(host.destination, this.deps.setup);
+    const previousFingerprint = await readRecordedFingerprint(host.destination, this.deps.setup);
+    return { hostname: probe.hostname, port: probe.port, keyType: probe.keyType, fingerprint: probe.fingerprint, previousFingerprint };
+  }
+
+  /** Trust the key the user was shown for a host whose key changed, then connect. */
+  async trustNewHostKey(hostId: string, shownFingerprint: string): Promise<SshHostStatus> {
+    const host = this.requireHost(hostId);
+    await replaceHostKey(host.destination, shownFingerprint, this.deps.setup);
+    await this.deps.hosting.connectHost(hostId);
+    return this.statusOf(host);
   }
 
   /**

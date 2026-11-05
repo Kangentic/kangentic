@@ -12,6 +12,11 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
+#. placeholder {0}: trustTarget.probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #, fuzzy
 msgid "{blurb}. Opens the docs page."
@@ -496,6 +501,10 @@ msgstr "Вертикальная черта"
 #, fuzzy
 msgid "Basic accuracy"
 msgstr "Базовая точность"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
 
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
@@ -1332,11 +1341,6 @@ msgstr "Размер шрифта"
 msgid "Foreground"
 msgstr "Цвет текста"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Forget old key"
-msgstr "Забыть старый ключ"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
@@ -1622,6 +1626,10 @@ msgstr "Kangentic хранит копию. Ключ с парольной фра
 #, fuzzy
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once and connects. Its other hosts are not affected."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -1942,6 +1950,10 @@ msgstr "Требуется индексация"
 msgid "Needs the Knowledge Graph"
 msgstr "Требуется граф знаний"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
@@ -2023,6 +2035,10 @@ msgstr "Коммитов пока нет"
 #, fuzzy
 msgid "Notifications"
 msgstr "Уведомления"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -3154,6 +3170,10 @@ msgstr "Транскрипция"
 #, fuzzy
 msgid "Transition and motion effects."
 msgstr "Эффекты переходов и движения."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy

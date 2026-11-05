@@ -38,7 +38,10 @@ interface SshStore {
   removeHost: (hostId: string) => Promise<void>;
   renameHost: (hostId: string, name: string) => Promise<void>;
   reconnectHost: (hostId: string) => Promise<void>;
-  forgetHostKey: (hostId: string) => Promise<void>;
+  /** The key a host whose key changed presents now, with the fingerprint trusted before when known. Trusts nothing. */
+  probeChangedKey: (hostId: string) => Promise<SshHostKeyProbe>;
+  /** Trust the key the user was shown, replacing the old one, and connect. */
+  trustNewKey: (hostId: string, shownFingerprint: string) => Promise<void>;
   /** What the program on a connected host reports. Rejects with the reason while the host cannot answer. */
   hostProgram: (hostId: string) => Promise<SshHostProgram>;
   probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
@@ -113,8 +116,11 @@ const createSshStore = () => create<SshStore>((set, get) => ({
     await get().loadHosts();
   },
 
-  forgetHostKey: async (hostId) => {
-    await window.electronAPI.ssh.forgetHostKey(hostId);
+  probeChangedKey: (hostId) => window.electronAPI.ssh.probeChangedKey(hostId),
+
+  trustNewKey: async (hostId, shownFingerprint) => {
+    await window.electronAPI.ssh.trustNewKey(hostId, shownFingerprint);
+    await get().loadHosts();
   },
 
   hostProgram: (hostId) => window.electronAPI.ssh.hostProgram(hostId),

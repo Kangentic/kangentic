@@ -28,7 +28,9 @@ import {
   parseSshConfigDump,
   pickKnownHostsEntry,
   probeHostKey,
+  readRecordedFingerprint,
   removeKeyCommand,
+  replaceHostKey,
   runProgram,
   trustHostKey,
   type RunProgram,
@@ -197,6 +199,103 @@ describe('a host key', () => {
 
     const call = run.calls.find((candidate) => candidate.file === 'ssh-keygen')!;
     expect(call.args).toEqual(['-R', 'lab.example.test', '-f', path.join(home, '.ssh', 'known_hosts')]);
+  });
+});
+
+describe('a host whose key changed', () => {
+  const OLD_BLOB = Buffer.from('the key this host presented before it was rebuilt, long enough').toString('base64');
+  const OLD_FINGERPRINT = fingerprintOf(OLD_BLOB);
+  const knownHostsPath = (): string => path.join(home, '.ssh', 'known_hosts');
+
+  /** Plays ssh-keygen over the fake ssh: -F finds a host's line in the file, -R removes it. */
+  function withKeygen(run: ReturnType<typeof makeRun>): ReturnType<typeof makeRun> {
+    const wrapped = (async (file: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+      if (file === 'ssh-keygen' && (args[0] === '-F' || args[0] === '-R')) {
+        run.calls.push({ file, args, env: options?.env });
+        // As the real one: a file that is not there is "not found", which a forget treats as nothing to do.
+        if (!fs.existsSync(args[3])) return { code: 1, stdout: '', stderr: `${args[3]} not found` };
+        const text = fs.readFileSync(args[3], 'utf8');
+        const lines = text.split('\n').filter((line) => line.trim() !== '');
+        const matching = lines.filter((line) => line.split(' ')[0].split(',').includes(args[1]));
+        if (args[0] === '-F') {
+          return matching.length === 0
+            ? { code: 1, stdout: '', stderr: '' }
+            : { code: 0, stdout: `# Host ${args[1]} found: line 1\n${matching.join('\n')}\n`, stderr: '' };
+        }
+        fs.writeFileSync(args[3], `${lines.filter((line) => !matching.includes(line)).join('\n')}\n`);
+        return { code: 0, stdout: '', stderr: '' };
+      }
+      return run(file, args, options as never);
+    }) as RunProgram & { calls: typeof run.calls };
+    wrapped.calls = run.calls;
+    return wrapped;
+  }
+
+  function recordOldKey(): void {
+    fs.mkdirSync(path.dirname(knownHostsPath()), { recursive: true });
+    fs.writeFileSync(knownHostsPath(), `other ssh-ed25519 ZZZZ\nlab.example.test ssh-ed25519 ${OLD_BLOB}\n`);
+  }
+
+  it('reads the fingerprint the user trusted before, from their own known_hosts', async () => {
+    recordOldKey();
+    const run = withKeygen(makeRun());
+
+    expect(await readRecordedFingerprint('lab', makeDeps(run))).toBe(OLD_FINGERPRINT);
+
+    const call = run.calls.find((candidate) => candidate.file === 'ssh-keygen')!;
+    expect(call.args).toEqual(['-F', 'lab.example.test', '-f', knownHostsPath()]);
+  });
+
+  it('reads a hashed known_hosts line too, since ssh-keygen prints the matching line whatever its host field', async () => {
+    const run = (async (file: string, args: string[]) => {
+      if (args[0] === '-G') return { code: 0, stdout: configDump(), stderr: '' };
+      return { code: 0, stdout: `# Host lab.example.test found: line 4\n|1|c2FsdA==|aGFzaA== ssh-ed25519 ${OLD_BLOB}\n`, stderr: '' };
+    }) as RunProgram;
+
+    expect(await readRecordedFingerprint('lab', makeDeps(run))).toBe(OLD_FINGERPRINT);
+  });
+
+  it.each([
+    ['no line for the host', async () => ({ code: 1, stdout: '', stderr: '' })],
+    ['a comment and no key', async () => ({ code: 0, stdout: '# Host lab found: line 1\n', stderr: '' })],
+    ['ssh-keygen failing to start', async () => { throw new Error('spawn ssh-keygen ENOENT'); }],
+  ])('is null for %s, and never throws', async (_label, keygen) => {
+    const run = (async (file: string, args: string[]) => {
+      if (args[0] === '-G') return { code: 0, stdout: configDump(), stderr: '' };
+      return keygen();
+    }) as RunProgram;
+
+    expect(await readRecordedFingerprint('lab', makeDeps(run))).toBeNull();
+  });
+
+  it('replaces the old key with the new one the user was shown, leaving other hosts alone', async () => {
+    recordOldKey();
+    const run = withKeygen(makeRun());
+
+    const probe = await replaceHostKey('lab', EXPECTED_FINGERPRINT, makeDeps(run));
+
+    expect(probe.fingerprint).toBe(EXPECTED_FINGERPRINT);
+    expect(fs.readFileSync(knownHostsPath(), 'utf8')).toBe(`other ssh-ed25519 ZZZZ\nlab.example.test ssh-ed25519 ${KEY_BLOB}\n`);
+    const removal = run.calls.find((candidate) => candidate.file === 'ssh-keygen' && candidate.args[0] === '-R')!;
+    expect(removal.args).toEqual(['-R', 'lab.example.test', '-f', knownHostsPath()]);
+  });
+
+  it('touches nothing when the host now presents a different key than the one shown, so the old key is never removed unseen', async () => {
+    recordOldKey();
+    const before = fs.readFileSync(knownHostsPath(), 'utf8');
+    const other = Buffer.from('yet another key blob the user was never shown').toString('base64');
+    const run = withKeygen(makeRun({ keyBlob: other }));
+
+    await expect(replaceHostKey('lab', EXPECTED_FINGERPRINT, makeDeps(run))).rejects.toThrow('different key than the one you were shown');
+
+    expect(fs.readFileSync(knownHostsPath(), 'utf8')).toBe(before);
+    expect(run.calls.some((call) => call.args[0] === '-R')).toBe(false);
+  });
+
+  it('records the new key when there was no old one to forget', async () => {
+    await replaceHostKey('lab', EXPECTED_FINGERPRINT, makeDeps(withKeygen(makeRun())));
+
+    expect(fs.readFileSync(knownHostsPath(), 'utf8')).toBe(`lab.example.test ssh-ed25519 ${KEY_BLOB}\n`);
   });
 });
 

@@ -133,6 +133,8 @@ export interface SshHostKeyProbe {
   keyType: string;
   /** `SHA256:...`, the form a terminal prints. */
   fingerprint: string;
+  /** For a host whose key changed: the fingerprint the user trusted before, when known. */
+  previousFingerprint?: string | null;
 }
 
 /** How Kangentic signs in to a host. None of these asks for a passphrase. */
@@ -9209,7 +9211,10 @@ export interface ElectronAPI {
     /** What the host's program reports. Rejects while the host is not connected, with the reason. */
     hostProgram: (hostId: string) => Promise<SshHostProgram>;
     /** Forget the recorded key of a host whose key changed, so the next connection asks again. */
-    forgetHostKey: (hostId: string) => Promise<void>;
+    /** The key a host whose key changed presents now, and the fingerprint trusted before when it can be read. Trusts nothing. */
+    probeChangedKey: (hostId: string) => Promise<SshHostKeyProbe>;
+    /** Trust the key the user was shown for a host whose key changed: forget the old one, record the new one, connect. */
+    trustNewKey: (hostId: string, shownFingerprint: string) => Promise<SshHostStatus>;
     /** Whether a folder exists on a host, for the Add project dialog. Rejects with the reason when it cannot say. */
     probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
     onHostsChanged: (callback: () => void) => () => void;

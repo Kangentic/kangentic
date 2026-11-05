@@ -12,6 +12,11 @@ msgstr ""
 msgid "{0, plural, one {# terminal running} other {# terminals running}}"
 msgstr ""
 
+#. placeholder {0}: trustTarget.probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{0} now presents a different key. Trust it only if you know the host was rebuilt or reinstalled."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}。開啟文件頁面。"
@@ -407,6 +412,10 @@ msgstr "直線"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Basic accuracy"
 msgstr "基本準確度"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
 
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Behavior"
@@ -1089,11 +1098,6 @@ msgstr "字型大小"
 msgid "Foreground"
 msgstr "前景"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Forget old key"
-msgstr "忘記舊金鑰"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Forwards encrypted traffic and never holds your keys."
 msgstr "轉送加密流量，絕不持有你的金鑰。"
@@ -1329,6 +1333,10 @@ msgstr "Kangentic 會保留複本。具有通關密語的金鑰必須位於您�
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once and connects. Its other hosts are not affected."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -1596,6 +1604,10 @@ msgstr "需要建立索引"
 msgid "Needs the Knowledge Graph"
 msgstr "需要知識圖譜"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "No camera? Copy the link and paste it into the app."
 msgstr "沒有相機？複製連結並貼到 App 中。"
@@ -1663,6 +1675,10 @@ msgstr "尚無任何提交"
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Notifications"
 msgstr "通知"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgctxt "close on outside click"
@@ -2597,6 +2613,10 @@ msgstr "轉錄"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Transition and motion effects."
 msgstr "轉場與動態效果。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy

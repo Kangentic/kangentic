@@ -5144,6 +5144,7 @@
           // A promise a spec holds open, so it can act while the probe is still in flight.
           if (win().__mockSshProbeGate) await win().__mockSshProbeGate;
           if (win().__mockSshProbeError) throw new Error(win().__mockSshProbeError);
+          if (win().__mockSshProbeResult) return win().__mockSshProbeResult;
           return { hostname: String(destination).split('@').pop(), port: 22, keyType: 'ssh-ed25519', fingerprint: 'SHA256:mockFingerprintForTestsOnly000000000000000' };
         },
         addHost: async function (input) {
@@ -5186,7 +5187,23 @@
           fire();
           return hosts.filter(function (status) { return status.host.id === hostId; })[0];
         },
-        forgetHostKey: async function () {},
+        // A host whose key changed: window.__mockSshProbeResult overrides what it presents now.
+        probeChangedKey: async function (hostId) {
+          if (win().__mockSshProbeResult) return win().__mockSshProbeResult;
+          return {
+            hostname: 'stage.example.com', port: 22, keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:Zk3Qn8vL0t1mXq5bPcR7yHdE2uWf9aJsKoT4iVgN6xA',
+            previousFingerprint: 'SHA256:b7Hc1nUe5oYw2DpQzR8kLm0XjVt3sAiG9fKq4NxE6yM',
+          };
+        },
+        trustNewKey: async function (hostId, shownFingerprint) {
+          win().__mockSshTrustedNewKey = { hostId: hostId, fingerprint: shownFingerprint };
+          hosts = hosts.map(function (status) {
+            return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
+          });
+          fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
         // window.__mockSshHostProgram: overrides the answer; window.__mockSshHostProgramError: a string that rejects it.
         hostProgram: async function () {
           if (win().__mockSshHostProgramError) throw new Error(win().__mockSshHostProgramError);
