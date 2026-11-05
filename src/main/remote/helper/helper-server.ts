@@ -662,18 +662,23 @@ export class HelperServer {
   }
 
   /**
-   * Remove files, each checked to lie beneath the home first so a refused path removes nothing. A folder is
-   * refused, not emptied. A path `expect` names goes only while it holds that text: the same last look a write
-   * takes before its swap, with nothing awaited between it and the unlink.
+   * Remove files, each checked first to lie beneath the home and not to be a folder, so a refused path removes
+   * nothing. A folder is refused, not emptied. A path `expect` names goes only while it holds that text: the same
+   * last look a write takes before its swap, with nothing awaited between it and the unlink.
    */
   private async removeFiles(paths: string[], expect?: Record<string, string>): Promise<{ removed: number; conflicts?: string[] }> {
     const targets = paths.map((requested) => this.homePath(requested));
+    for (const target of targets) {
+      const stat = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (stat?.isDirectory()) throw new Error(`${target} is a folder, and only files are removed here`);
+    }
     const conflicts: string[] = [];
     let removed = 0;
     for (const [index, target] of targets.entries()) {
       try {
-        const stat = await fs.lstat(target);
-        if (stat.isDirectory()) throw new Error(`${target} is a folder, and only files are removed here`);
         const expected = expect?.[paths[index]];
         if (expected !== undefined && readCurrentText(target) !== expected) {
           conflicts.push(paths[index]);

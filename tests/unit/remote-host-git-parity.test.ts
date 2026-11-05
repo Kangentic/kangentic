@@ -17,15 +17,17 @@ import path from 'node:path';
 import { DiffService } from '../../src/main/git/diff-service';
 import { getBranchSummary } from '../../src/main/git/branch-summary';
 import { createRemoteGitResolver } from '../../src/main/remote/host-git';
-import { runHostCommand } from '../../src/main/remote/helper/host-command';
 import { RemoteGitUnavailableError, setRemoteGitResolver } from '../../src/main/git/remote-git';
 import { readWorktreeHeadUnqueued } from '../../src/main/git/worktree-head';
 import { readGitObject } from '../../src/main/git/git-object-reader';
+import { gitIn, runHostCommandAt } from './helpers/host-git-rig';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
+// The fingerprint script uses GNU `stat -c`, which BSD stat refuses.
 const hasShellAndGit = process.platform !== 'win32'
   && spawnSync('sh', ['-c', 'exit 0'], { stdio: 'ignore' }).status === 0
-  && spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0;
+  && spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0
+  && spawnSync('stat', ['-c', '%Y', '.'], { stdio: 'ignore' }).status === 0;
 
 describe.runIf(hasShellAndGit)('a project on a host reads as the same repository does locally', () => {
   let scratch: string;
@@ -35,14 +37,21 @@ describe.runIf(hasShellAndGit)('a project on a host reads as the same repository
   let linkDown = false;
 
   function git(...args: string[]): string {
-    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' } });
-    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
-    return result.stdout;
+    return gitIn(repo, ...args);
   }
 
   async function runOnHost(_hostId: string, request: HostCommandRequest): Promise<HostCommandResult> {
     if (linkDown) throw new Error('The link to the host is down.');
-    return runHostCommand(request, { shellPath: '/bin/sh', cwd: request.cwd ?? repo, baseEnv: { ...process.env, HOME: home } });
+    return runHostCommandAt(request, home, repo);
+  }
+
+  function hostRunner() {
+    const runner = createRemoteGitResolver({
+      remoteProjects: () => [{ path: shell, remote: { hostId: 'host-a', path: repo } }],
+      runCommand: runOnHost,
+    })(shell);
+    if (!runner) throw new Error('the stand-in is not routed to the host');
+    return runner;
   }
 
   beforeEach(() => {
@@ -209,5 +218,24 @@ describe.runIf(hasShellAndGit)('a project on a host reads as the same repository
     expect(climbing.modified).toBe('');
     const linked = await new DiffService(shell).getFileContent({ ...filesInput(shell, 'working'), filePath: 'link.txt', status: 'U' });
     expect(linked.modified).toBe('');
+  });
+
+  describe('the scripts on the files a repository really holds', () => {
+    it('counts, reads and fingerprints a file whose name starts with a dash, as an argument and not an option', async () => {
+      const runner = hostRunner();
+      fs.writeFileSync(path.join(repo, '-notes.txt'), 'one\ntwo\nthree\n');
+
+      expect(await runner.countUntracked(['-notes.txt'])).toEqual([{ insertions: 3, binary: false }]);
+      const read = await runner.readWorkingFile('-notes.txt', 1000);
+      expect(read.kind).toBe('bytes');
+      if (read.kind === 'bytes') expect(read.bytes.toString('utf8')).toBe('one\ntwo\nthree\n');
+
+      const before = await runner.fingerprint();
+      // Same length, later time: only the file's own modified time tells the two apart.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      fs.writeFileSync(path.join(repo, '-notes.txt'), 'ONE\ntwo\nthree\n');
+      expect(await runner.fingerprint()).not.toBe(before);
+    });
+
   });
 });

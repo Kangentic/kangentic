@@ -36,6 +36,7 @@ vi.mock('../../src/main/db/repositories/ssh-host-repository', () => ({
 import { createRemoteHosting } from '../../src/main/remote/remote-hosting';
 import { RemoteHostService } from '../../src/main/remote/remote-host-service';
 import { RemoteAgentUnsupportedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { remoteGitRunnerFor, setRemoteGitResolver } from '../../src/main/git/remote-git';
 import * as path from 'node:path';
 
 function makeSessionManager() {
@@ -55,6 +56,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   setRemoteLaunchResolver(null);
+  setRemoteGitResolver(null);
 });
 
 describe('a link reporting its state', () => {
@@ -142,6 +144,23 @@ describe('resolving a project path to its remote', () => {
     await launch?.place.files?.removeFiles(['/home/dev/app/.mcp.json'], { '/home/dev/app/.mcp.json': '{}' });
 
     expect(removeFiles).toHaveBeenCalledWith('host-1', ['/home/dev/app/.mcp.json'], { '/home/dev/app/.mcp.json': '{}' });
+    vi.restoreAllMocks();
+  });
+
+  it('routes git for a remote project\'s worktree stand-in to its host, and leaves a local project to this computer', async () => {
+    const runCommand = vi.spyOn(RemoteHostService.prototype, 'runCommand').mockResolvedValue({
+      code: 0, stdout: 'KG:code:0\nKG:size:0\nKG:id:git-1-1\nKG:err:\nKG:out:', stderr: '', timedOut: false,
+    });
+    hostingWithProjects();
+
+    const runner = remoteGitRunnerFor(path.join(remoteProjectPath, '.kangentic', 'worktrees', '7'));
+    expect(runner).not.toBeNull();
+    expect(remoteGitRunnerFor(localProjectPath)).toBeNull();
+
+    await runner?.run(['status']);
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(runCommand.mock.calls[0][0]).toBe('host-1');
+    expect(runCommand.mock.calls[0][1]).toMatchObject({ file: 'sh', cwd: '/home/dev/app/.kangentic/worktrees/7' });
     vi.restoreAllMocks();
   });
 

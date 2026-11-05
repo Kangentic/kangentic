@@ -38,6 +38,7 @@ const STDERR_BYTES = 32 * 1024;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const RUN_TIMEOUT_MS = 60_000;
 const PULL_TIMEOUT_MS = 30_000;
+const FINGERPRINT_TIMEOUT_MS = 30_000;
 /** How many untracked files one count asks about, so the arguments stay well under the shell's limit. */
 const COUNT_BATCH = 100;
 /** The same checks `countFileLines` makes: a null byte in the first 8 KiB is binary, and 20 MiB is read at most. */
@@ -58,7 +59,7 @@ const PRELUDE = `
 first=$1; shift
 spool="\${HOME:-/tmp}/.kangentic/tmp"
 mkdir -p "$spool" 2>/dev/null || spool=/tmp
-find "$spool" -maxdepth 1 -name 'git-*' -mmin +120 -exec rm -f {} \\; 2>/dev/null
+find "$spool" -maxdepth 1 -type f \\( -name 'git-[0-9]*.out' -o -name 'git-[0-9]*.err' \\) -mmin +120 -exec rm -f {} \\; 2>/dev/null
 id="git-$$-$(date +%s)"
 out="$spool/$id.out"; err="$spool/$id.err"
 emit() {
@@ -102,12 +103,17 @@ emit
 
 /**
  * Arguments are `first`, `path`, `max`. Only a plain file inside the folder is read: no absolute path, no `..`,
- * and a symlink is never followed. The file is copied first, so the pull reads one consistent file.
+ * no symlink, and no folder on the way that a symlink takes elsewhere. The `./` keeps a name that starts with
+ * a dash from reading as an option. The file is copied first, so the pull reads one consistent file.
  */
 const FILE_SCRIPT = `
 ${PRELUDE}
 file=$1; max=$2
 case "$file" in ''|/*|..|../*|*/..|*/../*) echo KG:missing; exit 0 ;; esac
+file="./$file"
+root=$(pwd -P)
+parent=$(cd "\${file%/*}" 2>/dev/null && pwd -P) || { echo KG:missing; exit 0; }
+case "$parent/" in "$root"/*) ;; *) echo KG:missing; exit 0 ;; esac
 { [ -f "$file" ] && [ ! -L "$file" ]; } || { echo KG:missing; exit 0; }
 filesize=$(wc -c <"$file" | tr -d ' ')
 echo "KG:mtime:$(stat -c %Y "$file" 2>/dev/null || echo 0)"
@@ -116,17 +122,22 @@ cp "$file" "$out" 2>/dev/null || { rm -f "$out"; echo KG:missing; exit 0; }
 emit
 `.trim();
 
-/** Arguments are the paths. One `KG:count:<base64 path>:<lines>:<binary>` line each, in order. */
+/**
+ * Arguments are the paths. One `KG:count:<position>:<lines>:<binary>` line each, in order, the first at 1. A
+ * batch is a shell loop, so a file costs as few processes as it can: the head of a file is read once.
+ */
 const COUNT_SCRIPT = `
+position=0
 for file; do
-  encoded=$(printf '%s' "$file" | base64 | tr -d '\\n')
-  case "$file" in ''|/*|..|../*|*/..|*/../*) echo "KG:count:$encoded:0:0"; continue ;; esac
-  if [ ! -f "$file" ] || [ -L "$file" ]; then echo "KG:count:$encoded:0:0"; continue; fi
-  nonnull=$(head -c ${COUNT_BINARY_BYTES} "$file" | tr -d '\\000' | wc -c | tr -d ' ')
-  total=$(head -c ${COUNT_BINARY_BYTES} "$file" | wc -c | tr -d ' ')
-  if [ "$nonnull" != "$total" ]; then echo "KG:count:$encoded:0:1"; continue; fi
+  position=$((position + 1))
+  case "$file" in ''|/*|..|../*|*/..|*/../*) echo "KG:count:$position:0:0"; continue ;; esac
+  file="./$file"
+  if [ ! -f "$file" ] || [ -L "$file" ]; then echo "KG:count:$position:0:0"; continue; fi
+  size=$(wc -c <"$file")
+  nonnull=$(head -c ${COUNT_BINARY_BYTES} "$file" | tr -d '\\000' | wc -c)
+  if [ "$nonnull" -lt "$size" ] && [ "$nonnull" -lt ${COUNT_BINARY_BYTES} ]; then echo "KG:count:$position:0:1"; continue; fi
   lines=$(head -c ${COUNT_CAP_BYTES} "$file" | grep -c '')
-  echo "KG:count:$encoded:$lines:0"
+  echo "KG:count:$position:$lines:0"
 done
 `.trim();
 
@@ -140,7 +151,7 @@ export GIT_OPTIONAL_LOCKS=0
 fp=$( {
   git rev-parse HEAD
   git status --porcelain=v1 -b -z | tr '\\000' '\\n'
-  git ls-files -m -o --exclude-standard -z | xargs -0 -r stat -c '%n %y %s'
+  git ls-files -m -o --exclude-standard -z | xargs -0 -r stat -c '%n %y %s' --
   stat -c '%y %s' "$(git rev-parse --git-path index)"
 } 2>/dev/null | cksum )
 echo "KG:fp:$fp"
@@ -249,7 +260,7 @@ export class HostGit implements RemoteGitRunner {
   }
 
   async fingerprint(): Promise<string> {
-    const lines = readLines(await this.ask(scriptRequest(FINGERPRINT_SCRIPT, [], this.deps.hostDirectory, PULL_TIMEOUT_MS)), 'check for changes');
+    const lines = readLines(await this.ask(scriptRequest(FINGERPRINT_SCRIPT, [], this.deps.hostDirectory, FINGERPRINT_TIMEOUT_MS)), 'check for changes');
     const fingerprint = lineValue(lines, 'fp');
     if (fingerprint === null || fingerprint === '') throw new RemoteGitUnavailableError('The host did not say whether the checkout changed.');
     return fingerprint;
@@ -265,9 +276,8 @@ export class HostGit implements RemoteGitRunner {
       );
       const answers = lines.filter((line) => line.startsWith('count:')).map((line) => line.slice('count:'.length).split(':'));
       if (answers.length !== batch.length) throw new RemoteGitUnavailableError('The host counted a different number of files than it was asked about.');
-      batch.forEach((relative, index) => {
-        const [encodedPath, lineCount, binary] = answers[index];
-        if (Buffer.from(encodedPath ?? '', 'base64').toString('utf8') !== relative) throw new RemoteGitUnavailableError('The host answered about a different file than it was asked about.');
+      answers.forEach(([position, lineCount, binary], index) => {
+        if (position !== String(index + 1)) throw new RemoteGitUnavailableError('The host answered about a different file than it was asked about.');
         counts.push({ insertions: wholeNumber(lineCount ?? null, 'how many lines a file has'), binary: binary === '1' });
       });
     }

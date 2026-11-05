@@ -270,8 +270,8 @@ export async function forgetHostKey(destination: string, deps: SshSetupDeps): Pr
   await removeRecordedKey(await resolveTarget(destination, deps), deps);
 }
 
-async function removeRecordedKey(target: ResolvedTarget, deps: SshSetupDeps): Promise<void> {
-  const result = await deps.run(deps.sshKeygenPath, ['-R', knownHostsToken(target), '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
+async function removeRecordedKey(target: ResolvedTarget, deps: SshSetupDeps, recordedHost: string = knownHostsToken(target)): Promise<void> {
+  const result = await deps.run(deps.sshKeygenPath, ['-R', recordedHost, '-f', target.userKnownHostsFile], { env: childProcessEnv(), timeout: 15_000 });
   if (result.code !== 0 && !/not found/i.test(result.stdout + result.stderr)) throw new Error(result.stderr.trim() || 'ssh-keygen could not remove the old key.');
 }
 
@@ -304,7 +304,9 @@ export async function replaceHostKey(destination: string, shownFingerprint: stri
   if (probe.fingerprint !== shownFingerprint) {
     throw new Error('The host presented a different key than the one you were shown, so nothing was changed. Try again, and compare the fingerprint.');
   }
-  await removeRecordedKey(target, deps);
+  // The name ssh looks the host up under, which a HostKeyAlias makes something other than the address. ssh
+  // accepts a host when any line matches, so an old line left under that name stays trusted.
+  await removeRecordedKey(target, deps, probe.knownHostsLine.split(' ')[0]);
   await recordKnownHostsLine(target, probe.knownHostsLine);
   return probe;
 }

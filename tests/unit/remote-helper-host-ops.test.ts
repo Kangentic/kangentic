@@ -10,10 +10,13 @@ import * as path from 'node:path';
 import { RemoteLink } from '../../src/main/remote/link/remote-link';
 import { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import { HOST_LOGIN_SHELL } from '../../src/main/remote/protocol/messages';
+import { RemoteHostService } from '../../src/main/remote/remote-host-service';
 import { dialHelper, makeHelperRig, settle, spawnParams, type HelperRig } from './helpers/remote-link-rig';
 
 const teardown: Array<() => void> = [];
 let home: string;
+/** Temp homes a test replaced `home` over, still to be removed in teardown. */
+const ownedHomes: string[] = [];
 
 interface Rig {
   helperRig: HelperRig;
@@ -43,6 +46,7 @@ afterEach(() => {
   for (const undo of teardown.splice(0)) undo();
   vi.useRealTimers();
   fs.rmSync(home, { recursive: true, force: true });
+  for (const ownedHome of ownedHomes.splice(0)) fs.rmSync(ownedHome, { recursive: true, force: true });
 });
 
 async function ask<T>(promise: Promise<T>): Promise<T> {
@@ -233,6 +237,8 @@ describe('files on the host', () => {
     const linkedHome = path.join(os.tmpdir(), `kangentic-helper-linked-${process.pid}-${Date.now()}`);
     fs.symlinkSync(realFolder, linkedHome, 'dir');
     teardown.push(() => fs.rmSync(realFolder, { recursive: true, force: true }), () => fs.rmSync(linkedHome, { force: true }));
+    // The temp home beforeEach made stays removable: afterEach removes `ownedHome`, not the linked one.
+    ownedHomes.push(home);
     home = linkedHome;
     const rig = makeRig();
     await settle();
@@ -330,9 +336,44 @@ describe('files on the host', () => {
       await settle();
       await folderRejected;
       expect(fs.existsSync(folder)).toBe(true);
+
+      // The folder comes after a file that could be removed: every target is checked before the first unlink.
+      const laterFolderAttempt = rig.link.requestHelper('removeFiles', { paths: [keep, folder] });
+      const laterFolderRejected = expect(laterFolderAttempt).rejects.toThrow('is a folder');
+      await settle();
+      await laterFolderRejected;
+      expect(fs.existsSync(keep)).toBe(true);
+      expect(fs.existsSync(folder)).toBe(true);
     } finally {
       fs.rmSync(outside, { force: true });
     }
+  });
+
+  it('keeps a file that changed since the app wrote it, and lists it as a conflict, through RemoteHostService', async () => {
+    const rig = makeRig();
+    await settle();
+    const service = new RemoteHostService({
+      sshPath: 'ssh',
+      hosts: { getById: () => undefined, list: () => [] },
+      send: async (request) => {
+        if (request.op !== 'helper') throw new Error(`unexpected operation ${request.op}`);
+        return rig.link.requestHelper(request.method, request.params as never);
+      },
+      asset: () => null,
+      identity: { installId: 'install-a', label: 'a test computer' },
+    });
+    const changed = path.join(home, 'changed.json');
+    const untouched = path.join(home, 'untouched.json');
+    fs.writeFileSync(changed, 'someone else edited this');
+    fs.writeFileSync(untouched, 'old');
+
+    const pending = service.removeFiles('host-a', [changed, untouched], { [changed]: 'old', [untouched]: 'old' });
+    await settle();
+    const answer = await pending;
+
+    expect(answer).toEqual({ removed: 1, conflicts: [changed] });
+    expect(fs.readFileSync(changed, 'utf8')).toBe('someone else edited this');
+    expect(fs.existsSync(untouched)).toBe(false);
   });
 
   it('removes folders that hold nothing and leaves one with something in it, or not there, alone', async () => {

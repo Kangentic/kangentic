@@ -186,6 +186,20 @@ describe.each(['v1', 'v2'] as const)('the %s activity plugin on a host with only
     expect(eventsFromInbox(sessionDirectory)).toEqual(PLUGIN_EVENTS);
   });
 
+  it('keeps the tool id and the subagent id, so a child session\'s events are told from the parent\'s', async () => {
+    const helpers = await loadHelpers(which);
+    const sessionDirectory = newSessionDirectory();
+    const hookDirectory = wslHookPaths(sessionDirectory).directory;
+    const subagentEvents = [
+      { ts: 1717000000200, type: 'subagent_start', subagentId: 'ses_child_0123456789abcdef' },
+      { ts: 1717000000201, type: 'tool_start', tool: 'read', detail: 'a.ts', toolId: 'call_0123456789', subagentId: 'ses_child_0123456789abcdef' },
+      { ts: 1717000000202, type: 'tool_end', tool: 'read', toolId: 'call_0123456789', subagentId: 'ses_child_0123456789abcdef' },
+    ];
+    for (const event of subagentEvents) helpers.publishToHookDirectory(hookDirectory, event, event.ts);
+
+    expect(eventsFromInbox(sessionDirectory)).toEqual(subagentEvents);
+  });
+
   it('names records like the hook script does, leaves no staging file, and signals the watcher', async () => {
     const helpers = await loadHelpers(which);
     const sessionDirectory = newSessionDirectory();

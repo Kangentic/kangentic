@@ -521,8 +521,9 @@ export class RemoteSessionRelay {
     if (!spec) return null;
     const hostPath = this.hostPathOf(entry, spec.localPath);
     if (hostPath === null) return null;
-    const replaced = entry.snapshot?.spec.localPath === spec.localPath ? null : entry.snapshot;
+    let supersededSnapshot: SnapshotState | null = null;
     if (entry.snapshot?.spec.localPath !== spec.localPath) {
+      supersededSnapshot = entry.snapshot;
       entry.snapshot = { spec, hostPath, pendingPromotion: false };
       if (!entry.pushedPaths.includes(hostPath)) entry.pushedPaths.push(hostPath);
     }
@@ -530,7 +531,7 @@ export class RemoteSessionRelay {
     // export that changed nothing gives the host no other reason to send it.
     if (![...entry.tails.values()].some((tail) => tail.localPath === spec.localPath)) await this.refreshTails(entry);
     // An id that moved on. Its copy stays, but nothing finishes what it left staged.
-    if (replaced && (!replaced.pendingPromotion || this.promoteSnapshot(entry, replaced.spec.localPath))) this.dropStagedSnapshot(replaced);
+    if (supersededSnapshot && (!supersededSnapshot.pendingPromotion || this.promoteSnapshot(entry, supersededSnapshot.spec.localPath))) this.dropStagedSnapshot(supersededSnapshot);
     const result = await this.options.files.runCommand(entry.hostId, {
       file: 'sh',
       args: ['-c', SNAPSHOT_SCRIPT, 'sh', hostPath, spec.file, ...spec.args],

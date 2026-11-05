@@ -316,6 +316,8 @@ export class RemoteLink implements PtyHostTransport {
         this.endpoint.attach(stream);
         await ended;
       } catch (error) {
+        // A dial that fails after `stop` belongs to a link that is over: nothing brings a stopped state back.
+        if (superseded()) return;
         this.log(`could not connect: ${error instanceof Error ? error.message : String(error)}`);
         this.setState('reconnecting', error instanceof Error ? error.message : String(error));
       }

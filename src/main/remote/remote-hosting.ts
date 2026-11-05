@@ -116,7 +116,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
     log,
   }));
-  // Every read of git for a remote project's folder runs on its host (`gitAt` and `openSimpleGit` ask this first).
+  // Every read of git for a remote project's folder runs on its host (`git/remote-git.ts` lists who asks this first).
   setRemoteGitResolver(createRemoteGitResolver({
     remoteProjects: () => deps.projects().list().flatMap((project) => (project.remote ? [{ path: project.path, remote: project.remote }] : [])),
     runCommand: (hostId, request) => hostService.runCommand(hostId, request),

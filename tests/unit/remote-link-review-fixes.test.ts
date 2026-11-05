@@ -302,6 +302,29 @@ describe('RemoteLink state reports and a link that was stopped', () => {
   });
 });
 
+describe('RemoteLink when a dial fails after stop', () => {
+  it('stays stopped and never reports reconnecting, since nothing brings a stopped state back', async () => {
+    let rejectDial: (error: Error) => void = () => undefined;
+    const connect = vi.fn(() => new Promise<never>((_resolve, reject) => { rejectDial = reject; }));
+    const states: string[] = [];
+    const link = new RemoteLink({ identity: identity('boot-1'), connect, reconnect: FAST });
+    link.setHandlers({ onStateChanged: (state) => states.push(state) });
+    teardown.push(() => link.stop());
+    link.start();
+    await settle(10);
+    expect(connect).toHaveBeenCalledTimes(1);
+
+    link.stop();
+    states.length = 0;
+    rejectDial(new Error('host unreachable'));
+    await settle(1_000);
+
+    expect(link.state).toBe('stopped');
+    expect(states).not.toContain('reconnecting');
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('RemoteLink.redialNow', () => {
   it('dials again at once instead of waiting out the backoff', async () => {
     const connect = vi.fn(async () => { throw new Error('host unreachable'); });

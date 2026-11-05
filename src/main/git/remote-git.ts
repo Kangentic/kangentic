@@ -1,9 +1,10 @@
 /**
  * How a git call reaches a repository on an SSH host (#913). A remote project's repository is on the host and
  * this computer holds an empty stand-in folder for it, so a git command run in that folder here would either
- * fail or, if the folder sits inside some other repository, answer about the wrong one. Both git entry points
- * (`gitAt` and `openSimpleGit`) ask the resolver below first: a directory that belongs to a remote project is
- * run on the host, and any other directory goes on to this computer's git as before.
+ * fail or, if the folder sits inside some other repository, answer about the wrong one. Everything that reads
+ * a project's git (`gitAt`, `openSimpleGit`, `runGitWithTimeout`, `readGitObject`) and everything that reads or
+ * watches its working tree (`DiffService`, `DiffWatcher`) asks the resolver below first: a directory that belongs
+ * to a remote project is run on the host, and any other directory goes on to this computer as before.
  *
  * The resolver is registered at startup (`remote-hosting.ts`) rather than imported, so this git module keeps
  * its dependency direction: it does not reach into the SSH feature.
@@ -49,8 +50,9 @@ export interface RemoteGitRunner {
     | { kind: 'missing' }
   >;
   /**
-   * A file in the working tree, by a path relative to the directory. A path that climbs out of it, a symlink
-   * and a file that is not there all read `missing`, so no read leaves the repository.
+   * A file in the working tree, by a path relative to the directory. A path that climbs out of it, a symlink, a
+   * symlinked folder that leads out of it and a file that is not there all read `missing`, so no read leaves
+   * the repository.
    */
   readWorkingFile(relativePath: string, maxBytes: number): Promise<RemoteWorkingFile>;
   /** The new lines of each untracked file, in the order asked. A file that is gone counts as empty, as it does here. */
@@ -71,11 +73,7 @@ export class RemoteGitUnavailableError extends Error {
   }
 }
 
-/**
- * The runner for a directory on this computer, or null when the directory is not a remote project's. A
- * directory that IS under a remote project's folder but cannot be mapped to the host throws instead of
- * returning null, so it never falls through to this computer's git.
- */
+/** The runner for a directory on this computer, or null when the directory is not under a remote project's folder. */
 export type RemoteGitResolver = (directory: string) => RemoteGitRunner | null;
 
 let resolver: RemoteGitResolver | null = null;

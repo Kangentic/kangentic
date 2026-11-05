@@ -72,8 +72,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
   A removal is forced only because the Done move asks the host for the uncommitted count first
   (`probePendingChanges`), and a host that cannot answer reads as "there are changes".
 - **A git read for a project on a host runs on the host, and a host that cannot answer is an error,
-  never an empty answer.** `gitAt`, `openSimpleGit` and `runGitWithTimeout` each ask the resolver in
-  `git/remote-git.ts` first, so a folder under a remote project's shell folder reaches `HostGit`
+  never an empty answer.** `gitAt`, `openSimpleGit`, `runGitWithTimeout` and `readGitObject` each ask the
+  resolver in `git/remote-git.ts` first, so a folder under a remote project's shell folder reaches `HostGit`
   (`remote/host-git.ts`) and never this computer's git, which would run in the empty stand-in or in
   whatever repository the stand-in sits inside. The script sets `GIT_OPTIONAL_LOCKS=0` (a read never
   takes the index lock the agent's git needs) and returns output larger than a frame in pieces, so no

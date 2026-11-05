@@ -605,6 +605,7 @@ const BLOB_FINGERPRINT_PREFIX = 'blob:';
  * One side of an image. A side that does not exist where the scope looks
  * (no such object, no such file) reads unreadable quietly; any other failure
  * also reads unreadable but is logged, since it means git or the disk failed.
+ * A host that could not be asked (#913) rejects, as `readSideAsText` does, so the panel keeps what it showed.
  */
 async function readSideAsImage(
   gitDirectory: string,
@@ -619,6 +620,7 @@ async function readSideAsImage(
       ? await readRemoteWorkingTreeImage(remote, source.relativePath, knownFingerprint)
       : await readWorkingTreeImage(source.absolutePath, knownFingerprint);
   } catch (error) {
+    if (error instanceof RemoteGitUnavailableError) throw error;
     if (!isMissingPathError(error)) console.warn('[DIFF] Could not read an image side:', error);
     return { kind: 'unreadable' };
   }

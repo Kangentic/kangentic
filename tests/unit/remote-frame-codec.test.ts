@@ -227,20 +227,24 @@ describe('damage', () => {
     let refusals = 0;
     for (let start = 1; start < stream.length - 1; start += 997) {
       for (const lost of [1, 7, 31, 32, 33, 500, 65_536]) {
-        const damaged = Buffer.concat([stream.subarray(0, start), stream.subarray(Math.min(stream.length, start + lost))]);
         const decoder = new FrameDecoder();
-        let delivered: DecodedFrame[] = [];
+        // Split at the loss point: a chunk that throws discards the frames it decoded, so the bytes
+        // before the loss go in alone and are checked on their own.
+        const before: DecodedFrame[] = decoder.push(stream.subarray(0, start));
+        // Whatever came out before the damage must be exactly what was sent, in order.
+        before.forEach((frame, position) => {
+          expect(frame.raw.equals(sent[position])).toBe(true);
+          expect((frame.json as { index: number }).index).toBe(position);
+        });
+        let after: DecodedFrame[] = [];
         try {
-          delivered = decoder.push(damaged);
+          after = decoder.push(stream.subarray(Math.min(stream.length, start + lost)));
         } catch (error) {
           expect(error).toBeInstanceOf(FrameError);
           refusals += 1;
         }
-        // Whatever came out before the damage must be exactly what was sent, in order.
-        delivered.forEach((frame, position) => {
-          expect(frame.raw.equals(sent[position])).toBe(true);
-          expect((frame.json as { index: number }).index).toBe(position);
-        });
+        // Past the loss, no frame may be delivered: the stream is either refused or still waiting for bytes.
+        expect(after).toEqual([]);
       }
     }
     expect(refusals).toBeGreaterThan(0);

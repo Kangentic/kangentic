@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { HostGit, createRemoteGitResolver } from '../../src/main/remote/host-git';
-import { runHostCommand } from '../../src/main/remote/helper/host-command';
+import { gitIn, runHostCommandAt } from './helpers/host-git-rig';
 import { MAX_FRAME_JSON_BYTES } from '../../src/main/remote/protocol/frame-codec';
 import { RemoteGitUnavailableError, remoteGitRunnerFor, setRemoteGitResolver } from '../../src/main/git/remote-git';
 import { gitAt } from '../../src/main/git/git-client';
@@ -161,8 +161,86 @@ describe('an answer that did not come is never an empty one', () => {
   });
 });
 
+describe('an output too large to read, and a count that does not match what was asked', () => {
+  it('rejects a reply that says 70 MB, and tells the host to drop the file with a zero-length pull', async () => {
+    const first = Buffer.alloc(96 * 1024, 97).toString('base64');
+    const requests: HostCommandRequest[] = [];
+    const runner = new HostGit({
+      hostDirectory: HOST_REPO,
+      runCommand: async (request) => {
+        requests.push(request);
+        return requests.length === 1
+          ? reply(['KG:code:0', 'KG:size:70000000', 'KG:id:git-4-5', 'KG:err:', `KG:out:${first}`])
+          : reply([]);
+      },
+    });
+
+    await expect(runner.run(['show', 'HEAD:huge'])).rejects.toBeInstanceOf(RemoteGitUnavailableError);
+
+    expect(requests).toHaveLength(2);
+    // sh -c <script> <name> then the pull script's arguments: id, offset, length, total.
+    expect(requests[1].args.slice(3)).toEqual(['git-4-5', '70000000', '0', '70000000']);
+  });
+
+  /** Answers a count batch the way the script does: one line per path asked, in order, from position 1. */
+  const countBatch = (request: HostCommandRequest): HostCommandResult =>
+    reply(request.args.slice(3).map((_unused, index) => `KG:count:${index + 1}:2:0`));
+
+  it('asks about 250 untracked paths in three requests of at most 100, and returns an answer for each', async () => {
+    const asked: number[] = [];
+    const runner = new HostGit({
+      hostDirectory: HOST_REPO,
+      runCommand: async (request) => { asked.push(request.args.slice(3).length); return countBatch(request); },
+    });
+    const paths = Array.from({ length: 250 }, (_unused, index) => `file-${index}.txt`);
+
+    const counts = await runner.countUntracked(paths);
+
+    expect(asked).toEqual([100, 100, 50]);
+    expect(counts).toHaveLength(250);
+    expect(counts[0]).toEqual({ insertions: 2, binary: false });
+  });
+
+  it('rejects, rather than counting the rest as empty, when the host answers about fewer files than it was asked', async () => {
+    const runner = new HostGit({ hostDirectory: HOST_REPO, runCommand: async () => reply(['KG:count:1:2:0']) });
+    await expect(runner.countUntracked(['a.txt', 'b.txt'])).rejects.toBeInstanceOf(RemoteGitUnavailableError);
+  });
+
+  it('rejects when an answer names a different position than the file asked about', async () => {
+    const runner = new HostGit({ hostDirectory: HOST_REPO, runCommand: async () => reply(['KG:count:1:2:0', 'KG:count:3:2:0']) });
+    await expect(runner.countUntracked(['a.txt', 'b.txt'])).rejects.toBeInstanceOf(RemoteGitUnavailableError);
+  });
+});
+
 describe('gitAt and openSimpleGit for a remote project', () => {
   const standIn = (): string => path.join(shellFolder, '.kangentic', 'worktrees', '7');
+
+  it('sends simple-git\'s show and diff to the host as git show and git diff', async () => {
+    const seen: string[][] = [];
+    setRemoteGitResolver(resolverOver(async (_hostId, request) => { seen.push(request.args.slice(4)); return smallAnswer('out'); }));
+    const simple = openSimpleGit(standIn());
+
+    expect(await simple.show(['HEAD:a.txt'])).toBe('out');
+    expect(await simple.diff(['--cached', '--name-status'])).toBe('out');
+
+    expect(seen).toEqual([['show', 'HEAD:a.txt'], ['diff', '--cached', '--name-status']]);
+    expect(localGit).not.toHaveBeenCalled();
+  });
+
+  it('does not serve a name that only Object.prototype has from the facade', () => {
+    setRemoteGitResolver(resolverOver(async () => smallAnswer('')));
+    const simple = openSimpleGit(standIn());
+    // A lookup that reached the facade's prototype would hand back Object.prototype.toString.
+    expect(() => simple.toString()).toThrow(RemoteGitUnavailableError);
+    expect(localGit).not.toHaveBeenCalled();
+  });
+
+  it('forwards a timed command\'s timeout to the host', async () => {
+    const timeouts: Array<number | undefined> = [];
+    setRemoteGitResolver(resolverOver(async (_hostId, request) => { timeouts.push(request.timeoutMs); return smallAnswer(''); }));
+    await runGitWithTimeout(standIn(), ['fetch'], { timeoutMs: 1234 });
+    expect(timeouts).toEqual([1234]);
+  });
 
   it('run the host\'s git and never this computer\'s, with the local success rule', async () => {
     const seen: string[][] = [];
@@ -235,16 +313,14 @@ describe.runIf(hasShellAndGit)('on a real repository', () => {
   const replySizes: number[] = [];
 
   function git(...args: string[]): string {
-    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.com' } });
-    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
-    return result.stdout;
+    return gitIn(repo, ...args);
   }
 
   function hostGit(): HostGit {
     return new HostGit({
       hostDirectory: repo,
       runCommand: async (request) => {
-        const result = await runHostCommand(request, { shellPath: '/bin/sh', cwd: request.cwd ?? repo, baseEnv: { ...process.env, HOME: home } });
+        const result = await runHostCommandAt(request, home, repo);
         replySizes.push(Buffer.byteLength(JSON.stringify({ t: 'reply', id: 1, ok: true, result })));
         return result;
       },
@@ -322,5 +398,63 @@ describe.runIf(hasShellAndGit)('on a real repository', () => {
     const status = await hostGit().run(['status', '--porcelain=v1']);
     expect(status.code).toBe(0);
     expect(status.stdout.toString('utf8')).toContain('a.txt');
+  });
+
+  it('counts a file named with a leading dash by its real lines, and reads its bytes', async () => {
+    fs.writeFileSync(path.join(repo, '-notes.txt'), 'one\ntwo\nthree\n');
+    const runner = hostGit();
+
+    expect(await runner.countUntracked(['-notes.txt'])).toEqual([{ insertions: 3, binary: false }]);
+    const read = await runner.readWorkingFile('-notes.txt', 1000);
+    expect(read.kind).toBe('bytes');
+    if (read.kind === 'bytes') expect(read.bytes.toString('utf8')).toBe('one\ntwo\nthree\n');
+  });
+
+  it('reads a path through a symlinked folder that leaves the repository as missing, and one that stays inside as the file', async () => {
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.writeFileSync(path.join(repo, 'src', 'app.ts'), 'export const one = 1;\n');
+    const outside = path.join(home, 'outside');
+    fs.mkdirSync(outside);
+    fs.writeFileSync(path.join(outside, 'secret'), 'private\n');
+    fs.symlinkSync(outside, path.join(repo, 'link-dir'));
+    fs.symlinkSync(path.join(repo, 'src'), path.join(repo, 'inner-link'));
+    const runner = hostGit();
+
+    expect(await runner.readWorkingFile('link-dir/secret', 1000)).toEqual({ kind: 'missing' });
+    const inside = await runner.readWorkingFile('inner-link/app.ts', 1000);
+    expect(inside.kind).toBe('bytes');
+    if (inside.kind === 'bytes') expect(inside.bytes.toString('utf8')).toBe('export const one = 1;\n');
+  });
+
+  it('answers too-large with the file\'s size and no bytes for a file over the cap', async () => {
+    fs.writeFileSync(path.join(repo, 'six.txt'), 'a\nb\nc\n');
+    expect(await hostGit().readWorkingFile('six.txt', 2)).toMatchObject({ kind: 'too-large', size: 6 });
+  });
+
+  it('sweeps a run\'s file left for two hours on the next run, and leaves another file in the same folder', async () => {
+    const spool = path.join(home, '.kangentic', 'tmp');
+    fs.mkdirSync(spool, { recursive: true });
+    const stale = path.join(spool, 'git-1-1.out');
+    const unrelated = path.join(spool, 'git-notes.txt');
+    fs.writeFileSync(stale, 'left behind');
+    fs.writeFileSync(unrelated, 'not a run\'s file');
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    fs.utimesSync(stale, threeHoursAgo, threeHoursAgo);
+    fs.utimesSync(unrelated, threeHoursAgo, threeHoursAgo);
+
+    await hostGit().run(['rev-parse', 'HEAD']);
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(unrelated)).toBe(true);
+  });
+
+  it('counts a binary file as binary, and a file shorter than 8 KiB by its lines', async () => {
+    fs.writeFileSync(path.join(repo, 'data.bin'), Buffer.concat([Buffer.from('head'), Buffer.alloc(10), Buffer.from('tail')]));
+    fs.writeFileSync(path.join(repo, 'short.txt'), 'x\ny\nno newline at the end');
+
+    expect(await hostGit().countUntracked(['data.bin', 'short.txt'])).toEqual([
+      { insertions: 0, binary: true },
+      { insertions: 3, binary: false },
+    ]);
   });
 });

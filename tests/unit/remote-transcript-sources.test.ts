@@ -671,6 +671,79 @@ describe('an export racing its own tail, its release and its replacement', () =>
     expect(order).toEqual(['export', 's1 removes the host file', 'export']);
   });
 
+  it('drops a chunk that lines up with an earlier transfer once a restart failed to write', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const [tailed] = host.watchCalls[0];
+
+    // A transfer that stopped partway leaves its end at 4.
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'old!', 12, true));
+    // The next export's first chunk fails: a folder in the staged file's place does that on every OS.
+    fs.rmSync(`${copy()}.part`, { force: true });
+    fs.mkdirSync(`${copy()}.part`, { recursive: true });
+    relay.deliverChunk(chunk('s1', tailed.key, 0, 'aaaa', 8, true));
+    fs.rmSync(`${copy()}.part`, { recursive: true });
+    fs.writeFileSync(`${copy()}.part`, 'aaaa');
+
+    // Its offset matches the older end, and the file would reach the host's size.
+    relay.deliverChunk(chunk('s1', tailed.key, 4, 'bbbb', 8));
+
+    expect(fs.existsSync(copy())).toBe(false);
+    expect(fs.readFileSync(`${copy()}.part`, 'utf8')).toBe('aaaa');
+  });
+
+  it('keeps the staged file of a promotion that is still failing when the id moves on', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const [tailed] = host.watchCalls[0];
+    // A folder in the copy's place fails the rename, as a reader's open handle does on Windows.
+    fs.mkdirSync(path.join(copy('abc'), 'held'), { recursive: true });
+    relay.deliverChunk(chunk('s1', tailed.key, 0, '{"n":1}\n', 8));
+
+    relay.setAgentSessionId('s1', 'def');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(fs.readFileSync(`${copy('abc')}.part`, 'utf8')).toBe('{"n":1}\n');
+    expect(fs.statSync(copy('abc')).isDirectory()).toBe(true);
+  });
+
+  it('puts a pending export in place when the id moves on, then clears its staged file', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const [tailed] = host.watchCalls[0];
+    fs.mkdirSync(path.join(copy('abc'), 'held'), { recursive: true });
+    relay.deliverChunk(chunk('s1', tailed.key, 0, '{"n":1}\n', 8));
+    expect(fs.readFileSync(`${copy('abc')}.part`, 'utf8')).toBe('{"n":1}\n');
+
+    // The reader lets go before the id moves on.
+    fs.rmSync(copy('abc'), { recursive: true });
+    relay.setAgentSessionId('s1', 'def');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(fs.readFileSync(copy('abc'), 'utf8')).toBe('{"n":1}\n');
+    expect(fs.existsSync(`${copy('abc')}.part`)).toBe(false);
+  });
+
+  it('lets two sessions released together on one agent id and host both finish, neither waiting on itself', async () => {
+    const { relay } = makeRelay();
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await relay.register(registrationOf('s2', source(), { agentSessionId: 'abc' }));
+    let finished = 0;
+    void relay.release('s1').then(() => { finished += 1; });
+    void relay.release('s2').then(() => { finished += 1; });
+
+    // Far short of any bound, so only a release that waits on no one can have finished.
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(finished).toBe(2);
+  });
+
   it('clears what the old id\'s export left staged when the id moves on, and keeps its whole copy', async () => {
     const { host, relay } = makeRelay();
     await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));

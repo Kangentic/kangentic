@@ -311,6 +311,14 @@ function hookRecordFor(event) {
       fields.detail = event.detail;
       directives.push(encodeDirective('extractDetail', { fields: ['detail'] }));
     }
+    if (event.toolId) {
+      fields.toolId = event.toolId;
+      directives.push(encodeDirective('extractToolId', { fields: ['toolId'] }));
+    }
+    if (event.subagentId) {
+      fields.subagentId = event.subagentId;
+      directives.push(encodeDirective('extractSubagentId', { fields: ['subagentId'] }));
+    }
     if (Object.keys(fields).length > 0) input = JSON.stringify(fields);
   }
   if (event.waitKind) directives.push(encodeDirective('setWaitKind', { kind: event.waitKind }));

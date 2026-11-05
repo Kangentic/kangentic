@@ -35,14 +35,11 @@ export function openSimpleGit(directory: string): SimpleGit {
   return __KANGENTIC_DEV__ ? withCallerAttribution(client) : client;
 }
 
-/** What a client for a project on a host runs there. Anything else is refused, never run on this computer. */
-const REMOTE_GIT_METHODS: ReadonlySet<string> = new Set(['raw', 'revparse', 'show', 'diff']);
-
 /**
  * A client for a repository on an SSH host (#913). The call sites that read a project's git (the Changes panel,
  * the branch summary, blame, history, the commit graph) use `raw`, so those run on the host through the same
- * runner `gitAt` uses. Every other method throws `RemoteGitUnavailableError` when called, so a caller that
- * would have run this computer's git in the empty stand-in fails with a sentence, never with another
+ * runner `gitAt` uses. Every method the facade does not hold throws `RemoteGitUnavailableError` when called, so a
+ * caller that would have run this computer's git in the empty stand-in fails with a sentence, never with another
  * repository's answer or a quiet empty result.
  */
 function openRemoteGit(directory: string, remote: RemoteGitRunner): SimpleGit {
@@ -56,7 +53,7 @@ function openRemoteGit(directory: string, remote: RemoteGitRunner): SimpleGit {
   };
   return new Proxy(shape, {
     get(target, property, receiver) {
-      if (typeof property === 'string' && REMOTE_GIT_METHODS.has(property)) return facade[property];
+      if (typeof property === 'string' && Object.hasOwn(facade, property)) return facade[property];
       // The client is a thenable; `await`ing it must not call a method that throws.
       if (property === 'then') return undefined;
       const value: unknown = Reflect.get(target, property, receiver);

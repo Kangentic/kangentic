@@ -281,6 +281,18 @@ describe('a host whose key changed', () => {
     expect(removal.args).toEqual(['-R', 'lab.example.test', '-f', knownHostsPath()]);
   });
 
+  it('removes the old key by the name in the probed line when the host is recorded under a HostKeyAlias, not by the address', async () => {
+    fs.mkdirSync(path.dirname(knownHostsPath()), { recursive: true });
+    fs.writeFileSync(knownHostsPath(), `lab-alias ssh-ed25519 ${OLD_BLOB}\nlab.example.test ssh-ed25519 ZZZZ\n`);
+    const run = withKeygen(makeRun({ keyLineHost: 'lab-alias' }));
+
+    await replaceHostKey('lab', EXPECTED_FINGERPRINT, makeDeps(run));
+
+    const removal = run.calls.find((candidate) => candidate.file === 'ssh-keygen' && candidate.args[0] === '-R')!;
+    expect(removal.args).toEqual(['-R', 'lab-alias', '-f', knownHostsPath()]);
+    expect(fs.readFileSync(knownHostsPath(), 'utf8')).toBe(`lab.example.test ssh-ed25519 ZZZZ\nlab-alias ssh-ed25519 ${KEY_BLOB}\n`);
+  });
+
   it('touches nothing when the host now presents a different key than the one shown, so the old key is never removed unseen', async () => {
     recordOldKey();
     const before = fs.readFileSync(knownHostsPath(), 'utf8');
@@ -520,12 +532,15 @@ describe('using a password once', () => {
     expect(run.calls).toEqual([]);
   });
 
-  it('refuses an unpinned host at once instead of asking a host-key question through askpass and waiting', async () => {
+  it('passes StrictHostKeyChecking=yes as an ssh option, so an unpinned host is refused rather than asked about', async () => {
     const run = makeRun();
 
     await installPublicKeyWithPassword('dev@lab', PUBLIC_KEY, 'pw', makeDeps(run));
 
-    expect(run.calls.at(-1)!.args).toEqual(expect.arrayContaining(['StrictHostKeyChecking=yes']));
+    const args = run.calls.at(-1)!.args;
+    const valueIndex = args.indexOf('StrictHostKeyChecking=yes');
+    expect(valueIndex).toBeGreaterThan(0);
+    expect(args[valueIndex - 1]).toBe('-o');
   });
 
   it('says what happened when ssh printed nothing: a stop at the time limit, or an exit code', async () => {
