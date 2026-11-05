@@ -121,6 +121,8 @@ const SNAPSHOT_MIN_INTERVAL_MS = 30_000;
 const SNAPSHOT_BYTES_PER_SECOND = 200_000;
 /** Inside the 15 s a request to the pty host gets. An export of 100 MB measured about a second. */
 const SNAPSHOT_TIMEOUT_MS = 12_000;
+/** The most a reader waits for an ending session's last export: the export's bound, its last pass, and a margin. */
+const SETTLE_WAIT_MS = 30_000;
 
 /**
  * Exports to a temporary file, then swaps it in only when it differs, so a host's tail sees a new file (and
@@ -199,6 +201,9 @@ interface Registered extends RemoteSessionRegistration {
   snapshotTimer: ReturnType<typeof setTimeout> | null;
   /** The export running now, so a tick never overlaps one and a release can wait for it. */
   snapshotRunning: Promise<void> | null;
+  /** Resolves when the release has finished, so a reader of the last export can wait for it. */
+  released: Promise<void>;
+  markReleased: () => void;
   /** The last export failure logged, so one that repeats every tick is logged once. */
   lastSnapshotFailure: string | null;
 }
@@ -355,8 +360,12 @@ export class RemoteSessionRelay {
       return;
     }
 
+    let markReleased = (): void => undefined;
+    const released = new Promise<void>((resolve) => { markReleased = resolve; });
     const entry: Registered = {
       ...registration,
+      released,
+      markReleased,
       localHooks,
       hostHooksDirectory,
       pushedPaths,
@@ -559,6 +568,25 @@ export class RemoteSessionRelay {
     // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
     await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths, entry.hostHooksDirectory);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
+    entry.markReleased();
+  }
+
+  /**
+   * For a reader of a session that is ending: resolves once the last export is in the copy, or after
+   * `SETTLE_WAIT_MS` if the release is held up. Null when there is nothing to wait for: a transcript tailed
+   * by offset is already here, and a session already released has its last export in place.
+   */
+  transcriptSettled(sessionId: string): Promise<void> | null {
+    const entry = this.sessions.get(sessionId);
+    if (!entry?.transcripts?.snapshot) return null;
+    return new Promise((resolve) => {
+      const giveUp = setTimeout(resolve, SETTLE_WAIT_MS);
+      giveUp.unref?.();
+      void entry.released.then(() => {
+        clearTimeout(giveUp);
+        resolve();
+      });
+    });
   }
 
   /**

@@ -47,6 +47,8 @@ function flushAsync(): Promise<void> {
 function makeStubManager(options: {
   agentName: string | undefined;
   transcriptPath?: string | null;
+  /** A session on a host whose last export is still on its way. */
+  settled?: Promise<void>;
 }): SessionManager {
   return {
     getSessionAgentName: vi.fn((_sessionId: string) => options.agentName),
@@ -55,6 +57,7 @@ function makeStubManager(options: {
         ? { 'session-1': { transcriptPath: options.transcriptPath ?? undefined } }
         : { 'session-1': { transcriptPath: '/path/to/transcript.jsonl' } },
     ),
+    remoteTranscriptSettled: vi.fn(() => options.settled ?? null),
   } as unknown as SessionManager;
 }
 
@@ -101,6 +104,25 @@ describe('refineTranscriptTokens orchestration', () => {
     const [calledId, calledTokens] = updateTranscriptTokensCalls[0];
     expect(calledId).toBe('record-1');
     expect(calledTokens).toEqual({ totalInputTokens: 50_000, totalOutputTokens: 8_000 });
+  });
+
+  it('waits for a session on a host to have its last export here, or the ledger totals the one before it', async () => {
+    const transcriptUsage = vi.fn().mockResolvedValue({ inputTokens: 900, outputTokens: 90 } satisfies TranscriptUsage);
+    vi.spyOn(agentRegistry, 'get').mockReturnValue({ transcriptUsage } as unknown as AgentAdapter);
+    let settle = (): void => undefined;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const manager = makeStubManager({ agentName: 'stub-agent', settled });
+    const { repo, updateTranscriptTokensCalls } = makeStubRepo();
+
+    refineTranscriptTokens(manager, repo, 'session-1', 'record-1');
+    await flushAsync();
+    expect(transcriptUsage).not.toHaveBeenCalled();
+
+    settle();
+    await drainTranscriptReadQueueForTests();
+    await flushAsync();
+
+    expect(updateTranscriptTokensCalls).toEqual([['record-1', { totalInputTokens: 900, totalOutputTokens: 90 }]]);
   });
 
   it('serializes concurrent transcript reads instead of launching one per ending session', async () => {
