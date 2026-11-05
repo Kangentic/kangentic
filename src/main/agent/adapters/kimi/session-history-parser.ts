@@ -32,7 +32,8 @@ export class KimiSessionHistoryParser {
     cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const place = placeFromStored(options.cliTarget);
-    // A Kimi on an SSH host keeps its sessions on the host, and this computer's mirror never holds them.
+    // The live reader stays off for a session on an SSH host: its wire arrives in the mirror as a copy, and a
+    // resume's backfill would read as fresh usage.
     if (place?.kind === 'ssh') return null;
     const maxAttempts = 20;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {

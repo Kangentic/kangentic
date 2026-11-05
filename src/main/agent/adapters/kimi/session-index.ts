@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { hostPathForTarget, hostPathToMirror, type CliPlace } from '../../shared/cli-target';
 import { parseJsonlRecords } from '../../shared/history-scan';
 import { cachedFileReader } from './cached-file';
 import { kimiCodeHome, kimiSessionIndexPath, kimiWorkDirCompareKey } from './kimi-home';
@@ -104,5 +104,22 @@ export function kimiSessionsForWorkDir(
 function hostSessionDir(sessionDir: string, place: CliPlace | null): string {
   const absolute = sessionDir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(sessionDir) || sessionDir.startsWith('\\\\');
   if (!absolute) return path.join(kimiCodeHome(place), sessionDir);
+  // Under a host's home it is always the mirror's: a project at the home itself would otherwise claim it.
+  if (place?.kind === 'ssh') return hostPathToMirror(sessionDir, place) ?? sessionDir;
   return place ? hostPathForTarget(sessionDir, place) : path.normalize(sessionDir);
+}
+
+/**
+ * The ids of the live sessions that lines of the index name in one folder on a
+ * host. For the lines a session on a host added since it started, which is how a
+ * fresh session's id is learned: the CLI prints it only at exit.
+ */
+export function kimiSessionIdsInFolder(text: string, folder: string): string[] {
+  const key = kimiWorkDirCompareKey(folder);
+  const ids = new Set<string>();
+  for (const entry of parseKimiSessionIndex(text)) {
+    if (entry.deleted) ids.delete(entry.sessionId);
+    else if (entry.workDir && kimiWorkDirCompareKey(entry.workDir) === key) ids.add(entry.sessionId);
+  }
+  return [...ids];
 }
