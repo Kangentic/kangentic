@@ -1,6 +1,7 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { markDataDirFailure, type DataDirKind, type DataDirOrigin } from './data-dir-failure';
 
 function getDataDirFromArgs(): string | null {
   for (let index = 0; index < process.argv.length; index++) {
@@ -18,6 +19,28 @@ function getDataDirFromArgs(): string | null {
   return null;
 }
 
+/** A resolved directory and what decided it, read together so the two cannot disagree. */
+interface ResolvedDir {
+  dir: string;
+  origin: DataDirOrigin;
+}
+
+function resolvePlatformConfigDir(): ResolvedDir {
+  const platform = process.platform;
+  let base: string;
+  let origin: DataDirOrigin = 'home';
+  if (platform === 'win32') {
+    base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    if (process.env.APPDATA) origin = 'appdata';
+  } else if (platform === 'darwin') {
+    base = path.join(os.homedir(), 'Library', 'Application Support');
+  } else {
+    base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    if (process.env.XDG_CONFIG_HOME) origin = 'appdata';
+  }
+  return { dir: path.join(base, 'kangentic'), origin };
+}
+
 /**
  * The persistent, machine-global config dir (platform default), ignoring any
  * KANGENTIC_DATA_DIR / --data-dir override. The model cache resolves from this so
@@ -25,39 +48,35 @@ function getDataDirFromArgs(): string | null {
  * preview, a relocated data dir) instead of re-downloading.
  */
 export function getPlatformConfigDir(): string {
-  const platform = process.platform;
-  let base: string;
-  if (platform === 'win32') {
-    base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-  } else if (platform === 'darwin') {
-    base = path.join(os.homedir(), 'Library', 'Application Support');
-  } else {
-    base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  }
-  return path.join(base, 'kangentic');
+  return resolvePlatformConfigDir().dir;
 }
 
-function getConfigDir(): string {
+function resolveConfigDir(): ResolvedDir {
   // Priority: env var > CLI flag > platform default
   if (process.env.KANGENTIC_DATA_DIR) {
-    return process.env.KANGENTIC_DATA_DIR;
+    return { dir: process.env.KANGENTIC_DATA_DIR, origin: 'env' };
   }
 
   const dataDirFromArgs = getDataDirFromArgs();
   if (dataDirFromArgs) {
-    return dataDirFromArgs;
+    return { dir: dataDirFromArgs, origin: 'flag' };
   }
 
-  return getPlatformConfigDir();
+  return resolvePlatformConfigDir();
 }
 
+const resolvedConfigDir = resolveConfigDir();
+const resolvedPlatformConfigDir = resolvePlatformConfigDir();
+
 export const PATHS = {
-  configDir: getConfigDir(),
+  configDir: resolvedConfigDir.dir,
+  configDirOrigin: resolvedConfigDir.origin,
   // The model cache holds immutable, machine-global weights (hundreds of MB), so
   // it resolves from the persistent platform config dir, NOT the per-instance
   // data dir (KANGENTIC_DATA_DIR / --data-dir). The ephemeral preview and a
   // relocated data dir share one cache instead of re-downloading ~730 MB.
-  modelCacheDir: path.join(getPlatformConfigDir(), 'models'),
+  modelCacheDir: path.join(resolvedPlatformConfigDir.dir, 'models'),
+  modelCacheDirOrigin: resolvedPlatformConfigDir.origin,
   get globalDb() { return path.join(this.configDir, 'index.db'); },
   get configFile() { return path.join(this.configDir, 'config.json'); },
   get projectsDir() { return path.join(this.configDir, 'projects'); },
@@ -76,17 +95,25 @@ export const PATHS = {
   get embeddingModelsDir() { return path.join(this.modelCacheDir, 'embeddings'); },
 };
 
-// These are raw mkdirSync calls, not a guard, and each of its callers already
-// has its own reason to see a failure: ConfigManager.load() wraps its call and
-// degrades to defaults (write-failure-notice.ts); getGlobalDb()/getProjectDb()
-// (db/database.ts) let it propagate into the SAME "can't read database"
-// dialog a failed `new Database(...)` open would trigger right afterward
-// either way.
+// Create one directory, recording which it was on the error before it goes on.
+function ensureDir(directory: string, kind: DataDirKind, origin: DataDirOrigin): void {
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+  } catch (error) {
+    markDataDirFailure(error, { path: directory, kind, origin });
+    throw error;
+  }
+}
+
+// These mkdirSync calls deliberately throw, and each caller already has its own
+// reason to see the failure: ConfigManager.load() wraps its call and degrades to
+// defaults (write-failure-notice.ts); getGlobalDb()/getProjectDb() (db/database.ts)
+// let it propagate, and the startup dialog reads the mark ensureDir leaves to say
+// it is the data folder and not the database. Each call names its own origin
+// because the models directory ignores KANGENTIC_DATA_DIR and --data-dir, so it
+// can fail while the other two are healthy.
 export function ensureDirs(): void {
-  // sync-write-ok: deliberately left throwing - see the function docblock above.
-  fs.mkdirSync(PATHS.configDir, { recursive: true });
-  // sync-write-ok: deliberately left throwing - see the function docblock above.
-  fs.mkdirSync(PATHS.projectsDir, { recursive: true });
-  // sync-write-ok: deliberately left throwing - see the function docblock above.
-  fs.mkdirSync(PATHS.modelsDir, { recursive: true });
+  ensureDir(PATHS.configDir, 'config', PATHS.configDirOrigin);
+  ensureDir(PATHS.projectsDir, 'projects', PATHS.configDirOrigin);
+  ensureDir(PATHS.modelsDir, 'models', PATHS.modelCacheDirOrigin);
 }

@@ -95,7 +95,7 @@ import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { ProjectRepository } from './db/repositories/project-repository';
-import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
+import { createWindowNotifier, setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
@@ -1848,11 +1848,11 @@ app.whenReady().then(async () => {
   // and notifySpawnWarning - a quit that closes the window mid-flush must not
   // try to push to a renderer that is tearing down. mainWindow is read at CALL
   // time, same reason as the DB notifier above: this runs before createWindow.
-  setSyncWriteFailureNotifier((message) => {
-    if (isShuttingDown()) return;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    sendToRenderer(mainWindow, IPC.CONFIG_WRITE_FAILED, message);
-  });
+  setSyncWriteFailureNotifier(createWindowNotifier({
+    getWindow: () => mainWindow,
+    isShuttingDown,
+    send: (window, message) => sendToRenderer(window, IPC.CONFIG_WRITE_FAILED, message),
+  }));
   phase('ensureGlobalDbReadable');
   const globalDbReady = await ensureGlobalDbReadable();
   endPhase('ensureGlobalDbReadable');

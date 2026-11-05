@@ -54,7 +54,8 @@ The user is told about it twice, by two mechanisms that answer different questio
 
 The machine-level condition goes out once per failing write source via the `config:writeFailed`
 push (below), latched in `src/main/config/write-failure-notice.ts` until a later write to that
-source succeeds. Its message names the cause where the errno identifies one: a full disk, a
+source succeeds. A failure with no window to tell, such as a save at module load, does not use up
+the notice: the source's next failure raises it. Its message names the cause where the errno identifies one: a full disk, a
 missing permission, a read-only volume, an unavailable drive, or, on Windows, a file in use or
 read-only. The toast's title is "Change not saved to disk". An errno with no mapped cause falls back to the
 plain "It may be lost on restart." body rather than guessing. The held-file case is a rename Windows refuses with EPERM, EACCES

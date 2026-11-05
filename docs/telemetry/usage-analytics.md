@@ -196,6 +196,7 @@ The last four are all startup-path faults in `src/main/index.ts`.
 exists, and `createWindowBeforeMcpSettled` when it runs before `startMcpHttpServer` settled;
 both report an ordering bug rather than a user-visible failure.
 `globalDbUnreadable` carries the sanitized open error when the global database cannot be read,
+or the mkdir error when its data folder cannot be created,
 and `startupFailure` the sanitized error from any other throw in the startup body.
 
 `secondInstanceNoWindow` is the window-lifecycle fault: a second launch hit the single-instance

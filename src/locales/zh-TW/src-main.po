@@ -40,6 +40,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 工作流程"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "此路徑中的連結指向不存在的資料夾。"
+
 #: src/main/notifications/desktop-notifier.ts
 msgid "A project"
 msgstr "某個專案"
@@ -94,6 +99,11 @@ msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "當時系統可用的提交記憶體：{remainingMb} MB。"
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic 無法建立資料資料夾"
+
+#: src/main/db/global-db-dialog.ts
 msgid "Kangentic can't read its database"
 msgstr "Kangentic 無法讀取其資料庫"
 
@@ -142,9 +152,19 @@ msgstr "工作階段當機：{label}"
 msgid "Terminals restarted"
 msgstr "終端機已重新啟動"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "此資料夾所在的磁碟機無法使用。"
+
 #: src/main/index.ts
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "視窗當機（{crashReason}），在 {minutes, plural, other {# 分鐘}}內嘗試 {attempts, plural, other {# 次}}後仍無法復原。"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "此路徑包含 Windows 不允許的字元。"
 
 #: src/main/db/global-db-dialog.ts
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."

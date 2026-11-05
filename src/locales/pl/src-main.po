@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "Przepływ pracy {workflowTitle}"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Dowiązanie w tej ścieżce wskazuje na folder, który nie istnieje."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "Wolna pamięć systemowa (commit) w tym momencie: {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic nie może utworzyć swojego folderu danych"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic nie może odczytać swojej bazy danych"
 
@@ -169,10 +179,20 @@ msgstr "Sesja uległa awarii: {label}"
 msgid "Terminals restarted"
 msgstr "Terminale uruchomione ponownie"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "Dysk tego folderu jest niedostępny."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Okno uległo awarii ({crashReason}) i nie udało się go przywrócić po {attempts, plural, one {# próbie} few {# próbach} many {# próbach} other {# próby}} w ciągu {minutes, plural, one {# minuty} few {# minut} many {# minut} other {# minuty}}."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Ta ścieżka zawiera znaki niedozwolone w systemie Windows."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
