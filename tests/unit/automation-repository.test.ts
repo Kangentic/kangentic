@@ -562,6 +562,58 @@ describe('AutomationRunRepository', () => {
     expect(runs.listForTask(taskId)).toEqual([]);
   });
 
+  // A restart prunes on project open, and the stopped mark is read back from
+  // these rows. Pruned, a stopped card would lose its mark at the restart and
+  // look like a healthy one. Red-green: drop the COLUMN_STOP_TYPES_SQL clause
+  // from pruneTo and the kept rows go.
+  it('keeps a task\'s stop rows in the column it is in now, past the limit, until it moves or is archived', () => {
+    const { database, runs, columnId, taskId } = setup();
+    const otherColumnId = new SwimlaneRepository(database).list()[1].id;
+    database
+      .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('task-plain', 'An ordinary task', '', columnId, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+    /** Stamp the row just written, since a new row is stamped now and would fall inside the limit. */
+    const stampNewest = (second: number) => database
+      .prepare('UPDATE automation_runs SET started_at = ? WHERE rowid = (SELECT MAX(rowid) FROM automation_runs)')
+      .run(at(second));
+    const stopRowIds = () => (database.prepare("SELECT id FROM automation_runs WHERE type IN ('column_stopped', 'column_stop_cleared')").all() as Array<{ id: string }>).length;
+
+    runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+    stampNewest(0);
+    runs.recordColumnStopCleared({ taskId, swimlaneId: columnId, reason: 'It can go on.' });
+    stampNewest(1);
+    // A stop row left in a column the task is no longer in.
+    runs.recordColumnStop({ taskId, swimlaneId: otherColumnId, cause: 'spent-row', reason: 'Spent.' });
+    stampNewest(2);
+    for (let index = 0; index < 4; index += 1) {
+      runs.start({ id: `plain-${index}`, automation: automation('a1', columnId), taskId: 'task-plain' });
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(at(10 + index), `plain-${index}`);
+    }
+
+    runs.pruneTo(4);
+    // Both rows in the task's current column stay; the one from the column it left goes.
+    expect(stopRowIds()).toBe(2);
+    expect(runs.columnStop(taskId, columnId, null)).toBeNull();
+    expect(runs.columnStop(taskId, otherColumnId, null)).toBeNull();
+
+    // A task that moved on no longer needs the rows of the column it left.
+    database.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(otherColumnId, taskId);
+    runs.pruneTo(4);
+    expect(stopRowIds()).toBe(0);
+
+    // And an archived task needs none, even in the column it sits in.
+    database.prepare('UPDATE tasks SET swimlane_id = ?, archived_at = NULL WHERE id = ?').run(columnId, taskId);
+    runs.recordColumnStop({ taskId, swimlaneId: columnId, cause: 'reply', reason: 'It waits for a sign in.' });
+    stampNewest(0);
+    runs.pruneTo(4);
+    expect(runs.columnStop(taskId, columnId, null)).toMatchObject({ cause: 'reply' });
+    database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', taskId);
+    runs.pruneTo(4);
+    expect(stopRowIds()).toBe(0);
+  });
+
   // Task #952: the newest 200 rows were a few hours of one workflow, so the
   // night it ran was pruned before anyone could read it.
   describe('a workflow still going, or done for less than a day', () => {
