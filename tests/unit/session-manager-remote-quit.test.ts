@@ -61,7 +61,7 @@ function giveHostAPid(manager: SessionManager, pid: number): void {
 }
 
 /** A relay that pushes nothing: this file is about the quit, not the session folder. */
-const quietRelay = { register: async () => undefined, release: async () => undefined, deliver: () => undefined } as unknown as RemoteSessionRelay;
+const quietRelay = { register: async () => undefined, release: async () => undefined, deliver: () => undefined, onSessionIdFound: () => undefined } as unknown as RemoteSessionRelay;
 
 async function spawnRemote(manager: SessionManager, taskId: string, hostId: string, hostPid: number, consoleCloseIsGraceful = false) {
   const mock = createMockPty(hostPid);

@@ -174,11 +174,11 @@ describe('the host events a remote agent produces, through the manager\'s own ho
       shutdown: () => undefined,
     };
     const manager = new SessionManager({ ptyHostTransport: transport });
-    const relay = { deliver: vi.fn(), deliverChunk: vi.fn() };
+    const relay = { deliver: vi.fn(), deliverChunk: vi.fn(), onSessionIdFound: vi.fn() };
     manager.setRemoteSessionRelay(relay as unknown as RemoteSessionRelay);
 
     const hookFile: PtyHostEvent = { type: 'hookFile', sessionId: 's1', folder: 'inbox', name: '1-2.rec', content: 'K1\nidle\n\n{}' };
-    const fileChunk: PtyHostEvent = { type: 'fileChunk', sessionId: 's1', key: 'transcript', offset: 0, reset: false, data: 'aGk=' };
+    const fileChunk: PtyHostEvent = { type: 'fileChunk', sessionId: 's1', key: 'transcript', offset: 0, reset: false, size: 2, data: 'aGk=' };
     expect(listenerRef.current).not.toBeNull();
     listenerRef.current?.(hookFile);
     listenerRef.current?.(fileChunk);
@@ -187,6 +187,24 @@ describe('the host events a remote agent produces, through the manager\'s own ho
     expect(relay.deliver).toHaveBeenCalledWith(hookFile);
     expect(relay.deliverChunk).toHaveBeenCalledTimes(1);
     expect(relay.deliverChunk).toHaveBeenCalledWith(fileChunk);
+  });
+});
+
+describe('an id found after a session on a host has started', () => {
+  // The relay's tests call `setAgentSessionId` by hand. Without this, a capture that stopped reaching the relay
+  // would leave a fresh Kimi with a name on its card and a transcript that never starts copying.
+  it('takes the same path as any captured id, and comes back to the relay, which starts copying', async () => {
+    const foundListener = vi.spyOn(RemoteSessionRelay.prototype, 'onSessionIdFound');
+    const rig = await makeRig();
+    const told = vi.spyOn(rig.relay, 'setAgentSessionId');
+    await spawnRemote(rig);
+    const reportFound = foundListener.mock.lastCall?.[0];
+
+    reportFound?.('s1', 'agent-from-index');
+
+    expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-from-index');
+    expect(told).toHaveBeenCalledWith('s1', 'agent-from-index');
+    foundListener.mockRestore();
   });
 });
 
