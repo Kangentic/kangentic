@@ -366,8 +366,9 @@ msgid "Paused"
 msgstr "En pause"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "En file d'attente {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -477,6 +478,12 @@ msgstr "Afficher les modifications"
 msgid "Starting agent..."
 msgstr "Démarrage de l'agent..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Arrêté"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
@@ -553,12 +560,14 @@ msgid "View conversation"
 msgstr "Afficher la conversation"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "En attente d'un emplacement d'agent libre."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "En attente d'un emplacement dans {columnName}."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

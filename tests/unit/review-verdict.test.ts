@@ -13,10 +13,10 @@
  * 4. Validation refuses `skipped`, a refuted or blocked finding with no reason, a blocked finding
  *    with no step, a decision with no alternative, and the retired followUps and followUpTask keys,
  *    even an empty followUps, so a driver on stale instructions fails instead of filing a task.
- * 5. The closing block's LAST line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
+ * 5. The closing block's verdict line is exactly `Verdict: Ready` or `Verdict: Blocked`, a Blocked
  *    verdict lists one numbered step per blocker above it, no `Next:` line follows, and the
  *    default output ends with the block, so the message's final line is the verdict the board's
- *    Text match rows read.
+ *    Text match rows read. A step only a person can do adds `Needs owner:` below the verdict.
  * 6. Ledger lines are keyed by file, symbol and mechanism and carry no line number.
  * 7. The Summary counts leave quick findings out of the status counts, count re-raises, list
  *    severities in critical, high, medium, low order, and name each check's value.
@@ -238,6 +238,54 @@ describe('review-verdict.mjs: verdict rules', () => {
     expect(validateFindings(report)).toEqual([]);
     expect(closingBlockLines(report)).toEqual(['1. src/main/pty/reap.ts:40: split the reap scheduler in this task', 'Verdict: Blocked']);
     expect(renderSummary(report)).not.toContain('Follow-up');
+  });
+
+  describe('a step only a person can do', () => {
+    const ownerStep = { status: 'blocked', reason: 'no login on this machine', step: 'sign in to the vendor CLI and capture a reply', needsOwner: true };
+
+    it('stays Blocked, with no third verdict, and ends on the Needs owner line below it', () => {
+      const report = reportOf([findingOf(1, ownerStep)]);
+      expect(validateFindings(report)).toEqual([]);
+      expect(computeVerdict(report).verdict).toBe('Blocked');
+      expect(closingBlockLines(report)).toEqual([
+        '1. src/main/example-1.ts:11: sign in to the vendor CLI and capture a reply',
+        'Verdict: Blocked',
+        'Needs owner: sign in to the vendor CLI and capture a reply',
+      ]);
+    });
+
+    it('stops the card on the first report even with agent steps beside it, and names only the person\'s', () => {
+      const report = reportOf([findingOf(1, { status: 'blocked', reason: 'too large for this pass', step: 'split the reader' }), findingOf(2, ownerStep)]);
+      const lines = closingBlockLines(report);
+      expect(lines.slice(0, 2)).toEqual([
+        '1. src/main/example-1.ts:11: split the reader',
+        '2. src/main/example-2.ts:12: sign in to the vendor CLI and capture a reply',
+      ]);
+      expect(lines.slice(-2)).toEqual(['Verdict: Blocked', 'Needs owner: sign in to the vendor CLI and capture a reply']);
+    });
+
+    it('keeps two such steps on the one line the app reads', () => {
+      const report = reportOf([findingOf(1, ownerStep), findingOf(2, { ...ownerStep, step: 'approve the\nschema change' })]);
+      expect(closingBlockLines(report).at(-1)).toBe('Needs owner: sign in to the vendor CLI and capture a reply; approve the schema change');
+    });
+
+    it('leaves a pass with no such step on Verdict: Blocked, the line that sends it back', () => {
+      const report = reportOf([findingOf(1, { status: 'blocked', reason: 'too large', step: 'split the reader' })]);
+      expect(closingBlockLines(report).at(-1)).toBe('Verdict: Blocked');
+    });
+
+    it('is refused anywhere but a non-quick blocked finding', () => {
+      const report = reportOf([
+        findingOf(1, { needsOwner: true }),
+        findingOf(2, { ...ownerStep, quick: true }),
+        findingOf(3, { ...ownerStep, needsOwner: 'yes' }),
+      ]);
+      expect(validateFindings(report)).toEqual([
+        'findings[0].needsOwner is only valid on a blocked finding',
+        'findings[1].needsOwner is not valid on a quick finding: a person-only step is not mechanical',
+        'findings[2].needsOwner must be true, or left out',
+      ]);
+    });
   });
 
   it('is Ready with no findings at all', () => {

@@ -165,22 +165,30 @@ describe('innerMarkup', () => {
   });
 
   it('keeps the two wait marks on their signed-off silhouettes, static and 18 wide', () => {
-    // The card tells a question (bubble) from an approval (crested shield) from a finished turn
-    // (envelope) by shape alone, all three in the attention tone (#452). Pinned here for the same
-    // reason the envelope is above: an upstream reshape would silently change what a card says.
-    // Both outlines run x 3 to 21, the 18 indicator keyline. The bubble's box is 18 x 18 (y 3 to
-    // 21, its tail included); the shield's is 18 x 20 (y 2 to 22), a unit taller than its
-    // siblings on purpose, and rendered at the same size as every other indicator mark.
+    // The card tells a question (bubble) from an approval (quartered shield) from a finished turn
+    // (envelope) from a stopped card (pennant) by shape alone, all four in the attention tone
+    // (#452). Pinned here for the same reason the envelope is above: an upstream reshape would
+    // silently change what a card says. The outlines run x 3 to 21, the 18 indicator keyline. The
+    // bubble's box is 18 x 18 (y 3 to 21, its tail included); the shield's is 18 x 20 (y 2 to 22),
+    // a unit taller than its siblings on purpose, and rendered at the same size as every other
+    // indicator mark.
     const question = innerMarkup(readMark('agent-question'));
     expect(question, 'agent-question lost its speech-bubble outline').toContain(
       'd="M5 3 H19 A2 2 0 0 1 21 5 V15 A2 2 0 0 1 19 17 H11 L8 21 V17 H5 A2 2 0 0 1 3 15 V5 A2 2 0 0 1 5 3 Z"',
     );
     const approval = innerMarkup(readMark('agent-approval'));
-    expect(approval, 'agent-approval lost its crested-shield outline').toContain(
+    expect(approval, 'agent-approval lost its shield outline').toContain(
       'd="M3 6 A1 1 0 0 1 4 5 A12.1667 12.1667 0 0 0 12 2 A12.1667 12.1667 0 0 0 20 5 A1 1 0 0 1 21 6 V11 A11.2222 11.2222 0 0 1 12 22 A11.2222 11.2222 0 0 1 3 11 Z"',
     );
-    // A wait is a state that lasts, not work in progress: neither mark moves.
-    for (const inner of [question, approval]) {
+    // The two solid quarters are what tell it from the bubble at a glance (branding 2.13.0), and
+    // they are strokes in a path of their own, since the phone's sync refuses a fill.
+    expect(approval, 'agent-approval lost its quarters').toContain(
+      'd="M11 2.7846 V11 M9.4 3.736 V11 M7.8 4.3914 V11 M6.2 4.7994 V11 M4.6 4.9852 V11 M3 11 H11 M13 13 V21.7497 M14.6 13 V21.1333 M16.2 13 V20.2029 M17.8 13 V18.8474 M19.4 13 V16.775 M13 13 H20.8203"',
+    );
+    const stopped = innerMarkup(readMark('agent-stopped'));
+    expect(stopped, 'agent-stopped lost its pennant outline').toContain('d="M3 21 V3 H21 L17 8 L21 13 H3"');
+    // A wait is a state that lasts, not work in progress: none of these marks move.
+    for (const inner of [question, approval, stopped]) {
       expect(inner).not.toMatch(/kng-(march|spin|blink)/);
     }
   });

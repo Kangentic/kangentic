@@ -11,6 +11,7 @@
  *    END on exactly the Back for revisions and On to Testing lines. Exact equality is stricter than
  *    the matcher on purpose: the script is deterministic, so the matcher's leniency is never what
  *    makes this pass. Back for revisions carries the reply, which is where the numbered steps are.
+ *    A pass with a step only a person can do ends on `Needs owner:` instead, which matches neither.
  * 2. Testing: /pull-request prints the On to Merge line in its success report step and names the
  *    row that reads it, and its escalation step's line does not match the row.
  * 3. Executing: the Apply findings message asks for exactly the On to Code Review line.
@@ -28,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { renderClosingBlock, renderSummary } from '../../scripts/review-verdict.mjs';
 import { matchFinalLine } from '../../src/shared/final-line-match';
+import { needsOwnerQuestion } from '../../src/shared/workflow-needs-owner';
 
 const REPOSITORY_ROOT = path.resolve(__dirname, '../..');
 
@@ -124,6 +126,20 @@ describe('board turn-end contracts: Code Review', () => {
       'closing block lines above the verdict that are not numbered steps',
     ).toEqual([]);
     expect(lastLineOf(renderSummary(BLOCKED_REPORT)), 'the summary').toBe(backForRevisions);
+  });
+
+  it('leaves a pass with a step only a person can do where it is, on the line the app reads', () => {
+    const personOnly = {
+      ...READY_REPORT,
+      findings: [{
+        id: 1, severity: 'medium', category: 'Correctness', location: 'src/a.ts:1', file: 'src/a.ts', mechanism: 'no real sample',
+        status: 'blocked', reason: 'no login on this machine', step: 'sign in and capture a reply', needsOwner: true,
+      }],
+    };
+    const message = renderSummary(personOnly);
+    expect(matchFinalLine(finalLineOf('Code Review', 'Back for revisions'), message).met, 'it must not take the Executing round trip').toBe(false);
+    expect(matchFinalLine(finalLineOf('Code Review', 'On to Testing'), message).met, 'it must not move on').toBe(false);
+    expect(needsOwnerQuestion(message)).toBe('sign in and capture a reply');
   });
 
   it('sends the review reply back to Executing, since the steps live in it', () => {

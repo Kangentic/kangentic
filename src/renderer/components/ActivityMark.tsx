@@ -4,6 +4,7 @@ import activityJson from '@kangentic/branding/assets/activity/activity.json';
 import agentApprovalSvg from '@kangentic/branding/assets/activity/agent-approval.svg?raw';
 import agentIdleSvg from '@kangentic/branding/assets/activity/agent-idle.svg?raw';
 import agentQuestionSvg from '@kangentic/branding/assets/activity/agent-question.svg?raw';
+import agentStoppedSvg from '@kangentic/branding/assets/activity/agent-stopped.svg?raw';
 import agentWorkingSvg from '@kangentic/branding/assets/activity/agent-working.svg?raw';
 import controlPauseIdleSvg from '@kangentic/branding/assets/activity/control-pause-idle.svg?raw';
 import controlPauseWorkingSvg from '@kangentic/branding/assets/activity/control-pause-working.svg?raw';
@@ -15,14 +16,15 @@ import terminalWorkingSvg from '@kangentic/branding/assets/activity/terminal-wor
 
 /**
  * The activity marks, owned upstream in `@kangentic/branding` (`assets/activity/`) and shared
- * with the website and the mobile app. Eleven marks over seven silhouettes (`activity.json` counts
+ * with the website and the mobile app. Twelve marks over eight silhouettes (`activity.json` counts
  * `control-pause` and `control-stop` separately) on one 24 grid at stroke 2, `currentColor` only.
  *
- * An agent waiting on the user wears one of three amber marks, told apart by shape: the
- * envelope (`agent-idle`) for a finished turn, the speech bubble (`agent-question`) for a
- * question or a wait whose kind the agent did not report, and the crested shield
- * (`agent-approval`) for a tool or plan to approve. The shield's ink is a unit taller than its
- * siblings (18 wide by 20 tall) on purpose; it renders at the same size.
+ * An agent waiting on the user wears one of four amber marks, told apart by shape: the
+ * envelope (`agent-idle`) for a finished turn, the pennant (`agent-stopped`) for a finished turn
+ * the board has stopped on, the speech bubble (`agent-question`) for a question or a wait whose
+ * kind the agent did not report, and the quartered shield (`agent-approval`) for a tool or plan
+ * to approve. The shield's ink is a unit taller than its siblings (18 wide by 20 tall) on
+ * purpose; it renders at the same size.
  *
  * Motion is composited, always, because Chromium can only composite `transform` and `opacity` and
  * a non-composited animation stops producing frames for exactly as long as THIS renderer's main
@@ -70,6 +72,7 @@ export const ACTIVITY_MARK_NAMES = [
   'agent-working',
   'agent-question',
   'agent-approval',
+  'agent-stopped',
   'terminal-idle',
   'terminal-working',
   'terminal-new',
@@ -86,6 +89,7 @@ const RAW_MARKS: Record<ActivityMarkName, string> = {
   'agent-working': agentWorkingSvg,
   'agent-question': agentQuestionSvg,
   'agent-approval': agentApprovalSvg,
+  'agent-stopped': agentStoppedSvg,
   'terminal-idle': terminalIdleSvg,
   'terminal-working': terminalWorkingSvg,
   'terminal-new': terminalNewSvg,

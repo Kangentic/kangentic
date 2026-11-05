@@ -133,7 +133,7 @@ Three top-level states:
   project but is not already looking at that session's terminal. It is edge-triggered off the
   previous state, because `session:activity` also carries reason-only refreshes that must not
   retrigger it.
-- **`permission`** - agent paused waiting on the user: a question it asked or an approval it wants. Distinct from `idle` so the UI can render a different affordance (the speech bubble or the crested shield against the envelope). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs. What the wait is for rides on its reason, not on a fourth state (see [The kind of a wait](#the-kind-of-a-wait)).
+- **`permission`** - agent paused waiting on the user: a question it asked or an approval it wants. Distinct from `idle` so the UI can render a different affordance (the speech bubble or the quartered shield against the envelope). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs. What the wait is for rides on its reason, not on a fourth state (see [The kind of a wait](#the-kind-of-a-wait)).
 
 ## ActivityReason (discriminated union)
 
@@ -141,7 +141,7 @@ Every transition emits both an `ActivityState` AND an `ActivityReason` describin
 
 ```ts
 type ActivityReason =
-  | { kind: 'idle'; since: number; inOwnCall?: true }
+  | { kind: 'idle'; since: number; inOwnCall?: true; stopped?: true }
   | { kind: 'permission'; since: number; waitKind?: PermissionWaitKind }
   | { kind: 'tool';            pendingCount: number; currentTool: string | null }
   | { kind: 'subagent';        depth: number }
@@ -169,6 +169,12 @@ the original park time rather than resetting it - and is cleared only on returni
 The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
 (`formatActivityReasonText` in `src/renderer/components/board/activity-reason-text.ts`, and
 `activityReasonIcon` in `src/renderer/components/board/ActivityReasonTooltip.tsx`).
+
+`stopped` is not the engine's either. `SessionManager` adds it to an idle reason while the board has
+stopped the task (`setTaskStopped`, which `automations/stopped-mark.ts` calls from the run log), in
+every push and every read of the reason cache, so the card draws `agent-stopped`. The turn-end rows
+run after the idle's own push, so a stop goes out as a reason-only refresh, and a card's toast and
+desktop notice stay on the one idle. `toActivityReasonWire` leaves it off the phone's reason.
 
 `inOwnCall` is not the engine's. Main adds it to the renderer's push (`markOwnCallIdle` in
 `ipc/handlers/sessions.ts`) on the idle that ends the turn in which the session moved its own task
@@ -204,7 +210,8 @@ TurnFailed, a SubagentStart the awaited call started, a non-permission Idle, `fo
 reason carries it as `waitKind`, absent rather than null when the agent did not say, and the debug
 overlay shows it as Wait kind. The phone's wire carries it too (protocol 0.26.0):
 `toActivityReasonWire` builds the permission reason field by field and adds `waitKind` only when the
-reason has one, and the `input-required` push seals the snapshot's `permissionWaitKind` as its own
+reason has one, and builds the idle reason the same way, so the desktop-only `stopped` and
+`inOwnCall` never reach the phone, and the `input-required` push seals the snapshot's `permissionWaitKind` as its own
 `waitKind`, so a phone titles the push "Agent has a question" or "Agent needs your approval".
 
 Every new wait an adapter reports needs an end the engine already clears on, and the end must not

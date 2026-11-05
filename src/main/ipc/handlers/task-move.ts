@@ -55,6 +55,7 @@ import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import { refreshStoppedMark } from '../../automations/stopped-mark';
 import { clearHeldMessages } from '../../held-messages/held-messages';
 import {
   deliverAgentMessageAndWait,
@@ -542,6 +543,10 @@ export async function handleTaskMove(
       // Move the task in the database, recording who moved it (the visit
       // boundary turn-end automations count from).
       tasks.move(input, { origin, reason: options?.moveReason ?? null });
+
+      // A stop belongs to the visit that just ended, and a session the move
+      // keeps gets no turn end to say so.
+      if (fromSwimlaneId !== input.targetSwimlaneId) refreshStoppedMark(context, resolvedProjectId, input.taskId);
 
       // Atomic archive for Done-role target: run synchronously in the same tick
       // as tasks.move so no reader can observe the intermediate state

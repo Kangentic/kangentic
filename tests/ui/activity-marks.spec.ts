@@ -342,11 +342,12 @@ test.describe('Activity marks', () => {
   });
 
   // #452: an agent waiting on you wears a mark that says why. The envelope is a finished turn,
-  // the speech bubble a question (or a wait whose agent did not report its kind), the crested
-  // shield an approval. All three are static, amber, and drawn at the card's 16px, the shield
-  // included although its ink is a unit taller.
+  // the pennant a finished turn the board has stopped on, the speech bubble a question (or a wait
+  // whose agent did not report its kind), the quartered shield an approval. All four are static,
+  // amber, and drawn at the card's 16px, the shield included although its ink is a unit taller.
   const waits: Array<{ label: string; activity: string; reasonJson?: string; mark: string; name: RegExp }> = [
     { label: 'a finished turn', activity: 'idle', reasonJson: "{ kind: 'idle', since: Date.now() - 180000 }", mark: 'agent-idle', name: /^Idle for / },
+    { label: 'a stopped card', activity: 'idle', reasonJson: "{ kind: 'idle', since: Date.now() - 180000, stopped: true }", mark: 'agent-stopped', name: /^Stopped$/ },
     { label: 'a question', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 120000, waitKind: 'question' }", mark: 'agent-question', name: /^Asking you a question for / },
     { label: 'an approval', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 60000, waitKind: 'approval' }", mark: 'agent-approval', name: /^Waiting for your approval for / },
     { label: 'a wait of unknown kind', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 120000 }", mark: 'agent-question', name: /^Waiting on you for / },
@@ -369,6 +370,28 @@ test.describe('Activity marks', () => {
       }
     });
   }
+
+  test('a stopped card takes the pennant in place, with no tip, when the board says so after the idle', async () => {
+    // Main's own push: the idle left before the rows ran, so the stop arrives as a reason alone.
+    const { browser, page } = await launch('idle', undefined, undefined, "{ kind: 'idle', since: Date.now() }");
+    try {
+      const mark = page.locator(`[data-task-id="${TASK_ID}"] svg[data-mark]`);
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle', { timeout: 15000 });
+      await page.evaluate(({ sessionId, projectId, taskId }) => {
+        const fire = (window as unknown as {
+          __mockFireActivity?: (sessionId: string, state: string, reason: unknown, projectId: string, taskId: string) => void;
+        }).__mockFireActivity;
+        fire?.(sessionId, 'idle', { kind: 'idle', since: Date.now(), stopped: true }, projectId, taskId);
+      }, { sessionId: SESSION_ID, projectId: PROJECT_ID, taskId: TASK_ID });
+      await expect(mark).toHaveAttribute('data-mark', 'agent-stopped');
+      await expect(mark).toHaveAccessibleName('Stopped');
+      await mark.hover();
+      await expect(mark).toHaveAccessibleDescription('');
+      await expect(page.getByRole('tooltip')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
 
   test('a wait that turns from a question into an approval swaps the mark in place', async () => {
     const { browser, page } = await launch('permission', undefined, undefined, "{ kind: 'permission', since: Date.now(), waitKind: 'question' }");

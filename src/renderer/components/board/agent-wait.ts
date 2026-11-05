@@ -10,7 +10,7 @@ import type { ActivityMarkName } from '../ActivityMark';
  */
 export type AgentWaitKind = PermissionWaitKind | 'unknown';
 
-/** The four marks an agent session wears: working, or one of the three waits. */
+/** The five marks an agent session wears: working, or one of the four waits. */
 export type AgentActivityMarkName = Extract<ActivityMarkName, `agent-${string}`>;
 
 /**
@@ -46,15 +46,26 @@ export function agentWaitKind(
 }
 
 /**
+ * Has the board stopped this session's card: the agent finished, and nothing
+ * will move it until a person acts? Main sets the flag, and only on an idle
+ * reason, so a working or prompting agent never reads as stopped.
+ */
+export function isStoppedReason(reason: ActivityReason | null | undefined): boolean {
+  // activity-state-ok: reads the reason's own kind to take its stopped field.
+  return reason?.kind === 'idle' && reason.stopped === true;
+}
+
+/**
  * The mark an agent session wears for `activity`: the working ring, or for a
- * session that needs the user the envelope (a finished turn), the speech
- * bubble (a question, or a wait of unknown kind) or the crested shield (a tool
- * or plan to approve). Every surface that draws an agent's mark asks this one
+ * session that needs the user the envelope (a finished turn), the pennant (a
+ * finished turn the board has stopped on), the speech bubble (a question, or a
+ * wait of unknown kind) or the quartered shield (a tool or plan to approve).
+ * Every surface that draws an agent's mark asks this one
  * function, so the board card, the Workflows views and the Agent Monitor
  * cannot draw the same wait two ways.
  *
  * The sidebar count and the Monitor's Idle tile do not ask it: they keep one
- * envelope for all three waits.
+ * envelope for all four waits.
  */
 export function agentActivityMark(
   activity: ActivityState | null | undefined,
@@ -62,7 +73,8 @@ export function agentActivityMark(
 ): AgentActivityMarkName {
   if (isActive(activity ?? undefined)) return 'agent-working';
   const waitKind = agentWaitKind(activity, reason);
-  return waitKind ? WAIT_MARKS[waitKind] : 'agent-idle';
+  if (waitKind) return WAIT_MARKS[waitKind];
+  return isStoppedReason(reason) ? 'agent-stopped' : 'agent-idle';
 }
 
 /** The mark a permission reason's own tooltip leads with. */

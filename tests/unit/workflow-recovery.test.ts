@@ -195,6 +195,7 @@ function scriptedCheck(_deps: unknown, input: CheckInput): unknown {
 }
 
 interface FakeSessionManager extends EventEmitter {
+  setTaskStopped: ReturnType<typeof vi.fn>;
   getActivityCache: () => Record<string, string>;
   isLatestTurn: (sessionId: string, workSerial: number) => boolean;
   currentWorkSerial: (sessionId: string) => number | undefined;
@@ -392,6 +393,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
     fs.writeFileSync(historyFile, '{}\n');
     stopWorkflowHangCheck();
     sessionManager = Object.assign(new EventEmitter(), {
+      setTaskStopped: vi.fn(),
       getActivityCache: () => ({ [SESSION_ID]: activity, ...(otherTaskId !== null ? { [OTHER_SESSION_ID]: otherActivity } : {}) }),
       isLatestTurn: (sessionId: string, serial: number) => (sessionId === SESSION_ID && serial === workSerial)
         || (otherTaskId !== null && sessionId === OTHER_SESSION_ID && serial === OTHER_WORK_SERIAL),
@@ -887,6 +889,8 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: OWNER_QUESTION }));
     expect(notifyPhone).toHaveBeenCalledWith(expect.objectContaining({ detail: `Waiting on you: ${OWNER_QUESTION}` }));
     expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+    // Only the owner can settle it, so the card wears the pennant.
+    expect(sessionManager.setTaskStopped).toHaveBeenLastCalledWith(taskId, 'turn');
     // Read in code: no check is paid for the line.
     expect(hoisted.check).not.toHaveBeenCalled();
 
@@ -1999,6 +2003,8 @@ describe('a running workflow task whose turn ends without its step done', () => 
       const stall = runs.listForTask(taskId).find((run) => (run.type as string) === 'workflow_stalled');
       expect(stall?.attempts).toBe(3);
       expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+      // Recovery has run out, so nothing else will try: the card wears the pennant.
+      expect(sessionManager.setTaskStopped).toHaveBeenCalledWith(taskId, 'turn');
     });
   });
 

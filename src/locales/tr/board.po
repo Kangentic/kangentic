@@ -366,8 +366,9 @@ msgid "Paused"
 msgstr "Duraklatıldı"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "Sırada {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -477,6 +478,12 @@ msgstr "Değişiklikleri göster"
 msgid "Starting agent..."
 msgstr "Ajan başlatılıyor..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Durduruldu"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
@@ -553,12 +560,14 @@ msgid "View conversation"
 msgstr "Konuşmayı görüntüle"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "Boş bir aracı yuvası bekleniyor."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "{columnName} sütununda yuva bekleniyor."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

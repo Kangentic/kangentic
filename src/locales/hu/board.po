@@ -366,8 +366,9 @@ msgid "Paused"
 msgstr "Szüneteltetve"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "Várólistán {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -477,6 +478,12 @@ msgstr "Módosítások megjelenítése"
 msgid "Starting agent..."
 msgstr "Ügynök indítása..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "Leállítva"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "Superseded by {workflowTitle}"
@@ -553,12 +560,14 @@ msgid "View conversation"
 msgstr "Beszélgetés megtekintése"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "Várakozás szabad ügynökhelyre."
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "Várakozás szabad helyre itt: {columnName}."
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

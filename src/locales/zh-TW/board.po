@@ -297,8 +297,9 @@ msgid "Paused"
 msgstr "已暫停"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued {position}/{total}..."
-msgstr ""
+msgstr "排入佇列中 {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
@@ -387,6 +388,12 @@ msgstr "顯示變更"
 msgid "Starting agent..."
 msgstr "正在啟動代理..."
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgctxt "Agent status"
+msgid "Stopped"
+msgstr "已停止"
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "Superseded by {workflowTitle}"
 msgstr "已由 {workflowTitle} 取代"
@@ -449,12 +456,14 @@ msgid "View conversation"
 msgstr "檢視對話"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot."
-msgstr ""
+msgstr "正在等待可用的代理程式位置。"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Waiting for a slot in {columnName}."
-msgstr ""
+msgstr "正在等待 {columnName} 中的可用位置。"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

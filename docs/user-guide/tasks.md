@@ -99,7 +99,7 @@ conversation and sends the task once more.
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
 - **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
-  - An amber mark when the agent is waiting on you, shaped by why: an envelope when it finished its turn, a speech bubble when it asked you a question (or did not say what it waits for), and a crested shield when it wants a tool or a plan approved. Hover it for how long ("Asking you a question for 2m"). The sidebar keeps one amber count for all three
+  - An amber mark when the agent is waiting on you, shaped by why: an envelope when it finished its turn, a pennant when it finished and the board has stopped until you act, a speech bubble when it asked you a question (or did not say what it waits for), and a quartered shield when it wants a tool or a plan approved. Hover it for how long ("Asking you a question for 2m"); the pennant has no tip, so open the task to read why. The sidebar keeps one amber count for all four
   - "Starting agent..." or "Resuming agent..." during session startup
   - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see `liveTelemetryUnsupported` in [Optional adapter properties](../integrations/agents/optional-properties.md))
   - "Queued 2/3..." with a clock when waiting for a slot, with its place in line. The tip says what it waits for: its column's [one agent at a time](columns-and-automations.md#running-one-agent-at-a-time), or a free agent slot under Max concurrent sessions
