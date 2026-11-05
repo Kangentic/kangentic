@@ -375,7 +375,7 @@ The engine's counters exist to paint the card, and a reset that is right for a c
 about whether the work ended: the background-shell hatch drops a shell after five quiet minutes, and
 a watchdog or a non-permission idle empties the pending tool stack. Overnight, three failures came
 from reading a reset as an end. A recovery nudge typed into a permission prompt the engine had
-lost. The low-memory pause stopped agents whose own gate was still running in the background. The
+lost. An automatic pause stopped agents whose own gate was still running in the background. The
 workflow step check judged a session by its reply's wording, with the same gate running each time.
 
 `OpenWorkLedger` (`open-work-ledger.ts`, task #952) keeps its own record from the same hook events.
@@ -401,13 +401,12 @@ work ended closes an entry:
   turn end is background work.
 
 `SessionManager.getOpenWork(sessionId)` reads it. Each spawn starts the session's ledger empty, so a
-resumed agent carries nothing its old process left open. Three readers act on it: the automated
+resumed agent carries nothing its old process left open. Two readers act on it: the automated
 keystrokes guard, where an open tool call holds every automated key (see
-[Command injection](../automations/command-injection.md#the-automated-keystrokes-guard)); the
-low-memory pause, which skips an agent with an open background shell or background subagent; and
+[Command injection](../automations/command-injection.md#the-automated-keystrokes-guard)); and
 the workflow step check, which reads open background work as still working, and holds a move
-while a shell is open. A lost end fails safe: Kangentic types nothing and pauses nothing while an
-entry is open, and the workflow's working wait bounds how long it waits. It is a real bound: a
+while a shell is open. A lost end fails safe: Kangentic types nothing while an entry is open, and
+the workflow's working wait bounds how long it waits. It is a real bound: a
 running workflow's turn is judged at the agent's Stop even while a shell holds the session
 (`onTurnEndedHeld`, see [Activity event types](event-types.md)), and the wait counts from when the
 oldest open entry started.

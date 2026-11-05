@@ -174,51 +174,6 @@ msgstr ""
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, other {{projectName}、# 日待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, other {{projectName}、# 時間待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, other {{projectName}、# 分待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, other {# 日待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, other {# 日待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, other {# 時間待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, other {# 時間待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, other {# 分待機}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, other {# 分待機}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -243,16 +198,6 @@ msgstr "{basePill} から {branchPill} を新しいワークツリーに作成�
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{basePill} から {branchPill} をプロジェクトフォルダーに作成します"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {アイドル状態のエージェントを一時停止しました} other {アイドル状態のエージェント # 個を一時停止しました}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic がメモリを解放するために一時停止しました。} other {Kangentic がメモリを解放するために一時停止しました。}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -328,11 +273,6 @@ msgstr "{processCount, plural, other {「{taskTitle}」の # 個のプロセス�
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, other {{taskCount, plural, other {# 個のタスク}}の # 個のプロセスが実行中のまま残っています。}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "メモリ予約の残り: {remaining}"
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -464,11 +404,6 @@ msgstr "エージェントを再開しました"
 #, fuzzy
 msgid "Agent started"
 msgstr "エージェントを開始しました"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "メモリ予約の残りがほとんどありません。"
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1138,11 +1073,6 @@ msgstr "残存プロセス"
 msgid "Leftover processes stopped"
 msgstr "残存プロセスを停止しました"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "メモリ不足"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1523,7 +1453,6 @@ msgid "Retry"
 msgstr "再試行"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "確認"
@@ -1594,7 +1523,6 @@ msgid "Session ended"
 msgstr "セッション終了"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "設定"

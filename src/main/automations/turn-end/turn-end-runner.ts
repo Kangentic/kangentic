@@ -176,7 +176,7 @@ interface PassRequest {
   payload: TurnEndedPayload;
   /** A resume's catch-up: the workflow step alone, on the reply no check judged. */
   catchUp: boolean;
-  /** A catch-up's: who resumed the session (a person, or Kangentic after a restart or a memory pause). */
+  /** A catch-up's: who resumed the session (a person, or Kangentic after a restart). */
   resumedBy?: SessionResumer;
   /**
    * A workflow recovery attempt (`runRecoveryAttempt`): the step judged again
@@ -306,8 +306,8 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     if (activity === 'idle') {
       setImmediate(() => armWorkflowRecoveryOnIdle(context, sessionId));
     }
-    // A nudge or a memory resume waiting on this session's turn has it under
-    // way: the workflow's memory gate lets the next one go.
+    // A nudge waiting on this session's turn has it under way: the workflow's
+    // memory gate lets the next one go.
     noteWorkflowSessionActivity(sessionId, activity);
   });
   context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {

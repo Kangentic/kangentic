@@ -616,25 +616,13 @@ export const IPC = {
   LEFTOVER_PROCESSES_STOP_SETTLED: 'leftoverProcesses:stopSettled',
   LEFTOVER_PROCESSES_CHECK: 'leftoverProcesses:check',
 
-  // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
-  HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
-  HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
-  // Low memory paused an agent that was waiting on the user, one push per
-  // agent (src/main/diagnostics/idle-agent-pause.ts). Every platform, unlike
-  // the two above, which carry the Windows-only warning. Main window only,
-  // like CONFIG_WRITE_FAILED: the paused toast and its Review list report one
-  // app-wide condition, and a broadcast would raise them in every open window.
-  HOST_MEMORY_AGENT_PAUSED: 'hostMemory:agentPaused',
-
   // How this launch is rendering, and whether the user still needs telling
   // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)
   //
-  // An invoke, not a push, unlike HOST_MEMORY_PRESSURE above. That one is
-  // driven by a periodic sampler, so it never fires during boot and never has
-  // to prove the renderer is listening. This is decided once, while the
-  // renderer may still be parsing its bundle, and a send with no listener
-  // registered is dropped silently - with the escalation record already
-  // cleared, so nothing would ever resend it. The renderer pulls instead.
+  // An invoke, not a push. This is decided once, while the renderer may still
+  // be parsing its bundle, and a send with no listener registered is dropped
+  // silently - with the escalation record already cleared, so nothing would
+  // ever resend it. The renderer pulls instead.
   GPU_HEALTH_STATUS: 'gpuHealth:status',
   // Save Graphics acceleration and restart. One main-side call rather than a
   // config:set followed by a relaunch: the graphics mode is chosen before

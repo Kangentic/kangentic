@@ -2664,8 +2664,8 @@ msgstr "Zatrzymuj to, co agent zostawił uruchomione w swoim folderze, gdy jego 
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Zatrzymuje to, co zadanie pozostawiło uruchomione po pauzie z powodu bezczynności lub braku pamięci albo przed zakończeniem; zapisywany w kangentic.json."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Zatrzymuje to, co zadanie pozostawiło uruchomione po pauzie z powodu bezczynności albo przed zakończeniem; zapisywany w kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3094,16 +3094,6 @@ msgstr "Przy bezczynności"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kiedy Kangentic wstrzymuje agentów czekających na Ciebie."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "Przy małej ilości pamięci"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "Gdy brakuje pamięci, wstrzymuj agenta, który najdłużej na Ciebie czeka, jednego na minutę, aż zwolni się miejsce."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

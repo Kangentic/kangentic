@@ -1,9 +1,9 @@
 /**
  * The workflow's memory gate (src/main/workflows/workflow-memory-gate.ts): one
- * queue for the load a running workflow starts by itself, nudges and memory
- * resumes. None while memory reads low, one at a time otherwise, paced, in
- * order. Overnight, three nudges sent within four seconds started three gates at
- * once, and all three failed on load.
+ * queue for the nudges a running workflow sends by itself. None while memory
+ * reads low, one at a time otherwise, paced, in order. Overnight, three nudges
+ * sent within four seconds started three gates at once, and all three failed on
+ * load.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PACE_MS, TURN_WAIT_MS, WorkflowMemoryGate } from '../../src/main/workflows/workflow-memory-gate';
@@ -53,14 +53,12 @@ describe('WorkflowMemoryGate', () => {
   });
 
   it('holds nothing longer than the turn wait when the turn never shows', () => {
-    gate.tryAcquire('resume:a');
-    gate.begin('resume:a', 'session-a');
+    gate.tryAcquire('nudge:a');
+    gate.begin('nudge:a', 'session-a');
     now += TURN_WAIT_MS;
     expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
   });
 
-  // Red before (seen live): a task's nudge waited the full turn wait behind
-  // its own memory resume, which starts no turn to end that wait.
   it('lets the key in flight continue its own load after the pace, ahead of the line and the turn wait', () => {
     expect(gate.tryAcquire('task:a')).toEqual({ go: true });
     gate.begin('task:a', 'session-a');
@@ -142,39 +140,5 @@ describe('WorkflowMemoryGate', () => {
     expect(gate.tryAcquire('nudge:b')).toEqual({ go: false, why: 'queued' });
     now += PACE_MS;
     expect(gate.tryAcquire('nudge:b')).toEqual({ go: true });
-  });
-
-  describe('withdraw', () => {
-    it('takes a waiting key out of line, so the next key goes first', () => {
-      gate.tryAcquire('task:a');
-      gate.begin('task:a', 'session-a');
-      expect(gate.tryAcquire('task:b')).toEqual({ go: false, why: 'queued' });
-      expect(gate.tryAcquire('task:c')).toEqual({ go: false, why: 'queued' });
-
-      gate.noteThinking('session-a');
-      now += PACE_MS;
-      // b asked first and is still in line, so c waits for it.
-      expect(gate.tryAcquire('task:c')).toEqual({ go: false, why: 'queued' });
-
-      gate.withdraw('task:b');
-      expect(gate.tryAcquire('task:c')).toEqual({ go: true });
-    });
-
-    it('leaves an item of the same key in flight: only the place in line goes', () => {
-      expect(gate.tryAcquire('task:a')).toEqual({ go: true });
-      gate.begin('task:a', 'session-a');
-      // The same key asks again while its first is in flight, and is told to wait.
-      expect(gate.tryAcquire('task:a')).toEqual({ go: false, why: 'queued' });
-      expect(gate.tryAcquire('task:b')).toEqual({ go: false, why: 'queued' });
-
-      gate.withdraw('task:a');
-
-      // The pace is over, but the first item has not started its turn: still in flight.
-      now += PACE_MS;
-      expect(gate.tryAcquire('task:b')).toEqual({ go: false, why: 'queued' });
-      // And its turn is still tracked by its session.
-      gate.noteThinking('session-a');
-      expect(gate.tryAcquire('task:b')).toEqual({ go: true });
-    });
   });
 });

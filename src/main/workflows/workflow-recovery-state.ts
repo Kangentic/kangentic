@@ -14,8 +14,7 @@ import type { WorkflowBlocker } from './workflow-step-condition';
 
 /**
  * How long a turn that left its own work running is left alone: nearly twice
- * the longest such wait seen ending by itself (37 minutes). Here, not in the
- * recovery, so the low-memory pause can read a wait's age without importing it.
+ * the longest such wait seen ending by itself (37 minutes).
  */
 export const WORKING_WAIT_MS = 60 * 60_000;
 
@@ -48,8 +47,6 @@ export interface RecoveryEntry {
   startedAt: number;
   /** A `'working'` verdict's one long wait is what is armed, not the schedule. */
   workingWait: boolean;
-  /** When that wait was armed (epoch ms), or null. */
-  workingWaitSince: number | null;
   /** When a held attempt is spent, if one is held off. */
   holdUntil: number | null;
   verdict: RecoveryVerdict | null;
@@ -137,17 +134,6 @@ export function recoveryEntryForSession(sessionId: string): RecoveryEntry | unde
 export function isUnderWorkflowRecovery(taskId: string): boolean {
   const entry = entries.get(taskId);
   return entry !== undefined && (entry.timer !== null || entry.inFlight);
-}
-
-/**
- * Is this task's agent in a fresh "still working" wait: the step check found
- * work of its own still running (`'working'`), and that wait has not run out?
- * The low-memory pause leaves such an agent alone (`isPauseEligible`).
- */
-export function isInWorkingWait(taskId: string, now: number = Date.now()): boolean {
-  const entry = entries.get(taskId);
-  if (!entry || !entry.workingWait || entry.workingWaitSince === null) return false;
-  return now - entry.workingWaitSince < WORKING_WAIT_MS;
 }
 
 /** Stop a task's recovery: it moved, its workflow paused or ended, or recovery is done. */

@@ -2159,8 +2159,8 @@ msgstr "任务完成、退回待办或被删除，或命令终端结束时，停
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "在任务空闲或内存不足暂停后或完成前，停止其遗留的运行内容，保存在 kangentic.json 中。"
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "在任务空闲暂停后或完成前，停止其遗留的运行内容，保存在 kangentic.json 中。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"
@@ -2508,14 +2508,6 @@ msgstr "空闲时"
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic 何时暂停等待你操作的智能体。"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "When memory runs low"
-msgstr "内存不足时"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "内存不足时，暂停等待你最久的智能体，每分钟一个，直到腾出空间。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "Where each kind of alert shows up."

@@ -1,10 +1,9 @@
 ---
 type: Guide
 title: Troubleshooting
-description: "Two failures after install: the window vanishing with no crash dialog when the Chromium graphics process fails (Kangentic turns off Graphics acceleration, gpu-process-gone crash records), and the Windows Low on memory warning (commit limit, page file size, Max Concurrent Sessions)."
-tags: [troubleshooting, gpu, memory, windows]
+description: "The window vanishing with no crash dialog when the Chromium graphics process fails: Kangentic turns off Graphics acceleration, and gpu-process-gone crash records say what happened."
+tags: [troubleshooting, gpu]
 sources:
-  - resource: src/main/diagnostics/host-memory.ts
   - resource: src/main/diagnostics/crash-capture.ts
 ---
 # Troubleshooting
@@ -48,43 +47,3 @@ itself is recorded.
 
 Unrelated, despite the similar name: **Model acceleration** in Settings > Knowledge Graph controls where
 the local search model runs, not app rendering. The two are independent.
-
-## Low memory warning (Windows)
-
-Windows keeps a second memory budget besides RAM: commit, the memory programs have reserved. Every
-reservation counts against a limit of your RAM plus the page file, whether or not the program has
-used it yet. Kangentic checks the room left under that limit once a minute and warns when less than
-2 GB is left. On a machine whose limit is under 40 GB, the line is 5% of the limit instead. Task
-Manager's Memory percentage is RAM, so it can read half free while the warning is up. The figure to
-watch is Committed, under Performance > Memory. macOS and Linux report no commit figure, so the
-warning never shows there.
-
-Windows does not stop a program when the limit is reached. The next program that asks for memory is
-refused, and it usually crashes. That can be an agent, a dev server, or Kangentic itself.
-
-Where the reservations go, measured on Windows 11 with Claude Code 2.1.306:
-
-- Each Claude Code agent reserves about 1 GB, nearly all of it the `claude` process. The MCP servers
-  you configured start once per agent on top of that. A server launched through `npx -y` also keeps
-  an `npx` process of about 110 MB beside each agent.
-- Kangentic itself reserves about 3 GB, most of it the dictation and Knowledge Graph models when
-  those features are on.
-- Builds, test runs, dev servers and browsers that agents start come on top. One of them can reserve
-  several GB, and they are what usually tips a busy machine over.
-
-Two changes give agents more room:
-
-- **Give the page file a larger starting size.** A page file Windows manages grows as commit nears
-  the limit, but a burst of reservations can outrun the growth. Open System Properties > Advanced >
-  Performance Settings > Advanced > Virtual memory > Change, clear "Automatically manage paging file
-  size", and choose Custom size. Set the Initial size so the limit sits at least 8 GB above the
-  Committed figure you see with your usual agents running, and the Maximum size no lower than that.
-- **Run fewer agents at once.** Lower Max Concurrent Sessions in Settings > Behavior, which the
-  warning's Settings button opens. Requests past the limit wait in the [Session Queue](sessions-and-worktrees.md#session-queue).
-
-For an MCP server launched through `npx`, install the package once and point its MCP config at the
-installed command, so no `npx` process sits beside each agent.
-
-The warning reads "Low on memory" over how much room is left, shows how long ago the reading was
-taken, and clears by itself once the room climbs back past twice the line. When Kangentic is also
-pausing idle agents for you, see [Pausing agents](sessions-and-worktrees.md#pausing-agents).

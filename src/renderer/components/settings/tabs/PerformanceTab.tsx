@@ -12,8 +12,8 @@ import { useConfigStore } from '../../../stores/config-store';
 
 /**
  * Chromium rendering and app-wide motion, and when Kangentic pauses agents
- * that are waiting on the user (low memory, the idle timer): both are about
- * what the app costs the machine.
+ * that are waiting on the user (the idle timer): both are about what the app
+ * costs the machine.
  *
  * Both rows arrived here rather than being invented here. Animations toggles
  * `.no-motion` on <html> but sat under Board > Window; graphics acceleration
@@ -106,24 +106,17 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
         />
       </SettingsCard>
 
-      {/* Both pauses hold: a paused agent stays paused, across a restart too,
-          until the user resumes it. Every platform: each reads its own memory
-          signal (src/main/diagnostics/host-memory.ts), so the copy names none.
-          The minutes are When idle's own value, so they share its tile on a
-          second line rather than a row of their own, and show only while it
-          is on. */}
+      {/* The pause holds: a paused agent stays paused, across a restart too,
+          until the user resumes it. The minutes are When idle's own value, so
+          they share its tile on a second line rather than a row of their own,
+          and show only while it is on. */}
       <SettingsCard
         icon={<CirclePause size={16} />}
         label={t`Pausing agents`}
         description={t`When Kangentic pauses agents that are waiting on you.`}
-        searchIds={['agent.pauseIdleAgentsOnLowMemory', 'agent.idleTimeoutEnabled', 'agent.idleTimeoutMinutes']}
+        searchIds={['agent.idleTimeoutEnabled', 'agent.idleTimeoutMinutes']}
         testId="settings-card-pausing-agents"
       >
-        <CardToggleRow
-          {...settingProps('agent.pauseIdleAgentsOnLowMemory')}
-          checked={globalConfig.agent.pauseIdleAgentsOnLowMemory}
-          onChange={(value) => updateGlobal({ agent: { pauseIdleAgentsOnLowMemory: value } })}
-        />
         <CardToggleRow
           {...settingProps('agent.idleTimeoutEnabled')}
           checked={globalConfig.agent.idleTimeoutEnabled}

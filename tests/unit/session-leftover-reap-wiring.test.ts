@@ -707,9 +707,9 @@ describe('Stop script wiring (static scans)', () => {
   function samplerTicksHeldOffStops(source: string): boolean {
     const start = source.indexOf('onSample: (sample) => {');
     if (start === -1) return false;
-    const end = source.indexOf('resumeMemoryPausedWorkflowTasks(', start);
-    const callback = source.slice(start, end === -1 ? undefined : end);
-    return /try \{[^}]*tickHeldOffStops\(stopContext\)/.test(callback);
+    const end = source.indexOf('workflowMemoryGate.onSample(', start);
+    if (end === -1) return false;
+    return /try \{[^}]*tickHeldOffStops\(stopContext\)/.test(source.slice(start, end));
   }
 
   it('the host memory sampler\'s onSample drives tickHeldOffStops, which is the recheck\'s only timer', () => {
@@ -1722,7 +1722,7 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
     expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses|startParkedStop/);
   });
 
-  it('only the idle timeout and the low-memory pause start a Stop script', () => {
+  it('only the idle timeout starts a Stop script', () => {
     // Beside its one caller in the idle continuation, sessions.ts names it in
     // its import alone, so no other handler in the file can start one.
     expect(sessionsSource.match(/startParkedStop\(/g)).toHaveLength(1);
@@ -1732,9 +1732,6 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
     // The move that parks a task in an auto_spawn=false column names it nowhere.
     const moveSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/task-move.ts'), 'utf8');
     expect(moveSource).not.toContain('startParkedStop');
-
-    const pauserSource = fs.readFileSync(path.join(__dirname, '../../src/main/diagnostics/low-memory-agent-pauser.ts'), 'utf8');
-    expect(pauserSource.match(/startParkedStop\(/g)).toHaveLength(1);
   });
 
   it("pauseTaskSession (the desktop Pause's, the phone's pause-session's and Pause workflow's shared path) never references reapTaskLeftovers / reapTaskProcesses", () => {

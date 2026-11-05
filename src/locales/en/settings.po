@@ -2151,8 +2151,8 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"
@@ -2498,14 +2498,6 @@ msgstr "When idle"
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "When Kangentic pauses agents that are waiting on you."
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "When memory runs low"
-msgstr "When memory runs low"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "Where each kind of alert shows up."

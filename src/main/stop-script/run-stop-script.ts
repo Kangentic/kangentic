@@ -4,8 +4,8 @@
  * A paused task keeps everything its agent started, and only the project knows
  * how to stop its stack cleanly. So a project names a command (`stopScript` in
  * `kangentic.json`), and Kangentic runs it in the task's worktree, or the project
- * folder for a task with none, after an idle or low-memory pause
- * (`parked-stop.ts`) and before a terminal transition's reap (`terminal-stop.ts`).
+ * folder for a task with none, after an idle pause (`parked-stop.ts`) and before
+ * a terminal transition's reap (`terminal-stop.ts`).
  *
  * It runs through the platform shell by `spawnWithAbort`, as the Post-Worktree
  * Script does, but not through `runInitScript`, whose counter holds back

@@ -2664,8 +2664,8 @@ msgstr "작업이 완료되거나, To Do로 돌아가거나, 삭제되거나, Co
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "유휴 또는 메모리 부족으로 일시 중지된 후나 완료되기 전에 작업이 남긴 실행 항목을 중지합니다. kangentic.json에 저장됩니다."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "유휴 상태로 일시 중지된 후나 완료되기 전에 작업이 남긴 실행 항목을 중지합니다. kangentic.json에 저장됩니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3094,16 +3094,6 @@ msgstr "유휴 상태일 때"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic이 응답 대기 중인 에이전트를 일시 중지하는 시점."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "메모리가 부족할 때"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "메모리가 부족하면 여유가 생길 때까지 1분에 하나씩, 가장 오래 응답을 기다린 에이전트를 일시 중지합니다."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

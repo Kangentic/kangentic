@@ -1895,19 +1895,15 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
   });
 });
 
-describe('TransitionEngine - where an isolated pass began, and who resumed a session (executeSpawnAgent chokepoint)', () => {
+describe('TransitionEngine - where an isolated pass began (executeSpawnAgent chokepoint)', () => {
   // Task #952. An isolated column's pass records the HEAD of the checkout it
   // starts in (`SessionRecord.start_head_sha`), read through the injected
   // `readStartHead` BEFORE the spawn because the agent may commit within its
   // first seconds. A main session records none, and a read that fails never
-  // fails the spawn. `spawnOverrides.resumedBy` (the workflow's memory resume
-  // passes 'memory') rides the spawn only when it really resumes.
+  // fails the spawn.
   //
   // Red-green: calling readStartHead for a main session fails the first
-  // main-session test; dropping its try/catch fails the throw test; forwarding
-  // resumedBy on a fresh spawn fails the fresh-spawn test, and dropping the
-  // forward fails the resume test.
-  const AGENT_SESSION_ID = 'agent-sess-uuid';
+  // main-session test; dropping its try/catch fails the throw test.
   const START_HEAD = '0123456789abcdef0123456789abcdef01234567';
 
   beforeEach(() => {
@@ -1915,25 +1911,7 @@ describe('TransitionEngine - where an isolated pass began, and who resumed a ses
     mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
   });
 
-  /** A suspended record the spawn resumes, or no record at all for a fresh spawn. */
-  function repoWithResumableRecord(resumable: boolean) {
-    const sessionRepo = makeSessionRepo();
-    if (resumable) {
-      const record = {
-        id: 'session-record-resume',
-        agent_session_id: AGENT_SESSION_ID,
-        session_type: 'claude_agent',
-        status: 'suspended',
-        cwd: '/some/project',
-        isolated_swimlane_id: null,
-      };
-      sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue(record as never);
-      sessionRepo.listForTaskNewestFirst.mockReturnValue([record] as never);
-    }
-    return sessionRepo;
-  }
-
-  type SpawnedArguments = { cwd: string; resuming?: boolean; resumedBy?: string };
+  type SpawnedArguments = { cwd: string };
 
   describe('start_head_sha', () => {
     it('reads the HEAD of the checkout an isolated pass starts in, before the spawn, and records it', async () => {
@@ -1999,48 +1977,6 @@ describe('TransitionEngine - where an isolated pass began, and who resumed a ses
       );
 
       expect(sessionRepo.insert).toHaveBeenCalledWith(expect.objectContaining({ start_head_sha: null }));
-    });
-  });
-
-  describe('resumedBy', () => {
-    it('is forwarded to the spawn when the session resumes', async () => {
-      const { engine, sessionManager } = makeEngine({ sessionRepo: repoWithResumableRecord(true) });
-
-      await engine.resumeSuspendedSession(
-        makeTask() as Parameters<typeof engine.resumeSuspendedSession>[0],
-        null, false, undefined, undefined, 'claude', undefined, { resumedBy: 'memory' },
-      );
-
-      const spawned = sessionManager.spawn.mock.calls[0][0] as unknown as SpawnedArguments;
-      // The control: this really is a resume.
-      expect(spawned.resuming).toBe(true);
-      expect(spawned.resumedBy).toBe('memory');
-    });
-
-    it('is left off a fresh spawn, which resumes nobody', async () => {
-      const { engine, sessionManager } = makeEngine({ sessionRepo: repoWithResumableRecord(false) });
-
-      await engine.resumeSuspendedSession(
-        makeTask() as Parameters<typeof engine.resumeSuspendedSession>[0],
-        null, false, undefined, undefined, 'claude', undefined, { resumedBy: 'memory' },
-      );
-
-      const spawned = sessionManager.spawn.mock.calls[0][0] as unknown as SpawnedArguments;
-      expect(spawned.resuming).toBe(false);
-      expect(spawned).not.toHaveProperty('resumedBy');
-    });
-
-    it('is left off a resume nobody else asked for (a person resumes by default)', async () => {
-      const { engine, sessionManager } = makeEngine({ sessionRepo: repoWithResumableRecord(true) });
-
-      await engine.resumeSuspendedSession(
-        makeTask() as Parameters<typeof engine.resumeSuspendedSession>[0],
-        null, false, undefined, undefined, 'claude',
-      );
-
-      const spawned = sessionManager.spawn.mock.calls[0][0] as unknown as SpawnedArguments;
-      expect(spawned.resuming).toBe(true);
-      expect(spawned).not.toHaveProperty('resumedBy');
     });
   });
 });

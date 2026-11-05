@@ -444,9 +444,8 @@ export function TestHarness() {
     }
   };
 
-  // Dev-only: read every host memory sample as low memory, so the low-memory
-  // pause runs on this machine: one agent that has waited on you 5 minutes or
-  // more is paused per minute (the first right away), oldest wait first.
+  // Dev-only: read every host memory sample as low memory, so a running
+  // workflow's nudges hold in the memory gate and the low spell reaches the log.
   const handleToggleLowMemory = async () => {
     const next = !simulatingLowMemory;
     try {
@@ -632,7 +631,7 @@ export function TestHarness() {
             aria-pressed={simulatingLowMemory}
             className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface transition-colors aria-pressed:border-warning aria-pressed:text-warning"
             data-testid="dev-simulate-low-memory"
-            title="Read every host memory sample as low memory, so the low-memory pause pauses one agent that has waited on you 5+ minutes per minute"
+            title="Read every host memory sample as low memory, so a running workflow's nudges hold in the memory gate"
           >
             <MemoryStick size={16} />
             {simulatingLowMemory ? 'Stop Low Memory' : 'Simulate Low Memory'}

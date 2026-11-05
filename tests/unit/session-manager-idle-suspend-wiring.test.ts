@@ -4,10 +4,9 @@
  * `requestSuspend`, just before it reports the timeout.
  *
  * A Command Terminal is exempt. A suspend ends it, and its conversation with
- * it (it has no record to resume), so the sweep never times it out, the same
- * way the low-memory pause never picks it (`isPauseEligible`). A workflow's
- * own agent is transient too, but it is no Command Terminal: it stays in the
- * sweep and is suspended here, since it has no task record to write.
+ * it (it has no record to resume), so the sweep never times it out. A
+ * workflow's own agent is transient too, but it is no Command Terminal: it stays
+ * in the sweep and is suspended here, since it has no task record to write.
  *
  * A task's agent must NOT be suspended here. The 'idle-timeout' listener
  * (ipc/handlers/sessions.ts) pauses it through `pauseTaskSession`, which

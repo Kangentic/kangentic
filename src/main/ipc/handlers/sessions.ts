@@ -675,8 +675,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       suspendedBy: 'auto',
       // The agent may have started working, or been moved or resumed onto a
       // new session, while this waited for the task lock. Text the user is
-      // typing into its prompt also holds the pause off, as it does the
-      // low-memory pause: the next sweep tries again once the prompt is empty.
+      // typing into its prompt also holds the pause off: the next sweep tries
+      // again once the prompt is empty.
       stillEligible: (liveSession) => liveSession.id === sessionId
         && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId])
         && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === ''

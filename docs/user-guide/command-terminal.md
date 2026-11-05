@@ -41,7 +41,7 @@ The Command Terminal provides quick access to Claude Code without creating a tas
 
 **Ending and pausing:**
 - **A terminal ends when its agent does.** Type `/exit`, or let the agent crash, and the terminal ends and closes within a few seconds, so you are not left at a bare shell prompt (under WSL, `/exit` ends the terminal about 5 seconds later). `/clear` keeps the terminal. Anything its agent started in the background (a dev server, a watcher) is stopped about 5 seconds after the terminal ends and listed in the leftover-processes toast, the same as when a task finishes; with **Stop Leftover Processes** off it is only listed.
-- **No pause ends a terminal.** The **When idle** and **When memory runs low** pauses both skip Command Terminals, so a terminal waiting on you stays up.
+- **No pause ends a terminal.** The **When idle** pause skips Command Terminals, so a terminal waiting on you stays up.
 - **A paired phone can start and stop terminals, and resume earlier conversations.** A terminal the phone starts in the project you have open gets its place the next time you open the panel; the title-bar icon counts it right away.
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI.
 - Command Terminals are independent of task sessions: they don't appear in the terminal panel tabs and produce no toasts when they exit or go idle. The one exception is a terminal whose shell never starts: it shows one error toast and closes. Each running Command Terminal still holds an agent slot under Max Concurrent Sessions, as a task's agent does.

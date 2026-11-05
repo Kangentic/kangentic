@@ -150,7 +150,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.copyFiles', tabId: 'git', label: msg`Copy files`, description: msg`Files copied into each new worktree, such as .env.`, scope: 'project', keywords: ['env', 'dotfiles', 'worktree'] },
   { id: 'git.initScript', tabId: 'git', label: msg`Post-worktree script`, description: msg`Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.`, scope: 'project', keywords: ['install', 'setup', 'hook', 'init', 'worktree'] },
   { id: 'git.holdPromptForInitScript', tabId: 'git', label: msg`Hold prompt for script`, description: msg`The agent gets its first prompt once the script succeeds, not at once while the script still runs.`, scope: 'project', keywords: ['init', 'setup', 'post-worktree', 'script', 'install', 'prompt', 'wait', 'agent', 'start', 'faster'] },
-  { id: 'git.stopScript', tabId: 'git', label: msg`Stop script`, description: msg`Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json.`, scope: 'project', section: msg`Leftover processes`, keywords: ['stop', 'teardown', 'shutdown', 'cleanup', 'dev server', 'stack', 'containers', 'leftover', 'pause', 'idle', 'memory', 'kangentic.json'] },
+  { id: 'git.stopScript', tabId: 'git', label: msg`Stop script`, description: msg`Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json.`, scope: 'project', section: msg`Leftover processes`, keywords: ['stop', 'teardown', 'shutdown', 'cleanup', 'dev server', 'stack', 'containers', 'leftover', 'pause', 'idle', 'kangentic.json'] },
   { id: 'git.prAutoRefresh', tabId: 'git', label: msg`Auto-refresh PRs`, description: PR_AUTO_REFRESH_DESCRIPTION, scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale', 'mergeable', 'ready', 'conflicts'] },
   { id: 'git.prBypassCountsAsReady', tabId: 'git', label: msg`Count merge bypass as ready`, description: msg`Shows a PR as ready when you can bypass its required review, never past a failing check.`, scope: 'project', keywords: ['github', 'admin', 'bypass', 'review', 'ready', 'blocked', 'behind', 'stale', 'out of date', 'branch protection', 'ruleset', 'rulesets', 'policy', 'policies', 'azure', 'pull request', 'pr'] },
 
@@ -190,10 +190,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'animationsEnabled', tabId: 'performance', label: msg`Animations`, description: msg`Transition and motion effects.`, scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility', 'animation', 'performance'] },
 
   // ── Performance > Pausing agents ──
-  // The labels finish the card's sentence ("Pause agents that are waiting on
-  // you... when memory runs low / when idle"). The info tips stay true on every
-  // platform: Windows, Linux and macOS each read their own memory signal.
-  { id: 'agent.pauseIdleAgentsOnLowMemory', tabId: 'performance', label: msg`When memory runs low`, description: msg`When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room.`, scope: 'global', section: msg`Pausing agents`, keywords: ['memory', 'low', 'pause', 'suspend', 'idle', 'agents', 'ram', 'swap', 'commit', 'pressure', 'out of memory'] },
+  // The label answers the card's description, "When Kangentic pauses agents
+  // that are waiting on you."
   { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: msg`When idle`, description: msg`Pause any agent that has waited on you this many minutes, except one in a Command Terminal.`, scope: 'global', section: msg`Pausing agents`, keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'performance', label: msg`Minutes idle`, description: msg`How long an agent waits on you before the idle timer pauses it.`, scope: 'global', section: msg`Pausing agents`, keywords: ['idle timeout', 'minutes', 'pause', 'suspend', 'timeout'] },
 

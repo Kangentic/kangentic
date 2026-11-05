@@ -14,11 +14,9 @@ import { installDiagnostics } from './diagnostics/install';
 import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
-import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
-import { createLowMemoryAgentPauser, sampleAsRead, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { startHostMemorySampler, getLastHostMemorySample, sampleAsRead, setSimulatedLowMemory } from './diagnostics/host-memory';
 import { tickHeldOffStops } from './stop-script/parked-stop-service';
 import { workflowMemoryGate } from './workflows/workflow-memory-gate';
-import { resumeMemoryPausedWorkflowTasks } from './workflows/workflow-memory-resume';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
@@ -994,10 +992,6 @@ let previousRunLogged = false;
 // live boards (docs/architecture/sessions/crash-recovery.md, step 8).
 let backgroundActivationScheduled = false;
 let stopHostMemorySampler: (() => void) | null = null;
-// Pauses the agent that has waited on the user longest while memory runs low
-// (diagnostics/idle-agent-pause.ts). Fed from the sampler's per-tick hook;
-// reads the IPC context at tick time, since the sampler is armed before it.
-const lowMemoryAgentPauser = createLowMemoryAgentPauser(() => getOptionalIpcContext());
 // DESKTOP-16 bounded-reload guard for the main window's render-process-gone
 // handler below. See renderer-recovery.ts for why the decision logic lives
 // in its own testable module rather than inline here.
@@ -1526,13 +1520,13 @@ const createWindow = () => {
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
           // The TestHarness "Simulate Low Memory" toggle: every sample reads as
-          // low memory, so the low-memory pause can be watched in a preview
-          // without exhausting the machine. Turning it on evaluates the last
-          // sample at once rather than waiting up to a minute for a tick.
+          // low memory, so the workflow's memory gate can be watched in a
+          // preview without exhausting the machine. Turning it on evaluates the
+          // last sample at once rather than waiting up to a minute for a tick.
           registerSimulateLowMemoryDevIpc((on) => {
             setSimulatedLowMemory(on);
             const lastSample = getLastHostMemorySample();
-            if (on && lastSample) lowMemoryAgentPauser.onSample(lastSample);
+            if (on && lastSample) workflowMemoryGate.onSample(sampleAsRead(lastSample));
           });
           // The TestHarness "Seed Knowledge Graph" button: the REAL-index mirror
           // (the parent project's actual conversations, titles and vectors), and
@@ -2002,34 +1996,15 @@ app.whenReady().then(async () => {
   runUptimeCheckpointInterval = setInterval(() => checkpointRunUptime(), RUN_UPTIME_CHECKPOINT_INTERVAL_MS);
   runUptimeCheckpointInterval.unref();
 
-  // Host memory pressure sampling (Sentry DESKTOP-16): armed here, before
+  // Host memory sampling (Sentry DESKTOP-16): armed here, before
   // createWindow()/registerAllIpc() below, but its first real tick is 60s
-  // away - by then mainWindow and the session manager both exist, the same
-  // ordering the heartbeat and run-uptime timers already rely on. The
-  // sampler itself is synchronous and side-effect-free
-  // (`process.getSystemMemoryInfo()`), so arming it this early is harmless
-  // even though nothing reads a sample until the first tick.
+  // away - by then the IPC context exists, the same ordering the heartbeat and
+  // run-uptime timers already rely on. The sampler itself is synchronous and
+  // side-effect-free (`process.getSystemMemoryInfo()`), so arming it this early
+  // is harmless even though nothing reads a sample until the first tick.
   stopHostMemorySampler = startHostMemorySampler({
-    // getSessionManager() throws if registerAllIpc() has not run yet; that
-    // should never be true by the time a tick fires 60s+ after this is
-    // armed, but the fallback keeps a degenerate early-startup failure from
-    // becoming a recurring uncaught-exception report every tick.
-    getActiveAgentCount: () => {
-      try {
-        return getSessionManager().getSessionCounts().active;
-      } catch {
-        return 0;
-      }
-    },
     onSample: (sample) => {
       setHostMemoryContext(sample);
-      // Its own try: a throw here must not skip this tick's Windows warning,
-      // which the sampler evaluates after this hook returns.
-      try {
-        lowMemoryAgentPauser.onSample(sample);
-      } catch (error) {
-        console.error('[idle-agent-pause] Tick failed:', error);
-      }
       // Stops a connected client held off. Nothing to do, and no work, unless
       // one is waiting (`src/main/stop-script/held-off-stops.ts`).
       try {
@@ -2038,29 +2013,13 @@ app.whenReady().then(async () => {
       } catch (error) {
         console.error('[stop-script] Tick failed:', error);
       }
-      // The workflow's nudges and memory resumes wait their turn on the same
-      // reading (`workflow-memory-gate.ts`), and the paused tasks come back
-      // one at a time once it clears (`workflow-memory-resume.ts`).
+      // The workflow's nudges wait their turn on this reading
+      // (`workflow-memory-gate.ts`).
       try {
         workflowMemoryGate.onSample(sampleAsRead(sample));
-        const ipcContext = getOptionalIpcContext();
-        if (ipcContext) {
-          // Async: this try cannot see its rejection.
-          resumeMemoryPausedWorkflowTasks(ipcContext).catch((error: unknown) => {
-            console.error('[workflow-memory-gate] Memory resume failed:', error);
-          });
-        }
       } catch (error) {
         console.error('[workflow-memory-gate] Tick failed:', error);
       }
-    },
-    onPressure: (sample, activeAgentCount) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });
-    },
-    onRecovery: (sample) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send(IPC.HOST_MEMORY_RECOVERED, { sample });
     },
   });
 

@@ -4,8 +4,7 @@
  * pauses qualify, read through the real record check.
  *
  * Brief table, rows this file pins:
- *   idle-timeout pause (`auto`), low-memory pause (`low_memory`): runs, unless a
- *     client is connected.
+ *   idle-timeout pause (`auto`): runs, unless a client is connected.
  *   user Pause or Stop, `auto_spawn=false` entry (`user`, `system`): no.
  *   respawn, handoff (`system`): no. Quit: no.
  * Terminal transitions are in session-leftover-reap-wiring.test.ts.
@@ -14,11 +13,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { TaskProbeEntry } from '../../src/main/pty/process-tag/tagged-reap';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-const { mockGetOpenProjectDb, mockGetLatestForTask, mockGetTaskById, mockListEligible, mockHoldTaskMessage, mockDestroyLanes, mockRunStopScript } = vi.hoisted(() => ({
+const { mockGetOpenProjectDb, mockGetLatestForTask, mockGetTaskById, mockHoldTaskMessage, mockDestroyLanes, mockRunStopScript } = vi.hoisted(() => ({
   mockGetOpenProjectDb: vi.fn((_projectId: string): unknown => ({ name: 'db' })),
   mockGetLatestForTask: vi.fn((_taskId: string): unknown => null),
   mockGetTaskById: vi.fn((_taskId: string): unknown => null),
-  mockListEligible: vi.fn((): string[] => []),
   mockHoldTaskMessage: vi.fn((..._args: unknown[]): { status: string } => ({ status: 'held' })),
   mockDestroyLanes: vi.fn((_taskId: string): number => 0),
   mockRunStopScript: vi.fn(async (_input: unknown): Promise<unknown> => ({ status: 'ok' })),
@@ -28,7 +26,6 @@ vi.mock('../../src/main/db/database', () => ({ getOpenProjectDb: (projectId: str
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = (taskId: string) => mockGetLatestForTask(taskId);
-    listStopEligiblePausedTasks = () => mockListEligible();
   },
 }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
@@ -47,7 +44,6 @@ vi.mock('../../src/main/stop-script/run-stop-script', () => ({
 
 import {
   createParkedStopDeps,
-  relieveParkedTasks,
   resetParkedStopsForTests,
   startParkedStop,
   tickHeldOffStops,
@@ -228,38 +224,22 @@ describe('stopParkedTask', () => {
     expect(deps.holdMessage).not.toHaveBeenCalled();
   });
 
-  it('tells a low-memory pass as the script starts, not as it ends', async () => {
-    let finish!: () => void;
-    const finished = new Promise<void>((resolve) => { finish = resolve; });
-    const deps = makeDeps({ runScript: vi.fn(async () => { await finished; return { status: 'ok' as const }; }) });
-    const onScriptStart = vi.fn();
-
-    const stop = stopParkedTask(deps, TARGET, { onScriptStart });
-    await vi.waitFor(() => expect(onScriptStart).toHaveBeenCalledTimes(1));
-    finish();
-    await stop;
-  });
-
   it('starts nothing, and asks the host nothing, while this task\'s script is already running', async () => {
     const deps = makeDeps({ isScriptRunning: () => true });
-    const onScriptStart = vi.fn();
 
-    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('already-running');
+    expect(await stopParkedTask(deps, TARGET)).toBe('already-running');
     expect(deps.probe).not.toHaveBeenCalled();
     expect(deps.runScript).not.toHaveBeenCalled();
-    expect(onScriptStart).not.toHaveBeenCalled();
   });
 
   it('runs no script when the app began to quit between the probe and the run', async () => {
     // True at the first look, which is why the probe happens at all.
     const isShuttingDown = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
     const deps = makeDeps({ isShuttingDown });
-    const onScriptStart = vi.fn();
 
-    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('skipped');
+    expect(await stopParkedTask(deps, TARGET)).toBe('skipped');
     expect(deps.probe).toHaveBeenCalledTimes(1);
     expect(deps.runScript).not.toHaveBeenCalled();
-    expect(onScriptStart).not.toHaveBeenCalled();
   });
 
   it('runs no script when the pause was lifted while the folder was being found', async () => {
@@ -272,11 +252,9 @@ describe('stopParkedTask', () => {
         return PROJECT_PATH;
       },
     });
-    const onScriptStart = vi.fn();
 
-    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('not-paused');
+    expect(await stopParkedTask(deps, TARGET)).toBe('not-paused');
     expect(deps.runScript).not.toHaveBeenCalled();
-    expect(onScriptStart).not.toHaveBeenCalled();
   });
 
   it('reads a cancelled run as a failure to stop: no report, no second probe, no message', async () => {
@@ -411,7 +389,6 @@ describe('the parked stop against the app', () => {
     mockGetTaskById.mockReturnValue({ id: TASK_ID, title: 'Fix login', worktree_path: null, archived_at: null });
     mockRunStopScript.mockResolvedValue({ status: 'ok' });
     mockDestroyLanes.mockReturnValue(0);
-    mockListEligible.mockReturnValue([]);
   });
 
   afterEach(() => {
@@ -421,7 +398,7 @@ describe('the parked stop against the app', () => {
 
   it.each([
     ['auto', true],
-    ['low_memory', true],
+    ['low_memory', false],
     ['user', false],
     ['system', false],
     [null, false],
@@ -574,166 +551,6 @@ describe('the parked stop against the app', () => {
       await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
 
       expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
-      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
-    });
-
-    it('runs one for a pause that lands while a low-memory pass has the task', async () => {
-      pausedBy('auto');
-      vi.useFakeTimers();
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = stackStoppedByTheScript();
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
-      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
-      await vi.advanceTimersByTimeAsync(1_000);
-      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
-
-      expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
-      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
-    });
-
-    it('has a low-memory pass that finds a pause\'s attempt under way answer none and add nothing', async () => {
-      pausedBy('auto');
-      vi.useFakeTimers();
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = stackStoppedByTheScript();
-
-      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
-      await vi.waitFor(() => expect(mockRunStopScript).toHaveBeenCalledTimes(1));
-      await vi.advanceTimersByTimeAsync(1_000);
-      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
-
-      expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
-      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('a low-memory pass', () => {
-    // Only the clock is faked: the pass reads `Date.now()` and the scripts here
-    // end without the one-second settle, so no timer is waited on.
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    const THIRTY_MINUTES = 30 * 60_000;
-
-    it('tries a task whose script ran again once 30 minutes have passed, and not before', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      mockRunStopScript.mockResolvedValue({ status: 'failed', failure: { kind: 'exit-code', exitCode: 1, detail: '' } });
-      const context = makeContext({ probe: [entry()] });
-      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
-      const firstPassAt = Date.now();
-
-      expect(await pass()).toBe('started');
-      // `waitFor` moves the faked clock a little, so the checks below set it absolutely.
-      await vi.waitFor(() => expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1));
-
-      vi.setSystemTime(firstPassAt + THIRTY_MINUTES - 1);
-      expect(await pass()).toBe('none');
-      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
-
-      vi.setSystemTime(firstPassAt + THIRTY_MINUTES);
-      expect(await pass()).toBe('started');
-      expect(mockRunStopScript).toHaveBeenCalledTimes(2);
-    });
-
-    it('does not probe a task again that had nothing running, until 30 minutes have passed', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = makeContext({ probe: [entry({ processes: [] })] });
-      const probe = context.sessionManager.probeTaskProcesses;
-      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
-      const firstPassAt = Date.now();
-
-      expect(await pass()).toBe('none');
-      expect(probe).toHaveBeenCalledTimes(1);
-
-      expect(await pass()).toBe('none');
-      expect(probe).toHaveBeenCalledTimes(1);
-
-      vi.setSystemTime(firstPassAt + THIRTY_MINUTES);
-      expect(await pass()).toBe('none');
-      expect(probe).toHaveBeenCalledTimes(2);
-      expect(mockRunStopScript).not.toHaveBeenCalled();
-    });
-
-    it('leaves a held-off task to its five-minute recheck: no probe, and the pass still answers held', async () => {
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = makeContext({ probe: [entry({ connected: true })] });
-      const probe = context.sessionManager.probeTaskProcesses;
-      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
-
-      expect(await pass()).toBe('held');
-      expect(probe).toHaveBeenCalledTimes(1);
-
-      expect(await pass()).toBe('held');
-      expect(probe).toHaveBeenCalledTimes(1);
-      expect(mockRunStopScript).not.toHaveBeenCalled();
-    });
-
-    it('starts a parked task\'s stop and answers before the script ends', async () => {
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      let finish!: (outcome: unknown) => void;
-      mockRunStopScript.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-      // The attempt goes on after the pass answers, through the real one-second settle.
-      vi.useFakeTimers();
-      const context = makeContext();
-      context.sessionManager.probeTaskProcesses
-        .mockResolvedValueOnce([entry()])
-        .mockResolvedValue([entry({ processes: [] })]);
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
-      // Positive control: the script is still open, so the attempt has held nothing.
-      expect(mockHoldTaskMessage).not.toHaveBeenCalled();
-
-      finish({ status: 'ok' });
-      await vi.advanceTimersByTimeAsync(1_000);
-      // The tail is awaited, so nothing of it runs after this test.
-      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
-    });
-
-    it('answers none when nothing is parked, and for a project with no script reads no session', async () => {
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = makeContext({ script: null });
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
-      expect(mockListEligible).not.toHaveBeenCalled();
-    });
-
-    it('answers none with "Stop leftover processes" off', async () => {
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = makeContext({ stopLeftoverProcesses: false, probe: [entry()] });
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
-      expect(mockRunStopScript).not.toHaveBeenCalled();
-    });
-
-    it('answers held while a client holds the task off', async () => {
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      const context = makeContext({ probe: [entry({ connected: true })] });
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('held');
-      expect(mockRunStopScript).not.toHaveBeenCalled();
-    });
-
-    it('does not try a failing script on every tick of a spell, which would pause no agent', async () => {
-      pausedBy('auto');
-      mockListEligible.mockReturnValue([TASK_ID]);
-      mockRunStopScript.mockResolvedValue({ status: 'failed', failure: { kind: 'exit-code', exitCode: 1, detail: '' } });
-      const context = makeContext({ probe: [entry()] });
-
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
-      // The failed run's report is the end of its attempt, so none is left running.
-      await vi.waitFor(() => expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1));
-      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
       expect(mockRunStopScript).toHaveBeenCalledTimes(1);
     });
   });

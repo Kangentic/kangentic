@@ -14,6 +14,7 @@ sources:
   - resource: src/main/config/write-failure-notice.ts
   - resource: src/main/config/data-dir-failure.ts
   - resource: src/main/analytics/native-crash-event.ts
+  - resource: src/main/diagnostics/host-memory.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
   - resource: src/main/utility-process/stderr-tail.ts
@@ -435,12 +436,19 @@ in one Sentry org, one triage surface.
   present the uploading launch's memory as the crash's. The commit fields are Windows-only. On
   Linux the sample carries `physicalAvailableBytes` instead, the kernel's MemAvailable
   (`available`, Electron 44+), because `physicalFreeBytes` there is MemFree, which leaves out page
-  cache and reads near zero on a healthy machine. It is null on every other platform. No Linux
-  pressure warning is raised from it. Linux samples also carry `swapTotalBytes` and
-  `swapFreeBytes`, and macOS samples `memoryPressureLevel` (the kernel's
-  `kern.memorystatus_vm_pressure_level`, read a tick late) and `memoryFreePercent`
-  (`kern.memorystatus_level`, which judges the warn level), which the low-memory pause reads
-  (`src/main/diagnostics/idle-agent-pause.ts`).
+  cache and reads near zero on a healthy machine. It is null on every other platform. Linux
+  samples also carry `swapTotalBytes` and `swapFreeBytes`, and macOS samples `memoryPressureLevel`
+  (the kernel's `kern.memorystatus_vm_pressure_level`, read a tick late) and `memoryFreePercent`
+  (`kern.memorystatus_level`, which judges the warn level). The workflow's memory gate reads the
+  same samples (`memoryHeadroom`, `src/main/workflows/workflow-memory-gate.ts`), and crash records
+  and the renderer give-up dialog read the last one.
+- **A low spell leaves two log lines, and nothing else.** Memory reads low below the smaller of 2 GB
+  and 5% of the limit, and recovers at twice that (`updateLowMemoryLatch`). `trackLowMemorySpell`
+  logs one `console.warn` tagged `[host-memory]` when a spell starts and one when it ends, with its
+  duration, its lowest headroom and the limit at both ends, so a spell can be read back when
+  diagnosing a crash. There is no toast, analytics event or automatic pause. A low reading was a
+  short spell of reservations on a limit that grows, and the load came from working agents that a
+  pause of waiting agents never touched.
 - **A worker crash is logged after its stderr pipe ends.** Electron 44.5.0 drains a utility
   process's stderr after `exit`, so `UtilityRestartPolicy.recordCrash` holds the crash's log line
   and latch report until the pipe ends, bounded at 500 ms (`STDERR_DRAIN_BOUND_MS`). Measured on

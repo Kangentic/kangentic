@@ -371,8 +371,7 @@ A task's pause can be resumed in place: its record keeps the agent's session id,
 the CLI with it on the same card. A Command Terminal has no task record, so a suspend ends it
 (`endCommandTerminalAfterPtyExit`). Its conversation is recorded (see
 [Earlier: ended conversations resume](#earlier-ended-conversations-resume)), but the terminal the
-user was looking at is gone, so the terminal is exempt from both automatic pauses. The low-memory
-pause never picks one (`isPauseEligible` in `src/main/diagnostics/idle-agent-pause.ts`). The When
+user was looking at is gone, so the terminal is exempt from the automatic pause. The When
 idle sweep skips one before it times anything out (`isIdleTimeoutExempt`, which `SessionManager`
 answers with `isCommandTerminalSession`). The skip comes before both of the sweep's callbacks, not
 just the suspend: an idle-timeout report alone reaches the renderer, which marks the session

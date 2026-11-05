@@ -273,7 +273,7 @@ export type TaskStop = 'turn' | 'visit';
  * it has no turn start and no transcript anchor.
  */
 export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt' | 'transcriptAnchor'> & {
-  /** Who resumed it: a person, or Kangentic after a restart (`'recovery'`) or a memory pause (`'memory'`). */
+  /** Who resumed it: a person, or Kangentic after a restart (`'recovery'`). */
   resumedBy: SessionResumer;
 };
 
@@ -907,9 +907,8 @@ export class SessionManager extends EventEmitter {
       // A Command Terminal is never paused: it has no task record to resume
       // in place, so a suspend ends the terminal the user was looking at (its
       // conversation only survives as an Earlier row). The sweep
-      // skips it before it times anything out, as the low-memory pause does
-      // (`isPauseEligible`). A workflow's own agent is transient too but stays
-      // in the sweep.
+      // skips it before it times anything out. A workflow's own agent is
+      // transient too but stays in the sweep.
       isIdleTimeoutExempt: (sessionId) => {
         // A session launched hidden sits idle at its input box until its
         // task's setup script ends, and has no task record to pause.
@@ -3105,8 +3104,7 @@ export class SessionManager extends EventEmitter {
    * to resume in place (its conversation is offered back from the panel's
    * Earlier list, as a new terminal), so a suspended row would only hold its
    * slot and a window on a dead PTY. No automatic path suspends one: the idle sweep skips it
-   * (`isIdleTimeoutExempt`), the low-memory pause never picks it
-   * (`isPauseEligible`), and a project relocate kills it. This is the
+   * (`isIdleTimeoutExempt`), and a project relocate kills it. This is the
    * backstop for a suspend that reaches one anyway.
    *
    * Skipped during quit: `killAll()` exits every terminal, and its bounded
