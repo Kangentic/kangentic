@@ -35,6 +35,8 @@ export interface FileChunkEvent {
   offset: number;
   /** The file was replaced or shortened: the copy is emptied before this chunk is written. */
   reset: boolean;
+  /** The file's whole size when this chunk was read, so a copy that must be whole knows when it is. */
+  size: number;
   /** The bytes, base64. */
   data: string;
 }
@@ -68,6 +70,8 @@ interface Tailing {
   files: TailState[];
   /** The scan running now, so a poll joins it and `unwatch` can wait for it before its last pass. */
   current: Promise<void> | null;
+  /** `unwatch` has begun its last pass, so a `watch` of this id is a new tail, not a change to this one. */
+  closing: boolean;
 }
 
 export class FileTail {
@@ -76,9 +80,19 @@ export class FileTail {
 
   constructor(private readonly options: FileTailOptions) {}
 
-  /** Start tailing a session's files from their first byte. A second call for one session replaces the first. */
+  /**
+   * Start tailing a session's files from their first byte. A second call names the session's whole set: a
+   * file in both keeps its place, so a transcript found late (a session id that arrives after the start)
+   * does not send the others again, a new one starts from byte 0, and one left out stops.
+   */
   watch(sessionId: string, files: readonly TailedFile[]): void {
-    this.tailing.set(sessionId, { files: files.map((file) => ({ ...file, sent: 0, identity: null, pendingReset: false })), current: null });
+    const fresh = (file: TailedFile): TailState => ({ ...file, sent: 0, identity: null, pendingReset: false });
+    const existing = this.tailing.get(sessionId);
+    if (existing && !existing.closing) {
+      existing.files = files.map((file) => existing.files.find((kept) => kept.key === file.key && kept.path === file.path) ?? fresh(file));
+    } else {
+      this.tailing.set(sessionId, { files: files.map(fresh), current: null, closing: false });
+    }
     if (!this.timer) {
       this.timer = setInterval(() => void this.scanAll(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
       this.timer.unref?.();
@@ -89,6 +103,7 @@ export class FileTail {
   async unwatch(sessionId: string): Promise<void> {
     const entry = this.tailing.get(sessionId);
     if (!entry) return;
+    entry.closing = true;
     if (entry.current) await entry.current;
     await this.scan(sessionId, entry, this.options.finalChunks ?? DEFAULT_FINAL_CHUNKS);
     await this.warnWhenBehind(sessionId, entry);
@@ -109,6 +124,16 @@ export class FileTail {
         console.warn(`[file-tail] ${sessionId.slice(0, 8)}: stopped ${stats.size - file.sent} bytes before the end of file ${file.key}`);
       }
     }
+  }
+
+  /** Each tailed file's size now, by key, leaving out one that is not there: what a file held before the agent ran. */
+  async sizes(sessionId: string): Promise<Record<string, number>> {
+    const sizes: Record<string, number> = {};
+    for (const file of this.tailing.get(sessionId)?.files ?? []) {
+      const stats = await fs.stat(file.path).catch(() => null);
+      if (stats?.isFile()) sizes[file.key] = stats.size;
+    }
+    return sizes;
   }
 
   dispose(): void {
@@ -155,7 +180,7 @@ export class FileTail {
     }
     file.identity = identity;
     if (stats.size === 0 && file.pendingReset) {
-      this.options.emit({ sessionId, key: file.key, offset: 0, reset: true, data: '' });
+      this.options.emit({ sessionId, key: file.key, offset: 0, reset: true, size: 0, data: '' });
       file.pendingReset = false;
       return;
     }
@@ -164,12 +189,16 @@ export class FileTail {
     const chunkBytes = this.options.chunkBytes ?? DEFAULT_CHUNK_BYTES;
     const handle = await fs.open(file.path, 'r');
     try {
+      // A file swapped in between the stat and the open would read as more of the one it replaced. The
+      // next poll sees the new identity and starts over.
+      const opened = await handle.stat();
+      if (`${opened.dev}:${opened.ino}` !== identity) return;
       for (let chunk = 0; chunk < maxChunks && file.sent < stats.size; chunk += 1) {
         const length = Math.min(chunkBytes, stats.size - file.sent);
         const buffer = Buffer.alloc(length);
         const { bytesRead } = await handle.read(buffer, 0, length, file.sent);
         if (bytesRead === 0) break;
-        this.options.emit({ sessionId, key: file.key, offset: file.sent, reset: file.pendingReset, data: buffer.subarray(0, bytesRead).toString('base64') });
+        this.options.emit({ sessionId, key: file.key, offset: file.sent, reset: file.pendingReset, size: stats.size, data: buffer.subarray(0, bytesRead).toString('base64') });
         file.pendingReset = false;
         file.sent += bytesRead;
       }

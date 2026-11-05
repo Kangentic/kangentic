@@ -6650,6 +6650,30 @@ export interface ProjectEnsureGitResult {
   error: string | null;
 }
 
+/** Runs a program on an SSH host to completion. A non-zero exit is an answer, not a rejection. */
+export type RemoteProgramRunner = (file: string, args: readonly string[]) => Promise<{ code: number | null; stdout: string }>;
+
+/** A file a CLI on an SSH host lists its sessions in. See `AgentParser.remoteTranscriptIndex`. */
+export interface RemoteTranscriptIndex {
+  /** The file, as the path its reader builds in this computer's mirror of the host's home. */
+  path: string;
+  /** The folder on the host this session runs in. Two sessions in one folder cannot tell their new lines apart. */
+  folder: string;
+  /** The ids of the live sessions in `folder` that lines of the file name. A torn last line is skipped. */
+  sessionIdsIn(text: string): readonly string[];
+}
+
+/** How to export a transcript on an SSH host. See `AgentParser.remoteTranscriptSnapshot`. */
+export interface RemoteTranscriptSnapshot {
+  /** The CLI, as the host's shell finds it. Its standard output is the export. */
+  file: string;
+  args: readonly string[];
+  /** The folder on the host it runs in. */
+  cwd: string;
+  /** Where the copy goes, in this computer's mirror of the host's home. */
+  localPath: string;
+}
+
 /** Minimal parsing interface for agent-specific runtime behavior. */
 export interface AgentParser {
   /**
@@ -6703,9 +6727,28 @@ export interface AgentParser {
    * bytes as they are written, and they land at the same offset in the mirror, so the conversation viewer,
    * the search index and the token ledger read a remote conversation as they read a local one. `cwd` is the
    * session's folder as this computer names it, and `cliTarget` the host. Absent for an agent whose
-   * transcript is not one plain file, or that names it only after the session starts.
+   * transcript is not one plain file. Asked again whenever the session's id arrives or its index grows, so a
+   * file named only after the session starts is picked up then, and `[]` means nothing is known yet.
    */
   remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[];
+  /**
+   * Optional: a file the CLI lists its sessions in, which says where a transcript is and what a fresh
+   * session's id is, for an agent that prints neither while it runs. It is tailed from the session's start,
+   * with or without an id.
+   */
+  remoteTranscriptIndex?(options: { cwd: string; cliTarget: StoredCliTarget }): RemoteTranscriptIndex | null;
+  /**
+   * Optional: how to copy a transcript that is no plain file, for an agent that keeps it in a database
+   * shared by every session. The CLI's own export runs on the host and the result is copied whole, each time
+   * it changes. `runProgram` runs a program on the host, for what the command depends on (the CLI's major
+   * version). Null while no export can be named, and asked again later.
+   */
+  remoteTranscriptSnapshot?(options: {
+    agentSessionId: string;
+    cwd: string;
+    cliTarget: StoredCliTarget;
+    runProgram: RemoteProgramRunner;
+  }): Promise<RemoteTranscriptSnapshot | null>;
   /**
    * Optional: this agent reports that it started, by its SessionStart hook or
    * its first alt-screen entry, so a session that shows neither did not start.

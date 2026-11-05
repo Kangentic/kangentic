@@ -149,6 +149,15 @@ export function mirrorPathToHost(localPath: string, place: SshCliPlace): string 
 }
 
 /**
+ * Where the copy of an exported conversation lives in this computer's mirror of the host's home: the file
+ * `<host home>/.kangentic/transcripts/<agent>/<id>.json`, once `mirrorPathToHost` maps it. For an agent whose
+ * conversations sit in one shared database, so a reader has a file of the conversation's own to open.
+ */
+export function remoteExportPath(place: SshCliPlace, agentName: string, agentSessionId: string): string {
+  return path.join(place.localHome, '.kangentic', 'transcripts', agentName, `${agentSessionId}.json`);
+}
+
+/**
  * A path under the host's home as this computer's mirror of that home names it (the inverse of
  * `mirrorPathToHost`), or null when the place has no mirror or the path is not inside the host's home.
  * This is what a path the CLI reported (`~/.claude/projects/...` in its status line) becomes here.

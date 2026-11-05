@@ -386,9 +386,9 @@ export class HelperServer {
       return { watching: true };
     },
     unwatchHooks: (params) => this.hookWatcher.unwatch(params.sessionId).then(() => ({ watching: false as const })),
-    watchFiles: (params) => {
+    watchFiles: async (params) => {
       this.fileTail.watch(params.sessionId, params.files.map((file) => ({ key: file.key, path: this.homePath(file.path) })));
-      return { watching: true };
+      return { watching: true, sizes: await this.fileTail.sizes(params.sessionId) };
     },
     unwatchFiles: (params) => this.fileTail.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     readFile: (params) => this.readFile(params),

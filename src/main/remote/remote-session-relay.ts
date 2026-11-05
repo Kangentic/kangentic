@@ -31,7 +31,8 @@ import { localPathToHost, mirrorPathToHost, type SshCliPlace } from '../agent/sh
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
 import type { PtyHostEvent } from '../pty/host/protocol';
-import type { HostFileWrite } from './protocol/messages';
+import type { RemoteProgramRunner, RemoteTranscriptIndex, RemoteTranscriptSnapshot } from '../../shared/types';
+import type { HostCommandRequest, HostCommandResult, HostFileWrite } from './protocol/messages';
 
 /** The helper's file jobs, as `RemoteHostService` offers them. */
 export interface RemoteSessionFiles {
@@ -43,6 +44,20 @@ export interface RemoteSessionFiles {
   unwatchFiles(hostId: string, sessionId: string): Promise<unknown>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
   removeEmptyDirectories(hostId: string, paths: string[]): Promise<unknown>;
+  runCommand(hostId: string, request: HostCommandRequest): Promise<HostCommandResult>;
+}
+
+/**
+ * What a session's adapter says about its transcript, asked again as more is known. A registration's
+ * `transcriptFiles` is the same answer at spawn; this is how it changes afterwards.
+ */
+export interface RemoteTranscriptSource {
+  /** The files tailed by offset for this id, in the mirror. Empty while none can be named. */
+  files(agentSessionId: string): readonly string[];
+  /** Tailed from the start, with or without an id. Its growth asks `files` again and can name the id. */
+  index?: RemoteTranscriptIndex;
+  /** How to export a transcript that is no plain file. Null while none can be named. */
+  snapshot?(agentSessionId: string, runProgram: RemoteProgramRunner): Promise<RemoteTranscriptSnapshot | null>;
 }
 
 export interface RemoteSessionRegistration {
@@ -64,6 +79,10 @@ export interface RemoteSessionRegistration {
    * they are written, and they are written at the same offset here. A path outside the mirror is refused.
    */
   transcriptFiles?: readonly string[];
+  /** The conversation's id when the spawn has it. One that arrives later comes through `setAgentSessionId`. */
+  agentSessionId?: string | null;
+  /** How the transcript changes after spawn: a file found late, an index, an export. */
+  transcripts?: RemoteTranscriptSource;
 }
 
 /** A file opened to be written anywhere in, made when it is not there. */
@@ -91,6 +110,63 @@ const RESPONSE_NAME = /^\d{19}-\d+\.res$/;
 const RESPONSE_JSON_LIMIT_BYTES = 100_000;
 const RESPONSE_POLL_MS = 100;
 
+/** How soon after the start or an id's arrival the first export runs: a session has nothing to export before. */
+const SNAPSHOT_FIRST_DELAY_MS = 5_000;
+/** The shortest gap between exports. An unchanged export sends nothing, so an idle session costs one CLI run. */
+const SNAPSHOT_MIN_INTERVAL_MS = 30_000;
+/**
+ * The gap grows with the export, so sending the whole file again never takes more than a sixth of the time.
+ * The tail's backfill runs at about 1.2 MB a second, and a 100 MB export would otherwise never finish arriving.
+ */
+const SNAPSHOT_BYTES_PER_SECOND = 200_000;
+/** Inside the 15 s a request to the pty host gets. An export of 100 MB measured about a second. */
+const SNAPSHOT_TIMEOUT_MS = 12_000;
+
+/**
+ * Exports to a temporary file, then swaps it in only when it differs, so a host's tail sees a new file (and
+ * sends it whole) exactly when there is something new. The export never crosses the link as output: a reply
+ * is one frame, capped at 256 KiB. Every value is an argument, and the script holds none of the caller's text.
+ * A `cmp` that is missing reads as a difference, which only costs one send. stderr is kept for the reason.
+ */
+const SNAPSHOT_SCRIPT = [
+  'target=$1; shift',
+  'mkdir -p "${target%/*}" || exit 70',
+  'staged="$target.$$.tmp"',
+  '"$@" > "$staged" 2> "$staged.err"',
+  'status=$?',
+  'if [ "$status" -eq 0 ] && [ ! -s "$staged" ]; then status=71; fi',
+  'if [ "$status" -ne 0 ]; then head -c 400 "$staged.err" >&2; rm -f "$staged" "$staged.err"; exit "$status"; fi',
+  'rm -f "$staged.err"',
+  'if cmp -s "$staged" "$target"; then rm -f "$staged"; printf \'unchanged %s\\n\' "$(wc -c < "$target")"; exit 0; fi',
+  'mv -f "$staged" "$target" || { rm -f "$staged"; exit 72; }',
+  'printf \'replaced %s\\n\' "$(wc -c < "$target")"',
+].join('\n');
+
+/** What an export's script printed: its size, and whether a new file went up for the tail to send. */
+export function readSnapshotAnswer(stdout: string): { replaced: boolean; bytes: number } | null {
+  const match = /^(replaced|unchanged) +(\d+)\s*$/m.exec(stdout);
+  return match ? { replaced: match[1] === 'replaced', bytes: Number(match[2]) } : null;
+}
+
+/** How long to wait before the next export, given the size of the last one. */
+export function nextSnapshotDelayMs(lastBytes: number): number {
+  return Math.max(SNAPSHOT_MIN_INTERVAL_MS, (lastBytes / SNAPSHOT_BYTES_PER_SECOND) * 1000);
+}
+
+type TailKind = 'file' | 'index' | 'snapshot';
+
+interface Tail {
+  localPath: string;
+  kind: TailKind;
+}
+
+interface SnapshotState {
+  spec: RemoteTranscriptSnapshot;
+  hostPath: string;
+  /** A whole copy staged here that a rename could not put in place yet (a reader held the file on Windows). */
+  pendingPromotion: boolean;
+}
+
 interface Registered extends RemoteSessionRegistration {
   localHooks: ReturnType<typeof wslHookPaths>;
   hostHooksDirectory: string;
@@ -105,7 +181,26 @@ interface Registered extends RemoteSessionRegistration {
   /** The release under way, so a second one waits on it and asks the host nothing. */
   releaseDone: Promise<void> | null;
   /** The transcript files the host sends, by the key it names them with, to where each is written here. */
-  tails: Map<string, string>;
+  tails: Map<string, Tail>;
+  /** The next key to hand out. A key is never reused, so a chunk still on its way cannot land in another file. */
+  nextTailKey: number;
+  /** The conversation's id, once known. */
+  currentAgentSessionId: string | null;
+  /** Changes to `tails` run one at a time, in order. */
+  tailUpdate: Promise<void>;
+  /** The host has been told to stop, so what is tailed no longer changes. */
+  tailsClosed: boolean;
+  /** The index's size before this session's agent ran, or null when new lines cannot be told from old. */
+  indexBaseline: number | null;
+  /** A read of the index is running, and whether it has grown since that read began. */
+  indexRead: { running: boolean; again: boolean };
+  /** The export this session is copying, once one can be named. */
+  snapshot: SnapshotState | null;
+  snapshotTimer: ReturnType<typeof setTimeout> | null;
+  /** The export running now, so a tick never overlaps one and a release can wait for it. */
+  snapshotRunning: Promise<void> | null;
+  /** The last export failure logged, so one that repeats every tick is logged once. */
+  lastSnapshotFailure: string | null;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -117,17 +212,39 @@ interface PendingRegistration {
   released: boolean;
   /** Resolves once this registration has finished, whichever way, cleanup included. */
   settled: Promise<void>;
+  /** An id that arrived while the files were being pushed, for the entry to start from. */
+  agentSessionId?: string;
 }
 
 export class RemoteSessionRelay {
   private readonly sessions = new Map<string, Registered>();
   /** Registrations still pushing files, so a release that arrives meanwhile is kept, not lost. */
   private readonly registering = new Map<string, PendingRegistration>();
+  private sessionIdFound: (sessionId: string, agentSessionId: string) => void = () => undefined;
 
   constructor(private readonly options: RemoteSessionRelayOptions) {}
 
   has(sessionId: string): boolean {
     return this.sessions.has(sessionId);
+  }
+
+  /** Told when a CLI's index names a fresh session's id, for an agent that prints none while it runs. */
+  onSessionIdFound(listener: (sessionId: string, agentSessionId: string) => void): void {
+    this.sessionIdFound = listener;
+  }
+
+  /**
+   * The session's conversation id arrived after the start, or the agent moved to a new one. Repeat-safe: the
+   * same id changes nothing. The transcript is asked for again, and a new id replaces what it names.
+   */
+  setAgentSessionId(sessionId: string, agentSessionId: string): void {
+    const pending = this.registering.get(sessionId);
+    if (pending) pending.agentSessionId = agentSessionId;
+    const entry = this.sessions.get(sessionId);
+    if (!entry || entry.releaseDone || entry.currentAgentSessionId === agentSessionId) return;
+    entry.currentAgentSessionId = agentSessionId;
+    void this.refreshTails(entry);
+    this.scheduleSnapshot(entry, SNAPSHOT_FIRST_DELAY_MS);
   }
 
   /**
@@ -164,7 +281,8 @@ export class RemoteSessionRelay {
     let hostHooksDirectory = '';
     let localHooks: ReturnType<typeof wslHookPaths>;
     const pushedPaths: string[] = [];
-    const tails = new Map<string, string>();
+    const tails = new Map<string, Tail>();
+    let indexBaseline: number | null = null;
     try {
       localHooks = wslHookPaths(registration.localSessionDirectory);
       const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
@@ -195,20 +313,24 @@ export class RemoteSessionRelay {
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
       // The transcript is extra: an agent with no transcript here still runs. A host that cannot tail it
       // costs the conversation viewer, not the session.
+      const wanted: Tail[] = [
+        ...(registration.transcripts?.index ? [{ localPath: registration.transcripts.index.path, kind: 'index' as const }] : []),
+        ...(registration.transcriptFiles ?? []).map((localPath) => ({ localPath, kind: 'file' as const })),
+      ];
       const tailRequest: Array<{ key: string; path: string }> = [];
-      for (const localPath of registration.transcriptFiles ?? []) {
-        const hostPath = mirrorPathToHost(localPath, registration.place);
-        if (hostPath === null) {
-          this.options.log?.(`not tailing ${path.basename(localPath)} for ${registration.sessionId.slice(0, 8)}: it is not inside the mirror of the host's home`);
-          continue;
-        }
+      for (const tail of wanted) {
+        const hostPath = this.hostPathOf(registration, tail.localPath);
+        if (hostPath === null) continue;
         const key = String(tailRequest.length);
-        tails.set(key, localPath);
+        tails.set(key, tail);
         tailRequest.push({ key, path: hostPath });
       }
       if (tailRequest.length > 0) {
         try {
-          await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest);
+          const answer = await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest);
+          // Read before the agent starts, so what lies past it is what this session's agent adds.
+          const indexKey = [...tails].find(([, tail]) => tail.kind === 'index')?.[0];
+          if (indexKey !== undefined) indexBaseline = sizesOf(answer)?.[indexKey] ?? 0;
         } catch (error) {
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -243,10 +365,149 @@ export class RemoteSessionRelay {
       lastFailure: null,
       releaseDone: null,
       tails,
+      nextTailKey: tails.size,
+      currentAgentSessionId: pending.agentSessionId ?? registration.agentSessionId ?? null,
+      tailUpdate: Promise.resolve(),
+      tailsClosed: false,
+      indexBaseline,
+      indexRead: { running: false, again: false },
+      snapshot: null,
+      snapshotTimer: null,
+      snapshotRunning: null,
+      lastSnapshotFailure: null,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
     this.sessions.set(registration.sessionId, entry);
+    // An id that came in while the files were being pushed, or a file its id names only now.
+    if (entry.currentAgentSessionId !== (registration.agentSessionId ?? null)) void this.refreshTails(entry);
+    if (entry.transcripts?.snapshot) this.scheduleSnapshot(entry, SNAPSHOT_FIRST_DELAY_MS);
+  }
+
+  /** A mirror path as the host names it. One outside the mirror is refused here, so it never reaches the host. */
+  private hostPathOf(registration: RemoteSessionRegistration, localPath: string): string | null {
+    const hostPath = mirrorPathToHost(localPath, registration.place);
+    if (hostPath === null) {
+      this.options.log?.(`not tailing ${path.basename(localPath)} for ${registration.sessionId.slice(0, 8)}: it is not inside the mirror of the host's home`);
+    }
+    return hostPath;
+  }
+
+  /** Bring what the host tails in line with what is known now. One at a time, and a failure keeps what was tailing. */
+  private refreshTails(entry: Registered): Promise<void> {
+    entry.tailUpdate = entry.tailUpdate.then(() => this.applyTails(entry)).catch((error: unknown) => {
+      this.options.log?.(`could not change what is tailed for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return entry.tailUpdate;
+  }
+
+  private async applyTails(entry: Registered): Promise<void> {
+    if (entry.tailsClosed) return;
+    const agentSessionId = entry.currentAgentSessionId;
+    const wanted = new Map<string, TailKind>();
+    if (entry.transcripts?.index) wanted.set(entry.transcripts.index.path, 'index');
+    if (entry.transcripts && agentSessionId) {
+      for (const localPath of entry.transcripts.files(agentSessionId)) wanted.set(localPath, 'file');
+    } else if (!entry.transcripts) {
+      for (const localPath of entry.transcriptFiles ?? []) wanted.set(localPath, 'file');
+    }
+    if (entry.snapshot) wanted.set(entry.snapshot.spec.localPath, 'snapshot');
+
+    const held = [...entry.tails.values()].map((tail) => tail.localPath);
+    if (held.length === wanted.size && held.every((localPath) => wanted.has(localPath))) return;
+
+    const tails = new Map<string, Tail>();
+    let nextTailKey = entry.nextTailKey;
+    for (const [localPath, kind] of wanted) {
+      const kept = [...entry.tails].find(([, tail]) => tail.localPath === localPath);
+      if (kept) {
+        tails.set(kept[0], kept[1]);
+      } else if (this.hostPathOf(entry, localPath) !== null) {
+        tails.set(String(nextTailKey), { localPath, kind });
+        nextTailKey += 1;
+      }
+    }
+    const request = [...tails].map(([key, tail]) => ({ key, path: this.hostPathOf(entry, tail.localPath) as string }));
+    // The tail keys are set first: a chunk can land before the host's answer does, and an unknown key is dropped.
+    const previous = entry.tails;
+    entry.tails = tails;
+    entry.nextTailKey = nextTailKey;
+    try {
+      await this.options.files.watchFiles(entry.hostId, entry.sessionId, request);
+    } catch (error) {
+      entry.tails = previous;
+      throw error;
+    }
+  }
+
+  /** Run the export after `delayMs`, in place of any tick already waiting. */
+  private scheduleSnapshot(entry: Registered, delayMs: number): void {
+    if (!entry.transcripts?.snapshot || entry.releaseDone) return;
+    if (entry.snapshotTimer) clearTimeout(entry.snapshotTimer);
+    entry.snapshotTimer = setTimeout(() => void this.snapshotTick(entry), delayMs);
+    entry.snapshotTimer.unref?.();
+  }
+
+  private async snapshotTick(entry: Registered): Promise<void> {
+    entry.snapshotTimer = null;
+    let delayMs = SNAPSHOT_MIN_INTERVAL_MS;
+    if (entry.currentAgentSessionId && !entry.snapshotRunning) {
+      const bytes = await this.runSnapshot(entry);
+      if (bytes !== null) delayMs = nextSnapshotDelayMs(bytes);
+    }
+    this.scheduleSnapshot(entry, delayMs);
+  }
+
+  /** One export, with its size as the answer. Null when it could not run: the copy here stays as it was. */
+  private runSnapshot(entry: Registered): Promise<number | null> {
+    let finish = (): void => undefined;
+    entry.snapshotRunning = new Promise((resolve) => { finish = resolve; });
+    return this.exportAndTail(entry).catch((error: unknown) => {
+      this.noteSnapshotFailure(entry, error instanceof Error ? error.message : String(error));
+      return null;
+    }).finally(() => {
+      entry.snapshotRunning = null;
+      finish();
+      this.retryPromotion(entry);
+    });
+  }
+
+  private async exportAndTail(entry: Registered): Promise<number | null> {
+    const agentSessionId = entry.currentAgentSessionId;
+    if (!agentSessionId || !entry.transcripts?.snapshot) return null;
+    const spec = await entry.transcripts.snapshot(agentSessionId, async (file, args) => {
+      const result = await this.options.files.runCommand(entry.hostId, { file, args: [...args], timeoutMs: SNAPSHOT_TIMEOUT_MS });
+      return { code: result.code, stdout: result.stdout };
+    });
+    if (!spec) return null;
+    const hostPath = this.hostPathOf(entry, spec.localPath);
+    if (hostPath === null) return null;
+    if (entry.snapshot?.spec.localPath !== spec.localPath) {
+      entry.snapshot = { spec, hostPath, pendingPromotion: false };
+      if (!entry.pushedPaths.includes(hostPath)) entry.pushedPaths.push(hostPath);
+      await this.refreshTails(entry);
+    }
+    const result = await this.options.files.runCommand(entry.hostId, {
+      file: 'sh',
+      args: ['-c', SNAPSHOT_SCRIPT, 'sh', hostPath, spec.file, ...spec.args],
+      cwd: spec.cwd,
+      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+    });
+    const answer = result.code === 0 ? readSnapshotAnswer(result.stdout) : null;
+    if (!answer) {
+      this.noteSnapshotFailure(entry, result.error ?? (result.timedOut ? 'the export timed out' : (result.stderr.trim() || `the export exited ${String(result.code)}`)));
+      return null;
+    }
+    entry.lastSnapshotFailure = null;
+    return answer.bytes;
+  }
+
+  /** Before a session's first turn there is nothing to export, so a failure is ordinary and is logged only once. */
+  private noteSnapshotFailure(entry: Registered, message: string): void {
+    if (message !== entry.lastSnapshotFailure) {
+      this.options.log?.(`could not export the transcript for ${entry.sessionId.slice(0, 8)}: ${message}`);
+    }
+    entry.lastSnapshotFailure = message;
   }
 
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
@@ -271,11 +532,21 @@ export class RemoteSessionRelay {
 
   private async finishRelease(sessionId: string, entry: Registered): Promise<void> {
     clearInterval(entry.timer);
+    if (entry.snapshotTimer) clearTimeout(entry.snapshotTimer);
+    entry.snapshotTimer = null;
     // The registration stays until the host has answered: the records it flushes on the way out
     // arrive first, and `deliver` drops what it has no registration for.
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
+    // A last export, for what the session did since the one before. Bounded by the run's own timeout, and a
+    // failure leaves the last whole copy. It can be the first one: a session shorter than the first tick.
+    if (entry.transcripts?.snapshot && entry.currentAgentSessionId) {
+      await entry.snapshotRunning;
+      await this.runSnapshot(entry);
+    }
+    await entry.tailUpdate;
+    entry.tailsClosed = true;
     // The host's last pass arrives before this answers, so a tail that had caught up leaves the whole
     // transcript in the copy here. One still backfilling can stop short, and the next session here starts over.
     if (entry.tails.size > 0) {
@@ -283,6 +554,8 @@ export class RemoteSessionRelay {
         this.options.log?.(`could not stop the host tailing ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
+    this.retryPromotion(entry);
+    this.dropStagedSnapshot(entry);
     // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
     await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths, entry.hostHooksDirectory);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
@@ -356,29 +629,112 @@ export class RemoteSessionRelay {
    * session's exit is handled, and a chunk is at most a couple of hundred KB.
    */
   deliverChunk(event: FileChunkEvent): void {
-    const localPath = this.sessions.get(event.sessionId)?.tails.get(event.key);
-    if (!localPath) return;
+    const entry = this.sessions.get(event.sessionId);
+    const tail = entry?.tails.get(event.key);
+    if (!entry || !tail) return;
+    // An export is one document, so the copy a reader opens is only ever a whole one. The last whole copy
+    // stays in place until the next is complete: a stale copy never reads as an empty one.
+    const target = tail.kind === 'snapshot' ? stagedPath(tail.localPath) : tail.localPath;
+    let written = -1;
     try {
       // Inside this try: a failure is logged and the next chunk tries again.
-      fsSync.mkdirSync(path.dirname(localPath), { recursive: true });
+      fsSync.mkdirSync(path.dirname(target), { recursive: true });
       // Read and write without append mode, which would put every write at the end whatever its offset.
-      const descriptor = openForWriteAt(localPath);
+      const descriptor = openForWriteAt(target);
       try {
-        if (event.reset) fsSync.ftruncateSync(descriptor, 0);
+        // The first chunk of an export empties what an earlier one left that never finished arriving.
+        if (event.reset || (tail.kind === 'snapshot' && event.offset === 0)) fsSync.ftruncateSync(descriptor, 0);
         const bytes = Buffer.from(event.data, 'base64');
         if (bytes.length > 0) fsSync.writeSync(descriptor, bytes, 0, bytes.length, event.offset);
+        if (tail.kind === 'snapshot') written = fsSync.fstatSync(descriptor).size;
       } finally {
         fsSync.closeSync(descriptor);
       }
     } catch (error) {
       this.options.log?.(`could not write the transcript for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
     }
+    if (tail.kind === 'snapshot' && event.size > 0 && written === event.size) this.promoteSnapshot(entry, tail.localPath);
+    if (tail.kind === 'index') {
+      // A reset means a line past the baseline need not be new, so the id is left to the agent's exit.
+      if (event.reset) entry.indexBaseline = null;
+      void this.readIndex(entry);
+    }
+  }
+
+  /** Put a whole staged export in place. A reader holding the copy on Windows fails this, and it is tried again. */
+  private promoteSnapshot(entry: Registered, localPath: string): void {
+    const pending = entry.snapshot?.spec.localPath === localPath ? entry.snapshot : null;
+    try {
+      fsSync.renameSync(stagedPath(localPath), localPath);
+      if (pending) pending.pendingPromotion = false;
+    } catch (error) {
+      if (pending) pending.pendingPromotion = true;
+      this.options.log?.(`could not put the transcript in place for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private retryPromotion(entry: Registered): void {
+    if (entry.snapshot?.pendingPromotion) this.promoteSnapshot(entry, entry.snapshot.spec.localPath);
+  }
+
+  /** What is left staged at the session's end never finished arriving. The last whole copy stands. */
+  private dropStagedSnapshot(entry: Registered): void {
+    if (!entry.snapshot) return;
+    try {
+      fsSync.rmSync(stagedPath(entry.snapshot.spec.localPath), { force: true });
+    } catch {
+      // A leftover is emptied by the next export's first chunk.
+    }
+  }
+
+  /**
+   * The index grew: its transcript may be named now, and a fresh session's id may be in the lines past the
+   * baseline. A chunk arrives at a time, so a read that is running is asked to go round once more.
+   */
+  private async readIndex(entry: Registered): Promise<void> {
+    if (entry.indexRead.running) {
+      entry.indexRead.again = true;
+      return;
+    }
+    entry.indexRead.running = true;
+    try {
+      do {
+        entry.indexRead.again = false;
+        await this.refreshTails(entry);
+        await this.findSessionId(entry);
+      } while (entry.indexRead.again && !entry.releaseDone);
+    } catch (error) {
+      this.options.log?.(`could not read the session index for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      entry.indexRead.running = false;
+    }
+  }
+
+  /**
+   * Name a fresh session's id from the lines its agent added. Assigned only when it can be nothing else: a
+   * wrong id would resume another conversation, so two sessions waiting in one folder get none, and each keeps
+   * the agent's own report at exit.
+   */
+  private async findSessionId(entry: Registered): Promise<void> {
+    const index = entry.transcripts?.index;
+    if (!index || entry.currentAgentSessionId !== null || entry.indexBaseline === null) return;
+    const content = await fs.readFile(index.path).catch(() => null);
+    if (!content || content.length <= entry.indexBaseline) return;
+    const others = [...this.sessions.values()].filter((other) => other !== entry && other.hostId === entry.hostId && other.transcripts?.index?.path === index.path);
+    if (others.some((other) => other.currentAgentSessionId === null && other.transcripts?.index?.folder === index.folder)) return;
+    const claimed = new Set(others.map((other) => other.currentAgentSessionId));
+    const candidates = index.sessionIdsIn(content.subarray(entry.indexBaseline).toString('utf8')).filter((id) => !claimed.has(id));
+    if (candidates.length === 1 && entry.currentAgentSessionId === null) this.sessionIdFound(entry.sessionId, candidates[0]);
   }
 
   dispose(): void {
     // A push still running ends in its own released path instead of starting a timer on a shut-down link.
     for (const pending of this.registering.values()) pending.released = true;
-    for (const entry of this.sessions.values()) clearInterval(entry.timer);
+    for (const entry of this.sessions.values()) {
+      clearInterval(entry.timer);
+      if (entry.snapshotTimer) clearTimeout(entry.snapshotTimer);
+    }
     this.sessions.clear();
   }
 
@@ -416,6 +772,16 @@ export class RemoteSessionRelay {
       entry.forwarding = false;
     }
   }
+}
+
+/** Where an export collects as it arrives, beside the copy a reader opens. */
+function stagedPath(localPath: string): string {
+  return `${localPath}.part`;
+}
+
+/** The `sizes` of a `watchFiles` answer. A fake host in a test may answer nothing. */
+function sizesOf(answer: unknown): Record<string, number> | undefined {
+  return (answer as { sizes?: Record<string, number> } | null | undefined)?.sizes;
 }
 
 /** A host path in forward slashes. The path map yields them; this guards the places that join one. */
