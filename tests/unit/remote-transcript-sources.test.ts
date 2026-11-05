@@ -252,6 +252,27 @@ describe('an index that names a fresh session', () => {
     await vi.waitFor(() => expect(host.watchCalls.at(-1)).toContainEqual({ key: '1', path: '/home/dev/.agent/wire.jsonl' }));
   });
 
+  it('names nothing with an older program on the host that answers no sizes, since all of the index would read as new', async () => {
+    const { host, relay, found } = relayFindingIds();
+    host.files.watchFiles = async () => ({ watching: true });
+    await relay.register(registrationOf('s1', indexSource()));
+
+    relay.deliverChunk(chunk('s1', '0', 0, 'an-older-session\n', 17));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(found).toEqual([]);
+  });
+
+  it('reads the whole index as new when the file was not there before the agent ran', async () => {
+    const { host, relay, found } = relayFindingIds();
+    host.state.sizes = {};
+    await relay.register(registrationOf('s1', indexSource()));
+
+    relay.deliverChunk(chunk('s1', '0', 0, 'mine\n', 5));
+
+    await vi.waitFor(() => expect(found).toEqual([['s1', 'mine']]));
+  });
+
   it('names nothing after the index was replaced, since what lies past the baseline may be old', async () => {
     const { host, relay, found } = relayFindingIds();
     host.state.sizes = { 0: 2 };
@@ -414,6 +435,22 @@ describe('an exported transcript', () => {
     expect(fs.readFileSync(copy(), 'utf8')).toBe('{"whole":true}\n');
   });
 
+  it('says why an export never lands on an older program on the host, once', async () => {
+    const host = fakeHost();
+    const lines: string[] = [];
+    const relay = new RemoteSessionRelay({ files: host.files, log: (line) => lines.push(line) });
+    teardown.push(() => relay.dispose());
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const { size: _size, ...withNoSize } = chunk('s1', '0', 0, '{}\n', 3);
+
+    relay.deliverChunk(withNoSize as never);
+    relay.deliverChunk(withNoSize as never);
+
+    expect(fs.existsSync(copy())).toBe(false);
+    expect(lines.filter((line) => line.includes('no file size'))).toHaveLength(1);
+  });
+
   it('logs the reason, not the shell\'s own opening lines, which change run to run', async () => {
     const host = fakeHost();
     const lines: string[] = [];
@@ -545,6 +582,19 @@ describe.skipIf(process.platform === 'win32')('an export through the real helper
 
     expect(fs.readFileSync(localPath, 'utf8')).toBe('{"turns":1}\n');
     expect(fs.readdirSync(path.join(hostHome, '.kangentic', 'transcripts', 'agent'))).toEqual([]);
+  });
+
+  it.skipIf(process.platform !== 'linux')('keeps the export owner-only, and leaves the CLI its own mask', async () => {
+    const relay = await realRelay();
+    // What the CLI's stdout is opened as, and the mask the CLI itself runs under.
+    fs.writeFileSync(fakeCli, '#!/bin/sh\nstat -L -c %a /proc/self/fd/1\numask\n', { mode: 0o755 });
+    const previousMask = process.umask(0o022);
+    teardown.push(() => process.umask(previousMask));
+
+    const localPath = await runSession(relay, 's1', 'unused');
+
+    expect(fs.readFileSync(localPath, 'utf8').trim().split('\n')).toEqual(['600', '0022']);
+    expect(fs.statSync(path.join(hostHome, '.kangentic', 'transcripts', 'agent')).mode & 0o777).toBe(0o700);
   });
 
   it('treats an export of nothing as a failure, so an empty file never replaces a conversation', async () => {

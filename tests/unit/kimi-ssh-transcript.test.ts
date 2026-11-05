@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { KimiAdapter } from '../../src/main/agent/adapters/kimi';
 import { toStoredCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
+import { getCachedTranscript } from '../../src/main/agent/transcript-cache';
 
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
 const wireFixture = fs.readFileSync(path.join(FIXTURES, 'kimi-2.5.1-wire.jsonl'), 'utf8');
@@ -108,6 +109,18 @@ describe('finding a fresh session in new lines of the index', () => {
     const deleted = `${JSON.stringify({ sessionId: SESSION.sessionId, deleted: true })}\n`;
 
     expect(sessionIdsIn(indexFixture + deleted)).toEqual([]);
+  });
+});
+
+describe('the conversation viewer, through its cache', () => {
+  it('shows the conversation once it arrives, after an open that found none', async () => {
+    const read = () => getCachedTranscript('kimi', SESSION.sessionId, () => adapter.parseTranscript(SESSION.sessionId, shellFolder, placeAt()));
+    await expect(read()).resolves.toMatchObject({ entries: [], sourcePath: null });
+
+    arrive(mirroredIndex(), indexFixture);
+    arrive(mirroredWire(), wireFixture);
+
+    expect(JSON.stringify((await read()).entries)).toContain('Stub reply from the probe model.');
   });
 });
 
