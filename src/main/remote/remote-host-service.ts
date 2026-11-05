@@ -166,8 +166,8 @@ export class RemoteHostService {
   }
 
   /** Remove files the app wrote on the host (an agent's hooks or MCP entry at the end of a session). */
-  removeFiles(hostId: string, paths: string[]): Promise<HelperRequestMap['removeFiles']['result']> {
-    return this.helper(hostId, 'removeFiles', { paths });
+  removeFiles(hostId: string, paths: string[], expect?: Record<string, string>): Promise<HelperRequestMap['removeFiles']['result']> {
+    return this.helper(hostId, 'removeFiles', { paths, ...(expect ? { expect } : {}) });
   }
 
   /** Remove folders that hold nothing (a finished session's hook folders). A folder with anything in it is left. */

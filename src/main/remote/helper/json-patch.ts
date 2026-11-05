@@ -137,8 +137,12 @@ async function acquireLock(lockDirectory: string): Promise<boolean> {
     }
     const age = await fs.stat(lockDirectory).then((stats) => Date.now() - stats.mtimeMs, () => 0);
     if (age > LOCK_STALE_MS) {
-      await fs.rmdir(lockDirectory).catch(() => undefined);
-      continue;
+      // One that cannot be removed (something inside it) is waited on like a held lock, inside the budget.
+      const broken = await fs.rmdir(lockDirectory).then(
+        () => true,
+        (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+      );
+      if (broken) continue;
     }
     if (Date.now() - startedAt >= LOCK_BUDGET_MS) return false;
     await delay(LOCK_RETRY_LADDER_MS[Math.min(attempt, LOCK_RETRY_LADDER_MS.length - 1)]);

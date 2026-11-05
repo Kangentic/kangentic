@@ -393,7 +393,7 @@ export class HelperServer {
     unwatchFiles: (params) => this.fileTail.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     readFile: (params) => this.readFile(params),
     pathPresence: (params) => this.pathPresence(params.paths),
-    removeFiles: (params) => this.removeFiles(params.paths),
+    removeFiles: (params) => this.removeFiles(params.paths, params.expect),
     removeEmptyDirectories: (params) => this.removeEmptyDirectories(params.paths),
     runCommand: (params) => this.runCommand(params),
     listeningPorts: async () => ({ ports: await readListeningPorts(this.options.procDirectory) }),
@@ -661,14 +661,24 @@ export class HelperServer {
     }
   }
 
-  /** Remove files, each checked to lie beneath the home first so a refused path removes nothing. A folder is refused, not emptied. */
-  private async removeFiles(paths: string[]): Promise<{ removed: number }> {
+  /**
+   * Remove files, each checked to lie beneath the home first so a refused path removes nothing. A folder is
+   * refused, not emptied. A path `expect` names goes only while it holds that text: the same last look a write
+   * takes before its swap, with nothing awaited between it and the unlink.
+   */
+  private async removeFiles(paths: string[], expect?: Record<string, string>): Promise<{ removed: number; conflicts?: string[] }> {
     const targets = paths.map((requested) => this.homePath(requested));
+    const conflicts: string[] = [];
     let removed = 0;
-    for (const target of targets) {
+    for (const [index, target] of targets.entries()) {
       try {
         const stat = await fs.lstat(target);
         if (stat.isDirectory()) throw new Error(`${target} is a folder, and only files are removed here`);
+        const expected = expect?.[paths[index]];
+        if (expected !== undefined && readCurrentText(target) !== expected) {
+          conflicts.push(paths[index]);
+          continue;
+        }
         await fs.unlink(target);
         removed += 1;
       } catch (error) {
@@ -676,7 +686,7 @@ export class HelperServer {
         throw error;
       }
     }
-    return { removed };
+    return conflicts.length > 0 ? { removed, conflicts } : { removed };
   }
 
   /** Remove folders with nothing in them, in the order given. Anything else (not empty, not there) is left as it is. */

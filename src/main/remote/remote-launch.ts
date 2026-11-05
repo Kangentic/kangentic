@@ -103,7 +103,7 @@ export interface RemoteLaunchResolverDeps {
   readFile(hostId: string, hostPath: string): Promise<HelperRequestMap['readFile']['result']>;
   jsonPatch(hostId: string, request: HelperRequestMap['jsonPatch']['params']): Promise<HelperRequestMap['jsonPatch']['result']>;
   writeFiles(hostId: string, files: HostFileWrite[]): Promise<{ written: number; conflicts?: string[] }>;
-  removeFiles(hostId: string, paths: string[]): Promise<unknown>;
+  removeFiles(hostId: string, paths: string[], expect?: Record<string, string>): Promise<{ removed: number; conflicts?: string[] }>;
   pathPresence(hostId: string, paths: string[]): Promise<Array<'present' | 'absent'>>;
   runCommand(hostId: string, request: HostCommandRequest): Promise<HostCommandResult>;
   /** This computer's mirror folder for a host's home. */
@@ -130,7 +130,7 @@ export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): Remo
           readFile: (hostPath) => deps.readFile(remote.hostId, hostPath),
           jsonPatch: (request) => deps.jsonPatch(remote.hostId, request),
           writeFiles: (files) => deps.writeFiles(remote.hostId, files),
-          removeFiles: (paths) => deps.removeFiles(remote.hostId, paths),
+          removeFiles: (paths, expect) => deps.removeFiles(remote.hostId, paths, expect),
           pathPresence: (paths) => deps.pathPresence(remote.hostId, paths),
           runCommand: (request) => deps.runCommand(remote.hostId, request),
         },

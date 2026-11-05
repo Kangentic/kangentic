@@ -231,6 +231,44 @@ describe('the helper\'s file tail', () => {
     expect(Buffer.from(resetChunk.data, 'base64').toString('utf8')).toBe(replacement);
   });
 
+  // The agent rotating its transcript between the tail's stat and its open. Without the identity check after the
+  // open, the new file is read from the old file's offset: the copy gets the middle of a file, written as if it
+  // continued the one before it, and nothing tells Kangentic to empty its copy first.
+  it('starts over with a reset at byte 0, and sends no stray bytes, when the file is swapped between the stat and the open', async () => {
+    const file = path.join(folder, 'swapped.jsonl');
+    const incoming = path.join(folder, 'incoming.jsonl');
+    fs.writeFileSync(file, 'short\n');
+    const inodeBefore = fs.statSync(file).ino;
+    const { tail, events } = tailer();
+    tail.watch('s1', [{ key: '0', path: file }]);
+    await until(() => bytesOf(events) === 'short\n');
+    const eventsBefore = events.length;
+
+    const replacement = 'a replacement much longer than the first file\n';
+    const realOpen = fs.promises.open.bind(fs.promises);
+    let swapped = false;
+    const openSpy = vi.spyOn(fs.promises, 'open').mockImplementation(async (...openArguments: Parameters<typeof fs.promises.open>) => {
+      if (!swapped) {
+        swapped = true;
+        fs.writeFileSync(incoming, replacement);
+        fs.rmSync(file);
+        fs.renameSync(incoming, file);
+      }
+      return realOpen(...openArguments);
+    });
+    teardown.push(() => openSpy.mockRestore());
+    // The old file grows, so the next poll stats it, finds more to send, and opens it: the swap lands in between.
+    fs.appendFileSync(file, 'more\n');
+
+    await until(() => swapped && events.length > eventsBefore);
+    if (fs.statSync(file).ino === inodeBefore) return; // a file system that reports no inode: only the size half exists there
+
+    const afterSwap = events.slice(eventsBefore);
+    expect(afterSwap[0]).toMatchObject({ offset: 0, reset: true });
+    expect(Buffer.from(afterSwap[0].data, 'base64').toString('utf8')).toBe(replacement);
+    expect(afterSwap.filter((event) => event.reset)).toHaveLength(1);
+  });
+
   it('keeps the new tail running when a watch replaces the entry during the last pass of an unwatch', async () => {
     const first = path.join(folder, 'first.jsonl');
     const second = path.join(folder, 'second.jsonl');

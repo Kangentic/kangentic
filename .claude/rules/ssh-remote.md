@@ -54,7 +54,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
   host's home and swaps it in only when it changed, every value an argument, and the tail sends that file.
   An export never crosses the link as a reply, which is one 256 KiB frame. It lands as `<copy>.part` and is
   renamed in only when whole, so a stale copy never reads as an empty one, and a total is of the whole file,
-  never a difference. A reader of an ending session waits for the last export through
+  never a difference. A resume is a new session on the same export paths, so its first export waits for
+  the release of the session it replaces. A reader of an ending session waits for the last export through
   `remoteTranscriptSettled`, bounded. An id from an index is taken only when it can be no other session's,
   and stays provisional (`notifyInferredAgentSessionId`) so the agent's own report replaces it: a wrong id
   resumes another conversation. An export's position is the compact JSON before a message, never a byte of the
@@ -90,8 +91,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
   into the folders the unchanged adapter code edits, pushes the change after the command is built,
   and restores them at release. A new adapter file that reads or writes a CLI's config does it
   through `cliHomeDir(place)` or the working directory and declares the file; it never opens a path
-  on the host any other way. Nothing is written over a host file that changed meanwhile, the helper
-  re-checks it as it swaps the file in, and a push is compared with what Kangentic last knew the host
+  on the host any other way. Nothing is written over or removed from a host file that changed meanwhile,
+  the helper re-checks it as it swaps the file in or unlinks it, and a push is compared with what Kangentic last knew the host
   to hold (shared by every session on the host), never with one session's own pull, which another
   session's push makes stale. A file that is not plain JSON is never rewritten.
 - **A forwarded dev-server port is its own `ssh -N -L`, never a channel of the link.** The process that

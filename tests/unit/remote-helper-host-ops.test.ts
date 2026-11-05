@@ -185,6 +185,27 @@ describe('files on the host', () => {
     expect(fs.readdirSync(home).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('removes a file only while it holds the text the removal expected, and lists one that changed', async () => {
+    const rig = makeRig();
+    await settle();
+    const changed = path.join(home, 'changed.json');
+    const unchanged = path.join(home, 'unchanged.json');
+    const unguarded = path.join(home, 'unguarded.json');
+    fs.writeFileSync(changed, '{"user":"edit"}');
+    fs.writeFileSync(unchanged, '{"v":1}');
+    fs.writeFileSync(unguarded, 'anything');
+
+    const answer = await ask(rig.link.requestHelper('removeFiles', {
+      paths: [changed, unchanged, unguarded],
+      expect: { [changed]: '{"v":1}', [unchanged]: '{"v":1}' },
+    }));
+
+    expect(answer).toEqual({ removed: 2, conflicts: [changed] });
+    expect(fs.readFileSync(changed, 'utf8')).toBe('{"user":"edit"}');
+    expect(fs.existsSync(unchanged)).toBe(false);
+    expect(fs.existsSync(unguarded)).toBe(false);
+  });
+
   it.skipIf(process.platform === 'win32')('keeps the permissions a file had when asked, and a symlink stays a symlink', async () => {
     const rig = makeRig();
     await settle();
@@ -346,6 +367,24 @@ describe('files on the host', () => {
     const rejected = expect(attempt).rejects.toThrow('not inside the home folder');
     await settle();
     await rejected;
+  });
+
+  // The relay reads each file's total from this answer. Without it a watched file whose size the relay
+  // cannot learn reads as empty, and a copy that is stale reads as whole.
+  it('answers the size of each watched file that exists, and no entry for one that does not', async () => {
+    const rig = makeRig();
+    await settle();
+    const present = path.join(home, 'transcript.jsonl');
+    const missing = path.join(home, 'not-yet.jsonl');
+    fs.writeFileSync(present, 'twelve bytes');
+
+    const answer = await ask(rig.link.requestHelper('watchFiles', { sessionId: 's1', files: [
+      { key: '0', path: present },
+      { key: '1', path: missing },
+    ] }));
+
+    expect(answer.sizes).toEqual({ '0': 12 });
+    expect(Object.keys(answer.sizes ?? {})).not.toContain('1');
   });
 
   it.each([

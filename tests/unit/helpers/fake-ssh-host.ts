@@ -39,12 +39,20 @@ export class FakeSshHost {
       }
       return conflicts.length > 0 ? { written, conflicts } : { written };
     },
-    removeFiles: async (paths) => {
+    removeFiles: async (paths, expect) => {
+      const conflicts: string[] = [];
       for (const target of paths) {
+        // The helper's last look before it unlinks: a path `expect` names goes only while it holds that text.
+        const expected = expect?.[target];
+        if (expected !== undefined && (this.files.get(target) ?? null) !== expected) {
+          conflicts.push(target);
+          continue;
+        }
         this.files.delete(target);
         this.removals.push(target);
       }
-      return { removed: paths.length };
+      const removed = paths.length - conflicts.length;
+      return conflicts.length > 0 ? { removed, conflicts } : { removed };
     },
     pathPresence: async (paths) => paths.map((target) => (this.directories.has(target) || this.files.has(target) ? 'present' : 'absent')),
     jsonPatch: async () => ({ applied: true, changed: false }),

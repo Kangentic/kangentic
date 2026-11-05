@@ -55,7 +55,7 @@ export function gooseTimestampMs(createdTimestamp: number): number {
   return createdTimestamp > MILLISECOND_TIMESTAMP_THRESHOLD ? createdTimestamp : createdTimestamp * 1000;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

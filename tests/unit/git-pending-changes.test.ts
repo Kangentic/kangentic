@@ -6,6 +6,7 @@
  * countLocalOnlyCommits (covered by local-only-commits.test.ts) and is mocked
  * here so the probe's policy is tested in isolation.
  */
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The probe builds a simple-git instance and calls status() / getRemotes().
@@ -53,7 +54,7 @@ import type { RemoteWorktreeBackend } from '../../src/main/git/remote-worktree';
 
 describe('probePendingChanges for a worktree on an SSH host', () => {
   const projectPath = process.platform === 'win32' ? 'C:\\Users\\dev\\remote-project' : '/home/dev/remote-project';
-  const hostWorktree = `${projectPath}${process.platform === 'win32' ? '\\' : '/'}.kangentic${process.platform === 'win32' ? '\\' : '/'}worktrees${process.platform === 'win32' ? '\\' : '/'}7`;
+  const hostWorktree = path.join(projectPath, '.kangentic', 'worktrees', '7');
   const pendingChanges = vi.fn<RemoteWorktreeBackend['pendingChanges']>();
 
   beforeEach(() => {

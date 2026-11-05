@@ -40,7 +40,8 @@ export interface RemoteSessionFiles {
   writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<unknown>;
   watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<unknown>;
   unwatchHooks(hostId: string, sessionId: string): Promise<unknown>;
-  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<unknown>;
+  /** `sizes` is what each file holds now, by key. A program older than this answers none. */
+  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<{ sizes?: Record<string, number> } | undefined>;
   unwatchFiles(hostId: string, sessionId: string): Promise<unknown>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
   removeEmptyDirectories(hostId: string, paths: string[]): Promise<unknown>;
@@ -359,8 +360,7 @@ export class RemoteSessionRelay {
           // no entry is not there yet. No sizes at all is an older program on the host, and with nothing to
           // tell new lines from old, no id is taken: a wrong one would stick, and resume someone else's.
           const indexKey = [...tails].find(([, tail]) => tail.kind === 'index')?.[0];
-          const sizes = sizesOf(answer);
-          if (indexKey !== undefined) indexBaseline = sizes ? sizes[indexKey] ?? 0 : null;
+          if (indexKey !== undefined) indexBaseline = answer?.sizes ? answer.sizes[indexKey] ?? 0 : null;
         } catch (error) {
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -452,17 +452,17 @@ export class RemoteSessionRelay {
     if (held.length === wanted.size && held.every((localPath) => wanted.has(localPath))) return;
 
     const tails = new Map<string, Tail>();
+    const request: Array<{ key: string; path: string }> = [];
     let nextTailKey = entry.nextTailKey;
     for (const [localPath, kind] of wanted) {
+      const hostPath = this.hostPathOf(entry, localPath);
+      if (hostPath === null) continue;
       const kept = [...entry.tails].find(([, tail]) => tail.localPath === localPath);
-      if (kept) {
-        tails.set(kept[0], kept[1]);
-      } else if (this.hostPathOf(entry, localPath) !== null) {
-        tails.set(String(nextTailKey), { localPath, kind });
-        nextTailKey += 1;
-      }
+      const key = kept ? kept[0] : String(nextTailKey);
+      if (!kept) nextTailKey += 1;
+      tails.set(key, kept ? kept[1] : { localPath, kind });
+      request.push({ key, path: hostPath });
     }
-    const request = [...tails].map(([key, tail]) => ({ key, path: this.hostPathOf(entry, tail.localPath) as string }));
     // The tail keys are set first: a chunk can land before the host's answer does, and an unknown key is dropped.
     const previous = entry.tails;
     entry.tails = tails;
@@ -477,7 +477,8 @@ export class RemoteSessionRelay {
 
   /** Run the export after `delayMs`, in place of any tick already waiting. */
   private scheduleSnapshot(entry: Registered, delayMs: number): void {
-    if (!entry.transcripts?.snapshot || entry.releaseDone) return;
+    // Checked against the map too: after a dispose nothing else stops a tick that was running from starting the next.
+    if (!entry.transcripts?.snapshot || entry.releaseDone || this.sessions.get(entry.sessionId) !== entry) return;
     if (entry.snapshotTimer) clearTimeout(entry.snapshotTimer);
     entry.snapshotTimer = setTimeout(() => void this.snapshotTick(entry), delayMs);
     entry.snapshotTimer.unref?.();
@@ -510,6 +511,7 @@ export class RemoteSessionRelay {
   private async exportAndTail(entry: Registered): Promise<number | null> {
     const agentSessionId = entry.currentAgentSessionId;
     if (!agentSessionId || !entry.transcripts?.snapshot) return null;
+    await this.earlierReleases(entry, agentSessionId);
     const spec = await entry.transcripts.snapshot(agentSessionId, async (file, args) => {
       const result = await this.options.files.runCommand(entry.hostId, { file, args: [...args], timeoutMs: SNAPSHOT_TIMEOUT_MS });
       return { code: result.code, stdout: result.stdout };
@@ -517,11 +519,16 @@ export class RemoteSessionRelay {
     if (!spec) return null;
     const hostPath = this.hostPathOf(entry, spec.localPath);
     if (hostPath === null) return null;
+    const replaced = entry.snapshot?.spec.localPath === spec.localPath ? null : entry.snapshot;
     if (entry.snapshot?.spec.localPath !== spec.localPath) {
       entry.snapshot = { spec, hostPath, pendingPromotion: false };
       if (!entry.pushedPaths.includes(hostPath)) entry.pushedPaths.push(hostPath);
-      await this.refreshTails(entry);
     }
+    // Asked on every export, not only the first: a watch that failed keeps the file off this computer, and an
+    // export that changed nothing gives the host no other reason to send it.
+    if (![...entry.tails.values()].some((tail) => tail.localPath === spec.localPath)) await this.refreshTails(entry);
+    // An id that moved on. Its copy stays, but nothing finishes what it left staged.
+    if (replaced && (!replaced.pendingPromotion || this.promoteSnapshot(entry, replaced.spec.localPath))) this.dropStagedSnapshot(replaced);
     const result = await this.options.files.runCommand(entry.hostId, {
       file: 'sh',
       args: ['-c', SNAPSHOT_SCRIPT, 'sh', hostPath, spec.file, ...spec.args],
@@ -537,6 +544,18 @@ export class RemoteSessionRelay {
     return answer.bytes;
   }
 
+  /**
+   * A resume is a new session on the same conversation, so it shares the export's paths on both computers with
+   * the session it replaces, which may still be in its last export and removes those paths after it. The older
+   * one finishes first. Only older entries, in the map's order, so two ending together never wait on each other.
+   */
+  private async earlierReleases(entry: Registered, agentSessionId: string): Promise<void> {
+    for (const other of this.sessions.values()) {
+      if (other === entry) return;
+      if (other.releaseDone && other.hostId === entry.hostId && other.currentAgentSessionId === agentSessionId) await other.released;
+    }
+  }
+
   /** Before a session's first turn there is nothing to export, so a failure is ordinary and is logged only once. */
   private noteSnapshotFailure(entry: Registered, message: string): void {
     if (message !== entry.lastSnapshotFailure) {
@@ -548,7 +567,7 @@ export class RemoteSessionRelay {
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
   async release(sessionId: string): Promise<void> {
     // With a session running, this is that session ending. A registration queued behind it is a newer spawn
-    // of the id, as a resume is, and it goes on: cancelled here it would start an agent with no hooks.
+    // of the id, and it goes on: cancelled here it would start an agent with no hooks.
     if (!this.sessions.has(sessionId)) {
       const pending = this.registering.get(sessionId);
       if (pending) pending.released = true;
@@ -590,7 +609,7 @@ export class RemoteSessionRelay {
       });
     }
     this.retryPromotion(entry);
-    this.dropStagedSnapshot(entry);
+    this.dropStagedSnapshot(entry.snapshot);
     // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
     await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths, entry.hostHooksDirectory);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
@@ -690,6 +709,7 @@ export class RemoteSessionRelay {
     // stays in place until the next is complete: a stale copy never reads as an empty one.
     const target = tail.kind === 'snapshot' ? stagedPath(tail.localPath) : tail.localPath;
     let written = -1;
+    let chunkEnd = event.offset;
     try {
       // Inside this try: a failure is logged and the next chunk tries again.
       fsSync.mkdirSync(path.dirname(target), { recursive: true });
@@ -700,6 +720,7 @@ export class RemoteSessionRelay {
         if (event.reset || (tail.kind === 'snapshot' && event.offset === 0)) fsSync.ftruncateSync(descriptor, 0);
         const bytes = Buffer.from(event.data, 'base64');
         if (bytes.length > 0) fsSync.writeSync(descriptor, bytes, 0, bytes.length, event.offset);
+        chunkEnd += bytes.length;
         if (tail.kind === 'snapshot') written = fsSync.fstatSync(descriptor).size;
       } finally {
         fsSync.closeSync(descriptor);
@@ -720,19 +741,26 @@ export class RemoteSessionRelay {
     if (tail.kind === 'index') {
       // A reset means a line past the baseline need not be new, so the id is left to the agent's exit.
       if (event.reset) entry.indexBaseline = null;
-      void this.readIndex(entry);
+      // An index lists every project on the host, and a backfill of it arrives in many chunks. One read at the
+      // end does for all of them: each read parses the whole copy, on this thread.
+      if (typeof event.size !== 'number' || chunkEnd >= event.size) void this.readIndex(entry);
     }
   }
 
-  /** Put a whole staged export in place. A reader holding the copy on Windows fails this, and it is tried again. */
-  private promoteSnapshot(entry: Registered, localPath: string): void {
+  /**
+   * Put a whole staged export in place, and say whether it went. A reader holding the copy on Windows fails
+   * this, and it is tried again.
+   */
+  private promoteSnapshot(entry: Registered, localPath: string): boolean {
     const pending = entry.snapshot?.spec.localPath === localPath ? entry.snapshot : null;
     try {
       fsSync.renameSync(stagedPath(localPath), localPath);
       if (pending) pending.pendingPromotion = false;
+      return true;
     } catch (error) {
       if (pending) pending.pendingPromotion = true;
       this.options.log?.(`could not put the transcript in place for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 
@@ -740,11 +768,11 @@ export class RemoteSessionRelay {
     if (entry.snapshot?.pendingPromotion) this.promoteSnapshot(entry, entry.snapshot.spec.localPath);
   }
 
-  /** What is left staged at the session's end never finished arriving. The last whole copy stands. */
-  private dropStagedSnapshot(entry: Registered): void {
-    if (!entry.snapshot) return;
+  /** What is left staged when nothing more will arrive for it never finished. The last whole copy stands. */
+  private dropStagedSnapshot(snapshot: SnapshotState | null): void {
+    if (!snapshot) return;
     try {
-      fsSync.rmSync(stagedPath(entry.snapshot.spec.localPath), { force: true });
+      fsSync.rmSync(stagedPath(snapshot.spec.localPath), { force: true });
     } catch {
       // A leftover is emptied by the next export's first chunk.
     }
@@ -796,6 +824,8 @@ export class RemoteSessionRelay {
     for (const entry of this.sessions.values()) {
       clearInterval(entry.timer);
       if (entry.snapshotTimer) clearTimeout(entry.snapshotTimer);
+      // Nothing will finish a release now, and a reader waiting on one should not sit out its bound.
+      entry.markReleased();
     }
     this.sessions.clear();
   }
@@ -847,11 +877,6 @@ function lastLine(text: string): string {
 /** Where an export collects as it arrives, beside the copy a reader opens. */
 function stagedPath(localPath: string): string {
   return `${localPath}.part`;
-}
-
-/** The `sizes` of a `watchFiles` answer. A fake host in a test may answer nothing. */
-function sizesOf(answer: unknown): Record<string, number> | undefined {
-  return (answer as { sizes?: Record<string, number> } | null | undefined)?.sizes;
 }
 
 /** A host path in forward slashes. The path map yields them; this guards the places that join one. */

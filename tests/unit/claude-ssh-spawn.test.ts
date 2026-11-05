@@ -8,7 +8,7 @@
  * What a user loses if it breaks: a settings file, hook script or MCP config named by a path that only
  * exists on this computer, or a hook that runs `node` on a host that may have none.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -140,20 +140,66 @@ describe('a Claude on a remote host: its settings', () => {
     expect(fs.existsSync(paths.signal)).toBe(true);
   });
 
+  /**
+   * The MCP tools the plan-mode approval hook may answer for, read back out of the hook command. The builder carries
+   * the user's own `permissions.allow` only into this hook (it is not copied into the settings file), so it is the one
+   * place a value from `~/.claude/settings.json` can be seen in what the builder wrote.
+   */
+  function toolsTheHookMayApprove(settings: Record<string, unknown>): string[] {
+    for (const command of hookCommands(settings)) {
+      const encoded = command.split(' ').pop() ?? '';
+      try {
+        const spec = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as { toolField?: string; tools?: string[] };
+        if (spec.toolField === 'tool_name' && Array.isArray(spec.tools)) return spec.tools;
+      } catch {
+        // Not a spec: an event command's last word.
+      }
+    }
+    throw new Error('the settings carry no plan-mode tool approval hook');
+  }
+
   it('merges the project settings pulled from the host, and the user settings from the mirror', () => {
     fs.mkdirSync(path.join(shellFolder, '.claude'), { recursive: true });
     fs.writeFileSync(path.join(shellFolder, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] } }));
     fs.mkdirSync(path.join(localHome, '.claude'), { recursive: true });
-    fs.writeFileSync(path.join(localHome, '.claude', 'settings.json'), JSON.stringify({ tui: 'default' }));
+    fs.writeFileSync(path.join(localHome, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['mcp__docs__search'] } }));
 
     const { settings } = buildForHost('ssh-merged');
 
     expect((settings.permissions as { allow: string[] }).allow).toContain('Bash(ls)');
+    // The mirror's user setting reached the hook the builder derives from the user's allow rules.
+    expect(toolsTheHookMayApprove(settings)).toContain('mcp__docs__search');
   });
 
-  it('does not read this computer\'s own ~/.claude/settings.json for a host\'s session', () => {
-    // The local user's settings live in os.homedir(); a host's session must only ever see the mirror.
-    const { settings } = buildForHost('ssh-no-local-user-settings');
-    expect(JSON.stringify(settings)).not.toContain(os.homedir().replace(/\\/g, '/'));
+  describe('with this computer\'s own home holding a settings file of its own', () => {
+    let ownHome: string;
+
+    beforeEach(() => {
+      ownHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-claude-ssh-own-home-'));
+      fs.mkdirSync(path.join(ownHome, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(ownHome, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['mcp__thiscomputer__tool'] } }));
+      // os.homedir() reads these on each call: USERPROFILE on Windows, HOME elsewhere.
+      vi.stubEnv('HOME', ownHome);
+      vi.stubEnv('USERPROFILE', ownHome);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      fs.rmSync(ownHome, { recursive: true, force: true });
+    });
+
+    it('does not read this computer\'s own ~/.claude/settings.json for a host\'s session, only the mirror', () => {
+      // Without this the sentinel could not show up either way: the stub must really have moved the home.
+      expect(path.resolve(os.homedir())).toBe(path.resolve(ownHome));
+      fs.mkdirSync(path.join(localHome, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(localHome, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['mcp__mirror__tool'] } }));
+
+      const { settings } = buildForHost('ssh-no-local-user-settings');
+
+      const tools = toolsTheHookMayApprove(settings);
+      expect(tools).toContain('mcp__mirror__tool');
+      expect(tools).not.toContain('mcp__thiscomputer__tool');
+      expect(JSON.stringify(settings)).not.toContain('thiscomputer');
+    });
   });
 });

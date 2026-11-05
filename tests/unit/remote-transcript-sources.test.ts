@@ -496,6 +496,226 @@ describe('the export\'s pace', () => {
   });
 });
 
+describe('a transcript watch the host did not take', () => {
+  const wire = (id: string): string => path.join(mirror, '.agent', `${id}.jsonl`);
+
+  it('is rolled back and asked again on the next trigger, and the file\'s chunks then land', async () => {
+    const { host, relay } = makeRelay();
+    host.state.sizes = {};
+    await relay.register(registrationOf('s1', {
+      files: (id) => [wire(id)],
+      index: { path: path.join(mirror, '.agent', 'index.jsonl'), folder: '/home/dev/project', sessionIdsIn: () => [] },
+    }));
+    const takeWatch = host.files.watchFiles;
+    const attempts: string[][] = [];
+    let refuse = true;
+    host.files.watchFiles = async (hostId, sessionId, tailed) => {
+      attempts.push(tailed.map((entry) => entry.path));
+      if (refuse) {
+        refuse = false;
+        throw new Error('the host did not answer watchFiles');
+      }
+      return takeWatch(hostId, sessionId, tailed);
+    };
+
+    relay.setAgentSessionId('s1', 'abc');
+    await vi.waitFor(() => expect(attempts).toHaveLength(1));
+    expect(host.watchCalls).toHaveLength(1);
+
+    // The index growing is a later trigger for the same set. With the failed watch left looking held, nothing
+    // would ask the host again and the file would never be tailed.
+    relay.deliverChunk(chunk('s1', '0', 0, 'noise\n', 6));
+    await vi.waitFor(() => expect(attempts).toHaveLength(2));
+
+    expect(attempts[1]).toContain('/home/dev/.agent/abc.jsonl');
+    const tailed = host.watchCalls[1].find((entry) => entry.path === '/home/dev/.agent/abc.jsonl');
+    expect(tailed).toBeDefined();
+    relay.deliverChunk(chunk('s1', tailed?.key ?? '', 0, 'line\n', 5));
+    expect(fs.readFileSync(wire('abc'), 'utf8')).toBe('line\n');
+  });
+});
+
+describe('an export racing its own tail, its release and its replacement', () => {
+  const copy = (id = 'abc'): string => remoteExportPath(placeOf(), 'agent', id);
+  const spec = (id = 'abc'): RemoteTranscriptSnapshot => ({ file: 'agent', args: ['export', id], cwd: '/home/dev/project', localPath: copy(id) });
+  const source = (): RemoteTranscriptSource => ({ files: () => [], snapshot: async (id) => spec(id) });
+  const unchanged = (): HostCommandResult => ({ code: 0, stdout: 'unchanged 10\n', stderr: '', timedOut: false });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  it('is tailed on a later tick when the watch after its first snapshot failed, though every export answers unchanged', async () => {
+    const { host, relay } = makeRelay();
+    host.state.answer = unchanged;
+    const takeWatch = host.files.watchFiles;
+    let attempts = 0;
+    host.files.watchFiles = async (hostId, sessionId, tailed) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('the host did not answer watchFiles');
+      return takeWatch(hostId, sessionId, tailed);
+    };
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(attempts).toBe(1);
+    expect(host.watchCalls).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(host.watchCalls).toHaveLength(1);
+    const [tailed] = host.watchCalls[0];
+    expect(tailed.path).toBe('/home/dev/.kangentic/transcripts/agent/abc.json');
+    relay.deliverChunk(chunk('s1', tailed.key, 0, '{}\n', 3));
+    expect(fs.readFileSync(copy(), 'utf8')).toBe('{}\n');
+  });
+
+  it('starts no further export once the relay is disposed during one', async () => {
+    const { host, relay } = makeRelay();
+    let finishExport = (): void => undefined;
+    const heldExport = new Promise<void>((resolve) => { finishExport = resolve; });
+    host.files.runCommand = async (_hostId, request) => {
+      host.commands.push(request);
+      await heldExport;
+      return unchanged();
+    };
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(host.commands).toHaveLength(1);
+
+    relay.dispose();
+    finishExport();
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(host.commands).toHaveLength(1);
+  });
+
+  it('lets a reader waiting for the last export go at dispose, not after the bound', async () => {
+    const { relay } = makeRelay();
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    let landed = false;
+    void relay.transcriptSettled('s1')?.then(() => { landed = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(landed).toBe(false);
+
+    relay.dispose();
+    // Far short of the 30 s bound, so only the dispose can have let the reader go.
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(landed).toBe(true);
+  });
+
+  it('makes a resume wait for the release of the session it replaces, so the old release cannot remove what the new one tails', async () => {
+    const { host, relay } = makeRelay();
+    const order: string[] = [];
+    let freeRelease = (): void => undefined;
+    const heldRelease = new Promise<void>((resolve) => { freeRelease = resolve; });
+    host.files.unwatchHooks = async (_hostId, sessionId) => {
+      if (sessionId === 's1') await heldRelease;
+    };
+    const takeRemove = host.files.removeFiles;
+    host.files.removeFiles = async (hostId, paths) => {
+      order.push('s1 removes the host file');
+      await takeRemove(hostId, paths);
+    };
+    const takeRun = host.files.runCommand;
+    host.files.runCommand = async (hostId, request) => {
+      order.push('export');
+      return takeRun(hostId, request);
+    };
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    const releasing = relay.release('s1');
+    await relay.register(registrationOf('s2', source(), { agentSessionId: 'abc' }));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(order).toEqual([]);
+
+    freeRelease();
+    await releasing;
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // The old session's last export and removal come first. The resume's export follows them.
+    expect(order).toEqual(['export', 's1 removes the host file', 'export']);
+  });
+
+  it('clears what the old id\'s export left staged when the id moves on, and keeps its whole copy', async () => {
+    const { host, relay } = makeRelay();
+    await relay.register(registrationOf('s1', source(), { agentSessionId: 'abc' }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const key = host.watchCalls[0][0].key;
+    relay.deliverChunk(chunk('s1', key, 0, '{"n":1}\n', 8));
+    relay.deliverChunk(chunk('s1', key, 0, '{"n":2,', 12, true));
+    expect(fs.readFileSync(copy('abc'), 'utf8')).toBe('{"n":1}\n');
+    expect(fs.existsSync(`${copy('abc')}.part`)).toBe(true);
+
+    relay.setAgentSessionId('s1', 'def');
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(host.commands.length).toBeGreaterThanOrEqual(2);
+    expect(fs.existsSync(`${copy('abc')}.part`)).toBe(false);
+    expect(fs.readFileSync(copy('abc'), 'utf8')).toBe('{"n":1}\n');
+  });
+});
+
+describe('a read of the index while a backfill arrives', () => {
+  const indexPath = (): string => path.join(mirror, '.agent', 'index.jsonl');
+
+  async function relayAskingIndex(sessionIdsIn: (text: string) => string[]) {
+    const made = makeRelay();
+    made.host.state.sizes = {};
+    const found: Array<[string, string]> = [];
+    made.relay.onSessionIdFound((sessionId, id) => found.push([sessionId, id]));
+    await made.relay.register(registrationOf('s1', {
+      files: () => [],
+      index: { path: indexPath(), folder: '/home/dev/project', sessionIdsIn },
+    }));
+    return { ...made, found };
+  }
+
+  it('waits for the last chunk, then reads the whole index once', async () => {
+    const asked: string[] = [];
+    const { relay } = await relayAskingIndex((text) => { asked.push(text); return []; });
+
+    relay.deliverChunk(chunk('s1', '0', 0, 'aa\n', 9));
+    relay.deliverChunk(chunk('s1', '0', 3, 'bb\n', 9));
+    // Intentional fixed wait: non-occurrence cannot be polled. A read starts on the next turns of the loop.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(asked).toEqual([]);
+
+    relay.deliverChunk(chunk('s1', '0', 6, 'cc\n', 9));
+
+    await vi.waitFor(() => expect(asked).toEqual(['aa\nbb\ncc\n']));
+  });
+
+  it('still reads on a chunk with no size, which is an older program on the host', async () => {
+    const asked: string[] = [];
+    const { relay } = await relayAskingIndex((text) => { asked.push(text); return []; });
+    const { size: _size, ...withNoSize } = chunk('s1', '0', 0, 'aa\n', 99);
+
+    relay.deliverChunk(withNoSize as never);
+
+    await vi.waitFor(() => expect(asked).toEqual(['aa\n']));
+  });
+
+  it('goes round again when the index grows during a read, so an id in the later chunk is found with no third chunk', async () => {
+    let reads = 0;
+    // Assigned once the relay exists, and called from inside the reader below.
+    let deliverSecond: () => void = () => undefined;
+    const { relay, found } = await relayAskingIndex((text) => {
+      reads += 1;
+      // The first read is under way and holds only the first chunk when the second one lands.
+      if (reads === 1) deliverSecond();
+      return text.split('\n').filter((line) => line.startsWith('id-'));
+    });
+    deliverSecond = () => relay.deliverChunk(chunk('s1', '0', 6, 'id-two\n', 13));
+
+    relay.deliverChunk(chunk('s1', '0', 0, 'noise\n', 6));
+
+    await vi.waitFor(() => expect(found).toEqual([['s1', 'id-two']]));
+    expect(reads).toBe(2);
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('an export through the real helper and its shell script', () => {
   let hostHome: string;
   let hostProject: string;

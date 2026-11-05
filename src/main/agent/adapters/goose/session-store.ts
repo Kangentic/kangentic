@@ -123,7 +123,7 @@ export interface GooseSessionRow {
   contextLimit: number | null;
 }
 
-function numberOrNull(value: unknown): number | null {
+export function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
