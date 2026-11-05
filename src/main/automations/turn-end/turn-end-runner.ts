@@ -37,6 +37,7 @@ import {
 } from '../../workflows/workflow-recovery';
 import { clearHeldMove, getHeldMove, getRecoveryEntry, setHeldMove, type HeldMove } from '../../workflows/workflow-recovery-state';
 import { needsOwnerQuestion } from '../../../shared/workflow-needs-owner';
+import { noChangesReason } from '../../../shared/workflow-no-changes';
 import { finalMatchLine } from '../../../shared/final-line-match';
 import { setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
 import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
@@ -165,6 +166,9 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  *   nothing changes. A move either would make waits while that work is open
  *   (`heldMoveReason`), recovery nudges at once naming it, and the move runs at
  *   the next turn end with none open (`settleHeldMove`).
+ * - **A reply that ends on the `No changes needed:` line skips the rows.** The
+ *   step acts on it, and a row with no Text match would otherwise message the
+ *   agent and take this turn end's step with it.
  * - **A workflow step that does not move the task on is recovered**
  *   (`workflow-recovery.ts`). Its verdict arms the recovery, and so does a
  *   resume whose reply was already judged (a restart) and a commit to idle
@@ -736,7 +740,12 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       return replyRead;
     };
 
-    const rowsOutcome = pending.length > 0
+    // The agent's word that the task needs no change is read before the rows: a
+    // row with no Text match would otherwise message the agent, and a message
+    // takes this turn end's step with it (below). The step acts on the line, and
+    // rows wait for a turn that does not end on it.
+    const endsTaskUnchanged = stepRuns && noChangesReason(await readReply()) !== null;
+    const rowsOutcome = pending.length > 0 && !endsTaskUnchanged
       ? await runRows(context, payload, {
         task, column, repos, sessionRepo, pending, visitStartedAt, controller, readReply,
         acceptHeld: held,
@@ -871,14 +880,14 @@ async function settleHeldMove(
     if (needsOwnerQuestion(reply) !== null) return 'judge';
     console.log(`[turn-end] Running task ${task.id.slice(0, 8)}'s held move in ${column.name}: the background work that held it has ended.`);
     try {
-      if (heldMove.kind === 'step') {
+      if (heldMove.kind !== 'row') {
         const step = await runWorkflowStep(context, {
           payload,
           columnId: column.id,
           signal: controller.signal,
           readAgentReply: async () => reply,
           acceptHeld,
-          releaseHeldMove: true,
+          releaseHeldMove: heldMove.kind,
         });
         if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
         else if (step) handOnStepVerdict(context, payload, task, column.id, step);

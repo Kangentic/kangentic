@@ -403,9 +403,10 @@ describe('a resumed workflow task and its unjudged reply', () => {
     function expectOnlyTheTurnEndRan() {
       // The held pass, then exactly one queued pass: the slot holds one request.
       expect(hoisted.waitForTurnCompletion).toHaveBeenCalledTimes(2);
-      // Only a turn end runs the column's rows, and only a catch-up reads the reply itself.
+      // Only a turn end runs the column's rows. Its one read of the reply is for
+      // the no-change line and the step: a catch-up that ran too would read again.
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
-      expect(hoisted.retrievalCall).not.toHaveBeenCalled();
+      expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
       expect(hoisted.runWorkflowStep).toHaveBeenCalledTimes(1);
       const [, input] = hoisted.runWorkflowStep.mock.calls[0] as [unknown, { payload: TurnEndedPayload }];
       // A catch-up carries no turn start; the turn end carries its own.

@@ -72,8 +72,9 @@ export interface RecoveryEntry {
 /**
  * A move a running workflow task earned while background work its agent left
  * was still open (`heldMoveReason`, `workflow-step.ts`): the step check's own,
- * or a Move to column row's. It runs at the agent's next turn end of the same
- * visit with no background work left, unless that reply ends on `Needs owner:`
+ * a `No changes needed:` line's move to Done, or a Move to column row's. It
+ * runs at the agent's next turn end of the same visit with no background work
+ * left, unless that reply ends on `Needs owner:`
  * (owner's decision, 2026-11-02). In memory only: a restart stops the
  * commands that held it, and recovery starts over and judges the reply again.
  * A new session for the task (a host crash's resume) drops it the same way.
@@ -82,8 +83,11 @@ export interface HeldMove {
   columnId: string;
   /** The session whose background work held it. Another session's turn end never runs it. */
   sessionId: string;
-  /** The step check's own move, or a Move to column row's (`rowId`). */
-  kind: 'step' | 'row';
+  /**
+   * The step check's own move, a no-change line's (to Done, the branch checked
+   * again at the release), or a Move to column row's (`rowId`).
+   */
+  kind: 'step' | 'no-changes' | 'row';
   rowId: string | null;
   /** The column it moves the task to, for the nudge. Null when not known. */
   targetName: string | null;

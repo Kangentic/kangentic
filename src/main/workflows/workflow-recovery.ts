@@ -21,6 +21,7 @@ import type { WorkflowBlocker } from './workflow-step-condition';
 import { workflowMemoryGate, type GateMemoryReading } from './workflow-memory-gate';
 import { workflowTasks } from './workflow-tasks';
 import { WORKFLOW_NEEDS_OWNER_LINE } from '../../shared/workflow-needs-owner';
+import { WORKFLOW_NO_CHANGES_LINE } from '../../shared/workflow-no-changes';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../shared/background-shell-hold';
 import {
   forgetWorkflowRecovery,
@@ -189,7 +190,13 @@ function handleVerdict(
       const entry = ensureEntry(context, target);
       if (!entry) return;
       takeVerdict(entry, result);
-      holdMove(entry, { columnId: target.columnId, sessionId: target.sessionId, kind: 'step', rowId: null, targetName: result.heldMoveTo ?? null });
+      holdMove(entry, {
+        columnId: target.columnId,
+        sessionId: target.sessionId,
+        kind: result.heldNoChanges ? 'no-changes' : 'step',
+        rowId: null,
+        targetName: result.heldMoveTo ?? null,
+      });
       return;
     }
     case 'stopped':
@@ -1078,6 +1085,8 @@ const GIBIBYTE = 1024 * 1024 * 1024;
  * - It ends on the `Needs owner:` line: the agent's own call whether only the
  *   owner can settle it, for the three things that stop a workflow and nothing
  *   else (owner's decision, 2026-10-31).
+ * - It names the `No changes needed:` line last: a stall can be an agent that
+ *   found nothing to do and has no other way to say so.
  */
 export function nudgeMessage(input: NudgeInput): string {
   // One line under the keystroke limit. The commands give way first, then
@@ -1141,7 +1150,8 @@ function composeNudge(input: NudgeInput, withCommands: boolean): string {
   const column = typeable(input.columnName);
   const shells = shellSentences(input.openShells ?? [], withCommands);
   const ownerLine = 'If only the owner can settle what you are stuck on (a change from the plan, something the owner must weigh in on, or a '
-    + `decision between options), end your reply with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it.`;
+    + `decision between options), end on the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it. `
+    + `If no change is needed and the branch is empty, end on the line "${WORKFLOW_NO_CHANGES_LINE}".`;
   if (input.heldMove) {
     // Done, and only the background work holds the move: the agent is asked
     // about that work and nothing else, so it ends its turn when it is done.

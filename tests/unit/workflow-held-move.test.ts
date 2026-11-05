@@ -67,6 +67,7 @@ const hoisted = vi.hoisted(() => ({
   retrievalCall: vi.fn(),
   resolveMoveTarget: vi.fn(),
   waitForTurnCompletion: vi.fn(async (): Promise<string> => 'completed'),
+  readWorktreeWork: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -119,6 +120,10 @@ vi.mock('../../src/main/workflows/workflow-tasks', async (importOriginal) => ({
   workflowTasks: hoisted.workflowTasks,
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-head')>()),
+  readWorktreeWork: hoisted.readWorktreeWork,
+}));
 
 const { registerTurnEndAutomations } = await import('../../src/main/automations/turn-end/turn-end-runner');
 const { stopWorkflowHangCheck } = await import('../../src/main/workflows/workflow-hang-check');
@@ -501,6 +506,148 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
       expect(hoisted.task.swimlane_id).toBe(nextLane.id);
       expect(stepChecks()).toBe(1);
       expect(getHeldMove(taskId)).toBeUndefined();
+    });
+  });
+
+  describe('a reply that ends on the no-change line', () => {
+    const NO_CHANGES_WHY = 'the route already returns 404, and nothing here needs to change.';
+    const NO_CHANGES_REPLY = `I read the handler and its tests.\n\nNo changes needed: ${NO_CHANGES_WHY}`;
+    const WORKTREE = '/mock/project/.kangentic/worktrees/badges';
+    const EMPTY_BRANCH = { branch: 'badges', commitsNotOnBase: 0, uncommittedFiles: 0 };
+    let doneLane: Swimlane;
+
+    beforeEach(() => {
+      doneLane = lanes.find((lane) => lane.role === 'done')!;
+      hoisted.task = { ...hoisted.task, worktree_path: WORKTREE, base_branch: 'develop', resolved_base_branch: null };
+      hoisted.readWorktreeWork.mockReset();
+      hoisted.readWorktreeWork.mockImplementation(async () => EMPTY_BRANCH);
+    });
+
+    const stepRows = (): Array<{ met: number | null; detail: string | null }> => (hoisted.database as DatabaseType.Database)
+      .prepare('SELECT condition_met AS met, detail FROM automation_runs WHERE task_id = ? ORDER BY started_at')
+      .all(taskId) as Array<{ met: number | null; detail: string | null }>;
+
+    it('moves the task straight to Done, past the rest of its route, with no check to pay for', async () => {
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(hoisted.readWorktreeWork).toHaveBeenCalledWith(WORKTREE, 'develop');
+      expect(stepChecks()).toBe(0);
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ taskId, targetSwimlaneId: doneLane.id }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.objectContaining({ fromTurnEndGroup: true }),
+      );
+    });
+
+    it('records the agent\'s reason in the run log', async () => {
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      const reasons = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT condition_reason AS reason FROM automation_runs WHERE task_id = ?')
+        .all(taskId) as Array<{ reason: string | null }>;
+      expect(reasons.map((row) => row.reason)).toContain(NO_CHANGES_WHY);
+    });
+
+    it('moves nothing on a branch with commits, and the nudge says why', async () => {
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, commitsNotOnBase: 2 }));
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+      const nudge = (hoisted.deliverMessageToSession.mock.calls[0] as unknown as [unknown, { message: string }])[1].message;
+      expect(nudge).toContain('2 commits');
+      expect(nudge).toContain('develop');
+    });
+
+    it('moves nothing on a dirty worktree', async () => {
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, uncommittedFiles: 1 }));
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(stepRows().some((row) => row.detail?.includes('1 uncommitted file'))).toBe(true);
+    });
+
+    it.each([
+      ['the read failed', null],
+      ['the base branch does not resolve', { ...EMPTY_BRANCH, commitsNotOnBase: null }],
+    ])('moves nothing when the branch cannot be read: %s', async (_label, work) => {
+      hoisted.readWorktreeWork.mockImplementation(async () => work);
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(stepRows().some((row) => row.detail?.includes('could not be read'))).toBe(true);
+    });
+
+    it('takes the agent\'s word on a task with no worktree: there is nothing to compare', async () => {
+      hoisted.task = { ...hoisted.task, worktree_path: null };
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(hoisted.readWorktreeWork).not.toHaveBeenCalled();
+    });
+
+    // A plan column's "Finish the plan" row has no Text match, so it runs on
+    // every reply. Its message would start a turn and take the step's turn with it.
+    it('runs no row first, so a row with no Text match cannot message the agent over it', async () => {
+      hoisted.rows = [{ ...moveRow(), id: 'row-finish-the-plan', name: 'Finish the plan', type: 'send_message', config: { message: 'Finish the plan.' } }];
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+    });
+
+    it('runs the rows on any other reply, as before', async () => {
+      hoisted.rows = [{ ...moveRow(), id: 'row-finish-the-plan', name: 'Finish the plan', type: 'send_message', config: { message: 'Finish the plan.' } }];
+
+      await endTurn(41, 'Here is the plan so far.');
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for a background command the agent left, then goes to Done, not the next route column', async () => {
+      leaveShellOpen();
+      await endTurn(41, NO_CHANGES_REPLY);
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(getHeldMove(taskId)).toMatchObject({ kind: 'no-changes', targetName: doneLane.name });
+
+      closeShell();
+      startTurn(42);
+      await endTurn(42, STOPPED_SHELL_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(getHeldMove(taskId)).toBeUndefined();
+    });
+
+    it('checks the branch again when the held move goes: the agent may have committed meanwhile', async () => {
+      leaveShellOpen();
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, commitsNotOnBase: 1 }));
+      closeShell();
+      startTurn(42);
+      await endTurn(42, STOPPED_SHELL_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('leaves a Needs owner reply alone: only the owner settles that', async () => {
+      await endTurn(41, QUESTION_REPLY);
+
+      expect(hoisted.readWorktreeWork).not.toHaveBeenCalled();
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
     });
   });
 
