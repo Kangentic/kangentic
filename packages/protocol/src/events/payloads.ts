@@ -522,11 +522,9 @@ export interface BoardTaskWire {
    *
    * There is no verb for it. A phone flips it with the `board-tool-write`
    * `update_task` call, whose param is camelCase: `automationsDisabled: true`
-   * or `false`, never `automations_disabled`. On a workflow task it also holds
-   * the task out of its workflow (no judging, moving or starting) while the
-   * rest runs. A desktop that predates `workflow.automations_pausable`
-   * (pre-0.25.0) refuses `true` for a workflow task, so offer the control on
-   * one only while that field is true.
+   * or `false`, never `automations_disabled`. A running or paused workflow's
+   * task refuses `true`, so offer the control on a workflow task only while
+   * `workflow.automations_pausable` is true.
    *
    * The desktop clears it by itself only when the task joins a workflow. A move
    * out of Done or a restore from the archive keeps it. Every change, by any
@@ -569,8 +567,8 @@ export interface BoardTaskWorkflowWire {
   /** The tasks it waits for that are not done, named as the card's footer names them ("#413"). */
   waiting_for: string[];
   /**
-   * While the card is locked (its workflow runs, its automations are not
-   * paused, and it is in motion: the agent is working or at a prompt, a message
+   * While the card is locked (its workflow runs and it is in motion: the
+   * agent is working or at a prompt, a message
    * is on its way, or it is starting), the desktop's sentence for a refused
    * move; null otherwise, which is when the desktop draws no lock. An unlocked
    * card still never moves into To Do.
@@ -584,12 +582,11 @@ export interface BoardTaskWorkflowWire {
    */
   gate_target_id: string | null;
   /**
-   * True on a desktop that honours the task's automations switch
-   * (`BoardTaskWire.automations_disabled`) on a workflow task: `update_task`
-   * accepts `automationsDisabled` for it, and while the switch is on the
-   * workflow neither judges, moves nor starts the task, and a hand may move its
-   * card anywhere but To Do (`lock_reason` reads null). Offer the switch on a
-   * workflow task only when this is true.
+   * True when `update_task` accepts `automationsDisabled` for this task. A
+   * running or paused workflow's task reads false, because a task cannot pause
+   * its automations there: to stop work, pause the workflow. A finished
+   * workflow's task reads true. Offer the switch on a workflow task only when
+   * this is true.
    *
    * Null or absent means a desktop that predates the field (pre-0.25.0), which
    * refuses `automationsDisabled: true` for a workflow task: hide the control.

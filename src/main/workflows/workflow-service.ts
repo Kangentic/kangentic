@@ -19,7 +19,6 @@ import type {
   WorkflowResumeReport,
   WorkflowTaskRunSettings,
 } from '../../shared/types';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { isTaskPaused, resumeBlockReasonForTask } from '../../shared/session-resume-eligibility';
 import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
@@ -122,11 +121,6 @@ export interface WorkflowTaskView {
   profileName: string | null;
   /** Why its running workflow stalled on it, while that holds; null otherwise. */
   stalled: string | null;
-  /**
-   * Its automations are paused and it is not done: the workflow neither judges,
-   * moves nor starts it, and a hand may move its card.
-   */
-  automationsPaused: boolean;
   /** Its plan approval and where it comes from; null when its route has no plan column. */
   planApproval: TaskPlanApproval | null;
   /**
@@ -141,13 +135,12 @@ export interface WorkflowTaskView {
  * Why a running workflow is stalled on each of its tasks, read from each
  * board's run log once (`listStalledTasks`), so the mark survives a restart
  * and an automatic pause. A paused or finished workflow shows no stall: its
- * state says what it is doing. Nor does a task whose automations are paused:
- * a person is working it, and its recovery has stopped.
+ * state says what it is doing.
  */
-export function stallReader(workflow: Workflow): (projectId: string, task: Pick<Task, 'id' | 'automations_disabled'>) => string | null {
+export function stallReader(workflow: Workflow): (projectId: string, task: Pick<Task, 'id'>) => string | null {
   const byProject = new Map<string, Map<string, string>>();
   return (projectId, task) => {
-    if (workflow.state !== 'running' || !canTaskRunAutomations(task).ok) return null;
+    if (workflow.state !== 'running') return null;
     let stalls = byProject.get(projectId);
     if (!stalls) {
       try {
@@ -220,7 +213,6 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         runSettings: runSettingsOf(planned),
         profileName: profileNameOn(context, projectId, planned.profile_id),
         stalled: null,
-        automationsPaused: false,
         planApproval: readPlannedTaskPlanApproval(context, homeProjectId, planned, workflow.plan_approval, lanes),
         ownPlanApproval: planned.plan_approval ?? workflow.plan_approval,
       };
@@ -264,7 +256,6 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       runSettings: runSettingsOf(task),
       profileName: profileNameOn(context, projectId, task.profile_id),
       stalled: place === 'done' ? null : stallOf(projectId, task),
-      automationsPaused: place !== 'done' && !canTaskRunAutomations(task).ok,
       planApproval: readTaskPlanApproval(context, projectId, task, workflow.plan_approval, lanes),
       ownPlanApproval: task.plan_approval ?? workflow.plan_approval,
     };
@@ -1165,7 +1156,6 @@ async function bringBackTaskAgent(context: IpcContext, projectId: string, task: 
     if (current.archived_at || !lane) return { kind: 'skip' as const };
     const latest = new SessionRepository(getProjectDb(projectId)).getLatestForTask(task.id);
     if (isTaskPaused(context.sessionManager.listSessions(), task.id) || latest?.status === 'suspended') return { kind: 'resume' as const };
-    if (!canTaskRunAutomations(current).ok) return { kind: 'skip' as const };
     // The column's own auto_spawn, through the task's Board Profile, as the
     // start below reads it, so a column that starts no agent is not counted.
     const projectPath = context.projectRepo.getById(projectId)?.path ?? null;

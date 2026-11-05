@@ -40,7 +40,7 @@ export function taskStoppedNow(task: Pick<Task, 'id'>, columnRole: SwimlaneRole 
 
 /** Why the lock refuses this move; null allows it (or the task is in no workflow). */
 export function refusedBoardMove(
-  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id' | 'automations_disabled'>,
+  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id'>,
   targetSwimlaneId: string,
   swimlanes: readonly Pick<Swimlane, 'id' | 'role'>[],
 ): string | null {

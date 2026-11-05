@@ -75,19 +75,18 @@ const SESSION_SPAWN_STRATEGY_DESCRIPTION =
   + 'pairing, e.g. an isolated column that should accumulate one long side conversation.';
 /**
  * The task-level automations switch, shared by create and update so the two
- * cannot describe it differently. The main use is an agent holding its OWN
- * task while it waits on something (CI, a decision), so the text says plainly
- * that the switch restarts nothing.
+ * cannot describe it differently. The text says plainly that the switch restarts
+ * nothing, and it says what a workflow task uses instead: agents reached for it
+ * to hold workflow tasks nobody asked to hold, which stopped a running workflow.
  */
 const AUTOMATIONS_DISABLED_DESCRIPTION =
   'Pause (true) or resume (false) column automations for this task. While paused, no On task enter, On agent '
   + 'turn end or On task exit automation runs for it in any column, moving it types no column message, and Kangentic '
   + 'approves none of its plans (the user approves them), so the board stops advancing it; manual moves, the '
-  + 'column\'s agent settings and Run again still work. On a task in a workflow it also holds the task out of its '
-  + 'workflow while the rest runs: the workflow does not judge, nudge, move or start it, and a hand may move its card '
-  + 'to any column but To Do. Use it to hold a task that is waiting on something, or to work one workflow task by '
-  + 'hand. Setting it never restarts the session; resuming replays nothing that was skipped. Adding the task to a '
-  + 'workflow resumes automations. Moving it out of Done keeps them paused. Board tasks only.';
+  + 'column\'s agent settings and Run again still work. A task in a running or paused workflow cannot be paused: to '
+  + 'review its plan set planApproval to manual, to wait on something outside end a turn on the "Needs owner:" line, '
+  + 'and to stop work pause the workflow. Setting it never restarts the session; resuming replays nothing that was '
+  + 'skipped. Adding the task to a workflow resumes automations. Moving it out of Done keeps them paused. Board tasks only.';
 
 /**
  * Build the create_task routing-check refusal shown when the call

@@ -1987,6 +1987,7 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!hasTaskAutomationsDisabled) {
     db.exec('ALTER TABLE tasks ADD COLUMN automations_disabled INTEGER NOT NULL DEFAULT 0');
   }
+  releaseWorkflowTaskHolds(db);
 
   // Migration: add 'fork_point_sha' column - the commit a task's branch was cut
   // from, read when its worktree is created (#881). A completed task's view
@@ -2178,6 +2179,24 @@ export function runProjectMigrations(db: Database.Database): void {
  * column must land together. A run that failed between them used to leave a
  * board the probe could not read until the next open finished the migration.
  */
+/**
+ * Migration: a workflow task cannot pause its automations (owner's decision,
+ * 2026-11-05), so a card held before that has no switch left. Clears it on every
+ * workflow task not yet in Done. It reads no `workflows` row: a task's workflow
+ * can live in another project's database, and a workflow with a task outside
+ * Done is running or paused. Its plan stays a person's to review: a hold read an
+ * Automatic plan approval as Manual, and lifting it alone would have Kangentic
+ * approve what a person meant to read. Safe on every open: nothing holds a
+ * workflow task again.
+ */
+function releaseWorkflowTaskHolds(db: Database.Database): void {
+  db.prepare(`
+    UPDATE tasks SET automations_disabled = 0, plan_approval = 'manual'
+    WHERE automations_disabled = 1 AND workflow_id IS NOT NULL AND archived_at IS NULL
+      AND swimlane_id NOT IN (SELECT id FROM swimlanes WHERE role = 'done')
+  `).run();
+}
+
 function runWorkflowsMigration(db: Database.Database): void {
   writeTransaction(db, () => migrateWorkflows(db))();
 }

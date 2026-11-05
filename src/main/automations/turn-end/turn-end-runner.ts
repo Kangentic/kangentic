@@ -33,13 +33,11 @@ import {
   resumeWorkflowRecovery,
   runRecoveryAttempt,
   setRecoveryAttemptRunner,
-  startWorkflowRecoveryOver,
 } from '../../workflows/workflow-recovery';
 import { clearHeldMove, getHeldMove, getRecoveryEntry, setHeldMove, type HeldMove } from '../../workflows/workflow-recovery-state';
 import { needsOwnerQuestion } from '../../../shared/workflow-needs-owner';
 import { noChangesReason } from '../../../shared/workflow-no-changes';
 import { finalMatchLine } from '../../../shared/final-line-match';
-import { setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
 import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
@@ -289,9 +287,8 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       void catchUpAfterResume(context, resumed);
     });
   });
-  // A workflow's Resume, or a task's automations resumed, found the agent
-  // already live: judge the reply it left, as a resume does. Off the caller's
-  // stack, as the resume's is.
+  // A workflow's Resume found the agent already live: judge the reply it left,
+  // as a resume does. Off the caller's stack, as the resume's is.
   setWorkflowCatchUp((resumed) => {
     setImmediate(() => {
       void catchUpAfterResume(context, resumed);
@@ -343,7 +340,6 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       turnEndMarkAtTurnEnd: turnEndMark(sessionId),
     });
   });
-  setHoldReleaseRecoveryStart(startWorkflowRecoveryOver);
   context.sessionManager.on('session-removed', (sessionId: string) => {
     // Gone before its recap turn ended: what waited on it is not sent.
     forgetRecapSession(sessionId, false);

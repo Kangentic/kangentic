@@ -32,14 +32,11 @@ import { isMoveByAPerson } from './task-move-origin';
  *   lock. A person moves its cards by hand, except into To Do. A card a person
  *   works while it is paused is an ordinary card, so its column automations,
  *   its own agent and a plan approval still move it.
- * - A card whose automations are paused (the task's own hold) moves by hand as
- *   a paused workflow's card does, while the rest of its workflow runs: the
- *   person working it is the one who moves it on.
  * - No workflow task moves into To Do by any path: that move kills the session
  *   and deletes the worktree and branch. Remove it from the workflow first.
  *   A person moving a running workflow's card reads the lock's own sentence
  *   for To Do as for every other column (boards 6 and 1d): the card is locked
- *   outright, so the To Do row says nothing different. A paused, held or stopped
+ *   outright, so the To Do row says nothing different. A paused or stopped
  *   card, and any agent, read the To Do sentence, which says what to do instead.
  * - Reordering within a column is presentation and is never refused.
  */
@@ -55,11 +52,6 @@ export interface WorkflowMoveCheck {
   toRole: SwimlaneRole | null;
   /** The mover is the task's own agent session. */
   moverIsTaskAgent: boolean;
-  /**
-   * The task's automations are paused (`canTaskRunAutomations` is not ok): a
-   * person may move it as a paused workflow's card, whatever its workflow does.
-   */
-  taskHeld: boolean;
   /**
    * The card has stopped, so a person may move it: `isWorkflowTaskStopped` in
    * main, `isStoppedOnBoard` on the board. Agents ask with false.
@@ -82,9 +74,8 @@ export function workflowMoveRefusalMessage(check: WorkflowMoveCheck): MessageDes
   if (check.workflowState === 'draft' || check.workflowState === 'done') return null;
   const label = `#${check.displayId}`;
   const byHand = isMoveByAPerson(check.origin);
-  // A stopped or held card in a running workflow is the person's to move, as a paused one is.
-  const handsFree = check.taskHeld || check.taskStopped;
-  const lockedForHands = check.workflowState === 'running' && !handsFree;
+  // A stopped card in a running workflow is the person's to move, as a paused one is.
+  const lockedForHands = check.workflowState === 'running' && !check.taskStopped;
   if (check.toRole === 'todo') {
     return byHand && lockedForHands
       ? WORKFLOW_REFUSAL_MESSAGES.locked(label, check.workflowTitle)
@@ -100,7 +91,7 @@ export function workflowMoveRefusalMessage(check: WorkflowMoveCheck): MessageDes
     if (byHand) return null;
     return WORKFLOW_REFUSAL_MESSAGES.pausedForAgents(label, check.workflowTitle);
   }
-  if (byHand && handsFree) return null;
+  if (byHand && check.taskStopped) return null;
   return WORKFLOW_REFUSAL_MESSAGES.locked(label, check.workflowTitle);
 }
 

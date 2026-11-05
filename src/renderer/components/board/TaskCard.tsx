@@ -25,7 +25,7 @@ import { OpenWorkflowMenuItem } from './workflow-menu-items';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove, taskStoppedNow } from '../../utils/workflow-refusal';
-import { toggleTaskAutomations } from '../../utils/task-automations';
+import { offersAutomationsSwitch, toggleTaskAutomations } from '../../utils/task-automations';
 import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
@@ -299,7 +299,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           navigationItem={menuWorkflow && (
             <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
           )}
-          onToggleAutomations={handleToggleAutomations}
+          onToggleAutomations={offersAutomationsSwitch(task, menuWorkflow !== null) ? handleToggleAutomations : undefined}
           sessionToggle={menuSessionToggle
             ? { ...menuSessionToggle, onToggle: () => handleToggleSession(menuSessionToggle.direction) }
             : undefined}

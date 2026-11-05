@@ -6011,10 +6011,9 @@
 
       // Why a running workflow is stalled on a task. Main reads it from the run
       // log; a test seeds it as window.__mockWorkflowStalls = { [taskId]: reason }.
-      // As main's stallReader: no mark while the workflow is not running, or
-      // while the task's own automations are paused.
+      // As main's stallReader: no mark while the workflow is not running.
       function stallOf(workflow, task) {
-        if (workflow.state !== 'running' || task.automations_disabled) return null;
+        if (workflow.state !== 'running') return null;
         var stalls = window.__mockWorkflowStalls || {};
         return typeof stalls[task.id] === 'string' ? stalls[task.id] : null;
       }

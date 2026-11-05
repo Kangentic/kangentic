@@ -570,22 +570,11 @@ msgstr "워크플로 이름 바꾸기"
 msgid "Resize the workflow agent"
 msgstr "워크플로 에이전트 크기 조정"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgctxt "automations"
-msgid "Resume"
-msgstr "재개"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "재개"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Resume automations"
-msgstr "자동화 재개"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy

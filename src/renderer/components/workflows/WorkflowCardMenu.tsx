@@ -13,7 +13,7 @@ import { taskStoppedNow } from '../../utils/workflow-refusal';
 import { findBoardTask } from '../../utils/board-task-index';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
-import { toggleTaskAutomations } from '../../utils/task-automations';
+import { offersAutomationsSwitch, toggleTaskAutomations } from '../../utils/task-automations';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { TaskContextMenu } from '../board/TaskContextMenu';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
@@ -155,8 +155,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
           }).finally(() => resyncBoardAfterMonitorWrite(viewTask.projectId));
         },
       } : undefined}
-      // Holds this task out of its workflow, or lets the workflow take it again.
-      onToggleAutomations={() => { void toggleTaskAutomations(task, viewTask.projectId); }}
+      onToggleAutomations={offersAutomationsSwitch(task, workflow !== null) ? () => { void toggleTaskAutomations(task, viewTask.projectId); } : undefined}
       moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId), stopped)}
       // Every card here is in a started workflow, so Backlog and Archive are refused.
       sendAwayRefusal={sendAwayRefusal(workflow, task, stopped) ?? t`Remove #${displayId} from its workflow first.`}

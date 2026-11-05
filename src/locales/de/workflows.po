@@ -570,22 +570,11 @@ msgstr "Workflow umbenennen"
 msgid "Resize the workflow agent"
 msgstr "Größe des Workflow-Agenten ändern"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgctxt "automations"
-msgid "Resume"
-msgstr "Fortsetzen"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "Fortsetzen"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Resume automations"
-msgstr "Automatisierungen fortsetzen"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy

@@ -2,7 +2,6 @@ import type { BoardTaskWorkflowWire } from '@kangentic/protocol';
 import type { Task, Workflow, WorkflowSummary } from '../../../shared/types';
 import { nextOnRoute, routeColumns } from '../../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
-import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { listWorkflowSummaries } from '../../workflows/workflow-view-service';
@@ -80,13 +79,14 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       waiting_for: boardTask?.waitingFor ?? [],
       // The card is locked as the desktop board locks it (`isLockedOnBoard`,
       // where a drag stays in its column): while the workflow runs and it is in
-      // motion. A paused workflow's cards move by hand, and so does a card whose
-      // own automations are paused.
-      lock_reason: workflow.state === 'running' && !stopped && canTaskRunAutomations(task).ok
+      // motion. A paused workflow's cards move by hand.
+      lock_reason: workflow.state === 'running' && !stopped
         ? WORKFLOW_REFUSALS.locked(`#${task.display_id}`, workflow.title)
         : null,
       gate_target_id: gateTargetId,
-      automations_pausable: true,
+      // A running or paused workflow's task cannot pause its automations. The
+      // phone offers the switch on a workflow task only while this is true.
+      automations_pausable: workflow.state === 'done',
     });
   }
   return facts;

@@ -427,15 +427,10 @@ interface TaskCardBodyProps {
    * ("Blocked by #413...", "Queued...").
    */
   idleFooter?: React.ReactNode;
-  /**
-   * The host draws the "Automations paused" strip itself: a workflow card
-   * stacks it over its workflow strip, in one bleed wrapper.
-   */
-  hostDrawsAutomationsStrip?: boolean;
 }
 
 /** The full card's content, inside whichever root the host draws. */
-export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter, hostDrawsAutomationsStrip }: TaskCardBodyProps) {
+export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
   // The rule above the footer closes what sits over it, and the agent's output
   // well already closes itself with its own edge. Labels and a plain
   // description (a paused card, or the card preview turned off) keep it, or
@@ -443,7 +438,7 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter, h
   const footerDivider = !(view.shownTrail && view.trailMode && view.taskLabels.length === 0);
   return (
     <>
-      {!hostDrawsAutomationsStrip && !canTaskRunAutomations(task).ok && <AutomationsDisabledStrip density={density} />}
+      {!canTaskRunAutomations(task).ok && <AutomationsDisabledStrip density={density} />}
       <TaskCardBodyContent task={task} view={view} density={density} hideDisplayId={hideDisplayId} idleFooter={idleFooter} />
       {/* Bottom bar -- exhaustive switch on display state */}
       {density !== 'compact' && <TaskCardFooter view={view} idleFooter={idleFooter} divider={footerDivider} />}

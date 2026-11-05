@@ -103,8 +103,8 @@ function automationsSortValue(row: MonitorSessionRow): number | null {
 }
 
 /** The Automations cell of a held task: the Column Manager's chip, with the mark's tip. */
-function AutomationsPausedChip({ inWorkflow }: { inWorkflow: boolean }) {
-  const { tip } = useAutomationsPausedText(inWorkflow);
+function AutomationsPausedChip() {
+  const { tip } = useAutomationsPausedText();
   return (
     <Tooltip label={tip}>
       <span
@@ -198,7 +198,7 @@ export function MonitorTable({
       sortValue: automationsSortValue,
       render: (row) => {
         if (row.isCommandTerminal) return <span className="text-fg-disabled">-</span>;
-        if (row.automationsDisabled) return <AutomationsPausedChip inWorkflow={row.workflow !== null} />;
+        if (row.automationsDisabled) return <AutomationsPausedChip />;
         return <span className="truncate block text-fg-faint"><Trans context="automations state">On</Trans></span>;
       },
       headerTip: t`Whether the column's automations run for the task`,

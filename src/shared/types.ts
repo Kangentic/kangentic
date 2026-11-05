@@ -698,12 +698,10 @@ export interface Task {
    * for it in any column, a move types no column message, and an Automatic Plan
    * approval is held as Manual (`readPlanApprovalDecision`). Column settings,
    * manual drags, Run again and the task's own `auto_command` are untouched.
-   * On a workflow task it is also the task's own hold: the workflow neither
-   * judges, nudges, moves nor starts it, and a hand may move its card. Joining a
-   * workflow clears it. A move out of Done or a restore keeps it. Asked only
-   * through `canTaskRunAutomations`. The UI calls the state "Automations
-   * paused", and the workflow code calls such a task held (`taskHeld`,
-   * `CoreTask.held`).
+   * A running or paused workflow's task cannot set it (`taskHoldRefusal`):
+   * to stop work, pause the workflow. Joining a workflow clears it. A move out of
+   * Done or a restore keeps it. Asked only through `canTaskRunAutomations`. The
+   * UI calls the state "Automations paused".
    */
   automations_disabled: boolean;
   /**
@@ -5766,7 +5764,7 @@ export interface TaskUpdateInput {
   profile_id?: string | null;
   /** Which run mode the task runs in (see `Task.run_mode`). `'agent_override'` clears `profile_id`; `'column_settings'` clears the four pins. Omitted leaves the stored mode alone, unless a pin or profile in the same write implies one. */
   run_mode?: TaskRunMode;
-  /** Pause or resume column automations for the task (see `Task.automations_disabled`). On a workflow task it is the task's own hold. */
+  /** Pause or resume column automations for the task (see `Task.automations_disabled`). A running or paused workflow's task refuses `true`. */
   automations_disabled?: boolean;
 }
 

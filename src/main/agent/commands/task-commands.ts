@@ -12,7 +12,7 @@ import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
-import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
+import { checkWorkflowMoveForAgent, taskHoldRefusal } from '../../workflows/workflow-lock-check';
 import { isInWorkflow } from '../../workflows/workflow-home';
 // Not workflow-service.ts: the MCP server loads this module, and that service
 // imports the session handlers.
@@ -37,7 +37,6 @@ import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { NEVER_AUTO_SPAWN_ROLES, type Task, type TaskUpdateInput, type PermissionMode, type PlanApproval, type TaskRunMode, type Swimlane } from '../../../shared/types';
-import { applyAutomationsHoldChange } from '../../workflows/workflow-task-hold';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -475,6 +474,11 @@ export const handleUpdateTask: CommandHandler = (
     return { success: false, error: `Task "${taskId}" not found` };
   }
 
+  if (newAutomationsDisabled === true) {
+    const refusal = taskHoldRefusal(task, context.projectId);
+    if (refusal) return { success: false, error: `${refusal} The task was not updated.` };
+  }
+
   const updates: Record<string, unknown> = { id: task.id };
   if (newTitle !== null) updates.title = String(newTitle).slice(0, 200);
 
@@ -624,15 +628,6 @@ export const handleUpdateTask: CommandHandler = (
   }
 
   context.onTaskUpdated(updated);
-
-  // A workflow task's hold stops or starts its workflow's judging and moving.
-  if (newAutomationsDisabled !== null && updated.workflow_id) {
-    try {
-      applyAutomationsHoldChange(requireWorkflowRuntimeContext(), context.projectId, task, updated);
-    } catch (error) {
-      console.warn(`[update_task] Could not apply the automations switch on #${task.display_id}:`, error);
-    }
-  }
 
   // A write that moves the task's model or effort target reaches a running
   // session, as a ContextBar pick does. Compared on the stored row, so a write
