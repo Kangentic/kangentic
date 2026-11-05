@@ -146,19 +146,21 @@ A live model swap has nothing to type: `/model <alias>` opens the picker rather 
 
 ## SSH
 
-A Kimi Code on a remote host over SSH (#913) runs as `kimi`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. It is checked only against a fake host in `tests/unit/kimi-ssh-remote.test.ts`, never against a real Kimi or host.
+A Kimi Code on a remote host over SSH (#913) runs as `kimi`, found by the host's login `PATH` (`remoteCliName`), so it must be installed and signed in there. A spawn is checked against a fake host in `tests/unit/kimi-ssh-remote.test.ts`, and its transcript against a real 2.5.1 in `tests/unit/remote-transcript-real-cli.test.ts`, which runs only in the rig.
 
 - **Synced file.** `remoteFiles()` declares the project's `.kimi-code/mcp.json`. Kangentic's stdio entry (the hook transport's bridge, by its path on the host) is merged beside the user's servers, the token stays in the session's environment, and the file is restored when the session releases. A file that is not JSON Kangentic can merge into is left as written.
 - **Trust and the first prompt.** `KIMI_CODE_TRUST_WORKSPACE`, `KIMI_CODE_NO_AUTO_UPDATE` and `KIMI_SHARE_DIR` ride the spawn environment, as locally.
-- **Unavailable over SSH.** The wire file and the session index are on the host. The transcript, usage and live model show nothing, and the session id comes from the welcome box or the exit hint, never the index scan, which would otherwise wait 90 seconds. Activity is the terminal's.
+- **Transcript and id.** `remoteTranscriptIndex()` tails `session_index.jsonl` into the host's home mirror from the session's start, and `remoteTranscriptFiles()` names the wire once the index says where it is ([SSH remote hosts](../../platforms/ssh-remote.md#transcripts)). A fresh session's line appears on its first message, and a line past the index's size at spawn, in the session's folder, gives its id. Two sessions waiting in one folder take no id from it and keep the exit hint. On a resume the id is in the command and the welcome box. The wire is named from the index and not `locateKimiWireFile`, which wants the file on disk. The viewer, the index and the ledger then read the wire as they read a local one. Subagent wires are not carried.
+- **Unavailable over SSH.** The live model, and the filesystem id scan, which would otherwise wait 90 seconds. Activity is the terminal's.
 
 ## What needs a live probe
+
+A real 2.5.1 on Linux confirmed the data root, the index line, an absolute `sessionDir`, the id's shape, the welcome box and exit hint wording, a wire that is append-only across a resume, and a real wire reading through the parsers (`docs/audits/ssh-transcript-exports-audit.md`). The session line and folder appear on the first message, not at launch.
 
 Run these against a real install before trusting the adapter:
 
 - **The typed first prompt**, past the startup screens. A model upgrade prompt (`tui/controllers/model-migration.ts`) opens over an idle, empty editor when the default model has an upgrade, the source shows no variable that turns it off, and a typed Enter would answer it, so check what a first prompt does on such a model. The migration screen, shown when `~/.kimi` holds 1.x data, is off through `KIMI_SHARE_DIR`, a behavior of the source that no doc lists, so check that on a machine with a real `~/.kimi`.
-- Session id capture timing after the first message, and the welcome box and exit hint wording.
-- Whether the wire is append-only across resumes, and whether any session keeps its turns only as `context.append_message` records, as the CLI's compaction sample does. The transcript parsers read `turn.prompt` and loop events, not those.
+- Whether any session keeps its turns only as `context.append_message` records, as the CLI's compaction sample does. The transcript parsers read `turn.prompt` and loop events, not those.
 - The exit sequence (Esc, a pause, `/exit`). It ends in Enter, which must not answer an open dialog. In the source Esc rejects an approval dialog (`tui/components/dialogs/approval-panel.ts`), so the Enter reaches the editor, but check with `scripts/probe-agent-dialog-exit.js`, including a second approval that opens inside the pause.
 - `detectFirstOutput` and the PTY prompt regex. `transcript-cleanup.ts` has no real capture behind it.
 - Background task ids and payloads, should the MCP wiring ever become per-session, which is what `backgroundCommands` needs first.

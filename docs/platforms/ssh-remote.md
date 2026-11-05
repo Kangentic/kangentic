@@ -25,6 +25,8 @@ sources:
   - resource: src/main/remote/remote-worktrees.ts
   - resource: src/main/git/remote-worktree.ts
   - resource: src/main/agent/shared/remote-files.ts
+  - resource: src/main/agent/adapters/goose/export-reader.ts
+  - resource: src/main/agent/adapters/opencode/export-reader.ts
   - resource: scripts/build-host.mjs
   - resource: scripts/lib/deterministic-tar.mjs
   - resource: scripts/verify-host-manifest.js
@@ -139,7 +141,7 @@ A probe an agent's CLI answers (its hook trust, a chat id, a model list) runs on
 
 ## Agents
 
-All 15 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run with its real CLI.** Each is covered by unit tests against a fake host. The mock CLIs of the first 14 have run on a real sshd in a Docker container through the real app (Kimi Code joined after that run, so it has only the unit tests). That run added the host over ssh with a password, made a remote project, and started tasks for 14 agents (eight at once in one host folder). It confirmed, for the agents that start there:
+All 15 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has been started by the app with its real CLI.** Each is covered by unit tests against a fake host. The one exception to "real" is transcripts: real Kimi Code, Goose and OpenCode conversations have crossed the real helper and relay in Docker (see [Transcripts](#transcripts)), run from a test, not through a spawn. The mock CLIs of the first 14 have run on a real sshd in a Docker container through the real app (Kimi Code joined after that run, so it has only the unit tests). That run added the host over ssh with a password, made a remote project, and started tasks for 14 agents (eight at once in one host folder). It confirmed, for the agents that start there:
 
 - the agent runs on the host under the host program's own Node, and its trust, settings and MCP files are written there with hook paths of the host;
 - a file the user already had (`.gemini/settings.json`, `.cursor/mcp.json`, `~/.gemini/trustedFolders.json`) keeps its own entries beside Kangentic's;
@@ -153,11 +155,32 @@ Real CLIs are the Beta gate: the mocks do not run hooks themselves, ask for a lo
 
 The conversation viewer, the search index and the token and cost ledger read a conversation's transcript from this computer's disk. For a session on a host, Kangentic keeps a copy of the transcript there. The adapter names the file (`remoteTranscriptFiles()`, as the path its own readers build under this computer's mirror of the host's home, `<config folder>/remote-homes/<host>/`), the helper tails the host's file by byte offset (`helper/file-tail.ts`, a poll every 250 ms), and the relay writes each chunk at the same offset into the copy (`RemoteSessionRelay.deliverChunk`). A reader that opens the transcript file (the conversation viewer, the search index) then finds a remote conversation where it finds a local one, and a path the CLI reports under the host's home (the status line's `transcript_path`) maps into the copy too. The live telemetry on the card (cost, context) is not from this: it comes from the status line the hooks carry, as it did before. The reader that follows the transcript for model and token figures while a session runs (`SessionHistoryReader`) stays off for a remote session, because a resumed session's backfill would read as fresh usage.
 
-- **Claude Code is the one agent that does this so far.** Its transcript is the one file it appends to under `~/.claude/projects/<slug>/`, filed under the slug of the folder on the host. Subagent transcripts are not carried. The other adapters have not declared a transcript file, so for them the viewer, the index and the token ledger are empty, and a session id still arrives from the agent's hooks or its output where the adapter has one.
+An adapter says how its transcript reaches this computer in one of three ways, and the relay asks again whenever the session's id arrives or an index grows (`RemoteSessionRelay.setAgentSessionId`). A file named late joins what is tailed, and what was already tailing keeps its place.
+
+| Agent | What is copied | Declared by |
+|---|---|---|
+| Claude Code | The one file it appends to under `~/.claude/projects/<slug>/`, filed under the slug of the folder on the host | `remoteTranscriptFiles()` |
+| Kimi Code | `~/.kimi-code/session_index.jsonl` from the session's start, then the wire it names, `<session folder>/agents/main/wire.jsonl` | `remoteTranscriptIndex()`, `remoteTranscriptFiles()` |
+| Goose | `goose session export --name <name> --format json` | `remoteTranscriptSnapshot()` |
+| OpenCode | `opencode export <id> --pure`, or `session export <id> --standalone` on OpenCode 2 | `remoteTranscriptSnapshot()` |
+
+The other adapters have declared nothing yet, so for them the viewer, the index and the token ledger are empty, and a session id still arrives from the agent's hooks or its output where the adapter has one.
+
+**An index.** A fresh Kimi session prints its id only as it exits, which can land after the session is released, and never lands after a force kill. So the index is tailed from the start and `watchFiles` answers its size then, and a new line past that size in the session's own folder names the id. Two sessions waiting in one folder cannot tell their lines apart, so neither takes one and each keeps the exit hint. A wrong id would resume another conversation.
+
+**An export.** Goose and OpenCode keep every conversation in one SQLite database in WAL mode, which an offset tail would corrupt. The CLI's own export runs instead, and three things shape how:
+
+- **It goes to a file on the host, never through a reply.** A reply is one frame, capped at 256 KiB, and an export can be 100 MB. One `sh` script exports to a temporary file under `~/.kangentic/transcripts/<agent>/` and swaps it in, and the tail sends that file. Every value is an argument. The file is removed when the session is released.
+- **Only a change is sent.** The script compares the export with the last one (`cmp`) and swaps it in only when it differs, so an idle session costs one CLI run and no link traffic. A swapped file has a new inode, which the tail already treats as starting over.
+- **The pace follows the size.** The first export runs 5 seconds after the id is known, then at most every 30 seconds, and no sooner than the last export's size at 200 KB a second, so sending the whole file again never holds the link. An export is cheap: 100 MB took about a second. The last export runs at release, before the tail's last pass, and the readers of an ending session (the ledger, the finished index pass) wait for it, for at most 30 seconds.
+
+An export is one document, so half of one is no conversation at all. It collects beside the copy as `<copy>.part` and is renamed over the copy only once whole (`FileChunkEvent.size`). The last whole copy stays until then, so a stale copy never reads as an empty one, and a rename a reader blocks on Windows is tried again. Main takes the export, and the retrieval worker only reads the file, because the worker has no route to a host. Totals are always of the whole file, never a difference: a replaced file has nothing to add to.
+
+- **Subagent transcripts are not carried.**
 - **A resume copies the whole file first.** The copy starts from byte 0 each session, at a few chunks a scan (about 1 MB a second) so it shares the link with the terminal instead of crowding it. A transcript of tens of megabytes takes under a minute to arrive, and the viewer fills in as it does. The last pass when a session is released is not paced, so the end of the conversation is in the copy when the session is.
-- **The copy never proves anything gone.** It is empty until the first bytes arrive and stale while the link is down, so no reader may treat a missing or old copy as "the conversation does not exist". A resume still asks the host (`resume-conversation-guard.ts` answers `unknown` for a host, and nothing is demoted for want of a file).
+- **The copy never proves anything gone.** It is empty until the first bytes arrive and stale while the link is down, so no reader may treat a missing or old copy as "the conversation does not exist". A resume still asks the host (`resume-conversation-guard.ts` answers `unknown` for a host, and nothing is demoted for want of a file). The Earlier conversations list keeps a host's row for the same reason: its transcript is never looked for, because an empty mirror once read as a conversation gone and deleted the row.
 - **A file the agent replaces or shortens is copied again from the start.** The copy is emptied first.
-- **A conversation that forks is not followed.** Claude's `/clear` starts a new conversation id in a new file, and only the file named at spawn is tailed, so the viewer stops updating at the fork until the session is next started.
+- **A conversation that forks is followed.** Claude's `/clear` starts a new conversation id in a new file. The new id reaches the relay as any id does, and the new file replaces the old one. The copy of the old conversation stays as it was.
 - **Removing a host deletes its copy.**
 
 An agent that cannot run on a host fails the spawn with a sentence saying so.
@@ -172,7 +195,17 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **A host whose `sshd` sets `AllowTcpForwarding no` cannot forward.** The port shows as blocked with `ssh`'s own refusal.
 - **A remote project's folder must be inside the user's home on the host.** The helper reads and writes only beneath the home, so a folder such as `/srv/app` is refused when it is added, with the home it must be in. Link or move the project under the home to use it.
 - **A remote project whose folder is not a git repository shares one folder.** Every task works in it, so two agents edit the same files. The Add project form says so.
-- **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session. Transcripts are copied for Claude Code only (see Transcripts).
+- **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session.
+- **Transcripts are copied for Claude Code, Kimi Code, Goose and OpenCode.** See [Transcripts](#transcripts). The others are empty in the viewer, the index and the ledger.
+- **A quit takes no last export.** A quit is one `suspendAll` frame, so a Goose or OpenCode copy stops at the export before it until that conversation next runs. A session ended any other way takes its last export.
+- **A large export can end short.** The tail's last pass stops near 9.6 MB, so an export still arriving when its session is released keeps the last whole copy. The next session of that conversation exports again.
+- **An export that takes over 12 seconds is stopped,** because a request to the pty host gets 15. The last whole copy stays and the next tick tries again. An export of 100 MB took about a second on the machine measured, so this is a host under heavy load or a slower disk.
+- **A conversation exported on a host does not page.** Goose and OpenCode on a host show the newest 16 MB in the viewer behind a notice, with no way to read further back, and the search index holds the same tail of a Goose conversation. OpenCode's index covers the whole export.
+- **A second Kimi in one folder gets its id only at exit.** A force kill of such a session leaves it with no id, so nothing is copied for it. Two tasks in worktrees have separate folders and are not affected.
+- **A `KIMI_CODE_HOME` set on the host is not followed.** The mirror assumes `~/.kimi-code`.
+- **A Kimi index that is replaced stops the id search** for the sessions running then, since a line past the old size may be an old one. They keep the exit hint.
+- **A remote Goose card shows no live tokens or model,** which a local one reads from the database every 3 seconds. The ledger fills from the export.
+- **OpenCode's subagent usage is empty on a host.** Child sessions are not in a parent's export.
 - **A macOS client is unmeasured** for how an agent exits, as it is for local sessions.
 - **System32 `ssh.exe` on Windows can lose bytes mid-stream.** Every frame is checksummed and a framing error ends the connection and resumes from the last acknowledged offset, so the loss costs a reconnect, not data.
 

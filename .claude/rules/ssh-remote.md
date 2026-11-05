@@ -43,7 +43,20 @@ process, a path tested against the wrong disk, an environment that overwrites th
   helper tails the host's file by byte offset, and the relay writes each chunk at its offset into this
   computer's mirror of the host's home (`PATHS.remoteHomeMirror`). The relay writes only to a path it
   registered, so a host names a key and never a path. A reader treats that copy as what has arrived so
-  far: empty at first, stale while the link is down, and never proof that a conversation is gone.
+  far: empty at first, stale while the link is down, and never proof that a conversation is gone. So
+  nothing deletes, prunes or demotes for want of a copy: `conversationAvailable` answers true for a host
+  rather than reading a null locate as gone.
+- **What a CLI cannot name at spawn, it names later; what it keeps in a shared database, it exports.**
+  The relay asks the adapter again when the id arrives (`setAgentSessionId`, from `onAgentSessionId`) or
+  an index grows (`remoteTranscriptIndex()`). A second `watchFiles` names the whole set, a file in both keeps
+  its place, and a key is never reused. A CLI's database is never copied or read on the host: the adapter
+  names the CLI's own export (`remoteTranscriptSnapshot()`), one `sh` script writes it to a file under the
+  host's home and swaps it in only when it changed, every value an argument, and the tail sends that file.
+  An export never crosses the link as a reply, which is one 256 KiB frame. It lands as `<copy>.part` and is
+  renamed in only when whole, so a stale copy never reads as an empty one, and a total is of the whole file,
+  never a difference. A reader of an ending session waits for the last export through
+  `remoteTranscriptSettled`, bounded. An id from an index is taken only when it can be no other session's:
+  a wrong id resumes another conversation.
 - **A worktree on a host is made by the host's git, and the folder here is a stand-in.** A task's
   worktree is `<project folder on the host>/.kangentic/worktrees/<n>`, made, counted and removed by
   one `sh` script the helper runs (`remote-worktrees.ts`), reached through `WorktreeManager`'s
@@ -123,6 +136,13 @@ process, a path tested against the wrong disk, an environment that overwrites th
   last pass) and Claude's declared file, and `tests/unit/remote-session-relay.test.ts` runs the whole path
   through the real link and helper: a copy that grows, a file that appears late, the end of the file in the
   copy when the session is released, a path outside the mirror refused, and a chunk written at its offset.
+  `tests/unit/remote-transcript-sources.test.ts` pins late registration, the id from an index and when it
+  refuses one, the export's schedule, staging and reset on a fake host, and on POSIX the real script through
+  the real helper (past a frame's cap, a failed or empty export, a hostile argument). `<agent>-ssh-transcript`
+  tests read real captures through the real readers. `resume-conversation-guard-ssh.test.ts` pins `unknown`
+  whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
+  `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
+  (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only

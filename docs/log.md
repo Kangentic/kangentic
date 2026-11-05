@@ -1,5 +1,15 @@
 # Log
 
+## 2026-11-05
+
+**New audit:** `audits/ssh-transcript-exports-audit.md`, what real Kimi Code, Goose and OpenCode do on a
+Linux host, and the real run of each through the helper and relay
+(`tests/unit/remote-transcript-real-cli.test.ts`, `scripts/probe-ssh-rig/transcript-clis.sh`).
+
+**Changed:** `platforms/ssh-remote.md` Transcripts and Known limits, and the SSH sections of
+`integrations/agents/kimi-code.md`, `goose-cli.md` and `opencode.md`: an index, a late id and a CLI's own
+export now bring those conversations to this computer.
+
 ## 2026-11-03
 
 **New concept:** `platforms/ssh-remote.md`, how running agents on a Linux host over SSH works: the
