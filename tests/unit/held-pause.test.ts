@@ -1,8 +1,9 @@
 /**
  * A held pause is a suspend that waits for the user to resume it: the user's
- * own Pause, or one Kangentic made while the agent waited on the user (low
- * memory, the idle timeout). A 'system' suspend (a quit, a move, a settings
- * restart) holds nothing. `isHeldPause` and the repository query that the
+ * own Pause, or one Kangentic made while the agent waited on the user (the
+ * idle timeout). 'low_memory' is no longer written, but a row an earlier
+ * version wrote still carries it and stays held. A 'system' suspend (a quit,
+ * a move, a settings restart) holds nothing. `isHeldPause` and the repository query that the
  * auto-spawn paths read must agree on that, so both are pinned here, the
  * query on real, migrated SQLite.
  */
@@ -16,7 +17,7 @@ import { makeSessionRecord } from './helpers/session-record-fixture';
 import type { SessionRecord, SuspendedBy } from '../../src/shared/types';
 
 describe('isHeldPause', () => {
-  it.each(['user', 'auto'] as const)('holds a %s pause', (suspendedBy) => {
+  it.each(['user', 'auto', 'low_memory'] as const)('holds a %s pause', (suspendedBy) => {
     expect(isHeldPause(makeSessionRecord({ status: 'suspended', suspended_by: suspendedBy }))).toBe(true);
   });
 
@@ -90,12 +91,14 @@ describe('SessionRepository.getHeldPausedTaskIds', () => {
     };
   }
 
-  it('returns tasks whose latest session is a user or auto pause, and not a system suspend', () => {
+  it('returns tasks whose latest session is a user, auto or legacy low-memory pause, and not a system suspend', () => {
     insertRecord(pausedRecord('task-user', 'user'));
     insertRecord(pausedRecord('task-auto', 'auto'));
+    // A row an earlier version wrote must stay held after the pause was removed.
+    insertRecord(pausedRecord('task-low-memory', 'low_memory'));
     insertRecord(pausedRecord('task-system', 'system'));
 
-    expect([...repository.getHeldPausedTaskIds()].sort()).toEqual(['task-auto', 'task-user']);
+    expect([...repository.getHeldPausedTaskIds()].sort()).toEqual(['task-auto', 'task-low-memory', 'task-user']);
   });
 
   it('reads only each task\'s latest session', () => {

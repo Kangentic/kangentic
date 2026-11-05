@@ -85,8 +85,8 @@ export function planAutoSpawnReconcile(
       // To Do and Done never get an agent, however the flag was written. See
       // NEVER_AUTO_SPAWN_ROLES: only the OFF direction is meaningful there.
       if (after.role !== null && NEVER_AUTO_SPAWN_ROLES.has(after.role)) continue;
-      // A held pause (the user's, or Kangentic's for low memory or idle) must
-      // NOT start just because a column was switched on. Only an explicit
+      // A held pause (the user's, or the idle timer's) must NOT start just
+      // because a column was switched on. Only an explicit
       // Resume clears that, which is why
       // spawnAgent carries the same guard and both startup passes skip these ids.
       if (dependencies.heldPausedTaskIds.has(task.id)) continue;

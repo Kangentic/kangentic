@@ -32,7 +32,7 @@ const FINALIZE_TIMEOUT_MS = 30_000;
  *  a worker holds the accurate model (HybridEngine loads it lazily on the
  *  first session), and onnxruntime never returns that arena to the OS
  *  in-process, so the recycle is a process exit: 3 GB of commit for an idle
- *  631 MB model was what fired the low-memory warning (#706). A worker that
+ *  631 MB model fired the old low-memory warning (#706). A worker that
  *  has only been pre-warmed holds the live model alone and is not
  *  recycled while under the ceiling - it IS the instant first press - unless
  *  a settings switch made it warm a second engine (warmedEngineKeys).
