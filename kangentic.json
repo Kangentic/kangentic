@@ -122,6 +122,7 @@
       "permissionMode": "auto",
       "modelOverride": "sonnet",
       "effortOverride": "high",
+      "maxAgents": 1,
       "automations": {
         "onEnter": [
           {
