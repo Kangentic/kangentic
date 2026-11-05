@@ -7,6 +7,7 @@ sources:
   - resource: src/main/db/database.ts
   - resource: src/main/db/global-db-dialog.ts
   - resource: src/main/db/soft-db.ts
+  - resource: src/main/config/data-dir-failure.ts
   - resource: src/main/db/migrations/global-schema.ts
   - resource: src/main/db/migrations/default-data.ts
   - resource: src/main/retrieval/checkpoint-driver.ts
@@ -103,7 +104,11 @@ early in the `app.whenReady()` body, before the MCP server starts and before any
 failure shows a modal naming the resolved file path, the SQLite code (or the plain error message
 when the failure carries no `SQLITE_*` code, such as a native addon that will not load), and the
 likely causes, with Retry and Quit. Retry drops the cached connection and reopens; a lock is usually over within
-seconds, so this recovers without a relaunch. Quit counts an `app_error` and calls `app.exit(0)`,
+seconds, so this recovers without a relaunch. A directory `ensureDirs()` could not create reaches
+the same modal with its own copy: "Kangentic can't create its data folder", the folder that failed
+(the config, projects or models directory), the raw error, and the cause when
+`src/main/config/data-dir-failure.ts` can name one (a missing drive, a dangling link, an invalid
+character). Quit counts an `app_error` and calls `app.exit(0)`,
 which is correct rather than `app.quit()` because `registerAllIpc` has not run yet and
 `performShutdown` would throw reaching for a board config manager that does not exist. Under
 `NODE_ENV=test` the dialog is skipped so the E2E tier never hangs on a modal nobody can click.

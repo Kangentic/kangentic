@@ -2878,8 +2878,8 @@ msgstr "Leállítva"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Leállítja, amit egy feladat futva hagyott tétlenség vagy kevés memória miatti szünet után, illetve befejezés előtt; a kangentic.json fájlba mentve."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Leállítja, amit egy feladat futva hagyott tétlenség miatti szünet után, illetve befejezés előtt; a kangentic.json fájlba mentve."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3356,16 +3356,6 @@ msgstr "Tétlenség esetén"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Mikor szüneteltesse a Kangentic az Önre váró ügynököket."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "Kevés memória esetén"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "Kevés memória esetén percenként egyet szüneteltet: azt az ügynököt, amely a legrégebben vár önre, amíg elég hely nem lesz."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

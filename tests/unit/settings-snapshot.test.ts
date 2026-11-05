@@ -104,7 +104,6 @@ function fullyDeviatedConfig(): AppConfig {
       autoResumeSessionsOnRestart: false,
       idleTimeoutEnabled: true,
       idleTimeoutMinutes: 45,
-      pauseIdleAgentsOnLowMemory: false,
     },
     knowledgeGraph: {
       indexingEnabled: false,
@@ -220,7 +219,6 @@ describe('buildSettingsSnapshot', () => {
       'agent.autoResumeSessionsOnRestart': 'false',
       'agent.idleTimeoutEnabled': 'true',
       'agent.idleTimeoutMinutes': '31-60',
-      'agent.pauseIdleAgentsOnLowMemory': 'false',
       'browserAutomation.enabled': 'false',
       'browserAutomation.allowEval': 'true',
       'browserAutomation.localhostOnly': 'true',

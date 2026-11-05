@@ -47,6 +47,11 @@ msgstr "{taskTitle} – {place}"
 msgid "{workflowTitle} workflow"
 msgstr "Pracovní postup {workflowTitle}"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Odkaz v této cestě ukazuje na složku, která neexistuje."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "Volná systémová paměť (commit) v daném okamžiku: {remainingMb} MB
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic nemůže vytvořit svou datovou složku"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic nemůže načíst svou databázi"
 
@@ -169,10 +179,20 @@ msgstr "Relace spadla: {label}"
 msgid "Terminals restarted"
 msgstr "Terminály restartovány"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "Jednotka této složky není k dispozici."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Okno spadlo ({crashReason}) a nepodařilo se ho obnovit ani po {attempts, plural, one {# pokusu} few {# pokusech} many {# pokusu} other {# pokusech}} během {minutes, plural, one {# minuty} few {# minut} many {# minuty} other {# minut}}."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Tato cesta obsahuje znaky, které Windows nepovoluje."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

@@ -178,51 +178,6 @@ msgstr "{minutes, plural, other {\"{taskTitle}\": #분 후 시간이 초과되�
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, other {\"{taskTitle}\": #초 후 시간이 초과되었습니다.}}"
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, other {{projectName}, #일 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, other {{projectName}, #시간 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, other {{projectName}, #분 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, other {#일 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, other {#일 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, other {#시간 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, other {#시간 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, other {#분 대기함}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, other {#분 대기함}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -247,16 +202,6 @@ msgstr "{basePill}에서 {branchPill}이(가) 새 작업 트리에 생성됩니�
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{basePill}에서 {branchPill}이(가) 프로젝트 폴더에 생성됩니다"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {유휴 에이전트 일시 중지됨} other {유휴 에이전트 #개 일시 중지됨}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic이 메모리 확보를 위해 에이전트를 일시 중지했습니다.} other {Kangentic이 메모리 확보를 위해 에이전트를 일시 중지했습니다.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -332,11 +277,6 @@ msgstr "{processCount, plural, other {\"{taskTitle}\"에서 프로세스 #개가
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, other {{taskCount, plural, other {작업 #개}}에서 프로세스 #개가 실행 중인 상태로 남았습니다.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "메모리 예약이 {remaining} 남았습니다."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -468,11 +408,6 @@ msgstr "에이전트 재개됨"
 #, fuzzy
 msgid "Agent started"
 msgstr "에이전트 시작됨"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "메모리 예약이 거의 남지 않았습니다."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1142,11 +1077,6 @@ msgstr "남은 프로세스"
 msgid "Leftover processes stopped"
 msgstr "남은 프로세스 중지됨"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "메모리 부족"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1528,7 +1458,6 @@ msgid "Retry"
 msgstr "다시 시도"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "검토"
@@ -1599,7 +1528,6 @@ msgid "Session ended"
 msgstr "세션 종료됨"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "설정"

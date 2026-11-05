@@ -28,7 +28,6 @@ import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { AddProjectDialogs } from '../dialogs/AddProjectDialogs';
 import { HostDegradedStrip } from '../board/HostDegradedStrip';
 import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
-import { PausedForMemoryDialog } from '../dialogs/PausedForMemoryDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
 import { LanguageSuggestion } from '../language/LanguageSuggestion';
@@ -671,7 +670,6 @@ export function AppLayout() {
       <ProjectPathMissingDialog />
       <AddProjectDialogs />
       <LeftoverProcessesDialog />
-      <PausedForMemoryDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />
       {/* History first, then the announcement dialog it can open on top. The

@@ -14,11 +14,9 @@ import { installDiagnostics } from './diagnostics/install';
 import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
-import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
-import { createLowMemoryAgentPauser, sampleAsRead, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { startHostMemorySampler, getLastHostMemorySample, sampleAsRead, setSimulatedLowMemory } from './diagnostics/host-memory';
 import { tickHeldOffStops } from './stop-script/parked-stop-service';
 import { workflowMemoryGate } from './workflows/workflow-memory-gate';
-import { resumeMemoryPausedWorkflowTasks } from './workflows/workflow-memory-resume';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
@@ -83,8 +81,9 @@ import { sweepOrphanedBrowserPartitions } from './browser/browser-partition-clea
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { createBeforeQuitHandler } from './pty/shutdown/before-quit-handler';
-import { drainPtyExitCallbacks } from './pty/shutdown/exit-callback-drain';
+import { drainPtyExitCallbacks, type PtyExitDrainResult } from './pty/shutdown/exit-callback-drain';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
+import { createSignalExitHandler } from './pty/shutdown/signal-exit';
 import { isProcessAlive } from './shared/process-liveness';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
@@ -95,7 +94,7 @@ import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
 import { ProjectRepository } from './db/repositories/project-repository';
-import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
+import { createWindowNotifier, setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
 import { notifyAdaptersWorktreeRemoved } from './ipc/helpers/task-cleanup';
@@ -994,10 +993,6 @@ let previousRunLogged = false;
 // live boards (docs/architecture/sessions/crash-recovery.md, step 8).
 let backgroundActivationScheduled = false;
 let stopHostMemorySampler: (() => void) | null = null;
-// Pauses the agent that has waited on the user longest while memory runs low
-// (diagnostics/idle-agent-pause.ts). Fed from the sampler's per-tick hook;
-// reads the IPC context at tick time, since the sampler is armed before it.
-const lowMemoryAgentPauser = createLowMemoryAgentPauser(() => getOptionalIpcContext());
 // DESKTOP-16 bounded-reload guard for the main window's render-process-gone
 // handler below. See renderer-recovery.ts for why the decision logic lives
 // in its own testable module rather than inline here.
@@ -1526,13 +1521,13 @@ const createWindow = () => {
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
           // The TestHarness "Simulate Low Memory" toggle: every sample reads as
-          // low memory, so the low-memory pause can be watched in a preview
-          // without exhausting the machine. Turning it on evaluates the last
-          // sample at once rather than waiting up to a minute for a tick.
+          // low memory, so the workflow's memory gate can be watched in a
+          // preview without exhausting the machine. Turning it on evaluates the
+          // last sample at once rather than waiting up to a minute for a tick.
           registerSimulateLowMemoryDevIpc((on) => {
             setSimulatedLowMemory(on);
             const lastSample = getLastHostMemorySample();
-            if (on && lastSample) lowMemoryAgentPauser.onSample(lastSample);
+            if (on && lastSample) workflowMemoryGate.onSample(sampleAsRead(lastSample));
           });
           // The TestHarness "Seed Knowledge Graph" button: the REAL-index mirror
           // (the parent project's actual conversations, titles and vectors), and
@@ -1848,11 +1843,11 @@ app.whenReady().then(async () => {
   // and notifySpawnWarning - a quit that closes the window mid-flush must not
   // try to push to a renderer that is tearing down. mainWindow is read at CALL
   // time, same reason as the DB notifier above: this runs before createWindow.
-  setSyncWriteFailureNotifier((message) => {
-    if (isShuttingDown()) return;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    sendToRenderer(mainWindow, IPC.CONFIG_WRITE_FAILED, message);
-  });
+  setSyncWriteFailureNotifier(createWindowNotifier({
+    getWindow: () => mainWindow,
+    isShuttingDown,
+    send: (window, message) => sendToRenderer(window, IPC.CONFIG_WRITE_FAILED, message),
+  }));
   phase('ensureGlobalDbReadable');
   const globalDbReady = await ensureGlobalDbReadable();
   endPhase('ensureGlobalDbReadable');
@@ -2002,34 +1997,15 @@ app.whenReady().then(async () => {
   runUptimeCheckpointInterval = setInterval(() => checkpointRunUptime(), RUN_UPTIME_CHECKPOINT_INTERVAL_MS);
   runUptimeCheckpointInterval.unref();
 
-  // Host memory pressure sampling (Sentry DESKTOP-16): armed here, before
+  // Host memory sampling (Sentry DESKTOP-16): armed here, before
   // createWindow()/registerAllIpc() below, but its first real tick is 60s
-  // away - by then mainWindow and the session manager both exist, the same
-  // ordering the heartbeat and run-uptime timers already rely on. The
-  // sampler itself is synchronous and side-effect-free
-  // (`process.getSystemMemoryInfo()`), so arming it this early is harmless
-  // even though nothing reads a sample until the first tick.
+  // away - by then the IPC context exists, the same ordering the heartbeat and
+  // run-uptime timers already rely on. The sampler itself is synchronous and
+  // side-effect-free (`process.getSystemMemoryInfo()`), so arming it this early
+  // is harmless even though nothing reads a sample until the first tick.
   stopHostMemorySampler = startHostMemorySampler({
-    // getSessionManager() throws if registerAllIpc() has not run yet; that
-    // should never be true by the time a tick fires 60s+ after this is
-    // armed, but the fallback keeps a degenerate early-startup failure from
-    // becoming a recurring uncaught-exception report every tick.
-    getActiveAgentCount: () => {
-      try {
-        return getSessionManager().getSessionCounts().active;
-      } catch {
-        return 0;
-      }
-    },
     onSample: (sample) => {
       setHostMemoryContext(sample);
-      // Its own try: a throw here must not skip this tick's Windows warning,
-      // which the sampler evaluates after this hook returns.
-      try {
-        lowMemoryAgentPauser.onSample(sample);
-      } catch (error) {
-        console.error('[idle-agent-pause] Tick failed:', error);
-      }
       // Stops a connected client held off. Nothing to do, and no work, unless
       // one is waiting (`src/main/stop-script/held-off-stops.ts`).
       try {
@@ -2038,29 +2014,13 @@ app.whenReady().then(async () => {
       } catch (error) {
         console.error('[stop-script] Tick failed:', error);
       }
-      // The workflow's nudges and memory resumes wait their turn on the same
-      // reading (`workflow-memory-gate.ts`), and the paused tasks come back
-      // one at a time once it clears (`workflow-memory-resume.ts`).
+      // The workflow's nudges wait their turn on this reading
+      // (`workflow-memory-gate.ts`).
       try {
         workflowMemoryGate.onSample(sampleAsRead(sample));
-        const ipcContext = getOptionalIpcContext();
-        if (ipcContext) {
-          // Async: this try cannot see its rejection.
-          resumeMemoryPausedWorkflowTasks(ipcContext).catch((error: unknown) => {
-            console.error('[workflow-memory-gate] Memory resume failed:', error);
-          });
-        }
       } catch (error) {
         console.error('[workflow-memory-gate] Tick failed:', error);
       }
-    },
-    onPressure: (sample, activeAgentCount) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });
-    },
-    onRecovery: (sample) => {
-      if (!mainWindow || mainWindow.isDestroyed()) return;
-      mainWindow.webContents.send(IPC.HOST_MEMORY_RECOVERED, { sample });
     },
   });
 
@@ -2585,9 +2545,9 @@ let osShutdownCannotBeDelayed = false;
  * before-quit drain's timer (SessionManager.killAll). Only a route the drain
  * follows may pass it: before-quit itself (unless a Windows session-end
  * disarmed the drain) and the powerMonitor shutdown. The signal handlers and
- * session-end call this bare, so nothing stays deferred on a route that
- * exits without the loop. First caller wins: the route that starts the
- * shutdown decides.
+ * session-end call this bare, so nothing stays deferred on a route that was
+ * asked to end now. First caller wins: the route that starts the shutdown
+ * decides.
  */
 interface PerformShutdownOptions {
   allowGrace?: boolean;
@@ -2624,6 +2584,23 @@ function performShutdown(options?: PerformShutdownOptions): boolean {
   return true;
 }
 
+/** The wait both quit routes share: every killed child and the pty host gone. */
+function drainReportedPtyExits(report: PtyKillReport): Promise<PtyExitDrainResult> {
+  return drainPtyExitCallbacks({
+    pids: report.pids,
+    killedCount: report.killedCount,
+    deferredCount: report.deferredCount,
+    isProcessAlive,
+  });
+}
+
+/** Both quit routes hide the app for the wait, so it looks quit while it drains. */
+function hideAllWindows(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.hide();
+  }
+}
+
 // The synchronous cleanup, then the one sanctioned event.preventDefault() in
 // the quit path: a timer-bounded drain that lets node-pty dispatch the killed
 // children's exit callbacks while JS is still callable, then app.quit() again.
@@ -2635,17 +2612,8 @@ app.on('before-quit', createBeforeQuitHandler({
   performShutdown: () => performShutdown({ allowGrace: !osShutdownCannotBeDelayed }),
   isOsInitiatedShutdown: () => osShutdownCannotBeDelayed,
   getPtyKillReport: () => ptyKillReport,
-  drainPtyExitCallbacks: (report) => drainPtyExitCallbacks({
-    pids: report.pids,
-    killedCount: report.killedCount,
-    deferredCount: report.deferredCount,
-    isProcessAlive,
-  }),
-  hideAllWindows: () => {
-    for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.hide();
-    }
-  },
+  drainPtyExitCallbacks: drainReportedPtyExits,
+  hideAllWindows,
   requestQuit: () => app.quit(),
 }));
 
@@ -2655,31 +2623,28 @@ app.on('before-quit', createBeforeQuitHandler({
 // that process.exit never reaches, so everything this shutdown logs, from
 // `[SHUTDOWN] cleanup:start` to `cleanup:done`, used to be lost and a closed
 // terminal read like a crash. A dev build writes them synchronously first.
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    if (performShutdown()) {
-      if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
-      process.exit(0);
-    }
-  });
-}
-
-// The terminal hosting the app closed. On macOS and Linux that is a real
+//
+// SIGHUP: the terminal hosting the app closed. On macOS and Linux that is a real
 // SIGHUP. On Windows, libuv maps the console's CTRL_CLOSE_EVENT to it and holds
 // the console handler open so this can run. Without a listener, the default
 // action ends the process with no exit recorded, and an `npm start` session
 // whose terminal closed read as `abrupt` on its next launch. Whether a Windows
 // shutdown or log-off under a terminal delivers CTRL_CLOSE to this process
 // before killing it is unverified. The GPU check does not depend on it:
-// session-teardown exits never count as GPU faults (gpu-health.ts). Its own
-// statement rather than a third entry in the tuple above, whose literal
-// before-quit-drain-wiring.test.ts anchors on.
-process.on('SIGHUP', () => {
-  if (performShutdown()) {
+// session-teardown exits never count as GPU faults (gpu-health.ts).
+const exitOnSignal = createSignalExitHandler({
+  performShutdown: () => performShutdown(),
+  getPtyKillReport: () => ptyKillReport,
+  drainPtyExitCallbacks: drainReportedPtyExits,
+  hideAllWindows,
+  writeQueuedLogs: () => {
     if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
-    process.exit(0);
-  }
+  },
+  exit: () => process.exit(0),
 });
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, exitOnSignal);
+}
 
 // Dev-only backstop for any other process.exit. An 'exit' listener runs
 // synchronously, so the queued lines can still be written. After the signal

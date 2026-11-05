@@ -54,16 +54,6 @@ msgstr "({deleteFailureCount} fehlgeschlagen)"
 msgid "{0} does not exist on {1}."
 msgstr "{0} ist auf {1} nicht vorhanden."
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, one {Agent pausiert, um Speicher freizugeben} other {# Agents pausiert, um Speicher freizugeben}}"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr "{agentCount, plural, one {Er bleibt pausiert, bis Sie ihn fortsetzen. Die Aufgabe eines Workflows wird von selbst fortgesetzt, sobald wieder genug Speicher frei ist.} other {Sie bleiben pausiert, bis Sie sie fortsetzen. Die Aufgaben eines Workflows werden von selbst fortgesetzt, sobald wieder genug Speicher frei ist.}}"
-
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
@@ -720,7 +710,6 @@ msgstr "Löschen"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
 #, fuzzy
@@ -2554,28 +2543,11 @@ msgstr "Wiederherstellen in"
 msgid "Restore to board"
 msgstr "Auf Board wiederherstellen"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task action"
-msgid "Resume"
-msgstr "Fortsetzen"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Resume {taskTitle}"
-msgstr "{taskTitle} fortsetzen"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Resume session"
 msgstr "Sitzung fortsetzen"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Resuming"
-msgstr "Wird fortgesetzt"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
@@ -2614,12 +2586,6 @@ msgstr "Im Projektordner ausführen"
 #, fuzzy
 msgid "Run one agent in this column at a time"
 msgstr "In dieser Spalte jeweils nur einen Agent ausführen"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Running"
-msgstr "Läuft"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3306,11 +3272,6 @@ msgstr "Unbenannt"
 #, fuzzy
 msgid "Untitled column"
 msgstr "Unbenannte Spalte"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Untitled task"
-msgstr "Unbenannte Aufgabe"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy

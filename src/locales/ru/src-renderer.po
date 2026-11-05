@@ -178,51 +178,6 @@ msgstr "{minutes, plural, one {«{taskTitle}»: время ожидания ис
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, one {«{taskTitle}»: время ожидания истекло через # секунду.} few {«{taskTitle}»: время ожидания истекло через # секунды.} many {«{taskTitle}»: время ожидания истекло через # секунд.} other {«{taskTitle}»: время ожидания истекло через # секунды.}}"
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, ожидание: # день} few {{projectName}, ожидание: # дня} many {{projectName}, ожидание: # дней} other {{projectName}, ожидание: # дня}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, ожидание: # час} few {{projectName}, ожидание: # часа} many {{projectName}, ожидание: # часов} other {{projectName}, ожидание: # часа}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, ожидание: # минута} few {{projectName}, ожидание: # минуты} many {{projectName}, ожидание: # минут} other {{projectName}, ожидание: # минуты}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {ожидание: # день} few {ожидание: # дня} many {ожидание: # дней} other {ожидание: # дня}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {Ожидание: # день} few {Ожидание: # дня} many {Ожидание: # дней} other {Ожидание: # дня}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {ожидание: # час} few {ожидание: # часа} many {ожидание: # часов} other {ожидание: # часа}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {Ожидание: # час} few {Ожидание: # часа} many {Ожидание: # часов} other {Ожидание: # часа}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {ожидание: # минута} few {ожидание: # минуты} many {ожидание: # минут} other {ожидание: # минуты}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {Ожидание: # минута} few {Ожидание: # минуты} many {Ожидание: # минут} other {Ожидание: # минуты}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -247,16 +202,6 @@ msgstr "Ветвь {branchPill} будет создана от {basePill} в н�
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "Ветвь {branchPill} будет создана от {basePill} в папке проекта"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Простаивающий агент приостановлен} one {# простаивающий агент приостановлен} few {# простаивающих агента приостановлены} many {# простаивающих агентов приостановлено} other {# простаивающего агента приостановлено}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic приостановил его, чтобы освободить память.} one {Kangentic приостановил их, чтобы освободить память.} few {Kangentic приостановил их, чтобы освободить память.} many {Kangentic приостановил их, чтобы освободить память.} other {Kangentic приостановил их, чтобы освободить память.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -332,11 +277,6 @@ msgstr "{processCount, plural, one {После задачи «{taskTitle}» пр
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {После {taskCount, plural, one {# задачи} few {# задач} many {# задач} other {# задачи}} продолжает работать # процесс.} few {После {taskCount, plural, one {# задачи} few {# задач} many {# задач} other {# задачи}} продолжают работать # процесса.} many {После {taskCount, plural, one {# задачи} few {# задач} many {# задач} other {# задачи}} продолжают работать # процессов.} other {После {taskCount, plural, one {# задачи} few {# задач} many {# задач} other {# задачи}} продолжают работать # процесса.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "Осталось {remaining} резерва памяти."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -468,11 +408,6 @@ msgstr "Агент возобновлён"
 #, fuzzy
 msgid "Agent started"
 msgstr "Агент запущен"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "Резерв памяти почти исчерпан."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1142,11 +1077,6 @@ msgstr "Оставшиеся процессы"
 msgid "Leftover processes stopped"
 msgstr "Оставшиеся процессы остановлены"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "Мало памяти"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1528,7 +1458,6 @@ msgid "Retry"
 msgstr "Повторить"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "Просмотреть"
@@ -1599,7 +1528,6 @@ msgid "Session ended"
 msgstr "Сеанс завершен"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "Настройки"

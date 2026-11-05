@@ -1553,13 +1553,12 @@ export type SessionRecordStatus = 'running' | 'queued' | 'suspended' | 'exited' 
 /**
  * Who suspended a session. `'user'`: the Pause button or a phone pause.
  * `'auto'`: Kangentic's idle timeout paused an agent that was waiting on the
- * user. `'low_memory'`: Kangentic's low-memory pause, its own value so a
- * restart can still tell which workflow tasks come back by themselves once
- * memory recovers (`workflow-memory-resume.ts`, task #952). `'system'`: a
- * quit, a move or a settings restart. `'user'`, `'auto'` and `'low_memory'`
- * hold the task paused until the user resumes it (`isHeldPause`,
- * `src/shared/held-pause.ts`), apart from that memory resume; `'system'`
- * holds nothing.
+ * user. `'low_memory'`: a pause an earlier version made for low memory.
+ * Kangentic no longer writes it, and a row that carries it reads as a held
+ * pause. `'system'`: a quit, a move or a settings restart. `'user'`, `'auto'`
+ * and `'low_memory'` hold the task paused until the user resumes it
+ * (`isHeldPause`, `src/shared/held-pause.ts`), except that a restart resumes a
+ * `'low_memory'` row on a running workflow's task; `'system'` holds nothing.
  */
 export type SuspendedBy = 'user' | 'system' | 'auto' | 'low_memory';
 
@@ -4454,11 +4453,6 @@ export interface AppConfig {
     idleTimeoutEnabled: boolean;
     /** How long an agent waits on the user before the idle timer pauses it. Read only while `idleTimeoutEnabled`. */
     idleTimeoutMinutes: number;
-    /**
-     * While memory runs low, pause the agent that has waited on the user
-     * longest, one a minute, until there is room again. Global-only.
-     */
-    pauseIdleAgentsOnLowMemory: boolean;
     autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click, and Command Terminals wait in Earlier
     /** Global, agent-keyed remote-server identity (url + auth). Machine-scoped, mirrors cliPaths. */
     executionServers: Record<string, AgentExecutionServer>;
@@ -5265,7 +5259,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxConcurrentSessions: 8,
     idleTimeoutEnabled: false,
     idleTimeoutMinutes: 30,
-    pauseIdleAgentsOnLowMemory: true,
     autoResumeSessionsOnRestart: true,
     executionServers: {},
     execution: {},
@@ -5442,7 +5435,7 @@ export interface HostMemorySample {
   /** Linux MemAvailable: the kernel's estimate of memory available without
    *  swapping, the honest pressure figure there. Null on every other platform. */
   physicalAvailableBytes: number | null;
-  /** Linux swap total and free. The low-memory pause reads RAM plus swap there
+  /** Linux swap total and free. Headroom reads RAM plus swap there
    *  (`memoryHeadroom` in host-memory.ts). Null on every other platform, and
    *  absent from samples recorded before these fields existed. */
   swapTotalBytes?: number | null;
@@ -5456,9 +5449,6 @@ export interface HostMemorySample {
   memoryFreePercent?: number | null;
 }
 
-/** Pushed when host commit headroom crosses below the warning threshold (an
- *  edge-triggered, hysteresis-gated event - see `evaluateHostMemoryPressure`).
- *  Not a per-tick heartbeat. */
 /** How this launch is rendering, and whether the user still needs telling. */
 export interface GpuGraphicsStatus {
   /** True when Chromium was started with --disable-gpu and --in-process-gpu.
@@ -5468,36 +5458,6 @@ export interface GpuGraphicsStatus {
   /** True exactly once, on the launch that recovered from a GPU-fatal run.
    *  Reading the status consumes it. */
   noticePending: boolean;
-}
-
-export interface HostMemoryPressureEvent {
-  sample: HostMemorySample;
-  activeAgentCount: number;
-}
-
-/** Pushed when host commit headroom recovers past the hysteresis line after a
- *  warning was latched - the clear-side edge for `HostMemoryPressureEvent`.
- *  Fires once per recovery, never on a healthy tick with no prior warning. */
-export interface HostMemoryRecoveryEvent {
-  sample: HostMemorySample;
-}
-
-/**
- * Pushed each time low memory paused an agent that was waiting on the user
- * (`src/main/diagnostics/idle-agent-pause.ts`). One push per agent, so the
- * renderer's toast counts them and its Review list names them. Every
- * platform, unlike the pressure warning.
- */
-export interface HostMemoryAgentPausedEvent {
-  /** When the pause landed, UTC ISO 8601. */
-  pausedAt: string;
-  taskId: string;
-  projectId: string;
-  /** Null when the task could not be read (its project closed meanwhile). */
-  taskTitle: string | null;
-  projectName: string | null;
-  /** How long the agent had waited on the user when it was paused. */
-  waitedMs: number;
 }
 
 // === Backlog ===
@@ -7483,7 +7443,7 @@ export type TranscriptBlock =
 export type ExitSequenceStep = string | { delayMs: number };
 
 /** Who resumed a session (`SpawnSessionInput.resumedBy`): a person, or Kangentic itself. */
-export type SessionResumer = 'user' | 'recovery' | 'memory';
+export type SessionResumer = 'user' | 'recovery';
 
 /** A task in the line for an agent slot, across projects. */
 export interface QueueTask {
@@ -7539,8 +7499,7 @@ export interface SpawnSessionInput {
   resuming?: boolean;
   /**
    * Who started a resuming session, when it was not a person: `'recovery'`,
-   * Kangentic after a quit, a crash or a pty host loss; `'memory'`, a workflow
-   * task Kangentic paused for low memory and brought back. Rides the
+   * Kangentic after a quit, a crash or a pty host loss. Rides the
    * `'session-resumed'` event, so workflow recovery can tell that the agent's
    * background commands died with the old process. Unset means a person.
    */
@@ -7956,7 +7915,7 @@ export interface BoardConfig {
   defaultBaseBranch?: string;
   /**
    * The project's Stop script: a shell command Kangentic runs in a task's folder
-   * after an idle or low-memory pause, and before a terminal transition's reap,
+   * after an idle pause, and before a terminal transition's reap,
    * when the task left something running (`src/main/stop-script/`). Team-shared,
    * since how to stop a stack is a fact about the repository. Absent, or empty
    * in `kangentic.local.json`, means none. Like `shortcuts`, it has no DB
@@ -8198,9 +8157,9 @@ export interface ElectronAPI {
      */
     seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
     /**
-     * Read every host memory sample as low memory (or stop), so the
-     * low-memory pause can be watched without exhausting the machine. Turning
-     * it on also evaluates the last sample at once instead of waiting a tick.
+     * Read every host memory sample as low memory (or stop), so the workflow's
+     * memory gate can be watched without exhausting the machine. Turning it
+     * on also evaluates the last sample at once instead of waiting a tick.
      */
     simulateLowMemory: (on: boolean) => Promise<void>;
     /**
@@ -8923,15 +8882,6 @@ export interface ElectronAPI {
      * is `onUpdateDownloaded`; ordinary update failures stay silent.
      */
     onUpdateBlocked: (callback: (message: string) => void) => () => void;
-  };
-
-  // Host memory pressure (Sentry DESKTOP-16): a push-only notification, no
-  // corresponding invoke - main owns the sampler and decides when to fire.
-  hostMemory: {
-    onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
-    onRecovery: (callback: (event: HostMemoryRecoveryEvent) => void) => () => void;
-    /** Low memory paused an agent that was waiting on the user. One push per agent. */
-    onAgentPaused: (callback: (event: HostMemoryAgentPausedEvent) => void) => () => void;
   };
 
   // Graphics state for THIS launch (Sentry DESKTOP-18/DESKTOP-W).

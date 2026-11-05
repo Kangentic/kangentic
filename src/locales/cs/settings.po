@@ -2878,8 +2878,8 @@ msgstr "Zastaveno"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Zastaví, co úloha nechala běžet, po pozastavení kvůli nečinnosti nebo nedostatku paměti či před jejím dokončením; uloženo v kangentic.json."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Zastaví, co úloha nechala běžet, po pozastavení kvůli nečinnosti či před jejím dokončením; uloženo v kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3356,16 +3356,6 @@ msgstr "Při nečinnosti"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kdy Kangentic pozastaví agenty, kteří čekají na vás."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "Při nedostatku paměti"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "Při nedostatku paměti pozastavit agenta, který na vás čeká nejdéle, jednoho za minutu, dokud se neuvolní místo."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

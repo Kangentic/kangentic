@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} munkafolyamat"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "Az elérési út egyik hivatkozása nem létező mappára mutat."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "Szabad rendszermemória (commit) akkor: {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "A Kangentic nem tudja létrehozni az adatmappáját"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "A Kangentic nem tudja olvasni az adatbázisát"
 
@@ -169,10 +179,20 @@ msgstr "A munkamenet összeomlott: {label}"
 msgid "Terminals restarted"
 msgstr "A terminálok újraindultak"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "A mappát tartalmazó meghajtó nem érhető el."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "Az ablak összeomlott ({crashReason}), és {minutes, plural, one {# perc} other {# perc}} alatt {attempts, plural, one {# próbálkozás} other {# próbálkozás}} után sem tudott helyreállni."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "Az elérési út a Windows által nem engedélyezett karaktereket tartalmaz."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

@@ -352,7 +352,7 @@ The `defaultBaseBranch` field sets the team-shared default base branch for workt
 
 ## stopScript
 
-The `stopScript` field names a project's Stop script: a shell command Kangentic runs in a task's worktree, or the project folder for a task with none, after an idle or low-memory pause and before every reap, when the task left something running. It runs through the platform shell, `cmd.exe` on Windows and `sh` elsewhere, not the shell set for terminals. [Suspend and cleanup](../architecture/sessions/suspend-and-cleanup.md#a-projects-stop-script) has which events run it and why.
+The `stopScript` field names a project's Stop script: a shell command Kangentic runs in a task's worktree, or the project folder for a task with none, after an idle pause and before every reap, when the task left something running. It runs through the platform shell, `cmd.exe` on Windows and `sh` elsewhere, not the shell set for terminals. [Suspend and cleanup](../architecture/sessions/suspend-and-cleanup.md#a-projects-stop-script) has which events run it and why.
 
 ```json
 {

@@ -162,12 +162,12 @@ Profiles. Column names and task content never leave the machine.
 
 `settings_snapshot` answers "what are people actually running with", the question that changes a
 default; a stream of setting-changed events would only say what was touched. It carries only the
-settings that differ from their default, from a fixed allowlist of sixteen global settings
+settings that differ from their default, from a fixed allowlist of fifteen global settings
 (`SETTINGS_SNAPSHOT_ALLOWLIST` in `src/main/analytics/settings-snapshot.ts`): `knowledgeGraph.indexingEnabled`,
 `knowledgeGraph.enabled`, `knowledgeGraph.localModel`, `knowledgeGraph.acceleration`,
 `agent.maxConcurrentSessions` (bucketed `1-3` / `4-7` / `9-12` / `13-16` / `17+`),
 `agent.autoResumeSessionsOnRestart`, `agent.idleTimeoutEnabled`, `agent.idleTimeoutMinutes`
-(bucketed `0` / `1-15` / `16-29` / `31-60` / `61+`), `agent.pauseIdleAgentsOnLowMemory`, `browserAutomation.enabled`, `browserAutomation.allowEval`,
+(bucketed `0` / `1-15` / `16-29` / `31-60` / `61+`), `browserAutomation.enabled`, `browserAutomation.allowEval`,
 `browserAutomation.restrictNavigationToLocalhost` (sent as `browserAutomation.localhostOnly`,
 since Aptabase rejects the whole event for a key over 40 characters), `mobileBridge.relayMode`,
 `dictation.language`, `windowLightDismiss`, and `animationsEnabled`. Property keys are the
@@ -196,6 +196,7 @@ The last four are all startup-path faults in `src/main/index.ts`.
 exists, and `createWindowBeforeMcpSettled` when it runs before `startMcpHttpServer` settled;
 both report an ordering bug rather than a user-visible failure.
 `globalDbUnreadable` carries the sanitized open error when the global database cannot be read,
+or the mkdir error when its data folder cannot be created,
 and `startupFailure` the sanitized error from any other throw in the startup body.
 
 `secondInstanceNoWindow` is the window-lifecycle fault: a second launch hit the single-instance

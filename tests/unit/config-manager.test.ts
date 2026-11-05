@@ -217,13 +217,23 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect(config.agent.idleTimeoutMinutes).toBe(45);
   });
 
-  it('gives a fresh install the defaults: the idle timer off at 30 minutes, the low-memory pause on', async () => {
+  it('gives a fresh install the defaults: the idle timer off at 30 minutes', async () => {
     const configManager = await createConfigManager();
     const config = configManager.load();
 
     expect(config.agent.idleTimeoutEnabled).toBe(false);
     expect(config.agent.idleTimeoutMinutes).toBe(30);
-    expect(config.agent.pauseIdleAgentsOnLowMemory).toBe(true);
+  });
+
+  it('loads a config saved by a version with the low-memory pause setting', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      agent: { pauseIdleAgentsOnLowMemory: false, idleTimeoutEnabled: true, idleTimeoutMinutes: 45 },
+    }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
+    expect(config.agent.idleTimeoutMinutes).toBe(45);
   });
 });
 

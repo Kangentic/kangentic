@@ -144,42 +144,6 @@ msgstr "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other 
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {waited # day} other {waited # days}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {Waited # day} other {Waited # days}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {waited # hour} other {waited # hours}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {waited # minute} other {waited # minutes}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
 msgstr "{basePill} will be checked out in the project folder"
@@ -199,14 +163,6 @@ msgstr "{branchPill} will be created from {basePill} in a new worktree"
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{branchPill} will be created from {basePill} in the project folder"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
 
 #: src/renderer/stores/workflow-store.ts
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
@@ -267,10 +223,6 @@ msgstr "{processCount, plural, one {\"{taskTitle}\" left # process running.} oth
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{remaining} of memory reservations left."
-msgstr "{remaining} of memory reservations left."
 
 #: src/renderer/utils/format-session.ts
 msgid "{seconds}s"
@@ -376,10 +328,6 @@ msgstr "Agent resumed"
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Agent started"
 msgstr "Agent started"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "Almost no memory reservations left."
-msgstr "Almost no memory reservations left."
 
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
@@ -917,10 +865,6 @@ msgstr "Leftover processes"
 msgid "Leftover processes stopped"
 msgstr "Leftover processes stopped"
 
-#: src/renderer/stores/host-memory-store.ts
-msgid "Low on memory"
-msgstr "Low on memory"
-
 #: src/renderer/hooks/useAddProject.ts
 msgid "Make a first commit so each task gets its own worktree."
 msgstr "Make a first commit so each task gets its own worktree."
@@ -1227,7 +1171,6 @@ msgid "Retry"
 msgstr "Retry"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Review"
 msgstr "Review"
 
@@ -1284,7 +1227,6 @@ msgid "Session ended"
 msgstr "Session ended"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "Settings"
 

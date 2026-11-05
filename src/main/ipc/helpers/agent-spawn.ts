@@ -58,7 +58,7 @@ import { backgroundCallSink } from './background-call-sink';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { readCommitsSince, readWorktreeHead } from '../../git/worktree-head';
 import type { IsolatedRunRecord } from '../../db/repositories/session-repository';
-import type { SessionRecord, SessionResumer } from '../../../shared/types';
+import type { SessionRecord } from '../../../shared/types';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import { forgetRecapSession, markRecapSession, whenRecapTurnEnds } from '../../automations/turn-end/recap-turns';
 import { trackMessageDelivery } from '../../automations/turn-end/turn-end-passes';
@@ -295,13 +295,6 @@ export interface AgentSpawnOptions {
    * Passed only by `resumeTaskSession`.
    */
   resumesEntry?: boolean;
-  /**
-   * Who resumes the conversation when it is not a person, for a `resumesEntry`
-   * start: the workflow's memory resume passes `'memory'`, which rides the
-   * resumed session's `session-resumed` event to workflow recovery. Unset means
-   * a person.
-   */
-  resumedBy?: SessionResumer;
   /**
    * The agent the caller launched while the task's new worktree ran its setup
    * script (`createEarlyAgentLauncher`). The spawn adopts it in place of a
@@ -969,7 +962,6 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         setupNote,
         {
           ...resolveSpawnOverrides(beforeSpawn, toLane, project),
-          ...(options.resumedBy ? { resumedBy: options.resumedBy } : {}),
           earlyAgent: options.earlyAgent,
         },
       );

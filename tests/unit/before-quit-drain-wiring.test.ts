@@ -114,21 +114,6 @@ function sliceBalancedBlock(source: string, searchFromIndex: number): string {
   throw new Error('sliceBalancedBlock: unbalanced braces after searchFromIndex');
 }
 
-/**
- * A signal route runs the synchronous shutdown and then process.exit()s with
- * no loop turn. Log lines are written on a setImmediate that exit never
- * reaches, so a dev build must drain the queue in between, or the shutdown it
- * just ran leaves no [SHUTDOWN] lines and a closed terminal reads like a crash.
- */
-function expectShutdownThenDrainThenExit(handlerRegion: string, routeName: string): void {
-  const shutdownIndex = handlerRegion.indexOf('if (performShutdown()) {');
-  const drainIndex = handlerRegion.indexOf('if (__KANGENTIC_DEV__) drainQueuedAppendsSync();');
-  const exitIndex = handlerRegion.indexOf('process.exit(0);');
-  expect(shutdownIndex, `${routeName} must run the synchronous shutdown`).toBeGreaterThan(-1);
-  expect(drainIndex, `${routeName} must drain the log queue in a dev build`).toBeGreaterThan(shutdownIndex);
-  expect(exitIndex, `${routeName} must exit with no loop turn, after the drain`).toBeGreaterThan(drainIndex);
-}
-
 function makeDeferredDrain() {
   let resolveDrain: (result: PtyExitDrainResult) => void = () => undefined;
   let rejectDrain: (error: Error) => void = () => undefined;
@@ -206,7 +191,9 @@ describe('createBeforeQuitHandler', () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it('is byte-for-byte the plain synchronous quit when no PTY was killed', () => {
+  // SessionManager.killAll always reports a live pty host, so this report means
+  // the in-process host with no PTY, or a host that was already down.
+  it('is byte-for-byte the plain synchronous quit when the report is empty', () => {
     const { dependencies, handler, event, log } = makeHarness({ pids: [], killedCount: 0 });
 
     handler(event);
@@ -403,8 +390,8 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     ).toBeGreaterThan(-1);
 
     // The registration ends at its own `}));`; slicing to a fixed length would
-    // run into the SIGINT/SIGTERM block that follows, which legitimately
-    // calls process.exit (no loop turn is needed there).
+    // run into the signal handler that follows, which legitimately calls
+    // process.exit.
     const end = INDEX_SOURCE.indexOf('}));', start);
     expect(end, 'the createBeforeQuitHandler registration must close with `}));`').toBeGreaterThan(start);
     const handlerRegion = INDEX_SOURCE.slice(start, end);
@@ -413,12 +400,19 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
       'the drain must re-enter the quit with app.quit() so Electron runs its own teardown (process.exit skips it and is the zombie-child failure mode the synchronous-shutdown rule exists for)',
     ).toContain('requestQuit: () => app.quit()');
     expect(handlerRegion).not.toContain('process.exit');
+    expect(handlerRegion).toContain('drainPtyExitCallbacks: drainReportedPtyExits');
+    // The same shared function the signal handler gets, not an inline copy.
+    expect(handlerRegion).toMatch(/\n\s+hideAllWindows,\n/);
+
+    const drainRegion = sliceBalancedBlock(INDEX_SOURCE, INDEX_SOURCE.indexOf('function drainReportedPtyExits('));
+    expect(drainRegion, 'the drain must probe the killed pids, host pid included').toContain('pids: report.pids');
+    expect(drainRegion, 'the drain must poll liveness through isProcessAlive').toContain('isProcessAlive');
     expect(
-      handlerRegion,
+      drainRegion,
       'the drain must receive killedCount as well as pids, or a kill with an unreadable child pid is drained as if nothing had been killed at all',
     ).toContain('killedCount: report.killedCount');
     expect(
-      handlerRegion,
+      drainRegion,
       'the drain must receive deferredCount: a young session\'s kill rides a 1500 ms timer inside the drain, and without the deadline extension that count switches on, the drain gives up at the very instant the deferred kill lands',
     ).toContain('deferredCount: report.deferredCount');
   });
@@ -426,8 +420,9 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
   /**
    * The exit-sequence grace at quit (pty-teardown-grace.md) is safe only where
    * the drain follows the cleanup: the deferred kill fires on a timer the drain
-   * keeps the loop alive for. A route that exits without the loop must call
-   * performShutdown() bare, which flushes every parked PTY at once.
+   * keeps the loop alive for. Any other route must call performShutdown()
+   * bare, which flushes every parked PTY at once. That covers a signal, which
+   * was asked to end now and whose drain waits only for exits already under way.
    */
   it('lets a young session\'s kill ride the drain only on the routes the drain follows', () => {
     const beforeQuitStart = INDEX_SOURCE.indexOf("app.on('before-quit', createBeforeQuitHandler(");
@@ -452,10 +447,11 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     ).toContain('performShutdown();');
     expect(windowsRegion).not.toContain('allowGrace');
 
-    const signalBlock = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)"));
+    const signalBlock = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf('const exitOnSignal = createSignalExitHandler('));
+    expect(signalBlock, 'the signal handler must exist').toContain('performShutdown: () => performShutdown()');
     expect(
       signalBlock,
-      'the signal route process.exit()s with no loop turn, so nothing may stay deferred there either',
+      'a signal keeps the instant kill, so nothing may stay deferred there either',
     ).not.toContain('allowGrace');
   });
 
@@ -517,24 +513,25 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     ).not.toContain('osShutdownCannotBeDelayed = true;');
   });
 
-  it('keeps the signal path synchronous (SIGINT/SIGTERM exit without running the loop)', () => {
-    const signalStart = INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)");
-    expect(signalStart, 'src/main/index.ts must handle SIGINT and SIGTERM').toBeGreaterThan(-1);
-    expectShutdownThenDrainThenExit(sliceBalancedBlock(INDEX_SOURCE, signalStart), 'the SIGINT/SIGTERM handler');
-  });
-
-  it('records a clean exit when the hosting terminal closes (SIGHUP), on the same bare signal route', () => {
-    // Without a listener, SIGHUP (on Windows, the console's CTRL_CLOSE_EVENT)
-    // ends the process with no exit recorded, so an `npm start` whose
-    // terminal closed read as `abrupt` on the next launch.
-    const hangupStart = INDEX_SOURCE.indexOf("process.on('SIGHUP', () => {");
-    expect(hangupStart, 'src/main/index.ts must handle SIGHUP').toBeGreaterThan(-1);
-    const hangupHandler = sliceBalancedBlock(INDEX_SOURCE, hangupStart);
-    expectShutdownThenDrainThenExit(hangupHandler, 'the SIGHUP handler');
-    expect(
-      hangupHandler,
-      'SIGHUP process.exit()s with no loop turn, so nothing may stay deferred there',
-    ).not.toContain('allowGrace');
+  /**
+   * What the handler does is tests/unit/signal-exit.test.ts; this pins that all
+   * three signals reach it. Without a listener, SIGHUP (on Windows, the
+   * console's CTRL_CLOSE_EVENT) ends the process with no exit recorded, so an
+   * `npm start` whose terminal closed read as `abrupt` on the next launch. A
+   * signal left out of the list also exits main with the pty host alive, which
+   * is Sentry DESKTOP-2A's route.
+   */
+  it('registers one signal handler for SIGINT, SIGTERM and SIGHUP, and writes the dev log queue from it', () => {
+    expect(INDEX_SOURCE).toContain("for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {\n  process.on(signal, exitOnSignal);");
+    const handlerRegion = INDEX_SOURCE.slice(
+      INDEX_SOURCE.indexOf('const exitOnSignal = createSignalExitHandler('),
+      INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const)"),
+    );
+    expect(handlerRegion).toContain('drainPtyExitCallbacks: drainReportedPtyExits');
+    expect(handlerRegion).toMatch(/\n\s+hideAllWindows,\n/);
+    expect(handlerRegion).toContain('getPtyKillReport: () => ptyKillReport');
+    expect(handlerRegion).toContain('if (__KANGENTIC_DEV__) drainQueuedAppendsSync();');
+    expect(handlerRegion).toContain('exit: () => process.exit(0)');
   });
 
   it('drains the log queue from a dev-only exit listener, as a backstop for any other process.exit', () => {

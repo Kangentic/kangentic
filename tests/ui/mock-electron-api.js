@@ -352,7 +352,6 @@
       maxConcurrentSessions: 8,
       idleTimeoutEnabled: false,
       idleTimeoutMinutes: 30,
-      pauseIdleAgentsOnLowMemory: true,
       autoResumeSessionsOnRestart: false,
       executionServers: {},
       execution: {},
@@ -907,32 +906,6 @@
   window.__mockFireUpdateBlocked = function (message) {
     var listeners = window.__mockUpdateBlockedListeners.slice();
     listeners.forEach(function (fn) { fn(message); });
-  };
-
-  // Host memory pressure test hooks (Sentry DESKTOP-16), same eager pattern
-  // as the update-downloaded hooks above: `__mockFireHostMemoryPressure`
-  // exists before any renderer subscriber has registered.
-  window.__mockHostMemoryPressureListeners = [];
-  window.__mockFireHostMemoryPressure = function (event) {
-    var listeners = window.__mockHostMemoryPressureListeners.slice();
-    listeners.forEach(function (fn) { fn(event); });
-  };
-
-  // Host memory recovery test hooks (Sentry DESKTOP-16): the clear-side edge
-  // for the pressure push above, same eager pattern.
-  window.__mockHostMemoryRecoveryListeners = [];
-  window.__mockFireHostMemoryRecovery = function (event) {
-    var listeners = window.__mockHostMemoryRecoveryListeners.slice();
-    listeners.forEach(function (fn) { fn(event); });
-  };
-
-  // Low-memory agent pause test hooks: one push per agent main paused while
-  // it waited on the user (src/main/diagnostics/idle-agent-pause.ts). Same
-  // eager pattern as the two above.
-  window.__mockHostMemoryAgentPausedListeners = [];
-  window.__mockFireHostMemoryAgentPaused = function (event) {
-    var listeners = window.__mockHostMemoryAgentPausedListeners.slice();
-    listeners.forEach(function (fn) { fn(event); });
   };
 
   // Announcements test hooks: installed eagerly for the same reason as the
@@ -5542,33 +5515,6 @@
         window.__mockUpdateBlockedListeners.push(callback);
         return function () {
           var listeners = window.__mockUpdateBlockedListeners || [];
-          var idx = listeners.indexOf(callback);
-          if (idx >= 0) listeners.splice(idx, 1);
-        };
-      },
-    },
-
-    hostMemory: {
-      onPressure: function (callback) {
-        window.__mockHostMemoryPressureListeners.push(callback);
-        return function () {
-          var listeners = window.__mockHostMemoryPressureListeners || [];
-          var idx = listeners.indexOf(callback);
-          if (idx >= 0) listeners.splice(idx, 1);
-        };
-      },
-      onRecovery: function (callback) {
-        window.__mockHostMemoryRecoveryListeners.push(callback);
-        return function () {
-          var listeners = window.__mockHostMemoryRecoveryListeners || [];
-          var idx = listeners.indexOf(callback);
-          if (idx >= 0) listeners.splice(idx, 1);
-        };
-      },
-      onAgentPaused: function (callback) {
-        window.__mockHostMemoryAgentPausedListeners.push(callback);
-        return function () {
-          var listeners = window.__mockHostMemoryAgentPausedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

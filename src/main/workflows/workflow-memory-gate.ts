@@ -1,12 +1,10 @@
 import type { HostMemorySample } from '../../shared/types';
-import { memoryHeadroom } from '../diagnostics/host-memory';
-import { createMemoryReliefState, evaluateMemoryRelief } from '../diagnostics/idle-agent-pause';
+import { createLowMemoryLatch, memoryHeadroom, updateLowMemoryLatch } from '../diagnostics/host-memory';
 
 /**
  * One queue for the load a running workflow starts by itself: a recovery
- * nudge (which usually reruns a gate) and a memory resume (an agent's 1.15 GB
- * coming back). Each waits its turn here, so they come one at a time, and none
- * goes while memory reads low.
+ * nudge, which usually reruns a gate. Each waits its turn here, so they come
+ * one at a time, and none goes while memory reads low.
  *
  * Measured overnight: Claude Code's memory reaper stopped gates around 02:20 and
  * told the agents not to start them again on their own; the step check's
@@ -16,10 +14,11 @@ import { createMemoryReliefState, evaluateMemoryRelief } from '../diagnostics/id
  * failed on load. So the pacing holds always, not only while memory reads low
  * (owner's decision, 2026-10-31):
  *
- * - **Nothing while memory reads low.** The latch is the low-memory pause's
- *   own (`evaluateMemoryRelief`): on below the threshold, off once headroom
- *   clears the recovery line. A reading older than `SAMPLE_STALE_MS`, or none,
- *   is not low: a sampler that stopped never holds the workflow.
+ * - **Nothing while memory reads low.** The latch (`updateLowMemoryLatch`) turns
+ *   on below the threshold and off once headroom clears the recovery line. It
+ *   is only a delay, so one reading is enough. A reading older than
+ *   `SAMPLE_STALE_MS`, or none, is not low: a sampler that stopped never holds
+ *   the workflow.
  * - **One at a time.** An item released holds the queue until its turn is
  *   under way (its session went thinking, `noteThinking`), it typed nothing
  *   (`release`), or `TURN_WAIT_MS` passed.
@@ -53,7 +52,7 @@ export interface GateMemoryReading {
 }
 
 export class WorkflowMemoryGate {
-  private readonly relief = createMemoryReliefState();
+  private readonly lowMemory = createLowMemoryLatch();
   private lastSampleAt: number | null = null;
   private lastFreeBytes: number | null = null;
   private readonly waiting: Array<{ key: string; lastAskedAt: number }> = [];
@@ -66,14 +65,14 @@ export class WorkflowMemoryGate {
   onSample(sample: HostMemorySample): void {
     const headroom = memoryHeadroom(sample);
     if (headroom === null) return;
-    evaluateMemoryRelief(headroom, this.relief);
+    updateLowMemoryLatch(headroom, this.lowMemory);
     this.lastSampleAt = this.now();
     this.lastFreeBytes = headroom.kind === 'bytes' ? headroom.remainingBytes : null;
   }
 
   reading(): GateMemoryReading {
     const fresh = this.lastSampleAt !== null && this.now() - this.lastSampleAt <= SAMPLE_STALE_MS;
-    return { low: fresh && this.relief.active, freeBytes: fresh ? this.lastFreeBytes : null };
+    return { low: fresh && this.lowMemory.active, freeBytes: fresh ? this.lastFreeBytes : null };
   }
 
   /**
@@ -90,8 +89,8 @@ export class WorkflowMemoryGate {
     else this.waiting.push({ key, lastAskedAt: now });
 
     if (this.reading().low) return { go: false, why: 'memory-low' };
-    // The key in flight asking again continues its own load (a task's nudge
-    // after its memory resume): past the turn wait and the line, never the pace.
+    // The key in flight asking again continues its own load: past the turn
+    // wait and the line, never the pace.
     const continuing = this.inFlight?.key === key;
     if (this.inFlight && now - this.inFlight.since < TURN_WAIT_MS && !continuing) return { go: false, why: 'queued' };
     if (this.lastReleaseAt !== null && now - this.lastReleaseAt < PACE_MS) return { go: false, why: 'queued' };
@@ -136,15 +135,6 @@ export class WorkflowMemoryGate {
     this.forget(key);
   }
 
-  /**
-   * The holder no longer asks for this place (what it waited to do went away):
-   * out of line only. An item already in flight stays, since another holder of
-   * the same key may have started it.
-   */
-  withdraw(key: string): void {
-    this.forget(key);
-  }
-
   /** Test-only: an empty gate with no reading. */
   resetForTests(): void {
     this.waiting.length = 0;
@@ -152,7 +142,7 @@ export class WorkflowMemoryGate {
     this.lastReleaseAt = null;
     this.lastSampleAt = null;
     this.lastFreeBytes = null;
-    this.relief.active = false;
+    this.lowMemory.active = false;
   }
 
   private forget(key: string): void {

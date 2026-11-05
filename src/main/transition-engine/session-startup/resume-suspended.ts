@@ -14,6 +14,7 @@ import { markRecapSession } from '../../automations/turn-end/recap-turns';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
 import { isHeldPause } from '../../../shared/held-pause';
+import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -26,6 +27,24 @@ import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
 import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
+import { workflowOfTask } from '../../workflows/workflow-home';
+
+/**
+ * A low-memory pause an earlier version made on a task in a running workflow.
+ * That version brought such a task back by itself, so here it joins recovery
+ * like a quit's suspend instead of stalling its workflow until someone looks.
+ * Every other `low_memory` row stays held, and a workflow that cannot be read
+ * leaves this one held too.
+ */
+function isRunningWorkflowMemoryPause(record: SessionRecord, task: Task, projectId: string): boolean {
+  if (record.suspended_by !== 'low_memory' || !canTaskRunAutomations(task).ok) return false;
+  try {
+    return workflowOfTask(task, projectId)?.state === 'running';
+  } catch (error) {
+    console.warn(`[RESUME_SUSPENDED] Could not read the workflow of task ${task.id.slice(0, 8)}:`, error);
+    return false;
+  }
+}
 
 /** The optional parts of a recovery pass (`resumeSuspendedSessions`). */
 export interface ResumeSuspendedOptions {
@@ -361,12 +380,13 @@ export async function resumeSuspendedSessions(
     }
 
     // A held pause: the user clicked Pause, or Kangentic paused an agent that
-    // was waiting on the user (low memory, idle timeout). Even when
-    // auto-resume-on-restart is enabled, respect it. Register a placeholder so
-    // the renderer shows "Paused" state. Clear task.session_id defensively -
+    // was waiting on the user (the idle timeout, or an earlier version's
+    // low-memory pause). Even when auto-resume-on-restart is enabled, respect
+    // it. Register a placeholder so the renderer shows "Paused" state. Clear
+    // task.session_id defensively -
     // it should already be null from the pause, but crash-recovery paths may
     // have left it set.
-    if (isHeldPause(record)) {
+    if (isHeldPause(record) && !isRunningWorkflowMemoryPause(record, task, projectId)) {
       sessionManager.registerSuspendedPlaceholder({
         taskId: record.task_id,
         projectId,

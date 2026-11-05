@@ -291,7 +291,7 @@ Fresh-spawn auto_command paths just consumed the CLI prompt arg (e.g. `claude --
 
 `write` takes a `WriteOrigin` (`'user' | 'system'`, defaulting to `'system'`). The human-facing entry points (a renderer's keystrokes, which reach the pty host on its own port, dictation, the mobile bridge's interactive terminal and permission answers) are tagged `'user'`. The ledger runs in the pty host, which records each write in the order its queue hands it to the PTY. Submit and clear bytes empty the ledger whatever their origin, since they empty the real prompt too; printable text counts only from `'user'`, so an injected command passing through is never mistaken for a draft.
 
-Main reads the draft two ways. Keystroke injection asks the host (`SessionManager.readPendingDraft`, the `getPromptDraft` request), so a key typed on the renderer's port just before a burst is counted. The idle and low-memory pause checks read main's mirror (`getPendingDraft`), which the host's `promptDraft` event keeps, since they ask again on their next sweep.
+Main reads the draft two ways. Keystroke injection asks the host (`SessionManager.readPendingDraft`, the `getPromptDraft` request), so a key typed on the renderer's port just before a burst is counted. The idle pause check reads main's mirror (`getPendingDraft`), which the host's `promptDraft` event keeps, since it asks again on its next sweep.
 
 It is deliberately **not** load-bearing for correctness: a warm session clears unconditionally, so a stale or missed entry degrades the message the user sees, never the delivery. It changes behavior in exactly one place - the fresh-spawn path, where it only ever *adds* a clear that would otherwise be skipped.
 

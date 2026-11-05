@@ -381,8 +381,8 @@ export function outsideChatRuns<T>(work: () => T): T {
 /**
  * Stop every CLI still running. Synchronous, for the quit path: each stop is a
  * signal or a `taskkill` started in place (`stopCli`). A run in the pty host is
- * also stopped from here by pid: with no terminal open the quit does not wait
- * for the host, which can be torn down before it reads its stop.
+ * also stopped from here by pid: a host that runs out its exit wait is torn
+ * down with the quit, and may never read its stop.
  */
 export function stopAllCliRuns(): void {
   for (const child of [...liveCliRuns.keys()]) {

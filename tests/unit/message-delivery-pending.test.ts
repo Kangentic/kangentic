@@ -1,7 +1,7 @@
 /**
  * `hasPendingMessageDelivery` answers whether a column message is still
- * waiting to be pasted into a task's agent. The low-memory pause reads it to
- * skip an agent that is about to get work, so it must follow the registry
+ * waiting to be pasted into a task's agent. Workflow recovery reads it to
+ * leave alone an agent that is about to get work, so it must follow the registry
  * that `trackMessageDelivery` and `supersedeMessageDeliveries` keep: true
  * while any delivery is registered, false once each one released or was
  * superseded.

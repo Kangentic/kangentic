@@ -1,11 +1,10 @@
 /**
  * Settings > Performance > Pausing agents.
  *
- * Two switches: When memory runs low (on by default) and When idle (off by
- * default). The idle timer's minutes are When idle's own value, so they sit on
- * a second line of its tile, under a hairline, and show only while it is on. A
- * click on that line must never flip the switch above it. Idle timeout left
- * Behavior > Sessions for this card.
+ * One switch, When idle (off by default). The idle timer's minutes are its own
+ * value, so they sit on a second line of its tile, under a hairline, and show
+ * only while it is on. A click on that line must never flip the switch above
+ * it. Idle timeout left Behavior > Sessions for this card.
  *
  * Each case owns its page, so no case relies on a switch an earlier case left on.
  */
@@ -14,7 +13,7 @@ import type { Page } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 
 interface AgentConfigSlice {
-  agent: { pauseIdleAgentsOnLowMemory: boolean; idleTimeoutEnabled: boolean; idleTimeoutMinutes: number };
+  agent: { idleTimeoutEnabled: boolean; idleTimeoutMinutes: number };
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -39,27 +38,13 @@ async function openPausingAgents(page: Page): Promise<void> {
 }
 
 test.describe('Settings > Performance > Pausing agents', () => {
-  test('starts with the memory pause on and the idle timer off, its minutes hidden', async () => {
+  test('starts with the idle timer off, its minutes hidden', async () => {
     const { browser, page } = await launchPage();
     try {
       await openPausingAgents(page);
 
-      await expect(page.getByTestId('setting-row-agent.pauseIdleAgentsOnLowMemory')).toHaveAttribute('aria-checked', 'true');
       await expect(page.getByTestId('setting-row-agent.idleTimeoutEnabled')).toHaveAttribute('aria-checked', 'false');
       await expect(page.getByTestId('setting-row-agent.idleTimeoutMinutes')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the memory pause switch persists', async () => {
-    const { browser, page } = await launchPage();
-    try {
-      await openPausingAgents(page);
-
-      await page.getByTestId('setting-row-agent.pauseIdleAgentsOnLowMemory').click();
-
-      await expect.poll(async () => (await readAgentConfig(page)).pauseIdleAgentsOnLowMemory, { timeout: 3000 }).toBe(false);
     } finally {
       await browser.close();
     }

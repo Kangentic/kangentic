@@ -54,16 +54,6 @@ msgstr "(nieudane: {deleteFailureCount})"
 msgid "{0} does not exist on {1}."
 msgstr "Ścieżka {0} nie istnieje na hoście {1}."
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, one {Wstrzymano agenta, aby zwolnić pamięć} few {Wstrzymano # agenty, aby zwolnić pamięć} many {Wstrzymano # agentów, aby zwolnić pamięć} other {Wstrzymano # agenta, aby zwolnić pamięć}}"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr "{agentCount, plural, one {Pozostaje wstrzymany, dopóki go nie wznowisz. Zadanie przepływu pracy wróci samo, gdy zwolni się pamięć.} few {Pozostają wstrzymane, dopóki ich nie wznowisz. Zadania przepływu pracy wrócą same, gdy zwolni się pamięć.} many {Pozostają wstrzymane, dopóki ich nie wznowisz. Zadania przepływu pracy wrócą same, gdy zwolni się pamięć.} other {Pozostają wstrzymane, dopóki ich nie wznowisz. Zadania przepływu pracy wrócą same, gdy zwolni się pamięć.}}"
-
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
@@ -720,7 +710,6 @@ msgstr "Wyczyść"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
 #, fuzzy
@@ -2554,28 +2543,11 @@ msgstr "Przywróć do"
 msgid "Restore to board"
 msgstr "Przywróć na tablicę"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task action"
-msgid "Resume"
-msgstr "Wznów"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Resume {taskTitle}"
-msgstr "Wznów {taskTitle}"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Resume session"
 msgstr "Wznów sesję"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Resuming"
-msgstr "Wznawianie"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
@@ -2614,12 +2586,6 @@ msgstr "Uruchom w folderze projektu"
 #, fuzzy
 msgid "Run one agent in this column at a time"
 msgstr "Uruchamiaj w tej kolumnie jednego agenta naraz"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Running"
-msgstr "Działa"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3306,11 +3272,6 @@ msgstr "Bez nazwy"
 #, fuzzy
 msgid "Untitled column"
 msgstr "Kolumna bez nazwy"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Untitled task"
-msgstr "Zadanie bez tytułu"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy

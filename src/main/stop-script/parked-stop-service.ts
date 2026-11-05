@@ -18,22 +18,9 @@ import { stopParkedTask, type ParkedStopDeps, type ParkedStopResult, type Parked
 import { isStopScriptRunning, runStopScript, STOP_SCRIPT_PAUSE_TIMEOUT_MS, stopScriptFolder } from './run-stop-script';
 import { reportStopScriptFailure } from './stop-script-failure';
 
-/**
- * How long a low-memory pass leaves a task alone after it ran the script or found
- * nothing running. A broken script would otherwise spend every tick of a low-memory
- * spell, and no agent would ever be paused. A task that parks again sooner is not
- * missed: its own pause starts a stop.
- */
-const RELIEF_RETRY_AFTER_MS = 30 * 60_000;
-
 const heldOffStops = new HeldOffStops();
-/** When a low-memory pass last ran a script for a task, or found nothing to stop. */
-const reliefAttemptAt = new Map<string, number>();
 /** Tasks with an attempt in progress, which spans the probes before a script starts. */
 const attemptsInFlight = new Set<string>();
-
-/** What one low-memory pass did: a stop started, tasks are still held off, or nothing. */
-export type ParkedReliefResult = 'started' | 'held' | 'none';
 
 export function createParkedStopDeps(context: IpcContext): ParkedStopDeps {
   return {
@@ -44,7 +31,7 @@ export function createParkedStopDeps(context: IpcContext): ParkedStopDeps {
       const db = getOpenProjectDb(projectId);
       if (!db || context.sessionManager.findLiveSessionByTaskId(taskId)) return null;
       const record = new SessionRepository(db).getLatestForTask(taskId);
-      if (record?.status !== 'suspended' || (record.suspended_by !== 'auto' && record.suspended_by !== 'low_memory')) return null;
+      if (record?.status !== 'suspended' || record.suspended_by !== 'auto') return null;
       const task = new TaskRepository(db).getById(taskId);
       if (!task || task.archived_at !== null) return null;
       return { title: task.title, worktreePath: task.worktree_path };
@@ -76,14 +63,14 @@ function targetOf(context: IpcContext, projectId: string, taskId: string): Parke
 
 /**
  * One attempt that never rejects, remembering a task a client held off. One at a
- * time per task: a pause, a low-memory pass and a recheck can land on the same
- * task, and two attempts would each hold a message for one stop.
+ * time per task: a pause and a recheck can land on the same task, and two
+ * attempts would each hold a message for one stop.
  */
-async function attemptStop(context: IpcContext, target: ParkedStopTarget, onScriptStart?: () => void): Promise<ParkedStopResult> {
+async function attemptStop(context: IpcContext, target: ParkedStopTarget): Promise<ParkedStopResult> {
   if (attemptsInFlight.has(target.taskId)) return 'already-running';
   attemptsInFlight.add(target.taskId);
   try {
-    const result = await stopParkedTask(createParkedStopDeps(context), target, { onScriptStart });
+    const result = await stopParkedTask(createParkedStopDeps(context), target);
     if (result === 'held-off') heldOffStops.add(target);
     return result;
   } catch (error) {
@@ -95,8 +82,8 @@ async function attemptStop(context: IpcContext, target: ParkedStopTarget, onScri
 }
 
 /**
- * Start the stop after an idle or low-memory pause. The record the pause wrote
- * says which pause it was, so a caller only names the task. Never throws.
+ * Start the stop after an idle pause. The record the pause wrote says which
+ * pause it was, so a caller only names the task. Never throws.
  */
 export function startParkedStop(context: IpcContext, projectId: string, taskId: string): void {
   try {
@@ -112,53 +99,8 @@ export function tickHeldOffStops(context: IpcContext): void {
   heldOffStops.onTick((target) => attemptStop(context, target));
 }
 
-/**
- * Every open project's parked tasks a low-memory pass may stop, for projects with a
- * script. A task a client holds off is left to its five-minute recheck, or every
- * tick of a spell would scan it again.
- */
-function reliefTargets(context: IpcContext, now: number): ParkedStopTarget[] {
-  const targets: ParkedStopTarget[] = [];
-  for (const project of context.projectRepo.list()) {
-    const db = getOpenProjectDb(project.id);
-    if (!db || !context.boardConfigManager.getStopScriptForPath(project.path)) continue;
-    for (const taskId of new SessionRepository(db).listStopEligiblePausedTasks()) {
-      if (heldOffStops.has(taskId)) continue;
-      const attemptedAt = reliefAttemptAt.get(taskId);
-      if (attemptedAt !== undefined && now - attemptedAt < RELIEF_RETRY_AFTER_MS) continue;
-      targets.push({ projectId: project.id, projectPath: project.path, taskId });
-    }
-  }
-  return targets;
-}
-
-/**
- * One low-memory pass: stop one parked task's leftovers before another idle agent
- * is paused, since a parked stack costs more and loses less. Resolves as soon as
- * a script starts, so a long stop never holds the next tick, and a stop counts as
- * that tick's one action. Tasks a client holds off stay held off.
- */
-export async function relieveParkedTasks(context: IpcContext): Promise<ParkedReliefResult> {
-  if (context.configManager.load().stopLeftoverProcesses === false) return 'none';
-  const now = Date.now();
-  for (const target of reliefTargets(context, now)) {
-    const started = await new Promise<boolean>((resolve) => {
-      void attemptStop(context, target, () => {
-        reliefAttemptAt.set(target.taskId, now);
-        resolve(true);
-      }).then((result) => {
-        if (result === 'nothing-running') reliefAttemptAt.set(target.taskId, now);
-        resolve(false);
-      });
-    });
-    if (started) return 'started';
-  }
-  return heldOffStops.size > 0 ? 'held' : 'none';
-}
-
 /** Test-only: forget what is held off and what was tried. */
 export function resetParkedStopsForTests(): void {
-  reliefAttemptAt.clear();
   attemptsInFlight.clear();
   heldOffStops.clear();
 }

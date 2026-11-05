@@ -2878,8 +2878,8 @@ msgstr "Arrêté"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
-msgstr "Arrête ce qu'une tâche a laissé en cours d'exécution après une pause pour inactivité ou mémoire faible, ou avant sa fin. Enregistré dans kangentic.json."
+msgid "Stops what a task left running after an idle pause or before it finishes, saved in kangentic.json."
+msgstr "Arrête ce qu'une tâche a laissé en cours d'exécution après une pause pour inactivité ou avant sa fin. Enregistré dans kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -3356,16 +3356,6 @@ msgstr "En cas d'inactivité"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Quand Kangentic met en pause les agents qui vous attendent."
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low"
-msgstr "Quand la mémoire est faible"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr "Quand la mémoire est faible, mettre en pause l'agent qui vous attend depuis le plus longtemps, un par minute, jusqu'à libérer assez de place."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy

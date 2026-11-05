@@ -47,6 +47,11 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 워크플로"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "A link in this path points to a folder that does not exist."
+msgstr "이 경로의 링크가 존재하지 않는 폴더를 가리킵니다."
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "A project"
@@ -110,6 +115,11 @@ msgstr "당시 사용 가능한 시스템 메모리(커밋): {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic에서 데이터 폴더를 만들 수 없습니다"
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic에서 데이터베이스를 읽을 수 없습니다"
 
@@ -169,10 +179,20 @@ msgstr "세션 충돌: {label}"
 msgid "Terminals restarted"
 msgstr "터미널 다시 시작됨"
 
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "The drive for this folder is not available."
+msgstr "이 폴더가 있는 드라이브를 사용할 수 없습니다."
+
 #: src/main/index.ts
 #, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "창이 충돌했으며({crashReason}) {minutes, plural, other {#분}} 동안 {attempts, plural, other {#회 시도}}한 후에도 복구하지 못했습니다."
+
+#: src/main/db/global-db-dialog.ts
+#, fuzzy
+msgid "This path has characters Windows does not allow."
+msgstr "이 경로에 Windows에서 허용되지 않는 문자가 있습니다."
 
 #: src/main/db/global-db-dialog.ts
 #, fuzzy

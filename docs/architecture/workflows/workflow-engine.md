@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Workflow engine
-description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the memory gate its nudges wait in, the memory resume of paused tasks, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
+description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the memory gate its nudges wait in, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
 tags: [workflows, engine, scheduling]
 sources:
   - resource: src/main/workflows/
@@ -35,10 +35,8 @@ src/main/workflows/
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?"),
                              #   the second ask of what a stalled agent is stuck on, and the column's exit rows' verdict
   workflow-recovery.ts       # a task whose step did not finish: re-judge, nudge, or one notice, on a schedule that ends
-  workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep, the
-                             #   low-memory pause and Pause
-  workflow-memory-gate.ts    # one queue for nudges and memory resumes: none while memory reads low, one at a time, paced
-  workflow-memory-resume.ts  # a running workflow's memory-paused tasks back one at a time once memory recovers
+  workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
+  workflow-memory-gate.ts    # one queue for nudges: none while memory reads low, one at a time, paced
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
   workflow-task-hold.ts      # one task's own hold (its automations switch): what putting it on and taking it off does
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
@@ -307,29 +305,28 @@ src/main/workflows/
     `working` verdict whose work has since ended with no turn of its own is a stall on the
     schedule (`noteHeldTurnDrained`), not the rest of the hour.
   - **One at a time, and never into low memory.** Every nudge waits its turn in the workflow's
-    memory gate (`workflow-memory-gate.ts`), one first-in, first-out queue it shares with memory
-    resumes (below). Nothing goes while memory reads low, on the low-memory pause's own latch
-    (`evaluateMemoryRelief`). A reading older than 3 minutes is not low, so a sampler that stopped
-    holds nothing. One item goes at a time: the next waits until the last one's session goes
-    thinking, the last one typed nothing after all, or 3 minutes pass. At most one goes every 60 s
-    (`PACE_MS`), about one sampler tick, so the next reads memory with the last one's load on it.
-    The pacing holds even while memory reads fine. A hold for memory spends no attempt, and the run
-    log says so once per low spell. A task has one place in the queue (`workflowTaskGateKey`),
-    shared by its memory resume and its nudges, so the nudge a resume exists for continues the
-    resume's place after the pace. A resume starts no turn of its own, so with places of their own
-    the nudge waited out the full 3 minutes behind its own resume. A memory resume that no longer
-    asks for its place (its task was resumed by hand, or moved) leaves the line at once
-    (`withdraw`). Measured overnight: three nudges sent within four seconds started three gates at
-    once, and all three failed on load. A nudge that said to rerun a gate Claude Code's memory
-    reaper had stopped sent one back at 3.7 GB free, to be killed again.
+    memory gate (`workflow-memory-gate.ts`), one first-in, first-out queue. Nothing goes while
+    memory reads low, on the gate's own latch (`updateLowMemoryLatch`,
+    `src/main/diagnostics/host-memory.ts`): on below the smaller of 2 GB and 5% of the limit, off
+    at twice that. Each platform has its own reading (`memoryHeadroom`): commit headroom on
+    Windows, RAM plus swap on Linux, and on macOS the kernel's pressure level, with its free
+    percentage deciding at warn. The sampler feeds the gate every 60 s. A reading older than 3
+    minutes is not low, so a sampler that stopped holds nothing. One item goes at a time: the next
+    waits until the last one's session goes thinking, the last one typed nothing after all, or 3
+    minutes pass. At most one goes every 60 s (`PACE_MS`), about one sampler tick, so the next reads
+    memory with the last one's load on it. The pacing holds even while memory reads fine. A hold for
+    memory spends no attempt, and the run log says so once per low spell. A task has one place in
+    the queue (`workflowTaskGateKey`). Measured overnight: three nudges sent within four seconds
+    started three gates at once, and all three failed on load. A nudge that said to rerun a gate
+    Claude Code's memory reaper had stopped sent one back at 3.7 GB free, to be killed again.
   - **After Kangentic restarts an agent, at once.** A session Kangentic resumed after a quit, a
     crash or a pty host loss (`resumedBy: 'recovery'` on the `session-resumed` event) lost its
     background commands with the old process. Its recovery starts over, with a run-log row that
     says so, and its first attempt comes at once, with the restart line. Before, each mid-step
     task kept its pre-quit `working` verdict and waited an hour on a gate that no longer existed.
-    A memory resume (`'memory'`) gets its first attempt at once too. The resumed session's first
-    idle has usually armed the schedule's first step already, and the resume replaces that timer:
-    kept, the nudge came five minutes after the agent was back (seen live).
+    The resumed session's first idle has usually armed the schedule's first step already, and this
+    attempt replaces that timer: kept, the nudge came five minutes after the agent was back (seen
+    live).
   - The keys refusal holds the nudge a minute at a time. An idle agent whose tool call has had no
     end for 10 minutes (`OPEN_CALL_NOTICE_MS`) is most likely at a prompt the engine lost, so
     recovery stops and the owner gets the waiting notice ("it may be waiting on a permission
@@ -351,45 +348,17 @@ src/main/workflows/
     a restart, a turn is the user's only when no nudge ran since the stall).
   - In an outage the task stays under recovery after the notice, so the idle sweep does not pause
     it for up to the day the hourly re-checks run. That keeps its agent alive overnight (about
-    1.15 GB of commit on Windows), so the service coming back can move it on; the low-memory
-    pause still applies.
+    1.15 GB of commit on Windows), so the service coming back can move it on.
   - A `waiting` verdict is noticed at once and ends the recovery. A running workflow task's plain
     idle raises neither the desktop idle notice nor the phone's `turn-complete`.
   - It is armed by a turn end's verdict, by a resume whose reply was already judged (a restart; the
     engine's own boot pass runs before any session resumes, so it cannot see who is idle), by a
     commit to idle with nothing armed (a turn that failed with no Stop), and by sending a nudge.
   - It is stopped by a move (`supersedeTurnEndWork`), the workflow's Pause, pausing the task's own
-    automations (the same supersede), removing the task or deleting the workflow, and a low-memory
-    pause. That pause notifies nobody: it writes a recovery start ("Paused to free memory"), so
-    the agent that comes back gets a recovery of its own. The idle sweep leaves a task under
-    recovery alone (`isUnderWorkflowRecovery`). The low-memory pause leaves alone an agent with
-    open background work, and one in a `working` wait under 60 minutes old (`isInWorkingWait`):
-    five of seven pauses overnight hit agents waiting on their own background gate, which left the
-    gate's processes running and its results unread for 45 to 110 minutes.
+    automations (the same supersede), and removing the task or deleting the workflow. The idle
+    sweep leaves a task under recovery alone (`isUnderWorkflowRecovery`).
   - A start that keeps failing for 30 minutes sends the same stall notice through
     `announceWorkflowStall`, and its retries go on.
-- **Memory resume** (`workflow-memory-resume.ts`). #873 holds a low-memory pause until the user
-  resumes it, and that still holds outside a workflow. A running workflow's task comes back by
-  itself (owner's decision, 2026-10-31): overnight, two workflow tasks whose agents really were
-  idle were paused at 01:39 and 04:05 and sat until morning with memory long recovered.
-  - The pause records `suspended_by = 'low_memory'`, its own source, so a restart still knows which
-    tasks those are (`SessionRepository.listMemoryPausedTasks`).
-  - Each memory sampler tick, while memory does not read low, the task paused longest comes back,
-    if it is in a running workflow whose step applies (not held), in a working column (not To Do or
-    Done), and not waiting on the owner. One at a time, through the memory gate, and only into a
-    free agent slot. A task a person is resuming at that moment is skipped (`isResumeInFlight`):
-    the Resume path cancels a resume already under way, and the person's must win.
-  - It comes back through the Resume button's own path (`resumeTaskSession`) with
-    `resumedBy: 'memory'`, which reaches the spawn on both of its branches (a plain resume, and a
-    column entered while paused through `spawnAgent`). The resume's catch-up hands the turn to
-    recovery, whose first attempt comes at once.
-  - A task paused again within 30 minutes of an auto-resume waits 30 minutes from that pause,
-    doubled for each further auto-resume in the last day. After 3 in a day it stays paused for the
-    user, with one stall notice, until the oldest of those resumes is a day old. Only a resume that
-    ran counts: one that failed waits 30 minutes, doubled for each failure in a row, and one that
-    found the agent already live counts nothing. Each resume reloads the conversation: one
-    overnight resume read 73M tokens before its first tool call. The counts live in main-process
-    memory, so a restart forgets them.
 - **A hung turn** (`workflow-hang-check.ts`) ends no turn, so recovery never sees it. Once a minute,
   main looks at each running workflow task whose agent shows working on a turn still in progress
   (a tool, a subagent or the turn itself; never a turn a background shell holds, whose Stop

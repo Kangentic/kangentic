@@ -99,10 +99,7 @@ const NUDGE_DELIVERY_TIMEOUT_MS = 120_000;
 export const PRESENCE_WINDOW_MS = 5 * 60_000;
 
 /**
- * A task's one place in the memory gate (`workflow-memory-gate.ts`), shared by
- * its memory resume and its nudges. The nudge a memory resume exists for then
- * continues the resume's place, after the pace, instead of queuing behind it
- * until the resume's turn wait runs out: a resume starts no turn of its own.
+ * A task's one place in the memory gate (`workflow-memory-gate.ts`).
  */
 export function workflowTaskGateKey(taskId: string): string {
   return `task:${taskId}`;
@@ -138,8 +135,7 @@ export function setRecoveryAttemptRunner(runner: ((projectId: string, taskId: st
  * `turnStartedAt` is the judged turn's start (a turn end's), null for a resume.
  * `resumedBy` is who resumed the session, for a resume: Kangentic after a quit,
  * a crash or a pty host loss (`'recovery'`), whose stall's recovery starts over
- * with its first attempt at once, or after a memory pause (`'memory'`), whose
- * first attempt is at once too.
+ * with its first attempt at once.
  */
 export function afterWorkflowStep(
   context: IpcContext,
@@ -203,8 +199,8 @@ function handleVerdict(
       if (!entry) return;
       takeVerdict(entry, result);
       endWorkingWait(entry);
-      if (options.resumedBy === 'recovery' || options.resumedBy === 'memory') {
-        attemptAtOnceAfterResume(entry, options.resumedBy);
+      if (options.resumedBy === 'recovery') {
+        attemptAtOnceAfterRestart(entry);
         return;
       }
       armNext(context, entry);
@@ -214,16 +210,14 @@ function handleVerdict(
 }
 
 /**
- * A resumed agent's first attempt comes at once, not a schedule step later.
- * After a restart (`'recovery'`) its background commands died with the old
- * process and nothing it waited on will wake it, so the nudge says so now.
- * After a memory resume it was brought back to be unblocked, and its attempt
- * takes its turn in the gate. Either replaces a timer the resumed session's
- * first idle may have armed (`armWorkflowRecoveryOnIdle`): kept, the nudge came
- * five minutes after the agent was back.
+ * A restarted agent's first attempt comes at once, not a schedule step later:
+ * its background commands died with the old process and nothing it waited on
+ * will wake it, so the nudge says so now. It replaces a timer the resumed
+ * session's first idle may have armed (`armWorkflowRecoveryOnIdle`): kept, the
+ * nudge came five minutes after the agent was back.
  */
-function attemptAtOnceAfterResume(entry: RecoveryEntry, resumedBy: 'recovery' | 'memory'): void {
-  if (resumedBy === 'recovery') entry.restartedAt = Date.now();
+function attemptAtOnceAfterRestart(entry: RecoveryEntry): void {
+  entry.restartedAt = Date.now();
   arm(entry, 0);
 }
 
@@ -257,7 +251,6 @@ function armWorkingWait(context: IpcContext, entry: RecoveryEntry): void {
   const now = Date.now();
   const since = Math.min(now, oldestOpenWorkSince(context, entry.sessionId) ?? now);
   entry.workingWait = true;
-  entry.workingWaitSince = since;
   entry.holdUntil = null;
   arm(entry, Math.max(0, WORKING_WAIT_MS - (now - since)));
 }
@@ -353,7 +346,6 @@ export function noteHeldTurnDrained(context: IpcContext, target: RecoveryTarget)
 /** The working wait is over: ran out, or a newer verdict replaced it. */
 function endWorkingWait(entry: RecoveryEntry): void {
   entry.workingWait = false;
-  entry.workingWaitSince = null;
 }
 
 /**
@@ -430,15 +422,11 @@ export function resumeWorkflowRecovery(context: IpcContext, target: RecoveryTarg
       startWorkflowRecoveryOver(context, target, { detail: RESTART_RECOVERY_DETAIL });
       const restartedEntry = ensureEntry(context, target);
       if (!restartedEntry) return;
-      attemptAtOnceAfterResume(restartedEntry, 'recovery');
+      attemptAtOnceAfterRestart(restartedEntry);
       return;
     }
     const entry = ensureEntry(context, target);
     if (!entry || entry.inFlight) return;
-    if (options.resumedBy === 'memory') {
-      attemptAtOnceAfterResume(entry, 'memory');
-      return;
-    }
     if (entry.timer !== null) return;
     armNext(context, entry);
   } catch (error) {
@@ -555,7 +543,6 @@ function ensureEntry(context: IpcContext, target: RecoveryTarget): RecoveryEntry
     noticeSent: history.lastStall !== null,
     startedAt: history.firstAt ? Date.parse(history.firstAt) : Date.now(),
     workingWait: false,
-    workingWaitSince: null,
     holdUntil: null,
     verdict: null,
     pendingNudge: null,
@@ -621,23 +608,6 @@ export function noteRecoveryTurnFailed(context: IpcContext, sessionId: string): 
   }
 }
 
-/**
- * Low memory paused this task's agent. Its recovery stops here, since there is
- * no agent to nudge, and the run log says why. Nobody is told: a running
- * workflow's task comes back by itself once memory recovers, one at a time
- * (`workflow-memory-resume.ts`, owner's decision 2026-10-31), and the catch-up
- * of that resume hands its turn back to recovery.
- */
-export function noteWorkflowTaskPaused(context: IpcContext, taskId: string): void {
-  const entry = getRecoveryEntry(taskId);
-  if (!entry) return;
-  // A boundary row, so the recovery of the agent that comes back starts from
-  // its own first step rather than the spent count of this one.
-  startWorkflowRecoveryOver(context, recoveryTargetOf(entry), {
-    detail: 'Paused to free memory; its agent comes back once memory recovers, and its recovery starts over then.',
-  });
-}
-
 // ---------------------------------------------------------------------------
 // An attempt
 // ---------------------------------------------------------------------------
@@ -682,7 +652,7 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
   const sessionId = task.session_id!;
   bindSession(entry, sessionId);
   const session = context.sessionManager.getSession(sessionId);
-  // No live agent: a pause, an exit. A low-memory pause says so itself.
+  // No live agent: a pause, an exit.
   if (!session || session.status !== 'running') {
     forgetWorkflowRecovery(entry.taskId);
     return;
@@ -925,8 +895,8 @@ function landedSiblings(context: IpcContext, entry: RecoveryEntry, task: Task): 
 }
 
 /**
- * The session went thinking: a nudge or a memory resume waiting on its turn
- * has it under way, and the gate lets the next one go. Called for every
+ * The session went thinking: a nudge waiting on its turn has it under way,
+ * and the gate lets the next one go. Called for every
  * session's activity by the turn-end runner, so it is one comparison.
  */
 export function noteWorkflowSessionActivity(sessionId: string, activity: string): void {

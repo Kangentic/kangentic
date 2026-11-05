@@ -178,51 +178,6 @@ msgstr "{minutes, plural, one {\"{taskTitle}\": # dakika sonra zaman aşımına 
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, one {\"{taskTitle}\": # saniye sonra zaman aşımına uğradı.} other {\"{taskTitle}\": # saniye sonra zaman aşımına uğradı.}}"
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, # gün bekledi} other {{projectName}, # gün bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, # saat bekledi} other {{projectName}, # saat bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, # dakika bekledi} other {{projectName}, # dakika bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {# gün bekledi} other {# gün bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {# gün bekledi} other {# gün bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {# saat bekledi} other {# saat bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {# saat bekledi} other {# saat bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {# dakika bekledi} other {# dakika bekledi}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {# dakika bekledi} other {# dakika bekledi}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -247,16 +202,6 @@ msgstr "{branchPill}, {basePill} temel alınarak yeni bir çalışma ağacında 
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{branchPill}, {basePill} temel alınarak proje klasöründe oluşturulacak"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Boştaki ajan duraklatıldı} one {# boştaki ajan duraklatıldı} other {# boştaki ajan duraklatıldı}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic belleği boşaltmak için onu duraklattı.} one {Kangentic belleği boşaltmak için onları duraklattı.} other {Kangentic belleği boşaltmak için onları duraklattı.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -332,11 +277,6 @@ msgstr "{processCount, plural, one {\"{taskTitle}\" görevi # işlemi çalışı
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {{taskCount, plural, one {# görev} other {# görev}} # işlemi çalışır durumda bıraktı.} other {{taskCount, plural, one {# görev} other {# görev}} # işlemi çalışır durumda bıraktı.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "Bellek ayırmalarından {remaining} kaldı."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -468,11 +408,6 @@ msgstr "Ajan sürdürüldü"
 #, fuzzy
 msgid "Agent started"
 msgstr "Ajan başlatıldı"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "Neredeyse hiç bellek ayırması kalmadı."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1142,11 +1077,6 @@ msgstr "Kalan işlemler"
 msgid "Leftover processes stopped"
 msgstr "Kalan işlemler durduruldu"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "Bellek azaldı"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1528,7 +1458,6 @@ msgid "Retry"
 msgstr "Yeniden dene"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "İncele"
@@ -1599,7 +1528,6 @@ msgid "Session ended"
 msgstr "Oturum sona erdi"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "Ayarlar"

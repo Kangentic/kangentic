@@ -18,7 +18,6 @@ import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
 import { showConversationExpiredNotices } from './lib/conversation-expired-toast';
 import { useUpdaterStore } from './stores/updater-store';
-import { useHostMemoryStore } from './stores/host-memory-store';
 import { useAnnouncementsStore } from './stores/announcements-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useMonitorStore } from './stores/monitor-store';
@@ -173,23 +172,6 @@ export function App() {
       useUpdaterStore.getState().receiveUpdate(info);
     });
 
-    // Host memory pressure (Sentry DESKTOP-16): a rare, edge-triggered push
-    // from main's sampler - see stores/host-memory-store.ts. The recovery
-    // push is the clear-side edge; its payload carries a sample but the
-    // store deliberately discards it (nothing displays a recovery reading).
-    const cleanupHostMemoryPressureListener = window.electronAPI.hostMemory?.onPressure((event) => {
-      useHostMemoryStore.getState().receivePressureEvent(event);
-    });
-    const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
-      useHostMemoryStore.getState().receiveRecovery();
-    });
-    // Low memory paused an agent that was waiting on the user: one push per
-    // agent, on every platform. The store counts them in one toast and keeps
-    // the Review list (stores/host-memory-store.ts).
-    const cleanupHostMemoryAgentPausedListener = window.electronAPI.hostMemory?.onAgentPaused((event) => {
-      useHostMemoryStore.getState().receiveAgentPaused(event);
-    });
-
     // Graphics state (Sentry DESKTOP-18/DESKTOP-W). PULLED, not pushed: main
     // decides both facts during boot, possibly before this renderer could
     // have registered a listener, and a dropped push would lose the notice
@@ -296,9 +278,6 @@ export function App() {
       cleanupListChanged?.();
       cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
-      cleanupHostMemoryPressureListener?.();
-      cleanupHostMemoryRecoveryListener?.();
-      cleanupHostMemoryAgentPausedListener?.();
       cleanupAnnouncementsChanged?.();
       cleanupOffscreenSurfaces?.();
       cleanupMcpConnectionFailed?.();

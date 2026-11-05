@@ -17,7 +17,7 @@ import { looksLikeShellId } from './background-shell/looks-like-shell-id';
  *   parallel subagent's start cleared the flag 4 ms after it was raised, and the
  *   stale-thinking watchdog emptied the stack 14 minutes later, so the nudge's
  *   Enter approved a tool call nobody saw.
- * - The low-memory pause paused agents whose own gate was still running in the
+ * - An automatic pause stopped agents whose own gate was still running in the
  *   background, after the hatch dropped the shell from the hold.
  * - The step check ruled a session "still working" or "not done" from the
  *   wording of its reply, with the same gate running both times.

@@ -2,20 +2,17 @@
  * Pause a task's live session: the desktop Pause button's whole path, shared
  * by its IPC handler (`SESSION_SUSPEND` in `sessions.ts`), the phone's
  * `pause-session` verb (`mobile-bridge/handlers/pause-session.ts`), and the
- * two pauses Kangentic makes on its own (the idle timeout, and low memory).
- * One function, so they cannot drift: the same lock, reconcile, DB writes, and
- * PTY suspend, with the record written before the PTY goes down.
+ * pause Kangentic makes on its own (the idle timeout). One function, so they
+ * cannot drift: the same lock, reconcile, DB writes, and PTY suspend, with the
+ * record written before the PTY goes down.
  *
  * The suspend is recorded as the USER's by default (`suspended_by = 'user'`).
- * A pause Kangentic made records `'auto'` (the idle timeout) or `'low_memory'`.
- * All are held pauses (`isHeldPause`): neither a restart nor an auto-spawn
- * column starts the task again by itself (`autoSpawnForTask`'s held-pause
- * check). The workflow's memory resume is the one exception, for a
- * `'low_memory'` pause of a running workflow's task. A pause never reaps
- * the task's leftover processes: the task is parked, not finished
- * (task-process-tag.md). In a project with a Stop script, the two pauses
- * Kangentic makes start that script once they return, outside this lock
- * (`src/main/stop-script/`); this function never does.
+ * The idle timeout records `'auto'`. Both are held pauses (`isHeldPause`):
+ * neither a restart nor an auto-spawn column starts the task again by itself
+ * (`autoSpawnForTask`'s held-pause check). A pause never reaps the task's
+ * leftover processes: the task is parked, not finished (task-process-tag.md).
+ * In a project with a Stop script, the idle pause starts that script once it
+ * returns, outside this lock (`src/main/stop-script/`); this function never does.
  *
  * No Done or archive gate, on purpose, matching the task view, whose Pause
  * stays available in Done and on an archived task because it is the only stop
@@ -49,7 +46,7 @@ export interface PauseTaskSessionOptions {
    * on `resumeTaskSession`'s.
    */
   onAccepted?: () => void;
-  /** Who is pausing. Defaults to `'user'`; a pause Kangentic made passes `'auto'` or `'low_memory'`. */
+  /** Who is pausing. Defaults to `'user'`; the idle timeout passes `'auto'`. */
   suspendedBy?: SuspendedBy;
   /**
    * For a pause Kangentic decides on its own. Re-checked under the task lock

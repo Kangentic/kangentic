@@ -75,21 +75,6 @@ declare global {
     /** Replaces the monitor rows and pushes a `monitor:changed` snapshot to every subscriber. Installed once `monitor.onChanged` has a subscriber. */
     __mockFireMonitorChanged?: (rows: Array<Record<string, unknown> & { sessionId: string }>) => void;
 
-    /** Subscribers registered via `hostMemory.onPressure`; fired by `__mockFireHostMemoryPressure`. Installed eagerly at mock-bootstrap time (Sentry DESKTOP-16). */
-    __mockHostMemoryPressureListeners?: Array<(event: import('../../src/shared/types').HostMemoryPressureEvent) => void>;
-    /** Fires the host-memory-pressure push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
-    __mockFireHostMemoryPressure?: (event: import('../../src/shared/types').HostMemoryPressureEvent) => void;
-
-    /** Subscribers registered via `hostMemory.onRecovery`; fired by `__mockFireHostMemoryRecovery`. Installed eagerly at mock-bootstrap time (Sentry DESKTOP-16). */
-    __mockHostMemoryRecoveryListeners?: Array<(event: import('../../src/shared/types').HostMemoryRecoveryEvent) => void>;
-    /** Fires the host-memory-recovery push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
-    __mockFireHostMemoryRecovery?: (event: import('../../src/shared/types').HostMemoryRecoveryEvent) => void;
-
-    /** Subscribers registered via `hostMemory.onAgentPaused`; fired by `__mockFireHostMemoryAgentPaused`. Installed eagerly at mock-bootstrap time. */
-    __mockHostMemoryAgentPausedListeners?: Array<(event: import('../../src/shared/types').HostMemoryAgentPausedEvent) => void>;
-    /** Fires the low-memory agent-paused push (one agent per call) to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
-    __mockFireHostMemoryAgentPaused?: (event: import('../../src/shared/types').HostMemoryAgentPausedEvent) => void;
-
     /** Pushes `automation:runFailed` (main's "an automation did not do what the board says") to every `automations.onRunFailed` subscriber. Installed once the subscription exists; throws if every subscriber has gone. */
     __mockFireAutomationRunFailed?: (failure: import('../../src/shared/types').AutomationRunFailure) => void;
     /** Pushes `workflow:completed` (every task of a workflow reached Done) to every `tasks.onWorkflowCompleted` subscriber. Installed once the subscription exists. */

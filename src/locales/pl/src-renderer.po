@@ -178,51 +178,6 @@ msgstr "{minutes, plural, one {„{taskTitle}”: przekroczono limit czasu po # 
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, one {„{taskTitle}”: przekroczono limit czasu po # sekundzie.} few {„{taskTitle}”: przekroczono limit czasu po # sekundach.} many {„{taskTitle}”: przekroczono limit czasu po # sekundach.} other {„{taskTitle}”: przekroczono limit czasu po # sekundy.}}"
 
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, one {{projectName}, oczekiwanie: # dzień} few {{projectName}, oczekiwanie: # dni} many {{projectName}, oczekiwanie: # dni} other {{projectName}, oczekiwanie: # dnia}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, one {{projectName}, oczekiwanie: # godzina} few {{projectName}, oczekiwanie: # godziny} many {{projectName}, oczekiwanie: # godzin} other {{projectName}, oczekiwanie: # godziny}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, one {{projectName}, oczekiwanie: # minuta} few {{projectName}, oczekiwanie: # minuty} many {{projectName}, oczekiwanie: # minut} other {{projectName}, oczekiwanie: # minuty}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, one {oczekiwanie: # dzień} few {oczekiwanie: # dni} many {oczekiwanie: # dni} other {oczekiwanie: # dnia}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, one {Oczekiwanie: # dzień} few {Oczekiwanie: # dni} many {Oczekiwanie: # dni} other {Oczekiwanie: # dnia}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, one {oczekiwanie: # godzina} few {oczekiwanie: # godziny} many {oczekiwanie: # godzin} other {oczekiwanie: # godziny}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, one {Oczekiwanie: # godzina} few {Oczekiwanie: # godziny} many {Oczekiwanie: # godzin} other {Oczekiwanie: # godziny}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, one {oczekiwanie: # minuta} few {oczekiwanie: # minuty} many {oczekiwanie: # minut} other {oczekiwanie: # minuty}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, one {Oczekiwanie: # minuta} few {Oczekiwanie: # minuty} many {Oczekiwanie: # minut} other {Oczekiwanie: # minuty}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
 msgid "{basePill} will be checked out in the project folder"
@@ -247,16 +202,6 @@ msgstr "Gałąź {branchPill} zostanie utworzona z {basePill} w nowym drzewie ro
 #, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "Gałąź {branchPill} zostanie utworzona z {basePill} w folderze projektu"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {Wstrzymano bezczynnego agenta} one {Wstrzymano # bezczynnego agenta} few {Wstrzymano # bezczynnych agentów} many {Wstrzymano # bezczynnych agentów} other {Wstrzymano # bezczynnego agenta}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic wstrzymał go, aby zwolnić pamięć.} one {Kangentic wstrzymał go, aby zwolnić pamięć.} few {Kangentic wstrzymał ich, aby zwolnić pamięć.} many {Kangentic wstrzymał ich, aby zwolnić pamięć.} other {Kangentic wstrzymał ich, aby zwolnić pamięć.}}"
 
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
@@ -332,11 +277,6 @@ msgstr "{processCount, plural, one {Zadanie „{taskTitle}” pozostawiło # dzi
 #, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, one {{taskCount, plural, one {# zadanie pozostawiło} few {# zadania pozostawiły} many {# zadań pozostawiło} other {# zadania pozostawiło}} # działający proces.} few {{taskCount, plural, one {# zadanie pozostawiło} few {# zadania pozostawiły} many {# zadań pozostawiło} other {# zadania pozostawiło}} # działające procesy.} many {{taskCount, plural, one {# zadanie pozostawiło} few {# zadania pozostawiły} many {# zadań pozostawiło} other {# zadania pozostawiło}} # działających procesów.} other {{taskCount, plural, one {# zadanie pozostawiło} few {# zadania pozostawiły} many {# zadań pozostawiło} other {# zadania pozostawiło}} # działającego procesu.}}"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "{remaining} of memory reservations left."
-msgstr "Pozostało {remaining} rezerwacji pamięci."
 
 #: src/renderer/utils/format-session.ts
 #, fuzzy
@@ -468,11 +408,6 @@ msgstr "Wznowiono agenta"
 #, fuzzy
 msgid "Agent started"
 msgstr "Agent uruchomiony"
-
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Almost no memory reservations left."
-msgstr "Prawie nie pozostało rezerwacji pamięci."
 
 #: src/renderer/components/ErrorBoundary.tsx
 #, fuzzy
@@ -1142,11 +1077,6 @@ msgstr "Pozostałe procesy"
 msgid "Leftover processes stopped"
 msgstr "Zatrzymano pozostałe procesy"
 
-#: src/renderer/stores/host-memory-store.ts
-#, fuzzy
-msgid "Low on memory"
-msgstr "Mało pamięci"
-
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
@@ -1528,7 +1458,6 @@ msgid "Retry"
 msgstr "Ponów"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Review"
 msgstr "Przejrzyj"
@@ -1599,7 +1528,6 @@ msgid "Session ended"
 msgstr "Sesja zakończona"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 #, fuzzy
 msgid "Settings"
 msgstr "Ustawienia"

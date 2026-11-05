@@ -54,16 +54,6 @@ msgstr "({deleteFailureCount} 件失敗)"
 msgid "{0} does not exist on {1}."
 msgstr "{0} は {1} に存在しません。"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, other {メモリ解放のため # 個のエージェントを一時停止しました}}"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr "{agentCount, plural, other {再開するまで一時停止されたままになります。ワークフローのタスクは、メモリが回復すると自動的に再開されます。}}"
-
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
@@ -720,7 +710,6 @@ msgstr "クリア"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
 #, fuzzy
@@ -2554,28 +2543,11 @@ msgstr "復元先"
 msgid "Restore to board"
 msgstr "ボードに復元"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task action"
-msgid "Resume"
-msgstr "再開"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Resume {taskTitle}"
-msgstr "{taskTitle} を再開"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Resume session"
 msgstr "セッションを再開"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Resuming"
-msgstr "再開中"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
@@ -2614,12 +2586,6 @@ msgstr "プロジェクトフォルダーで実行"
 #, fuzzy
 msgid "Run one agent in this column at a time"
 msgstr "この列で一度に実行するエージェントを 1 つにする"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgctxt "task status"
-msgid "Running"
-msgstr "実行中"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3306,11 +3272,6 @@ msgstr "無題"
 #, fuzzy
 msgid "Untitled column"
 msgstr "無題の列"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "Untitled task"
-msgstr "無題のタスク"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy

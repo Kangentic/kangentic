@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
 import type { QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
-import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
+import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
 import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
@@ -656,24 +656,6 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, message: string) => callback(message);
       ipcRenderer.on(IPC.UPDATE_BLOCKED, handler);
       return () => ipcRenderer.removeListener(IPC.UPDATE_BLOCKED, handler);
-    },
-  },
-
-  hostMemory: {
-    onPressure: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryPressureEvent) => callback(payload);
-      ipcRenderer.on(IPC.HOST_MEMORY_PRESSURE, handler);
-      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_PRESSURE, handler);
-    },
-    onRecovery: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryRecoveryEvent) => callback(payload);
-      ipcRenderer.on(IPC.HOST_MEMORY_RECOVERED, handler);
-      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_RECOVERED, handler);
-    },
-    onAgentPaused: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: HostMemoryAgentPausedEvent) => callback(payload);
-      ipcRenderer.on(IPC.HOST_MEMORY_AGENT_PAUSED, handler);
-      return () => ipcRenderer.removeListener(IPC.HOST_MEMORY_AGENT_PAUSED, handler);
     },
   },
 

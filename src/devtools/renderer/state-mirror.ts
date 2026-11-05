@@ -4,7 +4,6 @@ import { useBacklogStore } from '../../renderer/stores/backlog-store';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { useDictationStore } from '../../renderer/stores/dictation-store';
-import { useHostMemoryStore } from '../../renderer/stores/host-memory-store';
 import { useKnowledgeGraphStore } from '../../renderer/stores/knowledge-graph-store';
 import { useLeftoverProcessesStore } from '../../renderer/stores/leftover-processes-store';
 import { useMobileStore } from '../../renderer/stores/mobile-store';
@@ -82,9 +81,6 @@ const PREVIEW_STORES: Record<string, ReadableStore> = {
   board: useBoardStore,
   config: useConfigStore,
   dictation: useDictationStore,
-  // Quoted because the file stem is kebab-case (host-memory-store.ts); the
-  // completeness test matches the key to the filename stem.
-  'host-memory': useHostMemoryStore,
   // Quoted because the file stem is kebab-case (knowledge-graph-store.ts); the
   // completeness test matches the key to the filename stem.
   'knowledge-graph': useKnowledgeGraphStore,

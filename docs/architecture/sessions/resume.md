@@ -31,8 +31,7 @@ cut short (see [On agent turn end](../automations/triggers.md#on-agent-turn-end)
 The payload also says who resumed the session (`resumedBy`, a `SessionResumer`), from
 `SpawnSessionInput.resumedBy`. A person's resume is `'user'`, the default. Startup recovery,
 which also brings agents back after a pty host loss (`resumeSuspendedSessions`), passes
-`'recovery'`. The workflow's memory resume passes `'memory'` through `resumeTaskSession` and
-`SpawnOverrides.resumedBy`. Workflow recovery reads it: an agent Kangentic restarted lost the
+`'recovery'`. Workflow recovery reads it: an agent Kangentic restarted lost the
 background commands it started, so its recovery starts over at once (see
 [Workflow engine](../workflows/workflow-engine.md)).
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, or as

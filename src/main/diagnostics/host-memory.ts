@@ -1,5 +1,13 @@
 /**
- * Host-level memory pressure sampling (Sentry DESKTOP-16).
+ * Host-level memory sampling (Sentry DESKTOP-16).
+ *
+ * The readings go on crash reports and the give-up dialog, and they hold the
+ * workflow's automatic nudges while memory reads low
+ * (`workflow-memory-gate.ts`). Nothing here warns anyone or stops an agent. An
+ * earlier warning toast and a pause of waiting agents were removed: a low
+ * reading was a short spell of reservations on a limit that grows, and the
+ * load came from working agents the pause never touched. A low spell now leaves
+ * one log line when it starts and one when it ends.
  *
  * DESKTOP-16 was a renderer OOM where the crashing renderer held 179 MB
  * (smaller than a healthy long-running dogfood session) while the HOST had
@@ -26,20 +34,18 @@
  * the kernel's MemAvailable, its estimate of what can be allocated without
  * swapping. `free` there is MemFree, which excludes page cache and other
  * reclaimable memory and so reads near zero on a perfectly healthy machine,
- * which made the recorded figure useless for judging a Linux crash. No Linux
- * pressure WARNING is raised from it, because no threshold has been measured
- * there; the warning toast stays Windows-only.
+ * which made the recorded figure useless for judging a Linux crash.
  *
- * The low-memory pause (idle-agent-pause.ts) reads every platform, each by its
- * own signal (`memoryHeadroom`):
- *   - Windows: commit headroom, the same figure the warning reads.
+ * Whether memory reads low is judged on every platform, each by its own signal
+ * (`memoryHeadroom`):
+ *   - Windows: commit headroom.
  *   - Linux: RAM plus swap, `available + swapFree` against `total + swapTotal`,
  *     through the same threshold and recovery line. MemAvailable alone reads
  *     low on a healthy machine that keeps cold pages in swap.
  *   - macOS: the kernel's own verdict, `kern.memorystatus_vm_pressure_level`
  *     (1 normal, 2 warn, 4 critical). Critical is low and normal is not. Warn
  *     alone says too little: a machine sat at warn on every check with 36% of
- *     its memory free and its swap 94% full, and agents were paused for it.
+ *     its memory free and its swap 94% full.
  *     Swap is no ceiling there, since macOS adds swap files as it needs them,
  *     and if room really runs out the level goes to critical. So warn is judged
  *     by the kernel's own free percentage (`kern.memorystatus_level`) against
@@ -105,16 +111,15 @@ export function getLastHostMemorySample(): HostMemorySample | null {
  *  remaining, so 2 GB gives roughly three orders of magnitude of runway. */
 const ABSOLUTE_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024;
 /** Relative floor: keeps a small machine (an 8 GB commit limit resolves to
- *  400 MB) from warning at a headroom that is actually normal for it. The
+ *  400 MB) from reading low at a headroom that is actually normal for it. The
  *  smaller of the two arms wins. */
 const RELATIVE_THRESHOLD_FRACTION = 0.05;
-/** Re-arm only once remaining commit recovers past this multiple of the
- *  threshold, so a value oscillating around the line cannot re-fire on every
- *  tick (hysteresis). */
+/** A low spell ends only once headroom recovers past this multiple of the
+ *  threshold, so a value oscillating around the line cannot start a new spell
+ *  on every tick (hysteresis). */
 const HYSTERESIS_MULTIPLIER = 2;
-/** Backstop even against a value oscillating exactly at the hysteresis
- *  boundary: no more than one warning per half hour regardless. */
-const MIN_WARNING_INTERVAL_MS = 30 * 60_000;
+
+const BYTES_PER_GB = 1024 * 1024 * 1024;
 
 /** Exported so the boundary tests measure against the real formula instead of
  *  a hand-copied one that would silently keep passing if a constant changed. */
@@ -122,7 +127,7 @@ export function pressureThreshold(commitLimitBytes: number): number {
   return Math.min(ABSOLUTE_THRESHOLD_BYTES, commitLimitBytes * RELATIVE_THRESHOLD_FRACTION);
 }
 
-/** The headroom past which a low-memory latch clears (the hysteresis line). */
+/** The headroom past which a low-memory latch clears (`updateLowMemoryLatch`). */
 export function recoveryLine(limitBytes: number): number {
   return pressureThreshold(limitBytes) * HYSTERESIS_MULTIPLIER;
 }
@@ -143,7 +148,7 @@ const MAC_CRITICAL_PRESSURE_LEVEL = 4;
 
 /**
  * The sample's headroom, or null when this platform's reading is missing or
- * unrecognized. Pure: the low-memory pause and its tests read it.
+ * unrecognized. Pure: the latch below and the workflow's memory gate read it.
  */
 export function memoryHeadroom(sample: HostMemorySample): MemoryHeadroom | null {
   if (sample.platform === 'win32') {
@@ -252,84 +257,138 @@ export function createMacSysctlReader(
   };
 }
 
-export interface HostMemoryPressureState {
-  /** False while latched below the threshold; re-arms only once recovered
-   *  past the hysteresis line. */
-  armed: boolean;
-  lastWarnedAt: number | null;
+export interface LowMemoryLatch {
+  /** True from the drop below the threshold until headroom clears the recovery line. */
+  active: boolean;
 }
 
-export function createHostMemoryPressureState(): HostMemoryPressureState {
-  return { armed: true, lastWarnedAt: null };
+export function createLowMemoryLatch(): LowMemoryLatch {
+  return { active: false };
 }
-
-/** The outcome of one evaluation tick. `'pressure'` is the existing
- *  edge-triggered warning; `'recovered'` is the clear-side edge - headroom
- *  climbed back past the hysteresis line after a warning was latched (NOT
- *  fired on every healthy tick above the line, which is why this is not a
- *  plain boolean: `state.armed` starts `true`, so a fresh boot's first
- *  healthy tick must read `'none'`, not `'recovered'`). `'none'` covers
- *  every other case (still above the line and already armed, in the
- *  threshold-to-hysteresis grey zone, below the line but not yet re-armed or
- *  blocked by the minimum interval, or a degraded/unsupported sample). */
-export type HostMemoryPressureDecision = 'pressure' | 'recovered' | 'none';
 
 /**
- * Pure edge-triggered decision: does this sample warrant a NEW warning, or
- * does it mark the recovery from one, given the running state? Mutates
- * `state` in place. `now` is injectable for tests.
- *
- * Three guards on the warning side, all necessary against a condition that
- * can persist for hours at a 60s sampling cadence: edge-triggering (fire on
- * the downward crossing only), hysteresis (re-arm only well above the
- * line), and a hard minimum interval (a backstop against a value
- * oscillating across the line itself). The recovery side reuses the same
- * hysteresis line: it fires once, only when a warning was actually latched,
- * so a value sitting in the threshold-to-hysteresis grey zone (a "partial"
- * recovery) is deliberately not treated as recovered - it must clear the
- * same line the warning side requires headroom to clear before re-arming.
+ * Whether memory reads low after this reading. Mutates `latch`: it turns on
+ * below the threshold and off past the recovery line, so a reading in between
+ * keeps whatever it was. A missing reading changes nothing and reads as not low.
  */
-export function evaluateHostMemoryPressure(
-  sample: HostMemorySample,
-  state: HostMemoryPressureState,
-  now: number = Date.now()
-): HostMemoryPressureDecision {
-  const { commitLimitBytes, commitRemainingBytes } = sample;
-  if (commitLimitBytes === null || commitRemainingBytes === null || commitLimitBytes <= 0) {
-    return 'none';
+export function updateLowMemoryLatch(headroom: MemoryHeadroom | null, latch: LowMemoryLatch): boolean {
+  if (headroom === null) return false;
+  if (headroom.kind === 'level') {
+    latch.active = headroom.low;
+    return latch.active;
   }
+  if (headroom.remainingBytes < pressureThreshold(headroom.limitBytes)) {
+    latch.active = true;
+  } else if (headroom.remainingBytes >= recoveryLine(headroom.limitBytes)) {
+    latch.active = false;
+  }
+  return latch.active;
+}
 
-  const threshold = pressureThreshold(commitLimitBytes);
-  if (commitRemainingBytes >= threshold * HYSTERESIS_MULTIPLIER) {
-    const wasLatched = !state.armed;
-    state.armed = true;
-    return wasLatched ? 'recovered' : 'none';
-  }
-  if (commitRemainingBytes >= threshold) return 'none';
-  if (!state.armed) return 'none';
-  if (state.lastWarnedAt !== null && now - state.lastWarnedAt < MIN_WARNING_INTERVAL_MS) {
-    return 'none';
-  }
+interface LowMemorySpell {
+  startedAt: number;
+  /** Null until a reading in bytes arrives: macOS reports a level at normal and critical. */
+  lowestRemainingBytes: number | null;
+  firstLimitBytes: number | null;
+  lastLimitBytes: number | null;
+}
 
-  state.armed = false;
-  state.lastWarnedAt = now;
-  return 'pressure';
+export interface LowMemorySpellState {
+  latch: LowMemoryLatch;
+  spell: LowMemorySpell | null;
+}
+
+export function createLowMemorySpellState(): LowMemorySpellState {
+  return { latch: createLowMemoryLatch(), spell: null };
+}
+
+function formatGigabytes(bytes: number): string {
+  return `${(bytes / BYTES_PER_GB).toFixed(1)} GB`;
+}
+
+function spellStartLine(headroom: MemoryHeadroom): string {
+  if (headroom.kind === 'level') return 'Memory reads low: the system reports critical pressure.';
+  return `Memory reads low: ${formatGigabytes(headroom.remainingBytes)} left of ${formatGigabytes(headroom.limitBytes)}.`;
+}
+
+function spellEndLine(spell: LowMemorySpell, now: number): string {
+  const minutes = Math.max(1, Math.round((now - spell.startedAt) / 60_000));
+  const { lowestRemainingBytes, firstLimitBytes, lastLimitBytes } = spell;
+  if (lowestRemainingBytes === null || firstLimitBytes === null || lastLimitBytes === null) {
+    return `Memory recovered after ${minutes} min.`;
+  }
+  const limits = firstLimitBytes === lastLimitBytes
+    ? formatGigabytes(lastLimitBytes)
+    : `${formatGigabytes(firstLimitBytes)} then ${formatGigabytes(lastLimitBytes)}`;
+  return `Memory recovered after ${minutes} min: lowest ${formatGigabytes(lowestRemainingBytes)} left, limit ${limits}.`;
+}
+
+/**
+ * The line a low spell logs on this reading, or null. One when it starts and
+ * one when it ends, with how long it lasted, how low it went and whether the
+ * limit moved, so a spell can be read back from the logs when diagnosing a
+ * crash. A missing reading changes nothing. Mutates `state`.
+ */
+export function trackLowMemorySpell(headroom: MemoryHeadroom | null, state: LowMemorySpellState, now: number): string | null {
+  if (headroom === null) return null;
+  const low = updateLowMemoryLatch(headroom, state.latch);
+  const bytes = headroom.kind === 'bytes' ? headroom : null;
+  if (state.spell === null) {
+    if (!low) return null;
+    state.spell = {
+      startedAt: now,
+      lowestRemainingBytes: bytes?.remainingBytes ?? null,
+      firstLimitBytes: bytes?.limitBytes ?? null,
+      lastLimitBytes: bytes?.limitBytes ?? null,
+    };
+    return spellStartLine(headroom);
+  }
+  const { spell } = state;
+  if (bytes) {
+    spell.lowestRemainingBytes = Math.min(spell.lowestRemainingBytes ?? bytes.remainingBytes, bytes.remainingBytes);
+    spell.firstLimitBytes ??= bytes.limitBytes;
+    spell.lastLimitBytes = bytes.limitBytes;
+  }
+  if (low) return null;
+  state.spell = null;
+  return spellEndLine(spell, now);
+}
+
+let simulatedLowMemory = false;
+
+/**
+ * Dev only (`/preview`): read every sample as low memory, so the workflow's
+ * memory gate and the spell log can be watched without exhausting the machine.
+ * Set through `dev.simulateLowMemory`.
+ */
+export function setSimulatedLowMemory(on: boolean): void {
+  simulatedLowMemory = on;
+}
+
+/**
+ * The sample as every low-memory reader sees it: forced low while dev's
+ * `dev.simulateLowMemory` is on. Production builds drop the simulation
+ * (`__KANGENTIC_DEV__`).
+ */
+export function sampleAsRead(sample: HostMemorySample): HostMemorySample {
+  return __KANGENTIC_DEV__ && simulatedLowMemory ? simulateLowMemorySample(sample) : sample;
+}
+
+/** The sample with this platform's reading forced low. */
+export function simulateLowMemorySample(sample: HostMemorySample): HostMemorySample {
+  return {
+    ...sample,
+    commitRemainingBytes: sample.commitLimitBytes === null ? null : 0,
+    physicalAvailableBytes: sample.physicalAvailableBytes === null ? null : 0,
+    swapFreeBytes: sample.swapFreeBytes === null || sample.swapFreeBytes === undefined ? sample.swapFreeBytes : 0,
+    memoryPressureLevel: sample.platform === 'darwin' ? 4 : sample.memoryPressureLevel,
+  };
 }
 
 export interface HostMemorySamplerOptions {
-  /** How many agents are running, read live at warning time (not cached),
-   *  so an idle app still reports a real number. */
-  getActiveAgentCount: () => number;
-  /** Called on the downward crossing only (see evaluateHostMemoryPressure). */
-  onPressure: (sample: HostMemorySample, activeAgentCount: number) => void;
-  /** Called on the upward crossing of the hysteresis line, and only when a
-   *  warning was actually latched - the clear edge for `onPressure`. Not
-   *  optional: an unpaired `onPressure` would silently ship a toast with no
-   *  way to dismiss it, which is the bug this option exists to close. */
-  onRecovery: (sample: HostMemorySample) => void;
-  /** Called on every tick regardless of pressure - the attach point for a
-   *  Sentry context, so whatever event fires next carries the freshest
-   *  sample even when nothing ever crosses the threshold. */
+  /** Called on every tick - the attach point for a Sentry context, so whatever
+   *  event fires next carries the freshest sample, and for the workflow's
+   *  memory gate. */
   onSample?: (sample: HostMemorySample) => void;
   intervalMs?: number;
 }
@@ -344,7 +403,7 @@ const DEFAULT_INTERVAL_MS = 60_000;
  * `src/main/index.ts`.
  */
 export function startHostMemorySampler(options: HostMemorySamplerOptions): () => void {
-  const state = createHostMemoryPressureState();
+  const spellState = createLowMemorySpellState();
   const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
   const pressureLevel = process.platform === 'darwin' ? createMacSysctlReader(readMacPressureLevel) : null;
   // Its own read: an unknown name fails a whole sysctl run, and the level must
@@ -360,13 +419,10 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
         memoryFreePercent: freePercent?.current(Date.now(), intervalMs * 2) ?? null,
       });
       lastSample = sample;
+      const spellLine = trackLowMemorySpell(memoryHeadroom(sampleAsRead(sample)), spellState, Date.now());
+      // A warning, so it reaches the log without Persist Console Logs on.
+      if (spellLine !== null) console.warn(`[host-memory] ${spellLine}`);
       options.onSample?.(sample);
-      const decision = evaluateHostMemoryPressure(sample, state, Date.now());
-      if (decision === 'pressure') {
-        options.onPressure(sample, options.getActiveAgentCount());
-      } else if (decision === 'recovered') {
-        options.onRecovery(sample);
-      }
     } catch (error) {
       console.error('[host-memory] Sampling tick failed:', error);
     }

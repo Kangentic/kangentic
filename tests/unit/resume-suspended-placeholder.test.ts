@@ -56,6 +56,12 @@ vi.mock('node:fs', () => ({
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({}) as never) }));
 vi.mock('../../src/main/shutdown-state', () => ({ isShuttingDown: vi.fn(() => false) }));
 
+// The workflow a task is in. None unless a test says so.
+const workflowOfTaskMock = vi.fn((): { state: string } | null => null);
+vi.mock('../../src/main/workflows/workflow-home', () => ({
+  workflowOfTask: (...args: unknown[]) => workflowOfTaskMock(...(args as [])),
+}));
+
 const markRecordSuspendedMock = vi.fn(() => true);
 const retireRecordMock = vi.fn(() => true);
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
@@ -896,9 +902,11 @@ describe('resumeSuspendedSessions: a held pause stays paused across a restart', 
   // suspended record is resumed by itself. A held pause must not be.
   beforeEach(() => {
     swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    workflowOfTaskMock.mockReset();
+    workflowOfTaskMock.mockReturnValue(null);
   });
 
-  it.each(['user', 'auto'] as const)('registers a placeholder and resumes nothing for a %s pause', async (suspendedBy) => {
+  it.each(['user', 'auto', 'low_memory'] as const)('registers a placeholder and resumes nothing for a %s pause', async (suspendedBy) => {
     sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: suspendedBy })]);
     const sessionManager = makeSessionManager();
 
@@ -907,6 +915,50 @@ describe('resumeSuspendedSessions: a held pause stays paused across a restart', 
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
     expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
     expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('resumes a low_memory pause an earlier version left on a running workflow\'s task', async () => {
+    workflowOfTaskMock.mockReturnValue({ state: 'running' });
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'low_memory' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+    expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
+  });
+
+  it('keeps a user pause held on a running workflow\'s task', async () => {
+    workflowOfTaskMock.mockReturnValue({ state: 'running' });
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'user' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a low_memory pause held while its workflow is paused', async () => {
+    workflowOfTaskMock.mockReturnValue({ state: 'paused' });
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'low_memory' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a low_memory pause held when its workflow cannot be read', async () => {
+    workflowOfTaskMock.mockImplementation(() => { throw new Error('home database unreadable'); });
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'low_memory' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
   });
 
   it('control: a system suspend from the last quit goes on to be resumed', async () => {

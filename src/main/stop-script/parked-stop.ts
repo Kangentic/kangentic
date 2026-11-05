@@ -1,12 +1,12 @@
 /**
  * Stop what a parked task left running, through the project's Stop script.
  *
- * A pause Kangentic made (the idle timeout, low memory) parks a task nobody is
- * watching, and the stack its agent started can hold more than the agent did. So
- * after such a pause, and only such a pause, this runs the script: not for a
- * user's Pause or Stop, an `auto_spawn=false` entry, a respawn or a quit, each of
- * which leaves the stack up for the person testing it, the agent coming straight
- * back, or the next launch.
+ * A pause Kangentic made (the idle timeout) parks a task nobody is watching, and
+ * the stack its agent started can hold more than the agent did. So after such a
+ * pause, and only such a pause, this runs the script: not for a user's Pause or
+ * Stop, an `auto_spawn=false` entry, a respawn or a quit, each of which leaves
+ * the stack up for the person testing it, the agent coming straight back, or the
+ * next launch.
  *
  * In order, and each step is what keeps it cheap or safe:
  * - No script, or stopping off: stop here, with no host call, so a project that
@@ -98,16 +98,8 @@ function sameProcess(left: ProbedProcess, right: ProbedProcess): boolean {
   return left.pid === right.pid && left.startKey === right.startKey;
 }
 
-/**
- * One attempt for one parked task. `onScriptStart` fires as the script starts,
- * for the low-memory pass, which must not wait out a two-minute script to spend
- * its tick.
- */
-export async function stopParkedTask(
-  deps: ParkedStopDeps,
-  target: ParkedStopTarget,
-  options: { onScriptStart?: () => void } = {},
-): Promise<ParkedStopResult> {
+/** One attempt for one parked task. */
+export async function stopParkedTask(deps: ParkedStopDeps, target: ParkedStopTarget): Promise<ParkedStopResult> {
   const script = deps.scriptOf(target.projectPath);
   if (!script || !deps.isStoppingEnabled() || deps.isShuttingDown()) return 'skipped';
   const parked = deps.parkedTask(target);
@@ -130,7 +122,6 @@ export async function stopParkedTask(
   // Past this point the script runs to its end, and its message reaches a resumed agent.
   if (!deps.parkedTask(target)) return 'not-paused';
   if (deps.isShuttingDown()) return 'skipped';
-  options.onScriptStart?.();
   const outcome = await deps.runScript(target.taskId, script, cwd);
   if (outcome.status === 'failed') {
     deps.reportFailure(target, parked.title, outcome.failure);

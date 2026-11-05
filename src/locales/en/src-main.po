@@ -39,6 +39,10 @@ msgstr "{taskTitle} - {place}"
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} workflow"
 
+#: src/main/db/global-db-dialog.ts
+msgid "A link in this path points to a folder that does not exist."
+msgstr "A link in this path points to a folder that does not exist."
+
 #: src/main/notifications/desktop-notifier.ts
 msgid "A project"
 msgstr "A project"
@@ -89,6 +93,10 @@ msgid "Free system memory (commit) at the time: {remainingMb} MB."
 msgstr "Free system memory (commit) at the time: {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
+msgid "Kangentic can't create its data folder"
+msgstr "Kangentic can't create its data folder"
+
+#: src/main/db/global-db-dialog.ts
 msgid "Kangentic can't read its database"
 msgstr "Kangentic can't read its database"
 
@@ -137,9 +145,17 @@ msgstr "Session crashed: {label}"
 msgid "Terminals restarted"
 msgstr "Terminals restarted"
 
+#: src/main/db/global-db-dialog.ts
+msgid "The drive for this folder is not available."
+msgstr "The drive for this folder is not available."
+
 #: src/main/index.ts
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
+
+#: src/main/db/global-db-dialog.ts
+msgid "This path has characters Windows does not allow."
+msgstr "This path has characters Windows does not allow."
 
 #: src/main/db/global-db-dialog.ts
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."

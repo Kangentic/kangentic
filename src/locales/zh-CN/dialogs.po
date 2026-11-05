@@ -46,15 +46,6 @@ msgstr "（{deleteFailureCount} 个失败）"
 msgid "{0} does not exist on {1}."
 msgstr "{0} 在 {1} 上不存在。"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, other {已暂停 # 个智能体以释放内存}}"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
-msgstr "{agentCount, plural, other {这些智能体将保持暂停，直到你手动恢复。工作流中的任务会在内存恢复后自动继续。}}"
-
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{ahead} ahead, {behind} behind base branch"
 msgstr "领先基础分支 {ahead} 个提交，落后 {behind} 个提交"
@@ -591,7 +582,6 @@ msgstr "清除"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
 msgctxt "button"
@@ -2090,24 +2080,10 @@ msgstr "恢复到"
 msgid "Restore to board"
 msgstr "恢复到看板"
 
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task action"
-msgid "Resume"
-msgstr "恢复"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "Resume {taskTitle}"
-msgstr "恢复 {taskTitle}"
-
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Resume session"
 msgstr "恢复会话"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task status"
-msgid "Resuming"
-msgstr "正在恢复"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Resuming agent..."
@@ -2140,11 +2116,6 @@ msgstr "在项目文件夹中运行"
 #, fuzzy
 msgid "Run one agent in this column at a time"
 msgstr "在此列中一次只运行一个智能体"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgctxt "task status"
-msgid "Running"
-msgstr "运行中"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "completed task card"
@@ -2706,10 +2677,6 @@ msgstr "无标题"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Untitled column"
 msgstr "未命名列"
-
-#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "Untitled task"
-msgstr "无标题任务"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"

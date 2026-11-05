@@ -163,10 +163,11 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   and the host would protect the still-running agent and its children. Kill every session first
   and `Promise.all` the waits, so N young sessions cost one grace. Never await the exit inside the
   per-project worktree queue.
-- **The quit path defers only where the drain follows.** `killAll({ allowGrace: true })` is
-  passed only from `before-quit` (unless a Windows session-end disarmed the drain) and the
+- **The quit path defers only where the quit can wait out the grace.** `killAll({ allowGrace: true })`
+  is passed only from `before-quit` (unless a Windows session-end disarmed the drain) and the
   powerMonitor shutdown; a signal handler or session-end calls it bare and gets the instant kill
-  plus a flush of every parked PTY. The report's `deferredCount` extends the drain's deadline by
+  plus a flush of every parked PTY. A POSIX signal still drains, but only for exits already under
+  way. The report's `deferredCount` extends the drain's deadline by
   the grace; at 1500 ms each, an unextended deadline would fire as the deferred kill lands.
   `SessionManager.dispose()` never touches the registry: it runs one statement after `killAll()`.
 - **A short-lived probe PTY runs Claude on the classic renderer**

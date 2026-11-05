@@ -3,12 +3,12 @@ import type { SessionRecordStatus, SuspendedBy } from './types';
 /**
  * The suspend sources that hold a task paused until it is resumed: the user's
  * own Pause (`'user'`), and a pause Kangentic made on its own (`'auto'`, the
- * idle timeout; `'low_memory'`, the low-memory pause). Neither a restart nor a
- * column move starts a held task again. The one thing that resumes a held
- * pause without the user is the workflow's memory resume, and only a
- * `'low_memory'` pause of a running workflow's task (`workflow-memory-resume.ts`).
- * A `'system'` suspend (a quit, a move, a settings restart) holds nothing:
- * those agents come back on the next launch or the next move, as before.
+ * idle timeout; `'low_memory'`, which only an earlier version wrote). Neither a
+ * restart nor a column move starts a held task again, apart from startup
+ * recovery's one exception, a `'low_memory'` row on a running workflow's task
+ * (`resume-suspended.ts`). A `'system'` suspend (a quit, a move, a settings
+ * restart) holds nothing: those agents come back on the next launch or the next
+ * move, as before.
  *
  * One list, so the startup recovery, the spawn guard and the auto-spawn
  * queries cannot disagree about which pauses stick.

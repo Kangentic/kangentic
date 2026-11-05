@@ -151,42 +151,6 @@ msgstr "{minutes, plural, other {「{taskTitle}」:# 分鐘後逾時。}}"
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr "{seconds, plural, other {「{taskTitle}」:# 秒後逾時。}}"
 
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 小時}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr "{amount, plural, other {{projectName}，已等待 # 分鐘}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr "{amount, plural, other {已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr "{amount, plural, other {已等待 # 天}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr "{amount, plural, other {已等待 # 小時}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr "{amount, plural, other {已等待 # 小時}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr "{amount, plural, other {已等待 # 分鐘}}"
-
-#: src/renderer/lib/paused-for-memory.ts
-msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr "{amount, plural, other {已等待 # 分鐘}}"
-
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
 msgstr "{basePill} 將在專案資料夾中簽出"
@@ -206,14 +170,6 @@ msgstr "{branchPill} 將在新的工作樹中從 {basePill} 建立"
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "{branchPill} 將在專案資料夾中從 {basePill} 建立"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, other {已暫停 # 個閒置代理}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, other {Kangentic 為釋放記憶體暫停了代理。}}"
 
 #: src/renderer/stores/workflow-store.ts
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
@@ -274,10 +230,6 @@ msgstr "{processCount, plural, other {「{taskTitle}」留下 # 個處理程序�
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
 msgstr "{processCount, plural, other {{taskCount, plural, other {# 個任務}}留下 # 個處理程序仍在執行。}}"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "{remaining} of memory reservations left."
-msgstr "記憶體保留量還剩 {remaining}。"
 
 #: src/renderer/utils/format-session.ts
 msgid "{seconds}s"
@@ -389,10 +341,6 @@ msgstr "代理已繼續"
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Agent started"
 msgstr "代理已啟動"
-
-#: src/renderer/stores/host-memory-store.ts
-msgid "Almost no memory reservations left."
-msgstr "記憶體保留量即將用盡。"
 
 #: src/renderer/components/ErrorBoundary.tsx
 msgid "An unexpected error occurred."
@@ -931,10 +879,6 @@ msgstr "殘留的處理程序"
 msgid "Leftover processes stopped"
 msgstr "已停止殘留的處理程序"
 
-#: src/renderer/stores/host-memory-store.ts
-msgid "Low on memory"
-msgstr "記憶體不足"
-
 #: src/renderer/hooks/useAddProject.ts
 msgid "Make a first commit so each task gets its own worktree."
 msgstr "請先建立第一個提交，讓每個任務都有自己的工作樹。"
@@ -1243,7 +1187,6 @@ msgid "Retry"
 msgstr "重試"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Review"
 msgstr "檢視"
 
@@ -1300,7 +1243,6 @@ msgid "Session ended"
 msgstr "工作階段已結束"
 
 #: src/renderer/App.tsx
-#: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "設定"
 

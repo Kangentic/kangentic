@@ -26,12 +26,12 @@
  *      step proves the readers built on it find and stop a real process;
  *   5. quits with the first terminal still running, and requires exit code 0 inside
  *      the bound. On Windows and Linux that is a user's quit (the window
- *      closes), which runs the PTY exit drain; on macOS it is SIGTERM, which
- *      runs the synchronous shutdown but not the drain (see `quitRouteFor`).
- * Then it reads the app's persisted logs and fails on any line that says a
- * forked process crashed or fell back: the pty host falls back to running
- * terminals in main after repeated crashes, which would pass step 2 with a
- * dead host.
+ *      closes); on macOS it is SIGTERM (see `quitRouteFor`). Both run the PTY
+ *      exit drain, which prints how long the quit waited for the pty host.
+ * Then it reads the app's persisted logs and output, and fails on any line that
+ * says a forked process crashed or fell back: the pty host falls back to
+ * running terminals in main after repeated crashes, which would pass step 2
+ * with a dead host.
  *
  * Usage: node scripts/package-smoke.mjs [--out <dir>] [--scratch-root <dir>]
  * The scratch directory is deleted on success and kept (its path printed) on
@@ -98,6 +98,12 @@ export const FAILURE_MARKERS = [
   { pattern: /sqlite-vec unavailable/, sourceText: 'sqlite-vec unavailable', reason: 'the retrieval worker could not load sqlite-vec' },
   { pattern: /\[SHUTDOWN\] hard-failsafe:fired/, sourceText: '[SHUTDOWN] hard-failsafe:fired', reason: 'the quit hung until the hard failsafe killed it' },
   {
+    // The host's own wait ends before this deadline, so main never gives up first unless the host would not exit.
+    pattern: /\[SHUTDOWN\] pty-drain:timeout/,
+    sourceText: '[SHUTDOWN] pty-drain:timeout',
+    reason: 'the quit gave up waiting with the pty host or a child still alive',
+  },
+  {
     pattern: /\[TASK-REAP\] reap failed/,
     sourceText: '[TASK-REAP] reap failed (non-fatal): ',
     reason: 'the task reap failed (a reader that would not load, or a scan that listed nothing)',
@@ -156,10 +162,10 @@ export function resolveAppExecutable(outDir, platform, packageJson, fileSystem =
 }
 
 /** How the app is quit: closing its window on Windows and Linux, which is
- *  what a user does and what runs the PTY exit drain. macOS keeps an app
- *  running with no window, so there it gets SIGTERM. Its signal handler runs
- *  the synchronous shutdown and exits 0 itself, without the drain or a wait
- *  for the pty host, so the macOS leg does not cover those. */
+ *  what a user does. macOS keeps an app running with no window, so there it
+ *  gets SIGTERM. Its signal handler runs the synchronous shutdown and the PTY
+ *  exit drain, then exits 0 itself without Electron's own teardown, so the
+ *  macOS leg does not cover that teardown. */
 export function quitRouteFor(platform) {
   return platform === 'darwin' ? 'sigterm' : 'close-window';
 }
@@ -201,6 +207,21 @@ export function findFailureMarkers(lines) {
     }
   }
   return found;
+}
+
+/**
+ * What a finished run's lines say: the failure markers, and the quit's drain
+ * lines to print. A signal route exits before a packaged build writes its queued
+ * log lines, so that quit's own lines are only in the app's output, and both
+ * sources are scanned. A log file holds each line as a JSON record, so a failure
+ * written to both is listed once per source. The output has every drain line in
+ * plain text, so those come from it alone.
+ */
+export function scanRunLines(logLines, outputLines) {
+  return {
+    failures: findFailureMarkers([...logLines, ...outputLines]),
+    drainLines: outputLines.filter((line) => line.includes('[SHUTDOWN] pty-drain:')),
+  };
 }
 
 /** Every line of every `*.log` file in the directories that exist. */
@@ -501,13 +522,15 @@ async function main() {
   // project's own .kangentic directory.
   const logLines = readLogLines([path.join(dataDir, 'logs'), path.join(repository, '.kangentic', 'logs')]);
   if (logLines.length === 0) failures.push('the app wrote no log lines, so nothing below could be checked');
-  for (const marker of findFailureMarkers(logLines)) failures.push(`${marker.reason}: ${marker.line.slice(0, 300)}`);
+  const appOutput = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').split(/\r?\n/) : [];
+  const scan = scanRunLines(logLines, appOutput);
+  for (const marker of scan.failures) failures.push(`${marker.reason}: ${marker.line.slice(0, 300)}`);
+  for (const line of scan.drainLines) say(line.slice(0, 200));
   say(`read ${logLines.length} log lines`);
 
   if (failures.length > 0) {
     console.error('[package-smoke] FAILED:');
     for (const failure of failures) console.error(`  - ${failure}`);
-    const appOutput = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf8').split(/\r?\n/) : [];
     console.error(`--- last app output lines (${outputPath}) ---`);
     for (const line of appOutput.slice(-60)) console.error(line);
     console.error('--- last log lines ---');
@@ -536,6 +559,7 @@ export const __testing = {
   appEnvironment,
   stripTerminalControls,
   findFailureMarkers,
+  scanRunLines,
 };
 
 /** Whether this module is the script node was asked to run. Compared by real
