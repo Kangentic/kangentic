@@ -327,7 +327,7 @@ whose transcript was cleaned up or whose project folder moved) reached the user 
 went quiet: exit code 0, no toast, a dead row (#682 follow-up). The retirement therefore announces
 the absence before the kill, while the ring still holds the CLI's last words; `handlers/sessions.ts`
 asks the session's adapter to read them (`AgentAdapter.describeStartupFailure`, implemented by
-Claude) and raises `notifySpawnBlocked`'s "Agent did not start" notice when they name a failure. The
+Claude) and raises `notifySpawnBlocked`'s "Agent didn't start" notice when they name a failure. The
 rare direct PTY exit (the CLI was the root, or its shell ended with it) takes the same read from the
 exit listener when the exit is not intentional. Most resumes of a deleted conversation never get
 here: `assessResumeConversation` ([Resume](resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead)) starts them fresh before the spawn. This notice covers what

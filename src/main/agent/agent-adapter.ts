@@ -1323,7 +1323,7 @@ export interface AgentAdapter {
    * exit code. Return a user-facing sentence when that output says the CLI
    * never became a working agent; `null` for a normal end, a crash the
    * adapter cannot name, or anything it is unsure about. A sentence surfaces
-   * through the same "Agent did not start" notice a failed worktree or
+   * through the same "Agent didn't start" notice a failed worktree or
    * checkout raises, so the failure is seen instead of reading as an agent
    * that went quiet.
    *
