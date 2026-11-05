@@ -29,6 +29,7 @@ const {
   claimHeldMessages,
   clearHeldMessages,
   commitWhenSessionRuns,
+  holdUndeliveredOpening,
   composeOpeningMessage,
   deliverOpeningRemainder,
   flushHeldIfLive,
@@ -54,7 +55,9 @@ interface StubSession {
 function makeContext(live: StubSession | null = null) {
   const emitter = new EventEmitter();
   let current = live;
+  let startPending = false;
   const sessionManager = {
+    agentStartPending: vi.fn(() => startPending),
     findLiveSessionByTaskId: vi.fn(() => (current ? { id: current.id, transient: false } : undefined)),
     isWritable: vi.fn((sessionId: string) => current?.id === sessionId && current.writable),
     getSession: vi.fn((sessionId: string) => (current?.id === sessionId ? { id: current.id, status: current.status } : undefined)),
@@ -67,6 +70,8 @@ function makeContext(live: StubSession | null = null) {
     context: { sessionManager } as never,
     sessionManager,
     setLive: (session: StubSession | null) => { current = session; },
+    /** An adapter that reports its start, and whose agent has not shown it ran. */
+    setStartPending: (pending: boolean) => { startPending = pending; },
   };
 }
 
@@ -319,6 +324,151 @@ describe('command-line rides', () => {
     expect(statuses()).toEqual(['held']);
     expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)?.text).toBe('first');
     unsubscribe();
+  });
+});
+
+describe('a ride on a launch whose agent has not shown it started', () => {
+  beforeEach(() => {
+    seedTask();
+    seedSession('session-next');
+    holdTaskMessage(makeContext().context, { projectId: PROJECT_ID, taskId: TASK_ID, message: 'first' });
+  });
+
+  function rideOnRunningShell() {
+    const stub = makeContext({ id: 'session-next', status: 'running', writable: false });
+    stub.setStartPending(true);
+    const unsubscribe = registerHeldMessageFlush(stub.context);
+    const claim = claimHeldMessages(stub.context, PROJECT_ID, TASK_ID);
+    if (!claim) throw new Error('nothing claimed');
+    commitWhenSessionRuns(stub.context, claim, 'session-next');
+    return { ...stub, unsubscribe };
+  }
+
+  it('waits for the agent, since a running PTY is only a shell', () => {
+    const { sessionManager, setStartPending, unsubscribe } = rideOnRunningShell();
+    expect(statuses()).toEqual(['held']);
+
+    setStartPending(false);
+    sessionManager.emit('agent-ran', 'session-next');
+
+    expect(statuses()).toEqual(['delivered_from_hold']);
+    unsubscribe();
+  });
+
+  it('puts them back for the retry of a failed resume, which replays no prompt', () => {
+    const { context, sessionManager, unsubscribe } = rideOnRunningShell();
+
+    sessionManager.emit('session-changed', 'session-next', { status: 'suspended' });
+
+    expect(statuses()).toEqual(['held']);
+    expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)?.text).toBe('first');
+    unsubscribe();
+  });
+
+  it('commits them for a fresh launch marked failed, whose replayed prompt holds them', () => {
+    const { context, sessionManager, unsubscribe } = rideOnRunningShell();
+    database.prepare('UPDATE sessions SET launch_failed_at = ? WHERE id = ?').run(new Date().toISOString(), 'session-next');
+
+    sessionManager.emit('session-changed', 'session-next', { status: 'suspended' });
+
+    expect(statuses()).toEqual(['delivered_from_hold']);
+    expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)).toBeNull();
+    unsubscribe();
+  });
+
+  it('puts them back when the launch record cannot be read, since committing on a failed read loses them', () => {
+    const { context, sessionManager, unsubscribe } = rideOnRunningShell();
+    // The record says the launch failed, so only the failed read keeps these held.
+    database.prepare('UPDATE sessions SET launch_failed_at = ? WHERE id = ?').run(new Date().toISOString(), 'session-next');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const realPrepare = database.prepare.bind(database);
+    vi.spyOn(database, 'prepare').mockImplementation(((sql: string) => {
+      if (sql.includes('FROM sessions WHERE task_id')) throw new Error('database is locked');
+      return realPrepare(sql);
+    }) as typeof database.prepare);
+
+    sessionManager.emit('session-changed', 'session-next', { status: 'suspended' });
+    vi.restoreAllMocks();
+
+    expect(logged).toHaveBeenCalled();
+    expect(statuses()).toEqual(['held']);
+    expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)?.text).toBe('first');
+    unsubscribe();
+  });
+
+  it('commits them when the session ends with evidence that came with no event', () => {
+    const { sessionManager, setStartPending, unsubscribe } = rideOnRunningShell();
+
+    setStartPending(false);
+    sessionManager.emit('exit', 'session-next', 0);
+
+    expect(statuses()).toEqual(['delivered_from_hold']);
+    unsubscribe();
+  });
+
+  it('holds a queued session\'s ride past its promotion too', () => {
+    const { context, sessionManager, setStartPending } = makeContext({ id: 'session-next', status: 'queued', writable: false });
+    setStartPending(true);
+    const unsubscribe = registerHeldMessageFlush(context);
+    const claim = claimHeldMessages(context, PROJECT_ID, TASK_ID);
+    if (!claim) throw new Error('nothing claimed');
+    commitWhenSessionRuns(context, claim, 'session-next');
+
+    sessionManager.emit('session-changed', 'session-next', { status: 'running', taskId: TASK_ID, projectId: PROJECT_ID });
+    expect(statuses()).toEqual(['held']);
+
+    sessionManager.emit('agent-ran', 'session-next');
+    expect(statuses()).toEqual(['delivered_from_hold']);
+    unsubscribe();
+  });
+
+  it('puts a waiting ride back when the listeners go', () => {
+    const { context, unsubscribe } = rideOnRunningShell();
+    unsubscribe();
+    expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)?.text).toBe('first');
+  });
+});
+
+describe('a column message the failed launch never took', () => {
+  beforeEach(() => {
+    seedTask();
+    seedSession('session-next');
+  });
+
+  const undelivered = report({ outcome: 'cancelled', textReachedAgent: false });
+  const opening = { projectId: PROJECT_ID, taskId: TASK_ID, message: 'Address the findings.', report: undelivered, taskStayed: true };
+
+  it('is held for the next agent', () => {
+    const { context, setStartPending } = makeContext();
+    setStartPending(true);
+
+    holdUndeliveredOpening(context, opening);
+
+    expect(statuses()).toEqual(['held']);
+    expect(claimHeldMessages(context, PROJECT_ID, TASK_ID)?.text).toBe('Address the findings.');
+  });
+
+  it('is not held for a task that has left the column', () => {
+    const { context, setStartPending } = makeContext();
+    setStartPending(true);
+
+    holdUndeliveredOpening(context, { ...opening, taskStayed: false });
+
+    expect(statuses()).toEqual([]);
+  });
+
+  it('is not held when the agent ran, which keeps the notice and Run again', () => {
+    holdUndeliveredOpening(makeContext().context, opening);
+    expect(statuses()).toEqual([]);
+  });
+
+  it('is not held once any of it reached the agent', () => {
+    const { context, setStartPending } = makeContext();
+    setStartPending(true);
+
+    holdUndeliveredOpening(context, { ...opening, report: report({ outcome: 'failed', textReachedAgent: true }) });
+
+    expect(statuses()).toEqual([]);
   });
 });
 

@@ -494,6 +494,20 @@ describe('performSpawn - KANGENTIC_EVENTS_PATH env injection', () => {
   });
 });
 
+describe('performSpawn - the start path on the session row', () => {
+  // mayRetryLaunch refuses a second retry only because the row says 'retry'.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('records the start path the caller named on the registry row', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-retry-0000-000000000000', startPath: 'retry' }), context);
+
+    expect(context.registry.get('session-retry-0000-000000000000')?.startPath).toBe('retry');
+  });
+});
+
 describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
   // Every process a task's agent starts inherits this tag, which is how a
   // terminal transition finds what the task left running (process-tag/).
@@ -1987,6 +2001,47 @@ describe('performSpawn - onPtyExited runs after every exit listener', () => {
     expect(onPtyExited).toHaveBeenCalledWith(input.id);
     expect(order.indexOf('emit:exit')).toBeGreaterThanOrEqual(0);
     expect(order.indexOf(`onPtyExited:${input.id}`)).toBeGreaterThan(order.indexOf('emit:exit'));
+  });
+});
+
+describe('performSpawn - onLaunchEnded sees every ending before it is applied', () => {
+  // The launch report's one chokepoint. Red-green: dropping the call stops every
+  // shell_exit and abandoned report, and moving it below the status write loses
+  // whether a suspend ended the session.
+
+  beforeEach(() => {
+    ptyExitHarness.onExitCallback = null;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hands over the raw code and the signal, with the session still as it ended', async () => {
+    const context = makeContext();
+    const seen: Array<{ status: string; exit: unknown }> = [];
+    (context as { onLaunchEnded?: unknown }).onLaunchEnded = (session: { status: string }, exit: unknown) => {
+      seen.push({ status: session.status, exit });
+    };
+
+    await performSpawn(makeInput(), context);
+    ptyExitHarness.onExitCallback!({ exitCode: 0, signal: 9 });
+
+    expect(seen).toEqual([{ status: 'running', exit: { exitCode: 0, signal: 9, intentional: false } }]);
+  });
+
+  it('reads a kill as intentional', async () => {
+    const context = makeContext();
+    const onLaunchEnded = vi.fn();
+    (context as { onLaunchEnded?: unknown }).onLaunchEnded = onLaunchEnded;
+
+    const input = makeInput();
+    const session = await performSpawn(input, context);
+    const row = (context.registry as unknown as { get(id: string): { intentionalExit?: boolean } }).get(session.id);
+    row.intentionalExit = true;
+    ptyExitHarness.onExitCallback!({ exitCode: 1 });
+
+    expect(onLaunchEnded.mock.calls[0][1]).toEqual({ exitCode: 1, signal: null, intentional: true });
   });
 });
 

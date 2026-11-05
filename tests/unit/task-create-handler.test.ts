@@ -588,6 +588,9 @@ describe('TASK_CREATE handler', () => {
   it('tracks spawn_failed and reports the handled error, tagged with the resolved agent, when spawnAgent rejects', async () => {
     const spawnError = new Error('CLI not found');
     mockSpawnAgent.mockRejectedValueOnce(spawnError);
+    // One event per class per run, and an earlier test in this file may spend it.
+    const { resetLaunchReports } = await import('../../src/main/pty/agent-launch-report');
+    resetLaunchReports();
 
     await callCreateHandler(context, {
       swimlane_id: 'lane-doing',
@@ -599,14 +602,14 @@ describe('TASK_CREATE handler', () => {
     // (task.agent_override ?? toLane.agent_override ?? 'default'); neither
     // fixture sets an override here, so 'default' is the expected tag.
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'default', reason: 'create_spawn' });
-    // reportHandledError's agent tag is a just-applied fix (pinned here so a
-    // regression to the untagged two-arg call form is caught): the SAME
-    // resolved agent that trackEvent above receives.
-    expect(mockReportHandledError).toHaveBeenCalledWith(spawnError, {
-      source: 'spawn',
-      reason: 'create_spawn',
-      agent: 'default',
-    });
+    // The report's agent tag is the SAME resolved agent that trackEvent above
+    // receives, and the failure is one of the launch stages, under its own cause.
+    expect(mockReportHandledError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'CLI not found' }),
+      expect.objectContaining({ source: 'agent_launch', stage: 'preflight', cause: 'create_spawn', agent: 'default', start_path: 'board' }),
+      {},
+      ['agent-launch', 'preflight', 'create_spawn'],
+    );
   });
 
   // =========================================================================

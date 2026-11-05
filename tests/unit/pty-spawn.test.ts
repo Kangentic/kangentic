@@ -21,6 +21,8 @@ import {
   SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
 import { reportHandledError } from '../../src/main/analytics/error-reporting';
+import { trackEvent } from '../../src/main/analytics/analytics';
+import { preflightTagsOf, resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { processNotStartedError } from '../../src/main/pty/host/root-pid-gate';
 import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import { buildSpawnClearPrelude } from '../../src/shared/paths';
@@ -704,7 +706,7 @@ describe('diagnoseSpawnFailure', () => {
     vi.restoreAllMocks();
   });
 
-  it('builds a posix_spawnp-specific scrollback message with dev-mode chmod instructions', () => {
+  it('prints the raw posix_spawnp error, with no diagnosis and no fix to try', () => {
     vi.spyOn(fs, 'existsSync').mockImplementation((p) => String(p).includes('/bin/bash'));
     const result = diagnoseSpawnFailure({
       err: new Error('posix_spawnp failed: EACCES'),
@@ -713,31 +715,26 @@ describe('diagnoseSpawnFailure', () => {
       originalCwd: '/home/user/project',
     });
     expect(result.errorMessage).toContain('posix_spawnp');
-    expect(result.scrollbackSuffix).toContain('spawn-helper');
-    expect(result.scrollbackSuffix).toContain('chmod +x');
+    expect(result.kind).toBe('posix-spawnp');
+    expect(result.scrollbackSuffix).toBe('\r\n\x1b[1;31mError: posix_spawnp failed: EACCES\x1b[0m\r\n');
     expect(result.shellExists).toBe(true);
     expect(result.cwdExists).toBe(false);
   });
 
-  it('points packaged-app users at reinstall rather than chmod', () => {
-    const result = diagnoseSpawnFailure({
-      err: new Error('posix_spawnp failed'),
-      shellExe: '/Applications/Kangentic.app/Contents/Resources/app.asar/node_modules/node-pty/bin/sh',
-      effectiveCwd: '/Users/dev/project',
-      originalCwd: '/Users/dev/project',
-    });
-    expect(result.scrollbackSuffix).toContain('Reinstalling');
-    expect(result.scrollbackSuffix).not.toContain('chmod');
-  });
-
-  it('emits an empty scrollback suffix for unrelated errors', () => {
+  it('prints an error of no known shape too, which used to leave a blank terminal', () => {
     const result = diagnoseSpawnFailure({
       err: new Error('ENOENT: no such file'),
       shellExe: '/missing/shell',
       effectiveCwd: '/tmp',
       originalCwd: '/tmp',
     });
-    expect(result.scrollbackSuffix).toBe('');
+    expect(result.kind).toBe('other');
+    expect(result.scrollbackSuffix).toContain('Error: ENOENT: no such file');
+  });
+
+  it('keeps a multi-line error\'s lines apart in the terminal', () => {
+    const result = diagnoseSpawnFailure({ err: new Error('first\nsecond'), shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    expect(result.scrollbackSuffix).toContain('first\r\nsecond');
   });
 
   it('carries the errno code through', () => {
@@ -763,7 +760,7 @@ describe('diagnoseSpawnFailure', () => {
     expect(result.errorMessage).toBe('weird string error');
   });
 
-  it('tells the user a ConPTY whose output never connected was too busy to start, from the error main rebuilt off the wire', () => {
+  it('shows a ConPTY whose output never connected as its raw error, from the error main rebuilt off the wire', () => {
     // The host's answer as main sees it: flattened for the wire and rebuilt.
     const spawnError = fromPtyHostError(toPtyHostError(processNotStartedError(-1, 5012, 4870)));
     const result = diagnoseSpawnFailure({
@@ -774,29 +771,35 @@ describe('diagnoseSpawnFailure', () => {
     });
     expect(result.kind).toBe('output-not-connected');
     expect(result.errno).toBe('PTY_OUTPUT_NOT_CONNECTED');
-    expect(result.scrollbackSuffix).toContain('output never connected');
-    expect(result.scrollbackSuffix).toContain('too busy');
-    expect(result.scrollbackSuffix).not.toContain('spawn-helper');
+    expect(result.scrollbackSuffix).toContain('Error: Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)');
   });
 
-  it('gives a real CreateProcessW failure no hint and no kind of its own', () => {
+  it('gives a real CreateProcessW failure no kind of its own, and prints it', () => {
     const spawnError = fromPtyHostError(toPtyHostError(processNotStartedError(267, 40, 10)));
     const result = diagnoseSpawnFailure({ err: spawnError, shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
     expect(result.kind).toBe('other');
-    expect(result.scrollbackSuffix).toBe('');
+    expect(result.scrollbackSuffix).toContain(`Error: ${spawnError.message}`);
     expect(result.errno).toBe('');
   });
 });
 
 describe('recordSpawnFailure', () => {
+  const launchTags = preflightTagsOf({ agent: 'claude', agentCliVersion: '2.1.302', startPath: 'phone' });
+
+  beforeEach(() => {
+    resetLaunchReports();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
   afterEach(() => {
     vi.mocked(reportHandledError).mockClear();
+    vi.mocked(trackEvent).mockClear();
     vi.restoreAllMocks();
   });
 
   function reportedFor(spawnError: Error): { error: Error; tags: Record<string, string> } {
     const diagnostic = diagnoseSpawnFailure({ err: spawnError, shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
-    recordSpawnFailure({ diagnostic, shellExe: 'pwsh', shellArgs: [] });
+    recordSpawnFailure({ diagnostic, shellExe: 'pwsh', launchTags });
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     const [error, tags] = vi.mocked(reportHandledError).mock.calls[0];
     return { error: error as Error, tags: tags as Record<string, string> };
@@ -814,5 +817,36 @@ describe('recordSpawnFailure', () => {
     expect(error.name).toBe('Error');
     expect(error.message).toBe('Cannot create process, error code: 267');
     expect(tags).toMatchObject({ source: 'pty_spawn', errno: 'none' });
+  });
+
+  it('names the agent, its version, the start path and the shell', () => {
+    const { tags } = reportedFor(fromPtyHostError(toPtyHostError(processNotStartedError(267, 40, 10))));
+    expect(tags).toMatchObject({
+      stage: 'pty_spawn',
+      cause: 'other',
+      agent: 'claude',
+      agent_cli_version: '2.1.302',
+      start_path: 'phone',
+      shell: 'pwsh',
+    });
+  });
+
+  it('reports a cause once per run, so one broken machine cannot use up the quota', () => {
+    const diagnostic = diagnoseSpawnFailure({ err: new Error('spawn failed'), shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic, shellExe: 'pwsh', launchTags });
+    recordSpawnFailure({ diagnostic, shellExe: 'pwsh', launchTags });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends no path to either service, whatever the shell setting holds', () => {
+    const shellExe = '/Users/dev/.nix-profile/bin/zsh';
+    const diagnostic = diagnoseSpawnFailure({ err: new Error('spawn failed'), shellExe, effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic, shellExe, launchTags });
+
+    const [, analytics] = vi.mocked(trackEvent).mock.calls[0];
+    expect(analytics).toMatchObject({ shell: 'zsh' });
+    expect(analytics).not.toHaveProperty('shellArgs');
+    const sent = JSON.stringify([analytics, vi.mocked(reportHandledError).mock.calls[0][1]]);
+    expect(sent).not.toContain('/Users/dev');
   });
 });

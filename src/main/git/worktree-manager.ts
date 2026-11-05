@@ -5,6 +5,7 @@ import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import type { WorktreeSkipReason } from '../../shared/types';
 import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
+import { GitUserStateError, StaleWorktreeDirectoryError, isRepositoryStateRefusal } from './worktree-errors';
 import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './task-worktree-folder';
 import { abortWorktreeSetup, isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
@@ -451,8 +452,8 @@ const BACKGROUND_PRUNE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 function withPathLengthCause(error: unknown, worktreePath: string): Error {
   const wrapped = error instanceof Error ? error : new Error(String(error));
   const cause = describeWorktreePathLengthCause(worktreePath, wrapped);
-  if (!cause) return wrapped;
-  return new Error(`${wrapped.message} ${cause}`, { cause: wrapped });
+  if (cause) return new GitUserStateError(`${wrapped.message} ${cause}`, { cause: wrapped });
+  return isRepositoryStateRefusal(wrapped.message) ? new GitUserStateError(wrapped.message, { cause: wrapped }) : wrapped;
 }
 
 /**
@@ -843,7 +844,7 @@ export class WorktreeManager {
     );
     if (resolution.kind === 'no-commits') return { skipped: true, reason: 'no-commits' };
     if (resolution.kind === 'unresolvable') {
-      throw new Error(describeUnresolvableBase(resolution));
+      throw new GitUserStateError(describeUnresolvableBase(resolution));
     }
 
     // The fetch outcome is NOT threaded into resolveWorktreeBase's own fetch
@@ -1025,10 +1026,10 @@ export class WorktreeManager {
             `[WorktreeManager] Could not inspect stale worktree dir: ${worktreePath} `
             + `(code=${errnoError.code ?? 'unknown'} errno=${errnoError.errno ?? '?'} syscall=${errnoError.syscall ?? '?'}): ${errnoError.message}`
           );
-          throw new Error(staleWorktreeError(worktreePath, 'unreadable', outcome.holders), { cause: error });
+          throw new StaleWorktreeDirectoryError(staleWorktreeError(worktreePath, 'unreadable', outcome.holders), { cause: error });
         }
         if (leftover.length > 0) {
-          throw new Error(staleWorktreeError(worktreePath, 'not-empty', outcome.holders));
+          throw new StaleWorktreeDirectoryError(staleWorktreeError(worktreePath, 'not-empty', outcome.holders));
         }
         reuseEmptyHusk = true;
       }
@@ -1764,7 +1765,7 @@ export class WorktreeManager {
       file => file.index !== '?' && file.working_dir !== '?',
     );
     if (trackedChanges.length > 0) {
-      throw new Error(
+      throw new GitUserStateError(
         currentBranch === branchName
           ? `Cannot start work on '${branchName}': the main repo has uncommitted changes. `
             + 'Commit or stash them, or enable worktree mode for this task.'

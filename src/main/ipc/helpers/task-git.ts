@@ -17,7 +17,10 @@ import { runGitWithTimeout } from '../../git/git-spawn';
 import { setSpawnStaleNote, beginSpawnStaleProbe, touchSpawnStaleProbe } from '../../transition-engine/spawn-progress';
 import { isShuttingDown } from '../../shutdown-state';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
-import { DEFAULT_AGENT, type ConversationExpiredNotice, type SpawnWarningKind, type Task, type WorktreeSkipReason } from '../../../shared/types';
+import { UserConfigurationError } from '../../../shared/user-configuration-error';
+import { StaleWorktreeDirectoryError } from '../../git/worktree-errors';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
+import { DEFAULT_AGENT, type ConversationExpiredNotice, type LaunchStartPath, type SpawnWarningKind, type Task, type WorktreeSkipReason } from '../../../shared/types';
 import { sendToRenderer } from '../send-to-renderer';
 import { queueConversationExpired } from './pending-conversation-expired';
 import { getProjectRepos } from './project-repos';
@@ -64,7 +67,7 @@ function resolveWorktreeCheckAgentName(task: Task, context: IpcContext, projectP
  * whole operation (create, unarchive, promote) can still tell the user why no
  * agent started, instead of logging to a console nobody is reading.
  */
-export class BranchCheckoutBlockedError extends Error {
+export class BranchCheckoutBlockedError extends UserConfigurationError {
   constructor(
     readonly directory: string,
     readonly blockingTaskId: string,
@@ -165,7 +168,8 @@ export type SpawnFailureStep = 'worktree' | 'checkout' | 'agent';
  * Deliberately the same wording the drag path already toasts
  * (`Worktree setup failed: ...` in handlers/task-move.ts), so the same
  * underlying git failure reads identically whether the task was dragged in or
- * born into the column.
+ * born into the column. The agent step's label is used only when the error has
+ * no text: the toast's own title already says the agent did not start.
  */
 const SPAWN_FAILURE_STEP_LABEL: Record<SpawnFailureStep, string> = {
   worktree: 'Worktree setup failed',
@@ -205,7 +209,8 @@ function shortenForNotice(text: string, limit: number): string {
  * `BranchCheckoutBlockedError` keeps its own message verbatim - it is written
  * for a user and names both the blocker and the remedy. Anything else is the
  * step that failed plus the error's FIRST line, capped: raw git errors run to
- * several lines and would swamp a toast.
+ * several lines and would swamp a toast. A failure of the agent step is that
+ * line alone, the raw error under a title that already names the step.
  *
  * The step label is dropped when the error already opens by naming that step
  * (`describeUnresolvableBase` starts "Cannot create worktree: ..."), which would
@@ -225,7 +230,7 @@ function describeSpawnFailure(step: SpawnFailureStep, error: unknown): string {
   const firstLine = (rawMessage.split('\n')[0] ?? '').trim();
   if (!firstLine) return `${SPAWN_FAILURE_STEP_LABEL[step]}.`;
   const detail = shortenForNotice(firstLine, maxDetailLength);
-  if (/^cannot (create|check ?out)\b/i.test(detail)) return detail;
+  if (step === 'agent' || /^cannot (create|check ?out)\b/i.test(detail)) return detail;
   return `${SPAWN_FAILURE_STEP_LABEL[step]}: ${detail}`;
 }
 
@@ -269,6 +274,7 @@ export function notifySpawnBlocked(
   step: SpawnFailureStep,
   error: unknown,
   projectId?: string | null,
+  startPath: LaunchStartPath = 'board',
 ): void {
   // A quit that closes the DB or kills git mid-step surfaces here as an ordinary
   // failure. While this only forwarded `BranchCheckoutBlockedError` that could
@@ -277,6 +283,17 @@ export function notifySpawnBlocked(
   // open"). `handleTaskMove` already bails this way on its own failure paths,
   // and the window is not reliably destroyed before the DB closes.
   if (isShuttingDown()) return;
+  // Ahead of the window check: a failure with no window to tell is still a
+  // failure. The agent step reported where it was caught. Git writes branch names
+  // into its errors, so its text stays here and a fixed cause goes.
+  if (step !== 'agent') {
+    reportPreflightFailure({
+      cause: error instanceof StaleWorktreeDirectoryError ? 'stale_directory' : step,
+      error,
+      agent: task.agent_override ?? task.agent,
+      startPath,
+    });
+  }
   if (!context.mainWindow || context.mainWindow.isDestroyed()) return;
   context.mainWindow.webContents.send(
     IPC.TASK_SPAWN_BLOCKED,

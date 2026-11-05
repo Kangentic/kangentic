@@ -532,7 +532,7 @@ export class PtyHostCore {
       entry.pty,
       pidGate,
       (data) => timeSyncWork('pty:data', () => this.onPtyData(entry, data)),
-      (exitCode) => this.onPtyExit(entry, exitCode),
+      (exitCode, signal) => this.onPtyExit(entry, exitCode, signal),
     ));
     if (!pidGate) {
       this.pinRootOf(entry);
@@ -1531,7 +1531,7 @@ export class PtyHostCore {
     }
   }
 
-  private onPtyExit(entry: PtyEntry, exitCode: number): void {
+  private onPtyExit(entry: PtyEntry, exitCode: number, signal?: number): void {
     if (entry.exited) return;
     entry.exited = true;
     entry.rootExitedAtMs = this.unpinRoot(entry);
@@ -1556,7 +1556,9 @@ export class PtyHostCore {
     // Flush the transcript before main hears of the exit, as the spawn flow's
     // exit handler did.
     this.transcriptWriter.finalize(entry.sessionId);
-    this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode });
+    // node-pty reports 0 for a process no signal ended, and sets the exit code
+    // only on a normal exit, so a signal death reads as code 0 without this.
+    this.deps.emit({ type: 'exit', ptyId: entry.ptyId, sessionId: entry.sessionId, exitCode, signal: signal || null });
     // The orphan cleanup writes through the exited PTY, so it releases it
     // when it is done; otherwise release it now. A PTY main killed is released.
     // The root is recorded in this same turn, so a reap main starts on hearing

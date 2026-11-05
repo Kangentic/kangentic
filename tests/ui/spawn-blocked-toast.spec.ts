@@ -97,6 +97,9 @@ test.describe('task:spawnBlocked push', () => {
       await expect(toast).toBeVisible({ timeout: 5000 });
       await expect(toast.getByTestId('toast-title')).toHaveText('Agent didn\'t start');
       await expect(toast.getByTestId('toast-body')).toContainText('"Task B": Cannot switch branches in /mock/blocked-current');
+      // The error card, which has Copy: the card's text cannot be selected.
+      await expect(toast).toHaveAttribute('data-variant', 'error');
+      await expect(toast.getByTestId('toast-copy')).toBeVisible();
       await expect(toast.getByTestId('toast-body')).toContainText('is already running an agent there.');
     } finally {
       await browser.close();

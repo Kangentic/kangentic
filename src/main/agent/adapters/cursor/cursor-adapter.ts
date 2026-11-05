@@ -1,3 +1,5 @@
+import { identifyCursorUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
@@ -293,6 +295,11 @@ export class CursorAdapter implements AgentAdapter {
     },
     supportsWslCli: true,
   });
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyCursorUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

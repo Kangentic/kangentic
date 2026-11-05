@@ -1297,7 +1297,7 @@ describe('PTY spawn failure', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  it('writes diagnostic scrollback on posix_spawnp failure', async () => {
+  it('shows a posix_spawnp failure in the terminal as its raw error', async () => {
     vi.mocked(pty.spawn).mockImplementation(() => {
       throw new Error('posix_spawnp failed.');
     });
@@ -1309,14 +1309,13 @@ describe('PTY spawn failure', () => {
     });
 
     const scrollback = await manager.getScrollback(session.id);
-    expect(scrollback).toContain('posix_spawnp');
-    expect(scrollback).toContain('spawn-helper');
+    expect(scrollback).toContain('Error: posix_spawnp failed.');
 
     manager.killAll();
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  it('does not write diagnostic scrollback for non-posix_spawnp errors', async () => {
+  it('shows any other spawn failure as its raw error too, which used to leave the terminal blank', async () => {
     vi.mocked(pty.spawn).mockImplementation(() => {
       throw new Error('spawn ENOENT');
     });
@@ -1328,8 +1327,7 @@ describe('PTY spawn failure', () => {
     });
 
     const scrollback = await manager.getScrollback(session.id);
-    expect(scrollback).not.toContain('posix_spawnp');
-    expect(scrollback).not.toContain('spawn-helper');
+    expect(scrollback).toContain('Error: spawn ENOENT');
 
     manager.killAll();
     await new Promise((resolve) => setTimeout(resolve, 20));

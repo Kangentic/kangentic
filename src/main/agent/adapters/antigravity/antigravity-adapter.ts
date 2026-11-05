@@ -1,3 +1,5 @@
+import { identifyAntigravityUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import { AntigravityDetector } from './detector';
 import { AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
@@ -133,6 +135,11 @@ export class AntigravityAdapter implements AgentAdapter {
   // concurrent sessions in one cwd; removeHooks() only strips them when the
   // folder's last session releases. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyAntigravityUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

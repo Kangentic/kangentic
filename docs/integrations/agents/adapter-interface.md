@@ -227,7 +227,7 @@ Command Terminal went from spawn to Claude's TUI in 3.0 to 3.1 s under Windows P
 the terminal hidden, the same as with it showing the prompt, so no boot query waits on a reply
 from the hidden terminal.
 
-An adapter whose agent always shows it started, by a SessionStart hook at launch or its first alt-screen entry, declares `reportsAgentStart`. Claude Code and Droid do. A session of such an agent that the sweep retires with neither signal reports a launch that never started ([Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md#cadence-and-what-a-retirement-does)). Leave it unset for an agent that may run without showing either, or a hook that waits for the first prompt: its silence proves nothing.
+An adapter whose agent always shows it started, by a SessionStart hook at launch or its first alt-screen entry, declares `reportsAgentStart`. Claude Code and Droid do. A session of such an agent that the sweep retires with no sign it ran reports a launch that never started, pauses, and gets one retry ([Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md#cadence-and-what-a-retirement-does)). The flag is read at spawn, so it has to hold for every way the adapter launches, print and resume included. Leave it unset for an agent that may run without showing either, or a hook that waits for the first prompt: its silence proves nothing.
 
 ## Exit Sequences
 

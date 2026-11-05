@@ -46,7 +46,7 @@ import { abortInFlightResume, registerResumeController, releaseResumeController 
 import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
-import type { Session, Task } from '../../../shared/types';
+import type { LaunchStartPath, Session, Task } from '../../../shared/types';
 import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
 
@@ -131,6 +131,8 @@ export interface ResumeTaskSessionOptions {
    * passes none: the renderer toasts the rejection itself.
    */
   onFailed?: (step: ResumeFailureStep, error: unknown, task: Task) => void;
+  /** What started this, when it is not the Resume button: a phone, or the automatic retry. */
+  startPath?: LaunchStartPath;
 }
 
 /**
@@ -324,6 +326,7 @@ export function resumeTaskSession(
                   suppressAutoCommand: enteredFromDone,
                   continuationPrompt: options.resumePrompt,
                   resumesEntry: true,
+                  startPath: options.startPath,
                 });
                 // `spawnAgent` reports a start that failed itself (the spawn-blocked
                 // notice), as it does for a move, so a Resume that started nothing
@@ -340,15 +343,21 @@ export function resumeTaskSession(
                 const overrides = {
                   ...resolveSpawnOverrides(current, currentLane, project),
                   forceFresh: false,
+                  startPath: options.startPath,
                 };
                 // Messages held for the task go out with this resume, after the
                 // prompt it carries (a command from the task's Commands menu),
                 // or as the whole opening message of a plain Resume.
                 const held = claimHeldMessages(context, resolvedProjectId, taskId);
-                const opening = composeOpeningMessage(options.resumePrompt, held?.text);
+                // A launch that never ran still owes its prompt, whatever filled it
+                // (the task, a column's message, messages held for it). The record
+                // has it word for word, so no template is built and no row runs again.
+                const failedLaunch = sessionRepo.getLatestForTask(taskId);
+                const owedPrompt = failedLaunch?.launch_failed_at ? failedLaunch.prompt : null;
+                const opening = composeOpeningMessage(options.resumePrompt ?? owedPrompt ?? undefined, held?.text);
                 let heldHandedOff = false;
                 try {
-                  const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, opening.prompt, signal, undefined, undefined, overrides);
+                  const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, failedLaunch?.launch_failed_at ? true : undefined, opening.prompt, signal, undefined, undefined, overrides);
                   const resumedSessionId = tasks.getById(taskId)?.session_id;
                   // A recap-only start withholds them, as it withholds a column's message.
                   if (resumedSessionId && !outcome?.recapOnly) {

@@ -22,7 +22,7 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { deleteTaskWithCleanup, drainAutoNameAskedIds } from '../helpers/task-delete';
 import { trackEvent } from '../../analytics/analytics';
-import { reportHandledError } from '../../analytics/error-reporting';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { trackMilestone } from '../../analytics/usage';
 import { linkPR } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -185,7 +185,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
               // the override chain is the best available approximation here.
               const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
               trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
-              reportHandledError(err, { source: 'spawn', reason: 'create_spawn', agent: failedAgent });
+              reportPreflightFailure({ cause: 'create_spawn', error: err, agent: failedAgent, startPath: 'board', keepMessage: true, alreadyCounted: true });
             }
           } finally {
             clearSpawnProgress(context.mainWindow, task.id);

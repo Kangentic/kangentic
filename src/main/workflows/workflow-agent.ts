@@ -25,6 +25,7 @@ import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../browser/browser-automation-config';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
+import { reportPreflightFailure } from '../pty/agent-launch-report';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
 import { notifyWorkflowChanged } from './workflow-changed';
@@ -521,6 +522,11 @@ function startOnce(
   const pending = opening.get(workflowId);
   if (pending) return pending;
   const started = startWorkflowAgent(context, homeProjectId, workflowId, grid, continuation)
+    .catch((error: unknown) => {
+      // A refusal comes back as a status, so what lands here is a real failure.
+      reportPreflightFailure({ cause: 'workflow_agent', error, startPath: 'workflow', keepMessage: true });
+      throw error;
+    })
     .finally(() => {
       opening.delete(workflowId);
       openingProjects.delete(workflowId);
@@ -731,6 +737,8 @@ async function startWorkflowAgent(
     projectId: homeProjectId,
     command,
     cwd: projectRoot,
+    startPath: 'workflow',
+    agentCliVersion: detection.version,
     env: extraEnv ?? undefined,
     statusOutputPath,
     eventsOutputPath,

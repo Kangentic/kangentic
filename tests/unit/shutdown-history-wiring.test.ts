@@ -97,6 +97,11 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   destroyAllLanes: vi.fn(),
 }));
 
+const mockRecordAbandonedLaunches = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/abandoned-launches', () => ({
+  recordAbandonedLaunches: mockRecordAbandonedLaunches,
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all mocks)
 // ---------------------------------------------------------------------------
@@ -133,6 +138,7 @@ function buildMockDependencies(
   return {
     getSessionManager: vi.fn(() => ({
       listSessions: vi.fn(() => sessions),
+      abandonedLaunchTags: vi.fn(() => [{ agent: 'claude', ended_by: 'quit' }]),
       killAll: vi.fn(() => ptyKillReport),
       dispose: vi.fn(),
       cancelAll: vi.fn(),
@@ -154,6 +160,7 @@ function buildMockDependencies(
     isEphemeral: false,
     isRestartRequested: () => false,
     allowGrace,
+    abandonedLaunchesFilePath: '/mock/config/abandoned-launches.json',
   };
 }
 
@@ -165,6 +172,32 @@ describe('syncShutdownCleanup history wire-up', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     createdHistoryInstances.length = 0;
+  });
+
+  it('writes the launches a quit is ending while their rows still read running, ahead of the kill', () => {
+    const dependencies = buildMockDependencies([]);
+    const manager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(manager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(mockRecordAbandonedLaunches).toHaveBeenCalledWith(
+      '/mock/config/abandoned-launches.json',
+      [{ agent: 'claude', ended_by: 'quit' }],
+    );
+    expect(mockRecordAbandonedLaunches.mock.invocationCallOrder[0])
+      .toBeLessThan(manager.killAll.mock.invocationCallOrder[0]);
+  });
+
+  it('still kills every PTY when that write throws', () => {
+    mockRecordAbandonedLaunches.mockImplementationOnce(() => { throw new Error('ENOSPC'); });
+    const dependencies = buildMockDependencies([]);
+    const manager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(manager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(manager.killAll).toHaveBeenCalledTimes(1);
   });
 
   it('constructs a UsageHistoryRepository and passes it as the third argument to captureSessionMetrics', () => {

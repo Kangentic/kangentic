@@ -20,6 +20,29 @@ export class UserConfigurationError extends Error {
   }
 }
 
+/** A CLI's own failure that is the user's to resolve, as its adapter identified it. */
+export type UserSetupFailure = 'login_required' | 'bad_configuration';
+
+/** What an adapter identified, and the CLI's own line that named it, for the notice. */
+export interface UserSetupMatch {
+  failure: UserSetupFailure;
+  /** The CLI's words. Shown to the user, and it never leaves this machine. */
+  line: string;
+}
+
+/**
+ * An installed agent CLI that will not start because of the user's own setup: it
+ * is not logged in, or its configuration is invalid. Only an adapter says so,
+ * from the CLI's own words (`AgentParser.identifyUserSetupFailure`). A failure
+ * nobody identified stays a report, since it may be a Kangentic bug.
+ */
+export class AgentUserSetupError extends UserConfigurationError {
+  constructor(readonly failure: UserSetupFailure) {
+    super(`Agent setup failure: ${failure}`);
+    this.name = 'AgentUserSetupError';
+  }
+}
+
 /**
  * Type guard for errors that describe user configuration rather than a bug.
  * Mirrors `isAbortError` in abort-utils.ts: used in catch blocks and in the

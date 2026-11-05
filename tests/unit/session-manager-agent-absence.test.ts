@@ -50,6 +50,13 @@ vi.mock('../../src/shared/paths', async (importOriginal) => ({
   isUncPath: (candidatePath: string) => /^[\\/]{2}[^\\/]/.test(candidatePath),
 }));
 
+// A quit in progress, switched per test (reset in beforeEach).
+const shutdown = vi.hoisted(() => ({ active: false }));
+vi.mock('../../src/main/shutdown-state', () => ({
+  isShuttingDown: () => shutdown.active,
+  setShuttingDown: () => { shutdown.active = true; },
+}));
+
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
   sanitizeErrorMessage: (message: string) => message,
@@ -69,6 +76,7 @@ let capturedCallbacks: {
   isAgentAbsenceCandidate?: (sessionId: string) => boolean;
   retireAgentlessSession?: (sessionId: string) => void;
   onEvent?: (sessionId: string, event: { ts: number; type: string; detail?: string }) => void;
+  onAgentSessionId?: (sessionId: string, agentReportedId: string, options?: { conversationMoved?: boolean }) => void;
 } | null = null;
 const requestAgentAbsenceCheck = vi.fn();
 const cancelAgentAbsenceCheck = vi.fn();
@@ -97,6 +105,7 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
 });
 
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 
 /** Mirrors AGENT_SPAWN_GRACE_MS in session-manager.ts (module-private). */
@@ -116,6 +125,8 @@ describe('SessionManager agent-absence wiring', () => {
     requestAgentAbsenceCheck.mockClear();
     cancelAgentAbsenceCheck.mockClear();
     sweep.available = true;
+    shutdown.active = false;
+    resetLaunchReports();
     manager = new SessionManager();
   });
 
@@ -184,9 +195,403 @@ describe('SessionManager agent-absence wiring', () => {
     callback(sessionId);
   }
 
+  describe('a launch that ended before its agent showed it ran', () => {
+    const ABANDON_MS = 15_000;
+
+    function ended(session: ManagedSession, exit: { exitCode?: number; signal?: number | null; intentional: boolean }): void {
+      (manager as unknown as {
+        noteLaunchEnded(row: ManagedSession, ending: { exitCode: number; signal: number | null; intentional: boolean }): void;
+      }).noteLaunchEnded(session, { exitCode: exit.exitCode ?? 1, signal: exit.signal ?? null, intentional: exit.intentional });
+    }
+
+    function sentTags(): Record<string, string> {
+      return reportHandledError.mock.calls[0][1] as Record<string, string>;
+    }
+
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it('reports a shell that exited on its own, with its code', () => {
+      ended(seedSession({ reportsAgentStart: true }), { exitCode: 1, intentional: false });
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(sentTags()).toMatchObject({ stage: 'shell_exit', exit_code: '1', exit_signal: 'none' });
+    });
+
+    it('reports the signal of a shell one killed, which reads as code 0 alone', () => {
+      ended(seedSession({ reportsAgentStart: true }), { exitCode: 0, signal: 9, intentional: false });
+      expect(sentTags()).toMatchObject({ stage: 'shell_exit', exit_code: '0', exit_signal: '9' });
+    });
+
+    it('reports a shell that died in its startup files for an adapter that reports no start', () => {
+      // Its silence proves nothing, but the shell died before the typed line ran.
+      ended(seedSession({ reportsAgentStart: false }), { exitCode: 1, intentional: false });
+      expect(sentTags()).toMatchObject({ stage: 'shell_exit' });
+    });
+
+    it('stays quiet for such an adapter once the typed line ran', () => {
+      ended(seedSession({ reportsAgentStart: false, agentOutputAt: Date.now() }), { intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('stays quiet for a shell with no agent', () => {
+      ended(seedSession({ agentParser: undefined }), { intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { label: 'SessionStart', overrides: { agentStartObservedAt: 1 } },
+      { label: 'alt screen', overrides: { altScreenEnteredAt: 1 } },
+      { label: 'any hook', overrides: { agentHookObservedAt: 1 } },
+      { label: 'an agent session id', overrides: { agentIdReportedAt: 1 } },
+    ])('stays quiet once the agent showed $label', ({ overrides }) => {
+      ended(seedSession({ reportsAgentStart: true, ...overrides }), { intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('leaves a host loss to its own report', () => {
+      ended(seedSession({ reportsAgentStart: true }), { exitCode: -2, intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('leaves out a hidden agent, which was never the task\'s', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1');
+      ended(session, { intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('does not count a quick Stop as a failure', () => {
+      const session = seedSession({
+        reportsAgentStart: true,
+        startedAt: new Date(Date.now() - (ABANDON_MS - 1_000)).toISOString(),
+      });
+      ended(session, { intentional: true });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('reports a kill past the threshold as a person giving up', () => {
+      const session = seedSession({
+        reportsAgentStart: true,
+        startedAt: new Date(Date.now() - (ABANDON_MS + 1_000)).toISOString(),
+      });
+      ended(session, { intentional: true });
+      expect(sentTags()).toMatchObject({ stage: 'abandoned', ended_by: 'kill' });
+    });
+
+    it('reports a pause past the threshold as a person giving up', () => {
+      const session = seedSession({
+        reportsAgentStart: true,
+        status: 'suspended',
+        startedAt: new Date(Date.now() - (ABANDON_MS + 1_000)).toISOString(),
+      });
+      ended(session, { intentional: true });
+      expect(sentTags()).toMatchObject({ stage: 'abandoned', ended_by: 'pause' });
+    });
+
+    it('does not read a stop of an adapter that reports no start as anything', () => {
+      ended(seedSession({ reportsAgentStart: false }), { intentional: true });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('reports the pause the sweep asked for only the once', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true });
+      retire();
+      ended(session, { intentional: true });
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(sentTags()).toMatchObject({ stage: 'never_started' });
+    });
+
+    it('lists what a quit is about to end, for the next launch to report', () => {
+      seedSession({ reportsAgentStart: true, id: 'gave-up', agentName: 'claude' });
+      seedSession({ reportsAgentStart: true, id: 'quick', startedAt: new Date(Date.now() - 1_000).toISOString() });
+      seedSession({ reportsAgentStart: true, id: 'ran', agentStartObservedAt: 1 });
+      seedSession({ reportsAgentStart: false, id: 'silent' });
+      const launches = manager.abandonedLaunchTags();
+      expect(launches).toHaveLength(1);
+      expect(launches[0]).toMatchObject({ agent: 'claude', ended_by: 'quit', output_class: 'not_read' });
+    });
+  });
+
+  describe('launch-failure wiring that real events and a quit reach', () => {
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    function hide(sessionId = 'session-1'): void {
+      (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add(sessionId);
+    }
+
+    it('stamps the id the agent reported and says the agent ran, so a silent hook does not earn a retry', async () => {
+      const session = seedSession({ reportsAgentStart: true, startPath: 'board' });
+      const agentRan = vi.fn();
+      manager.on('agent-ran', agentRan);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+
+      capturedCallbacks?.onAgentSessionId?.('session-1', 'agent-uuid');
+
+      expect(typeof session.agentIdReportedAt).toBe('number');
+      expect(agentRan).toHaveBeenCalledTimes(1);
+      expect(manager.agentStartPending('session-1')).toBe(false);
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('stamps the first alt-screen entry and says the agent ran once', () => {
+      const session = seedSession({ reportsAgentStart: true });
+      const agentRan = vi.fn();
+      manager.on('agent-ran', agentRan);
+      const hostEvent = (inAltScreen: boolean): void => {
+        (manager as unknown as { handleHostEvent(event: unknown): void })
+          .handleHostEvent({ type: 'altScreen', sessionId: 'session-1', inAltScreen });
+      };
+
+      hostEvent(false);
+      expect(session.altScreenEnteredAt).toBeUndefined();
+      expect(agentRan).not.toHaveBeenCalled();
+
+      hostEvent(true);
+      expect(typeof session.altScreenEnteredAt).toBe('number');
+      expect(agentRan).toHaveBeenCalledTimes(1);
+
+      hostEvent(true);
+      expect(agentRan).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports an agent that exited at start once, however often it is told', () => {
+      seedSession({ reportsAgentStart: true });
+      manager.noteAgentExitedAtStart('session-1');
+      manager.noteAgentExitedAtStart('session-1');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentLaunchAgentExitedError');
+    });
+
+    it('does not double a launch already reported', () => {
+      seedSession({ reportsAgentStart: true });
+      retire();
+      manager.noteAgentExitedAtStart('session-1');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports nothing for a launch ending during a quit', () => {
+      shutdown.active = true;
+      const session = seedSession({ reportsAgentStart: true });
+      (manager as unknown as {
+        noteLaunchEnded(row: ManagedSession, ending: { exitCode: number; signal: number | null; intentional: boolean }): void;
+      }).noteLaunchEnded(session, { exitCode: 1, signal: null, intentional: false });
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('lets no retry spawn once a quit has begun', async () => {
+      seedSession({ reportsAgentStart: true, startPath: 'board' });
+      shutdown.active = true;
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('leaves out of the quit list a suspended session, one already reported, and a hidden one', () => {
+      const longAgo = new Date(Date.now() - 60_000).toISOString();
+      seedSession({ id: 'kept', reportsAgentStart: true, startedAt: longAgo });
+      seedSession({ id: 'suspended', reportsAgentStart: true, startedAt: longAgo, status: 'suspended' });
+      seedSession({ id: 'noted', reportsAgentStart: true, startedAt: longAgo, launchFailureNoted: true });
+      seedSession({ id: 'hidden', reportsAgentStart: true, startedAt: longAgo });
+      hide('hidden');
+      const launches = manager.abandonedLaunchTags();
+      expect(launches).toHaveLength(1);
+    });
+  });
+
+  describe('whether a failed launch may retry', () => {
+    it('says yes with no sign the agent ran', async () => {
+      seedSession({ reportsAgentStart: true, startPath: 'board' });
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+    });
+
+    it.each([
+      { outputClass: 'login_required' as const },
+      { outputClass: 'bad_configuration' as const },
+    ])('says no for $outputClass, which a second launch cannot fix', async ({ outputClass }) => {
+      seedSession({ reportsAgentStart: true, startPath: 'board', launchOutputRead: Promise.resolve(outputClass) });
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it.each([
+      { outputClass: 'other' as const },
+      { outputClass: 'command_not_found' as const },
+      { outputClass: 'unknown_option' as const },
+      { outputClass: 'not_read' as const },
+      { outputClass: 'unreadable' as const },
+    ])('says yes for $outputClass, which may be ours', async ({ outputClass }) => {
+      seedSession({ reportsAgentStart: true, startPath: 'board', launchOutputRead: Promise.resolve(outputClass) });
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+    });
+
+    it('waits for the output read before it answers', async () => {
+      let finishRead!: (outputClass: 'login_required') => void;
+      const launchOutputRead = new Promise<'login_required'>((resolve) => { finishRead = resolve; });
+      seedSession({ reportsAgentStart: true, startPath: 'board', launchOutputRead });
+      const answer = manager.mayRetryLaunch('session-1');
+      finishRead('login_required');
+      expect(await answer).toBe(false);
+    });
+
+    it.each([
+      { label: 'a retry, which is never retried', overrides: { startPath: 'retry' as const } },
+      { label: 'a late start hook', overrides: { agentStartObservedAt: 1 } },
+      { label: 'any other hook', overrides: { agentHookObservedAt: 1 } },
+      { label: 'a first frame', overrides: { altScreenEnteredAt: 1 } },
+      { label: 'a session id the agent gave', overrides: { agentIdReportedAt: 1 } },
+      { label: 'an adapter whose silence proves nothing', overrides: { reportsAgentStart: false } },
+    ])('says no for $label', async ({ overrides }) => {
+      seedSession({ reportsAgentStart: true, startPath: 'board', ...overrides });
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('says no for a session that is gone', async () => {
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+  });
+
+  describe('whether a launch still owes a sign its agent ran', () => {
+    it('is pending for an adapter that reports its start, until the agent shows it', () => {
+      seedSession({ reportsAgentStart: true });
+      const agentRan = vi.fn();
+      manager.on('agent-ran', agentRan);
+      expect(manager.agentStartPending('session-1')).toBe(true);
+
+      sendAgentEvent('prompt');
+
+      expect(agentRan).toHaveBeenCalledTimes(1);
+      expect(agentRan).toHaveBeenCalledWith('session-1');
+      expect(manager.agentStartPending('session-1')).toBe(false);
+    });
+
+    it('says so once, however many hooks land', () => {
+      seedSession({ reportsAgentStart: true });
+      const agentRan = vi.fn();
+      manager.on('agent-ran', agentRan);
+
+      sendAgentEvent('prompt');
+      sendAgentEvent('tool_start');
+
+      expect(agentRan).toHaveBeenCalledTimes(1);
+    });
+
+    it('is never pending for an adapter whose silence proves nothing, or a session that is gone', () => {
+      seedSession({ reportsAgentStart: false });
+      expect(manager.agentStartPending('session-1')).toBe(false);
+      expect(manager.agentStartPending('no-such-session')).toBe(false);
+    });
+
+    it('answers what the report found, for the notice', async () => {
+      seedSession({ reportsAgentStart: true, launchOutputRead: Promise.resolve('login_required') });
+      expect(await manager.launchOutputClass('session-1')).toBe('login_required');
+      expect(await manager.launchOutputClass('no-such-session')).toBeUndefined();
+    });
+  });
+
+  describe('a retry that worked', () => {
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it('reports the recovery on its first sign, once', () => {
+      seedSession({ reportsAgentStart: true, startPath: 'retry' });
+      sendAgentEvent('session_start');
+      sendAgentEvent('prompt');
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect((reportHandledError.mock.calls[0][0] as Error).name).toBe('AgentLaunchRecoveredError');
+    });
+
+    it('stays quiet for a launch that was no retry', () => {
+      seedSession({ reportsAgentStart: true, startPath: 'board' });
+      sendAgentEvent('session_start');
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('takes no synthesized SessionEnd for a sign the agent ran', () => {
+      const session = seedSession({ reportsAgentStart: true, startPath: 'retry' });
+      sendAgentEvent('session_end');
+      expect(session.agentHookObservedAt).toBeUndefined();
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a shell the sweep cannot judge', () => {
+    function armCheck(sessionId = 'session-1'): void {
+      (manager as unknown as { armUnjudgedLaunchCheck(id: string): void }).armUnjudgedLaunchCheck(sessionId);
+    }
+
+    beforeEach(() => {
+      reportHandledError.mockClear();
+      vi.useFakeTimers();
+    });
+
+    it('reports a launch that showed nothing by the ceiling, and pauses nothing', () => {
+      sweep.available = false;
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedSession({ reportsAgentStart: true });
+      armCheck();
+      vi.advanceTimersByTime(START_CEILING_MS);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'never_started', judge: 'timer' });
+      expect(neverStarted).not.toHaveBeenCalled();
+    });
+
+    it('reports a WSL shell, which the sweep never judges', () => {
+      seedSession({ reportsAgentStart: true, shell: 'wsl -d Ubuntu' });
+      armCheck();
+      vi.advanceTimersByTime(START_CEILING_MS);
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ judge: 'timer', shell: 'other' });
+    });
+
+    it('stays quiet once the agent showed it ran', () => {
+      sweep.available = false;
+      const session = seedSession({ reportsAgentStart: true });
+      armCheck();
+      session.agentStartObservedAt = Date.now();
+      vi.advanceTimersByTime(START_CEILING_MS);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { label: 'killed', undo: (session: ManagedSession) => { session.status = 'exited'; session.pty = null; } },
+      { label: 'suspended', undo: (session: ManagedSession) => { session.status = 'suspended'; } },
+      { label: 'removed', undo: () => { (manager as unknown as { registry: { delete(id: string): boolean } }).registry.delete('session-1'); } },
+      { label: 'hidden until adopted', undo: () => { (manager as unknown as { hiddenUntilAdopted: Set<string> }).hiddenUntilAdopted.add('session-1'); } },
+    ])('reports nothing for a session $label before the ceiling', ({ undo }) => {
+      sweep.available = false;
+      const session = seedSession({ reportsAgentStart: true });
+      armCheck();
+      undo(session);
+      vi.advanceTimersByTime(START_CEILING_MS);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+
+    it('arms nothing where the sweep can judge', () => {
+      seedSession({ reportsAgentStart: true });
+      armCheck();
+      vi.advanceTimersByTime(START_CEILING_MS);
+      expect(reportHandledError).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a launch that never started', () => {
     beforeEach(() => {
       reportHandledError.mockClear();
+    });
+
+    it('reports a shell\'s own failure for an adapter that reports no start, and retires as usual', async () => {
+      const session = seedSession({ firstOutputAt: Date.now() });
+      vi.spyOn(manager, 'getRawScrollback').mockResolvedValue('$ aider\r\nzsh: command not found: aider\r\n$ ');
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      retire();
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'never_started', output_class: 'command_not_found' });
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(session.status).toBe('exited');
     });
 
     it('reports a task session retired with no sign its agent started, once', () => {
