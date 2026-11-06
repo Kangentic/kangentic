@@ -96,6 +96,9 @@ const ALLOWLIST: Record<string, string> = {
     'The first-spawn lock plans nothing for profile tasks (`if (task.profile_id) return null;`), so its '
     + 'raw settingsLane reads only ever run for direct-override tasks. Its `destinationLane` is '
     + 'supplied already folded by both chokepoints.',
+  'src/main/transition-engine/session-startup/missing-worktree.ts':
+    'Pure helper. `canRecreateWorktree` takes a lane its caller already folded: auto-spawn.ts carries '
+    + 'the folded lane on each candidate, and resume-suspended.ts passes `laneForTask(task)`.',
 };
 
 /**
