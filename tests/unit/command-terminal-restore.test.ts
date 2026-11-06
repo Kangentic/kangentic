@@ -63,6 +63,7 @@ import {
   isRestorableAfterHostLoss,
   registerCommandTerminalRestoreHandlers,
   restoreLostCommandTerminals,
+  skipCommandTerminalRestore,
   startCommandTerminalRestore,
   waitForCommandTerminalRestore,
   type LostCommandTerminal,
@@ -398,6 +399,35 @@ describe('startCommandTerminalRestore', () => {
     release();
     await pass;
     expect(startMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('skipCommandTerminalRestore', () => {
+  it('answers the panel at once, starts nothing, and leaves the claimed rows open for the owning instance', async () => {
+    vi.useFakeTimers();
+    try {
+      const { context, repository } = makeRig({ rows: [{ id: 'conversation-a', slot: 'slot-1' }, { id: 'conversation-b', slot: 'slot-2' }] });
+      claimCommandTerminalRestore(context, PROJECT_ID);
+      let finished = false;
+      const wait = waitForCommandTerminalRestore(context, PROJECT_ID).then(() => { finished = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(finished).toBe(false);
+
+      skipCommandTerminalRestore(context, PROJECT_ID);
+
+      // Far short of the 10 s ceiling, so it is the skip that answered.
+      await vi.advanceTimersByTimeAsync(1);
+      await wait;
+      expect(finished).toBe(true);
+      // A later start finds the pass settled and spawns nothing.
+      await startCommandTerminalRestore(context, PROJECT_ID);
+      expect(startMock).not.toHaveBeenCalled();
+      // Neither row was stamped ended: another instance that owns them can still restore them.
+      expect(repository.get('conversation-a')?.ended_at).toBeNull();
+      expect(repository.get('conversation-b')?.ended_at).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

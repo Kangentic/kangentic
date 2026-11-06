@@ -561,7 +561,7 @@ Before keeping a >10s E2E test, answer these 4 questions:
 
 **Reference examples:**
 
-- `branch-rename.spec.ts` (deleted 2026-04-11): The `renameBranch` function is 20 lines that call `git branch -m` after a slug comparison. The 3 E2E tests that covered it cost 28.2s. Replaced with 5 unit tests in `tests/unit/worktree-manager.test.ts` that run in ~5ms. Same for `pruneOrphanedWorktreeTasks` - 6 unit tests in `resource-cleanup.test.ts`. Answer to #1 was "no, git operations can be mocked via `simple-git`"; answer to #2 was "no, the function's logic is self-contained".
+- `branch-rename.spec.ts` (deleted 2026-04-11): The `renameBranch` function is 20 lines that call `git branch -m` after a slug comparison. The 3 E2E tests that covered it cost 28.2s. Replaced with 5 unit tests in `tests/unit/worktree-manager.test.ts` that run in ~5ms. Answer to #1 was "no, git operations can be mocked via `simple-git`"; answer to #2 was "no, the function's logic is self-contained".
 
 - `codex-session-id-capture.spec.ts` (kept at 12.2s): Exercises the filesystem scanner → `notifyAgentSessionId` → DB → `--resume <uuid>` pipeline for Codex 0.118, which lacks PTY session headers and hook firing. Answer to #1 is "yes" - the scanner observes real disk state via a timer. Answer to #2 is "yes" - the bug this protects against was a wiring regression where `StatusFileReader` gated the watcher on Claude-only hook state. Kept, but the fixed `waitForTimeout(3000)` + `waitForTimeout(2000)` were replaced with polls on `sessions.list()[i].agent_session_id`.
 
