@@ -13,6 +13,7 @@ const {
   PTY_HOST_EXTERNALS,
   PTY_HOST_PROBE_DEPENDENCIES,
 } = require('./verify-unpacked-worker');
+const { verifyNoSourceMaps } = require('./verify-no-source-maps');
 const { installSpawnHelper } = require('./install-spawn-helper');
 // The targets the local embedding model has no build for, shared with the app
 // (src/shared/embedding-runtime.ts), which reports the Knowledge Graph
@@ -182,6 +183,10 @@ module.exports = async function afterPack(context) {
     : context.appOutDir;
   const resourcesDirName = platform === 'darwin' ? 'Resources' : 'resources';
   const unpackedRoot = path.join(frameworkDir, resourcesDirName, 'app.asar.unpacked');
+
+  // First, since it only reads the asar header, and a package that fails it should
+  // not spend the load probes below. Throws on any .map, which fails the package.
+  verifyNoSourceMaps({ asarPath: path.join(frameworkDir, resourcesDirName, 'app.asar') });
 
   // Strip cross-platform prebuilds and PDB debug symbols from node-pty
   const archMap = { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64' };
