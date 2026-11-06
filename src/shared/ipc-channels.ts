@@ -589,10 +589,11 @@ export const IPC = {
   UPDATE_INSTALL: 'updater:install',
   UPDATE_DOWNLOADED: 'updater:downloaded',
   // Push: this install cannot update itself and never will until the user acts
-  // on it - today that is only the macOS read-only-volume case, DESKTOP-1A.
-  // Carries the user-facing message to toast, composed in main and latched
-  // there for the app's lifetime (`notifyReadOnlyVolume` in src/main/updater.ts),
-  // so a condition every 4-hour check rediscovers still toasts once.
+  // on it - the macOS read-only volume (DESKTOP-1A) or a .deb install with no
+  // package manager (DESKTOP-R).
+  // Carries the user-facing message to toast, chosen in main and latched there
+  // for the app's lifetime (`notifyUpdateBlocked` in src/main/updater.ts), so a
+  // condition the updater keeps rediscovering still toasts once.
   // Main window only (the updater's own window reference, not broadcast), for
   // the reason CONFIG_WRITE_FAILED gives above: one app-wide condition, toasted
   // once, not once per open window.
