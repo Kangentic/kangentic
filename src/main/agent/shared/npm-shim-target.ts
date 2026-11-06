@@ -22,6 +22,11 @@ import path from 'node:path';
 
 const NODE_LAUNCHER_NAMES = new Set(['node', 'node.exe', 'node$exe']);
 
+/** `.cmd` / `.bat` by extension, case-insensitive (`which` returns `.CMD`). */
+export function isWindowsBatchShim(agentPath: string): boolean {
+  return /\.(cmd|bat)$/i.test(agentPath);
+}
+
 /**
  * Largest file this module will read. A real shim is well under 2KB; the
  * ceiling stops a same-extension file that is not a shim at all (a generated

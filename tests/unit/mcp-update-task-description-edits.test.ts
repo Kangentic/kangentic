@@ -132,16 +132,15 @@ function existingTask(description: string = ORIGINAL_DESCRIPTION) {
 }
 
 // ---------------------------------------------------------------------------
-// TASK_DESCRIPTION_MAX_LENGTH - the description cap was raised from 10,000 to
-// 50,000. Without this assertion, nothing in this suite fails if the cap
-// were reverted back to 10,000 (computeUpdatedDescription's own over-cap
-// tests use `TASK_DESCRIPTION_MAX_LENGTH` symbolically, so they pass either
-// way).
+// TASK_DESCRIPTION_MAX_LENGTH - the cap is what a Windows command line can
+// carry (`task-description-limit.test.ts`). Without this assertion, nothing in
+// this suite fails if the cap moves (computeUpdatedDescription's own over-cap
+// tests use `TASK_DESCRIPTION_MAX_LENGTH` symbolically, so they pass either way).
 // ---------------------------------------------------------------------------
 
 describe('TASK_DESCRIPTION_MAX_LENGTH', () => {
-  it('is 50,000 characters (raised from the prior 10,000 cap)', () => {
-    expect(TASK_DESCRIPTION_MAX_LENGTH).toBe(50_000);
+  it('is 27,500 characters', () => {
+    expect(TASK_DESCRIPTION_MAX_LENGTH).toBe(27_500);
   });
 });
 
@@ -249,6 +248,41 @@ describe('computeUpdatedDescription', () => {
     expect((result as { error: string }).error).toContain(String(TASK_DESCRIPTION_MAX_LENGTH + 1));
   });
 
+  // A task from before the limit (or a board import) may already be over it.
+  // `taskDescriptionOverage(text, current)` lets it keep editing as long as the
+  // result does not grow.
+  describe('on a task already past the limit', () => {
+    const older = `${'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH)}OLD-TAIL${'y'.repeat(100)}`;
+
+    it('takes an edit that shrinks it and stays over the limit', () => {
+      const result = computeUpdatedDescription(older, { edits: [{ find: 'OLD-TAIL', replace: '' }] });
+
+      expect(result.success).toBe(true);
+      expect((result as { text: string }).text.length).toBe(older.length - 'OLD-TAIL'.length);
+      expect((result as { text: string }).text.length).toBeGreaterThan(TASK_DESCRIPTION_MAX_LENGTH);
+    });
+
+    it('takes an edit that leaves the length equal', () => {
+      const result = computeUpdatedDescription(older, { edits: [{ find: 'OLD-TAIL', replace: 'NEW-TAIL' }] });
+
+      expect(result.success).toBe(true);
+      expect((result as { text: string }).text).toHaveLength(older.length);
+    });
+
+    it('refuses an edit that grows it', () => {
+      const result = computeUpdatedDescription(older, { edits: [{ find: 'OLD-TAIL', replace: 'OLD-TAIL!' }] });
+
+      expect(result.success).toBe(false);
+      expect((result as { error: string }).error).toContain(String(older.length + 1));
+    });
+
+    it('refuses an append, even of one character', () => {
+      const result = computeUpdatedDescription(older, { append: '!' });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
   it('resolves overlapping-but-not-identical find strings across sequential edits (an earlier replace can make a later find unique)', () => {
     // "section" alone appears twice (Section A / Section B headers), so it is
     // non-unique against the ORIGINAL text. The first edit narrows the
@@ -348,6 +382,47 @@ describe('handleUpdateTask - descriptionEdits / appendDescription', () => {
 
     expect(result.success).toBe(false);
     expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+  });
+
+  // A path past the Zod schema reaches the handler, and a cut prompt starts as
+  // if nothing happened.
+  it('refuses a full replace past the limit rather than cutting it', () => {
+    const result = handleUpdateTask(
+      updateTaskParams({ description: 'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH + 3) }),
+      context,
+    );
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining(`limit by 3`) });
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+  });
+
+  it('leaves an older task past the limit its full replace, as long as it does not grow', () => {
+    const older = 'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH + 100);
+    mockTaskRepoGetById.mockReturnValue(existingTask(older));
+    mockTaskRepoUpdate.mockImplementation((input: { description?: string }) => ({ ...existingTask(), description: input.description }));
+
+    const result = handleUpdateTask(updateTaskParams({ description: older.slice(10) }), context);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledOnce();
+  });
+
+  it('persists a shrinking edit to a task already past the limit, and refuses a growing one with nothing written', () => {
+    const older = `${'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH)}OLD-TAIL`;
+    mockTaskRepoGetById.mockReturnValue(existingTask(older));
+    mockTaskRepoUpdate.mockImplementation((input: { description?: string }) => ({ ...existingTask(), description: input.description }));
+
+    const grown = handleUpdateTask(
+      updateTaskParams({ descriptionEdits: [{ find: 'OLD-TAIL', replace: 'OLD-TAIL-AND-MORE' }] }),
+      context,
+    );
+    expect(grown.success).toBe(false);
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+
+    const shrunk = handleUpdateTask(updateTaskParams({ descriptionEdits: [{ find: 'OLD-TAIL', replace: 'TAIL' }] }), context);
+    expect(shrunk.success).toBe(true);
+    const updateInput = mockTaskRepoUpdate.mock.calls[0][0] as { description: string };
+    expect(updateInput.description).toBe(`${'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH)}TAIL`);
   });
 
   it('an over-cap result fails the call and writes nothing', () => {

@@ -172,8 +172,8 @@ changed briefs in `attachments`, which adds to what is there. Remove a supersede
 
 Attach the briefs rather than copy them into the description, because the attachment paths reach the
 agent's opening prompt anyway. Keep the description to the plan a person reads on the card, and under
-25,000 characters. The field allows 50,000, but on Windows the opening prompt travels on the command
-line, which fails between 32,000 and 32,800 characters.
+25,000 characters. The field allows 27,500, but the briefs' paths ride the same command line, and
+past its limit most agents refuse to start.
 
 The `Upgrade` Board Profile puts the Testing column on Opus, because `/pull-request` fixes code there
 when CI fails and an upgrade's fixes are app changes. If the board has no such profile, file without

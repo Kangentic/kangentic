@@ -36,6 +36,8 @@ import { translateText } from '../../i18n/translate';
 import { isPermissionMode } from '../../../shared/workflow-run-settings';
 import { runSettingsFrom, showsPlannedTaskRows, type WorkflowTaskInitial } from './workflow-task-form';
 import { DescriptionEditor } from '../DescriptionEditor';
+import { DescriptionLimitNote } from './DescriptionLimitNote';
+import { taskDescriptionOverage } from '../../../shared/task-description-limit';
 import { AttachmentChipStrip } from './AttachmentChipStrip';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex } from './attachment-utils';
 import { compressClipboardImage } from './image-compress';
@@ -218,8 +220,10 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   // Editing a planned task measures against what it already holds, not an empty form.
   // A workflow task's board, base branch and Worktree choice count too; the
   // board form's never did, and keeps its old measure.
+  const trimmedDescription = description.trim();
+  const descriptionOverage = taskDescriptionOverage(trimmedDescription, initial?.description ?? null);
   const isDirty = title.trim() !== (initial?.title ?? '').trim()
-    || description.trim() !== (initial?.description ?? '').trim()
+    || trimmedDescription !== (initial?.description ?? '').trim()
     || labels.join('\n') !== (initial?.labels ?? []).join('\n')
     || priority !== (initial?.priority ?? 0)
     || customBranchName.trim() !== '' || attachments.length > 0
@@ -414,7 +418,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       inputRef.current?.focus();
       return;
     }
-    if (branchNameError || heldReason) return;
+    if (branchNameError || heldReason || descriptionOverage > 0) return;
     setSubmitting(true);
     try {
       const taskTitle = title.trim();
@@ -520,7 +524,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           // overlay stack; while it covers the form the key does nothing.
           save={{
             onSave: () => formRef.current?.requestSubmit(),
-            disabled: submitting || !!branchNameError || heldReason !== null || previewAttachment !== null,
+            disabled: submitting || !!branchNameError || heldReason !== null || descriptionOverage > 0 || previewAttachment !== null,
           }}
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
@@ -548,8 +552,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               onCancel={closeWithAnimation}
               submitLabel={workflow?.submitLabel ?? t`Create`}
               busy={submitting}
-              disabled={!!branchNameError || heldReason !== null}
-              disabledReason={heldReason}
+              disabled={!!branchNameError || heldReason !== null || descriptionOverage > 0}
+              disabledReason={heldReason ?? (descriptionOverage > 0 ? t`The description is too long to start an agent with.` : null)}
             />
           }
         >
@@ -594,6 +598,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               mentionSearchCwd={(workflow ? taskProject?.path : currentProject?.path) ?? null}
               className="flex-1"
             />
+            <DescriptionLimitNote overage={descriptionOverage} />
 
             {!workflow && (
               <AttachmentChipStrip

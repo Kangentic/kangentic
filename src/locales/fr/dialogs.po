@@ -182,6 +182,10 @@ msgstr "{nextFileCombo} - fichier modifié suivant"
 msgid "{oldPath} to {newPath}"
 msgstr "{oldPath} vers {newPath}"
 
+#: src/renderer/components/dialogs/DescriptionLimitNote.tsx
+msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
@@ -2988,6 +2992,10 @@ msgstr "Correspondance de texte"
 #, fuzzy
 msgid "The agent CLI this task runs on"
 msgstr "La CLI d'agent utilisée par cette tâche"
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 #, fuzzy

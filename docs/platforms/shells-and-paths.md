@@ -127,6 +127,12 @@ sourced `.ps1` would meet the execution policy. A session with no output paths (
 `SESSION_SPAWN`) has no folder to use and types the whole command, as does a spawn whose launcher
 write failed, which still works once the shell has reached its prompt.
 
+A Windows console has no line limit, but the process the line starts does: 32,766 characters, and
+8,191 through cmd.exe. `commandLineLimit` holds both. Linux limits one argument to 131,072 bytes,
+in a WSL distro too. `commandFitsShell` measures a built command against these, and `performSpawn`
+refuses an agent's command that does not fit
+([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
+
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of
 a command is not the agent getting it.

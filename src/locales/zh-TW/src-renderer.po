@@ -1339,6 +1339,10 @@ msgstr "代理在遠端伺服器上執行"
 msgid "The automation did not start."
 msgstr "自動化未啟動。"
 
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."
 msgstr "清單已重新整理。"

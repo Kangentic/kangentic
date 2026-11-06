@@ -7,6 +7,7 @@ import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-comma
 import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
 import { MOVE_MESSAGE_MAX_CHARS } from '../commands/move-message-limit';
 import { resolveSpacedModelName, resolveEffortSelector } from '../../../shared/model-id';
+import { taskDescriptionTooLong } from '../../../shared/task-description-limit';
 import { validateSpawnOverrides } from './spawn-override-validation';
 import { resolveColumn } from '../commands/column-resolver';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -14,6 +15,11 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveTask } from '../commands/task-resolver';
 import type { ToolArgumentNotices } from './tool-call-logging';
 import type { CommandContext } from '../commands';
+
+/** Says how far over, so an agent can shorten a description in one more call instead of guessing. */
+function descriptionOverLimit(issue: { input?: unknown }): string {
+  return taskDescriptionTooLong(String(issue.input ?? '').length - TASK_DESCRIPTION_MAX_LENGTH);
+}
 
 const PERMISSION_MODE_SCHEMA = z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']);
 /** Literals kept in lockstep with the shared `TaskRunMode` union by tests/unit/mcp-task-tools-run-mode-schema.test.ts. */
@@ -219,7 +225,7 @@ export function registerTaskTools(
       description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks are ready to work on immediately; with worktrees on (the project default) each gets its own worktree and branch, and with `useWorktree: false` the agent works in the project directory on the branch already checked out. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here (you may omit labels), then set labels with a separate labels-only kangentic_update_task call right after.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
-        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Task description. Supports markdown.'),
+        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH, { error: descriptionOverLimit }).optional().describe(`Task description. Supports markdown. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line. Attach longer material as a file.`),
         column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. The done-role column is not a valid target here (creating a task there would archive it off the board immediately); create it on the board and move it with kangentic_move_task. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
         priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
         labels: z.array(z.union([
@@ -641,7 +647,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
-        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('New task description (markdown). Replaces the entire description. For an incremental change to a long description, prefer descriptionEdits or appendDescription instead - they cost far fewer tokens and cannot silently drop untouched sections. Mutually exclusive with descriptionEdits and appendDescription.'),
+        description: z.string().optional().describe(`New task description (markdown). Replaces the entire description. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters, unless the task is already longer and this does not grow it. For an incremental change to a long description, prefer descriptionEdits or appendDescription instead - they cost far fewer tokens and cannot silently drop untouched sections. Mutually exclusive with descriptionEdits and appendDescription.`),
         descriptionEdits: z.array(z.object({
           find: z.string().min(1).max(TASK_DESCRIPTION_MAX_LENGTH).describe('Exact text to find in the current description. Must appear exactly once.'),
           replace: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).describe('Text to replace it with.'),

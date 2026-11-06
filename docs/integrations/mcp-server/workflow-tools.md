@@ -110,7 +110,8 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 | `planApproval` | | No | Removed: plan approval is set per task. A value is refused with "planApproval is set per task now. Put planApproval on each task entry."; `null` is accepted and ignored, since older `kangentic_get_workflow` output told agents to send it back. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
-Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally
+Each planned task takes `key` (unique in the plan), `title`, `description` (max 27500 chars: it
+rides the agent's command line), and optionally
 `project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
 one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`.
 
@@ -207,7 +208,7 @@ Add a task to a started workflow. It lands in To Do and starts once nothing it w
 |-----------|------|----------|-------------|
 | `workflow` | string | Yes | The workflow's id or exact title. |
 | `title` | string | Yes | The task's title. |
-| `description` | string | No | What its agent should do. |
+| `description` | string | No | What its agent should do (max 27500 chars: it rides the agent's command line). |
 | `taskProject` | string | No | Another project's board to put it on. |
 | `routeStart` / `routeLast` | string | No | First and last columns it visits. |
 | `skip` | string[] | No | Columns inside its route it skips. |

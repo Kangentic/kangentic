@@ -125,6 +125,8 @@ function useStartBlockedCopy(reason: StartBlockedReason): { label: string; tip: 
       return { label: t`Didn't start`, tip: t`The agent never reported that it started.` };
     case 'spawn-failed':
       return { label: t`Didn't start`, tip: t`The terminal could not start. Its window shows why.` };
+    case 'prompt-too-long':
+      return { label: t`Didn't start`, tip: t`Its prompt is too long for this agent to start with.` };
   }
 }
 

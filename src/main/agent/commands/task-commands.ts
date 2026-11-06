@@ -37,8 +37,10 @@ import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { NEVER_AUTO_SPAWN_ROLES, type Task, type TaskUpdateInput, type PermissionMode, type PlanApproval, type TaskRunMode, type Swimlane } from '../../../shared/types';
+import { TASK_DESCRIPTION_MAX_LENGTH, taskDescriptionOverage, taskDescriptionRefusal } from '../../../shared/task-description-limit';
 
-export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
+// For `task-tools.ts` and the tests that mock this module in its place.
+export { TASK_DESCRIPTION_MAX_LENGTH };
 
 export interface DescriptionEdit {
   find: string;
@@ -97,7 +99,7 @@ export function computeUpdatedDescription(
   if (options.append) {
     text = text + options.append;
   }
-  if (text.length > TASK_DESCRIPTION_MAX_LENGTH) {
+  if (taskDescriptionOverage(text, current) > 0) {
     return { success: false, error: `Resulting description would be ${text.length} characters, over the ${TASK_DESCRIPTION_MAX_LENGTH} character limit.` };
   }
   return { success: true, text };
@@ -227,7 +229,7 @@ export const handleCreateTask: CommandHandler = async (
   context: CommandContext,
 ) => {
   const title = String(params.title ?? '').slice(0, 200);
-  const description = String(params.description ?? '').slice(0, TASK_DESCRIPTION_MAX_LENGTH);
+  const description = String(params.description ?? '');
   const columnName = params.column as string | null;
   const branchName = params.branchName as string | null;
   const baseBranch = params.baseBranch as string | null;
@@ -280,6 +282,11 @@ export const handleCreateTask: CommandHandler = async (
     }
     return handleCreateBacklogTask({ ...params, priority: priority ?? 0 }, context);
   }
+
+  // Refused, not cut: a path past the Zod schema reaches this, and a task with
+  // the end of its prompt missing starts as if nothing happened.
+  const descriptionRefusal = taskDescriptionRefusal(description, null);
+  if (descriptionRefusal !== null) return { success: false, error: descriptionRefusal };
 
   // Normalize labels: extract names for DB storage and colors for config
   const labelNames: string[] = [];
@@ -487,7 +494,10 @@ export const handleUpdateTask: CommandHandler = (
   // together, so this if/else never sees both from the MCP path.
   let descriptionChanged = false;
   if (newDescription !== null) {
-    updates.description = String(newDescription).slice(0, TASK_DESCRIPTION_MAX_LENGTH);
+    const replacement = String(newDescription);
+    const descriptionRefusal = taskDescriptionRefusal(replacement, task.description);
+    if (descriptionRefusal !== null) return { success: false, error: descriptionRefusal };
+    updates.description = replacement;
     descriptionChanged = true;
   } else if (newDescriptionEdits !== null || newAppendDescription !== null) {
     const editResult = computeUpdatedDescription(task.description, {

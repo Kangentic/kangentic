@@ -111,6 +111,27 @@ async function openNewTask(): Promise<void> {
   await expect(newTaskTitle()).toBeVisible();
 }
 
+test.describe('A description over the limit', () => {
+  // The field's limit is what an agent's command line can carry. Past it the task
+  // would save and never start, so Save stops here, and says why.
+  test('keeps the task from being created until it fits, and the key with it', async () => {
+    await openNewTask();
+    await newTaskTitle().fill('Too Long To Start');
+    const description = newTaskDialog().locator('[data-testid="task-description"]');
+    const create = newTaskDialog().getByRole('button', { name: 'Create' });
+
+    await description.fill('x'.repeat(27_502));
+    await expect(newTaskDialog().getByTestId('task-description-over-limit')).toHaveText('2 characters over the limit');
+    await expect(create).toBeDisabled();
+    await dispatchControlS(newTaskTitle());
+    expect(await storedTaskTitles()).toEqual([]);
+
+    await description.fill('x'.repeat(27_500));
+    await expect(newTaskDialog().getByTestId('task-description-over-limit')).toHaveCount(0);
+    await expect(create).toBeEnabled();
+  });
+});
+
 /** Open the Column Manager on a column by clicking its board header. */
 async function openColumnManager(columnName: string): Promise<void> {
   await page.locator(`[data-swimlane-name="${columnName}"]`).locator(`text=${columnName}`).click();

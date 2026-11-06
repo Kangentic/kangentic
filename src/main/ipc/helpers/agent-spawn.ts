@@ -33,7 +33,7 @@ import { buildCommandInjectionVerifier } from '../../transition-engine/injection
 import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
-import { awaitQueuedSessionStart, deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import { awaitQueuedSessionStart, deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, OPENING_BOOT_SCREEN_WAIT_MS, OPENING_INPUT_WAIT_MS, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
 import { isWorktreeCreationInFlight } from '../../git/worktree-creation-registry';
 import {
@@ -413,8 +413,12 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
    * Task #952: set when the return recap is the resume's whole prompt ahead of
    * a slash command. Resolves once the recap's turn ends (true) or the session
    * leaves first (false). The column's message and held messages wait on it.
+   * A typed opening waiting in the background (`deferredOpening`) sets it too:
+   * only a fresh start has one and only a resume has a recap, so they never meet.
    */
   let recapTurnGate: Promise<boolean> | null = null;
+  /** A typed opening waiting in the background. Resolves whether it landed. */
+  let deferredOpening: Promise<boolean> | null = null;
 
   /**
    * Send now, or, behind a return recap, once its turn has ended. A move of the
@@ -492,7 +496,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     discardedDraft: null,
     interruptedTurn: false,
     escalated: false,
-    reason: 'The task moved on, or its agent ended, before the recap turn was over, so the message was not sent.',
+    reason: deferredOpening === null
+      ? 'The task moved on, or its agent ended, before the recap turn was over, so the message was not sent.'
+      : 'The task moved on, or its opening prompt did not land, so the message was not sent.',
     textReachedAgent: false,
   });
 
@@ -827,8 +833,6 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     }
   };
 
-  let queuedOpening: Promise<boolean> | null = null;
-
   /**
    * Type in the opening prompt a spawn's command line could not carry
    * (`SpawnOutcome.typedOpening`), and wait for it, exactly as everything waits
@@ -836,23 +840,32 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
    * prompt sits idle, so a failure is said, as a column message that did not
    * run is said; a cancel is the user's own move. Resolves whether it landed.
    *
-   * A session the concurrency cap queued has no PTY to type into, and its
-   * command, which has no prompt, is what the queue runs. Its opening waits for
-   * the promotion in the background, since the queue can outlast a task lock by
-   * hours and a caller with no signal could not be cancelled out of the wait.
-   * This then resolves true at once and `queuedOpening` holds the real answer,
-   * for what depends on the opening landing. Rows after it do not wait for it.
+   * Two waits can outlast a task lock, so each moves to the background. A
+   * session the concurrency cap queued has no PTY to type into, and its command,
+   * which has no prompt, is what the queue runs, so its opening waits for the
+   * promotion, which can take hours. An agent on a boot screen needs a person to
+   * answer it, and a paste's Enter would answer it for them, so its opening waits
+   * for the input box, after a promotion too. Measured on real Claude, whose
+   * approval of external imports held a preview's 28,000 character opening past a
+   * minute. This then resolves true at once and `deferredOpening` holds the real
+   * answer, for what depends on the opening landing. It is also the gate
+   * `afterRecapTurn` holds every later message behind: a row's keystrokes would
+   * answer the same screen, and a row's paste could land before the opening or
+   * across it.
+   *
+   * Only the boot screen's wait is a tracked delivery. A move leaves a queued row
+   * queued, and its agent still needs this prompt when its turn comes.
    */
   const deliverTypedOpening = async (typedOpening: string): Promise<boolean> => {
     const sessionId = tasks.getById(task.id)?.session_id;
     if (!sessionId) return false;
-    const typeOpening = async (): Promise<boolean> => {
+    const typeOpening = async (typingSignal: AbortSignal | undefined): Promise<boolean> => {
       const notSent = await deliverOpeningPromptAndWait(context, {
         taskId: task.id,
         sessionId,
         prompt: typedOpening,
         verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
-        signal,
+        signal: typingSignal,
       });
       if (notSent === null) return true;
       reportAutoCommandOutcome(context, tasks, task, {
@@ -868,13 +881,51 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       }, options.projectId);
       return false;
     };
-    if (context.sessionManager.getSession(sessionId)?.status !== 'queued') return typeOpening();
-    queuedOpening = awaitQueuedSessionStart(context, sessionId, signal)
-      .then((started) => (started ? typeOpening() : false))
-      .catch((error) => {
-        console.error(`[spawnAgent] Task ${task.id.slice(0, 8)}: the queued opening prompt failed:`, error);
+    const onBootScreen = async (): Promise<boolean> => {
+      const atInput = await context.sessionManager.awaitInputReady(sessionId, OPENING_INPUT_WAIT_MS, signal);
+      return !atInput && !signal?.aborted && context.sessionManager.getSession(sessionId)?.status === 'running';
+    };
+    /** A pause, or a newer session, ended the wait. Neither is a failure to report. */
+    const sessionStoodDown = (): boolean => {
+      const currentSessionId = tasks.getById(task.id)?.session_id;
+      return context.sessionManager.getSession(sessionId)?.status === 'suspended'
+        || (Boolean(currentSessionId) && currentSessionId !== sessionId);
+    };
+    const waitOutBootScreen = async (): Promise<boolean> => {
+      // Its own controller: a create has no signal, and a move ending this session
+      // is the user's choice, which must not read as an agent that exited.
+      const superseded = new AbortController();
+      const release = trackMessageDelivery(task.id, superseded);
+      const forwardAbort = (): void => superseded.abort();
+      signal?.addEventListener('abort', forwardAbort, { once: true });
+      try {
+        const atInput = await context.sessionManager.awaitInputReady(sessionId, OPENING_BOOT_SCREEN_WAIT_MS, superseded.signal);
+        if (!atInput && sessionStoodDown()) return false;
+        // Any other way this wait ends, `typeOpening` says so: it sends, or reports why not.
+        return await typeOpening(superseded.signal);
+      } finally {
+        signal?.removeEventListener('abort', forwardAbort);
+        release();
+      }
+    };
+    const inBackground = (waiting: Promise<boolean>): void => {
+      const opening = waiting.catch((error) => {
+        console.error(`[spawnAgent] Task ${task.id.slice(0, 8)}: the deferred opening prompt failed:`, error);
         return false;
       });
+      deferredOpening = opening;
+      recapTurnGate = opening;
+    };
+    if (context.sessionManager.getSession(sessionId)?.status === 'queued') {
+      inBackground(awaitQueuedSessionStart(context, sessionId, signal).then(async (started) => {
+        if (!started) return false;
+        if (await onBootScreen()) return waitOutBootScreen();
+        return sessionStoodDown() ? false : typeOpening(signal);
+      }));
+      return true;
+    }
+    if (!(await onBootScreen())) return typeOpening(signal);
+    inBackground(waitOutBootScreen());
     return true;
   };
 
@@ -980,8 +1031,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       );
       startedAgentInGroup = true;
       // The spawn's command line could not carry its prompt (an adopted early
-      // agent, a CLI with no starting prompt): it goes in now, and everything
-      // below waits for it.
+      // agent, a CLI with no starting prompt, a prompt too long for the line): it
+      // goes in now, and everything below waits for it.
       const typedOpening = outcome?.typedOpening ?? null;
       const typedOpeningLanded = typedOpening === null || await deliverTypedOpening(typedOpening);
       // The agent deleted the conversation this move would have resumed, so
@@ -1056,11 +1107,12 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           // did not land: back on hold for the next start.
           heldClaim.release({ flush: true });
           heldHandedOff = true;
-        } else if (heldInPrompt && unsentPrompt === null && queuedOpening !== null) {
-          // They are in an opening that waits for the queue, so they settle from
-          // it. Unlike a queued command's prompt, the promotion delivers nothing.
+        } else if (heldInPrompt && unsentPrompt === null && deferredOpening !== null) {
+          // They are in an opening still waiting in the background, so they
+          // settle from it. Unlike a queued command's prompt, the promotion
+          // delivers nothing.
           const claim = heldClaim;
-          void queuedOpening.then((landed) => {
+          void deferredOpening.then((landed) => {
             if (landed) claim.commit(startedSessionId);
             else claim.release({ flush: true });
           });
