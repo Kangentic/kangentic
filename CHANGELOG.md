@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.55.0] - 2026-11-06
+
+### Features
+- Finish the queued task window and keep a queued start's settings (b6f30f52)
+- A workflow task cannot pause its automations (7aff391f)
+- A stopped card is the owner's to move (ec403ad8)
+- A task that needs no change goes straight to Done (6e5926ea)
+- Report agent launches Kangentic breaks, and retry one that never started (a542eaaf)
+- Mark a card the board has stopped, and stop a review on a person-only step (613bbb6a)
+
+### Fixes
+- A database must own a project folder before it sweeps it (300471c3)
+- Treat a gone project folder as a refusal and pin start reasons (38ee597d)
+- Name the step and the crash behind a held worker loop (6ace4ceb)
+- Label goose's database read and pin the transcript spans (dc69304f)
+- Tell the user once when a .deb install has no dpkg or apt (e6efc2f4)
+- Open the Column Manager through the task detail host (c4d0c327)
+- Contain a queued rebuild's failure and fill its coverage (0f0d2aa6)
+- Run the worktree enumeration in the pty host (122b6230)
+- Compare a no-change branch with the board's default base (7b5e41c0)
+- An empty reply is a stall, and the step owns the idle toast (5f75608c)
+- Release old task holds once, and refuse them in the mock (26d348e8)
+- The step never moves a task out of a person's gate (b9a6fb2e)
+- A row that names a column keeps to the task's route (5b1ded95)
+- List models through the initialize handshake and key trust by the physical path (03426d32)
+- Keep the lock tests green on Linux and cover the review fixes (9bdffe49)
+- Keep the quit waiting for a live pty host on every route (d705c176)
+- Remove the low-memory warning and the memory-triggered agent pause (82b8146f)
+- Resume a running workflow's legacy low-memory pause at startup (85c85ced)
+- Say why the data folder could not be created (3683690c)
+
+### Other
+- Classify the missing-worktree helper in the column strategy scan (b3e749d4)
+- Give the stderr-tail mock the watchdogLine export (aa6a2b02)
+- Name both update-blocked causes in the UI mock (bbd57005)
+- Pin a worktree that vanishes mid-enumeration (f67a33e4)
+- Pin the separate transcript open and flush spans (b9b2aa84)
+- Fix prose the lock, hold and gate changes left stale (f65bf27f)
+- Say "Agent didn't start", and list the new launch tests and spawn input fields (542b9557)
+- Pin launch report tags, the start path stamp, and which git failures are the user's (1384b9b7)
+- Pin the failed launch wiring and its start paths (8b5e9b44)
+- Say the 12h model-list cache is filled by the handshake first (2d6637df)
+- Pin that physicalPath and physicalPathSync agree (3271a728)
+- Pin the stop rows' tie order and the one-task stall read (46856cd1)
+- Pin the stopped mark's prune and move refresh (5df5a64d)
+- Land every Earlier search query in its field before asserting (fe1f826e)
+- Keep the real watcher out of tests that drive their own reads (348ee0e3)
+- Name the macOS launch failure in the v0.54.0 notes (4184eb52)
+
 ## [v0.54.0] - 2026-11-04
 
 ### Features
