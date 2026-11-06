@@ -266,11 +266,15 @@ describe('an agent session id that arrives for a session on a host', () => {
     rig.manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, id: string) => emitted.push(id));
     const changed = vi.fn();
     rig.manager.on('session-changed', changed);
+    const ran = vi.fn();
+    rig.manager.on('agent-ran', ran);
     const before = rig.manager.getSession('s1')?.agentSessionId;
     const knownBefore = rig.postedCommands.filter((command) => command.type === 'setAgentSessionIdKnown').length;
 
     (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x');
 
+    // The agent did report, so the launch counts as run: one read as never started would get a retry.
+    expect(ran).toHaveBeenCalledWith('s1');
     expect(rig.manager.getSession('s1')?.agentSessionId).toBe(before);
     expect(told).not.toHaveBeenCalled();
     expect(emitted).toEqual([]);
