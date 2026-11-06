@@ -60,6 +60,12 @@ vi.mock('../../src/main/automations/turn-end/agent-message-delivery', async (imp
   ...(await importOriginal<typeof import('../../src/main/automations/turn-end/agent-message-delivery')>()),
   pasteAgentMessageInBackground: mockPasteAgentMessage,
 }));
+const mockReportPreflightFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPreflightFailure: mockReportPreflightFailure,
+}));
+
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
@@ -608,6 +614,10 @@ describe('the workflow agent\'s reads across projects', () => {
 
         // The pane's own start, at a size it measured: the workflow row records none.
         await expect(agent.openWorkflowAgent(context, 'home', workflowId, { cols: 100, rows: 40 })).rejects.toThrow('the conversation could not be recorded');
+        expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+          cause: 'workflow_agent',
+          startPath: 'workflow',
+        }));
         expect(spawn).toHaveBeenCalledTimes(1);
         expect(spawn.mock.calls[0][0]).toMatchObject({ cols: 100, rows: 40 });
         expect(sessions.map((session) => [session.id, session.status])).toEqual([['session-restarted', 'running']]);

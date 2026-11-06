@@ -376,7 +376,8 @@ export class RemoteLink implements PtyHostTransport {
         lost.push(sessionId);
       } else if (!record.alive) {
         session.alive = false;
-        this.eventListener?.({ type: 'exit', ptyId: session.ptyId, sessionId, exitCode: record.exitCode ?? -1 });
+        // The host kept an exit code but no signal, so none is reported.
+        this.eventListener?.({ type: 'exit', ptyId: session.ptyId, sessionId, exitCode: record.exitCode ?? -1, signal: null });
       } else if (record.wirePtyId !== session.ptyId) {
         void this.requestHelper('rebind', { sessionId, ptyId: session.ptyId }).catch((error) => this.log(`rebind failed: ${String(error)}`));
       }

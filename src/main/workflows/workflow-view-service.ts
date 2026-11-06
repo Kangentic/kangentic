@@ -17,11 +17,10 @@ import type {
   WorkflowViewLink,
   WorkflowViewTask,
 } from '../../shared/types';
-import { boardEnds, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
+import { boardEnds, plannedRouteSteps, routeFromColumns, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
 import { UNNAMED_BLOCKER_LABEL } from '../../shared/workflow-waiting';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -30,7 +29,6 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import type { IpcContext } from '../ipc/ipc-context';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
-import { isHumanGate } from './workflow-lock-check';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import { linkEndState, readWorkflowTasks } from './workflow-tasks';
@@ -245,12 +243,9 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
   for (const { projectId, task } of created) {
     const place = places.get(task.id)!;
     let waitingFor: string[] = [];
-    let humanGateTargetId: string | null = null;
     if (place === 'done') doneCount += 1;
-    else if (place === 'working') {
-      inProgressCount += 1;
-      humanGateTargetId = humanGateExit(context, projectId, task, workflow);
-    } else {
+    else if (place === 'working') inProgressCount += 1;
+    else {
       // A blocker the read could not name, because its project would not open,
       // holds the task as the engine reads it. One that is provably gone does
       // not: the engine drops its link.
@@ -269,7 +264,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     if (place !== 'done') {
       const stallReason = stallOf(projectId, task);
       if (stallReason !== null) stalledTasks.push({ taskId: task.id, displayId: task.display_id, reason: stallReason });
-      boardTasks[task.id] = { waitingFor, humanGateTargetId, hasLinks: linked.has(task.id), stallReason };
+      boardTasks[task.id] = { waitingFor, hasLinks: linked.has(task.id), stallReason };
     }
   }
   return {
@@ -284,19 +279,6 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     agent: workflowAgentSummary(context, workflow.id),
     stalledTasks,
   };
-}
-
-/**
- * While the workflow runs: where a person may drag a task out of the human gate
- * it sits in. None for a task whose automations are paused, which a hand may
- * move anywhere but To Do, as a paused workflow's card.
- */
-function humanGateExit(context: IpcContext, projectId: string, task: Task, workflow: Workflow): string | null {
-  if (workflow.state !== 'running' || !canTaskRunAutomations(task).ok) return null;
-  const lanes = safeLanes(projectId);
-  const column = lanes.find((lane) => lane.id === task.swimlane_id);
-  if (!column || !isHumanGate(context, projectId, task, column)) return null;
-  return nextOnRoute(lanes, task, column.id)?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------

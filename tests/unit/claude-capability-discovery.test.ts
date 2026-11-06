@@ -34,12 +34,12 @@ vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
   };
 });
 
-// The /model picker probe spawns a real PTY - always mocked here. Its own
+// The CLI's model list spawns a real process - always mocked here. Its own
 // behavior is covered by tests/unit/claude-model-picker-probe.test.ts.
-// Non-forced discovery reads the non-blocking cache accessor (sync); a forced
-// rescan (a dropdown opening) awaits the TTL-bypassing probe instead.
+// Non-forced discovery reads the bounded cache accessor; a forced rescan (a
+// dropdown opening) awaits the TTL-bypassing probe instead.
 vi.mock('../../src/main/agent/adapters/claude/model-picker-probe', () => ({
-  getCachedModelPickerModels: vi.fn(),
+  awaitModelPickerModels: vi.fn(),
   probeModelPickerModels: vi.fn(),
 }));
 
@@ -47,12 +47,12 @@ import { execFile, exec } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverClaudeCapabilities } from '../../src/main/agent/adapters/claude/capability-discovery';
-import { getCachedModelPickerModels, probeModelPickerModels } from '../../src/main/agent/adapters/claude/model-picker-probe';
+import { awaitModelPickerModels, probeModelPickerModels } from '../../src/main/agent/adapters/claude/model-picker-probe';
 import { listMostRecentDirs, listMostRecentFiles, readHeadBytes } from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const probeMock = getCachedModelPickerModels as unknown as ReturnType<typeof vi.fn>;
+const probeMock = awaitModelPickerModels as unknown as ReturnType<typeof vi.fn>;
 const probeFreshMock = probeModelPickerModels as unknown as ReturnType<typeof vi.fn>;
 const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
 const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
@@ -438,6 +438,19 @@ Commands:
       expect(capabilities.models).toEqual(['claude-opus-4-7', 'claude-opus-5-5']);
       expect(capabilities.modelAliases).toEqual([{ id: 'opus', resolvesTo: 'claude-opus-5-5' }]);
       expect(capabilities.modelDisplayNames?.opus).toBe('Opus');
+    });
+
+    it('carries the CLI\'s name for an id with no claude- core through to the labels', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore(null);
+      probeMock.mockReturnValue({
+        models: ['my-gateway-model'],
+        aliases: [],
+        displayNames: { 'my-gateway-model': 'My Team Gateway' },
+      });
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
+      expect(capabilities.modelDisplayNames?.['my-gateway-model']).toBe('My Team Gateway');
     });
 
     it('reports no aliases when only transcripts answered', async () => {

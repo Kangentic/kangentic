@@ -478,8 +478,8 @@ export class TaskRepository {
    * Put a task in a workflow, or take it out (`null`), with its route. A task
    * taken out keeps nothing: it is an ordinary task again, on the auto layout.
    * Does not bump `updated_at`: membership is not an edit the board orders by.
-   * Joining resumes the task's automations: a workflow's run starts fresh, and a
-   * hold is a person's choice made on a workflow task, not one carried into it.
+   * Joining resumes the task's automations: a workflow task cannot pause them
+   * (`taskHoldRefusal`), and a run must not start on a hold carried into it.
    */
   setWorkflowMembership(taskId: string, membership: TaskWorkflowMembership | null): void {
     const join = writeTransaction(this.db, () => {

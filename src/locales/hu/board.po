@@ -225,11 +225,6 @@ msgstr "Változások észlelhetők a kangentic.json fájlban. Alkalmazza a friss
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "Az oszlopautomatizálások nem futnak ennél a feladatnál, és a munkafolyamata sem mozgatja. A kártya menüjéből folytathatja őket."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "Az oszlopautomatizálások nem futnak ennél a feladatnál. A kártya menüjéből folytathatja őket."
 

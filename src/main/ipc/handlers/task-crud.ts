@@ -22,7 +22,7 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { deleteTaskWithCleanup, drainAutoNameAskedIds } from '../helpers/task-delete';
 import { trackEvent } from '../../analytics/analytics';
-import { reportHandledError } from '../../analytics/error-reporting';
+import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { trackMilestone } from '../../analytics/usage';
 import { linkPR } from '../../pr/pr-linking';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -31,7 +31,7 @@ import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { wakeWorkflowEngine } from '../../workflows/workflow-wake';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
-import { applyAutomationsHoldChange } from '../../workflows/workflow-task-hold';
+import { taskHoldRefusal } from '../../workflows/workflow-lock-check';
 import type { IpcContext } from '../ipc-context';
 import type { Task, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
 
@@ -185,7 +185,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
               // the override chain is the best available approximation here.
               const failedAgent = task.agent_override ?? toLane.agent_override ?? 'default';
               trackEvent('spawn_failed', { agent: failedAgent, reason: 'create_spawn' });
-              reportHandledError(err, { source: 'spawn', reason: 'create_spawn', agent: failedAgent });
+              reportPreflightFailure({ cause: 'create_spawn', error: err, agent: failedAgent, startPath: 'board', keepMessage: true, alreadyCounted: true });
             }
           } finally {
             clearSpawnProgress(context.mainWindow, task.id);
@@ -203,6 +203,12 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     const { tasks } = getProjectRepos(context, resolvedProjectId);
     const existing = tasks.getById(input.id);
+
+    // Refused before anything is written, a rename included: the write is one.
+    if (input.automations_disabled === true && existing && resolvedProjectId) {
+      const refusal = taskHoldRefusal(existing, resolvedProjectId);
+      if (refusal) throw new Error(refusal);
+    }
 
     // If title changed and task has a worktree branch, try to rename the branch
     if (input.title && existing?.branch_name && existing?.worktree_path
@@ -234,10 +240,6 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       }
     }
 
-    // Read again after the rename's await, right before the write: an
-    // update_task call that flipped the automations switch meanwhile must not
-    // read as this write's flip.
-    const beforeWrite = tasks.getById(input.id);
     const updated = timeSyncWork('ipc:task:update', () => tasks.update(input));
 
     // Announced however the rest settles: the row above is already written.
@@ -270,10 +272,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
           console.error(`[pr-linking] link-time resolve failed for task ${String(input.id).slice(0, 8)}:`, error);
         });
       }
-      // A workflow task's title and its automations hold show on its canvas card
-      // and in the inspector.
+      // A workflow task's title shows on its canvas card and in the inspector.
       notifyWorkflowOfTask(updated, resolvedProjectId);
-      if (beforeWrite && resolvedProjectId) applyAutomationsHoldChange(context, resolvedProjectId, beforeWrite, updated);
       return updated;
     } finally {
       // Every edit, not only the automations switch, since a rename or a label

@@ -139,6 +139,8 @@ function fireExit(fixture: ExitFixture = {}) {
       getSessionProjectId: vi.fn(() => 'proj-test'),
       getSessionAgentName: vi.fn(() => fixture.agentName ?? 'claude'),
       getRawScrollback: vi.fn(() => Promise.resolve(CLI_OUTPUT)),
+      // Reports what the CLI named. A throw here is swallowed with the notice.
+      noteAgentExitedAtStart: vi.fn(),
       getUsageCache: vi.fn(() => ({})),
       getToolCallCount: vi.fn(() => 0),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {

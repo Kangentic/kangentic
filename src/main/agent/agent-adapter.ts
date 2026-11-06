@@ -30,6 +30,7 @@ import type {
   TranscriptPageUnavailableReason,
   StoredCliTarget,
 } from '../../shared/types';
+import type { UserSetupMatch } from '../../shared/user-configuration-error';
 
 /**
  * Result of `AgentAdapter.parseTranscript`. `entries` is the parsed
@@ -574,11 +575,20 @@ export interface AgentAdapter {
    * detection still succeeds.
    *
    * `forceRefresh` (set when a model dropdown opens) bypasses any
-   * adapter-internal capability caches - notably Claude's 12h /model picker
-   * probe - so a newly shipped model appears without a Kangentic restart.
+   * adapter-internal capability caches - notably Claude's 12h model-list cache
+   * (the `initialize` handshake, or the /model picker probe when it fails) - so a
+   * newly shipped model appears without a Kangentic restart.
    * Adapters with no cache to bypass may ignore it.
    */
   discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
+
+  /**
+   * Register who to tell when a `discoverCapabilities` answer stopped waiting
+   * for a read that has since landed, so an inventory built without that read
+   * is dropped. Claude's cold wait is the one that exists. An adapter holds one
+   * listener, and a later call replaces it.
+   */
+  onCapabilitiesChanged?(listener: () => void): void;
 
   /**
    * Pre-approve a working directory so the agent does not prompt for trust, and apply any other
@@ -1333,7 +1343,7 @@ export interface AgentAdapter {
    * exit code. Return a user-facing sentence when that output says the CLI
    * never became a working agent; `null` for a normal end, a crash the
    * adapter cannot name, or anything it is unsure about. A sentence surfaces
-   * through the same "Agent did not start" notice a failed worktree or
+   * through the same "Agent didn't start" notice a failed worktree or
    * checkout raises, so the failure is seen instead of reading as an agent
    * that went quiet.
    *
@@ -1355,6 +1365,23 @@ export interface AgentAdapter {
    * shape, per `agent-adapters-boundary`.
    */
   describeStartupFailure?(finalOutput: string, exitCode: number): string | null;
+
+  /**
+   * Optional: read this CLI's final output for a failure that is the user's own
+   * setup: `login_required` (no login, or an expired or invalid key) or
+   * `bad_configuration` (the CLI refuses the user's own config).
+   *
+   * What this names stays out of Sentry and gets no retry, so it must be the
+   * CLI's own wording, measured, and narrow enough that an agent's or a tool's
+   * output cannot match it. Return null for anything else. An installed CLI's
+   * unknown failure is reported, because it may be a Kangentic bug, and so is one
+   * that rejects an option Kangentic passed. Leave this out with no measured
+   * wording: unidentified is the safe side.
+   *
+   * An agent-specific string in an adapter, surfaced through this generic shape,
+   * per `agent-adapters-boundary`.
+   */
+  identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
 
   /**
    * Optional: whether a SLASH-prefixed `auto_command` can be verified in this

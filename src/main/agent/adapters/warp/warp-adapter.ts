@@ -1,3 +1,5 @@
+import { identifyWarpUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { WarpDetector } from './version-detector';
 import { writeWarpMcpConfig } from './mcp-config';
 import { cliPathForTarget } from '../../shared/cli-target';
@@ -75,6 +77,11 @@ export class WarpAdapter implements AgentAdapter {
   };
 
   private readonly detector = new WarpDetector();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyWarpUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

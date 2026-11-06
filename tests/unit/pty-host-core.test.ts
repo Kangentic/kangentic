@@ -49,7 +49,7 @@ type HostOutput = PtyHostEvent | FromPtyHostPortMessage;
 interface FakePty {
   pty: nodePty.IPty;
   feed(data: string): void;
-  exit(exitCode: number): void;
+  exit(exitCode: number, signal?: number): void;
   write: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   /** Called when the host disposes its onData subscription. */
@@ -60,7 +60,7 @@ interface FakePty {
 
 function createFakePty(pid = 4242): FakePty {
   let dataListener: ((data: string) => void) | null = null;
-  let exitListener: ((event: { exitCode: number }) => void) | null = null;
+  let exitListener: ((event: { exitCode: number; signal?: number }) => void) | null = null;
   const write = vi.fn();
   const kill = vi.fn();
   const disposeData = vi.fn();
@@ -73,7 +73,7 @@ function createFakePty(pid = 4242): FakePty {
       dataListener = listener;
       return { dispose: () => { disposeData(); dataListener = null; } };
     },
-    onExit: (listener: (event: { exitCode: number }) => void) => {
+    onExit: (listener: (event: { exitCode: number; signal?: number }) => void) => {
       exitListener = listener;
       return { dispose: () => { disposeExit(); exitListener = null; } };
     },
@@ -86,7 +86,7 @@ function createFakePty(pid = 4242): FakePty {
   return {
     pty,
     feed: (data) => dataListener?.(data),
-    exit: (exitCode) => exitListener?.({ exitCode }),
+    exit: (exitCode, signal) => exitListener?.({ exitCode, signal }),
     write,
     kill,
     disposeData,
@@ -1377,7 +1377,21 @@ describe('PtyHostCore', () => {
     fake.exit(0);
 
     expect(appended).toEqual([{ sessionId: 'session-1', chunk: 'plain transcript text' }]);
-    expect(events[events.length - 1]).toEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0 });
+    expect(events[events.length - 1]).toEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0, signal: null });
+  });
+
+  it('reports the signal that ended a shell, which node-pty leaves out of the code', () => {
+    const { core, events, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.exit(0, 9);
+    expect(events[events.length - 1]).toMatchObject({ type: 'exit', exitCode: 0, signal: 9 });
+  });
+
+  it('reads the 0 node-pty reports for no signal as none', () => {
+    const { core, events, fake } = makeCore();
+    core.spawn(spawnParams());
+    fake.exit(1, 0);
+    expect(events[events.length - 1]).toMatchObject({ type: 'exit', exitCode: 1, signal: null });
   });
 
   it('keeps no transcript for a Command Terminal', () => {
@@ -1603,7 +1617,7 @@ describe('PtyHostCore', () => {
       expect(eventsAtAnswer).toEqual([]);
 
       await flush();
-      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0 });
+      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0, signal: null });
       expect(core.livePtyCount).toBe(0);
     });
 
@@ -1697,7 +1711,7 @@ describe('PtyHostCore', () => {
 
       // The exit was not dropped with the chunk that threw. Main hears of it, after the output.
       expect(events.map((event) => event.type)).toEqual(['outputSeen', 'exit']);
-      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0 });
+      expect(events).toContainEqual({ type: 'exit', ptyId: 1, sessionId: 'session-1', exitCode: 0, signal: null });
       expect(core.livePtyCount).toBe(0);
     });
 
@@ -2211,7 +2225,7 @@ describe('PtyHostClient and RemotePty', () => {
     const exitListener = vi.fn();
     client.onPtyExit(remote.ptyId, exitListener);
     fake.exit(3);
-    expect(exitListener).toHaveBeenCalledWith(3);
+    expect(exitListener).toHaveBeenCalledWith(3, null);
     expect(remote.hasExited).toBe(true);
   });
 

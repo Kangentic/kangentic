@@ -119,6 +119,9 @@ export interface PtyHostTransport {
 
 export { PTY_HOST_LOST_EXIT_CODE };
 
+/** A session PTY's exit. `signal` is null for a normal exit and when the host was lost. */
+export type PtyExitListener = (exitCode: number, signal?: number | null) => void;
+
 export interface PtyHostLifecycleHandler {
   /** The host died; these sessions' PTYs were reported exited. */
   onHostLost(sessionIds: string[]): void;
@@ -376,7 +379,7 @@ export class PtyHostClient {
   private readonly handles = new Map<number, RemotePty>();
   private readonly rawHandles = new Map<number, RemoteRawPty>();
   private readonly cliHandles = new Map<number, RemoteCliProcess>();
-  private readonly exitListeners = new Map<number, (exitCode: number) => void>();
+  private readonly exitListeners = new Map<number, PtyExitListener>();
   private eventHandler: ((event: PtyHostEvent) => void) | null = null;
   private lifecycleHandler: PtyHostLifecycleHandler | null = null;
 
@@ -499,7 +502,7 @@ export class PtyHostClient {
    * Run `listener` when this PTY exits. The disposable detaches it; the quit
    * path does, so a late exit cannot land on a torn-down session.
    */
-  onPtyExit(ptyId: number, listener: (exitCode: number) => void): PtyDisposable {
+  onPtyExit(ptyId: number, listener: PtyExitListener): PtyDisposable {
     this.exitListeners.set(ptyId, listener);
     return {
       dispose: () => {
@@ -686,7 +689,7 @@ export class PtyHostClient {
       this.handles.delete(event.ptyId);
       const listener = this.exitListeners.get(event.ptyId);
       this.exitListeners.delete(event.ptyId);
-      listener?.(event.exitCode);
+      listener?.(event.exitCode, event.signal);
       return;
     }
     this.eventHandler?.(event);
@@ -721,7 +724,7 @@ export class PtyHostClient {
    * local host crashing says nothing of an agent running on another machine, whose end is reported by
    * its own link once it reconciles (`remote-link.ts`), never by this.
    */
-  private takeLiveHandles(): Array<{ handle: RemotePty; listener: ((exitCode: number) => void) | undefined }> {
+  private takeLiveHandles(): Array<{ handle: RemotePty; listener: PtyExitListener | undefined }> {
     const live = [...this.handles.values()]
       .filter((handle) => !handle.isOnRemoteHost)
       .map((handle) => ({ handle, listener: this.exitListeners.get(handle.ptyId) }));

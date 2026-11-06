@@ -84,7 +84,10 @@ const repos = {
 };
 
 vi.mock('../../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
-vi.mock('../../../src/main/db/repositories/session-repository', () => ({ SessionRepository: class {} }));
+vi.mock('../../../src/main/db/repositories/session-repository', () => ({
+  // A Resume reads the latest record for a failed launch's owed prompt.
+  SessionRepository: class { getLatestForTask = () => null; },
+}));
 vi.mock('../../../src/main/ipc/helpers', () => ({
   getProjectRepos: () => repos,
   ensureTaskWorktree: (...args: unknown[]) => mockEnsureTaskWorktree(...(args as [])),
@@ -228,7 +231,7 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
       PROJECT_ID,
       { id: TASK_ID, title: 'Review the PR' },
       LANE.id,
-      { explicitStart: true },
+      { explicitStart: true, startPath: 'phone' },
     );
     expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
@@ -446,7 +449,7 @@ describe('start-session: a paused task resumes like the desktop Resume button', 
 
       await expect(result.settled).rejects.toThrow('spawn exploded');
       expect(spawnBlockedNotices(context)).toEqual([
-        [IPC.TASK_SPAWN_BLOCKED, TASK_ID, 'Review the PR', 'Agent did not start: spawn exploded', PROJECT_ID],
+        [IPC.TASK_SPAWN_BLOCKED, TASK_ID, 'Review the PR', 'spawn exploded', PROJECT_ID],
       ]);
     });
   });

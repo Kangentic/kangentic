@@ -33,6 +33,8 @@ export interface IdleToastInput {
   endsOwnCall: boolean;
   /** The push's reason, which names what a permission wait is for. */
   reason: ActivityReason | null | undefined;
+  /** The task is in a running workflow, whose step check judges every turn end. */
+  inRunningWorkflow: boolean;
 }
 
 /**
@@ -77,10 +79,16 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
     sessionIdShort,
     endsOwnCall,
     reason,
+    inRunningWorkflow,
   } = input;
 
   if (!enabled) return null;
   if (endsOwnCall) return null;
+  // The step check says itself when the agent waits on the user or the task
+  // stalls, so a plain "Agent finished" would only be noise, as on the desktop
+  // half (`isWorkflowStepTask` in desktop-notifier.ts).
+  // activity-state-ok: granular, only the idle half is the step check's, and a prompt still toasts.
+  if (state === 'idle' && inRunningWorkflow) return null;
 
   // The edge into "waiting on the human", taken through the shared classifier
   // rather than a state literal (.claude/rules/activity-state-classification.md).

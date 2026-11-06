@@ -28,7 +28,7 @@ import { useWorkflowStore } from '../stores/workflow-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
 import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../utils/dnd-sensor-options';
-import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
+import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal, taskStoppedNow } from '../utils/workflow-refusal';
 import { isLockedOnBoard } from '../utils/board-workflow';
 import {
   CARD_GAP_PX,
@@ -535,7 +535,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
           ?? state.archivedTasks.find((candidate) => candidate.id === id);
         if (task) {
           const workflow = task.workflow_id ? boardWorkflowNow(task) : null;
-          lockedLaneRef.current = workflow && isLockedOnBoard(workflow, task) ? task.swimlane_id : null;
+          const stopped = taskStoppedNow(task, state.swimlanes.find((lane) => lane.id === task.swimlane_id)?.role);
+          lockedLaneRef.current = workflow && isLockedOnBoard(workflow, stopped) ? task.swimlane_id : null;
           setActiveTask(task);
           dragOriginRef.current = task.swimlane_id;
           const sourceElement = document.querySelector(`[data-task-id="${id}"]`);

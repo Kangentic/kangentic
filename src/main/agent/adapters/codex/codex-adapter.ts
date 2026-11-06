@@ -1,3 +1,5 @@
+import { identifyCodexUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { CodexDetector } from './detector';
 import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
@@ -126,6 +128,11 @@ export class CodexAdapter implements AgentAdapter {
    * that finds it exited. No launch hint, since no hook fires at the yield.
    */
   readonly backgroundCommands = { source: 'session-history', launchHint: false } as const;
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyCodexUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     const info = await this.detector.detect(overridePath);

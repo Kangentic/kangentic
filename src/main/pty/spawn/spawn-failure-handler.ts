@@ -3,6 +3,7 @@ import type { SessionRegistry, ManagedSession } from '../session-registry';
 import type { PtyHostClient } from '../host/pty-host-client';
 import { toSession } from '../session-registry';
 import { diagnoseSpawnFailure, recordSpawnFailure } from './pty-spawn';
+import { preflightTagsOf } from '../agent-launch-report';
 
 /**
  * Snapshot of the inputs that went into a spawn attempt - everything
@@ -14,7 +15,6 @@ export interface SpawnAttempt {
   input: SpawnSessionInput;
   shell: string;
   shellExe: string;
-  shellArgs: string[];
   effectiveCwd: string;
   /** Scrollback carried over from the previous session (or empty). */
   previousScrollback: string;
@@ -40,8 +40,8 @@ const FAILED_SESSION_COLS = 120;
  *
  *   - structured log line
  *   - metric emission via recordSpawnFailure
- *   - diagnostic suffix appended to scrollback so the user sees
- *     actionable guidance in the terminal panel
+ *   - the raw error appended to scrollback, so the terminal panel
+ *     shows it instead of a blank screen
  *   - an "exited" placeholder ManagedSession registered in the
  *     session registry so the renderer renders a failed session
  *     instead of the main process crashing
@@ -56,7 +56,7 @@ export function handleSpawnFailure(
   attempt: SpawnAttempt,
   context: SpawnFailureContext,
 ): Session {
-  const { id, input, shell, shellExe, shellArgs, effectiveCwd, previousScrollback } = attempt;
+  const { id, input, shell, shellExe, effectiveCwd, previousScrollback } = attempt;
 
   const diagnostic = diagnoseSpawnFailure({
     err,
@@ -65,10 +65,17 @@ export function handleSpawnFailure(
     originalCwd: input.cwd,
   });
   console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${diagnostic.errorMessage} errno=${diagnostic.errno} cwdExists=${diagnostic.cwdExists} shellExists=${diagnostic.shellExists}`);
-  recordSpawnFailure({ diagnostic, shellExe, shellArgs });
+  recordSpawnFailure({
+    diagnostic,
+    shellExe,
+    launchTags: preflightTagsOf({
+      agent: input.agentName,
+      agentCliVersion: input.agentCliVersion,
+      startPath: input.startPath,
+    }),
+  });
 
-  // Append actionable guidance to scrollback (empty suffix if no
-  // known recipe for this error shape).
+  // Print the raw error in the terminal, whatever its shape.
   const diagnosticScrollback = previousScrollback + diagnostic.scrollbackSuffix;
   if (diagnostic.kind === 'posix-spawnp') {
     console.error(`[PTY] posix_spawnp failed for shell "${shellExe}" in "${effectiveCwd}". Likely missing +x on spawn-helper.`);

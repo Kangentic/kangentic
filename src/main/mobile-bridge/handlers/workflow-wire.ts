@@ -1,18 +1,19 @@
 import type { BoardTaskWorkflowWire } from '@kangentic/protocol';
 import type { Task, Workflow, WorkflowSummary } from '../../../shared/types';
-import { routeColumns } from '../../../shared/workflow-route';
+import { nextOnRoute, routeColumns } from '../../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
-import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { listWorkflowSummaries } from '../../workflows/workflow-view-service';
 import { workflowOfTask } from '../../workflows/workflow-home';
+import { isWorkflowTaskStopped } from '../../workflows/workflow-lock-check';
 
 /**
  * The workflow facts of one board's tasks, as the phone draws them: the strip,
  * what each card waits for, and its lock. Read from the same summaries the
- * desktop board draws its cards from, so the two cannot disagree. A board
- * with no workflow task reads nothing.
+ * desktop board draws its cards from, and the lock from main's own answer on
+ * whether a card has stopped, so the two cannot disagree. A board with no
+ * workflow task reads nothing.
  *
  * A task on this board may belong to a workflow homed in another project; that
  * home's summaries are read once per call. A finished workflow is not in the
@@ -62,7 +63,12 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
     const workflow = summary?.workflow ?? finishedWorkflow(task, workflowId);
     if (!workflow) continue;
     const boardTask = summary?.boardTasks[task.id];
-    const gateTargetId = boardTask?.humanGateTargetId ?? null;
+    const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
+    const stopped = workflow.state === 'running' && lane !== undefined && isWorkflowTaskStopped(context, task, lane);
+    // The phone moves a card only into this column, so a stopped card names the
+    // next on its route: the move a person is waiting to make. The desktop takes
+    // it anywhere but To Do.
+    const gateTargetId = stopped ? nextOnRoute(lanes, task, task.swimlane_id)?.id ?? null : null;
     facts.set(task.id, {
       id: workflow.id,
       title: workflow.title,
@@ -72,15 +78,15 @@ export function workflowWireFacts(context: IpcContext, projectId: string, tasks:
       route: routeColumns(lanes, task).map((column) => column.id),
       waiting_for: boardTask?.waitingFor ?? [],
       // The card is locked as the desktop board locks it (`isLockedOnBoard`,
-      // where a drag stays in its column): while the workflow runs, unless it
-      // waits in a human gate, where a hand may move it to the gate's target. A
-      // paused workflow's cards move by hand, and so does a card whose own
-      // automations are paused.
-      lock_reason: workflow.state === 'running' && gateTargetId === null && canTaskRunAutomations(task).ok
+      // where a drag stays in its column): while the workflow runs and it is in
+      // motion. A paused workflow's cards move by hand.
+      lock_reason: workflow.state === 'running' && !stopped
         ? WORKFLOW_REFUSALS.locked(`#${task.display_id}`, workflow.title)
         : null,
       gate_target_id: gateTargetId,
-      automations_pausable: true,
+      // A running or paused workflow's task cannot pause its automations. The
+      // phone offers the switch on a workflow task only while this is true.
+      automations_pausable: workflow.state !== 'running' && workflow.state !== 'paused',
     });
   }
   return facts;

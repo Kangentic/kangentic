@@ -42,6 +42,7 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({
   reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
 }));
 
+import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
 
 const TASK_ID = 'task-lock-001';
@@ -540,6 +541,7 @@ describe('spawnAgent lock-Advanced-overrides-on-first-spawn -- project model/eff
 describe('spawnAgent - resume failure analytics', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetLaunchReports();
   });
 
   it('reports spawn_failed and forwards the handled error when resumeSuspendedSession rejects, without letting it propagate', async () => {
@@ -554,11 +556,10 @@ describe('spawnAgent - resume failure analytics', () => {
     await runSpawn(task, makeDestinationLane(), deps);
 
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
-    expect(mockReportHandledError).toHaveBeenCalledWith(resumeError, {
-      source: 'spawn',
-      reason: 'resume',
-      agent: 'claude',
-    });
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    const [reported, tags] = mockReportHandledError.mock.calls[0];
+    expect((reported as Error).message).toBe('CLI exited unexpectedly');
+    expect(tags).toMatchObject({ source: 'agent_launch', stage: 'preflight', cause: 'agent_start', agent: 'claude', start_path: 'board' });
   });
 
   it('notifies the user that the agent did not start, so the card no longer lies', async () => {
@@ -576,7 +577,7 @@ describe('spawnAgent - resume failure analytics', () => {
     const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
     const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');
     expect(blockedCall, 'expected a task:spawnBlocked push').toBeDefined();
-    expect(blockedCall?.[3]).toBe('Agent did not start: worktree is locked');
+    expect(blockedCall?.[3]).toBe('worktree is locked');
   });
 
   it('surfaces a missing agent CLI with its remedy, counts it, but keeps it OUT of Sentry', async () => {
@@ -602,12 +603,8 @@ describe('spawnAgent - resume failure analytics', () => {
     // missing CLI" gets answered.
     expect(mockTrackEvent).toHaveBeenCalledWith('spawn_failed', { agent: 'claude', reason: 'resume' });
     // Handed to the reporter as the TYPED error, which is what lets
-    // reportHandledError drop it.
-    expect(mockReportHandledError).toHaveBeenCalledWith(cliError, {
-      source: 'spawn',
-      reason: 'resume',
-      agent: 'claude',
-    });
+    // reportHandledError drop it (launch-user-setup-exclusion.test.ts runs that).
+    expect(mockReportHandledError.mock.calls[0][0]).toBe(cliError);
 
     const send = deps.context.mainWindow.webContents.send as ReturnType<typeof vi.fn>;
     const blockedCall = send.mock.calls.find((call) => call[0] === 'task:spawnBlocked');

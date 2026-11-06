@@ -12,6 +12,7 @@ import type {
   AutoCommandMode,
   ColumnAutomation,
   ConversationExpiredNotice,
+  LaunchStartPath,
   NotificationInput,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
@@ -116,6 +117,11 @@ export interface SpawnOverrides {
    * `SpawnOutcome.typedOpening`. Any other spawn discards it first.
    */
   earlyAgent?: EarlyAgentHandle;
+  /**
+   * What started this, when it is not what the spawn can tell for itself (a phone,
+   * or the automatic retry). Defaults to `resume` for a resume, else `board`.
+   */
+  startPath?: LaunchStartPath;
 }
 
 /** What an agent spawn takes: the same list on the wrapper that holds its host file pull and on the spawn. */
@@ -1054,6 +1060,8 @@ export class TransitionEngine {
       projectId: appConfig.projectId,
       command,
       cwd,
+      startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
+      agentCliVersion: spawnCli.version,
       env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
@@ -1341,6 +1349,8 @@ export class TransitionEngine {
     permissionOverride?: PermissionMode | null;
     agentOverride: string;
     spawnOverrides?: SpawnOverrides;
+    /** What started this. Omitted: the board. */
+    startPath?: LaunchStartPath;
     signal?: AbortSignal;
   }): Promise<EarlyAgentHandle | null> {
     const appConfig = this.getConfig();
@@ -1418,6 +1428,8 @@ export class TransitionEngine {
       projectId: appConfig.projectId,
       command,
       cwd,
+      startPath: input.startPath ?? 'board',
+      agentCliVersion: detection.version,
       env: extraEnv ?? undefined,
       statusOutputPath: launch.statusOutputPath,
       eventsOutputPath: launch.eventsOutputPath,

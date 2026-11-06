@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Workflow engine
-description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the memory gate its nudges wait in, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
+description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the memory gate its nudges wait in, the hung-turn check, the move lock, and project-delete cleanup."
 tags: [workflows, engine, scheduling]
 sources:
   - resource: src/main/workflows/
@@ -9,6 +9,7 @@ sources:
   - resource: src/shared/workflow-lock.ts
   - resource: src/shared/workflow-refusals.ts
   - resource: src/shared/workflow-needs-owner.ts
+  - resource: src/shared/workflow-no-changes.ts
   - resource: src/shared/final-line-match.ts
   - resource: src/main/pty/turn-settled.ts
 ---
@@ -38,7 +39,6 @@ src/main/workflows/
   workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
   workflow-memory-gate.ts    # one queue for nudges: none while memory reads low, one at a time, paced
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
-  workflow-task-hold.ts      # one task's own hold (its automations switch): what putting it on and taking it off does
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
   workflow-never-started.ts  # a task in To Do with no session, worktree or move out, which a delete may take along
   workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
@@ -184,14 +184,46 @@ src/main/workflows/
   open), `stopped` (a stall to nudge), `check-failed`, or `human-gate` (no Automation agent).
   A check that could not run is recorded too, with `condition_met` NULL, so it never counts as
   having judged the reply. A failed move is reported, not thrown.
-  - **Only the agent's own word stops a task** (owner's decision, 2026-10-31). A reply whose last
+  - **The route wins over a row that names a column.** Rows run before the step, so a forward row
+    that went by its name walked a task into a column its route skips, and an empty diff there sent
+    it back. `resolveMoveTarget` sends a forward row whose column is not on the route to the
+    route's next column, which can be Done. A send-back keeps the column it names, and an agent's or
+    a person's named move never comes through there. Done is not a route column, so a row naming
+    Done from mid-route also takes the next route column.
+  - **An agent that finds no change needed ends the task.** A reply whose last line is
+    `No changes needed: <why>` goes straight to Done, past the rest of the route, in any column
+    (`noChangesReason`, `src/shared/workflow-no-changes.ts`; owner's decision, 2026-11-05). The
+    reason is required, so a review that ends on those words alone is not the line. The turn-end
+    runner reads it before the rows, because a row with no Text match would otherwise message the
+    agent and take this turn's step with it. Kangentic checks the branch with `readWorktreeWork`:
+    no commits ahead of the base and a clean worktree (`noChangesBlocker`). A task with no worktree
+    has nothing to compare, so the agent's word stands. A branch with changes, or one that cannot be
+    read, moves nothing, and the reason is the nudge's. Neither signal is enough alone: an empty
+    branch can reach a review column with its work not yet built, and an agent's word alone could
+    skip review on real code. A plan column's branch is always empty, so there the check proves nothing:
+    the line in a Manual plan approval column ends the task on the agent's word, by decision, since
+    the line works in any column. A tracked file an adapter rewrites reads as uncommitted, so the line
+    fails safe there and the nudge says so. The move goes through `moveOn`, so a background command holds it
+    (`HeldMove.kind` `no-changes`), and its release checks the branch again.
+  - **The step never moves a task out of a column with only send-back rows** (owner's decision,
+    2026-11-05). With no matching row the check alone used to decide, and on one PR state it held
+    six tasks and moved three on, which then merged with no approval. Such a column is a person's
+    gate (`isSendBackOnly`). The check asks whether the agent finished what it can do alone
+    (`personGateCondition`), and a yes stops the card: `stepExitVerdict` answers `stopsHere`, and
+    the step returns `waiting`, with one notice a visit and no nudge. Measured on 15 real turn
+    endings, three runs each on Haiku at low, it got 43 of 45 right against hand labels, and the usual
+    wording got 17 of 45. A no is a real stall and gets its nudge, and so does a yes on a turn with no
+    final message, which gives a person nothing to act on. A board that wants unattended merges says
+    so with a forward row.
+  - **Only the agent's own word stops a task, bar one column shape** (owner's decision, 2026-10-31). A reply whose last
     line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
     (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works
     in a human gate too. Case and markdown marks are forgiven, and the label ends at a colon or a
     spaced dash, so a last sentence that only starts with the words is not the line. The
     `<workflow>` block and every nudge tell the agent to end on that line only for a change from the
     plan, something the owner must weigh in on, or a decision between options, and to act on
-    anything else. No other wording in a reply stops a task.
+    anything else. No other wording in a reply stops a task. The one other stop is a column with only
+    send-back rows, where the check's yes stops the card (above).
   - **Still working comes from the hook events, never from the reply.** A step judged not done
     whose agent still holds a background shell, or a subagent running past its turn end
     (`SessionManager.getOpenWork`, the activity engine's open-work ledger), is `working`, with no
@@ -386,44 +418,47 @@ src/main/workflows/
     freeze none of the engine's own watchdogs fired, which looks like the host itself stopping.
 - **The lock** (`workflowMoveRefusal`) is asked by `handleTaskMove` before it aborts anything and
   again inside its Phase 1 lock, and by `kangentic_move_task` before it fires. The caller's task
-  comes from the MCP request's caller segment (`CommandContext.callerTaskId`). Every caller passes
-  `taskHeld`; a held card in a running workflow moves by hand as a paused workflow's card does.
-- **One task's own hold** is its automations switch (`tasks.automations_disabled`), asked only
-  through `canTaskRunAutomations`, so a person can work one task by hand while the rest runs.
-  - `workflowStepApplies` answers no for a held task, which stops the step check at a turn end
-    (and its post-check re-read, so a hold set during the paid check moves nothing), the resume
-    catch-up, `armWorkflowRecoveryOnIdle` and each recovery attempt. `isRunningWorkflowStepTask`
-    answers no too, so the hang check leaves its turns alone and the plain idle notice and the
-    phone's turn-complete push come back. `announceWorkflowStall` sends nothing for it and
-    `stallReader` shows no mark.
-  - The core's `readyTasks` skips a held task (`CoreTask.held`), and `startTask` re-checks it, so
-    a held task in To Do stays queued and what waits for it keeps waiting.
-  - `planPass` takes an optional `columnRoom` reader, built by `columnRoomReader()` in the host from
-    `columnRoom` (`src/main/transition-engine/column-capacity.ts`). A start whose column has no room
-    for another agent (see [a column's agent limit](../sessions/spawn-flow.md#a-columns-agent-limit))
-    is skipped in that pass and takes no global slot, so the task stays in To Do, the workflow's
-    durable queue, instead of piling into the in-memory one. One pass fills a column only up to its
-    room. A project that is not open reads as no limit.
-  - The lock lets a person move its card to any column but To Do (`taskHeld`), and the board's
-    reads agree: `humanGateExit` names no gate for it, `isLockedOnBoard` and `sendAwayRefusal`
-    read the hold, and the phone's `lock_reason` is null. Backlog and Archive stay refused.
-  - The hold never suspends an agent by itself. The workflow's own Pause does stop a held task's
-    agent, and Resume brings it back still held, with no new agent for a held task that has none
-    (decided 2026-10-27, task #925).
-  - A plan approved by hand still moves it on: the `plan-exit` auto-move is the person's act, and
-    Automatic approval is held as Manual (`readPlanApprovalDecision`).
-  - `applyAutomationsHoldChange` (`workflow-task-hold.ts`) runs after the two writes that flip it
-    (the task update IPC and `handleUpdateTask`, which the phone shares). Putting it on calls
-    `supersedeTurnEndWork`. Taking it off, in a working column, writes a recovery start (so a task
-    held while stalled comes back with a fresh schedule rather than a spent one) and, with a live
-    agent that is idle, asks for the resume catch-up (`requestWorkflowCatchUp`, shared with the
-    workflow's Resume), which judges a reply of this visit. Point forward only: a reply from before
-    a hand move and the enter rows that move skipped are left alone, and a paused agent stays
-    paused.
+  comes from the MCP request's caller segment (`CommandContext.callerTaskId`). In motion, locked;
+  stopped, the owner's (owner's decision, 2026-11-05).
+  - `isWorkflowTaskStopped` (`workflow-lock-check.ts`) is main's answer. A card is in motion while
+    its agent is working, a turn held by background work included (`isTurnSettled` with no
+    `acceptHeld`); while it sits at a prompt (`automatedKeysBlocker`); while a turn-end pass, a
+    recovery attempt or a catch-up acts on it (`hasTurnEndGroup`); while a message is on its way
+    (`hasPendingMessageDelivery`, `hasMoveFollowUp`, the terminal submit scheduler); and while it is
+    starting or queued. Anything else is stopped, a task with no agent included. A `Needs owner:`
+    line ends the turn, so that card is stopped.
+  - A stopped card moves to any column but To Do, as a paused workflow's card does, and the route
+    carries on from where it lands, since `nextOnRoute` works from any column. A card in To Do
+    stays locked, because only the engine starts it, and so does a card in Done, because moving it
+    out would un-finish a blocker. Backlog and Archive stay refused.
+  - The board reads the session store at the moment of a drag or a click (`isStoppedOnBoard`,
+    `taskStoppedNow`), which holds a drag to its own column (`isLockedOnBoard`). Main sees more, and
+    a drag that races a turn gets the refusal toast. The phone reads main's answer: a stopped card
+    has a null `lock_reason`, and `gate_target_id` names the next column on its route, the one
+    column a phone moves a card to.
+  - A hand move goes through `handleTaskMove`, so `supersedeTurnEndWork` stops recovery and the
+    destination's enter rows run.
+- **A workflow task cannot pause its automations** (owner's decision, 2026-11-05): to stop work,
+  pause the workflow. One switch on one card could quietly stop a run built to be left alone, with
+  its tab still reading Running and no notice, since recovery follows a turn end and a card in To Do
+  never has one. Agents also reached for it unasked. `taskHoldRefusal` refuses `true` on a running
+  or paused workflow's task, in `TASK_UPDATE` and `handleUpdateTask`, which the phone shares, and
+  says what to use instead. It fails closed. `false` is always taken, so a card left held has a way
+  back, and a finished workflow's task is ordinary again. `automations_pausable` tells the phone.
+  A migration (`releaseWorkflowTaskHolds`, once per database through `schema_meta`, because a task whose
+  workflow is gone or finished may be held again) clears the switch on every workflow task outside Done and
+  writes `plan_approval = 'manual'`, because a hold read Automatic as Manual. The workflow keeps
+  judging a card while a person works with it, so a turn that ends on the column's exit line moves
+  it on. Only Pause stops that.
+- `planPass` takes an optional `columnRoom` reader, built by `columnRoomReader()` in the host from
+  `columnRoom` (`src/main/transition-engine/column-capacity.ts`). A start whose column has no room
+  for another agent (see [a column's agent limit](../sessions/spawn-flow.md#a-columns-agent-limit))
+  is skipped in that pass and takes no global slot, so the task stays in To Do, the workflow's
+  durable queue, instead of piling into the in-memory one. One pass fills a column only up to its
+  room. A project that is not open reads as no limit.
 - **Pause** (`pauseWorkflow`) writes the state, cancels recovery and stops each task's turn-end
   work (`supersedeTurnEndWork`), so a row a running agent's last turn set off moves nothing. Then it
-  calls `pauseTaskSession` for every task at once, a held task's included, with or without a
-  session pointer. The pause's own reconcile re-links a live agent whose pointer was lost, and
+  calls `pauseTaskSession` for every task at once, with or without a session pointer. The pause's own reconcile re-links a live agent whose pointer was lost, and
   cancels a resume or an `autoSpawnForTask` still in flight. A paused workflow starts nothing by
   itself:
   - The lock refuses the `workflow` origin while paused. `handleTaskMove` asks it under the task

@@ -64,9 +64,11 @@ vi.mock('../../src/main/db/database', () => ({
 // SessionRepository mock: getLatestForTask is driven by mockGetLatestForTask
 // which is set per-test in beforeEach. All other methods are stubs.
 const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
+const mockMarkLaunchFailed = vi.fn();
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
+    markLaunchFailed = mockMarkLaunchFailed;
     // No own-record row, so applySuspendDbWrites falls back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
     getLatestForTask = mockGetLatestForTask;
@@ -160,12 +162,19 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   deleteTaskWorktree: vi.fn(async () => true),
 }));
 
+const mockResumeTaskSession = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/handlers/session-resume', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/handlers/session-resume')>()),
+  resumeTaskSession: mockResumeTaskSession,
+}));
+
 // Import under test AFTER all mocks are registered.
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 import { notifySpawnBlocked } from '../../src/main/ipc/helpers';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 import { forgetWorkflowRecovery, resetWorkflowRecoveryForTests, setRecoveryEntry } from '../../src/main/workflows/workflow-recovery-state';
 
 // Recovery state is module-level: an entry a failed test left behind, with its
@@ -202,6 +211,11 @@ function createMockContext() {
       kill: vi.fn(async () => {}),
       // Called by the agent-never-started listener when its pause does not land.
       retireAgentlessSession: vi.fn(),
+      // Whether the launch gets its one retry. No, unless a test says so.
+      mayRetryLaunch: vi.fn((_sessionId?: string) => false),
+      // What the report found in the launch's output. Nothing, unless a test says so.
+      launchOutputClass: vi.fn(async (_sessionId?: string) => undefined as string | undefined),
+      noteAgentExitedAtStart: vi.fn(),
       getActivityCache: vi.fn((): Record<string, string> => ({})),
       // Read by the idle pause's eligibility re-check: typed text holds it off.
       getPendingDraft: vi.fn((_sessionId?: string) => null as string | null),
@@ -296,6 +310,168 @@ describe('agent-never-started listener', () => {
     await withTaskLock('task-never', async () => {});
   }
 
+  it('retries once on a fresh PTY after the pause, and holds the notice for its outcome', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockResolvedValue(null);
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+    expect(mockResumeTaskSession).toHaveBeenCalledWith(context, 'task-never', { projectId: 'proj-1', startPath: 'retry', onFailed: expect.any(Function) });
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('raises the notice when the retry could not start', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    // The real function reports a failed start through onFailed, then rejects.
+    mockResumeTaskSession.mockImplementation(async (_context: unknown, _taskId: string, options: { onFailed?: () => void }) => {
+      options.onFailed?.();
+      throw new Error('Worktree setup failed');
+    });
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+  });
+
+  it('raises no notice when the retry is refused (rejects without onFailed)', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    // A task moved to To Do or Done is refused: the user's answer, not a failure.
+    mockResumeTaskSession.mockRejectedValue(new Error('Task is in To Do'));
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('does not retry, and raises the notice, when a Pause aborts the retry window', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.mayRetryLaunch.mockImplementation(async () => {
+      abortInFlightResume('task-never');
+      return true;
+    });
+    mockResumeTaskSession.mockResolvedValue(null);
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+  });
+
+  it('neither retries nor raises the notice while another start is in flight', async () => {
+    const context = registerWithLiveSession('sess-never');
+    const otherStart = new AbortController();
+    context.sessionManager.mayRetryLaunch.mockImplementation(async () => {
+      registerResumeController('task-never', otherStart);
+      return true;
+    });
+    mockResumeTaskSession.mockResolvedValue(null);
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    try {
+      await fireNeverStarted();
+
+      await vi.waitFor(() => expect(context.sessionManager.mayRetryLaunch).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mockResumeTaskSession).not.toHaveBeenCalled();
+      expect(notifySpawnBlocked).not.toHaveBeenCalled();
+      // The other start's controller is still its own.
+      expect(isResumeInFlight('task-never')).toBe(true);
+    } finally {
+      releaseResumeController('task-never', otherStart);
+    }
+  });
+
+  describe('the controller the listener registers is released', () => {
+    async function fireAndExpectReleased(): Promise<void> {
+      capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', NEVER_STARTED_SESSION);
+      // Registered synchronously by the listener, before the pause.
+      expect(isResumeInFlight('task-never')).toBe(true);
+      await withTaskLock('task-never', async () => {});
+      await vi.waitFor(() => expect(isResumeInFlight('task-never')).toBe(false));
+    }
+
+    it('after a retry', async () => {
+      const context = registerWithLiveSession('sess-never');
+      context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+      mockResumeTaskSession.mockResolvedValue(null);
+
+      await fireAndExpectReleased();
+      expect(mockResumeTaskSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('after a skipped retry', async () => {
+      registerWithLiveSession('sess-never');
+      mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+      await fireAndExpectReleased();
+    });
+
+    it('after a declined pause', async () => {
+      // The task's live session is a newer one, so the pause is declined.
+      const context = registerWithLiveSession('sess-newer');
+      context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+
+      await fireAndExpectReleased();
+      expect(mockResumeTaskSession).not.toHaveBeenCalled();
+    });
+
+    it('after a pause that throws', async () => {
+      const context = registerWithLiveSession('sess-never');
+      context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+      context.sessionManager.suspend.mockRejectedValue(new Error('suspend failed'));
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await fireAndExpectReleased();
+    });
+  });
+
+  it('does not retry a launch the manager says may not', async () => {
+    registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+  });
+
+  it('marks a fresh launch failed before its PTY goes down, so a Resume starts it fresh', async () => {
+    const context = registerWithLiveSession('sess-never');
+    let markedBeforeSuspend = false;
+    context.sessionManager.suspend.mockImplementation(async () => {
+      markedBeforeSuspend = mockMarkLaunchFailed.mock.calls.length === 1;
+    });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(context.sessionManager.suspend).toHaveBeenCalled());
+    expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-never');
+    expect(markedBeforeSuspend).toBe(true);
+  });
+
+  it('leaves a failed resume unmarked: its conversation is still there to resume', async () => {
+    const context = registerWithLiveSession('sess-never');
+
+    capturedSessionEventHandlers.get('agent-never-started')?.('sess-never', { ...NEVER_STARTED_SESSION, resuming: true });
+    await withTaskLock('task-never', async () => {});
+
+    await vi.waitFor(() => expect(context.sessionManager.suspend).toHaveBeenCalled());
+    expect(mockMarkLaunchFailed).not.toHaveBeenCalled();
+  });
+
   it('raises the fallback notice when a pause lands, and does not retire the session', async () => {
     const context = registerWithLiveSession('sess-never');
     mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
@@ -305,6 +481,7 @@ describe('agent-never-started listener', () => {
     await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
     const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
     expect(noticeError.message).toBe(NEVER_STARTED_FALLBACK);
+    expect(context.sessionManager.noteAgentExitedAtStart).not.toHaveBeenCalled();
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
     expect(context.sessionManager.retireAgentlessSession).not.toHaveBeenCalled();
   });
@@ -323,6 +500,38 @@ describe('agent-never-started listener', () => {
     const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
     expect(noticeError.message).toContain('found no conversation to resume');
     expect(noticeError.message).not.toBe(NEVER_STARTED_FALLBACK);
+    // What the CLI named is its own failure, so it reports as that stage.
+    expect(context.sessionManager.noteAgentExitedAtStart).toHaveBeenCalledWith('sess-never');
+  });
+
+  it('shows the CLI\'s own line for a login failure, word for word, with no retry', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    context.sessionManager.getSessionAgentName.mockReturnValue('claude');
+    context.sessionManager.getRawScrollback.mockResolvedValue('$ claude\r\nNot logged in · Please run /login\r\n$ ');
+    context.sessionManager.launchOutputClass.mockResolvedValue('login_required');
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    const noticeError = vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error;
+    expect(noticeError.message).toBe('Not logged in · Please run /login');
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
+    // The report already counted it, as what it is.
+    expect(context.sessionManager.noteAgentExitedAtStart).not.toHaveBeenCalled();
+  });
+
+  it('does not show a line the report did not find in this launch, such as a resume\'s old output', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+    context.sessionManager.getSessionAgentName.mockReturnValue('claude');
+    context.sessionManager.getRawScrollback.mockResolvedValue('Not logged in · Please run /login\r\n');
+    context.sessionManager.launchOutputClass.mockResolvedValue('not_read');
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    expect((vi.mocked(notifySpawnBlocked).mock.calls[0][3] as Error).message).toBe(NEVER_STARTED_FALLBACK);
   });
 
   it('retires the session and raises no notice when the pause is declined for a newer session', async () => {

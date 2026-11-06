@@ -24,6 +24,16 @@ export function trackTurnEndGroup(taskId: string, controller: AbortController): 
   };
 }
 
+/** Is a turn-end pass, a recovery attempt or a resume's catch-up acting on this task now? */
+export function hasTurnEndGroup(taskId: string): boolean {
+  return groupControllers.has(taskId);
+}
+
+/** Is a moved task's message still waiting for the agent where the task landed? */
+export function hasMoveFollowUp(taskId: string): boolean {
+  return followUpControllers.has(taskId);
+}
+
 /** Register a message waiting to reach the agent after a Move to column move. */
 export function trackTurnEndFollowUp(taskId: string, controller: AbortController): () => void {
   followUpControllers.get(taskId)?.abort();

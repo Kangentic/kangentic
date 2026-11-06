@@ -26,14 +26,24 @@ vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({
   ensureWorktreeTrust: vi.fn(async () => undefined),
 }));
 
+// The handshake is tried first and would spawn a real CLI. Its own behavior is
+// in claude-model-list-handshake.test.ts; here it fails unless a case says
+// otherwise, so every PTY case below runs as the fallback it now is.
+vi.mock('../../src/main/agent/adapters/claude/model-list-handshake', () => ({
+  readClaudeModelList: vi.fn(),
+}));
+
 import * as pty from 'node-pty';
 import { ensureWorktreeTrust } from '../../src/main/agent/adapters/claude/trust-manager';
+import { readClaudeModelList } from '../../src/main/agent/adapters/claude/model-list-handshake';
 import {
   VirtualScreen,
   parseModelPickerScreen,
   mergePickerFrames,
   probeModelPickerModels,
   getCachedModelPickerModels,
+  awaitModelPickerModels,
+  setLateModelScanListener,
   peekModelPickerAliasIds,
   inputBoxPromptLine,
   isSelectDialogShowing,
@@ -43,9 +53,16 @@ import {
   setModelPickerProbeScanFileForTests,
   type ModelPickerScan,
 } from '../../src/main/agent/adapters/claude/model-picker-probe';
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { filterBreadcrumb } from '../../src/shared/sentry-breadcrumbs';
 
 const spawnMock = pty.spawn as unknown as ReturnType<typeof vi.fn>;
+const handshakeMock = readClaudeModelList as unknown as ReturnType<typeof vi.fn>;
+
+beforeEach(() => {
+  handshakeMock.mockReset();
+  handshakeMock.mockRejectedValue(new Error('initialize failed'));
+});
 
 interface FakePtyProcess {
   emitData: (data: string) => void;
@@ -962,6 +979,162 @@ describe('probeModelPickerModels', () => {
   });
 });
 
+describe('the handshake before the PTY', () => {
+  const HANDSHAKE_SCAN: ModelPickerScan = {
+    models: ['claude-opus-5-5', 'claude-haiku-4-5-20251001'],
+    aliases: [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }],
+  };
+
+  it('never opens a PTY or writes a trust entry when the handshake answers', async () => {
+    handshakeMock.mockResolvedValue(HANDSHAKE_SCAN);
+
+    expect(await probeModelPickerModels('/usr/bin/claude')).toEqual(HANDSHAKE_SCAN);
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(ensureWorktreeTrust).not.toHaveBeenCalled();
+  });
+
+  it('reads the /model picker when the handshake fails, and logs one line saying so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+      },
+    );
+
+    const scan = await probeModelPickerModels('/usr/bin/claude');
+
+    expect(scan?.models).toContain('claude-opus-4-8');
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const lines = warn.mock.calls.map((call) => String(call[0]));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[model-picker-probe\] handshake failed after \d+ ms \(Error: initialize failed\)/u);
+    warn.mockRestore();
+  });
+
+  it('caches an answer for the success TTL and rides one run for concurrent callers', async () => {
+    handshakeMock.mockResolvedValue(HANDSHAKE_SCAN);
+
+    await Promise.all([probeModelPickerModels('/usr/bin/claude'), probeModelPickerModels('/usr/bin/claude')]);
+    await probeModelPickerModels('/usr/bin/claude');
+
+    expect(handshakeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the CLI path, the scratch directory and each timing to the handshake in their own slots', async () => {
+    handshakeMock.mockResolvedValue(HANDSHAKE_SCAN);
+    setModelPickerProbeTimingsForTests({ handshakeTimeoutMs: 111, handshakeExitGraceMs: 222 });
+
+    await probeModelPickerModels('/usr/bin/claude');
+
+    expect(handshakeMock).toHaveBeenCalledTimes(1);
+    const [cliPath, , workingDirectory, timeoutMs, exitGraceMs] = handshakeMock.mock.calls[0] as unknown[];
+    expect(cliPath).toBe('/usr/bin/claude');
+    // The scratch directory is the probe's own folder under the OS temp directory,
+    // created before the call so the CLI has somewhere to start.
+    expect(workingDirectory).toBe(path.join(os.tmpdir(), 'kangentic-model-probe'));
+    expect(fs.existsSync(String(workingDirectory))).toBe(true);
+    expect(timeoutMs).toBe(111);
+    expect(exitGraceMs).toBe(222);
+  });
+
+  it('keeps the aliases for the spawn path, so a stored "Opus" converts', async () => {
+    handshakeMock.mockResolvedValue(HANDSHAKE_SCAN);
+    await probeModelPickerModels('/usr/bin/claude');
+    expect(peekModelPickerAliasIds('/usr/bin/claude')).toEqual(new Set(['opus']));
+  });
+});
+
+describe('awaitModelPickerModels', () => {
+  const SCAN: ModelPickerScan = { models: ['claude-opus-5-5'], aliases: [{ id: 'opus', resolvesTo: 'claude-opus-5-5' }] };
+
+  it('holds a cold discovery for the first scan, so a first launch has the Latest group', async () => {
+    handshakeMock.mockResolvedValue(SCAN);
+    expect(await awaitModelPickerModels('/usr/bin/claude')).toEqual(SCAN);
+  });
+
+  it('gives up at its bound, and the run still lands for the next read', async () => {
+    let answer: (scan: ModelPickerScan) => void = () => undefined;
+    handshakeMock.mockReturnValue(new Promise<ModelPickerScan>((resolve) => { answer = resolve; }));
+    setModelPickerProbeTimingsForTests({ coldDiscoveryWaitMs: 10 });
+
+    expect(await awaitModelPickerModels('/usr/bin/claude')).toBeUndefined();
+
+    answer(SCAN);
+    await vi.waitFor(() => expect(getCachedModelPickerModels('/usr/bin/claude')).toEqual(SCAN));
+  });
+
+  it('tells the listener when a scan lands after the wait ran out, so the inventory built without it is dropped', async () => {
+    let answer: (scan: ModelPickerScan) => void = () => undefined;
+    handshakeMock.mockReturnValue(new Promise<ModelPickerScan>((resolve) => { answer = resolve; }));
+    setModelPickerProbeTimingsForTests({ coldDiscoveryWaitMs: 10 });
+    const listener = vi.fn();
+    setLateModelScanListener(listener);
+
+    await awaitModelPickerModels('/usr/bin/claude');
+    expect(listener).not.toHaveBeenCalled();
+
+    answer(SCAN);
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+  });
+
+  it('calls the listener a real ClaudeAdapter registered through onCapabilitiesChanged', async () => {
+    let answer: (scan: ModelPickerScan) => void = () => undefined;
+    handshakeMock.mockReturnValue(new Promise<ModelPickerScan>((resolve) => { answer = resolve; }));
+    setModelPickerProbeTimingsForTests({ coldDiscoveryWaitMs: 10 });
+    const listener = vi.fn();
+    new ClaudeAdapter().onCapabilitiesChanged(listener);
+
+    await awaitModelPickerModels('/usr/bin/claude');
+    expect(listener).not.toHaveBeenCalled();
+
+    answer(SCAN);
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
+  });
+
+  it('tells no one when the scan landed inside the wait, or when the late run found nothing', async () => {
+    const listener = vi.fn();
+    setLateModelScanListener(listener);
+    handshakeMock.mockResolvedValue(SCAN);
+    await awaitModelPickerModels('/usr/bin/claude');
+
+    resetModelPickerProbeForTests();
+    setLateModelScanListener(listener);
+    let fail: (error: Error) => void = () => undefined;
+    handshakeMock.mockReturnValue(new Promise<ModelPickerScan>((_resolve, reject) => { fail = reject; }));
+    installFakePty((self) => self.emitExit());
+    setModelPickerProbeTimingsForTests({ coldDiscoveryWaitMs: 10 });
+    await awaitModelPickerModels('/usr/bin/claude');
+    fail(new Error('initialize failed'));
+    await probeModelPickerModels('/usr/bin/claude');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('serves a scan in hand at once, with no wait', async () => {
+    handshakeMock.mockResolvedValue(SCAN);
+    await probeModelPickerModels('/usr/bin/claude');
+    handshakeMock.mockClear();
+
+    expect(await awaitModelPickerModels('/usr/bin/claude')).toEqual(SCAN);
+    expect(handshakeMock).not.toHaveBeenCalled();
+  });
+
+  it('does not wait out a failure still in its backoff', async () => {
+    installFakePty((self) => self.emitExit());
+    await probeModelPickerModels('/usr/bin/claude');
+    expect(await probeModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    handshakeMock.mockClear();
+    spawnMock.mockClear();
+    setModelPickerProbeTimingsForTests({ coldDiscoveryWaitMs: 60_000 });
+
+    expect(await awaitModelPickerModels('/usr/bin/claude')).toBeUndefined();
+    expect(handshakeMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('getCachedModelPickerModels', () => {
   it('returns undefined on the first call and warms the cache in the background', async () => {
     installFakePty(
@@ -1333,9 +1506,11 @@ describe('the probe failure log line', () => {
   });
 
   function probeLines(): string[] {
+    // Each case here runs the PTY as the fallback, so the handshake's own line
+    // comes first; 'the handshake before the PTY' pins that line.
     return warnSpy.mock.calls
       .map((call) => String(call[0]))
-      .filter((line) => line.startsWith('[model-picker-probe]'));
+      .filter((line) => line.startsWith('[model-picker-probe]') && !line.includes('handshake failed'));
   }
 
   let churnTimer: ReturnType<typeof setInterval> | undefined;
@@ -2162,11 +2337,6 @@ describe('the last-scan file', () => {
       record.scan.models = [];
       return record;
     }],
-    ['an uppercase model id', () => {
-      const record = goodRecord();
-      record.scan.models = ['Claude-Opus-5-5'];
-      return record;
-    }],
     ['a model id containing a space', () => {
       const record = goodRecord();
       record.scan.models = ['claude opus'];
@@ -2197,7 +2367,38 @@ describe('the last-scan file', () => {
       record.scan.aliases = [{ id: 'opus', resolvesTo: 'Claude Opus' }];
       return record;
     }],
+    ['a model id past the length bound', () => {
+      const record = goodRecord();
+      record.scan.models = [`claude-${'x'.repeat(300)}`];
+      return record;
+    }],
+    ['displayNames that are not a map of strings', () => {
+      const record = { ...goodRecord(), scan: { ...goodRecord().scan, displayNames: { 'my-model': 5 } } };
+      return record;
+    }],
   ];
+
+  it('keeps a Bedrock scan across a restart, or those users pay the cold wait on every launch', async () => {
+    installFakePty((self) => self.emitExit());
+    const arn = 'arn:aws:bedrock:us-west-2:111122223333:inference-profile/custom-7f3a';
+    const scan: ModelPickerScan = {
+      models: [
+        'us.anthropic.claude-sonnet-4-6[1m]',
+        'us.anthropic.claude-opus-4-1-20250805-v1:0',
+        'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'claude-haiku-4-5@20251001',
+        arn,
+      ],
+      aliases: [{ id: 'haiku', resolvesTo: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }, { id: 'opus[1m]' }],
+      displayNames: { [arn]: 'Opus' },
+    };
+    writeScanFile({ ...goodRecord(), scan });
+    setModelPickerProbeScanFileForTests(scanFile);
+
+    expect(getCachedModelPickerModels(CLI_PATH)).toEqual(scan);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(handshakeMock).not.toHaveBeenCalled();
+  });
 
   it.each(malformedRecords)('rejects %s', async (_label, buildRecord) => {
     installFakePty((self) => self.emitExit());

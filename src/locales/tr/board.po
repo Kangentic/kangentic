@@ -225,11 +225,6 @@ msgstr "kangentic.json dosyasında değişiklikler algılandı. Güncellenen pan
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "Sütun otomasyonları bu görev için çalışmaz ve görevin iş akışı onu taşımaz. Otomasyonları kartın menüsünden sürdürün."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "Sütun otomasyonları bu görev için çalışmaz. Otomasyonları kartın menüsünden sürdürün."
 

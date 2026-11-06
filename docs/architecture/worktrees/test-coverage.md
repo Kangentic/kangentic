@@ -42,6 +42,7 @@ Unit tests (`tests/unit/`, run with `npm run test:unit`) cover the worktree stra
 - Uses empty array when parent has no MCP servers
 - Preserves existing worktree entry fields while setting `hasTrustDialogAccepted`
 - Leaves malformed JSON untouched rather than replacing it
+- Files a directory reached through a symlink under its physical path on macOS and Linux (the trust dialog shows for an entry under the link), and leaves the path as given on Windows
 
 Uses real temp files with mocked `os.homedir()`.
 

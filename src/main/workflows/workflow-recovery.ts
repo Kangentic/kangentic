@@ -1,6 +1,5 @@
 import type { SessionResumer, Swimlane, Task, WorkflowStalledEvent } from '../../shared/types';
 import { IPC } from '../../shared/ipc-channels';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import type { IpcContext } from '../ipc/ipc-context';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import type { TurnEndedPayload } from '../pty/session-manager';
@@ -21,6 +20,7 @@ import type { WorkflowBlocker } from './workflow-step-condition';
 import { workflowMemoryGate, type GateMemoryReading } from './workflow-memory-gate';
 import { workflowTasks } from './workflow-tasks';
 import { WORKFLOW_NEEDS_OWNER_LINE } from '../../shared/workflow-needs-owner';
+import { WORKFLOW_NO_CHANGES_LINE } from '../../shared/workflow-no-changes';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../shared/background-shell-hold';
 import {
   forgetWorkflowRecovery,
@@ -172,7 +172,7 @@ function handleVerdict(
       return;
     case 'waiting':
       forgetWorkflowRecovery(target.taskId);
-      noticeWaiting(context, target, result.reason ?? 'the agent asked something.');
+      noticeWaiting(context, target, result.reason ?? 'the agent asked something.', { notify: result.firstThisVisit !== false });
       return;
     case 'human-gate':
       forgetWorkflowRecovery(target.taskId);
@@ -189,7 +189,13 @@ function handleVerdict(
       const entry = ensureEntry(context, target);
       if (!entry) return;
       takeVerdict(entry, result);
-      holdMove(entry, { columnId: target.columnId, sessionId: target.sessionId, kind: 'step', rowId: null, targetName: result.heldMoveTo ?? null });
+      holdMove(entry, {
+        columnId: target.columnId,
+        sessionId: target.sessionId,
+        kind: result.heldNoChanges ? 'no-changes' : 'step',
+        rowId: null,
+        targetName: result.heldMoveTo ?? null,
+      });
       return;
     }
     case 'stopped':
@@ -1078,6 +1084,8 @@ const GIBIBYTE = 1024 * 1024 * 1024;
  * - It ends on the `Needs owner:` line: the agent's own call whether only the
  *   owner can settle it, for the three things that stop a workflow and nothing
  *   else (owner's decision, 2026-10-31).
+ * - It names the `No changes needed:` line last: a stall can be an agent that
+ *   found nothing to do and has no other way to say so.
  */
 export function nudgeMessage(input: NudgeInput): string {
   // One line under the keystroke limit. The commands give way first, then
@@ -1141,7 +1149,8 @@ function composeNudge(input: NudgeInput, withCommands: boolean): string {
   const column = typeable(input.columnName);
   const shells = shellSentences(input.openShells ?? [], withCommands);
   const ownerLine = 'If only the owner can settle what you are stuck on (a change from the plan, something the owner must weigh in on, or a '
-    + `decision between options), end your reply with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it.`;
+    + `decision between options), end on the line "${WORKFLOW_NEEDS_OWNER_LINE}". Otherwise act on it. `
+    + `If no change is needed and the branch is empty, end on the line "${WORKFLOW_NO_CHANGES_LINE}".`;
   if (input.heldMove) {
     // Done, and only the background work holds the move: the agent is asked
     // about that work and nothing else, so it ends its turn when it is done.
@@ -1267,8 +1276,7 @@ function noticeStall(context: IpcContext, entry: RecoveryEntry, reason: string):
  * A running workflow stalled on this task: write the stall row (the notice's
  * latch and the task's mark), then tell the user on desktop, phone and the
  * in-app toast, and refresh the workflow's view. Recovery calls it when it
- * runs out, and the engine host when a start keeps failing. A task whose
- * automations are paused gets none of it: a person is working it by hand.
+ * runs out, and the engine host when a start keeps failing.
  */
 export function announceWorkflowStall(
   context: IpcContext,
@@ -1279,10 +1287,6 @@ export function announceWorkflowStall(
   try {
     const repos = getProjectRepos(context, stall.projectId);
     const task = repos.tasks.getById(stall.taskId);
-    if (task && !canTaskRunAutomations(task).ok) {
-      console.log(`[WORKFLOW] Task ${stall.taskId.slice(0, 8)} would have stalled (${stall.reason}), but its automations are paused.`);
-      return;
-    }
     repos.automationRuns.recordWorkflowStall({
       taskId: stall.taskId,
       swimlaneId: stall.columnId,
@@ -1304,8 +1308,13 @@ export function announceWorkflowStall(
   notifyWorkflowChanged(homeProjectId, stall.workflowId);
 }
 
-/** A wait on the user: its row, then the notice, which stands in for the idle one. */
-function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: string): void {
+/**
+ * A wait on the user: its row, then the notice, which stands in for the idle
+ * one. The row is written even when the notice is not (`notify`): it is the
+ * latch that keeps recovery off a task waiting on a person, and each step check
+ * that judged a turn ends the last one (`isWaitingOnUser`).
+ */
+function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: string, options: { notify?: boolean } = {}): void {
   try {
     getProjectRepos(context, target.projectId).automationRuns.recordWorkflowWaiting({
       taskId: target.taskId,
@@ -1317,6 +1326,7 @@ function noticeWaiting(context: IpcContext, target: RecoveryTarget, reason: stri
     console.warn('[WORKFLOW] Could not record a wait on the user:', error);
   }
   refreshStoppedMark(context, target.projectId, target.taskId);
+  if (options.notify === false) return;
   sendNotice(context, { projectId: target.projectId, taskId: target.taskId, sessionId: target.sessionId, kind: 'waiting', reason });
 }
 

@@ -570,22 +570,11 @@ msgstr "Renomear fluxo de trabalho"
 msgid "Resize the workflow agent"
 msgstr "Redimensionar o agente de fluxo de trabalho"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgctxt "automations"
-msgid "Resume"
-msgstr "Retomar"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "Retomar"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Resume automations"
-msgstr "Retomar automações"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy

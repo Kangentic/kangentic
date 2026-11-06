@@ -273,6 +273,12 @@ function findPortsLostListener(): IpcHandler {
 // Tests
 // ---------------------------------------------------------------------------
 
+const mockReportPtyPortFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPtyPortFailure: mockReportPtyPortFailure,
+}));
+
 describe('sessions.ts renderer port broker', () => {
   let context: ReturnType<typeof createMockContext>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -322,6 +328,27 @@ describe('sessions.ts renderer port broker', () => {
       expect(renderer.listenerCount('render-process-gone')).toBe(1);
     });
 
+    it('reports a renderer left open with no port, since its terminals take no keystroke', () => {
+      const renderer = addRenderer(7);
+      renderer.postMessage.mockImplementation(() => { throw new Error('post failed'); });
+
+      requestPort(renderer);
+
+      expect(mockReportPtyPortFailure).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports nothing for a window that went away during the post', () => {
+      const renderer = addRenderer(7);
+      renderer.postMessage.mockImplementation(() => {
+        renderer.markDestroyed();
+        throw new Error('Render frame was disposed before WebFrameMain could be accessed');
+      });
+
+      requestPort(renderer);
+
+      expect(mockReportPtyPortFailure).not.toHaveBeenCalled();
+    });
+
     it('closes the host end, attaches nothing, arms no watch and throws nothing when the post throws', () => {
       const renderer = addRenderer(7);
       renderer.postMessage.mockImplementation(() => {
@@ -365,6 +392,20 @@ describe('sessions.ts renderer port broker', () => {
       expect(createdChannels[0].port1).not.toBe(createdChannels[1].port1);
       expect(renderer.listenerCount('destroyed')).toBe(1);
       expect(renderer.listenerCount('render-process-gone')).toBe(1);
+    });
+  });
+
+  describe('SESSION_SPAWN', () => {
+    // A launch report carries `start_path` as a tag. The renderer's input is the
+    // one place a value could name a start path of its own choosing.
+    it('stamps the board as the start path, whatever the renderer sent', () => {
+      const spawn = vi.fn();
+      (context.sessionManager as unknown as { spawn: typeof spawn }).spawn = spawn;
+
+      findIpcHandleHandler(IPC.SESSION_SPAWN)({}, { command: 'claude', startPath: 'Fix the Acme billing' }, 'proj-1');
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ command: 'claude', projectId: 'proj-1', startPath: 'board' }));
     });
   });
 

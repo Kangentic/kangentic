@@ -67,6 +67,7 @@ const hoisted = vi.hoisted(() => ({
   retrievalCall: vi.fn(),
   resolveMoveTarget: vi.fn(),
   waitForTurnCompletion: vi.fn(async (): Promise<string> => 'completed'),
+  readWorktreeWork: vi.fn(),
 }));
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -110,8 +111,9 @@ vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
 vi.mock('../../src/main/automations/condition-check/condition-check', () => ({ checkAutomationConditions: hoisted.check }));
 vi.mock('../../src/main/workflows/workflow-home', () => ({
   workflowOfTask: vi.fn(() => ({ id: 'workflow-1', state: hoisted.workflowState })),
-  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running' && !hoisted.task.automations_disabled),
+  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running'),
   isInWorkflow: vi.fn(() => true),
+  isTaskWorkflowPaused: vi.fn(() => hoisted.workflowState === 'paused'),
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowChanged: vi.fn(), notifyWorkflowOfTask: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-tasks', async (importOriginal) => ({
@@ -119,9 +121,14 @@ vi.mock('../../src/main/workflows/workflow-tasks', async (importOriginal) => ({
   workflowTasks: hoisted.workflowTasks,
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-head')>()),
+  readWorktreeWork: hoisted.readWorktreeWork,
+}));
 
 const { registerTurnEndAutomations } = await import('../../src/main/automations/turn-end/turn-end-runner');
 const { stopWorkflowHangCheck } = await import('../../src/main/workflows/workflow-hang-check');
+const { runWorkflowStep } = await import('../../src/main/workflows/workflow-step');
 
 const SESSION_ID = 'session-1';
 const PROJECT_ID = 'project-1';
@@ -201,6 +208,9 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
   let rowReleaseMoves: boolean;
   let notifyDesktop: ReturnType<typeof vi.fn>;
   let historyDirectory: string;
+  /** The team-shared board default for the project's path, and the effective config's default. Empty reads as unset. */
+  let boardDefaultBranch: string;
+  let configDefaultBranch: string;
 
   afterEach(() => {
     resetWorkflowRecoveryForTests();
@@ -324,6 +334,8 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
     openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [] };
     heldByBackgroundWork = false;
     engineHeldShellIds = [];
+    boardDefaultBranch = '';
+    configDefaultBranch = '';
     workflowMemoryGate.resetForTests();
     notifyDesktop = vi.fn();
     historyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-held-move-history-'));
@@ -362,7 +374,8 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
       sessionManager,
       mainWindow: { isDestroyed: () => false },
       projectRepo: { getById: () => ({ path: '/mock/project' }) },
-      boardConfigManager: { getBoardProfiles: () => [] },
+      boardConfigManager: { getBoardProfiles: () => [], getDefaultBaseBranchForPath: () => boardDefaultBranch },
+      configManager: { getEffectiveConfig: () => ({ git: { defaultBaseBranch: configDefaultBranch } }) },
       terminalSubmitScheduler: { hasPending: () => false },
       desktopNotifier: { notifyWorkflowTask: notifyDesktop },
       mobileBridgeService: { notifyWorkflowTask: vi.fn() },
@@ -501,6 +514,321 @@ describe('a held move across the turn-end runner and workflow recovery', () => {
       expect(hoisted.task.swimlane_id).toBe(nextLane.id);
       expect(stepChecks()).toBe(1);
       expect(getHeldMove(taskId)).toBeUndefined();
+    });
+  });
+
+  describe('a reply that ends on the no-change line', () => {
+    const NO_CHANGES_WHY = 'the route already returns 404, and nothing here needs to change.';
+    const NO_CHANGES_REPLY = `I read the handler and its tests.\n\nNo changes needed: ${NO_CHANGES_WHY}`;
+    const WORKTREE = '/mock/project/.kangentic/worktrees/badges';
+    const EMPTY_BRANCH = { branch: 'badges', commitsNotOnBase: 0, uncommittedFiles: 0 };
+    let doneLane: Swimlane;
+
+    beforeEach(() => {
+      doneLane = lanes.find((lane) => lane.role === 'done')!;
+      hoisted.task = { ...hoisted.task, worktree_path: WORKTREE, base_branch: 'develop', resolved_base_branch: null };
+      hoisted.readWorktreeWork.mockReset();
+      hoisted.readWorktreeWork.mockImplementation(async () => EMPTY_BRANCH);
+    });
+
+    const stepRows = (): Array<{ met: number | null; detail: string | null }> => (hoisted.database as DatabaseType.Database)
+      .prepare('SELECT condition_met AS met, detail FROM automation_runs WHERE task_id = ? ORDER BY started_at')
+      .all(taskId) as Array<{ met: number | null; detail: string | null }>;
+
+    it('moves the task straight to Done, past the rest of its route, with no check to pay for', async () => {
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(hoisted.readWorktreeWork).toHaveBeenCalledWith(WORKTREE, 'develop');
+      expect(stepChecks()).toBe(0);
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ taskId, targetSwimlaneId: doneLane.id }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.objectContaining({ fromTurnEndGroup: true }),
+      );
+    });
+
+    it('records the agent\'s reason in the run log', async () => {
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      const reasons = (hoisted.database as DatabaseType.Database)
+        .prepare('SELECT condition_reason AS reason FROM automation_runs WHERE task_id = ?')
+        .all(taskId) as Array<{ reason: string | null }>;
+      expect(reasons.map((row) => row.reason)).toContain(NO_CHANGES_WHY);
+    });
+
+    it('moves nothing on a branch with commits, and the nudge says why', async () => {
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, commitsNotOnBase: 2 }));
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+      const nudge = (hoisted.deliverMessageToSession.mock.calls[0] as unknown as [unknown, { message: string }])[1].message;
+      expect(nudge).toContain('2 commits');
+      expect(nudge).toContain('develop');
+    });
+
+    it('moves nothing on a dirty worktree', async () => {
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, uncommittedFiles: 1 }));
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(stepRows().some((row) => row.detail?.includes('1 uncommitted file'))).toBe(true);
+    });
+
+    it.each([
+      ['the read failed', null],
+      ['the base branch does not resolve', { ...EMPTY_BRANCH, commitsNotOnBase: null }],
+    ])('moves nothing when the branch cannot be read: %s', async (_label, work) => {
+      hoisted.readWorktreeWork.mockImplementation(async () => work);
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(stepRows().some((row) => row.detail?.includes('could not be read'))).toBe(true);
+    });
+
+    it('takes the agent\'s word on a task with no worktree: there is nothing to compare', async () => {
+      hoisted.task = { ...hoisted.task, worktree_path: null };
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(hoisted.readWorktreeWork).not.toHaveBeenCalled();
+    });
+
+    // A plan column's "Finish the plan" row has no Text match, so it runs on
+    // every reply. Its message would start a turn and take the step's turn with it.
+    it('runs no row first, so a row with no Text match cannot message the agent over it', async () => {
+      hoisted.rows = [{ ...moveRow(), id: 'row-finish-the-plan', name: 'Finish the plan', type: 'send_message', config: { message: 'Finish the plan.' } }];
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+    });
+
+    it('runs the rows on any other reply, as before', async () => {
+      hoisted.rows = [{ ...moveRow(), id: 'row-finish-the-plan', name: 'Finish the plan', type: 'send_message', config: { message: 'Finish the plan.' } }];
+
+      await endTurn(41, 'Here is the plan so far.');
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for a background command the agent left, then goes to Done, not the next route column', async () => {
+      leaveShellOpen();
+      await endTurn(41, NO_CHANGES_REPLY);
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(getHeldMove(taskId)).toMatchObject({ kind: 'no-changes', targetName: doneLane.name });
+
+      closeShell();
+      startTurn(42);
+      await endTurn(42, STOPPED_SHELL_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(doneLane.id);
+      expect(getHeldMove(taskId)).toBeUndefined();
+    });
+
+    it('checks the branch again when the held move goes: the agent may have committed meanwhile', async () => {
+      leaveShellOpen();
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      hoisted.readWorktreeWork.mockImplementation(async () => ({ ...EMPTY_BRANCH, commitsNotOnBase: 1 }));
+      closeShell();
+      startTurn(42);
+      await endTurn(42, STOPPED_SHELL_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('leaves a Needs owner reply alone: only the owner settles that', async () => {
+      await endTurn(41, QUESTION_REPLY);
+
+      expect(hoisted.readWorktreeWork).not.toHaveBeenCalled();
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+    });
+
+    // The branch is compared with the task's own base, else the board's default for the project
+    // (which outranks the config's, as CONFIG_GET overlays it), else the config's, else 'main'.
+    it.each([
+      { label: 'the resolved base', resolved: 'release/2', base: 'develop', board: 'board-default', config: 'config-default', expected: 'release/2' },
+      { label: 'the task base when none resolved', resolved: null, base: 'develop', board: 'board-default', config: 'config-default', expected: 'develop' },
+      { label: 'the board default over a different config default', resolved: null, base: null, board: 'board-default', config: 'config-default', expected: 'board-default' },
+      { label: 'the config default when the board sets none', resolved: null, base: null, board: '', config: 'config-default', expected: 'config-default' },
+      { label: 'main when nothing is configured', resolved: null, base: null, board: '', config: '', expected: 'main' },
+    ])('compares the branch with $label', async ({ resolved, base, board, config, expected }) => {
+      hoisted.task = { ...hoisted.task, resolved_base_branch: resolved, base_branch: base };
+      boardDefaultBranch = board;
+      configDefaultBranch = config;
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.readWorktreeWork).toHaveBeenCalledTimes(1);
+      expect(hoisted.readWorktreeWork).toHaveBeenCalledWith(WORKTREE, expected);
+    });
+
+    describe('while the branch is being read', () => {
+      let finishRead!: (work: typeof EMPTY_BRANCH) => void;
+      let controller: AbortController;
+      let step: ReturnType<typeof runWorkflowStep>;
+
+      beforeEach(async () => {
+        hoisted.readWorktreeWork.mockImplementationOnce(() => new Promise((resolve) => { finishRead = resolve; }));
+        controller = new AbortController();
+        step = runWorkflowStep(context, {
+          payload: turnEndPayload(41) as never,
+          columnId: workingLane.id,
+          signal: controller.signal,
+          readAgentReply: async () => NO_CHANGES_REPLY,
+        });
+        await settle();
+        expect(hoisted.readWorktreeWork).toHaveBeenCalledTimes(1);
+      });
+
+      it('moves nothing when the pass is aborted', async () => {
+        controller.abort();
+        finishRead(EMPTY_BRANCH);
+
+        expect(await step).toBeUndefined();
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+
+      it('moves nothing when the task left the column', async () => {
+        hoisted.task = { ...hoisted.task, swimlane_id: doneLane.id };
+        finishRead(EMPTY_BRANCH);
+
+        expect(await step).toBeUndefined();
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+
+      it('moves nothing when a newer turn began, and says so', async () => {
+        workSerial = 42;
+        finishRead(EMPTY_BRANCH);
+
+        expect(await step).toBe('newer-turn');
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+
+      it('moves the task when none of that happened: the control for the three above', async () => {
+        finishRead(EMPTY_BRANCH);
+
+        expect(await step).toMatchObject({ verdict: 'done' });
+        expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe('a task with no running workflow that ends on the no-change line', () => {
+    const NO_CHANGES_REPLY = 'I read the handler and its tests.\n\nNo changes needed: the route already returns 404.';
+    const ROW_ID = 'row-finish-the-plan';
+    const messageRow = (): ColumnAutomation => ({ ...moveRow(), id: ROW_ID, name: 'Finish the plan', type: 'send_message', config: { message: 'Finish the plan.' } });
+
+    // The line is read before the rows only when the step runs. Anywhere else the rows run as always.
+    it.each([
+      { label: 'an ordinary task', arrange: () => { hoisted.task = { ...hoisted.task, workflow_id: null }; } },
+      { label: 'the task of a paused workflow', arrange: () => { hoisted.workflowState = 'paused'; } },
+    ])('still runs the turn-end rows of $label', async ({ arrange }) => {
+      arrange();
+      hoisted.rows = [messageRow()];
+
+      await endTurn(41, NO_CHANGES_REPLY);
+
+      expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
+      expect((hoisted.executeTransition.mock.calls[0][3] as TransitionOptions).onlyIds).toEqual(new Set([ROW_ID]));
+    });
+  });
+
+  describe('a column whose only exit rows send the task back', () => {
+    const SEND_BACK_ROW_ID = 'row-checks-failing';
+    const AWAITING_REVIEW_REPLY = `PR open, checks green.\n\n${MARKER}`;
+
+    beforeEach(() => {
+      const earlierLane = lanes.find((lane) => lane.role === 'todo')!;
+      hoisted.resolveMoveTarget.mockImplementation(() => ({ ok: true, column: earlierLane }));
+      hoisted.rows = [{ ...moveRow(), id: SEND_BACK_ROW_ID, name: 'Checks failing', final_line: 'PR: checks failing', config: { targetColumn: earlierLane.name } }];
+    });
+
+    it('stops the card on a yes: no move, one notice, and no nudge however long it waits', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting' }));
+
+      await vi.advanceTimersByTimeAsync(120 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).not.toHaveBeenCalled();
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+    });
+
+    it('tells the owner again when the card leaves the column and comes back: a new visit', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+
+      // The card goes to To Do and returns, both after the first stop and before the next turn began.
+      await vi.advanceTimersByTimeAsync(10 * MINUTE);
+      const todoLane = lanes.find((lane) => lane.role === 'todo')!;
+      const insertMove = (fromLaneId: string, toLaneId: string, at: Date): void => {
+        (hoisted.database as DatabaseType.Database)
+          .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(randomUUID(), taskId, fromLaneId, toLaneId, 'workflow', null, at.toISOString());
+      };
+      insertMove(workingLane.id, todoLane.id, new Date(Date.now() - 4 * MINUTE));
+      insertMove(todoLane.id, workingLane.id, new Date(Date.now() - 3 * MINUTE));
+
+      startTurn(42);
+      await endTurn(42, AWAITING_REVIEW_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(notifyDesktop).toHaveBeenCalledTimes(2);
+    });
+
+    it('asks the check its own question there', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      const [, input] = hoisted.check.mock.calls[0] as [unknown, CheckInput];
+      expect(input.rows[0].condition).toContain('finished what it can do alone');
+    });
+
+    it('tells the owner once a visit, and stays quiet across a person\'s later turns there', async () => {
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+      startTurn(42);
+      await endTurn(42, AWAITING_REVIEW_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(120 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).not.toHaveBeenCalled();
+    });
+
+    it('still nudges a real stall, which the check answers no', async () => {
+      await endTurn(41, STALLED_REPLY);
+
+      expect(notifyDesktop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5 * MINUTE);
+      await settle();
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('never holds a step move there: a yes with a command still open only stops', async () => {
+      leaveShellOpen();
+      await endTurn(41, AWAITING_REVIEW_REPLY);
+
+      expect(getHeldMove(taskId)).toBeUndefined();
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
     });
   });
 

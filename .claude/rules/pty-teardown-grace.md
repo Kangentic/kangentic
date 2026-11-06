@@ -172,9 +172,11 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   `SessionManager.dispose()` never touches the registry: it runs one statement after `killAll()`.
 - **A short-lived probe PTY runs Claude on the classic renderer**
   (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`, which never arms the canary) and exits it with
-  `/exit`, waiting on the PTY's own `onExit` before the fallback kill. The model picker probe is
-  the one that exists. It writes Esc and `/exit` only after its own `/model` was submitted, and
-  not when a dialog replaced the picker. A dialog takes typed keys as its answer, so a run that
+  `/exit`, waiting on the PTY's own `onExit` before the fallback kill. The `/model` picker probe,
+  the fallback when the `initialize` handshake fails, is the one that exists. The handshake itself
+  is a `-p` run with no TUI and no canary, so this bullet does not reach it: it ends stdin and
+  stops the CLI only after a grace. The probe writes Esc and `/exit` only after its own `/model`
+  was submitted, and not when a dialog replaced the picker. A dialog takes typed keys as its answer, so a run that
   never got `/model` into the input box, or whose Enter opened a dialog, ends on the plain kill,
   which the classic renderer makes safe.
 - **Every Kangentic read-modify-write of `~/.claude.json` runs under `withClaudeJsonLock`**
@@ -199,7 +201,8 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   and Linux, not macOS) and its typed sequence; `tests/unit/exit-sequence.test.ts` pins the pauses;
   `tests/unit/pty-exit-callback-drain.test.ts` pins the deadline extension;
   `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env, its graceful exit, and its
-  no-key-into-a-dialog guards;
+  no-key-into-a-dialog guards; `tests/unit/claude-model-list-handshake.test.ts` pins the handshake's
+  stdin end and its stop after the grace;
   `tests/unit/claude-json-lock.test.ts` pins the file lock's acquire, wait, stale break, and
   ELOCKED skip. `tests/unit/dead-root-orphans.test.ts` pins the orphan cleanup's identity window
   (the pinned creation and exit, the pin taken and released, no cleanup without one),

@@ -13,6 +13,7 @@ import { useSshStore } from './stores/ssh-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useWorkflowStore } from './stores/workflow-store';
+import { boardWorkflowNow } from './utils/workflow-refusal';
 import { useToastStore } from './stores/toast-store';
 import { useLeftoverProcessesStore } from './stores/leftover-processes-store';
 import { describeLeftoverReport } from './lib/leftover-processes';
@@ -789,6 +790,7 @@ export function App() {
               sessionIdShort: sessionId.slice(0, 8),
               endsOwnCall,
               reason,
+              inRunningWorkflow: toastTask !== undefined && boardWorkflowNow(toastTask)?.state === 'running',
             });
             if (idleToast) {
               const openProjectId = toastSession.projectId;
@@ -969,10 +971,14 @@ export function App() {
           // fires from create, promote, unarchive and MCP auto-spawn, and only
           // the first of those created anything - "was created" would be a lie
           // on three of the four paths. Main words the reason; the title says
-          // the agent did not start, so the body leads with the task.
+          // the agent did not start, so the body leads with the task. The reason
+          // is the raw error, so it is not made into a sentence: a period on
+          // "Please run /login" changes the line a person copies and types. The
+          // error variant is the one with Copy, and a card's text cannot be
+          // selected.
           title: i18n._(msg`Agent didn't start`),
-          message: `"${taskTitle}": ${asSentence(message)}`,
-          variant: 'warning',
+          message: `"${taskTitle}": ${message.trim()}`,
+          variant: 'error',
           durationMs: 12000,
           onOpen: openProjectId
             ? () => { openTaskFromNotification(openProjectId, blockedTaskId); }

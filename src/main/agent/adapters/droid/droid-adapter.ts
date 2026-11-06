@@ -1,3 +1,5 @@
+import { identifyDroidUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { DroidDetector } from './detector';
 import { DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
@@ -138,6 +140,11 @@ export class DroidAdapter implements AgentAdapter {
    */
   remoteFiles(): RemoteFileDeclaration {
     return { home: [], project: ['.factory/mcp.json'] };
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyDroidUserSetupFailure(finalOutput);
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {

@@ -375,7 +375,7 @@ export interface PtyHostRequest<M extends PtyHostMethod = PtyHostMethod> {
 }
 
 export type PtyHostEvent =
-  | { type: 'exit'; ptyId: number; sessionId: string; exitCode: number }
+  | { type: 'exit'; ptyId: number; sessionId: string; exitCode: number; signal: number | null }
   /** The session's unsent prompt text changed (`PromptDraftLedger`, kept here
    *  because every write reaches the PTY here, in the order the PTY gets it).
    *  Null once the prompt looks empty. Main mirrors it for `getPendingDraft`. */

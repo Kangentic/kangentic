@@ -107,7 +107,7 @@ export async function startTaskSession(
   if (decision.path === 'live') return { outcome: 'live' };
 
   if (decision.path === 'start') {
-    const settled = autoSpawnForTask(context, projectId, decision.task, decision.laneId, { explicitStart: true });
+    const settled = autoSpawnForTask(context, projectId, decision.task, decision.laneId, { explicitStart: true, startPath: 'phone' });
     return { outcome: 'starting', settled };
   }
 
@@ -119,10 +119,11 @@ export async function startTaskSession(
   const resumed = resumeTaskSession(context, taskId, {
     projectId,
     onAccepted,
+    startPath: 'phone',
     // The phone was answered before this work ran, so no rejection reaches a
     // toast. The desktop's spawn-blocked notice is how a failed phone Resume
     // shows, as a failed phone Start does through autoSpawnForTask.
-    onFailed: (step, error, task) => notifySpawnBlocked(context, task, step, error, projectId),
+    onFailed: (step, error, task) => notifySpawnBlocked(context, task, step, error, projectId, 'phone'),
   });
   // A refusal in the resume's Phase 1 rejects before acceptance and reaches
   // the phone as ok:false, as the decision's own refusals do. A resume that a

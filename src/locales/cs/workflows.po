@@ -570,22 +570,11 @@ msgstr "Přejmenovat pracovní postup"
 msgid "Resize the workflow agent"
 msgstr "Změnit velikost agenta pracovních postupů"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgctxt "automations"
-msgid "Resume"
-msgstr "Obnovit"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "Pokračovat"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Resume automations"
-msgstr "Obnovit automatizace"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy

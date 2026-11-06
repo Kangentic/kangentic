@@ -225,11 +225,6 @@ msgstr "Обнаружены изменения в kangentic.json. Примен�
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "Автоматизации столбцов не выполняются для этой задачи, и её рабочий процесс не перемещает её. Возобновите их в меню карточки."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "Автоматизации столбцов не выполняются для этой задачи. Возобновите их в меню карточки."
 

@@ -1,3 +1,5 @@
+import { identifyGeminiUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { GeminiDetector } from './detector';
 import { GeminiCommandBuilder, GEMINI_WSL_HOOK_COPY_NAME } from './command-builder';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
@@ -130,6 +132,11 @@ export class GeminiAdapter implements AgentAdapter {
   // sessions in the same folder, and removeHooks() strips it only when the
   // folder's last session releases. Keyed by session id: see SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyGeminiUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

@@ -48,6 +48,12 @@ const cappedColumnTasks = vi.fn((): unknown[] => []);
 // the preparation pass has no conversation to resume there.
 const latestForTaskByTypeAndIsolation = vi.fn((): SessionRecord | null => null);
 
+const mockReportPreflightFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/agent-launch-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/agent-launch-report')>()),
+  reportPreflightFailure: mockReportPreflightFailure,
+}));
+
 vi.mock('electron', () => ({ app: { isPackaged: false } }));
 vi.mock('node:fs', () => ({
   default: { existsSync: vi.fn(() => true) },
@@ -451,6 +457,11 @@ describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
     expect(markRecordSuspendedMock).toHaveBeenCalledWith(expect.anything(), 'record-1', 'system');
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
     expect(retireRecordMock).not.toHaveBeenCalled();
+    // A start that failed with nobody watching: the log was its only trace.
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+      cause: 'recovery_prepare',
+      startPath: 'startup_recovery',
+    }));
   });
 
   it('registers a placeholder for an already suspended record with no upgrade, and clears the task\'s stale session ref', async () => {
@@ -465,6 +476,21 @@ describe('resumeSuspendedSessions: a resume whose preparation fails', () => {
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
     expect(taskRepoUpdateMock).toHaveBeenCalledWith({ id: 'task-1', session_id: null });
     expect(retireRecordMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown agent as a startup recovery', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord()]);
+    prepareAgentSpawnMock.mockResolvedValue({ ok: false, reason: 'unknown-agent' });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await runResume(makeSessionManager());
+
+    expect(mockReportPreflightFailure).toHaveBeenCalledTimes(1);
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+      cause: 'unknown_agent',
+      startPath: 'startup_recovery',
+    }));
+    vi.mocked(console.warn).mockRestore();
   });
 
   it('registers nothing when the upgrade loses its CAS', async () => {
@@ -813,6 +839,23 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
 
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session' }));
     expect(removeHooks).not.toHaveBeenCalled();
+  });
+
+  it('reports a spawn that failed as a startup recovery, naming the agent', async () => {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockRejectedValue(new Error('pty host down'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await runResume(sessionManager);
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({
+      cause: 'recovery_spawn',
+      agent: 'gemini',
+      startPath: 'startup_recovery',
+    }));
   });
 });
 

@@ -17,15 +17,25 @@ earlier, or skips some), and starts when every task it waits for has reached Don
 when the column's work is done: the Automation agent judges the agent's final message at each turn
 end (or a plan is approved, or the task's own agent moves it with `kangentic_move_task`), and the
 task moves to the next column on its route. A column with no agent, an agent that reports no turn
-end, or no Automation agent set up is a human gate: a person drags the card on.
+end, or no Automation agent set up is a human gate: a person drags the card on. So is a column whose
+only Move to column rows send a task back: when the agent has finished what it can do alone, the
+card stops and the owner gets a notice. A row that names a column the route does not visit moves
+the task to the route's next column instead.
 
-While a workflow runs its tasks are locked. Only the workflow, its column automations, plan exit
-and a task's OWN agent move them; a drag, the phone or another agent is refused with
-"#414 is locked while Usage budgets runs." Nothing moves a workflow task into To Do. Paused, its
-cards move by hand except into To Do. So does a task whose automations are paused
-(`automationsDisabled`, see [Disabling automations for one
-task](../../architecture/automations/triggers.md#disabling-automations-for-one-task)): it is not
-locked, and a hand may move it to any column but To Do.
+An agent that decides its task needs no change ends its final message with the line
+`No changes needed: <why>`. Kangentic checks the branch (no commits ahead of its base, a clean
+worktree) and moves the task straight to Done. A question for the owner stays `Needs owner:`.
+
+While a workflow runs, a task in motion is locked. Only the workflow, its column automations, plan
+exit and a task's OWN agent move it; a drag, the phone or another agent is refused with
+"#414 is locked while Usage budgets runs." Once the task stops, a person may move it to any column
+but To Do. Another agent stays refused. A task in To Do stays locked until the workflow starts it.
+Nothing moves a workflow task into To Do. Paused, its cards move by hand except into To Do.
+
+A running or paused workflow's task cannot pause its automations: `kangentic_update_task` refuses
+`automationsDisabled: true` and says what to use instead. To review its plan, set `planApproval` to
+`manual`. To wait on something outside, end a turn on the `Needs owner:` line. If it must never
+start on its own, leave it out of the workflow. To stop work, pause the workflow.
 
 A workflow lives in the project it was made in (pass `project` to reach another). Its tasks can sit
 on other registered projects' boards: name the project on the planned task. Of these tools the

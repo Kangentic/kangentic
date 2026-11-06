@@ -833,6 +833,31 @@ describe('TransitionEngine - recorded grid on a resume (executeSpawnAgent chokep
   });
 });
 
+describe('TransitionEngine - the spawn carries the start path (executeSpawnAgent chokepoint)', () => {
+  // mayRetryLaunch reads the session row's startPath ('retry') as its only guard
+  // against retrying a retry, so the override must reach sessionManager.spawn.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+  });
+
+  it('hands spawn() the start path a caller named in the spawn overrides', async () => {
+    const { engine, sessionManager } = makeEngine({});
+
+    await engine.resumeSuspendedSession(makeTask() as never, undefined, undefined, undefined, undefined, undefined, undefined, { startPath: 'retry' });
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ startPath: 'retry' }));
+  });
+
+  it('starts a fresh spawn with no named path as a board start', async () => {
+    const { runSpawn, sessionManager } = makeEngine({});
+
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ startPath: 'board' }));
+  });
+});
+
 describe('TransitionEngine - the spawn carries the permission mode its record gets', () => {
   // The spawn analytics event fires inside spawn(), before this record is
   // inserted, so it reads the mode off the session. The two must agree.

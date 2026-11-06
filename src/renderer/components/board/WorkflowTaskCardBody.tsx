@@ -10,8 +10,6 @@ import { WorkflowCardStrip, WorkflowGlyph, WorkflowStripLabel } from '../workflo
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
 import { useCardLinksPreview } from './card-links-preview';
 import { cardStripBleedClass } from './CardStrip';
-import { AutomationsDisabledCardStrip } from './AutomationsDisabledStrip';
-import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 
 /**
  * A workflow task's card content on the board: the workflow strip on top
@@ -65,44 +63,38 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
   const steps = useMemo(() => routeSteps(swimlanes, task), [swimlanes, task]);
   const ends = useMemo(() => boardEnds(swimlanes), [swimlanes]);
   const place = useMemo(() => taskPlace(swimlanes, task), [swimlanes, task]);
-  const held = !canTaskRunAutomations(task).ok;
-  if (!workflow && !held) return null;
+  if (!workflow) return null;
   return (
-    // One bleed wrapper around both strips, so they stack flush and the pair
-    // still meets the card's rounded top corners, as the Agent Monitor's card.
     <div
       className={cardStripBleedClass(density)}
-      data-workflow-id={workflow?.workflowId}
+      data-workflow-id={workflow.workflowId}
       ref={stripRef}
     >
-      {held && <AutomationsDisabledCardStrip testId="task-card-automations-disabled" inWorkflow />}
-      {workflow && (
-        <WorkflowCardStrip
-          // No pause glyph for a paused workflow (2026-10-21): at 11px it read as
-          // stray bars, and the Agent Monitor's strip draws none. A paused task in
-          // To Do still says "Paused" in its footer.
-          leading={(
-            <WorkflowStripLabel
-              icon={<WorkflowGlyph colorSlot={workflow.colorSlot} />}
-              label={workflow.title}
-              className="gap-[5px] text-fg-muted"
-            />
-          )}
-          steps={steps}
-          ends={ends}
-          place={place}
-          // The lane the card sits in names its column, so the board keeps the bar.
-          currentStep="bar"
-          stallReason={workflow.state === 'running' ? workflow.stallReason : null}
-        />
-      )}
+      <WorkflowCardStrip
+        // No pause glyph for a paused workflow (2026-10-21): at 11px it read as
+        // stray bars, and the Agent Monitor's strip draws none. A paused task in
+        // To Do still says "Paused" in its footer.
+        leading={(
+          <WorkflowStripLabel
+            icon={<WorkflowGlyph colorSlot={workflow.colorSlot} />}
+            label={workflow.title}
+            className="gap-[5px] text-fg-muted"
+          />
+        )}
+        steps={steps}
+        ends={ends}
+        place={place}
+        // The lane the card sits in names its column, so the board keeps the bar.
+        currentStep="bar"
+        stallReason={workflow.state === 'running' ? workflow.stallReason : null}
+      />
     </div>
   );
 });
 
 /** What a To Do card waits for ("Blocked by #413...", "Queued...", "Paused"). */
 const BoardWorkflowFooter = React.memo(function BoardWorkflowFooter({ task }: { task: Task }) {
-  const waiting = boardWaiting(useBoardWorkflow(task), task);
+  const waiting = boardWaiting(useBoardWorkflow(task));
   return waiting ? <WorkflowWaitingBar label={waiting.label} paused={waiting.paused} /> : null;
 });
 
@@ -124,7 +116,6 @@ export function WorkflowTaskCardBody({ task, view, density, interactive }: Workf
         view={view}
         density={density}
         idleFooter={inToDo ? <BoardWorkflowFooter task={task} /> : undefined}
-        hostDrawsAutomationsStrip
       />
     </>
   );

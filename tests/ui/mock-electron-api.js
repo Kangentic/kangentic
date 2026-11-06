@@ -1441,6 +1441,12 @@
           return t.id === input.id;
         });
         if (idx >= 0) {
+          var holdWorkflowTitle = input.automations_disabled === true && tasks[idx].workflow_id
+            ? window.__mockOpenWorkflowTitle(tasks[idx].workflow_id)
+            : null;
+          if (holdWorkflowTitle !== null) {
+            throw new Error('#' + tasks[idx].display_id + ' is in ' + holdWorkflowTitle + ', so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the "Needs owner:" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow.');
+          }
           tasks[idx] = Object.assign({}, tasks[idx], input, { updated_at: now() });
           return tasks[idx];
         }
@@ -5883,6 +5889,15 @@
 
       function homeOf(entry) { return entry.projectId || currentProjectId; }
 
+      // tasks.update asks this, as main's taskHoldRefusal does: the title of a
+      // running or paused workflow, or null for one that is finished or gone.
+      window.__mockOpenWorkflowTitle = function (workflowId) {
+        hydrate();
+        var entry = entries.find(function (candidate) { return candidate.workflow.id === workflowId; });
+        if (!entry || (entry.workflow.state !== 'running' && entry.workflow.state !== 'paused')) return null;
+        return entry.workflow.title;
+      };
+
       function blockerHeld(link) {
         return (window.__mockUnreadableProjects || []).indexOf(link.blocker_project_id) !== -1;
       }
@@ -6149,10 +6164,9 @@
 
       // Why a running workflow is stalled on a task. Main reads it from the run
       // log; a test seeds it as window.__mockWorkflowStalls = { [taskId]: reason }.
-      // As main's stallReader: no mark while the workflow is not running, or
-      // while the task's own automations are paused.
+      // As main's stallReader: no mark while the workflow is not running.
       function stallOf(workflow, task) {
-        if (workflow.state !== 'running' || task.automations_disabled) return null;
+        if (workflow.state !== 'running') return null;
         var stalls = window.__mockWorkflowStalls || {};
         return typeof stalls[task.id] === 'string' ? stalls[task.id] : null;
       }
@@ -6181,7 +6195,7 @@
           if (place === 'done') { counts.done += 1; return; }
           if (place === 'working') {
             counts.working += 1;
-            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task, boardOf(entry, task)), hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
+            boardTasks[task.id] = { waitingFor: [], hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
             return;
           }
           var waitingFor = links.filter(function (link) {
@@ -6194,7 +6208,7 @@
             return blocker ? '#' + blocker.display_id : 'a task';
           });
           counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
-          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
+          boardTasks[task.id] = { waitingFor: waitingFor, hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
@@ -6203,19 +6217,6 @@
           agent: agentSummary(workflow.id),
           stalledTasks: stalledTasks,
         };
-      }
-
-      // Main's human gate (isHumanGate) also counts a column whose agent reports no
-      // turn end, and every column while no Automation agent is set up. The mock
-      // checks only auto_spawn, even where the web build's agent list carries
-      // reportsTurnEnd, so here a column that starts no agent is the only gate.
-      function humanGateExit(workflow, task, projectId) {
-        if (workflow.state !== 'running' || task.automations_disabled) return null;
-        var column = laneOf(task.swimlane_id);
-        if (!column || column.auto_spawn) return null;
-        var after = routeColumns(task, projectId).find(function (lane) { return lane.position > column.position; });
-        var next = after || doneLane(projectId);
-        return next ? next.id : null;
       }
 
       function editDraft(entry, edit) {

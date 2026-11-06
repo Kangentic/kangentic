@@ -9,6 +9,7 @@ import type {
   AnnouncementsChangedPayload,
 } from './announcements';
 import type { AppLocale } from './i18n/locales';
+import type { UserSetupMatch } from './user-configuration-error';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
@@ -826,12 +827,10 @@ export interface Task {
    * for it in any column, a move types no column message, and an Automatic Plan
    * approval is held as Manual (`readPlanApprovalDecision`). Column settings,
    * manual drags, Run again and the task's own `auto_command` are untouched.
-   * On a workflow task it is also the task's own hold: the workflow neither
-   * judges, nudges, moves nor starts it, and a hand may move its card. Joining a
-   * workflow clears it. A move out of Done or a restore keeps it. Asked only
-   * through `canTaskRunAutomations`. The UI calls the state "Automations
-   * paused", and the workflow code calls such a task held (`taskHeld`,
-   * `CoreTask.held`).
+   * A running or paused workflow's task cannot set it (`taskHoldRefusal`):
+   * to stop work, pause the workflow. Joining a workflow clears it. A move out of
+   * Done or a restore keeps it. Asked only through `canTaskRunAutomations`. The
+   * UI calls the state "Automations paused".
    */
   automations_disabled: boolean;
   /**
@@ -1591,6 +1590,13 @@ export interface SessionRecord {
   suspended_at: string | null;
   exited_at: string | null;
   suspended_by: SuspendedBy | null;
+  /**
+   * When this FRESH launch was found never to have started (UTC ISO). The agent
+   * wrote no conversation, so a Resume starts fresh with this record's `prompt`
+   * rather than `--resume`. Null on every other record, a resume that failed
+   * included: its conversation is still there to resume.
+   */
+  launch_failed_at: string | null;
   total_cost_usd: number | null;
   total_input_tokens: number | null;
   total_output_tokens: number | null;
@@ -5887,7 +5893,7 @@ export interface TaskUpdateInput {
   profile_id?: string | null;
   /** Which run mode the task runs in (see `Task.run_mode`). `'agent_override'` clears `profile_id`; `'column_settings'` clears the four pins. Omitted leaves the stored mode alone, unless a pin or profile in the same write implies one. */
   run_mode?: TaskRunMode;
-  /** Pause or resume column automations for the task (see `Task.automations_disabled`). On a workflow task it is the task's own hold. */
+  /** Pause or resume column automations for the task (see `Task.automations_disabled`). A running or paused workflow's task refuses `true`. */
   automations_disabled?: boolean;
 }
 
@@ -6377,11 +6383,6 @@ export interface WorkflowBoardTask {
    * or "a task" for one whose project's database would not open.
    */
   waitingFor: string[];
-  /**
-   * While the workflow runs and the task sits in a human gate (a column whose
-   * work no agent can judge): the column a person may drag it to. Null otherwise.
-   */
-  humanGateTargetId: string | null;
   /** It has a link, either way: the strip's links button and hover show them only then. */
   hasLinks: boolean;
   /** Why its running workflow stalled on it, while that holds; null otherwise. */
@@ -6755,6 +6756,11 @@ export interface AgentParser {
    * Read at spawn onto the session row. See `AgentAdapter.reportsAgentStart`.
    */
   readonly reportsAgentStart?: boolean;
+  /**
+   * Optional: a login or configuration failure this CLI's own output names. See
+   * `AgentAdapter.identifyUserSetupFailure`.
+   */
+  identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
   /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
@@ -7527,6 +7533,19 @@ export interface SpawnRemote {
   /** The host's login shell by program name (zsh, fish, nu, ...), which decides how a typed command is quoted. */
   shellName: string;
 }
+/**
+ * What started a session, as a launch failure report tags it. A fixed list, so
+ * the value is safe on an event. `retry` is the one automatic second launch a
+ * launch that never started gets (`src/main/pty/agent-launch-report.ts`).
+ */
+export type LaunchStartPath =
+  | 'board'
+  | 'resume'
+  | 'command_terminal'
+  | 'workflow'
+  | 'phone'
+  | 'startup_recovery'
+  | 'retry';
 
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
@@ -7535,6 +7554,13 @@ export interface SpawnSessionInput {
   projectId: string;
   command: string;
   cwd: string;
+  /** What started this session. Required, so a new spawn sink has to say. */
+  startPath: LaunchStartPath;
+  /**
+   * The agent CLI's version as detection read it. Raw detector text, so
+   * `launchVersionTag` vets it before it reaches an event.
+   */
+  agentCliVersion?: string | null;
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)
@@ -8488,7 +8514,7 @@ export interface ElectronAPI {
     // `projectId` the renderer stamps at interaction time (same rationale as
     // the task mutations above). kill/write/resize/list operate by session id
     // and stay project-agnostic. See .claude/rules/project-scoped-ipc.md.
-    spawn: (input: SpawnSessionInput, projectId?: string | null) => Promise<Session>;
+    spawn: (input: Omit<SpawnSessionInput, 'startPath'>, projectId?: string | null) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
     /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */

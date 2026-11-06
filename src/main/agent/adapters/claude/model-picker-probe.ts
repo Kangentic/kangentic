@@ -1,14 +1,15 @@
 /**
- * Model discovery via Claude Code's own `/model` picker.
+ * Model discovery from Claude Code itself, and the cache around it.
  *
- * The CLI has no model enumeration surface (verified against `--help`:
- * no `models` subcommand, no list flag) and `claude auth status` exposes no
- * token that would let us call the Anthropic API on the user's behalf. The
- * one place the CLI does enumerate models - for every auth method, including
- * OAuth-only Pro/Max - is the interactive `/model` picker. So we spawn a
- * short-lived hidden PTY, open the picker, parse the rendered rows, press
- * Esc (never Enter - Enter would change the user's default model), and kill
- * the session.
+ * The CLI has no `models` subcommand or list flag, and `claude auth status`
+ * exposes no token that would let us call the Anthropic API on the user's
+ * behalf. A scan comes from one of two places: the `initialize` handshake of its
+ * stream-json mode (`model-list-handshake.ts`), a structured answer in under a
+ * second, tried first; or, when that fails, the interactive `/model` picker. So
+ * the fallback spawns a short-lived hidden PTY, opens the picker, parses the
+ * rendered rows, presses Esc (never Enter - Enter would change the user's
+ * default model), and kills the session. Everything below about that PTY is the
+ * fallback. Everything about the cache applies to both.
  *
  * The probe runs `--safe-mode` so the user's hooks, plugins, MCP servers,
  * and CLAUDE.md never load (auth and model selection work normally there),
@@ -58,6 +59,8 @@ import type { ModelAliasOption } from '../../../../shared/types';
 import { isWindowsBatchShim, shimSibling } from '../../shared/shim-launch';
 import { cliInvocationForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { ensureWorktreeTrust } from './trust-manager';
+import { readClaudeModelList } from './model-list-handshake';
+import { CLAUDE_ALIAS_ID_PATTERN, CLAUDE_MODEL_ID_PATTERN } from './model-display-name';
 
 // The VT screen-grid renderer this probe parses through now lives in
 // src/main/pty/virtual-screen.ts (shared with the mobile bridge's
@@ -86,6 +89,19 @@ interface ProbeTimings {
   exitGraceMs: number;
   /** Interval between identical-screen checks after each scroll keypress. */
   scrollSettleMs: number;
+  /** Hard cap on the handshake, spawn to answer. */
+  handshakeTimeoutMs: number;
+  /**
+   * How long the handshake's CLI gets to leave after stdin ends. Signed in it
+   * took about 2 s on 2.1.318, so the PTY's grace would kill it on its way out.
+   */
+  handshakeExitGraceMs: number;
+  /**
+   * How long discovery waits for a first scan on a cold cache. The slowest
+   * handshake measured took 3861 ms. A wait that runs out leaves the scan
+   * running, and the next dropdown's rescan reads it.
+   */
+  coldDiscoveryWaitMs: number;
 }
 
 const DEFAULT_TIMINGS: ProbeTimings = {
@@ -95,6 +111,9 @@ const DEFAULT_TIMINGS: ProbeTimings = {
   overallTimeoutMs: 15000,
   exitGraceMs: 1500,
   scrollSettleMs: 80,
+  handshakeTimeoutMs: 15000,
+  handshakeExitGraceMs: 5000,
+  coldDiscoveryWaitMs: 8000,
 };
 
 /**
@@ -272,12 +291,14 @@ function describeProbeError(error: unknown): string {
 
 let timings: ProbeTimings = DEFAULT_TIMINGS;
 
-/** What one picker read yields: the model ids and the floating aliases derived from them. */
+/** What one read yields: the model ids and the floating aliases. */
 export interface ModelPickerScan {
-  /** Exact model ids, one per recognized row, in picker order. */
+  /** Exact model ids, one per recognized row, in the CLI's order. */
   models: string[];
-  /** One floating alias per model family the picker lists, in first-appearance order. */
+  /** One floating alias per model family the CLI lists, in first-appearance order. */
   aliases: ModelAliasOption[];
+  /** The CLI's name for an id with no `claude-` core. Only the handshake reports these. */
+  displayNames?: Record<string, string>;
 }
 
 /**
@@ -303,6 +324,7 @@ interface ProbeCache {
 
 let cache: ProbeCache | null = null;
 let inFlight: { cliPath: string; promise: Promise<ModelPickerScan | undefined> } | null = null;
+let lateScanListener: (() => void) | null = null;
 
 /**
  * Where the last good scan survives a restart; null turns that off. Without
@@ -324,6 +346,7 @@ let lastScanFileRead = false;
 export function resetModelPickerProbeForTests(): void {
   cache = null;
   inFlight = null;
+  lateScanListener = null;
   timings = DEFAULT_TIMINGS;
   lastScanFilePath = null;
   lastScanFileRead = false;
@@ -336,15 +359,19 @@ export function setModelPickerProbeScanFileForTests(filePath: string | null): vo
 }
 
 /**
- * The id shapes a scan can hold: the characters the parser itself produces
- * (`EXPLICIT_MODEL_ID_PATTERN`, and lowercased family words). Anything else in
- * the file (a hand edit, another build's format) was not written by this code.
+ * A scan holds the id shapes the handshake accepts. A model id is whatever
+ * `--model` takes (`claude-haiku-4-5@20251001`, an ARN), so all it must be is one
+ * bounded word. An alias is a bare lowercase word, with or without `[1m]`, the
+ * only shape either reader produces. Anything else in the file (a hand edit,
+ * another build's format) was not written by this code.
  */
-const PERSISTED_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9.:-]*$/u;
-const PERSISTED_ALIAS_ID_PATTERN = /^[a-z]+$/u;
-
 function isPersistedModelId(value: unknown): value is string {
-  return typeof value === 'string' && PERSISTED_MODEL_ID_PATTERN.test(value);
+  return typeof value === 'string' && CLAUDE_MODEL_ID_PATTERN.test(value);
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && Object.values(value).every((entry) => typeof entry === 'string');
 }
 
 /** A persisted cache record read back from disk, or null when it is not one. */
@@ -354,17 +381,26 @@ function parsePersistedScan(value: unknown): ProbeCache | null {
   if (typeof record.cliPath !== 'string' || typeof record.fetchedAtMs !== 'number') return null;
   // A record from the future would read as fresh for as long as the clock lags it.
   if (record.fetchedAtMs > Date.now()) return null;
-  const scan = record.scan as { models?: unknown; aliases?: unknown } | undefined;
+  const scan = record.scan as { models?: unknown; aliases?: unknown; displayNames?: unknown } | undefined;
   if (!scan || !Array.isArray(scan.models) || !Array.isArray(scan.aliases)) return null;
+  if (scan.displayNames !== undefined && !isStringMap(scan.displayNames)) return null;
   if (scan.models.length === 0 || !scan.models.every(isPersistedModelId)) return null;
   const aliases: ModelAliasOption[] = [];
   for (const alias of scan.aliases) {
     const entry = alias as { id?: unknown; resolvesTo?: unknown } | null;
-    if (!entry || typeof entry.id !== 'string' || !PERSISTED_ALIAS_ID_PATTERN.test(entry.id)) return null;
+    if (!entry || typeof entry.id !== 'string' || !CLAUDE_ALIAS_ID_PATTERN.test(entry.id)) return null;
     if (entry.resolvesTo !== undefined && !isPersistedModelId(entry.resolvesTo)) return null;
     aliases.push(entry.resolvesTo !== undefined ? { id: entry.id, resolvesTo: entry.resolvesTo } : { id: entry.id });
   }
-  return { cliPath: record.cliPath, fetchedAtMs: record.fetchedAtMs, scan: { models: scan.models as string[], aliases } };
+  return {
+    cliPath: record.cliPath,
+    fetchedAtMs: record.fetchedAtMs,
+    scan: {
+      models: scan.models as string[],
+      aliases,
+      ...(scan.displayNames !== undefined ? { displayNames: scan.displayNames } : {}),
+    },
+  };
 }
 
 /**
@@ -821,6 +857,33 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
 }
 
 /**
+ * One discovery run: the handshake, and the `/model` PTY only when it fails. The
+ * handshake is the source that needs no trust entry and no screen parsing, and
+ * the PTY keeps discovery working if a CLI changes the undocumented wire format
+ * under `supportedModels()`. The line this logs names the failure, never the
+ * payload, which holds the account. Never throws.
+ */
+async function discoverModelScan(cliPath: string): Promise<ProbeOutcome | undefined> {
+  const startedAtMs = Date.now();
+  try {
+    const target = await resolveCliTarget(cliPath, true);
+    const scratchDirectory = probeScratchDirectory();
+    await fs.promises.mkdir(scratchDirectory, { recursive: true });
+    const scan = await readClaudeModelList(
+      cliPath,
+      target,
+      scratchDirectory,
+      timings.handshakeTimeoutMs,
+      timings.handshakeExitGraceMs,
+    );
+    return { scan, complete: true };
+  } catch (error) {
+    writeProbeLog(`handshake failed after ${Date.now() - startedAtMs} ms (${describeProbeError(error)}), reading the /model picker`, null);
+    return runModelPickerProbe(cliPath);
+  }
+}
+
+/**
  * Store one probe's outcome. A failure or an incomplete scan after a good scan
  * for the same CLI (seeded from disk or from an earlier probe) keeps that scan
  * rather than blanking the pickers' aliases or truncating the list, and retries
@@ -889,18 +952,9 @@ function isSameCli(scannedPath: string, cliPath: string): boolean {
 }
 
 /**
- * Non-blocking accessor for capability discovery. Returns whatever the cache
- * currently holds (undefined on the very first call) and kicks off a
- * background probe to warm it - it never awaits the PTY round trip, because
- * discovery sits on the `agents.list` path the renderer awaits and a 15s
- * picker timeout there would stall the model dropdown on first launch.
- *
- * Consequence: a newly shipped model surfaces on the *next* discovery call
- * after the background probe settles (~2s for the real CLI), not the first.
- * That matches how transcript-discovered models already accrue over time.
- * The renderer persists the model ids once seen, and the whole scan
- * (aliases included) is kept in the last-scan file, so both are there from
- * the first call on every subsequent launch.
+ * Non-blocking accessor. Returns whatever the cache currently holds (undefined
+ * on the very first call) and kicks off a background probe to warm it. A stale
+ * scan is served as it is while the probe replaces it.
  */
 export function getCachedModelPickerModels(cliPath: string): ModelPickerScan | undefined {
   seedCacheFromLastScan(cliPath);
@@ -911,17 +965,57 @@ export function getCachedModelPickerModels(cliPath: string): ModelPickerScan | u
 }
 
 /**
+ * What capability discovery reads. With a scan in hand, that scan at once. On a
+ * cold cache (a first launch), it waits for the run the accessor just started,
+ * up to `coldDiscoveryWaitMs`: the inventory `agents.list` builds is cached with
+ * no TTL, so a list built without the scan would keep the pickers without their
+ * aliases until a dropdown forced a rescan. A wait that runs out says so through
+ * the late-scan listener when that run lands, so the inventory built without it
+ * is dropped. A failure still in its backoff has no run to wait for.
+ */
+export async function awaitModelPickerModels(cliPath: string): Promise<ModelPickerScan | undefined> {
+  const cachedScan = getCachedModelPickerModels(cliPath);
+  if (cachedScan !== undefined || inFlight?.cliPath !== cliPath) return cachedScan;
+  const running = inFlight.promise;
+  let waitRanOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      waitRanOut = true;
+      resolve(undefined);
+    }, timings.coldDiscoveryWaitMs);
+    timer.unref?.();
+  });
+  const scan = await Promise.race([running, bound]);
+  if (timer !== undefined) clearTimeout(timer);
+  if (waitRanOut) {
+    void running.then((lateScan) => {
+      if (lateScan !== undefined) lateScanListener?.();
+    });
+  }
+  return scan;
+}
+
+/**
+ * Called when a scan lands after a cold discovery stopped waiting for it. There
+ * is one listener, and a later call replaces it.
+ */
+export function setLateModelScanListener(listener: () => void): void {
+  lateScanListener = listener;
+}
+
+/**
  * Awaitable cached probe. Concurrent callers share one in-flight probe;
  * results are reused per `cacheReuseWindow` (a complete scan for
  * SUCCESS_TTL_MS, a failed or incomplete one for FAILURE_TTL_MS) per CLI
- * path. Capability discovery uses getCachedModelPickerModels (non-blocking)
- * instead of awaiting this directly.
+ * path. Capability discovery uses awaitModelPickerModels instead of awaiting
+ * this directly.
  *
  * `forceRefresh` bypasses the TTL early-return so a fresh probe runs even when
  * the cache is still warm - the on-demand rescan a model dropdown fires when it
  * opens, so a newly shipped model surfaces without a Kangentic restart. The
  * in-flight dedup is still honored (an already-running probe is a fresh result,
- * so we ride it rather than spawning a second PTY).
+ * so we ride it rather than spawning a second CLI).
  */
 export async function probeModelPickerModels(
   cliPath: string,
@@ -934,14 +1028,14 @@ export async function probeModelPickerModels(
   }
   if (inFlight && inFlight.cliPath === cliPath) return inFlight.promise;
 
-  const promise = runModelPickerProbe(cliPath).then(
+  const promise = discoverModelScan(cliPath).then(
     (outcome) => {
       recordProbeResult(cliPath, outcome);
       inFlight = null;
       return cache?.scan;
     },
     () => {
-      // runModelPickerProbe is written never to reject, but guard the state
+      // discoverModelScan is written never to reject, but guard the state
       // machine anyway: an unexpected throw must not strand `inFlight` and
       // wedge every future probe on a permanently-pending promise.
       recordProbeResult(cliPath, undefined);

@@ -1,3 +1,5 @@
+import { identifyGrokUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -159,6 +161,11 @@ export class GrokAdapter implements AgentAdapter {
   // sessions in one cwd do not strip each other's wiring. See
   // SharedFolderHolds.
   private readonly wiringHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyGrokUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

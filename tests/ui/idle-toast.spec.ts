@@ -56,8 +56,11 @@ const OTHER_PROJECT_ID = 'proj-idle-toast-other';
 /** How long to let a toast that should NOT exist have to show up. */
 const NEGATIVE_ASSERTION_BUDGET_MS = 300;
 
-/** A project with one running session on a task in Code Review. */
-async function launchWithState(): Promise<{ browser: Browser; page: Page }> {
+/**
+ * A project with one running session on a task in Code Review. With
+ * `workflowState` the task belongs to a workflow in that state.
+ */
+async function launchWithState(workflowState?: 'running' | 'paused'): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
@@ -65,6 +68,10 @@ async function launchWithState(): Promise<{ browser: Browser; page: Page }> {
 
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(`
+    window.__mockWorkflows = ${workflowState
+      ? `[{ workflow: { id: 'wf-idle-toast', title: 'Idle toast workflow', state: '${workflowState}', draft: null, color_slot: 5, agent_name: 'claude', source_task_id: null } }]`
+      : '[]'};
+    window.__mockWorkflowLinks = [];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -115,6 +122,8 @@ async function launchWithState(): Promise<{ browser: Browser; page: Page }> {
         priority: 0,
         attachment_count: 0,
         archived_at: null,
+        workflow_id: ${workflowState ? "'wf-idle-toast'" : 'null'},
+        workflow_project_id: ${workflowState ? `'${PROJECT_ID}'` : 'null'},
         created_at: ts,
         updated_at: ts,
       });
@@ -127,6 +136,11 @@ async function launchWithState(): Promise<{ browser: Browser; page: Page }> {
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  if (workflowState) {
+    // The wiring reads the workflow store at the moment of the push: wait for the
+    // summaries, which the card's strip shows once loaded.
+    await page.locator(`[data-task-id="${TASK_ID}"] [data-testid="workflow-card-strip"]`).waitFor({ state: 'visible', timeout: 10000 });
+  }
 
   // See the header: the default 4s dismiss is inside the expect timeout, which
   // is what made the first version of every negative case here pass vacuously.
@@ -450,6 +464,35 @@ test.describe('Agent Idle toast', () => {
       await expect(toast.first().getByTestId('toast-title')).toHaveText('Agent finished');
       await expect(toast.first().getByTestId('toast-body')).toHaveText(`"${TASK_TITLE}" is waiting on you.`);
       expect(await toastCountRightNow(page)).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // App.tsx hands resolveIdleToast whether the task is in a running workflow
+  // (the unit file pins the decision; this pins that the handler passes it). The
+  // workflow's step check says for itself that the turn ended, so a plain
+  // "Agent finished" on top of it is noise. A paused workflow has no step check
+  // running, so its task's idle still toasts.
+  test('a task in a running workflow gets no Agent finished toast when its session goes idle', async () => {
+    const { browser, page } = await launchWithState('running');
+    try {
+      await fireActivity(page, 'thinking');
+      await fireActivity(page, 'idle');
+      expect(await toastCountAfterBudget(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task in a paused workflow still gets the Agent finished toast when its session goes idle', async () => {
+    const { browser, page } = await launchWithState('paused');
+    try {
+      await fireActivity(page, 'thinking');
+      await fireActivity(page, 'idle');
+      const toast = page.getByTestId('toast');
+      await expect(toast.first()).toBeVisible();
+      await expect(toast.first().getByTestId('toast-title')).toHaveText('Agent finished');
     } finally {
       await browser.close();
     }

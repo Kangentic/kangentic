@@ -7,6 +7,7 @@ import { reportHandledError } from '../../analytics/error-reporting';
 import { parseWslShellSpec } from '../process-tag/task-process-tag';
 import { childProcessEnv } from '../../shared/child-env';
 import { PTY_OUTPUT_NOT_CONNECTED_CODE } from '../host/root-pid-gate';
+import { claimLaunchReport, shellLabelOf, type LaunchTags } from '../agent-launch-report';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -286,23 +287,22 @@ export function resolveSpawnCwd(input: {
 }
 
 /**
- * The spawn failures with their own guidance: node-pty's spawn-helper
- * missing its execute bit (`posix_spawnp`), and a ConPTY whose output never
- * connected, so its process never started (`root-pid-gate.ts`).
+ * The spawn failures with a known shape: node-pty's spawn-helper missing its
+ * execute bit (`posix_spawnp`), and a ConPTY whose output never connected, so
+ * its process never started (`root-pid-gate.ts`).
  */
 export type SpawnFailureKind = 'posix-spawnp' | 'output-not-connected' | 'other';
 
 /**
- * Diagnostic payload for a PTY spawn failure. Callers use the
- * scrollback suffix to show actionable guidance in the terminal panel
- * instead of a blank screen, and fire the analytics event via
- * `recordSpawnFailure`.
+ * Diagnostic payload for a PTY spawn failure. Callers print the scrollback
+ * suffix in the terminal panel instead of a blank screen, and fire the
+ * analytics event via `recordSpawnFailure`.
  */
 export interface SpawnFailureDiagnostic {
   kind: SpawnFailureKind;
   /** Human-readable error message from the thrown error. */
   errorMessage: string;
-  /** ANSI-formatted text to append to scrollback. Empty if no special hint applies. */
+  /** The raw error as ANSI-formatted text to append to scrollback. No diagnosis, no advice. */
   scrollbackSuffix: string;
   /** Best-effort errno/code for analytics. */
   errno: string;
@@ -323,6 +323,10 @@ export interface SpawnFailureDiagnostic {
  * Pure (no logging or side effects) so callers can test and also so
  * they can sequence the logging themselves (session-manager wants to
  * include the session ID in its log line).
+ *
+ * What the terminal shows is the error as it was thrown, for every kind. We
+ * cannot know the cause from here, and a guess reads as a diagnosis. The
+ * person reporting it copies this line, so it stays the real one.
  */
 export function diagnoseSpawnFailure(params: {
   err: unknown;
@@ -341,33 +345,7 @@ export function diagnoseSpawnFailure(params: {
   if (errnoCode === PTY_OUTPUT_NOT_CONNECTED_CODE) kind = 'output-not-connected';
   else if (errorMessage.includes('posix_spawnp')) kind = 'posix-spawnp';
 
-  let scrollbackSuffix = '';
-  if (kind === 'output-not-connected') {
-    scrollbackSuffix = [
-      '',
-      '\x1b[1;31mError: The terminal did not start because its output never connected\x1b[0m',
-      '',
-      'This computer was too busy to start it in time. Start it again to retry.',
-      '',
-    ].join('\r\n');
-  } else if (kind === 'posix-spawnp') {
-    const isPackaged = params.shellExe.includes('app.asar') || params.effectiveCwd.includes('app.asar');
-    const fixInstructions = isPackaged
-      ? '  Reinstalling the app should resolve this.'
-      : '  find node_modules/node-pty -name spawn-helper -exec chmod +x {} \\;';
-    scrollbackSuffix = [
-      '',
-      '\x1b[1;31mError: Failed to spawn shell process (posix_spawnp failed)\x1b[0m',
-      '',
-      'This is likely caused by node-pty\'s spawn-helper binary missing',
-      'execute permissions. To fix:',
-      '',
-      fixInstructions,
-      '',
-      'Then restart the app. See https://github.com/Kangentic/kangentic/issues/3',
-      '',
-    ].join('\r\n');
-  }
+  const scrollbackSuffix = `\r\n\x1b[1;31mError: ${errorMessage.replace(/\r?\n/g, '\r\n')}\x1b[0m\r\n`;
 
   return { kind, errorMessage, scrollbackSuffix, errno, cwdExists, shellExists };
 }
@@ -379,13 +357,15 @@ export function diagnoseSpawnFailure(params: {
 export function recordSpawnFailure(params: {
   diagnostic: SpawnFailureDiagnostic;
   shellExe: string;
-  shellArgs: string[];
+  /** The launch's fixed values (`preflightTagsOf`): the agent, its version, the start path. */
+  launchTags: LaunchTags;
 }): void {
+  const shell = shellLabelOf(params.shellExe);
   trackEvent('app_error', {
     source: 'pty_spawn',
     message: sanitizeErrorMessage(params.diagnostic.errorMessage),
-    shell: params.shellExe,
-    shellArgs: params.shellArgs.join(' '),
+    // The label, never the setting: a configured shell's path names a home folder.
+    shell,
     cwdExists: String(params.diagnostic.cwdExists),
     shellExists: String(params.diagnostic.shellExists),
     errno: params.diagnostic.errno,
@@ -402,12 +382,18 @@ export function recordSpawnFailure(params: {
   // ConPTY whose output never connected is reported from its own line, under
   // its own type, to open its own issue rather than share one with a real
   // CreateProcessW failure.
-  const tags = {
-    source: 'pty_spawn',
-    errno: params.diagnostic.errno || 'none',
-    shellExists: String(params.diagnostic.shellExists),
-    cwdExists: String(params.diagnostic.cwdExists),
-  };
+  const tags = claimLaunchReport({
+    stage: 'pty_spawn',
+    cause: params.diagnostic.kind,
+    tags: {
+      ...params.launchTags,
+      shell,
+      errno: params.diagnostic.errno || 'none',
+      shellExists: String(params.diagnostic.shellExists),
+      cwdExists: String(params.diagnostic.cwdExists),
+    },
+  });
+  if (!tags) return;
   if (params.diagnostic.kind === 'output-not-connected') {
     const notConnected = new Error(sanitizeErrorMessage(params.diagnostic.errorMessage));
     notConnected.name = 'PtyOutputNotConnectedError';

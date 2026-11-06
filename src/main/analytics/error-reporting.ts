@@ -106,6 +106,7 @@ export function reportHandledError(
   error: unknown,
   tags: Record<string, string> = {},
   contexts: ErrorReportContexts = {},
+  fingerprint?: string[],
 ): void {
   if (!active) return;
   if (isUserConfigurationError(error)) return;
@@ -115,6 +116,9 @@ export function reportHandledError(
       for (const [contextName, contextValue] of Object.entries(contexts)) {
         scope.setContext(contextName, contextValue);
       }
+      // Sentry groups by type and in-app frames, so one cause reported from two
+      // call paths would open two issues. A fingerprint names the issue instead.
+      if (fingerprint) scope.setFingerprint(fingerprint);
       Sentry.captureException(error instanceof Error ? error : new Error(String(error)));
     });
   } catch {

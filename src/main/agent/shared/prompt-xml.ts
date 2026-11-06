@@ -5,6 +5,7 @@
 
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
 import { WORKFLOW_NEEDS_OWNER_LINE } from '../../../shared/workflow-needs-owner';
+import { WORKFLOW_NO_CHANGES_LINE } from '../../../shared/workflow-no-changes';
 
 // Escapes both quote styles so values are safe inside `"..."` and `'...'`
 // attribute values. Anthropic's prompt-engineering guidance lists `'` as one
@@ -167,6 +168,11 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   // code (`src/shared/workflow-needs-owner.ts`). Narrow on purpose: everything
   // else a stalled agent meets, Kangentic nudges it past.
   lines.push(`- Only the owner can settle a change from the plan, something the owner must weigh in on, or a decision between options. For those, end your final message with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Anything else, such as a failing test, a busy machine or a step of your own work, is yours to act on without asking.`);
+  // The way to end a task with nothing to change, matched in code
+  // (`src/shared/workflow-no-changes.ts`). Every exit line a board offers
+  // assumes a change, so an agent with none walked the card through columns
+  // with nothing to review, test or merge.
+  lines.push(`- If you have decided this task needs no change at all and nothing is left on its branch (no commits, a clean worktree), end your final message with the line "${WORKFLOW_NO_CHANGES_LINE}". Kangentic checks the branch and moves the task straight to Done. A question for the owner stays "${WORKFLOW_NEEDS_OWNER_LINE}".`);
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
   // A plan column's work ends at the plan's approval, which moves the task on
   // by itself while the conversation carries on. An agent told it may move the

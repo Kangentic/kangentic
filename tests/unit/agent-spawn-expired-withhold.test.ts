@@ -151,12 +151,14 @@ const mockClaimHeldMessages = vi.hoisted(() => vi.fn<(...callArguments: unknown[
 const mockCommitWhenSessionRuns = vi.hoisted(() => vi.fn());
 const mockPasteHeldAfterTurn = vi.hoisted(() => vi.fn());
 const mockSettleClaimFromReport = vi.hoisted(() => vi.fn());
+const mockHoldUndeliveredOpening = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/main/held-messages/held-messages')>();
   return {
     composeOpeningMessage: original.composeOpeningMessage,
     claimHeldMessages: mockClaimHeldMessages,
     commitWhenSessionRuns: mockCommitWhenSessionRuns,
+    holdUndeliveredOpening: mockHoldUndeliveredOpening,
     pasteHeldAfterTurn: mockPasteHeldAfterTurn,
     settleClaimFromReport: mockSettleClaimFromReport,
   };
@@ -1532,6 +1534,35 @@ describe('spawnAgent: held messages on a cross-agent handoff', () => {
   beforeEach(() => {
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockHoldUndeliveredOpening.mockClear();
+  });
+
+  it('offers the column\'s own message to the hold when its delivery ends, and nothing else of the opening', async () => {
+    // Held text in the same delivery: it settles through its own claim, and
+    // holding the whole opening would send it twice.
+    mockClaimHeldMessages.mockReturnValue(fakeHeldClaim());
+    await runHeldHandoff();
+    const report = injectionReport([COLUMN_TEXT], 'cancelled');
+
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, report);
+
+    expect(mockHoldUndeliveredOpening).toHaveBeenCalledTimes(1);
+    expect(mockHoldUndeliveredOpening.mock.calls[0][1]).toEqual({
+      projectId: PROJECT_ID, taskId: TASK_ID, message: COLUMN_TEXT, report, taskStayed: true,
+    });
+  });
+
+  it('tells the hold the task left its column when its delivery ends elsewhere, so a stale column message is not held for a later agent', async () => {
+    mockClaimHeldMessages.mockReturnValue(null);
+    await runHeldHandoff();
+    const report = injectionReport([COLUMN_TEXT], 'cancelled');
+    // The task moved on while the message was in flight.
+    mockTaskGetById.mockImplementation(() => makeTask({ agent: 'codex', session_id: 'session-new', swimlane_id: 'lane-moved-on' }));
+
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, report);
+
+    expect(mockHoldUndeliveredOpening).toHaveBeenCalledTimes(1);
+    expect(mockHoldUndeliveredOpening.mock.calls[0][1]).toEqual(expect.objectContaining({ taskStayed: false }));
   });
 
   afterEach(() => {

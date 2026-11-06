@@ -48,7 +48,7 @@ Choosing **Agent Override** reveals the per-task pins:
 | Field | Description |
 |-------|-------------|
 | **Agent** | Pick a specific agent CLI (Claude, Codex, etc.) for this task. Defaults to the destination column's agent override, then the project default. Locked (shown disabled, on the one agent it has) when only one agent is detected on the machine. The pencil beside it opens Settings > Agent, where all four of these fields get their project defaults. |
-| **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). When the agent offers floating aliases, the dropdown leads with a **Latest** group (Opus, Fable, Sonnet, Haiku for Claude), each with the version it runs today beside it. Pick one and the task follows each new release. The versions those aliases run, older generations, and dated pins sit in one collapsed **Specific versions** section, grouped by model with the newest first and a dated pin right after its generation. A current version with no alias stays in the main list. Without aliases, only older generations and dated pins are collapsed, under **Older versions**. For Claude, the list comes from scanning past session transcripts and from the CLI's own `/model` picker, read by a hidden background probe, so newly shipped models surface without first being used in a session. |
+| **Model** | Adapter-specific model identifier (e.g. `opus`, `sonnet`, `claude-opus-4-8`). When the agent offers floating aliases, the dropdown leads with a **Latest** group (Opus, Fable, Sonnet, Haiku for Claude), each with the version it runs today beside it. Pick one and the task follows each new release. The versions those aliases run, older generations, and dated pins sit in one collapsed **Specific versions** section, grouped by model with the newest first and a dated pin right after its generation. A current version with no alias stays in the main list. Without aliases, only older generations and dated pins are collapsed, under **Older versions**. For Claude, the list comes from scanning past session transcripts and from the CLI's own model list, read through its `initialize` handshake (or, when that fails, a hidden `/model` picker probe), so newly shipped models surface without first being used in a session. |
 | **Effort** | Adapter-specific reasoning tier (Claude: `low`, `medium`, `high`, `xhigh`, `max`). Only shown when the agent reports effort levels. |
 | **Permission** | Permission mode for this task. A column that forces Plan mode still wins while the task is in that column - that is a safety guarantee, not an ordinary default. |
 
@@ -103,7 +103,7 @@ conversation and sends the task once more.
   - "Starting agent..." or "Resuming agent..." during session startup
   - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see `liveTelemetryUnsupported` in [Optional adapter properties](../integrations/agents/optional-properties.md))
   - "Queued 2/3..." with a clock when waiting for a slot, with its place in line. The tip says what it waits for: its column's [one agent at a time](columns-and-automations.md#running-one-agent-at-a-time), or a free agent slot under Max concurrent sessions
-  - "Paused" when manually suspended, or when an agent never reported that it started. That second case raises an "Agent did not start" notice, and Resume tries the launch again
+  - "Paused" when manually suspended, or when an agent never reported that it started. Kangentic retries that launch once on its own. If the retry fails too, or the agent says it is signed out or misconfigured, the task stays paused and raises an "Agent didn't start" notice with the error, and Resume tries the launch again
   - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
 - **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
@@ -141,8 +141,8 @@ Right-click any task card on the board to open a context menu with:
   tooltip; the header shows no toggle for it
 - **Pause automations** / **Resume automations** - on any task, whatever its column or state (an
   archived task's menu does not offer it): holds the task out of every column's automations (see
-  [Automations](columns-and-automations.md#automations)). On a workflow task it also holds the task
-  out of its workflow while the rest runs (see [Workflows](workflows.md#workflows))
+  [Automations](columns-and-automations.md#automations)). A running or paused workflow's task does
+  not offer it: to stop work there, pause the workflow (see [Workflows](workflows.md#workflows))
 - **Open workflow** - on a task in a workflow (see [Workflows](workflows.md#workflows))
 - **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
 - **Move to** - submenu listing all other columns as move targets

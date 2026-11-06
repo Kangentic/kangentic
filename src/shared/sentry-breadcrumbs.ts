@@ -58,6 +58,8 @@ export interface BreadcrumbShape {
  *   (.claude/rules/synchronous-shutdown.md).
  * - `[terminal-webgl]`, `[gpu]`, `[GPU-HEALTH]`: WebGL and GPU recovery.
  * - `[APP]`: uncaught errors and startup faults.
+ * - `[AGENT-LAUNCH]`: a launch's trail, in fixed values only (stage, cause, agent,
+ *   shell, and session ids), never its command or its output.
  */
 export const CONSOLE_BREADCRUMB_TAGS: readonly string[] = [
   '[UPDATER]',
@@ -67,6 +69,7 @@ export const CONSOLE_BREADCRUMB_TAGS: readonly string[] = [
   '[gpu]',
   '[GPU-HEALTH]',
   '[APP]',
+  '[AGENT-LAUNCH]',
 ];
 
 /**

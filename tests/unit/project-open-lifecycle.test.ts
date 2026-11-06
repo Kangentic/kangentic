@@ -2004,9 +2004,10 @@ describe('where each project open sends a task that never had an agent (firstAge
     const handOffs = vi.mocked(autoSpawnForTask).mock.calls;
     expect(handOffs).toHaveLength(1);
     expect(handOffs[0][0]).toBe(context);
-    expect(handOffs[0].slice(1)).toEqual([project.id, { id: 'task-first', title: 'First agent' }, 'lane-planning']);
-    // No options argument at all: `explicitStart` belongs to a user's Start only.
-    expect(handOffs[0]).toHaveLength(4);
+    expect(handOffs[0].slice(1, 4)).toEqual([project.id, { id: 'task-first', title: 'First agent' }, 'lane-planning']);
+    // Named a startup recovery, and nothing else: `explicitStart` belongs to a user's Start only.
+    expect(handOffs[0][4]).toEqual({ startPath: 'startup_recovery' });
+    expect(handOffs[0]).toHaveLength(5);
   });
 
   it('recoverSessionsAfterPtyHostLoss hands none: every task it starts had a session', async () => {

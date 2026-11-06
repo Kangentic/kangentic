@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isBrowserAutomationServer, type McpServerDescription } from '../../shared/browser-policy-hook';
 import { cliHomeDir, cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { physicalPathSync } from './physical-path';
 
 /**
  * The browser-automation MCP servers a Claude session will load, by the name
@@ -97,9 +98,10 @@ export function configuredMcpServers(sources: BrowserServerSources): McpServerDe
   if (claudeJson) {
     servers.push(...claudeJson.user);
     // Claude keys a project by its path as the CLI sees it: forward slashes on
-    // Windows, the distro's Linux path in WSL. A Windows path names the same
-    // folder in any case, so there the keys are compared without case.
-    const projectKey = cliPathForTarget(sources.cwd, sources.place);
+    // Windows, the distro's Linux path in WSL, the real path on POSIX. A Windows
+    // path names the same folder in any case, so there the keys are compared
+    // without case.
+    const projectKey = cliPathForTarget(sources.place ? sources.cwd : physicalPathSync(sources.cwd), sources.place);
     const anyCase = !sources.place && process.platform === 'win32';
     const normalize = (key: string): string => (anyCase ? key.replace(/\\/g, '/').toLowerCase() : key);
     const wanted = normalize(projectKey);

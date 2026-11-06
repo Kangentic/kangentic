@@ -58,6 +58,10 @@ msgid "{label} is done. Waiting for it changes nothing."
 msgstr "{label} は完了済みです。待機しても何も変わりません。"
 
 #: src/shared/workflow-refusals.ts
+msgid "{label} is in {workflowTitle}, so its automations cannot be paused. To review its plan, set planApproval to manual. To wait on something outside, end a turn on the \"Needs owner:\" line. If it must never start on its own, leave it out of the workflow. To stop work, pause the workflow."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
 msgstr "{label} は一時停止中の {workflowTitle} に含まれています。タスクを移動するには再開してください。"

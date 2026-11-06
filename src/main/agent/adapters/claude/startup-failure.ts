@@ -1,4 +1,6 @@
 import { stripAnsiEscapes } from '../../../../shared/ansi-strip';
+import { identifyLoginFailure } from '../../shared/user-setup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 
 /**
  * Claude Code's own account of a `--resume <id>` it could not honour. Printed
@@ -38,4 +40,29 @@ export function describeClaudeStartupFailure(finalOutput: string, _exitCode: num
       + 'or the project folder moved. Move the task to To Do and back to start fresh.';
   }
   return null;
+}
+
+/**
+ * Claude Code's own words for a login it cannot use, from its 2.1.318 string table
+ * and a refused `--print` run (`tests/fixtures/claude-refused-api-key-stream.jsonl`).
+ * An interactive launch with a bad key opens a dialog and keeps running (the header
+ * of `claude-startup-failure.test.ts`), so this only ever reads a run that ended.
+ *
+ * Nothing for configuration. A bad settings file opens a dialog, and the `--settings`
+ * errors that do exit name the file Kangentic wrote moments before launch, which
+ * is ours.
+ */
+const LOGIN_SENTENCES: readonly RegExp[] = [
+  /^Not logged in · Please run \/login$/,
+  /^Login expired · Please run \/login$/,
+  /^OAuth token revoked · Please run \/login$/,
+  /^Login reached its time limit · Please run \/login$/,
+  /^Invalid API key · Fix external API key$/,
+  /^Invalid auth token · Fix external auth token$/,
+  /^Authentication required · Sign in again to continue$/,
+];
+
+/** See `AgentAdapter.identifyUserSetupFailure`. */
+export function identifyClaudeUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+  return identifyLoginFailure(finalOutput, LOGIN_SENTENCES);
 }

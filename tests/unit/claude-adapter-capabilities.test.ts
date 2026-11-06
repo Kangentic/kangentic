@@ -94,6 +94,26 @@ describe('ClaudeAdapter.discoverCapabilities', () => {
     });
   });
 
+  it('carries the CLI\'s own names for gateway ids through a second call, which reuses the cached static bits', async () => {
+    staticCapabilitiesMock.mockResolvedValue({ supportsModelOverride: true });
+    rescanModelsMock.mockResolvedValue({
+      models: ['claude-opus-4-8', 'my-gateway-model'],
+      aliases: [],
+      displayNames: { 'my-gateway-model': 'My Team Gateway' },
+    });
+
+    const adapter = new ClaudeAdapter();
+    await adapter.discoverCapabilities('/usr/bin/claude');
+    const capabilities = await adapter.discoverCapabilities('/usr/bin/claude');
+
+    // The second call took the cached path: static bits were read once.
+    expect(staticCapabilitiesMock).toHaveBeenCalledTimes(1);
+    expect(capabilities.modelDisplayNames).toEqual({
+      'claude-opus-4-8': 'Opus 4.8',
+      'my-gateway-model': 'My Team Gateway',
+    });
+  });
+
   it('omits modelDisplayNames when the rescan finds no models', async () => {
     staticCapabilitiesMock.mockResolvedValue({ supportsModelOverride: true });
     rescanModelsMock.mockResolvedValue(undefined);

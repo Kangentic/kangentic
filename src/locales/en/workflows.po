@@ -461,19 +461,10 @@ msgstr "Rename workflow"
 msgid "Resize the workflow agent"
 msgstr "Resize the workflow agent"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgctxt "automations"
-msgid "Resume"
-msgstr "Resume"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "Resume"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgid "Resume automations"
-msgstr "Resume automations"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Resume session"

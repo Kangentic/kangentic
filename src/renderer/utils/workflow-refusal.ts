@@ -1,7 +1,9 @@
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import type { Swimlane, Task } from '../../shared/types';
+import type { Swimlane, SwimlaneRole, Task } from '../../shared/types';
+import { isStoppedOnBoard } from '../../shared/workflow-lock';
 import { useProjectStore } from '../stores/project-store';
+import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { useWorkflowStore } from '../stores/workflow-store';
 import { boardMoveRefusal, boardWorkflowOf, type BoardWorkflow } from './board-workflow';
@@ -20,14 +22,31 @@ export function boardWorkflowNow(task: Pick<Task, 'id' | 'workflow_id' | 'workfl
   return boardWorkflowOf(summaries, homeSummaries, task, useProjectStore.getState().currentProject?.id ?? null);
 }
 
+/**
+ * Has this card stopped, read at the moment of a drag or a click rather than
+ * subscribed. The column's role is the caller's, since a Workflows view card
+ * can be on another board.
+ */
+export function taskStoppedNow(task: Pick<Task, 'id'>, columnRole: SwimlaneRole | null | undefined): boolean {
+  const { _sessionByTaskId, sessionActivity, spawnProgress } = useSessionStore.getState();
+  const session = _sessionByTaskId.get(task.id);
+  return isStoppedOnBoard({
+    columnRole,
+    sessionStatus: session?.status ?? null,
+    activity: session ? sessionActivity[session.id] : undefined,
+    starting: task.id in spawnProgress,
+  });
+}
+
 /** Why the lock refuses this move; null allows it (or the task is in no workflow). */
 export function refusedBoardMove(
-  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id' | 'automations_disabled'>,
+  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id'>,
   targetSwimlaneId: string,
   swimlanes: readonly Pick<Swimlane, 'id' | 'role'>[],
 ): string | null {
   if (!task.workflow_id || task.swimlane_id === targetSwimlaneId) return null;
-  return boardMoveRefusal(boardWorkflowNow(task), task, swimlanes.find((lane) => lane.id === targetSwimlaneId));
+  const stopped = taskStoppedNow(task, swimlanes.find((lane) => lane.id === task.swimlane_id)?.role);
+  return boardMoveRefusal(boardWorkflowNow(task), task, swimlanes.find((lane) => lane.id === targetSwimlaneId), stopped);
 }
 
 /**

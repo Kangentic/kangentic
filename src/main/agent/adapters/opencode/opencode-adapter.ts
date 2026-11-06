@@ -1,3 +1,5 @@
+import { identifyOpenCodeUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -336,6 +338,11 @@ export class OpenCodeAdapter implements AgentAdapter {
       home: [],
       project: ['.opencode/plugins/kangentic-activity.js', '.opencode/plugins/kangentic-activity/index.js'],
     };
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyOpenCodeUserSetupFailure(finalOutput);
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {

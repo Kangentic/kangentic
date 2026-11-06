@@ -502,6 +502,35 @@ describe('findClaudeResumeTranscriptFile - only the cwd and its parent folders',
     await expect(findClaudeResumeTranscriptFile({ ...query, reportedPath })).resolves.toBeNull();
     await expect(findClaudeTranscriptFile({ ...query, reportedPath })).resolves.toBe(reportedPath);
   });
+
+  // Claude slugs its real cwd. Linking a directory needs a privilege on Windows,
+  // where the path as given is the one Claude keys by.
+  describe.skipIf(process.platform === 'win32')('in a project reached through a symlink', () => {
+    let physicalProject: string;
+    let linkedProject: string;
+
+    beforeEach(() => {
+      physicalProject = path.join(fs.realpathSync(workDir), 'physical', 'project');
+      fs.mkdirSync(path.join(physicalProject, '.kangentic', 'worktrees', '918'), { recursive: true });
+      fs.symlinkSync(path.dirname(physicalProject), path.join(workDir, 'linked'));
+      linkedProject = path.join(workDir, 'linked', 'project');
+    });
+
+    it('finds a file under the physical cwd\'s slug', async () => {
+      const atPhysicalCwd = transcriptUnder(physicalProject);
+      writeFile(atPhysicalCwd);
+
+      await expect(findClaudeResumeTranscriptFile({ agentSessionId: AGENT_SESSION_ID, cwd: linkedProject })).resolves.toBe(atPhysicalCwd);
+    });
+
+    it('finds a file under a physical parent\'s slug from a linked worktree', async () => {
+      const atPhysicalRoot = transcriptUnder(physicalProject);
+      writeFile(atPhysicalRoot);
+      const linkedWorktree = path.join(linkedProject, '.kangentic', 'worktrees', '918');
+
+      await expect(findClaudeResumeTranscriptFile({ agentSessionId: AGENT_SESSION_ID, cwd: linkedWorktree })).resolves.toBe(atPhysicalRoot);
+    });
+  });
 });
 
 type LinkKind = 'directory' | 'file';

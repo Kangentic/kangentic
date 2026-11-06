@@ -225,11 +225,6 @@ msgstr "Rilevate modifiche in kangentic.json. Applicare la configurazione aggior
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "Le automazioni delle colonne non vengono eseguite per questa attività e il relativo flusso di lavoro non la sposta. Riprendile dal menu della scheda."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "Le automazioni delle colonne non vengono eseguite per questa attività. Riprendile dal menu della scheda."
 

@@ -1,3 +1,5 @@
+import { identifyCursorUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
@@ -310,6 +312,11 @@ export class CursorAdapter implements AgentAdapter {
    */
   remoteFiles(): RemoteFileDeclaration {
     return { home: [], project: ['.cursor/mcp.json', '.cursor/hooks.json', `.kangentic/${CURSOR_WSL_HOOK_COPY_NAME}`] };
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyCursorUserSetupFailure(finalOutput);
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {

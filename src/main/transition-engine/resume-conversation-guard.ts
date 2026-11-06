@@ -27,7 +27,7 @@ export type StartOverReason = Exclude<ResumeConversationVerdict, 'unknown'>;
 export type ResumeLineageRecord = Pick<
   SessionRecord,
   'id' | 'transcript_path' | 'total_input_tokens' | 'total_output_tokens' | 'total_cost_usd'
-> & Partial<Pick<SessionRecord, 'cli_target'>>;
+> & Partial<Pick<SessionRecord, 'cli_target' | 'launch_failed_at' | 'prompt'>>;
 
 /**
  * A transcript path an agent reported, as Kangentic can open it: a Linux path
@@ -110,7 +110,9 @@ export function resolveResumeLineage(params: {
  *    malformed report, an adapter with no status pipeline, or no reported path
  *    all give `unknown`. Mocked E2E resumes hit that structurally (mock-claude
  *    writes no status file), which is what broke the ten session-resume specs
- *    the first time around.
+ *    the first time around. The one record that decides `never-started` with
+ *    no report is one the launch check marked (`launch_failed_at`): that check
+ *    saw no agent, no start and no turn, so there is no report to wait for.
  *
  * A wrong `expired` costs a new conversation in place of the resume and
  * deletes nothing: the caller retires and keeps the old record.
@@ -205,6 +207,7 @@ export async function assessResumeConversation(params: {
   if (spawnPlace?.kind === 'ssh' || newestPlace?.kind === 'ssh') return 'unknown';
 
   if (!hadTurns) {
+    if (records.find(Boolean)?.launch_failed_at) return 'never-started';
     // The agent's own report says nothing ever happened, and the transcript it
     // named is not on disk.
     if (firstAgentReport && firstAgentReport.transcriptPath && await isConfirmedMissing(firstAgentReport.transcriptPath)) {

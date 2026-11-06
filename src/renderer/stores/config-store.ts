@@ -37,9 +37,9 @@ const systemAppearance: MediaQueryList | null = typeof window !== 'undefined' &&
   : null;
 
 /** Throttle for the on-demand model rescan a Model dropdown fires when it opens
- *  (`rescanModels`). Models ship rarely and each forced rescan spawns a fresh
- *  hidden /model PTY probe, so re-opening a dropdown within this window is a
- *  cheap no-op rather than another probe. */
+ *  (`rescanModels`). Models ship rarely and each forced rescan spawns the CLI
+ *  again, so re-opening a dropdown within this window is a cheap no-op rather
+ *  than another probe. */
 const MODEL_RESCAN_COOLDOWN_MS = 60_000;
 // hmr-safe: transient rescan throttle; resetting on HMR at worst allows one extra probe
 let modelRescanInFlight = false;
@@ -554,8 +554,8 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     rescanModels: () => {
       // In-flight lock + cooldown: a Model dropdown can open many times a
       // session (tabbing through a form, reopening the picker), and each forced
-      // rescan re-probes every agent's CLI plus spawns a hidden /model PTY
-      // probe. Collapse those into at most one probe per cooldown window.
+      // rescan re-probes every agent's CLI. Collapse those into at most one
+      // probe per cooldown window.
       if (modelRescanInFlight) return;
       if (Date.now() - modelRescanLastAtMs < MODEL_RESCAN_COOLDOWN_MS) return;
       modelRescanInFlight = true;

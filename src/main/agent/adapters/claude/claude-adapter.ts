@@ -46,7 +46,8 @@ import {
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
-import { describeClaudeStartupFailure } from './startup-failure';
+import { describeClaudeStartupFailure, identifyClaudeUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { proveClaudeConversationGone } from './conversation-gone';
 import { claudeBackgroundSessionOf, claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
@@ -82,7 +83,7 @@ import type {
   StoredCliTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
-import { peekModelPickerAliasIds } from './model-picker-probe';
+import { peekModelPickerAliasIds, setLateModelScanListener } from './model-picker-probe';
 
 /**
  * The one tool an answering agent is allowed, by its full MCP name.
@@ -426,8 +427,12 @@ export class ClaudeAdapter implements AgentAdapter {
     }
     const rescan = await rescanClaudeModels(cliPath, forceRefresh);
     return rescan
-      ? { ...staticCapabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases) }
+      ? { ...staticCapabilities, ...buildModelCapabilityFields(rescan.models, rescan.aliases, rescan.displayNames) }
       : staticCapabilities;
+  }
+
+  onCapabilitiesChanged(listener: () => void): void {
+    setLateModelScanListener(listener);
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
@@ -1069,6 +1074,11 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   describeStartupFailure(finalOutput: string, exitCode: number): string | null {
     return describeClaudeStartupFailure(finalOutput, exitCode);
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyClaudeUserSetupFailure(finalOutput);
   }
 
   /**

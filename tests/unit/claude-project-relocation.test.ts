@@ -89,6 +89,85 @@ afterEach(() => {
   fs.rmSync(tmpProjectsParent, { recursive: true, force: true });
 });
 
+/**
+ * Claude files both stores under its real cwd, so a project reached through a
+ * symlink has them under the physical path, and the trust writer now does too.
+ * Migrating only the path the project was opened by would leave them behind.
+ * Linking a directory needs a privilege on Windows, where keys stay as given.
+ */
+describe.skipIf(process.platform === 'win32')('migrateClaudeProjectData - a project reached through a symlink', () => {
+  let linkedParent: string;
+  let physicalParent: string;
+
+  beforeEach(() => {
+    physicalParent = path.join(fs.realpathSync(tmpProjectsParent), 'physical');
+    fs.mkdirSync(physicalParent);
+    linkedParent = path.join(tmpProjectsParent, 'linked');
+    fs.symlinkSync(physicalParent, linkedParent);
+  });
+
+  it('migrates the physical key and transcripts, the old folder already gone', async () => {
+    const oldPhysical = path.join(physicalParent, 'old-app');
+    const newPhysical = path.join(physicalParent, 'new-app');
+    fs.mkdirSync(newPhysical);
+    writeTranscriptDir(oldPhysical, { 'session-a.jsonl': 'line-a' });
+    writeClaudeJson({ projects: { [oldPhysical]: { hasTrustDialogAccepted: true } } });
+
+    await migrateClaudeProjectData(path.join(linkedParent, 'old-app'), path.join(linkedParent, 'new-app'));
+
+    const projects = readClaudeJson().projects as Record<string, unknown>;
+    expect(Object.keys(projects)).toEqual([newPhysical]);
+    expect(fs.existsSync(transcriptDir(oldPhysical))).toBe(false);
+    expect(fs.readFileSync(path.join(transcriptDir(newPhysical), 'session-a.jsonl'), 'utf-8')).toBe('line-a');
+  });
+
+  it('still migrates a key an earlier version wrote under the linked path', async () => {
+    const oldLinked = path.join(linkedParent, 'old-app');
+    const newLinked = path.join(linkedParent, 'new-app');
+    writeClaudeJson({ projects: { [oldLinked]: { hasTrustDialogAccepted: true } } });
+
+    await migrateClaudeProjectData(oldLinked, newLinked);
+
+    expect(Object.keys(readClaudeJson().projects as Record<string, unknown>)).toEqual([newLinked]);
+  });
+
+  it('files the key and transcripts under the new physical path when only the new folder is reached through the link', async () => {
+    // The old folder is plain, so its data sits under its physical path. The new
+    // folder is spelled through the linked parent, but Claude will run in its
+    // real cwd, so everything must land under the new PHYSICAL path.
+    const oldPlain = path.join(physicalParent, 'old-app');
+    const newPhysical = path.join(physicalParent, 'new-app');
+    fs.mkdirSync(newPhysical);
+    writeTranscriptDir(oldPlain, { 'session-a.jsonl': 'line-a' });
+    writeClaudeJson({ projects: { [oldPlain]: { hasTrustDialogAccepted: true } } });
+
+    await migrateClaudeProjectData(oldPlain, path.join(linkedParent, 'new-app'));
+
+    const projects = readClaudeJson().projects as Record<string, unknown>;
+    expect(Object.keys(projects)).toEqual([newPhysical]);
+    expect(fs.existsSync(transcriptDir(oldPlain))).toBe(false);
+    expect(fs.readFileSync(path.join(transcriptDir(newPhysical), 'session-a.jsonl'), 'utf-8')).toBe('line-a');
+    expect(fs.existsSync(transcriptDir(path.join(linkedParent, 'new-app')))).toBe(false);
+  });
+
+  it('files the key and transcripts under the new physical path when only the old folder is reached through the link', async () => {
+    // Data sits under the old physical path although the caller names the old
+    // folder through the link. The new folder is plain.
+    const oldPhysical = path.join(physicalParent, 'old-app');
+    const newPlain = path.join(physicalParent, 'new-app');
+    fs.mkdirSync(newPlain);
+    writeTranscriptDir(oldPhysical, { 'session-b.jsonl': 'line-b' });
+    writeClaudeJson({ projects: { [oldPhysical]: { hasTrustDialogAccepted: true } } });
+
+    await migrateClaudeProjectData(path.join(linkedParent, 'old-app'), newPlain);
+
+    const projects = readClaudeJson().projects as Record<string, unknown>;
+    expect(Object.keys(projects)).toEqual([newPlain]);
+    expect(fs.existsSync(transcriptDir(oldPhysical))).toBe(false);
+    expect(fs.readFileSync(path.join(transcriptDir(newPlain), 'session-b.jsonl'), 'utf-8')).toBe('line-b');
+  });
+});
+
 describe('migrateClaudeProjectData - transcript directories', () => {
   it('renames the root transcript directory and preserves its files', async () => {
     writeTranscriptDir(OLD_PATH, { 'session-a.jsonl': 'line-a' });

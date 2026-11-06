@@ -3,7 +3,6 @@ import { workflowMoveRefusalMessage } from '../../shared/workflow-lock';
 import { WORKFLOW_REFUSAL_MESSAGES, WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { translateText } from '../i18n/translate';
 import { waitingLabel } from '../../shared/workflow-waiting';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 
 /**
  * A workflow task as its board card reads it: the workflow's name, color and
@@ -22,8 +21,6 @@ export interface BoardWorkflow {
   state: WorkflowState;
   /** The tasks it waits for that are not done ("#413"). */
   waitingFor: readonly string[];
-  /** While it runs and the task sits in a human gate: the column a person may drag it to. */
-  humanGateTargetId: string | null;
   /** It has a link, either way, so its strip can show the links. */
   hasLinks: boolean;
   /** Why its running workflow stalled on it, while that holds, for the strip's mark. */
@@ -63,7 +60,6 @@ export function toBoardWorkflow(source: BoardWorkflowSource): BoardWorkflow {
     colorSlot: source.workflow.color_slot,
     state: source.workflow.state,
     waitingFor: source.facts?.waitingFor ?? NOTHING,
-    humanGateTargetId: source.facts?.humanGateTargetId ?? null,
     hasLinks: source.facts?.hasLinks ?? false,
     stallReason: source.facts?.stallReason ?? null,
   };
@@ -81,20 +77,21 @@ export function boardWorkflowOf(
 }
 
 /**
- * Only its workflow moves this card: the workflow runs, the card's own
- * automations are not paused, and it is not in a human gate, where a person
- * drags it on. A drag of it stays in its own column, to reorder it there
- * (`useBoardDragDrop`), and reaches no other.
+ * Only its workflow moves this card: the workflow runs, and the card
+ * is in motion. A stopped card is the person's (`stopped`, read by
+ * `taskStoppedNow`). A drag of a locked card stays in its own column, to reorder
+ * it there (`useBoardDragDrop`), and reaches no other.
  */
-export function isLockedOnBoard(workflow: BoardWorkflow, task: Pick<Task, 'automations_disabled'>): boolean {
-  return workflow.state === 'running' && canTaskRunAutomations(task).ok && workflow.humanGateTargetId === null;
+export function isLockedOnBoard(workflow: BoardWorkflow, stopped: boolean): boolean {
+  return workflow.state === 'running' && !stopped;
 }
 
 /** Why a person may not move this card to that column, in main's own words; null allows it. */
 export function boardMoveRefusal(
   workflow: BoardWorkflow | null,
-  task: Pick<Task, 'display_id' | 'swimlane_id' | 'automations_disabled'>,
+  task: Pick<Task, 'display_id' | 'swimlane_id'>,
   target: Pick<Swimlane, 'id' | 'role'> | null | undefined,
+  stopped: boolean,
 ): string | null {
   if (!workflow || !target) return null;
   const refusal = workflowMoveRefusalMessage({
@@ -106,8 +103,7 @@ export function boardMoveRefusal(
     toSwimlaneId: target.id,
     toRole: target.role ?? null,
     moverIsTaskAgent: false,
-    taskHeld: !canTaskRunAutomations(task).ok,
-    humanGateTargetId: workflow.humanGateTargetId,
+    taskStopped: stopped,
   });
   return refusal === null ? null : translateText(refusal);
 }
@@ -127,24 +123,22 @@ export function isWorkflowLockMessage(message: string, task: Pick<Task, 'display
 
 /**
  * Why Backlog and Archive are not offered: each takes the task out of its
- * workflow, which only Remove does. While the workflow runs the card is locked
- * outright, unless its own automations are paused; otherwise it says how.
+ * workflow, which only Remove does. While the workflow runs a card in motion is
+ * locked outright; otherwise it says how.
  */
-export function sendAwayRefusal(workflow: BoardWorkflow | null, task: Pick<Task, 'display_id' | 'automations_disabled'>): string | null {
+export function sendAwayRefusal(workflow: BoardWorkflow | null, task: Pick<Task, 'display_id'>, stopped: boolean): string | null {
   if (!workflow) return null;
   const label = `#${task.display_id}`;
-  return workflow.state === 'running' && canTaskRunAutomations(task).ok
+  return workflow.state === 'running' && !stopped
     ? translateText(WORKFLOW_REFUSAL_MESSAGES.locked(label, workflow.title))
     : translateText(WORKFLOW_REFUSAL_MESSAGES.removeFirst(label, workflow.title));
 }
 
 /**
  * What a workflow task's footer says while it sits in To Do with no session.
- * A task whose automations are paused reads Paused: the engine starts it only
- * once they resume.
  */
-export function boardWaiting(workflow: BoardWorkflow | null, task: Pick<Task, 'automations_disabled'>): { label: string; paused: boolean } | null {
+export function boardWaiting(workflow: BoardWorkflow | null): { label: string; paused: boolean } | null {
   if (!workflow || workflow.state === 'draft' || workflow.state === 'done') return null;
-  const waiting = waitingLabel(workflow.waitingFor, workflow.state === 'paused' || !canTaskRunAutomations(task).ok);
+  const waiting = waitingLabel(workflow.waitingFor, workflow.state === 'paused');
   return { label: translateText(waiting.label), paused: waiting.paused };
 }

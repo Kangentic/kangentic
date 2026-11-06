@@ -1,19 +1,10 @@
 /**
  * `workflowStepApplies` (src/main/workflows/workflow-step.ts): does a task's
- * turn end get a workflow step check?
+ * turn end get a workflow step check? It does for a task of a running workflow.
+ * A task's automations switch has no say: a workflow task cannot set it, and a
+ * card left held must not fall out of its workflow unnoticed.
  *
- * It does for a task of a running workflow, and not while the task's own
- * automations are paused: a person is working that task by hand, so its workflow
- * neither judges, nudges nor moves it, and its recovery stops (the turn-end
- * runner asks this one function for all three). The switch is
- * `tasks.automations_disabled`, asked only through `canTaskRunAutomations`.
- *
- * Real, migrated SQLite for the workflow rows (better-sqlite3). Every held case
- * is the same fixture as its not-held twin with `automations_disabled` as the
- * only difference, and asserts the twin first, so a "false" cannot pass because
- * the workflow was never running or its row could not be found. The pairs are
- * also what makes the held tests read red against a `workflowStepApplies` that
- * ignores the switch: that version answers true for the held half.
+ * Real, migrated SQLite for the workflow rows (better-sqlite3).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -54,8 +45,8 @@ describe('workflowStepApplies', () => {
     return workflow.id;
   }
 
-  function stepTask(workflowId: string | null, automationsDisabled: boolean, workflowProjectId: string | null = 'home') {
-    return { workflow_id: workflowId, workflow_project_id: workflowProjectId, automations_disabled: automationsDisabled };
+  function stepTask(workflowId: string | null, workflowProjectId: string | null = 'home') {
+    return { workflow_id: workflowId, workflow_project_id: workflowProjectId };
   }
 
   beforeEach(() => {
@@ -71,42 +62,28 @@ describe('workflowStepApplies', () => {
     harness.dbs.clear();
   });
 
-  it('is true for a task of a running workflow whose automations are on', () => {
-    expect(workflowStepApplies(stepTask(addWorkflow('running'), false), 'home')).toBe(true);
+  it('is true for a task of a running workflow', () => {
+    expect(workflowStepApplies(stepTask(addWorkflow('running')), 'home')).toBe(true);
   });
 
-  it('is false for the same task once its own automations are paused', () => {
-    const workflowId = addWorkflow('running');
-    expect(workflowStepApplies(stepTask(workflowId, false), 'home')).toBe(true);
-
-    expect(workflowStepApplies(stepTask(workflowId, true), 'home')).toBe(false);
+  it('is true for a task of a running workflow left with its automations switch held', () => {
+    const heldTask = { ...stepTask(addWorkflow('running')), automations_disabled: true };
+    expect(workflowStepApplies(heldTask, 'home')).toBe(true);
   });
 
-  it('follows the switch both ways on one workflow: paused, then resumed', () => {
-    const workflowId = addWorkflow('running');
-    const answers = [false, true, false].map((paused) => workflowStepApplies(stepTask(workflowId, paused), 'home'));
-
-    expect(answers).toEqual([true, false, true]);
+  it('is false for a task of a paused workflow', () => {
+    expect(workflowStepApplies(stepTask(addWorkflow('paused')), 'home')).toBe(false);
   });
 
-  it('is false for a task of a paused workflow whatever its switch says, as it was', () => {
-    const workflowId = addWorkflow('paused');
-
-    expect(workflowStepApplies(stepTask(workflowId, false), 'home')).toBe(false);
-    expect(workflowStepApplies(stepTask(workflowId, true), 'home')).toBe(false);
+  it('is false for a task in no workflow', () => {
+    expect(workflowStepApplies(stepTask(null, null), 'home')).toBe(false);
   });
 
-  it('is false for a task in no workflow, held or not', () => {
-    expect(workflowStepApplies(stepTask(null, false, null), 'home')).toBe(false);
-    expect(workflowStepApplies(stepTask(null, true, null), 'home')).toBe(false);
-  });
-
-  it('reads the held task of a workflow homed on another board from that board', () => {
+  it('reads a task of a workflow homed on another board from that board', () => {
     const workflows = new WorkflowRepository(harness.dbs.get('mobile') as Database.Database);
     const workflow = workflows.create({});
     workflows.setState(workflow.id, 'running');
 
-    expect(workflowStepApplies(stepTask(workflow.id, false, 'mobile'), 'home')).toBe(true);
-    expect(workflowStepApplies(stepTask(workflow.id, true, 'mobile'), 'home')).toBe(false);
+    expect(workflowStepApplies(stepTask(workflow.id, 'mobile'), 'home')).toBe(true);
   });
 });

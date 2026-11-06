@@ -991,7 +991,7 @@ describe('the workflow step and the turn it judged', () => {
       });
     });
 
-    it('reads the rows of the column\'s turn end, once the check says done', async () => {
+    it('reads the rows of the column\'s turn end, for the check\'s question and again for its yes', async () => {
       hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
       checkSaysDone();
 
@@ -999,7 +999,7 @@ describe('the workflow step and the turn it judged', () => {
 
       // The rows of this column, for this trigger: not another column's, and not
       // the enter or exit rows, which say nothing about where a turn end sends the task.
-      expect(hoisted.getForTrigger).toHaveBeenCalledTimes(1);
+      expect(hoisted.getForTrigger).toHaveBeenCalledTimes(2);
       expect(hoisted.getForTrigger).toHaveBeenCalledWith('lane-review', 'turn_end');
     });
   });

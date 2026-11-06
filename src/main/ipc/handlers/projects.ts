@@ -550,7 +550,7 @@ function recoveryOptions(
  * spawn in the project root. The crash's scoped pass passes none.
  */
 function firstAgentStarter(context: IpcContext, projectId: string): FirstAgentStarter {
-  return (task, swimlaneId) => autoSpawnForTask(context, projectId, task, swimlaneId);
+  return (task, swimlaneId) => autoSpawnForTask(context, projectId, task, swimlaneId, { startPath: 'startup_recovery' });
 }
 
 /**

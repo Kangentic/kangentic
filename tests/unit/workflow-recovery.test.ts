@@ -103,7 +103,7 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: {
 vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi.fn(), list: vi.fn(() => []) } }));
 vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
-vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(), routeOf: vi.fn() }));
+vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(() => ({ ok: false, reason: 'No such column.' })), routeOf: vi.fn() }));
 vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
   deliverMessageToSession: hoisted.deliverMessageToSession,
   deliverMessageAfterMove: vi.fn(),
@@ -112,7 +112,7 @@ vi.mock('../../src/main/automations/condition-check/condition-check', () => ({ c
 vi.mock('../../src/main/workflows/workflow-home', () => ({
   workflowOfTask: vi.fn(() => ({ id: 'workflow-1', state: hoisted.workflowState })),
   // As the real one: a task whose own automations are paused is no step task.
-  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running' && !hoisted.task.automations_disabled),
+  isRunningWorkflowStepTask: vi.fn(() => hoisted.workflowState === 'running'),
   isInWorkflow: vi.fn(() => true),
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowChanged: vi.fn(), notifyWorkflowOfTask: vi.fn() }));
@@ -131,7 +131,6 @@ const {
   OUTAGE_RETRY_MS,
   HOLD_RECHECK_MS,
 } = await import('../../src/main/workflows/workflow-recovery');
-const { applyAutomationsHoldChange } = await import('../../src/main/workflows/workflow-task-hold');
 const { sendToRenderer } = await import('../../src/main/ipc/send-to-renderer');
 const { checkForHungTurns, stopWorkflowHangCheck, INTERRUPT_LANDING_MS } = await import('../../src/main/workflows/workflow-hang-check');
 const { agentRegistry } = await import('../../src/main/agent/agent-registry');
@@ -542,7 +541,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
     // It answers a "shall I go on?" rather than inviting one.
     expect(nudges()[0]).toContain('Go ahead with this step\'s own work without asking first.');
     // The one way to stop: the agent's own line, for the three things only the owner can settle.
-    expect(nudges()[0]).toContain('end your reply with the line "Needs owner: <the question>". Otherwise act on it.');
+    expect(nudges()[0]).toContain('end on the line "Needs owner: <the question>". Otherwise act on it.');
     expect(nudges()[0]).not.toContain('\n');
     expect(recoveryRows()).toEqual([expect.objectContaining({ status: 'succeeded', detail: 'Recovery 1 of 4: asked the agent to carry on.' })]);
 
@@ -2097,226 +2096,6 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: OWNER_QUESTION }));
       expect(nudges()).toHaveLength(0);
       expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-    });
-  });
-
-  // The task's own hold (`tasks.automations_disabled` on a workflow task): a
-  // person works it by hand, so the workflow neither judges, nudges nor moves it.
-  // `applyAutomationsHoldChange` is the real module, called as the task update
-  // IPC calls it after its write; the switch is flipped on the task row the repos
-  // return, the way the write flips it in SQLite.
-  describe('a workflow task whose automations are paused and resumed', () => {
-    /** Flip the switch on the task row, then run what the write's caller runs. */
-    function setHold(held: boolean): void {
-      const before = hoisted.task as never;
-      hoisted.task = { ...hoisted.task, automations_disabled: held };
-      applyAutomationsHoldChange(context, PROJECT_ID, before, hoisted.task as never);
-    }
-
-    /** Four nudged turns that still do not finish: the schedule is spent, with its one notice. */
-    async function spendTheSchedule(): Promise<void> {
-      await endTurn(41, STALLED_REPLY);
-      for (let attempt = 0; attempt < RECOVERY_DELAYS_MS.length; attempt += 1) {
-        await wait(RECOVERY_DELAYS_MS[attempt]);
-        startTurn(42 + attempt);
-        await endTurn(42 + attempt, STALLED_REPLY);
-      }
-      expect(nudges()).toHaveLength(RECOVERY_DELAYS_MS.length);
-      expect(stallNotices()).toHaveLength(1);
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-    }
-
-    it('nudges a stalled task on the schedule when nothing holds it (the control)', async () => {
-      await endTurn(41, STALLED_REPLY);
-      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
-
-      await wait(RECOVERY_DELAYS_MS[0]);
-
-      expect(nudges()).toHaveLength(1);
-    });
-
-    it('stops a pending recovery when it is paused, so no nudge lands and no notice goes out', async () => {
-      await endTurn(41, STALLED_REPLY);
-      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
-
-      setHold(true);
-
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-      await wait(RECOVERY_DELAYS_MS.reduce((total, delay) => total + delay, 0) + OUTAGE_RETRY_MS);
-      expect(nudges()).toHaveLength(0);
-      expect(notifyDesktop).not.toHaveBeenCalled();
-      expect(stallNotices()).toHaveLength(0);
-    });
-
-    it('judges, nudges and moves nothing at a turn end while it is paused, even a finished reply', async () => {
-      setHold(true);
-      const checksBefore = hoisted.check.mock.calls.length;
-
-      await endTurn(41, FINISHED_REPLY);
-
-      expect(hoisted.check.mock.calls.length).toBe(checksBefore);
-      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
-      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-      await wait(RECOVERY_DELAYS_MS[0] + HOLD_RECHECK_MS);
-      expect(nudges()).toHaveLength(0);
-    });
-
-    it('arms no recovery when a paused task\'s agent goes idle without a turn end', async () => {
-      setHold(true);
-
-      activity = 'idle';
-      sessionManager.emit('activity', SESSION_ID, 'idle');
-      await settle();
-
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-      await wait(RECOVERY_DELAYS_MS[0]);
-      expect(nudges()).toHaveLength(0);
-    });
-
-    it('judges the reply its last turn left when it resumes with its agent live, and moves a finished task on', async () => {
-      // The person finishes the step by hand and leaves the agent idle on its marker.
-      setHold(true);
-      await endTurn(41, FINISHED_REPLY);
-      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
-
-      setHold(false);
-      await settle();
-
-      expect(hoisted.task.swimlane_id).toBe(nextLane.id);
-      expect(nudges()).toHaveLength(0);
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-    });
-
-    it('does not judge that reply when the agent is not live: the session\'s own resume does', async () => {
-      setHold(true);
-      await endTurn(41, FINISHED_REPLY);
-      const original = sessionManager.getSession;
-      sessionManager.getSession = (sessionId: string) => {
-        const session = original(sessionId) as Record<string, unknown> | undefined;
-        return session ? { ...session, status: 'suspended' } : undefined;
-      };
-      const checksBefore = hoisted.check.mock.calls.length;
-
-      setHold(false);
-      await settle();
-
-      // Nothing judged and nothing moved, though the recovery did start over.
-      expect(hoisted.check.mock.calls.length).toBe(checksBefore);
-      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
-      const startRows = runs.listForTask(taskId).filter((run) => (run.type as string) === 'workflow_recovery_start');
-      expect(startRows).toHaveLength(1);
-      expect(startRows[0].detail).toBe('Recovery starts over: automations resumed.');
-    });
-
-    it('starts the recovery over in the run log when it resumes in a working column, and not in To Do', async () => {
-      const startRows = () => runs.listForTask(taskId).filter((run) => (run.type as string) === 'workflow_recovery_start');
-      setHold(true);
-      setHold(false);
-      await settle();
-      expect(startRows()).toHaveLength(1);
-
-      // The same flip for a task that sits in To Do has no step to start over.
-      const todoLane = lanes.find((lane) => lane.role === 'todo')!;
-      hoisted.task = { ...hoisted.task, swimlane_id: todoLane.id };
-      setHold(true);
-      setHold(false);
-      await settle();
-
-      expect(startRows()).toHaveLength(1);
-    });
-
-    it('gives a task paused while stalled a fresh schedule and a notice of its own once it resumes', async () => {
-      await spendTheSchedule();
-      // The control: a catch-up alone finds the recovery spent and arms nothing,
-      // which is what a resume of the same task did before the release started it over.
-      await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial });
-      await wait(2 * OUTAGE_RETRY_MS);
-      expect(nudges()).toHaveLength(RECOVERY_DELAYS_MS.length);
-      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-
-      setHold(true);
-      await wait(6 * OUTAGE_RETRY_MS);
-      expect(nudges()).toHaveLength(RECOVERY_DELAYS_MS.length);
-
-      setHold(false);
-      await settle();
-      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
-      expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_recovery_start')).toBe(true);
-
-      // The first step again, not the last or an hour on.
-      await wait(RECOVERY_DELAYS_MS[0]);
-      expect(nudges()).toHaveLength(RECOVERY_DELAYS_MS.length + 1);
-      expect(recoveryRows().at(-1)).toMatchObject({ detail: 'Recovery 1 of 4: asked the agent to carry on.' });
-
-      // That schedule runs out too, with its own notice.
-      startTurn(70);
-      await endTurn(70, STALLED_REPLY);
-      for (let attempt = 1; attempt < RECOVERY_DELAYS_MS.length; attempt += 1) {
-        await wait(RECOVERY_DELAYS_MS[attempt]);
-        startTurn(71 + attempt);
-        await endTurn(71 + attempt, STALLED_REPLY);
-      }
-      expect(nudges()).toHaveLength(2 * RECOVERY_DELAYS_MS.length);
-      expect(stallNotices()).toHaveLength(2);
-    });
-
-    describe('announcing a stall, which the engine host also does when a start keeps failing', () => {
-      const stall = () => ({
-        projectId: PROJECT_ID,
-        taskId,
-        columnId: workingLane.id,
-        workflowId: 'workflow-1',
-        reason: 'the start kept failing.',
-        countedNudges: 0,
-      });
-      const stallRows = () => runs.listForTask(taskId).filter((run) => (run.type as string) === 'workflow_stalled');
-
-      it('writes the stall row and tells the user for a task that is not held (the control)', () => {
-        announceWorkflowStall(context, stall());
-
-        expect(stallRows()).toHaveLength(1);
-        expect(stallNotices()).toHaveLength(1);
-        expect(sendToRenderer).toHaveBeenCalledWith(expect.anything(), IPC.WORKFLOW_STALLED, expect.objectContaining({ taskId }));
-      });
-
-      it('writes no stall row and tells nobody for a task whose automations are paused', () => {
-        hoisted.task = { ...hoisted.task, automations_disabled: true };
-
-        announceWorkflowStall(context, stall());
-
-        expect(stallRows()).toHaveLength(0);
-        expect(stallNotices()).toHaveLength(0);
-        expect(notifyPhone).not.toHaveBeenCalled();
-        expect(sendToRenderer).not.toHaveBeenCalledWith(expect.anything(), IPC.WORKFLOW_STALLED, expect.anything());
-      });
-
-      it('announces it again once the task\'s automations resume', () => {
-        hoisted.task = { ...hoisted.task, automations_disabled: true };
-        announceWorkflowStall(context, stall());
-        expect(stallNotices()).toHaveLength(0);
-
-        hoisted.task = { ...hoisted.task, automations_disabled: false };
-        announceWorkflowStall(context, stall());
-
-        expect(stallRows()).toHaveLength(1);
-        expect(stallNotices()).toHaveLength(1);
-      });
-    });
-
-    it('leaves no stall notice from a held task whose schedule would have run out', async () => {
-      await endTurn(41, STALLED_REPLY);
-      await wait(RECOVERY_DELAYS_MS[0]);
-      startTurn(42);
-      await endTurn(42, STALLED_REPLY);
-      expect(nudges()).toHaveLength(1);
-
-      setHold(true);
-      await wait(5 * OUTAGE_RETRY_MS);
-
-      expect(nudges()).toHaveLength(1);
-      expect(stallNotices()).toHaveLength(0);
-      expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_stalled')).toBe(false);
     });
   });
 

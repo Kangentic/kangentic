@@ -463,19 +463,10 @@ msgstr "重命名工作流"
 msgid "Resize the workflow agent"
 msgstr "调整工作流智能体大小"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgctxt "automations"
-msgid "Resume"
-msgstr "恢复"
-
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "恢复"
-
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgid "Resume automations"
-msgstr "恢复自动化"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Resume session"

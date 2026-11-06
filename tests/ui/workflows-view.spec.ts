@@ -1095,20 +1095,40 @@ test.describe('Workflows inspector', () => {
   test('a card\'s right-click menu is the board\'s, with Open on board and the locked rows disabled', async () => {
     const { browser, page } = await launch('running');
     try {
-      await card(page, 't414').click({ button: 'right' });
+      // A card in To Do: only the engine starts it, so a person's hand stays locked out.
+      await card(page, 't419').click({ button: 'right' });
       const menu = byTestId(page, 'workflow-card-menu');
       await expect(menu).toBeVisible();
       await expect(menu.locator('[data-testid="workflow-card-menu-open-on-board"]')).toBeVisible();
       // The canvas draws every link, so the menu does not offer to show them.
       await expect(menu.locator('[data-testid="context-show-workflow-links"]')).toHaveCount(0);
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'Code Review' }))
-        .toHaveAccessibleDescription('#414 is locked while Usage budgets runs.');
+        .toHaveAccessibleDescription('#419 is locked while Usage budgets runs.');
       await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAttribute('aria-disabled', 'true');
 
       // Open on board: Board, with the task's window open.
       await menu.locator('[data-testid="workflow-card-menu-open-on-board"]').click();
       await expect(page.locator('[data-swimlane-name="To Do"]').first()).toBeVisible();
-      await expect(page.locator('[data-testid="task-detail-dialog"] [data-testid="task-title-text"]')).toHaveText('Refuse to spawn past the hard cap');
+      await expect(page.locator('[data-testid="task-detail-dialog"] [data-testid="task-title-text"]')).toHaveText('Phone alert at 80 percent');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a stopped card\'s menu on the canvas is unlocked: Move to rows enabled, Backlog and Archive say to remove it first', async () => {
+    // #414 works in Executing with no agent running, so it has stopped and is the person's.
+    const { browser, page } = await launch('running');
+    try {
+      await card(page, 't414').click({ button: 'right' });
+      const menu = byTestId(page, 'workflow-card-menu');
+      await expect(menu).toBeVisible();
+      const rows = menu.locator('[data-testid="context-move-to"]');
+      await expect(rows.filter({ hasText: 'Code Review' })).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
+      // To Do stays refused, with the sentence that says what to do instead of the lock's.
+      await expect(rows.filter({ hasText: 'To Do' })).toHaveAccessibleDescription('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+      await expect(menu.locator('[data-testid="context-send-to-backlog"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
+      await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
     } finally {
       await browser.close();
     }

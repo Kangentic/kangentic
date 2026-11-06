@@ -5,12 +5,11 @@
  * Intent:
  * - A task card's right-click menu offers "Pause automations" (or "Resume
  *   automations" once paused) in the TOP group, after Edit and Show changes and
- *   before the navigation row and New workflow. A workflow task is offered the
- *   same row (#923): there it is the task's own hold, which keeps the workflow's
- *   judging, moving and starting off the task while the rest of the workflow runs.
+ *   before the navigation row and New workflow. A running workflow's card offers
+ *   no such row, since its automations cannot be paused: to stop work, pause the
+ *   workflow. A card left held keeps its Resume.
  * - A task with its automations paused wears a strip across the top of its card at
- *   every card density, and the strip explains itself in its tooltip. A workflow
- *   card stacks the strip over its workflow strip, on the board and on the canvas.
+ *   every card density, and the strip explains itself in its tooltip.
  * - "Changes" is now "Show changes" and still opens the changes dialog.
  * - The rule above a card's footer closes what sits over it. The agent's message
  *   trail well closes itself with its own edge, so a card showing the trail and
@@ -19,21 +18,16 @@
  * - The Agent Monitor row menu is the same menu and offers the same switch,
  *   writing to the ROW's project, not the open board's. A row of the OPEN project
  *   writes through the board store, so the card under the overlay gains its strip
- *   too. A row of a workflow task is offered it as well.
+ *   too. A row of a running workflow's task offers no switch.
  * - The Agent Monitor marks a held task in all three of its layouts: the board's
  *   strip on the card, a slice closing the list row, and a Paused chip in the
  *   table's Automations column. A Command Terminal has no task and carries none.
  *   A held workflow task keeps its workflow's mark beside it: the card stacks both
  *   strips and the list row closes with both slices.
- * - The Workflows canvas card's menu (`WorkflowCardMenu`) offers the switch, the
- *   canvas card wears the strip over its workflow strip, and the inspector shows a
- *   Resume button while the selected task is held.
+ * - The Workflows canvas card's menu (`WorkflowCardMenu`) offers no switch either.
  * - A write the desktop rejects reaches the user as a toast with the plain
  *   sentence main wrote, not Electron's "Error invoking remote method" wrapper, from
  *   the card menu and from the monitor menu alike. The card is left as it was.
- * - The mock no longer refuses the switch on a workflow task, as the desktop no
- *   longer does, so the cases above that lean on it are not passing against a mock
- *   that still refuses.
  *
  * The expected menu orders and the divider rule come from the task, not from the
  * components. Assertions read state (attributes, classes, text, DOM order), never
@@ -53,8 +47,6 @@ const PROJECT_ID = 'proj-automations-disabled';
 const PROJECT_NAME = 'Automations Disabled Test';
 const STRIP_TEST_ID = 'task-card-automations-disabled';
 const STRIP_TIP = "Column automations don't run for this task. Resume them from the card's menu.";
-/** A workflow task's tip also says the workflow leaves it alone, which is what the hold is for there. */
-const WORKFLOW_STRIP_TIP = "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu.";
 
 /** A class attribute holds this token, as opposed to a longer class that starts with it. */
 function classToken(token: string): RegExp {
@@ -308,42 +300,33 @@ test.describe('per-task automations switch: the card menu', () => {
     }
   });
 
-  test('a workflow card gets the automations row too, between Show changes and Open workflow, and it holds the task', async () => {
-    const taskId = 'task-ad-workflow';
+  test('a running workflow\'s card offers no automations row, and a card left held keeps its Resume', async () => {
     const workflowId = 'wf-ad-menu';
+    const freeTaskId = 'task-ad-workflow';
+    const heldTaskId = 'task-ad-workflow-held';
     const { browser, page } = await launch({
       workflows: [{ workflow: { id: workflowId, title: 'Menu order', state: 'running', draft: null, color_slot: 5, source_task_id: null } }],
-      tasks: [{
-        id: taskId, displayId: 52, title: 'Task inside a workflow', lane: 'Executing', description: 'Planned by the workflow agent.',
-        worktree: true, workflowId,
-      }],
+      tasks: [
+        { id: freeTaskId, displayId: 52, title: 'Task inside a workflow', lane: 'Executing', description: 'Planned by the workflow agent.', worktree: true, workflowId },
+        { id: heldTaskId, displayId: 53, title: 'Task left held', lane: 'Executing', description: 'Held before the rule changed.', worktree: true, workflowId, automationsDisabled: true },
+      ],
     });
     try {
       // The row reads the workflow store when the menu opens: without the summaries
       // loaded there is no Open workflow row. The strip appears once they have.
-      await boardCard(page, taskId).locator('[data-testid="workflow-card-strip"]').waitFor({ state: 'visible', timeout: 10000 });
+      await boardCard(page, freeTaskId).locator('[data-testid="workflow-card-strip"]').waitFor({ state: 'visible', timeout: 10000 });
 
-      let menu = await openMenu(page, taskId);
-      // Exact, so the row's place is asserted by the whole list, and the present Open
-      // workflow row keeps it from passing on an empty menu.
+      const menu = await openMenu(page, freeTaskId);
+      // Exact, and the present Open workflow row keeps it from passing on an empty menu.
       expect(await menuLayout(menu)).toEqual([
-        ...MENU_HEAD, 'context-show-changes', 'context-toggle-automations', 'context-open-workflow', ...MENU_MOVE_TO, ...MENU_BOTTOM,
+        ...MENU_HEAD, 'context-show-changes', 'context-open-workflow', ...MENU_MOVE_TO, ...MENU_BOTTOM,
       ]);
-      await expect(menu.getByTestId('context-open-workflow')).toBeVisible();
-      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Pause automations');
-      await expect(boardCard(page, taskId).getByTestId(STRIP_TEST_ID)).toHaveCount(0);
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(byTestId(page, 'task-context-menu')).toHaveCount(0);
 
-      // Pausing holds this one task out of its workflow: the paused strip stacks over
-      // the workflow strip, in the one wrapper, and the way back is offered.
-      await menu.getByTestId('context-toggle-automations').click();
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: taskId, automations_disabled: true }]);
-      const heldStrip = boardCard(page, taskId).getByTestId(STRIP_TEST_ID);
-      await expect(heldStrip).toHaveText('Automations paused');
-      await expect(heldStrip).toHaveAccessibleDescription(WORKFLOW_STRIP_TIP);
-      await expect(boardCard(page, taskId).getByTestId('workflow-card-strip')).toBeVisible();
-
-      menu = await openMenu(page, taskId);
-      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
+      const heldMenu = await openMenu(page, heldTaskId);
+      await expect(heldMenu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
     } finally {
       await browser.close();
     }
@@ -663,6 +646,8 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
     displayId: number;
     /** Whose board the row's task is on: the project the board is open on, or a second one it is not. */
     project: 'open' | 'other';
+    /** The row's running workflow, for its strip and its menu. Absent: none. */
+    workflow?: { id: string; title: string; colorSlot: number };
   }
 
   /**
@@ -680,6 +665,7 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
       startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
       status: 'running', activity: 'thinking', activityReason: null,
       lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false,
+      workflow: row.workflow ?? null,
     };
     const otherProject = row.project === 'other' ? `
       window.__mockPreConfigure(function (state) {
@@ -795,7 +781,7 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
     });
   }
 
-  test('a row of a workflow task gets the automations row too, and writes the hold to its project', async () => {
+  test('a row of a running workflow\'s task offers no automations row', async () => {
     const workflowTaskId = 'task-ad-monitor-workflow';
     const workflowId = 'wf-ad-monitor';
     const { browser, page } = await launch(
@@ -808,26 +794,42 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
       },
       monitorInitScript({
         sessionId: 'sess-ad-monitor-workflow', taskId: workflowTaskId, taskTitle: 'Monitored workflow task', displayId: 33, project: 'open',
+        workflow: { id: workflowId, title: 'Monitor menu', colorSlot: 5 },
       }),
     );
     try {
       await openMonitor(page);
-      await recordUpdateProjectIds(page);
       const menu = await openRowMenu(page, 'sess-ad-monitor-workflow');
 
-      // Exact, so the row's place is asserted by the whole list, beside the present copy-id,
-      // Open on board and destructive rows.
-      expect(await menuLayout(menu)).toEqual([
-        ...MENU_HEAD, 'context-toggle-automations', 'monitor-menu-open-on-board', ...MENU_MOVE_TO, ...MENU_BOTTOM,
-      ]);
       await expect(menu.getByTestId('monitor-menu-open-on-board')).toBeVisible();
-      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Pause automations');
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
 
-      await menu.getByTestId('context-toggle-automations').click();
-      await expect(byTestId(page, 'monitor-row-menu')).toHaveCount(0);
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: workflowTaskId, automations_disabled: true }]);
-      expect(await page.evaluate(() => (window as unknown as { __updateProjectIds?: Array<string | null> }).__updateProjectIds))
-        .toEqual([PROJECT_ID]);
+  test('a row of a running workflow\'s task left held keeps its Resume', async () => {
+    const heldTaskId = 'task-ad-monitor-workflow-held';
+    const workflowId = 'wf-ad-monitor-held';
+    const { browser, page } = await launch(
+      {
+        workflows: [{ workflow: { id: workflowId, title: 'Monitor held', state: 'running', draft: null, color_slot: 5, source_task_id: null } }],
+        tasks: [{
+          id: heldTaskId, displayId: 35, title: 'Monitored held workflow task', lane: 'Executing',
+          description: 'Held before the rule changed.', workflowId, automationsDisabled: true,
+        }],
+      },
+      monitorInitScript({
+        sessionId: 'sess-ad-monitor-workflow-held', taskId: heldTaskId, taskTitle: 'Monitored held workflow task', displayId: 35, project: 'open',
+        workflow: { id: workflowId, title: 'Monitor held', colorSlot: 5 },
+      }),
+    );
+    try {
+      await openMonitor(page);
+      const menu = await openRowMenu(page, 'sess-ad-monitor-workflow-held');
+
+      await expect(menu.getByTestId('monitor-menu-open-on-board')).toBeVisible();
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
     } finally {
       await browser.close();
     }
@@ -996,193 +998,50 @@ test.describe('per-task automations switch: the Agent Monitor marks a held task'
 
 test.describe('per-task automations switch: the Workflows canvas', () => {
   const WORKFLOW_ID = 'wf-ad-canvas';
-  const HELD_TASK_ID = 'task-ad-canvas-held';
-  const FREE_TASK_ID = 'task-ad-canvas-free';
-  const CANVAS_STRIP_TEST_ID = 'workflow-card-automations-disabled';
-  const INSPECTOR_ROW_TEST_ID = 'workflow-inspector-automations-paused';
+  const TASK_ID = 'task-ad-canvas';
 
-  const canvasCard = (page: Page, taskId: string): Locator =>
-    page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${taskId}"]`);
-
-  /** A running workflow with one task in Executing, held or not, and a free one beside it. */
-  async function launchCanvas(options: { held: boolean }): Promise<{ browser: Browser; page: Page }> {
-    const launched = await launch({
-      workflows: [{ workflow: { id: WORKFLOW_ID, title: 'Canvas hold', state: 'running', draft: null, color_slot: 5, source_task_id: null, agent_name: 'claude' } }],
-      tasks: [
-        { id: HELD_TASK_ID, displayId: 61, title: 'Task worked by hand', lane: 'Executing', description: 'A person works this one.', workflowId: WORKFLOW_ID, automationsDisabled: options.held },
-        { id: FREE_TASK_ID, displayId: 62, title: 'Task the workflow runs', lane: 'Executing', description: 'The workflow runs this one.', workflowId: WORKFLOW_ID },
-      ],
-    });
-    await byTestId(launched.page, 'view-toggle-workflows').click();
-    await canvasCard(launched.page, HELD_TASK_ID).waitFor({ state: 'visible', timeout: 10000 });
-    return launched;
-  }
-
-  test('the canvas card\'s menu offers the switch, and the paused card stacks its strip over the workflow strip', async () => {
-    const { browser, page } = await launchCanvas({ held: false });
-    try {
-      const heldCard = canvasCard(page, HELD_TASK_ID);
-      await expect(heldCard.getByTestId('workflow-card-strip')).toBeVisible();
-      await expect(heldCard.getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(0);
-
-      await heldCard.click({ button: 'right' });
-      const menu = byTestId(page, 'workflow-card-menu');
-      await menu.waitFor({ state: 'visible' });
-      const toggle = menu.getByTestId('context-toggle-automations');
-      await expect(toggle).toHaveText('Pause automations');
-      await toggle.click();
-
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: HELD_TASK_ID, automations_disabled: true }]);
-      const strip = heldCard.getByTestId(CANVAS_STRIP_TEST_ID);
-      await expect(strip).toHaveText('Automations paused');
-      await expect(strip).toHaveAccessibleDescription(WORKFLOW_STRIP_TIP);
-      // Over the workflow's own strip, which stays: the hold does not take the task out of its workflow.
-      await expect(heldCard.getByTestId('workflow-card-strip')).toBeVisible();
-      const order = await heldCard.evaluate((element) => Array.from(
-        element.querySelectorAll('[data-testid="workflow-card-automations-disabled"], [data-testid="workflow-card-strip"]'),
-      ).map((child) => child.getAttribute('data-testid')));
-      expect(order).toEqual([CANVAS_STRIP_TEST_ID, 'workflow-card-strip']);
-
-      // The other card is not held, and wears neither.
-      await expect(canvasCard(page, FREE_TASK_ID).getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(0);
-
-      // The same card's menu now offers the way back.
-      await heldCard.click({ button: 'right' });
-      await expect(byTestId(page, 'workflow-card-menu').getByTestId('context-toggle-automations')).toHaveText('Resume automations');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('the inspector shows the hold of the selected task with Resume, which hands it back to the workflow', async () => {
-    const { browser, page } = await launchCanvas({ held: true });
-    try {
-      await expect(canvasCard(page, HELD_TASK_ID).getByTestId(CANVAS_STRIP_TEST_ID)).toHaveText('Automations paused');
-
-      // The free task is selected first: the inspector shows no hold for it, so the row below
-      // is the held task's own and not a row every selection carries.
-      await canvasCard(page, FREE_TASK_ID).click();
-      await expect(canvasCard(page, FREE_TASK_ID)).toHaveAttribute('data-selected', 'true');
-      await expect(byTestId(page, INSPECTOR_ROW_TEST_ID)).toHaveCount(0);
-
-      await canvasCard(page, HELD_TASK_ID).click();
-      await expect(canvasCard(page, HELD_TASK_ID)).toHaveAttribute('data-selected', 'true');
-      const row = byTestId(page, INSPECTOR_ROW_TEST_ID);
-      await expect(row).toBeVisible();
-      await expect(row).toContainText('Automations paused');
-      // The tip sits on the label's wrapper, the Tooltip's trigger, not on the text inside it.
-      await expect(row.locator('[aria-description]')).toHaveAccessibleDescription(WORKFLOW_STRIP_TIP);
-
-      await byTestId(page, 'workflow-inspector-resume-automations').click();
-
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: HELD_TASK_ID, automations_disabled: false }]);
-      await expect(row).toHaveCount(0);
-      await expect(canvasCard(page, HELD_TASK_ID).getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a Resume the desktop rejects toasts the plain reason and keeps the task paused', async () => {
-    const { browser, page } = await launchCanvas({ held: true });
-    try {
-      await canvasCard(page, HELD_TASK_ID).click();
-      await expect(byTestId(page, INSPECTOR_ROW_TEST_ID)).toBeVisible();
-      await rejectTaskUpdates(page, DECORATED_BUSY_ERROR);
-
-      await byTestId(page, 'workflow-inspector-resume-automations').click();
-
-      const toast = toastWith(page, "Couldn't resume automations");
-      await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't resume automations");
-      await expect(toast.getByTestId('toast-body')).toHaveText('"Task worked by hand": The board is busy.');
-      await expect(toast).not.toContainText(DECORATION_FRAGMENT);
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: HELD_TASK_ID, automations_disabled: false }]);
-      await expect(byTestId(page, INSPECTOR_ROW_TEST_ID)).toBeVisible();
-      await expect(canvasCard(page, HELD_TASK_ID).getByTestId(CANVAS_STRIP_TEST_ID)).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
-  // The canvas card draws the paused strip itself, stacked over the workflow's, and tells the
-  // card body not to draw its own. Without that, a held card wears the strip twice.
-  test('a held canvas card draws one paused strip, its own, and the card body draws none', async () => {
-    const { browser, page } = await launchCanvas({ held: true });
-    try {
-      const heldCard = canvasCard(page, HELD_TASK_ID);
-      // The canvas strip first, so the zeroes below are read off a card that does show a hold.
-      await expect(heldCard.getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(1);
-      await expect(heldCard.getByTestId(STRIP_TEST_ID)).toHaveCount(0);
-      // What a person sees: the label once, whichever strip drew it.
-      await expect(heldCard.getByText('Automations paused', { exact: true })).toHaveCount(1);
-
-      // The task that is not held wears neither strip.
-      await expect(canvasCard(page, FREE_TASK_ID).getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(0);
-      await expect(canvasCard(page, FREE_TASK_ID).getByTestId(STRIP_TEST_ID)).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  // The inspector offers no hold row, and no Resume, for a task in Done. The held task in
-  // Executing is selected first and must show its row, so the missing row on the Done task is
-  // the Done guard and not a row that never rendered at all.
-  test('a held task in Done shows no hold row in the inspector when selected', async () => {
-    const executingTaskId = 'task-ad-canvas-held-executing';
-    const doneTaskId = 'task-ad-canvas-held-done';
+  test('the canvas card\'s menu offers no switch, and the inspector no Resume', async () => {
     const { browser, page } = await launch({
-      workflows: [{ workflow: { id: WORKFLOW_ID, title: 'Canvas hold', state: 'running', draft: null, color_slot: 5, source_task_id: null, agent_name: 'claude' } }],
-      tasks: [
-        { id: executingTaskId, displayId: 63, title: 'Held task still in Executing', lane: 'Executing', description: 'Not finished.', workflowId: WORKFLOW_ID, automationsDisabled: true },
-        { id: doneTaskId, displayId: 64, title: 'Held task that finished', lane: 'Done', archived: true, description: 'Finished while held.', workflowId: WORKFLOW_ID, automationsDisabled: true },
-      ],
+      workflows: [{ workflow: { id: WORKFLOW_ID, title: 'Canvas menu', state: 'running', draft: null, color_slot: 5, source_task_id: null, agent_name: 'claude' } }],
+      tasks: [{ id: TASK_ID, displayId: 61, title: 'Task the workflow runs', lane: 'Executing', description: 'The workflow runs this one.', workflowId: WORKFLOW_ID }],
     });
     try {
       await byTestId(page, 'view-toggle-workflows').click();
-      await canvasCard(page, executingTaskId).waitFor({ state: 'visible', timeout: 10000 });
-      await canvasCard(page, doneTaskId).waitFor({ state: 'visible', timeout: 10000 });
+      const card = page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_ID}"]`);
+      await card.waitFor({ state: 'visible', timeout: 10000 });
 
-      await canvasCard(page, executingTaskId).click();
-      await expect(canvasCard(page, executingTaskId)).toHaveAttribute('data-selected', 'true');
-      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Held task still in Executing');
-      await expect(byTestId(page, INSPECTOR_ROW_TEST_ID)).toBeVisible();
-
-      await canvasCard(page, doneTaskId).click();
-      await expect(canvasCard(page, doneTaskId)).toHaveAttribute('data-selected', 'true');
-      // The inspector has moved to the Done task, so a missing row is read off the right panel.
-      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Held task that finished');
-      await expect(byTestId(page, INSPECTOR_ROW_TEST_ID)).toHaveCount(0);
-      await expect(byTestId(page, 'workflow-inspector-resume-automations')).toHaveCount(0);
+      await card.click({ button: 'right' });
+      const menu = byTestId(page, 'workflow-card-menu');
+      await menu.waitFor({ state: 'visible' });
+      // The Open on board row keeps it from passing on an empty menu.
+      await expect(menu.getByTestId('workflow-card-menu-open-on-board')).toBeVisible();
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  // The row reads the board's live task, as the canvas card does, because a write made anywhere
-  // else (here the card's own menu) reaches the board store without the workflow's view being
-  // re-read. The mock's tasks.update announces no workflow change, as main's does not for a
-  // hold, so a row that read only the view's copy would stay on screen after the Resume.
-  test('the inspector row follows the board\'s live task when the hold is resumed from the card\'s menu', async () => {
-    const { browser, page } = await launchCanvas({ held: true });
+  test('a canvas card left held keeps its Resume, and the switch resumes it', async () => {
+    const { browser, page } = await launch({
+      workflows: [{ workflow: { id: WORKFLOW_ID, title: 'Canvas held', state: 'running', draft: null, color_slot: 5, source_task_id: null, agent_name: 'claude' } }],
+      tasks: [{
+        id: TASK_ID, displayId: 62, title: 'Task left held', lane: 'Executing', description: 'Held before the rule changed.',
+        workflowId: WORKFLOW_ID, automationsDisabled: true,
+      }],
+    });
     try {
-      const heldCard = canvasCard(page, HELD_TASK_ID);
-      await heldCard.click();
-      await expect(heldCard).toHaveAttribute('data-selected', 'true');
-      const row = byTestId(page, INSPECTOR_ROW_TEST_ID);
-      await expect(row).toBeVisible();
+      await byTestId(page, 'view-toggle-workflows').click();
+      const card = page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_ID}"]`);
+      await card.waitFor({ state: 'visible', timeout: 10000 });
 
-      await heldCard.click({ button: 'right' });
+      await card.click({ button: 'right' });
       const menu = byTestId(page, 'workflow-card-menu');
       await menu.waitFor({ state: 'visible' });
-      const toggle = menu.getByTestId('context-toggle-automations');
-      await expect(toggle).toHaveText('Resume automations');
-      await toggle.click();
+      await expect(menu.getByTestId('workflow-card-menu-open-on-board')).toBeVisible();
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
 
-      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: HELD_TASK_ID, automations_disabled: false }]);
-      // The inspector is still on this task, so the row going away is the live row's doing.
-      await expect(heldCard).toHaveAttribute('data-selected', 'true');
-      await expect(heldCard.getByTestId(CANVAS_STRIP_TEST_ID)).toHaveCount(0);
-      await expect(row).toHaveCount(0);
+      await menu.getByTestId('context-toggle-automations').click();
+      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: TASK_ID, automations_disabled: false }]);
     } finally {
       await browser.close();
     }

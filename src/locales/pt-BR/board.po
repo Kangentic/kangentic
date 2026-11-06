@@ -225,11 +225,6 @@ msgstr "Alterações detectadas no kangentic.json. Aplicar a configuração atua
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
-msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "As automações de coluna não são executadas para esta tarefa, e o fluxo de trabalho dela não a move. Retome-as no menu do cartão."
-
-#: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr "As automações de coluna não são executadas para esta tarefa. Retome-as no menu do cartão."
 

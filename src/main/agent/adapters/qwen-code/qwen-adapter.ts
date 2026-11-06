@@ -1,3 +1,5 @@
+import { identifyQwenUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { QwenDetector } from './detector';
 import { QwenCommandBuilder, QWEN_WSL_HOOK_COPY_NAME } from './command-builder';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
@@ -96,6 +98,11 @@ export class QwenAdapter implements AgentAdapter {
   // it only when the folder's last session releases. Keyed by session id:
   // see SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyQwenUserSetupFailure(finalOutput);
+  }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);

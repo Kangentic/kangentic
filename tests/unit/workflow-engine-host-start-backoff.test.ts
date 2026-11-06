@@ -386,7 +386,7 @@ describe('the workflow engine host', () => {
       await advance(DEBOUNCE_MS);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(1);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledWith(
-        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'git exploded' }), 'home',
+        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'git exploded' }), 'home', 'workflow',
       );
 
       // Second failure, same message: no new toast.
@@ -399,7 +399,7 @@ describe('the workflow engine host', () => {
       expect(harness.handleTaskMove).toHaveBeenCalledTimes(3);
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(2);
       expect(harness.notifySpawnBlocked).toHaveBeenLastCalledWith(
-        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'the disk is full' }), 'home',
+        context, expect.objectContaining({ id: taskId }), 'agent', expect.objectContaining({ message: 'the disk is full' }), 'home', 'workflow',
       );
     });
 
@@ -411,7 +411,7 @@ describe('the workflow engine host', () => {
       await advance(DEBOUNCE_MS);
 
       expect(harness.notifySpawnBlocked).toHaveBeenCalledTimes(1);
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home', 'workflow']);
     });
 
     it('passes the error itself as the cause of a worktree failure that carries none', async () => {
@@ -421,7 +421,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', error, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', error, 'home', 'workflow']);
     });
 
     it('names the worktree step for an error the real wrapWorktreeSetupError built', async () => {
@@ -433,7 +433,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home', 'workflow']);
     });
 
     it('names the checkout step for a BranchCheckoutBlockedError', async () => {
@@ -443,7 +443,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['checkout', error, 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['checkout', error, 'home', 'workflow']);
     });
 
     it('names the agent step for any other failure, a thrown string included', async () => {
@@ -452,7 +452,7 @@ describe('the workflow engine host', () => {
 
       await advance(DEBOUNCE_MS);
 
-      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['agent', 'the spawn queue is gone', 'home']);
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['agent', 'the spawn queue is gone', 'home', 'workflow']);
     });
 
     it('shows nothing, and does not open the database, for a start whose project was deleted while the move ran', async () => {
@@ -717,142 +717,6 @@ describe('the workflow engine host', () => {
 
       expect(harness.handleTaskMove).toHaveBeenCalledTimes(4);
       expect(new Set(movedTaskIds()).size).toBe(4);
-    });
-  });
-
-  describe('a task whose own automations are paused', () => {
-    // The task's hold: a person works it by hand while the rest of the workflow
-    // runs. The engine starts neither it nor, through it, what waits for it. Each
-    // case first lets the engine start the same tasks with nothing held, so a
-    // "not started" cannot come from a pass that never ran.
-    const holdOn = (taskId: string, held: boolean) => new TaskRepository(dbOf('home')).update({ id: taskId, automations_disabled: held });
-
-    function link(workflowId: string, blockerTaskId: string, blockedTaskId: string): void {
-      new TaskLinkRepository(dbOf('home')).insert({
-        workflow_id: workflowId,
-        blocker_project_id: 'home',
-        blocker_task_id: blockerTaskId,
-        blocked_project_id: 'home',
-        blocked_task_id: blockedTaskId,
-      });
-    }
-
-    it('starts every task of the workflow with nothing held (the control)', async () => {
-      const { taskIds } = runningWorkflow('Usage budgets', 2);
-      moveSucceeds();
-
-      await advance(DEBOUNCE_MS);
-
-      for (const taskId of taskIds) expect(movesOf(taskId)).toHaveLength(1);
-    });
-
-    it('leaves a held task in To Do and starts the rest of its workflow', async () => {
-      const { taskIds: [heldTaskId, freeTaskId] } = runningWorkflow('Usage budgets', 2);
-      holdOn(heldTaskId, true);
-      moveSucceeds();
-
-      await advance(DEBOUNCE_MS);
-
-      expect(movesOf(freeTaskId)).toHaveLength(1);
-      expect(movesOf(heldTaskId)).toHaveLength(0);
-      expect(new TaskRepository(dbOf('home')).getById(heldTaskId)!.swimlane_id).toBe(todoOf('home').id);
-    });
-
-    it('keeps a task that waits for a held one waiting, and starts a free task beside it', async () => {
-      const { workflowId, taskIds: [heldTaskId, waitingTaskId, freeTaskId] } = runningWorkflow('Usage budgets', 3);
-      link(workflowId, heldTaskId, waitingTaskId);
-      holdOn(heldTaskId, true);
-      moveSucceeds();
-
-      await advance(DEBOUNCE_MS);
-
-      expect(movesOf(freeTaskId)).toHaveLength(1);
-      expect(movesOf(heldTaskId)).toHaveLength(0);
-      expect(movesOf(waitingTaskId)).toHaveLength(0);
-    });
-
-    it('starts it on the first pass after it resumes, and what waits for it stays waiting until it is done', async () => {
-      const { workflowId, taskIds: [heldTaskId, waitingTaskId] } = runningWorkflow('Usage budgets', 2);
-      link(workflowId, heldTaskId, waitingTaskId);
-      holdOn(heldTaskId, true);
-      moveSucceeds();
-      await advance(DEBOUNCE_MS);
-      expect(harness.handleTaskMove).not.toHaveBeenCalled();
-
-      holdOn(heldTaskId, false);
-      engine.wake();
-      await advance(DEBOUNCE_MS);
-
-      expect(movesOf(heldTaskId)).toHaveLength(1);
-      expect(movesOf(waitingTaskId)).toHaveLength(0);
-    });
-
-    it('is not a failed start, so it gets no backoff, no toast and no stall notice', async () => {
-      const { taskIds: [heldTaskId] } = runningWorkflow('Usage budgets');
-      holdOn(heldTaskId, true);
-      moveFails();
-
-      await advance(DEBOUNCE_MS * 2);
-      await advance(40 * 60_000);
-
-      expect(harness.handleTaskMove).not.toHaveBeenCalled();
-      expect(engine.failedStart('home', heldTaskId)).toBeNull();
-      expect(harness.notifySpawnBlocked).not.toHaveBeenCalled();
-      expect(harness.announceWorkflowStall).not.toHaveBeenCalled();
-    });
-
-    // The host holds a task back at two places, and each case below can only be
-    // told apart from the other by taking the other one out of play. A task held
-    // when the pass reads it is kept out of the plan (the mapping into the core's
-    // task); a task held after that is stopped by the re-read of its row right
-    // before the start. The cases above pass with either alone, because the
-    // other one hides it.
-    it('does not start a task whose hold landed after the pass planned it, and counts it no failed start', async () => {
-      const { taskIds: [taskId] } = runningWorkflow('Usage budgets');
-      moveSucceeds();
-      // The pass reads its tasks, then asks for the free agent slots, then
-      // carries its starts out. The slot count is the one hook in between: the
-      // person's pause lands there, so the plan already holds the task as free.
-      let freeWhenPlanned: boolean | null = null;
-      vi.spyOn(context.sessionManager, 'getFreeAgentSlots').mockImplementation(() => {
-        if (freeWhenPlanned === null) {
-          freeWhenPlanned = !new TaskRepository(dbOf('home')).getById(taskId)!.automations_disabled;
-          holdOn(taskId, true);
-        }
-        return freeAgentSlots;
-      });
-
-      await advance(DEBOUNCE_MS * 2);
-
-      // The pass ran, and read the task as free when it planned the start.
-      expect(freeWhenPlanned).toBe(true);
-      expect(harness.handleTaskMove).not.toHaveBeenCalled();
-      expect(engine.failedStart('home', taskId)).toBeNull();
-      expect(harness.notifySpawnBlocked).not.toHaveBeenCalled();
-      expect(harness.announceWorkflowStall).not.toHaveBeenCalled();
-
-      // Nothing else holds it back: once the pause is lifted, the next pass starts it.
-      holdOn(taskId, false);
-      engine.wake();
-      await advance(DEBOUNCE_MS);
-
-      expect(movesOf(taskId)).toHaveLength(1);
-    });
-
-    it('gives the one free slot to the next task when a held task is first in To Do', async () => {
-      const { taskIds: [heldTaskId, freeTaskId] } = runningWorkflow('Usage budgets', 2);
-      const tasks = new TaskRepository(dbOf('home'));
-      expect(tasks.getById(heldTaskId)!.position).toBeLessThan(tasks.getById(freeTaskId)!.position);
-      holdOn(heldTaskId, true);
-      moveSucceeds();
-      // One slot: a held task planned first would spend it, and the free task behind it would wait.
-      freeAgentSlots = 1;
-
-      await advance(DEBOUNCE_MS);
-
-      expect(movesOf(freeTaskId)).toHaveLength(1);
-      expect(movesOf(heldTaskId)).toHaveLength(0);
-      expect(tasks.getById(heldTaskId)!.swimlane_id).toBe(todoOf('home').id);
     });
   });
 

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   describeStepRoute,
+  isSendBackOnly,
   stepExitVerdict,
   workflowBlockerConditions,
   workflowStepCondition,
@@ -170,6 +171,28 @@ describe('workflowStepCondition before the last column', () => {
 // agent's own is still running: what the reply says it is stuck on, so the
 // nudge can aim at it. Whether it needs the owner is the agent's own line, and
 // whether work still runs comes from the hook events, so neither is asked.
+describe('workflowStepCondition in a column with only send-back rows', () => {
+  const testing = { name: 'Testing', description: 'Opens the PR and waits for CI. Stays here until 1+ reviewer approves, then drag to Merge.' };
+  const route = { steps: ['Executing', 'Testing', 'Merge', 'Done'], skipped: [], isLast: false };
+
+  it('asks whether the agent finished what it can do alone, whatever the column says about a reviewer', () => {
+    const condition = workflowStepCondition(testing, route, { sendBackOnly: true });
+    expect(condition).toContain('finished what it can do alone');
+    expect(condition).toContain('waits on a person');
+    expect(condition).toContain(testing.description);
+    expect(condition).not.toContain('not waiting on the user');
+  });
+
+  it('asks the same at the route\'s last column, which a person also moves on', () => {
+    const condition = workflowStepCondition(testing, { ...route, steps: ['Testing', 'Done'], isLast: true }, { sendBackOnly: true });
+    expect(condition).toContain('finished what it can do alone');
+  });
+
+  it('keeps the measured wording everywhere else', () => {
+    expect(workflowStepCondition(testing, route)).toContain('not waiting on the user');
+  });
+});
+
 describe('what a step that is not done is stuck on', () => {
   it('asks one row per blocker the nudge has an instruction for, and nothing about the owner', () => {
     const rows = workflowBlockerConditions({ name: 'Executing' }, 'main');
@@ -260,9 +283,23 @@ describe('stepExitVerdict', () => {
     expect(stepExitVerdict(codeReview, [], 'No changes to review.')).toBeNull();
   });
 
-  it('leaves the check alone in a column whose only row sends the task back, when the reply does not match it', () => {
-    // The step itself is that column's forward exit.
-    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], 'Reviewed and fixed everything.')).toBeNull();
+  // A review gate: the column has said how a task goes back, and left the way on
+  // to a person. On one PR state the check alone held six tasks and moved three
+  // on, and those three merged with no approval. So its yes stops the card.
+  it('stops the card on a yes in a column whose only rows send the task back, when the reply matches neither', () => {
+    const rows = [BACK_FOR_REVISIONS, exitTo('Changes requested', 'Executing')];
+    expect(stepExitVerdict(codeReview, rows, 'PR open, checks green.\n\nPR: awaiting review')).toEqual({ accepted: true, stopsHere: true });
+  });
+
+  // A yes on a turn with no final message would tell a person the agent finished
+  // with nothing to show for it. Refused, it is a stall and gets its nudge.
+  it('refuses an empty reply there too, so it is nudged rather than handed to a person', () => {
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], null)).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], '   \n')).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+  });
+
+  it('counts a send-back with a Text match that can match no line as no exit at all', () => {
+    expect(stepExitVerdict(codeReview, [exitTo('---', 'Executing')], 'PR: awaiting review')).toBeNull();
   });
 
   it('still refuses a send-back match in a column with no forward row', () => {
@@ -279,9 +316,22 @@ describe('stepExitVerdict', () => {
     expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', 'Merge')], 'Verdict: Ready')).toEqual({ accepted: true });
   });
 
+  it('never stops the card in a column with a forward row', () => {
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS, ON_TO_TESTING], 'Verdict: Ready')).toEqual({ accepted: true });
+  });
+
   it('treats a row whose target names no column as no forward exit', () => {
     expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'Verdict: Ready')).toBeNull();
     expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'No changes to review.')).toBeNull();
+  });
+
+  // Decision: a dangling row (its target column no longer exists) is not a forward exit, so a
+  // column with one send-back row and one dangling row is send-back-only. Stopping for a person
+  // is the safe direction: the step never moves the card on past a row it cannot resolve.
+  it('reads a send-back row beside a dangling row as send-back-only, and stops the card on a reply matching the dangling row', () => {
+    const rows = [BACK_FOR_REVISIONS, exitTo('Verdict: Ready', null)];
+    expect(isSendBackOnly(codeReview, rows)).toBe(true);
+    expect(stepExitVerdict(codeReview, rows, 'Verdict: Ready')).toEqual({ accepted: true, stopsHere: true });
   });
 
   it('ignores a row whose Text match can match no line, since it never runs', () => {

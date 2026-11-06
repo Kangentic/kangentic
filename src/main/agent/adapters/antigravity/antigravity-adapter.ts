@@ -1,3 +1,5 @@
+import { identifyAntigravityUserSetupFailure } from './startup-failure';
+import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import fs from 'node:fs';
 import { AntigravityDetector } from './detector';
 import { AGY_SESSION_SETTINGS_FILE, AntigravityCommandBuilder, antigravityMcpWiringEnabled } from './command-builder';
@@ -158,6 +160,11 @@ export class AntigravityAdapter implements AgentAdapter {
    */
   remoteSessionFiles(): readonly string[] {
     return [AGY_SESSION_SETTINGS_FILE];
+  }
+
+  /** See `startup-failure.ts`. */
+  identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
+    return identifyAntigravityUserSetupFailure(finalOutput);
   }
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {

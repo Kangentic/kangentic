@@ -112,7 +112,9 @@ to the next column on its route, and the last one to Done; not done leaves it wh
 with a Move to column automation that moves the task forward on the agent's last line (a Text match
 such as "Verdict: Ready") has said what finishes it. There a task moves on only when that last line
 matches a forward one. A reply that matches none of them, or matches only one that sends the task
-back, is treated as not finished, whatever the Automation agent made of it. A task
+back, does not move the task on, whatever the Automation agent made of it. In a column whose
+only rows send the task back, the card stops once the agent has finished what it can do alone (see
+Columns only you move a card out of). A task
 that finishes a plan moves on when its plan is approved, and its agent's first prompt says so. The
 agent may also move its task on itself with `kangentic_move_task` and "next", except in a plan
 column, where its prompt says the approval does it, and not from a column its task already left
@@ -138,9 +140,29 @@ set it too: `planApproval` on a task in `kangentic_save_workflow` or `kangentic_
 and `kangentic_update_task` for a started workflow task that has not passed its plan column. Without an Automation agent, or in a
 column with no agent, you drag the card on yourself.
 
+**A row keeps to the route.** A column's Move to column row that names a column the task's route
+skips, or one past the route's last column, moves the task to the next column on its route instead,
+which can be Done. A row that sends a task back still goes where it says.
+
+**When no change is needed.** An agent that decides the task needs no change ends its reply with a
+`No changes needed: <why>` line. Kangentic checks the branch: no commits ahead of its base and a
+clean worktree. If it agrees, the card goes straight to Done, past the rest of its route, and the
+reason goes in the run log. This works in any column and needs no Automation agent. A task with no
+worktree has nothing to compare, so the agent's word stands. If the branch has changes, or cannot be
+read, nothing moves and the agent is told why. The line also skips what lies ahead on the route,
+Manual plan approval included: a task in Planning has an empty branch, so there the check proves
+nothing and the agent's word decides.
+
+**Columns only you move a card out of.** When a column's only Move to column rows send a task back
+(a Testing column with "Checks failing" and "Changes requested", say), the workflow never moves a
+card out of it, because the way on is yours to give. Once the agent has finished what it can do
+alone, the card stops and you get one notice. Drag it on when it is ready. A real stall there still
+gets its nudges, and so does a turn that ends with no final message. To let a run go on by itself, give the column a row that moves the task forward.
+
 **When a step does not finish.** Nothing an agent writes stops a running workflow's task unless it
 says that only you can settle it: a change from the plan, something you must weigh in on, or a
-decision between options. The agent says so by ending its reply with a `Needs owner: <the question>` line, which
+decision between options. The one other stop is a column with only send-back rows, where the card
+stops once the agent has finished what it can do alone. The agent says so by ending its reply with a `Needs owner: <the question>` line, which
 every workflow task is told about. When a turn ends with the step not done:
 
 - **It ends on the Needs owner line.** You get a notice with the question, at once, and nothing is
@@ -182,25 +204,9 @@ Stalled with why on hover. Through an outage Kangentic keeps checking every hour
 service comes back the task moves on by itself. If you answer a stalled task and it stops again
 later, recovery starts over for it, with its own notice. A start that keeps failing for 30
 minutes and a hung turn the interrupt does not end get the notice too. Pausing the workflow
-cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
+cancels all of it, and a task in a running workflow raises no plain Agent idle notice or toast. A
+permission prompt still does. The
 **Workflow stalled** switch is in Settings > Notifications.
-
-**Working one task by hand.** To take one task out of a running workflow while the rest keeps
-going, right-click its card (on the board, the Workflows canvas or the Agent Monitor) and choose
-**Pause automations**. The workflow then leaves that task alone: it does not judge its turns, move
-it on, nudge it, interrupt a hung turn or send a Workflow stalled notice for it, and the plain
-Agent idle notice comes back. Its column's own automations stop too, as on any task. You can drag
-the card to any column but To Do. The tasks that wait for it keep waiting until it reaches Done,
-and a held task in To Do is not started. A plan you approve yourself still moves it on, as the
-approval is yours. The card wears an **Automations paused** strip over its workflow strip, a held
-To Do card's footer says Paused, and the inspector shows the strip with a **Resume** button.
-Choose **Resume automations** (or Resume in the inspector) to hand it back. Nothing the hold
-skipped is replayed: an enter automation a hand move skipped stays skipped (Run again runs it).
-If the agent finished its work in this column and sits idle, its last reply is judged at once and
-the task moves on; a reply from before a hand move is left for the next turn. Its recovery starts
-over, with its own nudges and notice. Pausing the whole workflow, on the Workflows header, does stop
-a held task's agent too, and Resume brings it back still held. An agent can do the same with
-`kangentic_update_task`'s `automationsDisabled`.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step
 track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
@@ -224,19 +230,27 @@ longer exists." instead, even when it had the workflow loaded. If the workflow's
 panel already showing the workflow keeps it through a failed read. The next read that succeeds
 clears either message.
 
-**Locked while it runs.** A running workflow's cards cannot be moved to another column by hand: a
-drag stays in the card's own column, where you can still reorder it. The exception is a card you
-move on yourself (no Automation agent, or a column with no agent), which you drag onto the next
-column of its route. No workflow task can be moved back to To Do. A refused move leaves the card
-where it is, says why in a toast that opens the workflow when clicked, and shows the card's links. The menu keeps Move
-to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after. To move one card by hand while the rest
-runs, pause that task's automations instead (see Working one task by hand); Backlog and Archive stay
-off for it, since both take the task out of its workflow.
+**In motion, locked; stopped, yours.** While a card is in motion, a drag stays in its own column,
+where you can still reorder it. In motion means its agent is working or sits at a prompt, a message
+is on its way to it, Kangentic is acting on its last reply, or it is starting. Once it stops, you
+can drag it to any column but To Do, and its route carries on from where it lands. That includes a
+card that ended on a Needs owner line, and a card with no agent. The new column's automations run
+as on any move. A card still in To Do stays locked, because only the workflow starts it, and so
+does a card in Done. A refused move leaves the card where it is, says why in a toast that opens the
+workflow when clicked, and shows the card's links. The menu keeps Move to, Backlog and Archive,
+disabled with the same reason. Backlog and Archive stay off for a stopped card too, since both take
+the task out of its workflow. A phone offers a stopped card the next column on its route. Pause the
+workflow (the Running button) to stop every agent in it and move its cards by hand, and Resume it
+after.
+
+**A workflow task's automations cannot be paused.** A workflow is built, started and left to run, so
+no one card can quietly stop it. To stop work, pause the workflow. To review a task's plan, set its
+Plan approval to Manual. To wait on something outside, the agent ends on a Needs owner line. If a
+task must never start on its own, leave it out of the workflow.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
 
 **Pausing.** The Running button pauses the workflow, and so do the phone and
-`kangentic_pause_workflow`. Pause stops every one of its agents at once, a task with paused
-automations included, and frees what they hold. If an agent cannot be stopped, a toast names its
+`kangentic_pause_workflow`. Pause stops every one of its agents at once and frees what they hold. If an agent cannot be stopped, a toast names its
 task. When an agent pauses its own workflow, that agent stops once its turn ends, so its reply
 stays in its conversation. While paused, the workflow does nothing by itself: it starts no task, judges no turn, nudges
 nothing and moves no card. You still can. Resume one card's agent to look into it, drag cards, or
@@ -249,8 +263,7 @@ agent, such as a column message, wait for its Resume. The automation log says so
 Resume brings back every agent the Pause stopped, each in the column its task is in now, and starts
 one, with the column's message, for a task in an agent column that has none. An agent already
 running is left running, and its last reply is judged, so a card you worked to the end of its
-column moves on. A task with paused automations gets its stopped agent back, still held, and never
-a new one. The workflow then carries on from the board as it is: a task you finished while it was
+column moves on. The workflow then carries on from the board as it is: a task you finished while it was
 paused lets what waits for it start. A paused agent you dragged to a new column comes back the way
 that move would have started it: a fresh conversation in a column that always starts new (an
 isolated Code Review, even one the card left and came back to), its conversation with the column's
