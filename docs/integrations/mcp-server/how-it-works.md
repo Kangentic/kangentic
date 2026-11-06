@@ -208,6 +208,10 @@ Claude Code sessions Kangentic spawns never see a permission prompt for Kangenti
 
 The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans running `claude` outside Kangentic; inside Kangentic the injection makes it redundant but harmless (deduped).
 
+## Tools on a remote host
+
+The server runs in Kangentic's main process on this computer. An agent in a remote project (an SSH host) runs on the host, so a tool answers from the layer its fact belongs to. A fact about where the agent works (a worktree or project path, a session `cwd`, a git or process fact, a port its server listens on) is the host's value. A fact about this computer (the Browser pane, a forwarded local port, the app's logs, Kangentic's own process metrics) is returned as it is and labeled `location: 'local'`. A path the agent passes in is a host path. The rule and the full mapping are in [Remote hosts](../../platforms/ssh-remote.md#what-an-agents-tools-report); a new or changed tool follows `.claude/rules/mcp-tool-host-values.md`.
+
 ## Security
 
 - **Loopback bind by default** - the HTTP server binds to `127.0.0.1:0` (random port) unless a user opts into a wider `mcpServer.bindAddress` (see Network Access above). Loopback is not reachable from other machines and does not trigger a Windows Defender Firewall prompt. Not `localhost` (which can resolve to `::1` on IPv6-preferring systems) and not `0.0.0.0` unless explicitly configured.

@@ -114,6 +114,12 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `place.files.runCommand` run the program through the user's shell on the host, with a timeout
   that stops its process group. `cliInvocationForTarget` throws for a host: it would start a
   process on this computer.
+- **A tool the agent calls answers from the layer its fact belongs to.** The MCP server runs here
+  and the agent runs on the host, so a path read from `task.worktree_path`, `sessions.cwd` or
+  `project.path` is this computer's empty stand-in, not where the agent works. A fact about where
+  the agent works is the host's value, a fact about this computer is local and labeled, and an input
+  path is a host path. The whole rule, with the helper and the `location` label, is
+  [[mcp-tool-host-values]].
 
 ## Enforcement (self-maintaining)
 
