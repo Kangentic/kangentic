@@ -27,6 +27,11 @@ msgstr "„{movedTaskTitle}“ je nyní ve sloupci."
 msgid "\"{taskTitle}\""
 msgstr "„{taskTitle}“"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, one {Před ní je # úloha...} few {Před ní jsou # úlohy...} many {Před ní je # úlohy...} other {Před ní je # úloh...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -328,6 +333,11 @@ msgstr "Nový úkol"
 msgid "New workflow"
 msgstr "Nový pracovní postup"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "Další na řadě..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "No completed tasks yet"
@@ -359,11 +369,6 @@ msgstr "Pozastavit relaci"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "Pozastaveno"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "Ve frontě {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy

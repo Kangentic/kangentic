@@ -217,6 +217,8 @@ function MonitorTaskDetailHostValue({
       shortcutsSuppressed,
       // The conversation viewer opens on the board layer, under this overlay.
       canOpenConversation: false,
+      // The Column Manager mounts on that same board layer.
+      canOpenColumnManager: false,
       // The bundle holds this one task, so no row has a live title to prefer.
       useLiveTaskTitle: useNoLiveTaskTitle,
     };

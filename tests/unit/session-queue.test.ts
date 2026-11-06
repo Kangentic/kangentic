@@ -22,6 +22,54 @@ describe('SessionQueue', () => {
     expect(queue.length).toBe(2);
   });
 
+  it('replaceCommand swaps a waiting entry\'s command and keeps its place', () => {
+    const queue = new SessionQueue({
+      spawner: vi.fn(),
+      getActiveCount: () => 5,
+      maxConcurrent: 5,
+    });
+    queue.enqueue(makeQueueInput('t1', 'sess-1'));
+    queue.enqueue(makeQueueInput('t2', 'sess-2'));
+
+    expect(queue.replaceCommand('sess-1', 'mock-claude --model sonnet')).toBe(true);
+
+    expect(queue.entries.map((entry) => entry.id)).toEqual(['sess-1', 'sess-2']);
+    expect(queue.entries[0].command).toBe('mock-claude --model sonnet');
+    expect(queue.replaceCommand('sess-gone', 'mock-claude')).toBe(false);
+  });
+
+  it('a promotion after replaceCommand spawns the new command with every other field intact', async () => {
+    const spawner = vi.fn().mockResolvedValue(undefined);
+    let activeCount = 5;
+    const queue = new SessionQueue({
+      spawner,
+      getActiveCount: () => activeCount,
+      maxConcurrent: 5,
+    });
+    const rebuildCommand = vi.fn(() => 'rebuilt');
+    const original: SpawnSessionInput & { id: string } = {
+      id: 'sess-1',
+      taskId: 't1',
+      projectId: 'project-1',
+      command: 'mock-claude',
+      cwd: '/tmp/work',
+      env: { KANGENTIC_FLAG: '1' },
+      rebuildCommand,
+    };
+    queue.enqueue(original);
+
+    expect(queue.replaceCommand('sess-1', 'mock-claude --model sonnet')).toBe(true);
+    expect(spawner).not.toHaveBeenCalled();
+
+    activeCount = 4;
+    queue.notifySlotFreed();
+    await vi.waitFor(() => expect(spawner).toHaveBeenCalledTimes(1));
+
+    expect(spawner).toHaveBeenCalledWith({ ...original, command: 'mock-claude --model sonnet' });
+    expect(spawner.mock.calls[0][0].rebuildCommand).toBe(rebuildCommand);
+    expect(queue.length).toBe(0);
+  });
+
   it('remove returns true when found, false when not', () => {
     const queue = new SessionQueue({
       spawner: vi.fn(),

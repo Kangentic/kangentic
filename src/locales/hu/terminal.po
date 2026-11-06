@@ -165,6 +165,11 @@ msgstr "Még nincsenek eszközhívások"
 msgid "Notice"
 msgstr "Értesítés"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "A módosításhoz szüneteltesse ezt a feladatot"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

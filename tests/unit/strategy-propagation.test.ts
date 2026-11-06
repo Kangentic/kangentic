@@ -53,6 +53,10 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: vi.fn(async (_id: string, fn: () => Promise<void>) => fn()),
 }));
+const mockApplyToQueuedStart = vi.fn();
+vi.mock('../../src/main/ipc/handlers/task-runtime-override', () => ({
+  applyTaskSettingsToQueuedStart: (...args: unknown[]) => mockApplyToQueuedStart(...args),
+}));
 // Stubbed for its own sake AND to keep the real module's `agent-spawn` import
 // (and the electron it drags in) out of this suite. What the reconcile DOES is
 // pinned in auto-spawn-reconcile.test.ts; what matters here is that the
@@ -205,6 +209,35 @@ describe('propagateStrategyToLiveSessions', () => {
     // Never typed, and nothing recorded: the respawn records its own flags.
     expect(mockScheduleKeystrokes).not.toHaveBeenCalled();
     expect(mockUpdateAppliedSettings).not.toHaveBeenCalled();
+  });
+
+  it('gives a queued session the new settings on its waiting command, with no restart', () => {
+    mockGetSession.mockReturnValue({ status: 'queued' });
+    const task = makeTask();
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task,
+      before: makeLane({ model_override: 'haiku' }),
+      after: makeLane({ model_override: 'sonnet' }),
+      sourceName: 'Executing',
+    }], 'proj-1');
+
+    expect(mockApplyToQueuedStart).toHaveBeenCalledWith(expect.anything(), 'proj-1', '/mock/project', task);
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it('does not touch a queued session when no project is resolved, and restarts nothing', () => {
+    mockGetSession.mockReturnValue({ status: 'queued' });
+
+    propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
+      task: makeTask(),
+      before: makeLane({ model_override: 'haiku' }),
+      after: makeLane({ model_override: 'sonnet' }),
+      sourceName: 'Executing',
+    }], null);
+
+    expect(mockApplyToQueuedStart).not.toHaveBeenCalled();
+    expect(restartSessionForSettingsChange).not.toHaveBeenCalled();
   });
 
   it('restarts with the switching-model phase for a model change', () => {

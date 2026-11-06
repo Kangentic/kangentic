@@ -152,6 +152,7 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
 - When the limit is reached, the session receives a `queued` status placeholder.
 - When a running session exits or is suspended, `notifySlotFreed()` promotes the next queued entry.
 - Reentrancy-safe: a `_processing` flag prevents concurrent promotion, and a `_dirty` flag ensures re-iteration if the queue changed during a spawn await.
+- A queued session's model or effort change rebuilds its waiting command through `SessionManager.rebuildQueuedCommand` and `SessionQueue.replaceCommand`, and the entry keeps its place in line. The rebuild is `SpawnSessionInput.rebuildCommand`, which `TransitionEngine.prepareLaunch` sets. An entry with no rebuild (a startup spawn), a rebuild that throws, or a promotion already spawning keeps its command, and the settings apply from its next spawn.
 
 ### A column's agent limit
 

@@ -27,6 +27,11 @@ msgstr "„{movedTaskTitle}“ ist jetzt in der Spalte."
 msgid "\"{taskTitle}\""
 msgstr "„{taskTitle}“"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, one {# Aufgabe davor...} other {# Aufgaben davor...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -328,6 +333,11 @@ msgstr "Neue Aufgabe"
 msgid "New workflow"
 msgstr "Neuer Workflow"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "Als Nächstes dran..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "No completed tasks yet"
@@ -359,11 +369,6 @@ msgstr "Sitzung pausieren"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "Pausiert"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "In Warteschlange {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy

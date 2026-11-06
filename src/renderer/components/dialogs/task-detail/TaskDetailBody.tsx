@@ -4,6 +4,7 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
 import { PreSpawnContextBar } from '../../terminal/PreSpawnContextBar';
+import { QueuedContextBar } from '../../terminal/QueuedContextBar';
 import { LaunchOverlay } from '../../LaunchOverlay';
 import { CompletedTaskView } from './completed/CompletedTaskView';
 import { BrowserPane } from '../../browser/BrowserPane';
@@ -533,9 +534,27 @@ export function TaskDetailBody({
     );
   }
 
-  // Queued
+  // Queued: the task's place in line, beside Changes when that is open, over a
+  // read-only bar.
   if (taskDetailSurfaceFor(displayKind, laneRole) === 'queued-placeholder') {
-    return <QueuedPlaceholder sessionId={sessionId} />;
+    return (
+      <>
+        <div ref={splitContainerRef} className="flex-1 min-h-0 flex">
+          {!changesExpanded && (
+            <div
+              className={`${changesPresent ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-w-0 min-h-0 flex overflow-hidden`}
+              style={changesPresent ? { flexBasis: `${splitRatio * 100}%` } : undefined}
+            >
+              <QueuedPlaceholder sessionId={sessionId} />
+            </div>
+          )}
+          {changesPresent && !changesExpanded && splitDivider}
+          {changesPanelElement}
+          {resizeCaptureOverlay}
+        </div>
+        <QueuedContextBar task={task} />
+      </>
+    );
   }
 
   // Launching (preparing): worktree creation / CLI boot before the session

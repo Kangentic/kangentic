@@ -114,6 +114,14 @@ export class SessionQueue {
     return false;
   }
 
+  /** Swap a waiting entry's command, keeping its place. False when it is not waiting. */
+  replaceCommand(sessionId: string, command: string): boolean {
+    const entry = this.queue.find((candidate) => candidate.input.id === sessionId);
+    if (!entry) return false;
+    entry.input = { ...entry.input, command };
+    return true;
+  }
+
   /** Signal that a slot may have opened (session exited/suspended/killed). */
   notifySlotFreed(): void {
     // Don't await -- callers (kill, suspend, onExit) shouldn't block.
