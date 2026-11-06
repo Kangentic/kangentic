@@ -392,7 +392,7 @@ async function restrictToOwnerOnWindows(filePath: string, deps: SshSetupDeps): P
   const icacls = systemRoot ? path.win32.join(systemRoot, 'System32', 'icacls.exe') : 'icacls';
   const { username } = os.userInfo();
   const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${username}` : username;
-  const result = await deps.run(icacls, [filePath, '/inheritance:r', '/grant:r', `${account}:F`, '*S-1-5-18:F'], { timeout: 30_000 });
+  const result = await deps.run(icacls, [filePath, '/inheritance:r', '/grant:r', `${account}:F`, '*S-1-5-18:F'], { env: childProcessEnv(), timeout: 30_000 });
   if (result.code !== 0) throw new Error(result.stdout.trim() || result.stderr.trim() || 'Could not restrict who can read the key file.');
 }
 
