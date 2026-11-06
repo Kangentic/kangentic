@@ -251,6 +251,21 @@ export function summarizeStderrTail(tail: string, maxLength = 160): string | nul
   return chosen.length > maxLength ? `${chosen.slice(0, Math.max(0, maxLength - 3))}...` : chosen;
 }
 
+/** What every line the retrieval worker's event-loop watchdog writes contains.
+ *  The watchdog builds its line from this and `watchdogLine` looks for it, so
+ *  the two cannot drift. Lives here because main reads it, and main must not
+ *  import the watchdog's thread module. */
+export const EVENT_LOOP_HELD_PHRASE = 'event loop held';
+
+/** The newest watchdog line in a stderr tail, or null when there is none. */
+export function watchdogLine(tail: string): string | null {
+  const lines = tail.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].includes(EVENT_LOOP_HELD_PHRASE)) return lines[index].trim();
+  }
+  return null;
+}
+
 /** Drain a forked worker's piped stderr into `tail`. Draining is mandatory:
  *  once the OS pipe buffer fills, an undrained pipe blocks the child on its
  *  next write. `passThrough` re-emits each chunk on this process's stderr so a

@@ -7,6 +7,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { geminiChatFilePattern, geminiChatsDir } from './session-history-parser';
 
 /** A Gemini message without its own id is named by its line, so the tail, its notice and every page count lines. */
@@ -67,17 +68,19 @@ export async function parseGeminiTranscript(
   const isWholeFile = window.omittedBytes === 0 && window.nextByteOffset >= window.totalBytes;
   if (isWholeFile && trimmed.startsWith('{') && trimmed.endsWith('}') && !trimmed.includes('\n')) {
     // Legacy single-object form: one JSON object with a messages[] array.
-    const kept = new Map<string, KeptItem>();
-    const parsed = tryParseJson(trimmed);
-    if (isRecord(parsed) && Array.isArray(parsed.messages)) {
-      // The legacy form is one object on one line, so every message shares
-      // line 0 and is distinguished by its index within the array. Its entries
-      // carry no `origin`, since one line holds nothing to page.
-      for (const [index, message] of parsed.messages.entries()) {
-        keepMessage(kept, agentSessionId, message, 0, index, null);
+    return timeSyncWork('transcript:parse-gemini', () => {
+      const kept = new Map<string, KeptItem>();
+      const parsed = tryParseJson(trimmed);
+      if (isRecord(parsed) && Array.isArray(parsed.messages)) {
+        // The legacy form is one object on one line, so every message shares
+        // line 0 and is distinguished by its index within the array. Its entries
+        // carry no `origin`, since one line holds nothing to page.
+        for (const [index, message] of parsed.messages.entries()) {
+          keepMessage(kept, agentSessionId, message, 0, index, null);
+        }
       }
-    }
-    return entriesFromMessages(agentSessionId, kept);
+      return entriesFromMessages(agentSessionId, kept);
+    });
   }
 
   // The line count is only used when a message lacks its own `id`. See the
@@ -242,6 +245,14 @@ type KeptItem =
  * yet run against a real session file.
  */
 function parseGeminiLines(
+  agentSessionId: string,
+  lines: ReadonlyArray<JsonlLine>,
+  onLineNamedMessage?: () => void,
+): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-gemini', () => collectGeminiEntries(agentSessionId, lines, onLineNamedMessage));
+}
+
+function collectGeminiEntries(
   agentSessionId: string,
   lines: ReadonlyArray<JsonlLine>,
   onLineNamedMessage?: () => void,

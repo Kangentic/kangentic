@@ -4,6 +4,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { countNewlinesBefore, readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { qwenChatsDir } from './session-history-parser';
 import type { CliPlace } from '../../shared/cli-target';
 
@@ -115,6 +116,10 @@ export function readQwenTranscriptPage(
 
 /** Parse whole lines into entries, each stamped with the byte its line starts at. */
 function parseQwenLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-qwen', () => collectQwenEntries(agentSessionId, lines));
+}
+
+function collectQwenEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;

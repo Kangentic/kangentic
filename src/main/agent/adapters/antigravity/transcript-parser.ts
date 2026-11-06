@@ -8,6 +8,7 @@ import {
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { antigravityTranscriptPath } from './data-paths';
 import type { CliPlace } from '../../shared/cli-target';
 
@@ -188,6 +189,10 @@ export function readAntigravityTranscriptPage(
  * the file.
  */
 function parseAntigravityLines(lines: ReadonlyArray<JsonlLine>, agentSessionId?: string): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-antigravity', () => collectAntigravityEntries(lines, agentSessionId));
+}
+
+function collectAntigravityEntries(lines: ReadonlyArray<JsonlLine>, agentSessionId?: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   // The id of the most recent tool_use block, so a following ERROR_MESSAGE
   // step (agy records tool failures as their own step) can be attached as

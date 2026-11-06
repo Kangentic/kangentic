@@ -17,7 +17,7 @@ import { format } from 'node:util';
 import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setProjectDbInitializer, setWalAutoCheckpoint } from '../../db/database';
 import { setAfterCommitHook } from '../../db/transaction';
-import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
+import { relaySlowSyncSpans, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { loadVecExtensionFrom } from '../vec-support';
 import { createCheckpointPacer } from './checkpoint-pacing';
 import { startEventLoopWatchdog } from './event-loop-watchdog';
@@ -127,7 +127,9 @@ async function dispatch(message: RequestMessage): Promise<void> {
     return;
   }
   try {
-    const result = await handler(message.params, context);
+    // Labels each handler's synchronous slice, up to its first await. Work after
+    // that await carries a span of its own, or it reads as outside any step.
+    const result = await timeSyncWork(`method:${method}`, () => handler(message.params, context));
     post({ type: 'reply', id: message.id, ok: true, result });
   } catch (error) {
     post({ type: 'reply', id: message.id, ok: false, error: error instanceof Error ? error.message : String(error) });
