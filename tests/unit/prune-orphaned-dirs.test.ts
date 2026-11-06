@@ -11,6 +11,8 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const mockExistsSync = vi.fn((): boolean => true);
 const mockReaddir = vi.fn((): Promise<{ name: string; isDirectory: () => boolean }[]> => Promise.resolve([]));
 const mockRm = vi.fn((): Promise<void> => Promise.resolve());
+const mockMoveIntoSetAside = vi.fn((): Promise<string | null> => Promise.resolve('/moved'));
+const mockReportHandledError = vi.fn();
 // Default to an old mtime so every existing deletion-asserting test still
 // sweeps. Computed at call time because these suites use fake timers.
 const mockStat = vi.fn((): Promise<{ mtimeMs: number }> => Promise.resolve({ mtimeMs: Date.now() - ONE_DAY_MS }));
@@ -31,6 +33,13 @@ vi.mock('node:fs', () => ({
   },
 }));
 
+vi.mock('../../src/main/project-ownership/set-aside', () => ({
+  moveIntoSetAside: (...args: unknown[]) => mockMoveIntoSetAside(...args),
+  purgeExpiredSetAside: vi.fn(),
+}));
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: (...args: unknown[]) => mockReportHandledError(...args),
+}));
 vi.mock('node:crypto', () => ({ randomUUID: vi.fn(() => 'mock-uuid') }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
@@ -84,6 +93,7 @@ vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
 import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+import { ownershipOf } from './helpers/verified-ownership';
 import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
 
@@ -95,8 +105,8 @@ const SESSIONS_DIR = path.join(PROJECT, '.kangentic', 'sessions');
 const TASKS_DIR = path.join(PROJECT, '.kangentic', 'tasks');
 
 function makeMockTaskRepo(
-  tasks: { id: string; worktree_path: string | null; session_id?: string | null }[],
-  archived: { id: string; worktree_path: string | null; session_id?: string | null }[] = [],
+  tasks: { id: string; worktree_path: string | null; worktree_folder?: string | null; session_id?: string | null }[],
+  archived: { id: string; worktree_path: string | null; worktree_folder?: string | null; session_id?: string | null }[] = [],
 ) {
   return {
     list: vi.fn(() => tasks),
@@ -146,6 +156,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddir.mockResolvedValue([]);
     mockRm.mockResolvedValue(undefined);
+    mockMoveIntoSetAside.mockResolvedValue('/moved');
     mockStat.mockImplementation(() => Promise.resolve({ mtimeMs: Date.now() - ONE_DAY_MS }));
   });
 
@@ -153,23 +164,21 @@ describe('pruneStaleResources -- async background cleanup', () => {
     vi.useRealTimers();
   });
 
-  it('removes orphaned worktree directories', async () => {
+  it('sets orphaned worktree directories aside and deletes nothing', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [WORKTREES_DIR]: [dirEntry('stale-abcd1234')],
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
-    expect(mockRm).toHaveBeenCalledWith(
-      path.join(WORKTREES_DIR, 'stale-abcd1234'),
-      expect.objectContaining({ recursive: true, force: true }),
-    );
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'stale-abcd1234'));
+    expect(mockRm).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
       expect.stringContaining('Removing orphaned worktree directory: stale-abcd1234'),
     );
@@ -179,14 +188,14 @@ describe('pruneStaleResources -- async background cleanup', () => {
   it('removes orphaned session directories', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [SESSIONS_DIR]: [dirEntry('dead-session-uuid')],
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).toHaveBeenCalledWith(
@@ -196,23 +205,92 @@ describe('pruneStaleResources -- async background cleanup', () => {
     logSpy.mockRestore();
   });
 
-  it('removes orphaned task directories', async () => {
+  it('sets orphaned task directories aside, since their attachments have no other copy', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [TASKS_DIR]: [dirEntry('dead-task-uuid')],
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
-    expect(mockRm).toHaveBeenCalledWith(
-      path.join(TASKS_DIR, 'dead-task-uuid'),
-      expect.objectContaining({ recursive: true, force: true }),
-    );
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'tasks', path.join(TASKS_DIR, 'dead-task-uuid'));
+    expect(mockRm).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('keeps a folder whose move aside failed: there is no fallback delete', async () => {
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionManager = makeMockSessionManager();
+    mockMoveIntoSetAside.mockResolvedValue(null);
+    setupReaddir({ [WORKTREES_DIR]: [dirEntry('held-open')] });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
+    await runWithTimers();
+
+    expect(mockRm).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('refuses a sweep of most of a folder, and clears nothing in it', async () => {
+    // The shape of a wrong database that got past the ownership check: it names
+    // one entry of a populated folder. Two more folders still clear as usual.
+    const keptTask = { id: 'kept-task', worktree_path: path.join(WORKTREES_DIR, 'kept'), session_id: null };
+    const taskRepo = makeMockTaskRepo([keptTask]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionManager = makeMockSessionManager();
+    setupReaddir({
+      [TASKS_DIR]: [dirEntry('kept-task'), ...['a', 'b', 'c', 'd', 'e'].map(dirEntry)],
+      [SESSIONS_DIR]: [dirEntry('dead-session')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
+    await runWithTimers();
+
+    expect(mockMoveIntoSetAside).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Refused to clear 5 of 6 task directories'));
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    expect(mockRm).toHaveBeenCalledWith(path.join(SESSIONS_DIR, 'dead-session'), expect.anything());
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it('clears a majority of a small folder: a few stragglers are what a sweep is for', async () => {
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionManager = makeMockSessionManager();
+    setupReaddir({ [TASKS_DIR]: ['a', 'b', 'c', 'd'].map(dirEntry) });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
+    await runWithTimers();
+
+    expect(mockMoveIntoSetAside).toHaveBeenCalledTimes(4);
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('clears a large folder when the orphans are the smaller half', async () => {
+    const tasks = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, worktree_path: null, session_id: null }));
+    const taskRepo = makeMockTaskRepo(tasks);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionManager = makeMockSessionManager();
+    setupReaddir({ [TASKS_DIR]: ['a', 'b', 'c', 'd', 'e', 'x', 'y', 'z', 'v', 'w'].map(dirEntry) });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
+    await runWithTimers();
+
+    expect(mockMoveIntoSetAside).toHaveBeenCalledTimes(5);
+    expect(mockReportHandledError).not.toHaveBeenCalled();
     logSpy.mockRestore();
   });
 
@@ -222,7 +300,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
       { id: 'task-uuid-1', worktree_path: wtPath, session_id: 'pty-session-1' },
     ]);
     const sessionRepo = makeMockSessionRepo(['claude-session-uuid']);
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [WORKTREES_DIR]: [dirEntry('my-task-abcd1234')],
@@ -230,11 +308,44 @@ describe('pruneStaleResources -- async background cleanup', () => {
       [TASKS_DIR]: [dirEntry('task-uuid-1')],
     });
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     // None should be removed -- all referenced
     expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it('keeps a worktree folder whose task spells the project path another way', async () => {
+    // Matched by the folder name in worktree_path, not the exact string: a row written
+    // with other separators or another case still names its folder.
+    const taskRepo = makeMockTaskRepo([
+      { id: 'task-uuid-1', worktree_path: '\\DEV\\Project\\.kangentic\\worktrees\\spelled-differently', session_id: null },
+    ]);
+    setupReaddir({
+      [WORKTREES_DIR]: [dirEntry('spelled-differently'), dirEntry('stale-abcd1234')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, makeMockSessionRepo(), makeMockSessionManager());
+    await runWithTimers();
+
+    expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'spelled-differently'));
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'stale-abcd1234'));
+    logSpy.mockRestore();
+  });
+
+  it('sets aside the folder of a task that records only worktree_folder: a Done round trip leaves it no keeper', async () => {
+    const taskRepo = makeMockTaskRepo([
+      { id: 'task-uuid-1', worktree_path: null, worktree_folder: 'left-behind', session_id: null },
+    ]);
+    setupReaddir({ [WORKTREES_DIR]: [dirEntry('left-behind')] });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, makeMockSessionRepo(), makeMockSessionManager());
+    await runWithTimers();
+
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'left-behind'));
+    logSpy.mockRestore();
   });
 
   it('preserves a worktree directory a creation is still setting up, which no task records yet', async () => {
@@ -246,7 +357,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // to a day old here, so the grace period does not save it.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
     const settingUpPath = path.join(WORKTREES_DIR, '42');
     let finishCreation: () => void = () => undefined;
     const creation = runWorktreeCreation(settingUpPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
@@ -256,14 +367,11 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
-    expect(mockRm).not.toHaveBeenCalledWith(settingUpPath, expect.anything());
-    expect(mockRm).toHaveBeenCalledWith(
-      path.join(WORKTREES_DIR, 'stale-abcd1234'),
-      expect.objectContaining({ recursive: true, force: true }),
-    );
+    expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', settingUpPath);
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'stale-abcd1234'));
     finishCreation();
     await creation;
     logSpy.mockRestore();
@@ -277,7 +385,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // inside the node_modules removal, so it did not exist at the first ask.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
     const lateClaimedPath = path.join(WORKTREES_DIR, 'stale-abcd1234');
     const otherOrphanPath = path.join(WORKTREES_DIR, 'other-orphan-5678');
     let finishCreation: () => void = () => undefined;
@@ -295,19 +403,16 @@ describe('pruneStaleResources -- async background cleanup', () => {
     try {
       // Nothing holds the path when the sweep starts.
       expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(false);
-      await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+      await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
       await runWithTimers();
 
       // The sweep reached the removal stage for the claimed directory, so the
       // skip below is the second ask and not an earlier guard.
       expect(removeNodeModulesPath).toHaveBeenCalledWith(path.join(lateClaimedPath, 'node_modules'));
       expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(true);
-      expect(mockRm).not.toHaveBeenCalledWith(lateClaimedPath, expect.anything());
+      expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', lateClaimedPath);
       // The sweep carried on: the next orphan, which nothing claimed, is removed.
-      expect(mockRm).toHaveBeenCalledWith(
-        otherOrphanPath,
-        expect.objectContaining({ recursive: true, force: true }),
-      );
+      expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', otherOrphanPath);
     } finally {
       finishCreation();
       await creation;
@@ -322,14 +427,14 @@ describe('pruneStaleResources -- async background cleanup', () => {
       [{ id: 'archived-uuid', worktree_path: path.join(WORKTREES_DIR, 'archived-task'), session_id: null }],
     );
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [WORKTREES_DIR]: [dirEntry('archived-task')],
       [TASKS_DIR]: [dirEntry('archived-uuid')],
     });
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
@@ -342,21 +447,18 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // (the mtime defaults to a day old, so the grace period does not save it).
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [WORKTREES_DIR]: [dirEntry('spare_0a1b2c3d'), dirEntry('stale-abcd1234')],
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
-    expect(mockRm).not.toHaveBeenCalledWith(path.join(WORKTREES_DIR, 'spare_0a1b2c3d'), expect.anything());
-    expect(mockRm).toHaveBeenCalledWith(
-      path.join(WORKTREES_DIR, 'stale-abcd1234'),
-      expect.objectContaining({ recursive: true, force: true }),
-    );
+    expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'spare_0a1b2c3d'));
+    expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', path.join(WORKTREES_DIR, 'stale-abcd1234'));
     logSpy.mockRestore();
   });
 
@@ -367,8 +469,8 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // sessionManager.listSessions(). This locks that guarantee.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo(); // no DB-referenced ids
-    const sessionMgr = makeMockSessionManager();
-    (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
+    const sessionManager = makeMockSessionManager();
+    (sessionManager as unknown as { listSessions: ReturnType<typeof vi.fn> })
       .listSessions.mockReturnValue([{ id: 'live-session-uuid', status: 'running' }]);
 
     setupReaddir({
@@ -376,7 +478,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     // The genuinely-dead dir is removed...
@@ -399,15 +501,15 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // open, with last run's directory unreferenced and days old.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
-    (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
+    const sessionManager = makeMockSessionManager();
+    (sessionManager as unknown as { listSessions: ReturnType<typeof vi.fn> })
       .listSessions.mockReturnValue([{ id: 'terminal-session-uuid', taskId: 'terminal-tag-uuid', status: 'running', transient: true }]);
 
     setupReaddir({
       [SESSIONS_DIR]: [dirEntry('terminal-session-uuid')],
     });
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
@@ -417,15 +519,15 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // Red without the live sessions' task ids in the referenced set.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
-    (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
+    const sessionManager = makeMockSessionManager();
+    (sessionManager as unknown as { listSessions: ReturnType<typeof vi.fn> })
       .listSessions.mockReturnValue([{ id: 'agent-session-uuid', taskId: 'workflow-uuid', status: 'running', transient: true, workflowId: 'workflow-uuid' }]);
 
     setupReaddir({
       [SESSIONS_DIR]: [dirEntry('workflow-uuid')],
     });
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
@@ -434,13 +536,13 @@ describe('pruneStaleResources -- async background cleanup', () => {
   it('preserves a session directory whose id is only in listAllSessionIds (DB regression)', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo(['db-only-session-uuid']);
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
       [SESSIONS_DIR]: [dirEntry('db-only-session-uuid')],
     });
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
@@ -453,7 +555,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // dirs alive so the sweep can never race a spawn path in flight.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     mockStat.mockImplementation((dirPath: string) =>
       Promise.resolve({
@@ -465,7 +567,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     // The genuinely-stale dir is removed...
@@ -484,7 +586,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
   it('still deletes an unreferenced session directory older than the grace period', async () => {
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     // mtime defaults to one day old (beforeEach), so this orphan is past the grace period.
     setupReaddir({
@@ -492,7 +594,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     expect(mockRm).toHaveBeenCalledWith(
@@ -511,7 +613,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     // and fail the second assertion below.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     mockStat.mockImplementation((dirPath: string) =>
       String(dirPath).includes('vanished-uuid')
@@ -524,7 +626,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
     await runWithTimers();
 
     // The vanished dir is never removed and the failure is logged...
@@ -546,10 +648,10 @@ describe('pruneStaleResources -- async background cleanup', () => {
     vi.useRealTimers(); // Retry delays need real timers since function is awaited
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
-      [WORKTREES_DIR]: [dirEntry('eperm-dir')],
+      [SESSIONS_DIR]: [dirEntry('eperm-dir')],
     });
 
     let rmCount = 0;
@@ -562,7 +664,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
 
     expect(mockRm).toHaveBeenCalledTimes(2);
     expect(warnSpy).not.toHaveBeenCalled();
@@ -574,20 +676,20 @@ describe('pruneStaleResources -- async background cleanup', () => {
     vi.useRealTimers(); // Retry delays need real timers since function is awaited
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
-    const sessionMgr = makeMockSessionManager();
+    const sessionManager = makeMockSessionManager();
 
     setupReaddir({
-      [WORKTREES_DIR]: [dirEntry('locked-dir')],
+      [SESSIONS_DIR]: [dirEntry('locked-dir')],
     });
     mockRm.mockRejectedValue(new Error('EPERM'));
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(ownershipOf(PROJECT), taskRepo, sessionRepo, sessionManager);
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Could not remove orphaned worktree directory: locked-dir'),
+      expect.stringContaining('Could not remove orphaned session directory: locked-dir'),
     );
     logSpy.mockRestore();
     warnSpy.mockRestore();

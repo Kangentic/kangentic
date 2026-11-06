@@ -218,7 +218,7 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `updater:check` | invoke | Check for application updates |
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
-| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/telemetry/error-reporting.md` |
+| `updater:blocked` | push | This install cannot update itself until the user acts: the macOS read-only volume (Sentry DESKTOP-1A) or a `.deb` install with no package manager (Sentry DESKTOP-R). Carries the whole user-facing body, chosen and latched in main so the renderer toasts it verbatim and a condition the updater keeps rediscovering still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/telemetry/error-reporting.md` |
 
 ## Leftover processes (4 channels)
 | Channel | Pattern | Purpose |

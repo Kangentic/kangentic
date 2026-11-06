@@ -58,7 +58,7 @@ vi.mock('../../src/main/transition-engine/session-startup', () => ({
 
 vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
   cleanupStaleResourcesAsync: vi.fn(async () => {}),
-  pruneOrphanedWorktreeTasks: vi.fn(async () => 0),
+  sweepAutomationRuns: vi.fn(() => 0),
 }));
 
 vi.mock('../../src/main/git/worktree-manager', () => ({

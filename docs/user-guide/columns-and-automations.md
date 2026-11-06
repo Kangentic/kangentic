@@ -55,8 +55,10 @@ and one task's agent runs there while the rest wait their turn.
 - Every start and resume waits its turn, and **Max concurrent sessions** in Settings still applies on top.
 - Turning it on stops nothing: agents already running in the column carry on, and the limit applies from the next start.
 
-A waiting card reads "Queued 2/3...", counting the running task first, so the numbers match the
-column's own count. Its task window shows the whole line, and each row opens its task.
+A waiting card reads "Next in line..." or "2 tasks ahead...". Its task window shows the whole line
+with a count of the tasks waiting, and says why they wait. Each row opens its task, and the reason
+opens the setting. The bottom bar is read-only while a task waits: pause the task to change its
+model or effort.
 
 ## Automations
 

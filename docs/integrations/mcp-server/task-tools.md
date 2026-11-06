@@ -119,6 +119,10 @@ the write did not change, such as a run mode sent again at its current value. Th
 current turn, which is the caller's own turn when an agent updates its own task, and the reply says
 so. See [Command Injection](../../architecture/automations/command-injection.md).
 
+A queued session is not restarted. Its waiting start command is rebuilt with the new settings, so it
+keeps its prompt and its place in line and starts with them. A session queued during startup recovery
+has no rebuild, so it starts as queued and a write applies from its next spawn.
+
 Setting `prUrl` or `prNumber` also clears the task's stored PR state and merge readiness, so the four PR columns never disagree; a forced resolve fires immediately after the write and fills both back in from the PR itself, so the card shows its state chip without waiting for the background sweep. The exception is a write that re-points nothing (the same `prUrl` and `prNumber` the task already holds, on a row whose `pr_state` is non-null): that is treated as a no-op, and both the clear and the resolve are skipped so the card's state chip does not blank and come back. See [PR linking](../pull-requests/pr-linking.md#where-pr-state-is-persisted).
 
 `profile` is **mutually exclusive** with `model` / `effort` / `permissionMode` / `runMode:

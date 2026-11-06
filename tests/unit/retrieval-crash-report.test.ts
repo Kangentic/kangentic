@@ -116,7 +116,7 @@ describe('RetrievalClient crash reporting, end to end through the restart policy
       expect(contexts.utility_process.crashes).toEqual([
         'ready_timeout',
         'exit code=3',
-        'request_timeout method=projects.summaries pending=summary.candidates(2)',
+        'request_timeout method=projects.summaries pending=summary.candidates(2) watchdog="event loop held 31 s in index.rebuild"',
       ]);
       expect(contexts.utility_process.stderrTail).toBe('event loop held 31 s in index.rebuild');
 

@@ -8,6 +8,7 @@ import { parseWslShellSpec } from '../process-tag/task-process-tag';
 import { childProcessEnv } from '../../shared/child-env';
 import { PTY_OUTPUT_NOT_CONNECTED_CODE } from '../host/root-pid-gate';
 import { claimLaunchReport, shellLabelOf, type LaunchTags } from '../agent-launch-report';
+import type { StartBlockedReason } from '../../../shared/types';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -233,11 +234,33 @@ export interface SpawnCwdResolution {
 }
 
 /**
+ * An agent session's folder is gone, so it was not started.
+ *
+ * A plain shell may land in the home directory, but an agent there is a run
+ * nobody asked for: #1003 started `/merge-pull-request` in the home directory
+ * with `--permission-mode auto`, with trust granted to the folder it asked for
+ * and not the one it got, and only Claude's own trust dialog stopped it.
+ */
+export class AgentCwdMissingError extends Error {
+  constructor(readonly cwd: string) {
+    super(`The folder this agent starts in no longer exists: ${cwd}`);
+    this.name = 'AgentCwdMissingError';
+  }
+}
+
+/** Which folder a refused agent lost, for its card: Resume recreates a worktree and nothing else. */
+export function startBlockedReasonForCwd(cwd: string): StartBlockedReason {
+  return /[\\/]\.kangentic[\\/]worktrees[\\/]/.test(cwd) ? 'worktree-missing' : 'folder-missing';
+}
+
+/**
  * Validate the requested cwd and handle Windows-specific quirks:
  *
  *  - Fall back to the user's home directory if the requested cwd does
- *    not exist. A live session in `~` is strictly better than a dead
- *    session with exit code -1. Emits a diagnostic analytics event.
+ *    not exist. For a plain shell, a live session in `~` is strictly better
+ *    than a dead session with exit code -1. An agent session never gets here
+ *    with a missing cwd (`AgentCwdMissingError`). Emits a diagnostic analytics
+ *    event.
  *  - cmd.exe cannot use a UNC path as its cwd (it prints
  *    "UNC paths are not supported" and defaults to C:\Windows). When
  *    we detect this, REPLACE the cwd with home and return a `pushd "<unc>"`

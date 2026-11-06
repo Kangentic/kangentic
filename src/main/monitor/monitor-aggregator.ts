@@ -260,6 +260,7 @@ export async function buildMonitorSnapshot(context: IpcContext, sources: Monitor
       // Distinct from `modelDisplayName`, which falls back to the spawn-time
       // `applied_model` id: the card says "Starting agent..." until this is true.
       modelReported: Boolean(usage?.model.displayName),
+      startBlockedReason: managed.startBlockedReason ?? null,
       // A Command Terminal's surface is keyed by its slot's owner key, never its
       // synthetic task id, so its globe reads that key.
       browserRunning: isCommandTerminal

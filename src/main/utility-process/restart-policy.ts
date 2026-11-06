@@ -1,6 +1,6 @@
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
-import { summarizeStderrTail, type StderrSource } from './stderr-tail';
+import { summarizeStderrTail, watchdogLine, type StderrSource } from './stderr-tail';
 
 /**
  * Restart policy shared by the utility processes we own
@@ -67,7 +67,7 @@ const DEFAULT_MAX_CRASHES = 3;
  * The cost of waiting is only that the caller degrades a little longer, which
  * it already does whenever the worker is absent.
  */
-const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
+export const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
 const DEFAULT_DECAY_MS = 5 * 60_000;
 /**
  * How long a crash's log line and latch report wait for the dying worker's
@@ -101,6 +101,11 @@ export interface UtilityCrashDetail {
 
 interface UtilityCrashRecord extends UtilityCrashDetail {
   exitCode: number | null;
+  /** This crash's stderr, when it had a process to read one from. A `fork_failed`
+   *  has none. Held by reference and read lazily: the pipe can still be draining
+   *  when the `exit` that recorded the crash fires, and the latch report comes
+   *  two backoffs after the first crash, by which time the text has landed. */
+  stderr?: StderrSource;
 }
 
 /**
@@ -129,14 +134,8 @@ export class UtilityRestartPolicy {
 
   private crashCount = 0;
   private lastCrashAt: number | null = null;
-  /** The stderr of each crash in the current window, oldest first, bounded to
-   *  the cap. Held by reference and read lazily (`latestStderr`): the pipe can
-   *  still be draining when the `exit` that recorded a crash fires, and the
-   *  latch report comes two backoffs after the first crash, by which time the
-   *  text has long since landed. */
-  private stderrSources: StderrSource[] = [];
-  /** Why each crash in the current window happened, oldest first, bounded to
-   *  the cap like `stderrSources`. */
+  /** Why each crash in the current window happened and what it printed, oldest
+   *  first, bounded to the cap. */
   private crashRecords: UtilityCrashRecord[] = [];
   /** One Sentry report per latch, not one per crash after the latch. */
   private reportedLatch = false;
@@ -185,16 +184,13 @@ export class UtilityRestartPolicy {
     this.decayIfQuiet();
     this.crashCount += 1;
     this.lastCrashAt = this.now();
-    if (stderr) {
-      this.stderrSources.push(stderr);
-      while (this.stderrSources.length > this.maxCrashes) this.stderrSources.shift();
-    }
     const cause = detail?.cause ?? 'exit';
     const record: UtilityCrashRecord = {
       cause,
       exitCode: exitCode ?? null,
       method: detail?.method,
       pendingMethods: detail?.pendingMethods,
+      stderr,
     };
     this.crashRecords.push(record);
     while (this.crashRecords.length > this.maxCrashes) this.crashRecords.shift();
@@ -315,9 +311,9 @@ export class UtilityRestartPolicy {
 
   /** The newest crash's stderr that is non-empty at read time, or null. */
   latestStderr(): string | null {
-    for (let index = this.stderrSources.length - 1; index >= 0; index -= 1) {
-      const snapshot = this.stderrSources[index].snapshot();
-      if (snapshot.length > 0) return snapshot;
+    for (let index = this.crashRecords.length - 1; index >= 0; index -= 1) {
+      const snapshot = this.crashRecords[index].stderr?.snapshot();
+      if (snapshot) return snapshot;
     }
     return null;
   }
@@ -342,7 +338,6 @@ export class UtilityRestartPolicy {
   reset(): void {
     this.crashCount = 0;
     this.lastCrashAt = null;
-    this.stderrSources = [];
     this.crashRecords = [];
     this.reportedLatch = false;
   }
@@ -372,7 +367,11 @@ function describeCrashForPeople(record: UtilityCrashRecord): string {
 /** One crash as a fixed-format line for the latch report:
  *  `exit code=1`, `ready_timeout`, or
  *  `request_timeout method=projects.summaries pending=transcript.usage(12),index.rebuild`.
- *  Pending names keep their first-seen order, with a count once one repeats. */
+ *  Pending names keep their first-seen order, with a count once one repeats.
+ *  A crash whose worker wrote a watchdog line ends with it, as
+ *  `watchdog="[retrieval-worker] event loop held 5 s in index:chunk-window"`, read
+ *  from that crash's own stderr at report time. `stderrTail` is one worker's text
+ *  and cannot say which of the crashes it came from. */
 function describeCrashRecord(record: UtilityCrashRecord): string {
   const parts: string[] = [record.cause];
   if (record.exitCode !== null) parts.push(`code=${record.exitCode}`);
@@ -383,5 +382,7 @@ function describeCrashRecord(record: UtilityCrashRecord): string {
     const pending = [...counts].map(([method, count]) => (count > 1 ? `${method}(${count})` : method));
     parts.push(`pending=${pending.join(',')}`);
   }
+  const held = record.stderr ? watchdogLine(record.stderr.snapshot()) : null;
+  if (held) parts.push(`watchdog="${held}"`);
   return parts.join(' ');
 }

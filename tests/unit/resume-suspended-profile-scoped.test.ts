@@ -78,6 +78,13 @@ vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({}) as never),
 }));
 
+// Whether a missing worktree can be made again asks whether this is a plain repo.
+vi.mock('../../src/main/git/git-checks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-checks')>()),
+  isGitRepo: () => true,
+  isInsideWorktree: () => false,
+}));
+
 vi.mock('../../src/main/shutdown-state', () => ({
   isShuttingDown: vi.fn(() => false),
 }));
@@ -270,10 +277,12 @@ function makeSessionManager() {
   };
 }
 
+let worktreesEnabled = true;
+
 function makeConfigManager(autoResumeSessionsOnRestart = true) {
   return {
     load: vi.fn(() => ({ agent: { autoResumeSessionsOnRestart } })),
-    getEffectiveConfig: vi.fn(() => ({ agent: {} })),
+    getEffectiveConfig: vi.fn(() => ({ agent: { execution: {} }, git: { worktreesEnabled } })),
   };
 }
 
@@ -419,14 +428,17 @@ describe('resumeSuspendedSessions: auto_spawn is resolved per task, not per lane
 });
 
 /**
- * The stale-`worktree_path` fallback in the preparation pass's CWD-missing
- * branch (resume-suspended.ts, step 5): a recoverable record's `cwd` (the
- * worktree directory it was spawned in) is gone, so the record is retired
+ * The preparation pass's CWD-missing branch (resume-suspended.ts, step 5): a
+ * recoverable record's `cwd` (the worktree directory it was spawned in) is gone.
+ * Where Resume can make that worktree again, the record stays resumable and the
+ * task stays as it is, so the card reads not running and keeps its branch.
+ *
+ * The fallback is for a task nothing can recreate one for: the record is retired
  * rather than resumed. If the task's own `worktree_path` matches that same
  * missing directory, it too is cleared, and the reason is persisted via
  * `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')` so the board
  * can say the task's next spawn will run in the shared project checkout, and
- * why. Nothing previously drove this branch at all.
+ * why.
  */
 describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing branch)', () => {
   const STALE_WORKTREE_PATH = '/project/worktrees/task-001';
@@ -450,15 +462,95 @@ describe('resumeSuspendedSessions: stale worktree_path fallback (CWD-missing bra
     vi.mocked(prepareAgentSpawn).mockClear();
     vi.mocked(prepareAgentSpawn).mockResolvedValue({ ok: false, reason: 'unknown-agent' });
     swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+    // Worktrees off: nothing can recreate this one, so the fallback applies.
+    worktreesEnabled = false;
   });
 
   afterEach(() => {
     // Restore the file-level default so tests declared earlier in the file
     // (and any `--repeat-each` rerun) see every path as existing again.
     vi.mocked(fs.existsSync).mockReturnValue(true);
+    worktreesEnabled = true;
   });
 
-  it('detects a stale worktree_path when the record cwd is missing, clears it, and records worktree-missing', async () => {
+  it('keeps a task whose worktree can be made again: its record stays resumable and its branch stays on the row', async () => {
+    worktreesEnabled = true;
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
+    ]);
+    taskRepoList.mockReturnValue([
+      makeTask({ swimlane_id: LOUD_LANE, profile_id: null, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' }),
+    ]);
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    const sessionManager = await runResume();
+
+    expect(taskRepoSetWorktreeSkipReasonMock).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+    expect(retireRecordMock).not.toHaveBeenCalled();
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({
+      taskId: TASK_ID,
+      projectId: 'proj-1',
+      cwd: STALE_WORKTREE_PATH,
+      startBlockedReason: 'worktree-missing',
+    });
+  });
+
+  it('carries a recorded reason onto the placeholder, so a card still says why after a restart', async () => {
+    worktreesEnabled = true;
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, suspended_by: 'user', start_blocked_reason: 'never-started' }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: LOUD_LANE, profile_id: null })]);
+
+    const sessionManager = await runResume();
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({
+      startBlockedReason: 'never-started',
+    }));
+  });
+
+  it('carries a recorded reason onto the placeholder of a custom column that does not auto-spawn', async () => {
+    swimlaneListMock.mockReturnValue([lane(QUIET_LANE, false)]);
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, status: 'suspended', suspended_by: 'system', start_blocked_reason: 'spawn-failed' }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: QUIET_LANE, profile_id: null })]);
+
+    const sessionManager = await runResume();
+
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({
+      startBlockedReason: 'spawn-failed',
+    }));
+  });
+
+  it('carries a recorded reason onto the placeholder kept while auto-resume on restart is off', async () => {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ isolated_swimlane_id: null, status: 'suspended', suspended_by: 'system', start_blocked_reason: 'folder-missing' }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: LOUD_LANE, profile_id: null })]);
+    const sessionManager = makeSessionManager();
+
+    await resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      makeConfigManager(false) as never,
+      'claude',
+      null,
+      null,
+      null,
+    );
+
+    expect(prepareAgentSpawn).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith(expect.objectContaining({
+      startBlockedReason: 'folder-missing',
+    }));
+  });
+
+  it('detects a stale worktree_path with worktrees off, clears it, and records worktree-missing', async () => {
     sessionRepoGetResumable.mockReturnValue([
       makeRecord({ isolated_swimlane_id: null, cwd: STALE_WORKTREE_PATH }),
     ]);

@@ -27,6 +27,11 @@ msgstr "„{movedTaskTitle}” áthelyezve az oszlopba."
 msgid "\"{taskTitle}\""
 msgstr "„{taskTitle}”"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, one {# feladat van előtte...} other {# feladat van előtte...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -251,6 +256,10 @@ msgstr "Befejezett feladat törlése"
 msgid "Delete task"
 msgstr "Feladat törlése"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Didn't start"
+msgstr ""
+
 #: src/renderer/components/board/BoardDialogs.tsx
 #, fuzzy
 msgid "Dismiss"
@@ -283,6 +292,10 @@ msgid "Edit {columnName} column"
 msgstr "{columnName} oszlop szerkesztése"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Folder missing"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
@@ -297,6 +310,10 @@ msgstr "Tétlen: {duration}"
 #, fuzzy
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
 msgstr "Ha a feladat folytatódik, a munkafa újra létrejön az ág utolsó commitjából."
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Its worktree folder is gone. Resume makes it again from the branch."
+msgstr ""
 
 #: src/renderer/components/board/BoardDialogs.tsx
 #, fuzzy
@@ -333,6 +350,11 @@ msgstr "Új feladat"
 msgid "New workflow"
 msgstr "Új munkafolyamat"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "Következő a sorban..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "No completed tasks yet"
@@ -364,11 +386,6 @@ msgstr "Munkamenet szüneteltetése"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "Szüneteltetve"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "Várólistán {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -526,6 +543,18 @@ msgstr "Feladatazonosító másolva"
 msgid "Task moved"
 msgstr "Feladat áthelyezve"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The agent never reported that it started."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The folder this agent starts in is gone."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The terminal could not start. Its window shows why."
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -603,6 +632,10 @@ msgstr "Munkafolyamatok"
 #, fuzzy
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
 msgstr "Munkafolyamatok, {workflowCount, plural, one {# munkafolyamat} other {# munkafolyamat}}, {runningWorkflowCount, plural, one {# fut} other {# fut}}"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Worktree missing"
+msgstr ""
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
 #, fuzzy

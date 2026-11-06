@@ -65,7 +65,8 @@ at the Windows timer floor.
   run's pid for a tree stop (`pinRun`). After three worker crashes, or a worker that fails to
   start, the host starts processes itself again. node-pty is the one exception: its handle belongs
   to the thread that spawned it, so a PTY spawn stays on the I/O thread (`pty:spawn`, 5 to 38 ms
-  measured under load).
+  in a load test; across a working day 15 of 91 reached 16 ms, 3 reached 256 ms, and the worst held
+  every terminal for 781 ms).
 - **One host, forked once, built in two places only.** `register-all.ts` constructs the
   `UtilityPtyHostTransport`; `SessionManager.createInProcessHost` is the only place the core runs in
   main, as the unit tests' host and as the fallback after five host crashes. One more place builds
@@ -181,6 +182,10 @@ at the Windows timer floor.
   `tests/e2e/terminal-input-second-renderer.spec.ts` types into a terminal in the detached Agent
   Monitor and reads the echo there, then closes it and types into the main window's, so two real
   webContents each get their own port and closing one forgets only that one.
+- **Test (worktree list):** `tests/unit/worktree-list-off-main.test.ts` runs real git through the
+  host's exec and fails on a start on main or a walk past `WORKTREE_READ_CONCURRENCY`;
+  `tests/unit/preview-instance-discovery.test.ts` fails when a devtools call with no `instanceId`
+  reaches the enumeration.
 - **Test (spawn worker):** `tests/unit/pty-host-spawn-worker.test.ts` builds the real worker, runs
   an exec and a CLI run through `PtyHostCore`, and fails when the test thread starts a process;
   `pty-host-boundary.test.ts` builds the worker's graph and fails on a native module or a main-only
@@ -234,6 +239,17 @@ they run repository hooks, filters or merge drivers and `gitAt`'s env drops Cras
 (`src/main/shared/child-env.ts`): Update from base's merge, the carry of uncommitted changes into a
 new worktree, and the Command Terminal's cold-start checkout and merge. Still on main, because none
 runs in a lifecycle: the branch summary's ahead and behind count, the diff watcher, blame, file
-history, the commit graph, the worktree list, a task's branch switch config write, and the Done
-drop's pending-changes probe. A new git call on the lifecycle path uses the git client;
-the lifecycle test fails when one lands on main.
+history, the commit graph, a task's branch switch config write, and the Done drop's pending-changes
+probe. A new git call on the lifecycle path uses the git client; the lifecycle test fails when one
+lands on main.
+
+The worktree enumeration behind `kangentic_list_worktrees` and `kangentic_devtools_list_instances`
+uses the git client too (`src/main/git/worktree-list.ts`). It is not on a lifecycle, but it walks
+every worktree of every project. In a dev build these walks pushed main's worst 10 s window to
+4.6 s, with a worktree creation overlapping it. On a packaged build walking 16 throwaway projects,
+main's slowest answer during a walk went from 888 ms to 19 ms on a quiet machine and from 2.2 s to
+40 ms under load. It reads `WORKTREE_READ_CONCURRENCY` worktrees at a time, because every start in
+the host lands on one spawn worker thread (2,141 git starts in 8.5 hours, about 110 ms each, worst
+2.2 s), and starting them all at once would queue a task's own git and agent CLI runs behind the
+walk. A devtools call with no `instanceId` skips the walk and reads the calling project's lockfiles
+(`findRespondingPreviews`).

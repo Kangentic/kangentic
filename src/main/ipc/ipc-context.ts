@@ -66,7 +66,7 @@ export interface IpcContext {
   currentProjectId: string | null;
   currentProjectPath: string | null;
   /**
-   * Project IDs whose suspended-session recovery (`pruneOrphanedWorktreeTasks`,
+   * Project IDs whose suspended-session recovery (`verifyProjectOwnership`,
    * `cleanupStaleResourcesAsync`, `resumeSuspendedSessions`, `autoSpawnTasks`)
    * has already been STARTED in this app lifetime. The open paths add the id
    * up front - before the deferred recovery chain runs - to guard a rapid

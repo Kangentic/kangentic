@@ -14,6 +14,7 @@ import type {
   ConversationExpiredNotice,
   LaunchStartPath,
   NotificationInput,
+  SpawnSessionInput,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import { automationNeedsAgent, canTaskRunAutomations } from '../../shared/automation-manifest';
@@ -1037,7 +1038,7 @@ export class TransitionEngine {
 
     const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
     const { statusOutputPath, eventsOutputPath, shell, promptKeptOff } = launch;
-    const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
+    const { command, extraEnv, rebuildCommand } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
     // A push that fails means this command never reaches spawn() to own its hold.
     await pushHostFilesForSpawn(hostFiles, ptySessionId, () => releaseCommandHold(adapter, cwd, ptySessionId));
 
@@ -1059,6 +1060,7 @@ export class TransitionEngine {
       taskId: task.id,
       projectId: appConfig.projectId,
       command,
+      rebuildCommand,
       cwd,
       startPath: spawnOverrides?.startPath ?? (canResume ? 'resume' : 'board'),
       agentCliVersion: spawnCli.version,
@@ -1142,21 +1144,33 @@ export class TransitionEngine {
     ptySessionId: string,
     cwd: string,
     signal?: AbortSignal,
-  ): { command: string; extraEnv: Record<string, string> | null } {
+  ): {
+    command: string;
+    extraEnv: Record<string, string> | null;
+    rebuildCommand: NonNullable<SpawnSessionInput['rebuildCommand']>;
+  } {
     try {
       fs.mkdirSync(launch.sessionDir, { recursive: true });
     } catch (error) {
       console.error(`[spawnAgent] Failed to create session directory: ${launch.sessionDir}`, error);
       throw new Error(`Cannot create session directory at ${launch.sessionDir}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
-    const command = adapter.buildCommand(launch.commandOptions);
+    const buildFrom = (options: SpawnCommandOptions): string => adapter.buildCommand(options);
+    const command = buildFrom(launch.commandOptions);
+    // What a queued session's settings change calls. Only the two flags move, so
+    // the prompt, the session id and the hold the build took stay this launch's.
+    const rebuildCommand: NonNullable<SpawnSessionInput['rebuildCommand']> = ({ model, effort }) => buildFrom({
+      ...launch.commandOptions,
+      model: model ?? undefined,
+      effort: effort ?? undefined,
+    });
     notePlanApprovalSpawn(ptySessionId, { sessionDir: launch.sessionDir, bypassAvailable: launch.bypassAvailable });
     try {
       const extraEnv = adapter.buildEnv?.(launch.commandOptions) ?? null;
       console.log(`[spawnAgent] agent=${adapter.name} Command: ${command.slice(0, 120)}...`);
       // Last chance to abort before creating a PTY process
       signal?.throwIfAborted();
-      return { command, extraEnv };
+      return { command, extraEnv, rebuildCommand };
     } catch (error) {
       // The built command never reached spawn() (an abort or a buildEnv
       // failure), so release the hold it took. From the spawn() call on,

@@ -50,9 +50,13 @@ msgstr "({deleteFailureCount}개 실패)"
 #. placeholder {0}: probe.path
 #. placeholder {1}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
 msgid "{0} does not exist on {1}."
 msgstr "{1}에 {0}이(가) 없습니다."
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, other {앞에 작업 #개}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -68,6 +72,11 @@ msgstr "{automationCount, plural, other {여기서 자동화 #개 실행}}"
 #, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, other {픽셀 #개 중 {changedCount}개 다름}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{maxAgents, plural, other {{columnName}에서는 한 번에 에이전트 #개 실행}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -200,6 +209,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position}/{total}"
@@ -213,11 +223,6 @@ msgstr "{reason} 실패 전 완료된 작업: {savedBeforeFailing}."
 #, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>(예: {sample})</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, other {에이전트 #개 중 {runningCount}개 실행 중}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -836,7 +841,7 @@ msgstr "열"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "이 열에 별도의 대화를 지정하지 않으면 열들은 작업의 메인 대화를 공유합니다. 격리된 열은 들어올 때마다 새 대화를 시작하므로, 코드 리뷰처럼 이전 작업을 이어받지 않아야 하는 단계에 적합합니다."
+msgstr "열은 별도로 지정하지 않으면 작업의 메인 대화를 공유합니다. 격리된 열은 들어올 때마다 새 대화를 시작하므로, 코드 리뷰처럼 이전 작업을 이어받지 않아야 하는 단계에 적합합니다."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Command Terminal"
@@ -1109,7 +1114,7 @@ msgstr "분기를 전환할 수 없음"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
-msgstr "에이전트가 작업 중이거나 사용자를 기다리는 작업 수를 셉니다. 설정의 최대 동시 세션 수는 계속 적용됩니다."
+msgstr "에이전트가 작업 중이거나 사용자를 기다리는 작업을 집계합니다. 설정의 최대 동시 세션 수는 계속 적용됩니다."
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1728,7 +1733,7 @@ msgstr "메인"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
-msgstr "메인은 작업의 대화를 이어 가고, 격리는 들어올 때마다 새 대화를 시작합니다."
+msgstr "메인은 작업의 대화를 이어가고, 격리는 들어올 때마다 새 대화를 시작합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1857,6 +1862,11 @@ msgstr "다음 변경 사항"
 #, fuzzy
 msgid "Next column"
 msgstr "다음 열"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Next in line"
+msgstr "다음 순서"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
@@ -2196,6 +2206,11 @@ msgstr "설정 열기"
 msgid "Open that board to edit its profiles"
 msgstr "프로필을 편집하려면 해당 보드를 여세요"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Open the board to change this"
+msgstr "변경하려면 보드를 여세요"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open worktree"
@@ -2399,11 +2414,6 @@ msgstr "대기 중"
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "대기 중(클릭하여 일시 중지)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Queued {position}/{total}"
-msgstr "대기 중 {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3278,6 +3288,11 @@ msgstr "제목 없는 열"
 msgctxt "file status"
 msgid "Untracked"
 msgstr "추적되지 않음"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "{maxConcurrent, plural, other {한 번에 최대 에이전트 #개 실행}}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

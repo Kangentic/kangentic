@@ -66,7 +66,8 @@ vi.mock('node:util', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories, sweepAutomationRuns } from '../../src/main/transition-engine/resource-cleanup';
+import { cleanupStaleResources, pruneOrphanedDirectories, sweepAutomationRuns } from '../../src/main/transition-engine/resource-cleanup';
+import { ownershipOf } from './helpers/verified-ownership';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 // The REAL per-task lock, not mocked: the To Do sweep takes it for each task,
 // so a test can hold it to stand in for a move that is still running.
@@ -153,23 +154,6 @@ function createMockRepos(backlogTasks: MockTask[] = []) {
   return { swimlaneRepo, taskRepo, sessionRepo, sessionManager };
 }
 
-/**
- * Route the async existence probes (fs.promises.stat, used by
- * pruneOrphanedWorktreeTasks' pathExists) through the same path predicate as
- * mockExistsSync, so each test configures existence exactly once.
- */
-function statDelegatesToExistsSync() {
-  mockStat.mockImplementation(async (pathArg?: unknown) => {
-    if (!mockExistsSync(String(pathArg))) {
-      throw Object.assign(
-        new Error(`ENOENT: no such file or directory, stat '${String(pathArg)}'`),
-        { code: 'ENOENT' },
-      );
-    }
-    return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
-  });
-}
-
 /** Helper: configure mockExecFile to call back with success or error */
 function setupExecFile(handler: (cmd: string, args: string[]) => void) {
   mockExecFile.mockImplementation((cmd: string, args: string[], options: unknown, callback?: Function) => {
@@ -226,7 +210,7 @@ describe('cleanupStaleResources', () => {
     const sessionManager = { remove: vi.fn(), listSessions: vi.fn(() => []) };
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -251,7 +235,7 @@ describe('cleanupStaleResources', () => {
     setupExecFile(() => { throw new Error('not found'); });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -279,7 +263,7 @@ describe('cleanupStaleResources', () => {
     );
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -348,7 +332,7 @@ describe('cleanupStaleResources', () => {
     mockReadLocalBranchSha.mockResolvedValue('abc123def456');
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -395,7 +379,7 @@ describe('cleanupStaleResources', () => {
     mockReadLocalBranchSha.mockResolvedValue('old-work-sha');
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -430,7 +414,7 @@ describe('cleanupStaleResources', () => {
     mockReadLocalBranchSha.mockResolvedValue('kept-tip-sha');
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -463,7 +447,7 @@ describe('cleanupStaleResources', () => {
     taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -492,7 +476,7 @@ describe('cleanupStaleResources', () => {
     taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T12:00:00.000Z', origin: 'unarchive' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -535,7 +519,7 @@ describe('cleanupStaleResources', () => {
     taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-planning', session_id: 'session-new' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -571,7 +555,7 @@ describe('cleanupStaleResources', () => {
     taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-backlog', session_id: 'session-new' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -610,7 +594,7 @@ describe('cleanupStaleResources', () => {
     taskRepo.getById.mockReturnValueOnce({ ...restoredTask, swimlane_id: 'lane-backlog', session_id: null });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -638,7 +622,7 @@ describe('cleanupStaleResources', () => {
     taskMoveRepo.currentVisit.mockReturnValueOnce({ at: '2026-10-15T13:00:00.000Z', origin: 'renderer' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -677,7 +661,7 @@ describe('cleanupStaleResources', () => {
     taskRepo.getById.mockReturnValueOnce({ ...movedTask, swimlane_id: 'lane-planning', session_id: 'session-new' });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -727,7 +711,7 @@ describe('cleanupStaleResources', () => {
     // releases the lock and awaits both, so a failed assertion leaks nothing
     // into the next test.
     const sweep = cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -788,7 +772,7 @@ describe('cleanupStaleResources', () => {
 
     try {
       await cleanupStaleResources(
-        projectPath,
+        ownershipOf(projectPath),
         taskRepo as never,
         taskMoveRepo as never,
         swimlaneRepo as never,
@@ -825,7 +809,7 @@ describe('cleanupStaleResources', () => {
 
     try {
       await cleanupStaleResources(
-        projectPath,
+        ownershipOf(projectPath),
         taskRepo as never,
         taskMoveRepo as never,
         swimlaneRepo as never,
@@ -873,7 +857,7 @@ describe('cleanupStaleResources', () => {
       // Nothing holds the path when the pass starts.
       expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(false);
       await cleanupStaleResources(
-        projectPath,
+        ownershipOf(projectPath),
         taskRepo as never,
         taskMoveRepo as never,
         swimlaneRepo as never,
@@ -915,7 +899,7 @@ describe('cleanupStaleResources', () => {
     });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -962,7 +946,7 @@ describe('cleanupStaleResources', () => {
     });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -988,7 +972,7 @@ describe('cleanupStaleResources', () => {
     setupExecFile(() => { throw new Error('not found'); });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -1013,7 +997,7 @@ describe('cleanupStaleResources', () => {
     setupExecFile(() => { throw new Error('not found'); });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -1049,7 +1033,7 @@ describe('cleanupStaleResources', () => {
     });
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -1076,7 +1060,7 @@ describe('cleanupStaleResources', () => {
     mockExistsSync.mockReturnValue(true);
 
     await cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,
@@ -1099,493 +1083,6 @@ describe('cleanupStaleResources', () => {
     expect(mockExecFile).toHaveBeenCalledWith(
       'git', ['branch', '-D', 'new-title-aaaa1111'], expect.anything(), expect.any(Function),
     );
-  });
-});
-
-// ---------------------------------------------------------------------------
-// pruneOrphanedWorktreeTasks -- runs as pass 1 of cleanupStaleResources
-// ---------------------------------------------------------------------------
-
-/**
- * Factory for tests that need `taskRepo.list()` (unfiltered) to return a
- * populated list. The existing `createMockRepos` only returns tasks when
- * filtered by the backlog lane ID, which doesn't exercise the orphan-prune
- * path.
- */
-function createMockReposWithAllTasks(allTasks: MockTask[]) {
-  const swimlaneRepo = {
-    list: vi.fn(() => [
-      { id: 'lane-backlog', role: 'todo', name: 'To Do' },
-      { id: 'lane-planning', role: null, name: 'Planning' },
-    ]),
-  };
-
-  const taskRepo = {
-    list: vi.fn((laneId?: string) => {
-      // Backlog cleanup pass filters by lane - return nothing so we do not
-      // accidentally exercise that path in these tests.
-      if (laneId === 'lane-backlog') return [];
-      return allTasks;
-    }),
-    // The prune re-reads a task's lane before it deletes it.
-    getById: vi.fn((id: string) => allTasks.find((task) => task.id === id)),
-    listArchived: vi.fn(() => []),
-    update: vi.fn(),
-    delete: vi.fn(),
-  };
-
-  const sessionRepo = {
-    deleteByTaskId: vi.fn(),
-    listAllSessionIds: vi.fn(() => []),
-  };
-
-  const sessionManager = {
-    remove: vi.fn(),
-    listSessions: vi.fn(() => []),
-  };
-
-  return { swimlaneRepo, taskRepo, sessionRepo, sessionManager };
-}
-
-describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
-  const projectPath = '/home/dev/my-project';
-  const worktreesDir = '/home/dev/my-project/.kangentic/worktrees';
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockExistsSync.mockReturnValue(false);
-    statDelegatesToExistsSync();
-    mockRm.mockResolvedValue(undefined);
-    mockReaddir.mockResolvedValue([]);
-    setupExecFile(() => '');
-  });
-
-  it('deletes a task whose worktree directory has been removed externally', async () => {
-    const orphanTask = createMockTask({
-      id: 'orphan11-0000-0000-0000-000000000000',
-      title: 'Orphan task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/orphan-task-orphan11',
-      branch_name: 'orphan-task-orphan11',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([orphanTask]);
-
-    // Worktrees parent dir exists; orphan task's specific dir does NOT.
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith(
-      'orphan11-0000-0000-0000-000000000000',
-    );
-    expect(taskRepo.delete).toHaveBeenCalledWith(
-      'orphan11-0000-0000-0000-000000000000',
-    );
-  });
-
-  it('preserves a task whose worktree directory still exists', async () => {
-    const keepTask = createMockTask({
-      id: 'keep1111-0000-0000-0000-000000000000',
-      title: 'Keep task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/keep-task-keep1111',
-      branch_name: 'keep-task-keep1111',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([keepTask]);
-
-    // Both the worktrees parent dir and the task's worktree dir exist.
-    mockExistsSync.mockReturnValue(true);
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
-  });
-
-  it('prunes the orphan but keeps the sibling task that still exists', async () => {
-    const orphanTask = createMockTask({
-      id: 'orphan11-0000-0000-0000-000000000000',
-      title: 'Orphan task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/orphan-orphan11',
-      branch_name: 'orphan-orphan11',
-    });
-    const keepTask = createMockTask({
-      id: 'keep1111-0000-0000-0000-000000000000',
-      title: 'Keep task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/keep-keep1111',
-      branch_name: 'keep-keep1111',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([orphanTask, keepTask]);
-
-    // worktrees dir + keepTask's dir exist; orphanTask's dir does not.
-    mockExistsSync.mockImplementation((pathArg: string) =>
-      pathArg === worktreesDir || pathArg === keepTask.worktree_path,
-    );
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(taskRepo.delete).toHaveBeenCalledWith(
-      'orphan11-0000-0000-0000-000000000000',
-    );
-    expect(taskRepo.delete).not.toHaveBeenCalledWith(
-      'keep1111-0000-0000-0000-000000000000',
-    );
-  });
-
-  it('does not prune a task with an active session even if its worktree dir is missing', async () => {
-    const activeTask = createMockTask({
-      id: 'active11-0000-0000-0000-000000000000',
-      title: 'Active task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/active-active11',
-      branch_name: 'active-active11',
-      session_id: 'session-abc',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([activeTask]);
-
-    // Worktrees dir exists; task's worktree dir does NOT.
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    // Active session running for this task.
-    sessionManager.listSessions = vi.fn(() => [
-      { id: 'session-abc', taskId: 'active11-0000-0000-0000-000000000000', status: 'running' },
-    ]);
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-  });
-
-  it('skips pruning entirely when the worktrees parent directory does not exist', async () => {
-    const orphanTask = createMockTask({
-      id: 'orphan11-0000-0000-0000-000000000000',
-      title: 'Orphan task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/orphan-orphan11',
-      branch_name: 'orphan-orphan11',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([orphanTask]);
-
-    // Worktrees dir missing - possibly an unmounted drive. Do not prune.
-    mockExistsSync.mockReturnValue(false);
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
-  });
-
-  it('does not prune tasks that have no worktree_path recorded', async () => {
-    const backlogTask = createMockTask({
-      id: 'noworkt1-0000-0000-0000-000000000000',
-      title: 'Backlog task',
-      worktree_path: null,
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([backlogTask]);
-
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    await cleanupStaleResources(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Ordering contract: startup callers MUST await pruneOrphanedWorktreeTasks
-// before session recovery reads the DB, then fire cleanupStaleResourcesAsync
-// without awaiting it. Startup code in projects.ts depends on this, and the
-// prune re-reads the active-session set after its async existence checks so
-// a spawn that interleaves cannot lose its task.
-// ---------------------------------------------------------------------------
-
-describe('pruneOrphanedWorktreeTasks ordering contract', () => {
-  const projectPath = '/home/dev/my-project';
-  const worktreesDir = '/home/dev/my-project/.kangentic/worktrees';
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockExistsSync.mockReturnValue(false);
-    statDelegatesToExistsSync();
-    mockRm.mockResolvedValue(undefined);
-    mockReaddir.mockResolvedValue([]);
-    setupExecFile(() => '');
-  });
-
-  it('the awaited prune completes its deletes before recovery would read the DB', async () => {
-    const orphanTask = createMockTask({
-      id: 'orphan11-0000-0000-0000-000000000000',
-      title: 'Orphan task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/orphan-orphan11',
-      branch_name: 'orphan-orphan11',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([orphanTask]);
-
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    // Emulate the startup call pattern exactly: await the prune, THEN fire
-    // the async tail without awaiting.
-    await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    // At this point - the exact position session recovery occupies in the
-    // real startup sequence - the orphan task must already be deleted.
-    expect(taskRepo.delete).toHaveBeenCalledWith(
-      'orphan11-0000-0000-0000-000000000000',
-    );
-    expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith(
-      'orphan11-0000-0000-0000-000000000000',
-    );
-
-    await cleanupStaleResourcesAsync(
-      projectPath,
-      taskRepo as never,
-      taskMoveRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-      undefined as never,
-      () => {},
-      // The leftover sweep runs first and reads this; off, it skips the scan.
-      { stoppingEnabled: () => false, onReport: () => {} },
-    );
-  });
-
-  it('re-reads the active-session set after the async gap (an interleaving spawn keeps its task)', async () => {
-    const racedTask = createMockTask({
-      id: 'raced111-0000-0000-0000-000000000000',
-      title: 'Raced task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/raced-raced111',
-      branch_name: 'raced-raced111',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([racedTask]);
-
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    // No session is active when the prune starts; one spawns for the task
-    // while its existence check is in flight. Reading the active set before
-    // the gap would miss it and wrongly prune the task.
-    let liveSessions: Array<{ id: string; taskId: string; status: string }> = [];
-    sessionManager.listSessions = vi.fn(() => liveSessions);
-    mockStat.mockImplementation(async (pathArg?: unknown) => {
-      if (String(pathArg) === racedTask.worktree_path) {
-        liveSessions = [{ id: 'session-raced', taskId: racedTask.id, status: 'running' }];
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      if (!mockExistsSync(String(pathArg))) {
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
-    });
-
-    const pruned = await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(pruned).toBe(0);
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
-  });
-
-  it('re-probes synchronously right before delete: a worktree re-created after the async gap keeps its task', async () => {
-    const recreatedTask = createMockTask({
-      id: 'recreat-0000-0000-0000-000000000000',
-      title: 'Recreated task',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/recreated-recreat',
-      branch_name: 'recreated-recreat',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([recreatedTask]);
-
-    // The async existence probe (fs.promises.stat) reports the worktrees
-    // parent dir as present but the task's own worktree dir as MISSING -
-    // this is the state captured during the async existence-check gap.
-    mockStat.mockImplementation(async (pathArg?: unknown) => {
-      if (String(pathArg) === recreatedTask.worktree_path) {
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
-    });
-
-    // By the time the synchronous delete loop runs its last-look re-probe, a
-    // spawn has re-created the worktree directory on disk.
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === recreatedTask.worktree_path);
-
-    const pruned = await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(pruned).toBe(0);
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
-  });
-
-  /**
-   * A To Do move removes the worktree and only then clears worktree_path, so a
-   * quit between the two leaves a To Do task pointing at a directory that is
-   * gone. That is the reset's own leftover, not a worktree deleted outside the
-   * app, and the prune used to delete the whole task for it.
-   */
-  it('never deletes a To Do task whose worktree a reset already removed', async () => {
-    const resetTask = createMockTask({
-      id: 'todo1111-0000-0000-0000-000000000000',
-      title: 'Reset cut short',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/reset-todo1111',
-      branch_name: 'reset-todo1111',
-      swimlane_id: 'lane-backlog',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([resetTask]);
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-
-    const pruned = await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(pruned).toBe(0);
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
-  });
-
-  it('re-reads the lane after the async gap: a task moved into To Do while the probes ran keeps its row', async () => {
-    const movingTask = createMockTask({
-      id: 'moving11-0000-0000-0000-000000000000',
-      title: 'Dragged to To Do at launch',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/moving-moving11',
-      branch_name: 'moving-moving11',
-      swimlane_id: 'lane-planning',
-    });
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks([movingTask]);
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-    // The move lands while the existence probe is in flight, and its reset is
-    // what removed the directory.
-    mockStat.mockImplementation(async (pathArg?: unknown) => {
-      if (String(pathArg) === movingTask.worktree_path) {
-        movingTask.swimlane_id = 'lane-backlog';
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
-    });
-
-    const pruned = await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    expect(pruned).toBe(0);
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-  });
-
-  /**
-   * The other half of the re-read: the row can be gone, not just moved. A task
-   * deleted while the probes ran has nothing left to prune, and running the
-   * deletes for it anyway would clear session rows for an id that no longer
-   * exists. Guards a re-read that lets an undefined row through to the deletes.
-   */
-  it('re-reads the row after the async gap: a task deleted while the probes ran is not deleted again', async () => {
-    const vanishingTask = createMockTask({
-      id: 'vanish11-0000-0000-0000-000000000000',
-      title: 'Deleted at launch',
-      worktree_path: '/home/dev/my-project/.kangentic/worktrees/vanishing-vanish11',
-      branch_name: 'vanishing-vanish11',
-      swimlane_id: 'lane-planning',
-    });
-    // One array reference. `list()` hands it out and `getById` searches it, so
-    // emptying it in place is what makes the row disappear for the re-read.
-    const allTasks: MockTask[] = [vanishingTask];
-    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
-      createMockReposWithAllTasks(allTasks);
-    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
-    // The delete lands while the existence probe is in flight. The candidate
-    // list was already copied by then, so the task still reaches the loop.
-    mockStat.mockImplementation(async (pathArg?: unknown) => {
-      if (String(pathArg) === vanishingTask.worktree_path) {
-        allTasks.splice(0, allTasks.length);
-        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      }
-      return { mtimeMs: Date.now() - 24 * 60 * 60 * 1000 };
-    });
-
-    const pruned = await pruneOrphanedWorktreeTasks(
-      projectPath,
-      taskRepo as never,
-      swimlaneRepo as never,
-      sessionRepo as never,
-      sessionManager as never,
-    );
-
-    // The re-read ran and found nothing, which is the only reason for the skip.
-    expect(taskRepo.getById).toHaveBeenCalledWith('vanish11-0000-0000-0000-000000000000');
-    expect(pruned).toBe(0);
-    expect(taskRepo.delete).not.toHaveBeenCalled();
-    expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
   });
 });
 
@@ -1646,7 +1143,7 @@ describe('pruneOrphanedDirectories -- pruneDirectory warn-and-continue', () => {
     const sessionManager = { listSessions: vi.fn(() => []) };
 
     const resultPromise = pruneOrphanedDirectories(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       sessionRepo as never,
       sessionManager as never,
@@ -1725,7 +1222,7 @@ describe('cleanupStaleResources -- removeWorktreeDirectory exhaustion path', () 
     );
 
     const resultPromise = cleanupStaleResources(
-      projectPath,
+      ownershipOf(projectPath),
       taskRepo as never,
       taskMoveRepo as never,
       swimlaneRepo as never,

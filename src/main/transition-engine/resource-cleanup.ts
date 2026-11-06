@@ -6,6 +6,7 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import type { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { SessionManager } from '../pty/session-manager';
+import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-worktree-folder';
 import { isWorktreeCreationInFlight } from '../git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../git/node-modules-link';
@@ -20,6 +21,9 @@ import { workflowKeepsRuns, type AutomationRunRepository } from '../db/repositor
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { getExistingProjectDb } from '../db/database';
 import type { LeftoverProcessEntry } from '../pty/process-tag/tagged-reap';
+import type { VerifiedOwnership } from '../project-ownership/project-ownership';
+import { moveIntoSetAside, purgeExpiredSetAside, type SetAsideKind } from '../project-ownership/set-aside';
+import { reportHandledError } from '../analytics/error-reporting';
 
 
 /**
@@ -39,22 +43,22 @@ const PROCESS_STARTED_AT = new Date().toISOString();
 /**
  * Clean up all stale resources under `.kangentic/` on project open.
  *
- * Runs three passes in order:
- *  1. Prune tasks whose worktree directories were deleted externally
- *  2. Clean worktree dirs, branches, and sessions for backlog tasks
- *  3. Remove orphaned worktree, session, and task directories
+ * Runs two passes in order:
+ *  1. Clean worktree dirs, branches, and sessions for backlog tasks
+ *  2. Remove orphaned worktree, session, and task directories
+ *
+ * A task whose worktree folder is gone is not stale. It keeps its card and its
+ * branch, and session recovery shows it as not running.
  *
  * This is the single source of truth for resource cleanup - session-startup/
  * only handles session lifecycle (resume, auto-spawn).
  *
- * For startup, prefer calling {@link pruneOrphanedWorktreeTasks} and then
- * {@link cleanupStaleResourcesAsync} separately, awaiting the prune before
- * session recovery reads the DB but firing the slow filesystem sweep without
- * awaiting it. This wrapper is retained for tests and any callers that want
- * the full sequence awaited.
+ * Startup calls {@link cleanupStaleResourcesAsync} directly and does not await
+ * it. This wrapper is retained for tests and any callers that want the sequence
+ * with its defaults.
  */
 export async function cleanupStaleResources(
-  projectPath: string,
+  ownership: VerifiedOwnership,
   taskRepo: TaskRepository,
   taskMoveRepo: Pick<TaskMoveRepository, 'currentVisit'>,
   swimlaneRepo: SwimlaneRepository,
@@ -66,21 +70,22 @@ export async function cleanupStaleResources(
   // ignore it. The production path calls cleanupStaleResourcesAsync instead.
   leftovers: LeftoverSweepOptions = { stoppingEnabled: () => false, onReport: () => {} },
 ): Promise<void> {
-  await pruneOrphanedWorktreeTasks(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
   await cleanupStaleResourcesAsync(
-    projectPath, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted, leftovers,
+    ownership, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, sessionManager, automationRunRepo, onRunsInterrupted, leftovers,
   );
 }
 
 /**
- * Async tail of resource cleanup: backlog cleanup (pass 2) + orphan directory
- * removal (pass 3). Safe to fire-and-forget during startup because it only
- * touches tasks the rest of the startup sequence does not (backlog tasks are
- * excluded from session recovery, and orphan directories are by definition
- * not referenced by any task).
+ * Resource cleanup: backlog cleanup + orphan directory removal. Safe to
+ * fire-and-forget during startup because it only touches tasks the rest of the
+ * startup sequence does not (backlog tasks are excluded from session recovery,
+ * and orphan directories are by definition not referenced by any task).
+ *
+ * Takes the proof rather than a path: a database that does not own this folder
+ * holds no evidence that anything in it is stale, so only an owner runs this.
  */
 export async function cleanupStaleResourcesAsync(
-  projectPath: string,
+  ownership: VerifiedOwnership,
   taskRepo: TaskRepository,
   /**
    * How each To Do task arrived, so the To Do sweep leaves alone the checkout
@@ -102,6 +107,7 @@ export async function cleanupStaleResourcesAsync(
   /** The setting and the toast for the startup sweep. Required, like the two above. */
   leftovers: LeftoverSweepOptions,
 ): Promise<void> {
+  const { projectPath } = ownership;
   // First: a leftover process holding a worktree as its cwd is what makes the
   // removals in the next two passes fail on Windows.
   await sweepTerminalTaskLeftovers(projectPath, taskRepo, swimlaneRepo, sessionManager, leftovers);
@@ -110,7 +116,8 @@ export async function cleanupStaleResourcesAsync(
   // Worktrees a Done move set aside and a quit left undeleted, plus any the
   // retry above just moved. In the background: it waits while init scripts run.
   scheduleRemovedWorktreeDeletion(projectPath);
-  await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
+  await pruneOrphanedDirectories(ownership, taskRepo, sessionRepo, sessionManager);
+  await purgeExpiredSetAside(ownership);
   const interrupted = sweepAutomationRuns(automationRunRepo);
   if (interrupted > 0) onRunsInterrupted(interrupted);
 }
@@ -265,104 +272,7 @@ function workflowHomedElsewhereKeepsRuns(homeProjectId: string, workflowId: stri
 }
 
 // ---------------------------------------------------------------------------
-// Pass 1: Prune tasks with missing worktree directories
-// ---------------------------------------------------------------------------
-
-/** Bounded parallelism for the per-task existence probes below: cheap on a
- *  local disk, safe on a network drive. */
-const PRUNE_EXISTENCE_CHECK_CONCURRENCY = 16;
-
-/** Async existence probe (fs.promises.stat) so a project with hundreds of
- *  historical tasks never blocks the event loop on a sync existsSync loop. */
-function pathExists(targetPath: string): Promise<boolean> {
-  return fs.promises.stat(targetPath).then(() => true, () => false);
-}
-
-/**
- * Delete tasks whose worktree directories have been removed outside the app.
- *
- * Only prunes if the `.kangentic/worktrees/` parent directory exists (if
- * missing, the project may be on an unmounted drive - don't prune anything).
- *
- * Never prunes tasks without a worktree_path or tasks with an active PTY.
- *
- * Never prunes a task in To Do either. A To Do move removes the task's
- * worktree and only then clears `worktree_path`, so a quit between the two
- * leaves this exact row: a To Do task pointing at a directory that is gone.
- * Deleting the task for it would lose the card the user just reset. The To Do
- * sweep ({@link cleanupStaleResourcesAsync}) clears the stale fields instead.
- * Done needs no such guard, since a Done move archives the task before it
- * removes anything and `list()` leaves archived tasks out.
- *
- * Async, with an ordering contract: startup callers MUST `await` this before
- * `resumeSuspendedSessions` so recovery reads a clean DB. The slow passes 2-3
- * ({@link cleanupStaleResourcesAsync}) may then be fired without awaiting.
- * The existence checks run with bounded parallelism off the event loop; the
- * active-session set is re-read AFTER that async gap (a spawn can interleave)
- * and the DB deletes then run in one synchronous final pass.
- */
-export async function pruneOrphanedWorktreeTasks(
-  projectPath: string,
-  taskRepo: TaskRepository,
-  swimlaneRepo: SwimlaneRepository,
-  sessionRepo: SessionRepository,
-  sessionManager: SessionManager,
-): Promise<number> {
-  const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
-  if (!(await pathExists(worktreesDir))) return 0;
-
-  const todoLaneIds = new Set(swimlaneRepo.list().filter((lane) => lane.role === 'todo').map((lane) => lane.id));
-  const candidates = taskRepo.list().filter(
-    (task): task is typeof task & { worktree_path: string } => Boolean(task.worktree_path) && !todoLaneIds.has(task.swimlane_id),
-  );
-
-  const missing: typeof candidates = [];
-  for (let chunkStart = 0; chunkStart < candidates.length; chunkStart += PRUNE_EXISTENCE_CHECK_CONCURRENCY) {
-    const chunk = candidates.slice(chunkStart, chunkStart + PRUNE_EXISTENCE_CHECK_CONCURRENCY);
-    const existence = await Promise.all(chunk.map((task) => pathExists(task.worktree_path)));
-    for (let indexInChunk = 0; indexInChunk < chunk.length; indexInChunk += 1) {
-      if (!existence[indexInChunk]) missing.push(chunk[indexInChunk]);
-    }
-  }
-
-  // Recompute AFTER the async gap: a session spawned while the existence
-  // checks ran must protect its task from the prune.
-  const activeTaskIds = new Set(
-    sessionManager.listSessions()
-      .filter(session => session.status === 'running' || session.status === 'queued')
-      .map(session => session.taskId),
-  );
-
-  let pruned = 0;
-  for (const task of missing) {
-    if (activeTaskIds.has(task.id)) continue;
-    // Never a workflow task. Deleting it would remove its links, and a task
-    // that waited for it would start without its work. Its card shows the task
-    // as not running instead, for the user to resume or remove.
-    if (task.workflow_id) continue;
-    // Last-look re-probe (sync, only for the handful of missing tasks): a
-    // spawn that interleaved after the probes may have re-created the worktree
-    // before its session reached the registry; skip rather than delete a task
-    // that is coming back to life. A spawn that has started but neither
-    // registered a session nor created the directory yet remains a residual
-    // (much narrower) race.
-    if (fs.existsSync(task.worktree_path)) continue;
-    // Re-read the lane after the async gap as well: a To Do move that landed
-    // while the probes ran removes this very directory as part of its reset.
-    const current = taskRepo.getById(task.id);
-    if (!current || todoLaneIds.has(current.swimlane_id)) continue;
-
-    console.log(`[RESOURCE_CLEANUP] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) - worktree missing`);
-    sessionRepo.deleteByTaskId(task.id);
-    taskRepo.delete(task.id);
-    pruned++;
-  }
-
-  return pruned;
-}
-
-// ---------------------------------------------------------------------------
-// Pass 2: Clean backlog task resources
+// Pass 1: Clean backlog task resources
 // ---------------------------------------------------------------------------
 
 /**
@@ -541,7 +451,7 @@ async function cleanBacklogTaskResources(
 }
 
 // ---------------------------------------------------------------------------
-// Pass 2b: Retry Done-task worktree cleanups that failed during the move
+// Pass 1b: Retry Done-task worktree cleanups that failed during the move
 // ---------------------------------------------------------------------------
 
 /**
@@ -657,38 +567,46 @@ export async function retryFailedDoneCleanups(
 }
 
 // ---------------------------------------------------------------------------
-// Pass 3: Remove orphaned directories
+// Pass 2: Remove orphaned directories
 // ---------------------------------------------------------------------------
 
 /**
- * Remove directories under `.kangentic/` not referenced by any task:
- *  - `worktrees/<slug>/`  - matched against task.worktree_path
- *  - `sessions/<uuid>/`   - matched against task.session_id + active PTY sessions
- *  - `tasks/<uuid>/`      - matched against task.id
+ * Clear directories under `.kangentic/` not referenced by any task:
+ *  - `worktrees/<slug>/`  - matched against the folder in task.worktree_path; set aside
+ *  - `sessions/<uuid>/`   - matched against task.session_id + active PTY sessions; deleted
+ *  - `tasks/<uuid>/`      - matched against task.id; set aside
+ *
+ * "No row names it" is a guess, so what a person cannot rebuild goes to
+ * `.kangentic/set-aside/` instead of being deleted, and a pass that would clear
+ * most of a folder clears none of it.
  */
 /** @internal Exported for testing. */
 export async function pruneOrphanedDirectories(
-  projectPath: string,
+  ownership: VerifiedOwnership,
   taskRepo: TaskRepository,
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
 ): Promise<void> {
+  const { projectPath } = ownership;
   const kangenticDir = path.join(projectPath, '.kangentic');
   const allTasks = [...taskRepo.list(), ...taskRepo.listArchived()];
 
-  // Worktree directories: match by full path. A worktree is recorded on its
-  // task only once its setup (the Post-Worktree Script) ends, so one a
-  // creation still holds counts as referenced too. A spare worktree is no
-  // task's until one adopts it, and its own startup pass decides whether it
-  // stays (`SpareWorktreePool.sweep`), so this sweep never takes one.
+  // Worktree directories: match by the folder name in `worktree_path`, so a row
+  // that spells the project's path another way still names its folder. Not
+  // `worktree_folder`: it outlives the worktree, and would keep every Done task's
+  // leftover here for good. A worktree is recorded on its task only once its
+  // setup (the Post-Worktree Script) ends, so one a creation still holds counts
+  // as referenced too. A spare worktree is no task's until one adopts it, and its
+  // own startup pass decides whether it stays (`SpareWorktreePool.sweep`), so this
+  // sweep never takes one.
   const referencedWorktrees = new Set(
-    allTasks.map(task => task.worktree_path).filter((worktreePath): worktreePath is string => Boolean(worktreePath)),
+    allTasks.map(task => worktreeFolderFromPath(task.worktree_path)).filter((folder): folder is string => folder !== null),
   );
   await pruneDirectory(
     path.join(kangenticDir, 'worktrees'),
-    (dirPath, name) => referencedWorktrees.has(dirPath) || isWorktreeCreationInFlight(dirPath) || isSpareWorktreeFolder(name),
+    (dirPath, name) => referencedWorktrees.has(name) || isWorktreeCreationInFlight(dirPath) || isSpareWorktreeFolder(name),
     'worktree',
-    true, // has junctions
+    { projectPath, setAsideKind: 'worktrees', hasJunctions: true },
   );
 
   // Session directories: match by directory name (UUID). A live session's own id
@@ -708,6 +626,7 @@ export async function pruneOrphanedDirectories(
     path.join(kangenticDir, 'sessions'),
     (_dirPath, name) => referencedSessionIds.has(name),
     'session',
+    { projectPath },
   );
 
   // Task directories: match by directory name (UUID)
@@ -716,6 +635,7 @@ export async function pruneOrphanedDirectories(
     path.join(kangenticDir, 'tasks'),
     (_dirPath, name) => referencedTaskIds.has(name),
     'task',
+    { projectPath, setAsideKind: 'tasks' },
   );
 }
 
@@ -735,15 +655,38 @@ export async function pruneOrphanedDirectories(
 const ORPHAN_DIRECTORY_GRACE_PERIOD_MS = 10 * 60 * 1000;
 
 /**
- * Remove unreferenced subdirectories with retry on EPERM. Skips directories
+ * The smallest count of orphans that can trip the refusal below, so a small
+ * folder with two stale entries of three still gets cleaned.
+ */
+const ORPHAN_REFUSAL_MINIMUM = 5;
+
+/**
+ * A pass that would clear most of a folder is not cleaning it. Genuine orphans
+ * are a few stragglers, and an owner's database naming almost nothing on disk is
+ * the shape of a wrong database, which the ownership check missed if we are here.
+ */
+function wouldClearMostOf(orphanCount: number, directoryCount: number): boolean {
+  return orphanCount >= ORPHAN_REFUSAL_MINIMUM && orphanCount * 2 > directoryCount;
+}
+
+interface PruneDirectoryOptions {
+  projectPath: string;
+  /** Move entries aside rather than delete them, for what a person cannot rebuild. */
+  setAsideKind?: SetAsideKind;
+  hasJunctions?: boolean;
+}
+
+/**
+ * Clear unreferenced subdirectories, retrying on EPERM. Skips directories
  * modified within the grace period so the sweep never races a concurrent spawn
- * path that creates directories before registering their ids.
+ * path that creates directories before registering their ids. Counts first, and
+ * clears nothing when the count says most of the folder would go.
  */
 async function pruneDirectory(
   parentDir: string,
   isReferenced: (dirPath: string, name: string) => boolean,
   label: string,
-  hasJunctions = false,
+  options: PruneDirectoryOptions,
 ): Promise<void> {
   let entries: fs.Dirent[];
   try {
@@ -752,8 +695,9 @@ async function pruneDirectory(
     return; // Directory doesn't exist
   }
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+  const directories = entries.filter((entry) => entry.isDirectory());
+  const orphans: fs.Dirent[] = [];
+  for (const entry of directories) {
     const dirPath = path.join(parentDir, entry.name);
     if (isReferenced(dirPath, entry.name)) continue;
 
@@ -772,16 +716,41 @@ async function pruneDirectory(
       console.log(`[RESOURCE_CLEANUP] Skipping recently modified ${label} directory (grace period): ${entry.name}`);
       continue;
     }
+    orphans.push(entry);
+  }
 
+  if (wouldClearMostOf(orphans.length, directories.length)) {
+    console.warn(
+      `[RESOURCE_CLEANUP] Refused to clear ${orphans.length} of ${directories.length} ${label} directories: `
+      + 'that is most of the folder, and this database may not be the one that made them',
+    );
+    reportHandledError(
+      new Error(`Refused an orphan sweep of most of a ${label} folder`),
+      { source: 'orphan_sweep_refused', folder: label },
+      { orphan_sweep: { orphans: orphans.length, directories: directories.length } },
+      ['orphan-sweep-refused', label],
+    );
+    return;
+  }
+
+  for (const entry of orphans) {
+    const dirPath = path.join(parentDir, entry.name);
     console.log(`[RESOURCE_CLEANUP] Removing orphaned ${label} directory: ${entry.name}`);
 
-    if (hasJunctions) {
+    if (options.hasJunctions) {
       await removeNodeModulesPath(path.join(dirPath, 'node_modules'));
     }
     // Asked again after the awaits above: a worktree creation can claim the
     // path while they run.
     if (isReferenced(dirPath, entry.name)) {
       console.log(`[RESOURCE_CLEANUP] Kept ${label} directory referenced since the sweep began: ${entry.name}`);
+      continue;
+    }
+
+    if (options.setAsideKind) {
+      // On a failed move the folder stays where it is: moveIntoSetAside warned,
+      // and a held folder is one something is still using.
+      await moveIntoSetAside(options.projectPath, options.setAsideKind, dirPath);
       continue;
     }
 

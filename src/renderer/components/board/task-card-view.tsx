@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
+import { Loader2, CircleAlert, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
@@ -18,7 +19,7 @@ import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } 
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
 import type {
-  ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task,
+  ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, Task,
 } from '../../../shared/types';
 import { activityReasonIcon } from './ActivityReasonTooltip';
 import { formatActivityReasonText } from './activity-reason-text';
@@ -52,13 +53,13 @@ import { canTaskRunAutomations } from '../../../shared/automation-manifest';
  * footer that turns from one into the other keeps its height.
  */
 export function CardStatusBar({
-  children, testId, tip, divider = true,
-}: { children: React.ReactNode; testId: string; tip?: string; divider?: boolean }) {
+  children, testId, tip, divider = true, toneClass = 'text-fg-faint',
+}: { children: React.ReactNode; testId: string; tip?: string; divider?: boolean; toneClass?: string }) {
   return (
     <div className={divider ? 'mt-2 pt-2 border-t border-edge' : 'mt-2'} data-testid={testId}>
       <div className="flex items-center justify-between">
         <Tooltip label={tip ?? ''} describe={false}>
-          <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0">
+          <span className={`text-xs ${toneClass} flex items-center gap-1 min-w-0`}>
             {children}
           </span>
         </Tooltip>
@@ -76,8 +77,10 @@ function useQueuedStatus(sessionId: string | undefined): { label: string; tip: s
   const { t } = useLingui();
   const place = useQueuePlace(sessionId);
   if (!place) return { label: t`Queued...`, tip: undefined };
-  const { position, total } = place;
-  const label = t`Queued ${position}/${total}...`;
+  const ahead = place.position - 1;
+  const label = ahead === 0
+    ? t`Next in line...`
+    : plural(ahead, { one: '# task ahead...', other: '# tasks ahead...' });
   if (place.kind === 'global') return { label, tip: t`Waiting for a free agent slot.` };
   const columnName = place.line.columnName;
   return { label, tip: t`Waiting for a slot in ${columnName}.` };
@@ -100,6 +103,48 @@ function QueuedCompactLine({ sessionId }: { sessionId: string | undefined }) {
     <Tooltip label={tip ?? ''} describe={false}>
       <span className="text-xs text-fg-faint mt-1 flex items-center gap-1 min-w-0" data-testid="task-card-queued-line">
         <Clock size={12} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
+ * What a card says about a start that never reached an agent: short words in
+ * place of "Paused", and the reason in the tip. A plain pause reads as a choice,
+ * and on 2026-11-05 three cards whose agents had never run read exactly that way.
+ */
+function useStartBlockedCopy(reason: StartBlockedReason): { label: string; tip: string } {
+  const { t } = useLingui();
+  switch (reason) {
+    case 'worktree-missing':
+      return { label: t`Worktree missing`, tip: t`Its worktree folder is gone. Resume makes it again from the branch.` };
+    case 'folder-missing':
+      return { label: t`Folder missing`, tip: t`The folder this agent starts in is gone.` };
+    case 'never-started':
+      return { label: t`Didn't start`, tip: t`The agent never reported that it started.` };
+    case 'spawn-failed':
+      return { label: t`Didn't start`, tip: t`The terminal could not start. Its window shows why.` };
+  }
+}
+
+function StartBlockedFooter({ reason, divider, testId }: { reason: StartBlockedReason; divider: boolean; testId?: string }) {
+  const { label, tip } = useStartBlockedCopy(reason);
+  return (
+    <CardStatusBar testId={testId ?? 'status-bar'} divider={divider} tip={tip} toneClass="text-warning">
+      <CircleAlert size={12} className="shrink-0" />
+      <span className="truncate">{label}</span>
+    </CardStatusBar>
+  );
+}
+
+/** A compact card has no footer, so its one line under the title says it, as a queued one does. */
+function StartBlockedCompactLine({ reason }: { reason: StartBlockedReason }) {
+  const { label, tip } = useStartBlockedCopy(reason);
+  return (
+    <Tooltip label={tip} describe={false}>
+      <span className="text-xs text-warning mt-1 flex items-center gap-1 min-w-0" data-testid="task-card-start-blocked-line">
+        <CircleAlert size={12} className="shrink-0" />
         <span className="truncate">{label}</span>
       </span>
     </Tooltip>
@@ -356,14 +401,17 @@ export type PendingFooterState = 'starting' | 'resuming' | 'queued' | 'paused';
  * (spinning), queued (a still clock and its place in line), or paused. One home for
  * the words, shared by the board card and the Agent Monitor's card.
  */
-export function PendingFooter({ state, divider, testId, sessionId }: {
+export function PendingFooter({ state, divider, testId, sessionId, startBlockedReason }: {
   state: PendingFooterState;
   divider: boolean;
   testId?: string;
   /** The queued session, for its place in line. */
   sessionId?: string;
+  /** Why a paused row's start never reached an agent, which replaces "Paused". */
+  startBlockedReason?: StartBlockedReason | null;
 }) {
   if (state === 'paused') {
+    if (startBlockedReason) return <StartBlockedFooter reason={startBlockedReason} divider={divider} testId={testId} />;
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
         <CirclePause size={12} className="shrink-0" />
@@ -543,6 +591,8 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
           the well is what says the agent wrote this. */}
       {isCompactDensity && displayState.kind === 'queued' ? (
         <QueuedCompactLine sessionId={view.sessionId} />
+      ) : isCompactDensity && (displayState.kind === 'suspended' || displayState.kind === 'exited') && displayState.startBlockedReason ? (
+        <StartBlockedCompactLine reason={displayState.startBlockedReason} />
       ) : shownTrail && trailMode ? (
         <div className="mt-1">
           <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} lineClass="text-fg-muted" terminal />
@@ -626,9 +676,11 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
     case 'queued':
       return <PendingFooter state="queued" divider={divider} sessionId={view.sessionId} />;
     case 'suspended':
-      return <PendingFooter state="paused" divider={divider} />;
-    case 'none':
+      return <PendingFooter state="paused" divider={divider} startBlockedReason={displayState.startBlockedReason} />;
     case 'exited':
+      if (displayState.startBlockedReason) return <StartBlockedFooter reason={displayState.startBlockedReason} divider={divider} />;
+      return idleFooter ? <>{idleFooter}</> : null;
+    case 'none':
     default:
       return idleFooter ? <>{idleFooter}</> : null;
   }

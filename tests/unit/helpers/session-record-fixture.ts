@@ -28,6 +28,7 @@ export function makeSessionRecord(overrides: Partial<SessionRecord> = {}): Sessi
     exited_at: null,
     suspended_by: null,
     launch_failed_at: null,
+    start_blocked_reason: null,
     total_cost_usd: null,
     total_input_tokens: null,
     total_output_tokens: null,

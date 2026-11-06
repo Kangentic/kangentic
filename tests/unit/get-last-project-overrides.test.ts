@@ -81,7 +81,7 @@ vi.mock('../../src/main/transition-engine/session-startup', () => ({
 }));
 vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
   cleanupStaleResourcesAsync: vi.fn(async () => {}),
-  pruneOrphanedWorktreeTasks: vi.fn(),
+  sweepAutomationRuns: vi.fn(() => 0),
 }));
 vi.mock('../../src/main/config/paths', () => ({
   PATHS: { projectDb: vi.fn((id: string) => `/tmp/${id}.db`) },

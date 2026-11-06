@@ -142,6 +142,7 @@ import {
   registerTransientSessionHandlers,
   startCommandTerminal,
 } from '../../src/main/ipc/handlers/transient-sessions';
+import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { SpawnTransientSessionInput } from '../../src/shared/types';
 
@@ -677,6 +678,32 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
       .rejects.toMatchObject({ code: 'spawn-failed' });
 
     expect(mockReportPreflightFailure).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a project folder that is gone as the refusal it is, and reports nothing', async () => {
+    // spawn() refuses with AgentCwdMissingError when the folder the terminal
+    // starts in no longer exists. That is an expected answer, not a fault to
+    // send to Sentry, and the caller still gets the same error back.
+    mockReportPreflightFailure.mockClear();
+    const context = createMockContext();
+    const refusal = new AgentCwdMissingError('C:/Users/dev/gone');
+    context.sessionManager.spawn.mockRejectedValueOnce(refusal);
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(refusal);
+
+    expect(mockReportPreflightFailure).not.toHaveBeenCalled();
+  });
+
+  it('still reports any other error the spawn throws', async () => {
+    mockReportPreflightFailure.mockClear();
+    const context = createMockContext();
+    const fault = new Error('node-pty exploded');
+    context.sessionManager.spawn.mockRejectedValueOnce(fault);
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(fault);
+
+    expect(mockReportPreflightFailure).toHaveBeenCalledTimes(1);
+    expect(mockReportPreflightFailure).toHaveBeenCalledWith(expect.objectContaining({ cause: 'command_terminal', error: fault }));
   });
 
   it('never gives two starts in flight the same slot, and frees a failed start\'s slot', async () => {

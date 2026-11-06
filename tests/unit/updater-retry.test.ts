@@ -21,20 +21,25 @@
  *          and the same two position regressions are pinned here.
  *       5. isReadOnlyVolumeError - trackEvent YES, reportHandledError NO, PLUS one
  *          updater:blocked push. The same split again for the macOS install path
- *          (DESKTOP-1A), and the only branch in the whole handler that says anything
- *          to the user: an app running from a read-only volume never updates again,
+ *          (DESKTOP-1A), and one of two branches in the handler that say anything to
+ *          the user: an app running from a read-only volume never updates again,
  *          silently, until someone moves it. The push is latched for the app run, so
  *          a condition every 4-hour check rediscovers still toasts once.
- *       6. isResourceUnavailableError - trackEvent YES, reportHandledError NO. EAGAIN
+ *       6. isPackageManagerMissingError - trackEvent YES, reportHandledError NO, PLUS the
+ *          same updater:blocked push, whose body is the error's own text. A .deb install
+ *          on a host with neither dpkg nor apt (DESKTOP-R's second failure shape) refuses
+ *          on every "Restart to update" click, so the shared latch is what keeps two
+ *          clicks to one toast.
+ *       7. isResourceUnavailableError - trackEvent YES, reportHandledError NO. EAGAIN
  *          (DESKTOP-1B) reaching us through macOS's NSError rendering rather than
  *          through Node, which is the only reason branch 2's errno list misses it.
- *       7. isPrereleaseWithNoMatchingRelease - trackEvent YES, reportHandledError NO,
+ *       8. isPrereleaseWithNoMatchingRelease - trackEvent YES, reportHandledError NO,
  *          and ONLY on a prerelease build. A prerelease asking for a channel we do not
  *          publish (DESKTOP-17) is its normal state; the identical error on a STABLE
  *          build means our releases feed is empty and still reports. Both pinned here.
- *       8. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
- *          called, gated identically (reportHandledError sits after the same six early
- *          returns, so a regression that moves it above any guard would page Sentry
+ *       9. structural error - trackEvent('app_error', ...) AND reportHandledError(error, { source: 'updater' })
+ *          called, gated identically (reportHandledError sits after every early return
+ *          above, so a regression that moves it above any guard would page Sentry
  *          for a transient, declined, or in-flight-retry error)
  */
 
@@ -578,7 +583,7 @@ describe("autoUpdater.on('error') listener", () => {
     // with no live window, and a second-instance arrival that finds the same -
     // re-points the updater at the new window through updateUpdaterWindow, NOT
     // initUpdater. The process never restarted, so this is not the "later
-    // launch" the latch comment on notifyReadOnlyVolume reserves a fresh
+    // launch" the latch comment on notifyUpdateBlocked reserves a fresh
     // notice for: the user already saw this run's one notice, and a rebuilt
     // window must not repeat it. A refactor that folds updateUpdaterWindow and
     // initUpdater's window assignment into one shared setter, and carries the
@@ -611,6 +616,31 @@ describe("autoUpdater.on('error') listener", () => {
     initUpdater(rebuiltWindow);
     getRegisteredListener('error')(readOnly);
     expect(rebuiltWindowSend).toHaveBeenCalledTimes(1);
+
+    consoleLogSpy.mockRestore();
+  });
+
+  it('counts a host with no dpkg or apt per click, never reports it, and tells the user once with the raw error', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const errorListener = getRegisteredListener('error');
+    // The real DESKTOP-R text. DebUpdater.doInstall dispatches it with no code,
+    // and quitAndInstall resets its own latch, so each click emits it again.
+    const message = 'Neither dpkg nor apt command found. Cannot install .deb package.';
+    errorListener(makeError(message));
+    errorListener(makeError(message));
+
+    // Counted per click, so "how many installs cannot update" stays answerable.
+    expect(mocks.trackEvent).toHaveBeenCalledTimes(2);
+    // Never filed: no build of ours can give that host a package manager.
+    expect(mocks.reportHandledError).not.toHaveBeenCalled();
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[UPDATER] Counting but not reporting a missing package manager:'),
+      expect.any(String),
+    );
+    // One toast for two clicks, and the body is the error word for word.
+    expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('updater:blocked', message);
 
     consoleLogSpy.mockRestore();
   });

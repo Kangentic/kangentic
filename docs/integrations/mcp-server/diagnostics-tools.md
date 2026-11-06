@@ -8,6 +8,8 @@ sources:
   - resource: src/main/agent/mcp-http/session-tools.ts
     title: kangentic_query_db registration
   - resource: src/main/agent/commands/inspect-commands.ts
+  - resource: src/main/git/worktree-list.ts
+    title: kangentic_list_worktrees enumeration
 ---
 # Diagnostics tools
 
@@ -72,6 +74,8 @@ Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jso
 ## kangentic_list_worktrees
 
 Enumerate worktrees for one or every registered project. Each `WorktreeRecord` carries path, branch, the base branch its work is based on (`baseRef`: the task's own base, else the base it was cut from, else the project default; the main checkout included), dirty flag, commits ahead/behind that base (measured against `origin/<base>` first, then the local ref; the branch's own upstream only when no base resolves, which then says how current the branch is with its own remote rather than with the base), and last-commit timestamp. Pure read-only and never fetches: the counts are as current as the remote-tracking refs, which the background fetch scheduler keeps refreshed for the focused project. Useful for finding a task's branch, locating dirty work, or checking whether a tree is behind the base it was cut from.
+
+Git runs in the pty host, four or five runs per worktree, four worktrees at a time, so a walk does not hold main. Those processes still add up across many projects, so pass `project` when one project is enough.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -45,6 +45,10 @@ msgstr "({deleteFailureCount} failed)"
 msgid "{0} does not exist on {1}."
 msgstr "{0} does not exist on {1}."
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{ahead} ahead, {behind} behind base branch"
 msgstr "{ahead} ahead, {behind} behind base branch"
@@ -56,6 +60,10 @@ msgstr "{automationCount, plural, one {# automation runs here} other {# automati
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 msgid "{columnName}, {triggerPhrase}"
@@ -162,6 +170,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "{position} of {total}"
 msgstr "{position} of {total}"
 
@@ -172,10 +181,6 @@ msgstr "{reason} Saved {savedBeforeFailing} before failing."
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, as in {sample}</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
@@ -1512,6 +1517,10 @@ msgstr "Next change"
 msgid "Next column"
 msgstr "Next column"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Next in line"
+msgstr "Next in line"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "No active session"
 msgstr "No active session"
@@ -1784,6 +1793,10 @@ msgstr "Open Settings"
 msgid "Open that board to edit its profiles"
 msgstr "Open that board to edit its profiles"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Open the board to change this"
+msgstr "Open the board to change this"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Open worktree"
 msgstr "Open worktree"
@@ -1948,10 +1961,6 @@ msgstr "Queued"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Queued (click to pause)"
 msgstr "Queued (click to pause)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "Queued {position}/{total}"
-msgstr "Queued {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
@@ -2661,6 +2670,10 @@ msgstr "Untitled column"
 msgctxt "file status"
 msgid "Untracked"
 msgstr "Untracked"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Update from base"

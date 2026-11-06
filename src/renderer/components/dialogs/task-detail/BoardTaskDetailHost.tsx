@@ -95,6 +95,7 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     isMoveConfirmPending: () => useBoardStore.getState().pendingMoveConfirm !== null,
     shortcutsSuppressed: boardManagerOpen || settingsOpen || commandTerminalOpen,
     canOpenConversation: true,
+    openColumnManager: (swimlaneId: string) => useBoardStore.getState().openBoardManager(swimlaneId),
     useLiveTaskTitle: useBoardTaskTitle,
   }), [
     projectId, projectPath, defaultAgent, swimlanes, shortcuts, config,

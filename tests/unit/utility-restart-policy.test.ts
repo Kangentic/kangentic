@@ -513,6 +513,104 @@ describe('UtilityRestartPolicy', () => {
       ]);
     });
 
+    // DESKTOP-1Q latched on three crashes with one `stderrTail`, so the report could not say
+    // which of the three printed its watchdog line. Each entry now carries its own crash's.
+    describe('each crash\'s own watchdog line', () => {
+      const firstLine = '[retrieval-worker] event loop held 5 s in method:sessions.summaries';
+      const thirdLine = '[retrieval-worker] event loop held 5 s in transcript:parse-codex';
+
+      it('says which of three crashes held the loop where, in the order the DESKTOP-1Q latch had them', () => {
+        // A worker that never says ready can still print one: the watchdog starts first in initialize().
+        const secondLine = '[retrieval-worker] event loop held 5 s in db:checkpoint';
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(null, makeStderrSource(firstLine), {
+          cause: 'request_timeout',
+          method: 'sessions.summaries',
+          pendingMethods: ['transcript.trailRead', 'db.checkpoint'],
+        });
+        clock.advance(4_000);
+        policy.recordCrash(null, makeStderrSource(secondLine), { cause: 'ready_timeout' });
+        clock.advance(4_000);
+        policy.recordCrash(null, makeStderrSource(thirdLine), {
+          cause: 'request_timeout',
+          method: 'transcript.trailRead',
+          pendingMethods: ['index.sweep', 'db.checkpoint', 'transcript.trailRead'],
+        });
+
+        const [, , contexts] = mockReportHandledError.mock.calls[0];
+        expect(contexts.utility_process.crashes).toEqual([
+          `request_timeout method=sessions.summaries pending=transcript.trailRead,db.checkpoint watchdog="${firstLine}"`,
+          `ready_timeout watchdog="${secondLine}"`,
+          `request_timeout method=transcript.trailRead pending=index.sweep,db.checkpoint,transcript.trailRead watchdog="${thirdLine}"`,
+        ]);
+      });
+
+      it('puts each crash\'s line on its own entry, leaving a crash that printed none alone', () => {
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(null, makeStderrSource(firstLine), { cause: 'request_timeout', method: 'sessions.summaries' });
+        clock.advance(4_000);
+        policy.recordCrash(null, makeStderrSource(''), { cause: 'ready_timeout' });
+        clock.advance(4_000);
+        policy.recordCrash(null, makeStderrSource(thirdLine), { cause: 'request_timeout', method: 'transcript.trailRead' });
+
+        const [, , contexts] = mockReportHandledError.mock.calls[0];
+        expect(contexts.utility_process.crashes).toEqual([
+          `request_timeout method=sessions.summaries watchdog="${firstLine}"`,
+          'ready_timeout',
+          `request_timeout method=transcript.trailRead watchdog="${thirdLine}"`,
+        ]);
+      });
+
+      it('stays on its own crash when a fork that threw, with no stderr to hold, sits between them', () => {
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(null, makeStderrSource(firstLine), { cause: 'request_timeout', method: 'sessions.summaries' });
+        clock.advance(4_000);
+        policy.recordCrash(null, undefined, { cause: 'fork_failed' });
+        clock.advance(4_000);
+        policy.recordCrash(null, makeStderrSource(thirdLine), { cause: 'request_timeout', method: 'transcript.trailRead' });
+
+        const [, , contexts] = mockReportHandledError.mock.calls[0];
+        expect(contexts.utility_process.crashes).toEqual([
+          `request_timeout method=sessions.summaries watchdog="${firstLine}"`,
+          'fork_failed',
+          `request_timeout method=transcript.trailRead watchdog="${thirdLine}"`,
+        ]);
+      });
+
+      it('reads the source at report time, so a line that lands after the crash was recorded is not lost', () => {
+        const { policy, clock } = makePolicy();
+        const draining = makeStderrSource('');
+        policy.recordCrash(null, draining, { cause: 'request_timeout', method: 'sessions.summaries' });
+        clock.advance(4_000);
+        draining.set(firstLine);
+        policy.recordCrash(null, undefined, { cause: 'ready_timeout' });
+        clock.advance(4_000);
+        policy.recordCrash(null, undefined, { cause: 'ready_timeout' });
+
+        const [, , contexts] = mockReportHandledError.mock.calls[0];
+        expect(contexts.utility_process.crashes[0]).toBe(`request_timeout method=sessions.summaries watchdog="${firstLine}"`);
+      });
+
+      it('keeps the newest line of a worker that held twice, and no other stderr', () => {
+        const { policy, clock } = makePolicy();
+        policy.recordCrash(null, makeStderrSource(`${firstLine}\n${thirdLine}\nError: an unrelated line\n`), {
+          cause: 'request_timeout',
+          method: 'transcript.trailRead',
+        });
+        clock.advance(4_000);
+        policy.recordCrash(1, makeStderrSource('Error: Cannot find module \'sharp\''));
+        clock.advance(4_000);
+        policy.recordCrash(1);
+
+        const [, , contexts] = mockReportHandledError.mock.calls[0];
+        expect(contexts.utility_process.crashes).toEqual([
+          `request_timeout method=transcript.trailRead watchdog="${thirdLine}"`,
+          'exit code=1',
+          'exit code=1',
+        ]);
+      });
+    });
+
     it('starts a fresh list after the window decays', () => {
       const { policy, clock } = makePolicy({ decayMs: 300_000 });
       for (let index = 0; index < 3; index++) {

@@ -4,6 +4,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { prepareInjectionPlan, resolveReportedEffort, restartPhaseFor } from '../../transition-engine/injection-plan';
 import { applyProfileToLane, findTaskProfile } from '../../transition-engine/column-strategy';
 import { restartSessionForSettingsChange } from './session-reconcile';
+import { applyTaskSettingsToQueuedStart } from './task-runtime-override';
 import { reconcileAutoSpawnChange } from './auto-spawn-reconcile';
 import { getProjectRepos } from '../helpers';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -102,6 +103,11 @@ export function propagateStrategyToLiveSessions(
 
     if (!task.session_id) continue;
     const session = context.sessionManager.getSession(task.session_id);
+    // A queued session has no agent to restart, and no turn an edit could cut.
+    if (session?.status === 'queued' && projectId && projectPath) {
+      applyTaskSettingsToQueuedStart(context, projectId, projectPath, task);
+      continue;
+    }
     if (!session || session.status !== 'running') continue;
 
     const adapter = task.agent ? agentRegistry.get(task.agent) : undefined;

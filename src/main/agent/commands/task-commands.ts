@@ -684,7 +684,8 @@ export const handleUpdateTask: CommandHandler = (
     // an agent updates its own task, so say so rather than leave it a surprise.
     message: `Updated ${changedFields.join(', ')} for "${updated.title}".`
       + (settingsChanged && updated.session_id
-        ? ' Its running session restarts if it is not already on these settings, which ends its current turn.'
+        ? ' A running session restarts if it is not already on these settings, which ends its current turn.'
+          + ' A queued session starts with them.'
         : ''),
     data: {
       id: updated.id,

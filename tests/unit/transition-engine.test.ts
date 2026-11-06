@@ -525,6 +525,30 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     expect(mockAdapter.removeHooks).not.toHaveBeenCalled();
   });
 
+  it('executeAction (spawn_agent): hands the queue the same launch to rebuild with other settings', async () => {
+    const builds: Array<{ model?: string; effort?: string; prompt?: string; ptySessionId?: string }> = [];
+    mockAdapter.buildCommand.mockImplementation((options: { model?: string; effort?: string; prompt?: string; ptySessionId?: string }) => {
+      builds.push(options);
+      return `mock --model ${options.model ?? 'none'}`;
+    });
+    const { runSpawn, sessionManager } = makeEngine({});
+
+    await runSpawn(makeTask());
+
+    const [input] = sessionManager.spawn.mock.calls[0] as unknown as [{
+      rebuildCommand: (settings: { model: string | null; effort: string | null }) => string;
+    }];
+    expect(input.rebuildCommand({ model: 'sonnet', effort: 'high' })).toBe('mock --model sonnet');
+    expect(input.rebuildCommand({ model: null, effort: null })).toBe('mock --model none');
+    // Only the settings move: the prompt and the session stay the spawn's own.
+    expect(builds[1].prompt).toBe(builds[0].prompt);
+    expect(builds[1].ptySessionId).toBe(builds[0].ptySessionId);
+    expect(builds[1].effort).toBe('high');
+    // A null effort reaches the builder as undefined (its "no flag" value), never as null.
+    expect(builds[2].effort).toBeUndefined();
+    expect(builds[2].model).toBeUndefined();
+  });
+
   it('executeAction (spawn_agent): task_xml contains raw multi-line description', async () => {
     const rawDescription = 'Step 1: check OAuth.\n\nStep 2: refresh token.';
     const task = makeTask({ description: rawDescription });

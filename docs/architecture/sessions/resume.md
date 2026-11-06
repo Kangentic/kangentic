@@ -309,6 +309,8 @@ The in-place restart, `restartSessionForSettingsChange` (`src/main/ipc/handlers/
 follows the same contract with a required `phase`: the ContextBar model/effort pick, an MCP
 `kangentic_update_task` settings write, and a column or Board Profile propagation emit `switching-model` (or `applying-settings` for an effort-only
 restart), and the auto_command escalation emits `resending-command` ("Re-sending command...").
+A queued session is not restarted by any of these: its waiting command is rebuilt in place (see
+[Command injection](../automations/command-injection.md)), so no phase label is emitted for it.
 It emits before its
 suspend and clears the label in a `finally` once the resume has returned or failed, the ordering
 task-move's Phase 3 uses. The emit is what lets the mobile bridge tell this respawn from a park

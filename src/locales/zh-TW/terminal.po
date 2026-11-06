@@ -136,6 +136,11 @@ msgstr "尚無工具呼叫"
 msgid "Notice"
 msgstr "通知"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "暫停此工作以進行變更"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Plan approved automatically"
 msgstr "計畫已自動核准"

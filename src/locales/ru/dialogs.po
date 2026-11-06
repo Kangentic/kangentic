@@ -50,9 +50,13 @@ msgstr "(ошибок: {deleteFailureCount})"
 #. placeholder {0}: probe.path
 #. placeholder {1}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
 msgid "{0} does not exist on {1}."
 msgstr "{0} не существует на {1}."
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, one {Впереди # задача} few {Впереди # задачи} many {Впереди # задач} other {Впереди # задачи}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -68,6 +72,11 @@ msgstr "{automationCount, plural, one {Здесь выполняется # ав�
 #, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, one {Отличаются: {changedCount} из # пикселя} few {Отличаются: {changedCount} из # пикселей} many {Отличаются: {changedCount} из # пикселей} other {Отличаются: {changedCount} из # пикселя}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{maxAgents, plural, one {{columnName}: одновременно работает # агент} few {{columnName}: одновременно работают # агента} many {{columnName}: одновременно работают # агентов} other {{columnName}: одновременно работают # агента}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -200,6 +209,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} из {total}"
@@ -213,11 +223,6 @@ msgstr "{reason} До сбоя сохранено: {savedBeforeFailing}."
 #, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, например {sample}</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, one {Запущено {runningCount} из # агента} few {Запущено {runningCount} из # агентов} many {Запущено {runningCount} из # агентов} other {Запущено {runningCount} из # агента}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -836,7 +841,7 @@ msgstr "Столбцы"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "Колонки используют основной диалог задачи, если не задать этой колонке собственный. Изолированная колонка начинает новый диалог при каждом попадании в неё задачи, что подходит для код-ревью и любого этапа, который не должен наследовать предыдущую работу."
+msgstr "Колонки используют основной диалог задачи, если не назначить этой колонке собственный. Изолированная колонка начинает новый диалог при каждом попадании в неё задачи: это подходит для проверки кода и других этапов, которые не должны наследовать предыдущую работу."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Command Terminal"
@@ -1109,7 +1114,7 @@ msgstr "Не удалось переключить ветвь"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
-msgstr "Учитываются задачи, агент которых работает или ждёт ваших действий. Максимум одновременных сеансов в настройках по-прежнему действует."
+msgstr "Учитываются задачи, агент которых работает или ждёт вашего ответа. Параметр «Максимум одновременных сеансов» в настройках по-прежнему действует."
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1858,6 +1863,11 @@ msgstr "Следующее изменение"
 msgid "Next column"
 msgstr "Следующий столбец"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Next in line"
+msgstr "Следующая в очереди"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
 msgid "No active session"
@@ -2196,6 +2206,11 @@ msgstr "Открыть параметры"
 msgid "Open that board to edit its profiles"
 msgstr "Откройте эту доску, чтобы изменить её профили"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Open the board to change this"
+msgstr "Откройте доску, чтобы изменить это"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open worktree"
@@ -2399,11 +2414,6 @@ msgstr "В очереди"
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "В очереди (нажмите для паузы)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Queued {position}/{total}"
-msgstr "В очереди {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3278,6 +3288,11 @@ msgstr "Колонка без названия"
 msgctxt "file status"
 msgid "Untracked"
 msgstr "Не отслеживается"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "{maxConcurrent, plural, one {Одновременно работает до # агента} few {Одновременно работает до # агентов} many {Одновременно работает до # агентов} other {Одновременно работает до # агента}}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

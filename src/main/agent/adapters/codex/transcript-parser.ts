@@ -8,6 +8,7 @@ import { touchBounded } from '../../shared/bounded-lru';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 
 /** Codex uuids number lines (see `parseCodexRecord`), so the tail, its notice and every page count them. */
 const UUIDS_NUMBER_LINES = true;
@@ -101,6 +102,10 @@ interface CodexLineState {
  * tail's cap, so in practice a rollout is read whole and never paged.
  */
 function parseCodexLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-codex', () => collectCodexEntries(agentSessionId, lines));
+}
+
+function collectCodexEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   const state: CodexLineState = { model: undefined };
   for (const { text: line, byte, line: lineNumber } of lines) {

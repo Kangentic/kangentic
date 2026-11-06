@@ -50,9 +50,13 @@ msgstr "({deleteFailureCount} en échec)"
 #. placeholder {0}: probe.path
 #. placeholder {1}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
 msgid "{0} does not exist on {1}."
 msgstr "{0} n'existe pas sur {1}."
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, one {# tâche avant celle-ci} many {# de tâches avant celle-ci} other {# tâches avant celle-ci}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -68,6 +72,11 @@ msgstr "{automationCount, plural, one {# automatisation s'exécute ici} many {# 
 #, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, one {Différences : {changedCount} sur # pixel} many {Différences : {changedCount} sur # de pixels} other {Différences : {changedCount} sur # pixels}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{maxAgents, plural, one {{columnName} exécute # agent à la fois} many {{columnName} exécute # d'agents à la fois} other {{columnName} exécute # agents à la fois}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -200,6 +209,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel} : {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} sur {total}"
@@ -213,11 +223,6 @@ msgstr "{reason} Enregistré avant l'échec : {savedBeforeFailing}."
 #, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, par exemple {sample}</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, one {{runningCount} sur # agent en cours d'exécution} many {{runningCount} sur # d'agents en cours d'exécution} other {{runningCount} sur # agents en cours d'exécution}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1109,7 +1114,7 @@ msgstr "Impossible de changer de branche"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
-msgstr "Compte les tâches dont l'agent travaille ou attend votre intervention. Le nombre maximal de sessions simultanées défini dans les paramètres s'applique toujours."
+msgstr "Compte les tâches dont l'agent travaille ou attend votre intervention. Le nombre maximal de sessions simultanées défini dans Paramètres s'applique toujours."
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1858,6 +1863,11 @@ msgstr "Modification suivante"
 msgid "Next column"
 msgstr "Colonne suivante"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Next in line"
+msgstr "Prochaine dans la file"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
 msgid "No active session"
@@ -2196,6 +2206,11 @@ msgstr "Ouvrir les Paramètres"
 msgid "Open that board to edit its profiles"
 msgstr "Ouvrez ce tableau pour modifier ses profils"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Open the board to change this"
+msgstr "Ouvrez le tableau pour modifier ceci"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open worktree"
@@ -2399,11 +2414,6 @@ msgstr "En file d'attente"
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "En file d'attente (cliquer pour suspendre)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Queued {position}/{total}"
-msgstr "En file d'attente {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3278,6 +3288,11 @@ msgstr "Colonne sans titre"
 msgctxt "file status"
 msgid "Untracked"
 msgstr "Non suivi"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "{maxConcurrent, plural, one {Jusqu'à # agent s'exécute à la fois} many {Jusqu'à # d'agents s'exécutent à la fois} other {Jusqu'à # agents s'exécutent à la fois}}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

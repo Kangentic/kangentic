@@ -26,6 +26,7 @@ import {
   hasTransientNetworkCause,
   isElevationDeniedError,
   isReadOnlyVolumeError,
+  isPackageManagerMissingError,
   isResourceUnavailableError,
   isPrereleaseWithNoMatchingRelease,
   stripUrlQueries,
@@ -65,6 +66,10 @@ const DESKTOP_1A_MESSAGE = [
  */
 const DESKTOP_1B_MESSAGE =
   'The operation couldn’t be completed. Resource temporarily unavailable';
+
+/** DESKTOP-R's no-package-manager event, verbatim. DebUpdater writes exactly this. */
+const PACKAGE_MANAGER_MISSING_MESSAGE =
+  'Neither dpkg nor apt command found. Cannot install .deb package.';
 
 /** DESKTOP-17, verbatim. The provider writes exactly this, with no detail. */
 const DESKTOP_17_MESSAGE = 'No published versions on GitHub';
@@ -488,6 +493,8 @@ describe('isElevationDeniedError', () => {
       expect(isElevationDeniedError(makeError({ message }))).toBe(false);
     });
 
+    // This predicate leaves all three alone. isPackageManagerMissingError, a later
+    // gate in the handler, takes the first, so that one is not filed to Sentry.
     it.each([
       'Neither dpkg nor apt command found. Cannot install .deb package.',
       'Package manager foo not supported',
@@ -599,6 +606,39 @@ describe('isReadOnlyVolumeError', () => {
     expect(isTransientUpdaterError(error)).toBe(false);
     expect(hasTransientNetworkCause(error)).toBe(false);
     expect(isElevationDeniedError(error)).toBe(false);
+  });
+});
+
+describe('isPackageManagerMissingError', () => {
+  it('matches the production message, which has no code', () => {
+    const error = makeError({ message: PACKAGE_MANAGER_MISSING_MESSAGE });
+    expect((error as NodeJS.ErrnoException).code).toBeUndefined();
+    expect(isPackageManagerMissingError(error)).toBe(true);
+  });
+
+  it('survives a hypothetical upstream prefix and suffix', () => {
+    expect(isPackageManagerMissingError(makeError({
+      message: `Install failed: ${PACKAGE_MANAGER_MISSING_MESSAGE} (see log)`,
+    }))).toBe(true);
+  });
+
+  it.each([
+    ['a package manager that ran and failed', 'Command dpkg exited with code 1'],
+    ['a denied elevation prompt', 'Command pkexec exited with code 126'],
+    ['a missing installer file', "No update filepath provided, can't quit and install"],
+    ['an empty message', ''],
+  ])('does not claim %s', (_label, message) => {
+    expect(isPackageManagerMissingError(makeError({ message }))).toBe(false);
+  });
+
+  it('is not claimed by any classifier that runs before or beside it', () => {
+    // isTransientUpdaterError sits above trackEvent, so a match there would
+    // delete the count. The others would take the toast with them.
+    const error = makeError({ message: PACKAGE_MANAGER_MISSING_MESSAGE });
+    expect(isTransientUpdaterError(error)).toBe(false);
+    expect(hasTransientNetworkCause(error)).toBe(false);
+    expect(isElevationDeniedError(error)).toBe(false);
+    expect(isReadOnlyVolumeError(error)).toBe(false);
   });
 });
 
@@ -767,6 +807,24 @@ describe('against the installed electron-updater source', () => {
     // the same reason as above: the compiled output's quote style is not a
     // semantic change.
     expect(linuxUpdaterSource).toMatch(/return ['"]sudo['"]/);
+  });
+
+  it('still dispatches the one DebUpdater message the missing-package-manager gate matches', () => {
+    // Runs the predicate over every message DebUpdater dispatches rather than
+    // comparing a typed copy, so a reword upstream and a drifted pattern here
+    // both fail, and so does a pattern that starts claiming a sibling message.
+    const debUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'DebUpdater.js'),
+      'utf-8',
+    );
+    const dispatchedMessages = [
+      ...debUpdaterSource.matchAll(/this\.dispatchError\(new Error\((["'`])(.*?)\1\)\)/g),
+    ].map((match) => match[2]);
+
+    expect(dispatchedMessages.length).toBeGreaterThan(1);
+    expect(dispatchedMessages.filter(
+      (message) => isPackageManagerMissingError(makeError({ message })),
+    )).toHaveLength(1);
   });
 
   it('still throws the no-published-versions error the DESKTOP-17 gate matches', () => {

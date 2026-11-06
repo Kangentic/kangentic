@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy } from '../../../shared/types';
+import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, StartBlockedReason, SuspendedBy } from '../../../shared/types';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../../shared/tool-call-totals';
 import { HELD_PAUSE_SOURCES } from '../../../shared/held-pause';
 import { writeTransaction } from '../transaction';
@@ -15,7 +15,7 @@ import { writeTransaction } from '../transaction';
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha' | 'launch_failed_at' | 'start_blocked_reason'
 > & { cli_target?: string | null; start_head_sha?: string | null };
 
 export interface SessionMetricsInput {
@@ -98,7 +98,7 @@ export type TaskReportSessionRecord = Pick<SessionRecord,
 export type IsolatedRunRecord = Pick<SessionRecord, 'id' | 'isolated_swimlane_id' | 'agent_session_id' | 'start_head_sha' | 'started_at'>;
 
 /** What reading a conversation's transcript needs: the newest record of the task that names one. */
-export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd' | 'cli_target'> & { agent_session_id: string };
+export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd' | 'cli_target' | 'transcript_path'> & { agent_session_id: string };
 
 /**
  * Sum the stored tool columns of several records: the count from
@@ -215,6 +215,7 @@ export class SessionRepository {
       tool_breakdown: null,
       compaction_count: 0,
       launch_failed_at: null,
+      start_blocked_reason: null,
       last_pty_cols: null,
       last_pty_rows: null,
       result_tokens_read_at: null,
@@ -429,7 +430,7 @@ export class SessionRepository {
    */
   getLatestAgentSessionForTask(taskId: string): LatestAgentSessionRecord | undefined {
     return this.db.prepare(
-      `SELECT session_type, agent_session_id, cwd, cli_target FROM sessions
+      `SELECT session_type, agent_session_id, cwd, cli_target, transcript_path FROM sessions
        WHERE task_id = ? AND agent_session_id IS NOT NULL
        ORDER BY started_at DESC, id DESC LIMIT 1`
     ).get(taskId) as LatestAgentSessionRecord | undefined;
@@ -602,6 +603,11 @@ export class SessionRepository {
   /** Mark a fresh launch as never having started (`SessionRecord.launch_failed_at`). */
   markLaunchFailed(id: string): void {
     this.db.prepare('UPDATE sessions SET launch_failed_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  }
+
+  /** Record why this start never reached an agent (`SessionRecord.start_blocked_reason`). */
+  setStartBlockedReason(id: string, reason: StartBlockedReason): void {
+    this.db.prepare('UPDATE sessions SET start_blocked_reason = ? WHERE id = ?').run(reason, id);
   }
 
   /**

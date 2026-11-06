@@ -165,6 +165,11 @@ msgstr "아직 도구 호출 없음"
 msgid "Notice"
 msgstr "알림"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "변경하려면 이 작업을 일시 중지하세요"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

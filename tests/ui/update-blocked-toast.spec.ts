@@ -24,9 +24,7 @@ test.afterEach(async () => {
  * the renderer toasts whatever main sent VERBATIM, so a literal is the honest
  * fixture. main's own half is pinned in tests/unit/updater-retry.test.ts.
  */
-const READ_ONLY_VOLUME_MESSAGE =
-  'Kangentic cannot install updates while it runs from a read-only volume. '
-  + 'Move Kangentic to your Applications folder to keep it up to date.';
+const READ_ONLY_VOLUME_MESSAGE = 'Move Kangentic to Applications to keep it updated.';
 
 /** The default toast lifetime, `notifications.toasts.durationSeconds` in DEFAULT_CONFIG. */
 const DEFAULT_TOAST_MS = 4000;
@@ -44,11 +42,11 @@ async function fireUpdateBlocked(target: Page, message: string) {
 }
 
 /**
- * DESKTOP-1A is the only updater failure the app says anything about, and the
- * renderer's whole job in it is four lines in App.tsx. Without this file those
- * four lines can be deleted with every unit test still green: the main-side
- * suite stops at `webContents.send`, and the mock-parity test only asserts the
- * bridge method exists.
+ * DESKTOP-1A and DESKTOP-R are the only updater failures the app says anything
+ * about, and the renderer's whole job in them is four lines in App.tsx. Without
+ * this file those four lines can be deleted with every unit test still green:
+ * the main-side suite stops at `webContents.send`, and the mock-parity test only
+ * asserts the bridge method exists.
  */
 test.describe('Update-blocked toast', () => {
   test('toasts the message main sent as its body, verbatim, under the renderer\'s title', async () => {
@@ -62,7 +60,7 @@ test.describe('Update-blocked toast', () => {
     await expect(toast.getByTestId('toast-body')).toHaveText(READ_ONLY_VOLUME_MESSAGE);
     // The warning variant, not error. Deliberately different from the config
     // write-failure toast next to it in App.tsx: nothing is broken and nothing
-    // was lost, the app simply cannot update itself from where it was launched.
+    // was lost, this install simply cannot update itself.
     await expect(toast).toHaveAttribute('data-variant', 'warning');
     await expect(toast).toHaveClass(/border-yellow-500\/50/);
   });

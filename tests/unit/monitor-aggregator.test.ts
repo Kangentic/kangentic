@@ -213,8 +213,10 @@ function makeManagedSummary(overrides: {
   commandTerminalSlot?: string | null;
   commandTerminalBranch?: string | null;
   commandTerminalLabel?: string | null;
+  startBlockedReason?: ManagedSessionSummary['startBlockedReason'];
 }): ManagedSessionSummary {
   return {
+    startBlockedReason: overrides.startBlockedReason ?? null,
     id: overrides.id,
     projectId: overrides.projectId,
     taskId: overrides.taskId,
@@ -944,6 +946,27 @@ describe('buildMonitorSnapshot', () => {
       const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].outputPeek).toEqual([]);
+    });
+
+    it('carries a session\'s startBlockedReason onto its row, and null when it has none', async () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1')], ['task-2', makeTask('task-2')], ['task-3', makeTask('task-3')]]),
+      });
+      const absent = makeManagedSummary({ id: 'session-3', projectId: 'project-a', taskId: 'task-3' });
+      // A summary from before the field existed carries no key at all.
+      delete (absent as Partial<ManagedSessionSummary>).startBlockedReason;
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1', startBlockedReason: 'never-started' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
+        absent,
+      ]);
+
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
+
+      const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
+      expect(rowsById.get('session-1')?.startBlockedReason).toBe('never-started');
+      expect(rowsById.get('session-2')?.startBlockedReason).toBeNull();
+      expect(rowsById.get('session-3')?.startBlockedReason).toBeNull();
     });
 
     it('leaves commandTerminalBranch null for a task agent', async () => {

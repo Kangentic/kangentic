@@ -50,9 +50,13 @@ msgstr "({deleteFailureCount} başarısız)"
 #. placeholder {0}: probe.path
 #. placeholder {1}: host?.host.name ?? ''
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
 msgid "{0} does not exist on {1}."
 msgstr "{0}, {1} üzerinde mevcut değil."
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, one {Önünde # görev var} other {Önünde # görev var}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -68,6 +72,11 @@ msgstr "{automationCount, plural, one {Burada # otomasyon çalışır} other {Bu
 #, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, one {# pikselden {changedCount} tanesi farklı} other {# pikselden {changedCount} tanesi farklı}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{maxAgents, plural, one {{columnName} aynı anda bir aracı çalıştırır} other {{columnName} aynı anda # aracı çalıştırır}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -200,6 +209,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position} / {total}"
@@ -213,11 +223,6 @@ msgstr "{reason} Hata öncesinde kaydedilenler: {savedBeforeFailing}."
 #, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, örneğin {sample}</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr "{maxConcurrent, plural, one {# ajandan {runningCount} tanesi çalışıyor} other {# ajandan {runningCount} tanesi çalışıyor}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -836,7 +841,7 @@ msgstr "Sütunlar"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "Sütunlar, bu sütuna ayrı bir konuşma vermediğiniz sürece görevin ana konuşmasını paylaşır. Yalıtılmış sütun her girişte yeni bir konuşma başlatır; bu, kod incelemesi veya önceki çalışmayı devralmaması gereken her geçiş için uygundur."
+msgstr "Bu sütuna kendi konuşmasını vermediğiniz sürece sütunlar görevin ana konuşmasını paylaşır. Yalıtılmış bir sütun her girişte yeni bir konuşma başlatır; bu, kod incelemesi veya önceki çalışmayı devralmaması gereken herhangi bir geçiş için uygundur."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Command Terminal"
@@ -1858,6 +1863,11 @@ msgstr "Sonraki değişiklik"
 msgid "Next column"
 msgstr "Sonraki sütun"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Next in line"
+msgstr "Sıradaki"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
 msgid "No active session"
@@ -2196,6 +2206,11 @@ msgstr "Ayarlar'ı aç"
 msgid "Open that board to edit its profiles"
 msgstr "Profillerini düzenlemek için o panoyu açın"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Open the board to change this"
+msgstr "Bunu değiştirmek için panoyu açın"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open worktree"
@@ -2393,17 +2408,12 @@ msgstr "Pull request"
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "Queued"
-msgstr "Sırada"
+msgstr "Kuyrukta"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "Sırada (duraklatmak için tıklayın)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Queued {position}/{total}"
-msgstr "Sırada {position}/{total}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2585,7 +2595,7 @@ msgstr "Proje klasöründe çalıştır"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
 msgid "Run one agent in this column at a time"
-msgstr "Bu sütunda aynı anda bir ajan çalıştır"
+msgstr "Bu sütunda aynı anda tek ajan çalıştır"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -3278,6 +3288,11 @@ msgstr "Adsız sütun"
 msgctxt "file status"
 msgid "Untracked"
 msgstr "İzlenmiyor"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "{maxConcurrent, plural, one {Aynı anda en fazla # aracı çalışır} other {Aynı anda en fazla # aracı çalışır}}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy

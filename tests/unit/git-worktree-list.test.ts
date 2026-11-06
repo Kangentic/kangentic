@@ -3,8 +3,7 @@
  *
  * Two layers. The no-projects paths pin what the MCP tool falls into when no
  * project is registered. The ahead/behind cases drive `enumerateWorktrees`
- * against a mocked `simple-git` (the pattern tests/unit/branch-summary.test.ts
- * uses) and pin WHICH ref the counts are measured against: the base branch the
+ * against a mocked git client and pin WHICH ref the counts are measured against: the base branch the
  * work is based on when the injected resolver names one (`origin/<base>`
  * first, then the local ref), and the branch's own upstream only when no base
  * resolves. A branch can be 0 behind its remote and far behind its base; the
@@ -33,7 +32,7 @@ const { projectsFixture, mockGit } = vi.hoisted(() => ({
   projectsFixture: [] as Array<{ id: string; name: string; path: string }>,
   mockGit: {
     raw: vi.fn<(args: string[]) => Promise<string>>(),
-    status: vi.fn(async () => ({ isClean: () => true })),
+    status: vi.fn(async () => ({ files: [], not_added: [] })),
   },
 }));
 
@@ -47,8 +46,8 @@ vi.mock('../../src/main/db/repositories/project-repository', () => ({
 // Every path is "present": the fixture paths never touch the disk.
 vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => mockGit),
 }));
 
 const PROJECT_PATH = '/mock/repo';
@@ -216,6 +215,51 @@ describe('worktree-list ahead/behind: the base branch, not the tracking ref', ()
     const record = project.worktrees.find((worktree) => worktree.path === TASK_WORKTREE_PATH);
 
     expect(record).toMatchObject({ baseRef: null, commitsBehind: null, commitsAhead: null });
+  });
+
+  it('keeps a bare record for a worktree whose folder vanished, without failing its siblings', async () => {
+    // gitAt throws synchronously for a directory that no longer exists (a
+    // worktree removed between `git worktree list` and the per-worktree reads).
+    routeGit({ revList: async () => '5\t1\n' });
+    const { gitAt } = await import('../../src/main/git/git-client');
+    vi.mocked(gitAt).mockImplementation((directory: string) => {
+      if (directory === TASK_WORKTREE_PATH) throw new Error(`ENOENT: no such directory '${directory}'`);
+      return mockGit as unknown as ReturnType<typeof gitAt>;
+    });
+    const resolveBaseRef = vi.fn(() => 'main');
+    try {
+      const { enumerateWorktrees } = await import('../../src/main/git/worktree-list');
+
+      const result = await enumerateWorktrees({ resolveBaseRef });
+
+      expect(result).toHaveLength(1);
+      const project = result[0];
+      expect(project.worktrees.map((worktree) => worktree.path)).toEqual([PROJECT_PATH, TASK_WORKTREE_PATH]);
+      // The vanished worktree keeps the branch from the porcelain list and
+      // reports nothing it could not read.
+      expect(project.worktrees.find((worktree) => worktree.path === TASK_WORKTREE_PATH)).toEqual({
+        path: TASK_WORKTREE_PATH,
+        branch: 'feature/task-a',
+        baseRef: null,
+        dirty: false,
+        commitsAhead: null,
+        commitsBehind: null,
+        lastCommitTs: null,
+        isMainCheckout: false,
+      });
+      // The base is never resolved for it, and the other worktree is read in full.
+      expect(resolveBaseRef).toHaveBeenCalledTimes(1);
+      expect(project.worktrees.find((worktree) => worktree.path === PROJECT_PATH)).toMatchObject({
+        branch: 'feature/main-checkout-work',
+        baseRef: 'main',
+        commitsBehind: 5,
+        commitsAhead: 1,
+        lastCommitTs: '2026-09-01T00:00:00Z',
+        isMainCheckout: true,
+      });
+    } finally {
+      vi.mocked(gitAt).mockImplementation(() => mockGit as unknown as ReturnType<typeof gitAt>);
+    }
   });
 
   it('tells the resolver which worktree it is asked about, main checkout included', async () => {

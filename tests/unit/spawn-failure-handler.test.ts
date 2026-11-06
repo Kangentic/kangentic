@@ -99,6 +99,27 @@ describe('handleSpawnFailure', () => {
     expect((emitted[0].args[1] as Session).transient).toBeFalsy();
   });
 
+  it('marks an agent session spawn-failed, so the board can say the start was blocked', () => {
+    const { context, registry } = makeContext();
+
+    const session = handleSpawnFailure(
+      new Error('File not found: '),
+      makeAttempt({ agentParser: { name: 'agent' } as unknown as SpawnAttempt['input']['agentParser'] }),
+      context,
+    );
+
+    expect(registry.get('failed-session-id')?.startBlockedReason).toBe('spawn-failed');
+    expect(session.startBlockedReason).toBe('spawn-failed');
+  });
+
+  it('leaves startBlockedReason null for a plain shell, which has no agent to block', () => {
+    const { context, registry } = makeContext();
+
+    handleSpawnFailure(new Error('File not found: '), makeAttempt({ agentParser: undefined }), context);
+
+    expect(registry.get('failed-session-id')?.startBlockedReason).toBeNull();
+  });
+
   it('shows a ConPTY whose output never connected its own hint, and logs no posix_spawnp line for it', () => {
     const hint = '\r\nError: The terminal did not start because its output never connected\r\n';
     vi.mocked(diagnoseSpawnFailure).mockReturnValueOnce({

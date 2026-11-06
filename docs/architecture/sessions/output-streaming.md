@@ -98,8 +98,8 @@ Now each renderer holds its own port to the host and main never relays a keystro
 - **No process starts on the host's I/O thread.** Every one-shot child, CLI run and process-table
   tool starts on the host's spawn worker (`src/main/pty/host/spawn-worker/`), a `worker_threads`
   Worker that loads only `node:` built-ins and pure modules. node-pty cannot move, since a PTY's
-  handle belongs to the thread that spawned it, so `pty:spawn` stays on the I/O thread at 5 to 38 ms
-  under load.
+  handle belongs to the thread that spawned it, so `pty:spawn` stays on the I/O thread: 5 to 38 ms
+  in a load test, and up to 781 ms across a working day.
 
 Both builds, run back to back on one machine the same afternoon, two to four runs of each load per
 build (ranges across runs):

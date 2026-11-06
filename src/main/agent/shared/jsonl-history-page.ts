@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { open, stat } from 'node:fs/promises';
 import type { TranscriptEntry } from '../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../agent-adapter';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { countNewlinesBefore, readJsonlWindow, type JsonlWindow } from './history-scan';
 import type { TruncatedHistory } from './transcript-truncation';
 
@@ -75,18 +76,20 @@ export interface JsonlLine {
  * since the text is decoded UTF-8 and a character can take several bytes.
  */
 export function splitJsonlLines(text: string, startByte: number, firstLine: number | null): JsonlLine[] {
-  const lines: JsonlLine[] = [];
-  if (text.length === 0) return lines;
-  const segments = text.split('\n');
-  // A window of whole lines ends with a newline, which leaves one empty segment.
-  if (segments[segments.length - 1] === '') segments.pop();
-  let byte = startByte;
-  segments.forEach((segment, index) => {
-    const withoutCarriageReturn = segment.endsWith('\r') ? segment.slice(0, -1) : segment;
-    lines.push({ text: withoutCarriageReturn, byte, line: firstLine === null ? null : firstLine + index });
-    byte += Buffer.byteLength(segment, 'utf8') + 1;
+  return timeSyncWork('transcript:split-lines', () => {
+    const lines: JsonlLine[] = [];
+    if (text.length === 0) return lines;
+    const segments = text.split('\n');
+    // A window of whole lines ends with a newline, which leaves one empty segment.
+    if (segments[segments.length - 1] === '') segments.pop();
+    let byte = startByte;
+    segments.forEach((segment, index) => {
+      const withoutCarriageReturn = segment.endsWith('\r') ? segment.slice(0, -1) : segment;
+      lines.push({ text: withoutCarriageReturn, byte, line: firstLine === null ? null : firstLine + index });
+      byte += Buffer.byteLength(segment, 'utf8') + 1;
+    });
+    return lines;
   });
-  return lines;
 }
 
 /**

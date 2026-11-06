@@ -165,6 +165,11 @@ msgstr "Brak wywołań narzędzi"
 msgid "Notice"
 msgstr "Powiadomienie"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "Wstrzymaj to zadanie, aby je zmienić"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

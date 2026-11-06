@@ -406,8 +406,16 @@ in one Sentry org, one triage surface.
   nothing itself, but not which one held the loop. For that, the worker runs an event-loop watchdog
   thread (`src/main/retrieval/worker/event-loop-watchdog.ts`). When its heartbeat stops for about
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
-  `timeSyncWork` span that was running (or `outside any labelled step` when none was), so the line
-  is in the stderr tail by the 15 s kill.
+  innermost `timeSyncWork` span that was running (or `outside any labelled step` when none was), so
+  the line is in the stderr tail by the 15 s kill. Every handler's synchronous slice runs inside a
+  `method:<name>` span, and each agent's transcript parse has one of its own
+  (`transcript:parse-codex`, or `transcript:read-goose` and `transcript:read-opencode` for the two
+  agents that read a database),
+  because a parse runs after its read's `await`, outside any span around the call. The shared
+  steps have `transcript:split-lines`, `transcript:previews` and `transcript:final-reply`.
+  The stderr tail is one worker's text and cannot say which crash wrote it, so a
+  crash with a watchdog line also carries it on its own `crashes` entry, read at report time:
+  `request_timeout method=transcript.trailRead watchdog="[retrieval-worker] event loop held 5 s in transcript:parse-codex"`.
 - **Every failed launch has one report.** A user whose terminal never starts leaves, and most of
   these failures throw nothing, so `src/main/pty/agent-launch-report.ts` is the one way a launch
   failure reaches Sentry. Each report has a `stage`, and each stage its own error name:
@@ -708,22 +716,39 @@ in one Sentry org, one triage surface.
   or KDE desktop, which is the case that ships. Because the pattern hand-matches a third-party
   template, `tests/unit/updater-error-classifier.test.ts` reads the installed
   `electron-updater` and fails if that template is reworded or a fifth sudo front-end appears.
-- **A read-only volume is counted, not reported, and is the one condition the user hears about.**
+- **A read-only volume is counted, not reported, and the user hears about it.**
   `isReadOnlyVolumeError` (`src/main/updater.ts`) gates the same `reportHandledError` call from
   the same position as the two above. A macOS app launched straight from the mounted DMG, or
   running translocated, cannot write over itself, so Squirrel.Mac refuses the install. That is a
   property of where the user put the app, not a defect: no build of ours would behave
   differently. DESKTOP-1A filed it 11 times from a single install.
 
-  Unlike every other suppressed branch, this one also pushes `updater:blocked` to the renderer,
-  which toasts a sentence pointing at the Applications folder. The reason is that the condition
-  is permanent and silent: an install in this state never updates again and says nothing, so
-  dropping the Sentry issue without telling anyone would leave the user on a frozen version
-  indefinitely. The push is latched in main for the app's lifetime, so a condition every 4-hour
-  check rediscovers still produces one toast per run.
+  This branch also pushes `updater:blocked` to the renderer, which toasts a sentence pointing at
+  the Applications folder. The reason is that the condition is permanent and silent: an install in
+  this state never updates again and says nothing, so dropping the Sentry issue without telling
+  anyone would leave the user on a frozen version indefinitely. The push is latched in main for
+  the app's lifetime, so a condition every 4-hour check rediscovers still produces one toast per
+  run.
 
   The pattern matches Squirrel's opening sentence only. Squirrel appends a recovery suggestion
   naming Downloads, macOS Sierra and a GitHub issue URL, none of which identifies the condition.
+- **A `.deb` install with no package manager is counted, not reported, and the user hears about
+  it.** `isPackageManagerMissingError` (`src/main/updater.ts`), the branch below the read-only one.
+  `electron-updater` picks its updater from the `package-type` marker in `resourcesPath`, so a
+  `.deb` unpacked outside dpkg runs `DebUpdater` on a host that may have neither `dpkg` nor `apt`.
+  `DebUpdater.doInstall` then refuses before any elevation with a bare `new Error` and no `code`,
+  so the message is all there is to test. `BaseUpdater.quitAndInstall` resets its own latch when
+  the install fails, so every "Restart to update" click dispatches the error again. DESKTOP-R
+  filed two events from two clicks 3 seconds apart on one Arch install. This is not
+  `isElevationDeniedError`, because no prompt was shown and nothing was declined.
+
+  It pushes `updater:blocked` through `notifyUpdateBlocked`, the once-per-run latch it shares with
+  the read-only case, so two clicks give one toast. The toast body is the error text word for
+  word, with no advice. The fix depends on how the package got there, and the event cannot say
+  which tool unpacked it. Because the pattern hand-matches a third-party string,
+  `tests/unit/updater-error-classifier.test.ts` runs it over the messages in the installed
+  `DebUpdater.js` and fails if none or more than one matches. `RpmUpdater` has no equivalent
+  check, so this is the only message to match.
 - **An EAGAIN install failure is counted, not reported.** `isResourceUnavailableError`
   (`src/main/updater.ts`), the branch below. DESKTOP-1B is the POSIX `EAGAIN` reaching us through
   macOS's `NSError` rendering rather than through Node, which is the only reason
@@ -754,7 +779,7 @@ in one Sentry org, one triage surface.
   guard and cannot: Squirrel.Mac is compiled into Electron and the EAGAIN text is macOS
   localization, so neither string has a source on disk to assert against. A reword would cost a
   rediscovery, not a silent regression, since the issue would simply reappear.
-- **Reading `app_error` / `source: updater`: the count is not every updater failure.** The five
+- **Reading `app_error` / `source: updater`: the count is not every updater failure.** The six
   suppressions above are not uniform about it, and the split is older than any of them.
   `isTransientUpdaterError` gates ABOVE `trackEvent`, so the classes it catches (a raw
   `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `ENETUNREACH`, `EPIPE`, an `HTTP_ERROR_5xx`

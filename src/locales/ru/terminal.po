@@ -165,6 +165,11 @@ msgstr "Вызовов инструментов пока нет"
 msgid "Notice"
 msgstr "Уведомление"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "Приостановите задачу, чтобы изменить её"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

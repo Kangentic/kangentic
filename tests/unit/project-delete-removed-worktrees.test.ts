@@ -102,7 +102,7 @@ vi.mock('../../src/main/transition-engine/session-startup', () => ({
 
 vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
   cleanupStaleResourcesAsync: vi.fn(async () => {}),
-  pruneOrphanedWorktreeTasks: vi.fn(async () => 0),
+  sweepAutomationRuns: vi.fn(() => 0),
 }));
 
 // The queue runs a job at once and records the worktree removal, so the spare

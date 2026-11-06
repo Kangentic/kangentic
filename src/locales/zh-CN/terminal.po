@@ -136,6 +136,11 @@ msgstr "暂无工具调用"
 msgid "Notice"
 msgstr "通知"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "暂停此任务后才能进行更改"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Plan approved automatically"
 msgstr "计划已自动批准"

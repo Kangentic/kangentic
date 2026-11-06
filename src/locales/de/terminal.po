@@ -165,6 +165,11 @@ msgstr "Noch keine Tool-Aufrufe"
 msgid "Notice"
 msgstr "Hinweis"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "Aufgabe pausieren, um sie zu ändern"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

@@ -105,7 +105,15 @@ describe('SessionRepository reads for the completed task report (real DB)', () =
         agent_session_id: 'conversation-b',
         cwd: '/mock/second',
         cli_target: null,
+        transcript_path: null,
       });
+    });
+
+    it('returns the transcript path the agent reported', () => {
+      insertSessionRecord(db, { id: 'record-a', taskId: 'task-a', agentSessionId: 'conversation-a', cwd: '/mock/record-a', startedAt: '2026-10-05T08:00:00.000Z' });
+      db.prepare('UPDATE sessions SET transcript_path = ? WHERE id = ?').run('/mock/elsewhere/conversation-a.jsonl', 'record-a');
+
+      expect(repository.getLatestAgentSessionForTask('task-a')?.transcript_path).toBe('/mock/elsewhere/conversation-a.jsonl');
     });
 
     it('breaks a tie on the start time by taking the greater id, even when the lesser id was inserted first', () => {
@@ -119,6 +127,7 @@ describe('SessionRepository reads for the completed task report (real DB)', () =
         agent_session_id: 'conversation-b',
         cwd: '/mock/record-b',
         cli_target: null,
+        transcript_path: null,
       });
     });
 

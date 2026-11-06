@@ -162,8 +162,8 @@ a ride: an aborted or superseded move, a row skipped by Condition or Frequency, 
   message mid-delivery then finds its row already `cleared`, and the compare-and-swap keeps it so.
 - An unarchive into To Do (`resetSessionForTodoRestore`). Archiving happens only through the Done
   move.
-- A **delete**, a **Backlog demote**, a **move to another project**, the startup orphan prune and a
-  workflow rollback all go through `TaskRepository.delete`, which deletes the task's log rows; the
+- A **delete**, a **Backlog demote**, a **move to another project** and a workflow rollback all go
+  through `TaskRepository.delete`, which deletes the task's log rows; the
   `task_id` foreign key cascades too. A project delete removes the database.
 
 ## The resume prompt bug this fixed
