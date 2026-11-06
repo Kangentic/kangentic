@@ -78,6 +78,21 @@ describe('applyJsonPatch', () => {
     expect(() => applyJsonPatch({ a: 'text' }, [{ op: 'addToArray', at: ['a'], value: 1 }])).toThrow('not an array');
     expect(() => applyJsonPatch({}, [{ op: 'set', at: [], value: 1 }])).toThrow('at least one key');
   });
+
+  // A key the file never holds but every parsed object inherits.
+  it('writes a key named like an inherited one, and makes the object for a step through it', () => {
+    const viaSet: Record<string, unknown> = {};
+    const viaDefault: Record<string, unknown> = {};
+    const viaStep: Record<string, unknown> = {};
+
+    expect(applyJsonPatch(viaSet, [{ op: 'set', at: ['toString'], value: 1 }])).toBe(true);
+    expect(applyJsonPatch(viaDefault, [{ op: 'setDefault', at: ['toString'], value: 2 }])).toBe(true);
+    expect(applyJsonPatch(viaStep, [{ op: 'set', at: ['toString', 'inner'], value: 3 }])).toBe(true);
+
+    expect(Object.hasOwn(viaSet, 'toString') && viaSet.toString).toBe(1);
+    expect(Object.hasOwn(viaDefault, 'toString') && viaDefault.toString).toBe(2);
+    expect(Object.hasOwn(viaStep, 'toString') && viaStep.toString).toEqual({ inner: 3 });
+  });
 });
 
 describe('patchJsonFile', () => {
@@ -118,6 +133,21 @@ describe('patchJsonFile', () => {
       expect(await patchJsonFile({ path: file, ops })).toEqual({ applied: false, changed: false, reason: 'not-an-object' });
       expect(fs.readFileSync(file, 'utf8')).toBe(content);
     }
+  });
+
+  // JSON drops a missing field on the wire, so a `set` with no `value` or a `copyIfAbsent` with no `fallback`
+  // reaches the helper as exactly this. It is a bad patch, not a SyntaxError out of JSON.parse(undefined).
+  it.each([
+    ['a set with no value', { op: 'set', at: ['a'] }],
+    ['a copyIfAbsent with no fallback and nothing to copy', { op: 'copyIfAbsent', from: ['no', 'where'], at: ['a'] }],
+  ])('reads %s as a bad patch and leaves the file as it was', async (_name, wireOp) => {
+    const file = path.join(directory, '.claude.json');
+    fs.writeFileSync(file, '{"keep":1}');
+
+    const outcome = await patchJsonFile({ path: file, ops: [wireOp as unknown as JsonPatchOp] });
+
+    expect(outcome).toEqual({ applied: false, changed: false, reason: 'bad-patch' });
+    expect(fs.readFileSync(file, 'utf8')).toBe('{"keep":1}');
   });
 
   it('refuses a bad patch without touching the file', async () => {

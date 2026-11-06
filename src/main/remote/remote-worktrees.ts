@@ -92,11 +92,17 @@ ${CLEAR_WORKTREE}
 echo KG:removed
 `.trim();
 
-/** Argument is `worktree`. Counts what a removal would destroy. */
+/**
+ * Argument is `worktree`. Counts what a removal would destroy. A forced removal follows a count of zero, so a git
+ * that fails is an error here, and so is a folder git only reads as part of the repository around it.
+ */
 const PENDING_SCRIPT = `
 worktree=$1
 cd "$worktree" 2>/dev/null || { printf 'KG:error:%s\\n' "The worktree $worktree is not on this host."; exit 3; }
-echo "KG:uncommitted:$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+[ "$(git rev-parse --show-toplevel 2>/dev/null)" = "$(pwd -P)" ] || { printf 'KG:error:%s\\n' "$worktree is not a worktree git can read on this host."; exit 3; }
+changes=$(git status --porcelain 2>/dev/null) || { printf 'KG:error:%s\\n' "Git could not read $worktree on this host."; exit 3; }
+if [ -z "$changes" ]; then count=0; else count=$(printf '%s\\n' "$changes" | wc -l | tr -d ' '); fi
+echo "KG:uncommitted:$count"
 echo "KG:branch:$(git symbolic-ref --short -q HEAD 2>/dev/null)"
 `.trim();
 
@@ -194,8 +200,12 @@ export class HostWorktrees implements RemoteWorktreeBackend {
       this.deps.hostRepoPath,
       CREATE_TIMEOUT_MS,
     ));
-    options?.signal?.throwIfAborted();
     const output = readScriptOutput(result);
+    if (options?.signal?.aborted) {
+      // The task let go of this while git ran, so no row will name the worktree and nothing else removes it.
+      if (output.lines.includes('created')) await this.removeWorktree(localPath);
+      options.signal.throwIfAborted();
+    }
     if (output.error) throw new Error(`Could not make the worktree on the host: ${output.error}`);
 
     const skip = output.lines.find((line) => line.startsWith('skip:'));

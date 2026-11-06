@@ -15,6 +15,7 @@ import {
   hostPathForTarget,
   execCliForTarget,
   hostPathToLocal,
+  hostPathToMirror,
   isSameCliPlace,
   localPathToHost,
   mayReadPlaceUnattended,
@@ -90,6 +91,29 @@ describe('mapping a path the CLI reported back', () => {
 
   it('never maps a path that climbs out of a root through `..` into the shell folder', () => {
     expect(hostPathToLocal('/home/dev/projects/api/../../secrets.txt', sshPlace().roots)).toBe('/home/dev/projects/api/../../secrets.txt');
+  });
+});
+
+describe('a host path segment that is not a plain name', () => {
+  it('maps a plain name under a root and under the home mirror to a path of the same shape', () => {
+    expect(hostPathToLocal('/home/dev/projects/api/src/a.ts', sshPlace().roots)).toBe(path.join(shellFolder, 'src', 'a.ts'));
+    expect(hostPathToMirror('/home/dev/.claude/projects/x.jsonl', sshPlace())).toBe(path.join(sshPlace().localHome, '.claude', 'projects', 'x.jsonl'));
+  });
+
+  // A Linux file name can hold a backslash, which path.join on Windows reads as a separator.
+  it.runIf(process.platform === 'win32')('keeps backslashes and `..` in a segment inside the shell folder', () => {
+    const mapped = hostPathToLocal('/home/dev/projects/api/a\\..\\..\\..\\escaped.txt', sshPlace().roots);
+
+    expect(mapped).toBe(path.join(shellFolder, 'a_.._.._.._escaped.txt'));
+    expect(path.relative(shellFolder, mapped).startsWith('..')).toBe(false);
+  });
+
+  it.runIf(process.platform === 'win32')('keeps backslashes and `..` in a segment inside the home mirror', () => {
+    const place = sshPlace();
+    const mapped = hostPathToMirror('/home/dev/a\\..\\..\\..\\escaped.txt', place);
+
+    expect(mapped).toBe(path.join(place.localHome, 'a_.._.._.._escaped.txt'));
+    expect(path.relative(place.localHome, mapped ?? '').startsWith('..')).toBe(false);
   });
 });
 

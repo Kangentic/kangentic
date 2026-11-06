@@ -293,6 +293,23 @@ describe('two spawns on one host at once', () => {
     expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"first":1}');
   });
 
+  // The second spawn starts from the first's unpushed edits, so it never saw the file absent. What decides
+  // whether the file is Kangentic's to hide from git is what the host holds when it is written.
+  it('keeps a file out of git status when the host has none, even if the pull took another spawn\'s edit as its start', async () => {
+    host.directories.add('/home/dev/app/.git/info');
+    host.files.set('/home/dev/app/.git/info/exclude', '# existing\n');
+    await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"first":1}');
+    const second = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{"first":1,"second":2}');
+
+    await second.push();
+
+    expect(host.files.get('/home/dev/app/.cursor/mcp.json')).toBe('{"first":1,"second":2}');
+    expect((host.files.get('/home/dev/app/.git/info/exclude') ?? '').split('\n')).toContain('/.cursor/mcp.json');
+  });
+
   it('refreshes the folder from the host again once the first spawn has pushed', async () => {
     host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
     const first = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);

@@ -745,7 +745,8 @@ function syntheticSecurityKey() {
     sshString(''),
     sshString('probe'),
   ]);
-  const padded = Buffer.concat([privateSection, Buffer.from([1, 2, 3, 4, 5, 6, 7].slice(0, 8 - (privateSection.length % 8)))]);
+  const padLength = (8 - (privateSection.length % 8)) % 8;
+  const padded = Buffer.concat([privateSection, Buffer.from([1, 2, 3, 4, 5, 6, 7].slice(0, padLength))]);
   const keyCount = Buffer.alloc(4);
   keyCount.writeUInt32BE(1);
   const container = Buffer.concat([
