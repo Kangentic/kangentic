@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { identifyQwenUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { QwenDetector } from './detector';
@@ -18,7 +19,7 @@ import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { placeFromStored, resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
 import type {
   AgentAdapter,
@@ -37,6 +38,7 @@ import type {
   AgentPermissionEntry,
   PermissionMode,
   AdapterRuntimeStrategy,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
@@ -79,6 +81,18 @@ export class QwenAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /** On a host over SSH the CLI is `qwen` from the host's own login PATH (#913). */
   readonly remoteCliName = 'qwen';
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file Qwen appends to under
+   * `~/.qwen/projects/<slug>/chats/<id>.jsonl`, in this computer's mirror of the host's home, where every
+   * Qwen reader already looks for it. The id is caller-owned (`--session-id`, `--resume`), so it is known at
+   * spawn, and the slug comes from the folder as the host names it. Subagent transcripts are not carried, and
+   * a `QWEN_HOME` or runtime directory set on the host is not followed (the mirror assumes `~/.qwen`).
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [locateQwenTranscriptFile(options.agentSessionId, options.cwd, place)];
+  }
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -304,6 +318,13 @@ export class QwenAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    // A Qwen on a host (#913): its chat is copied into this computer's mirror (`remoteTranscriptFiles`), so the
+    // conversation readers look at what has arrived, once. Never a wait, since the copy starts with the session.
+    // The live telemetry reader keeps answering null for a host (`QwenSessionHistoryParser.locate`).
+    if (place?.kind === 'ssh') {
+      const arrived = locateQwenTranscriptFile(agentSessionId, cwd, place);
+      return fs.existsSync(arrived) ? arrived : null;
+    }
     return QwenSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 

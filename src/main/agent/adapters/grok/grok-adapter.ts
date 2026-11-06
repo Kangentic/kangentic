@@ -17,7 +17,7 @@ import { createGrokCommandInjectionVerifier } from './command-injection-verifier
 import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
-import { grokChatHistoryPath, grokSessionDir } from './session-paths';
+import { grokChatHistoryPath, grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -27,7 +27,7 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { execCliForTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { answerHomeForPlace, withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
@@ -46,6 +46,7 @@ import type {
   AgentPermissionEntry,
   PermissionMode,
   AdapterRuntimeStrategy,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
@@ -125,6 +126,21 @@ export class GrokAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /** On a host over SSH the CLI is `grok` from the host's own login PATH (#913). */
   readonly remoteCliName = 'grok';
+  /**
+   * The conversation's transcript on a host over SSH (#913): the two files Grok appends to in
+   * `~/.grok/sessions/<cwd key>/<id>/`, in this computer's mirror of the host's home. `chat_history.jsonl`
+   * is what the viewer, the index and the archive read, and `updates.jsonl` is what the usage ledger reads.
+   * The id is caller-owned, so both are named at spawn, and the key comes from the folder as the host
+   * names it. The live telemetry reader stays off for a host (it polls for a file that has not landed).
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [
+      grokChatHistoryPath(options.cwd, options.agentSessionId, place),
+      grokUpdatesJsonlPath(options.cwd, options.agentSessionId, place),
+    ];
+  }
   // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
   readonly transcriptHasTimestamps = false;
   /**

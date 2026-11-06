@@ -50,6 +50,7 @@ import type {
   AdapterRuntimeStrategy,
   PermissionMode,
   PerToolStat,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
   TranscriptToolCounts,
@@ -100,6 +101,18 @@ export class AntigravityAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   /** On a remote host over SSH the CLI is `agy` from the host's own login PATH (#913). */
   readonly remoteCliName = 'agy';
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file agy appends to,
+   * `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`, in this computer's mirror
+   * of the host's home, where every agy reader already looks for it. agy allocates a NEW conversation's id at
+   * its first turn, so a fresh session names nothing here until its hook reports the id, and the relay asks
+   * again then (`setAgentSessionId`). A resume has the id at spawn. The SQLite file beside it is not copied.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [antigravityTranscriptPath(options.agentSessionId, place)];
+  }
   // Mapped onto agy's native modes in the command builder
   // (https://antigravity.google/docs/cli/modes): --mode plan / accept-edits /
   // auto, and --dangerously-skip-permissions. No flag leaves agy in the mode
@@ -261,9 +274,10 @@ export class AntigravityAdapter implements AgentAdapter {
   }
 
   async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
-    // The transcript of an agy on a remote host is on the host; this computer's mirror of its home
-    // never holds it, so polling would only wait.
-    if (place?.kind === 'ssh') return null;
+    // An agy on a host (#913): its transcript is copied into this computer's mirror of the host's home
+    // (`remoteTranscriptFiles`), so the readers look at what has arrived, once. Polling would only wait,
+    // since the copy starts with the session and a missing file is a conversation with no turn yet.
+    if (place?.kind === 'ssh') return locateAntigravityTranscriptFile(agentSessionId, place);
     // The brain-dir transcript appears when the first turn starts; poll
     // briefly since callers locate right after id capture.
     for (let attempt = 0; attempt < 10; attempt++) {

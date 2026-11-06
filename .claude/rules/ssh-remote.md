@@ -161,7 +161,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `tests/unit/remote-transcript-sources.test.ts` pins late registration, the id from an index and when it
   refuses one, the export's schedule, staging and reset on a fake host, and on POSIX the real script through
   the real helper (past a frame's cap, a failed or empty export, a hostile argument). `<agent>-ssh-transcript`
-  tests read real captures through the real readers. `resume-conversation-guard-ssh.test.ts` pins `unknown`
+  tests read real captures through the real readers. `remote-transcript-fixed-path-agents.test.ts` pins the
+  files of the CLIs whose path follows from the id and folder (Qwen, Grok, Antigravity) against each CLI's own
+  layout, and that `locateSessionHistoryFile` finds the copy once it has arrived and never waits for it. An
+  adapter that declares a transcript for a host must let its locator answer from the mirror: a locator that
+  returns null for any host reads the copy as absent. `resume-conversation-guard-ssh.test.ts` pins `unknown`
   whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.
   `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
   (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `scripts/ssh-link-rig.mjs`,
