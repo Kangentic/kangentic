@@ -2275,7 +2275,6 @@ red test can still guard an expensive miss.
 | unit/workflow-store-pause-report.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/workflow-store-sharing.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/workflow-task-form.test.ts | 3 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/workflow-task-hold.test.ts | 27 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/workflow-track.test.ts | 7 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/workflow-xml.test.ts | 8 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/workflows-migration-atomic.test.ts | 3 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
