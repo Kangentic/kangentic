@@ -103,6 +103,20 @@ Add project asks where first once a host exists: This computer, or a host. A hos
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
 - Removing a host removes its projects from Kangentic, suspends their agents and leaves the folders on the host.
 
+## What an agent's tools report
+
+A remote task has two folders that look alike. The host holds the real worktree and project folder, where the agent runs. This computer holds an empty stand-in for each at `<shell folder>/.kangentic/worktrees/<n>`, which the board uses for the task's identity.
+
+An MCP tool answers from the layer the fact belongs to:
+
+- **Where the agent works is the host's value.** A worktree or project path, a session `cwd`, a git or process fact, and a port the agent's server listens on are returned as the host sees them, never as the stand-in.
+- **This computer is local, and labeled.** The Browser pane, a forwarded local port, the app's logs and Kangentic's own process metrics are returned as they are, with `location: 'local'`.
+- **Each path, URL, pid or port in a tool's `data` carries `location: 'host' | 'local'`.** A local project reports `'local'` and nothing else about its answers changes.
+- **A path the agent passes in is a host path.** An attachment or a file to drop is fetched from the host, or refused with a sentence. It is never read from this disk.
+- **A copy is labeled as one.** A transcript, events file or session file the relay brought here holds the host's content, possibly stale, and its local path is not openable by the agent. The tool returns the host path of the original beside it.
+
+Status: the rule is [mcp-tool-host-values](../../.claude/rules/mcp-tool-host-values.md). The tools do not apply it yet. A follow-up task builds the shared helper and audits every tool, and the scan test that fails a new tool which prints a path without it lands with that task. Until then `kangentic_get_current_task`, `kangentic_find_task`, `kangentic_list_worktrees`, `kangentic_list_projects`, the session file tools, the Browser `saveToFile` option and the dev-port tools can return this computer's values for a remote project.
+
 ## Worktrees on a host
 
 A task in a remote project works in its own git worktree on the host, as a local task does, so two agents never edit the same files. The host's git makes it, through one `sh` script the helper runs (`remote-worktrees.ts`). Nothing about it uses this computer's git.

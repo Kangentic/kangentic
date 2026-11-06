@@ -5082,6 +5082,10 @@ test.describe('Command Terminal', () => {
     }
 
     test('a resume main refuses starts a fresh terminal in the same slot and says why', async () => {
+      // It passes in 10 s locally, but on a loaded CI runner (this file's shard) the 20 settled
+      // frames run slowly enough that both attempts spent the 15 s default before the last poll,
+      // so it gets the room its neighbours have.
+      test.setTimeout(45_000);
       // Main refuses a conversation another terminal holds only after the slot's unused terminal
       // has ended, so the window used to close with nothing in it. A fresh terminal takes its place.
       const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)) + refuseResumeStarts());

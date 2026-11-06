@@ -271,6 +271,7 @@ indexes it and Cursor gets no copy.
 - `cross-platform-parity.md` - code and tests behave identically on Windows/macOS/Linux/CI.
 - `browser-automation-driver.md` - one shipped CDP driver; every `kangentic_browser_*` tool routes through `withGuest`.
 - `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and has a heading in a `docs/integrations/mcp-server/` concept.
+- `mcp-tool-host-values.md` - an MCP tool answers from the layer its fact belongs to: the host's path, pid or port for where the agent works, a labeled local value for this computer, `location` on each, and an input path is a host path for a remote project.
 - `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
 - `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.
