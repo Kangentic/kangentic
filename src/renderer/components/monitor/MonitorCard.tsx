@@ -406,7 +406,7 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
 function MonitorCardFooter({ row, divider }: { row: MonitorSessionRow; divider: boolean }) {
   const liveTelemetryUnsupported = useLiveTelemetryUnsupported(row.agentName);
   if (row.status === 'queued') return <PendingFooter state="queued" divider={divider} testId="monitor-card-status" sessionId={row.sessionId} />;
-  if (row.status === 'suspended') return <PendingFooter state="paused" divider={divider} testId="monitor-card-status" />;
+  if (row.status === 'suspended') return <PendingFooter state="paused" divider={divider} testId="monitor-card-status" startBlockedReason={row.startBlockedReason} />;
   if (row.status === 'running' && row.modelReported === false) {
     return (
       <NoModelFooter liveTelemetryUnsupported={liveTelemetryUnsupported} resuming={false} divider={divider} testId="monitor-card-usage" />

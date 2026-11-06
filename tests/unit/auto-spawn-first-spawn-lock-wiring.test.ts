@@ -60,6 +60,13 @@ vi.mock('../../src/main/git/worktree-head', () => ({
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 
+// Whether a missing worktree can be made again asks whether this is a plain repo.
+vi.mock('../../src/main/git/git-checks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/git-checks')>()),
+  isGitRepo: () => true,
+  isInsideWorktree: () => false,
+}));
+
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
     listCappedColumnTasks() { return []; }
@@ -136,9 +143,15 @@ function makeSessionManager() {
   };
 }
 
+let worktreesEnabled = true;
+let agentExecution: Record<string, { mode: string }> = {};
+
 function makeConfigManager() {
   return {
-    getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits', cliPaths: {} } })),
+    getEffectiveConfig: vi.fn(() => ({
+      agent: { permissionMode: 'acceptEdits', cliPaths: {}, execution: agentExecution },
+      git: { worktreesEnabled },
+    })),
   };
 }
 
@@ -303,13 +316,16 @@ describe('autoSpawnTasks first-spawn wiring', () => {
 });
 
 /**
- * The stale-`worktree_path` fallback: a task carries a `worktree_path` from a
- * prior run, but the directory is gone (the worktree was deleted out from
- * under it). auto-spawn.ts nulls both `worktree_path` and `branch_name`,
- * records WHY via `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')`
- * so the board can say the agent runs in the shared project checkout, and
- * falls back to spawning at `projectPath`. Nothing previously drove this
- * branch at all.
+ * A task carries a `worktree_path` from a prior run, but the directory is gone
+ * (the worktree was deleted out from under it). Where Resume can make it again
+ * the task stays as it is, not running, and no agent starts: a fresh agent in
+ * the shared checkout is not the work the task asked for.
+ *
+ * The fallback is for a task nothing can recreate one for: auto-spawn.ts nulls
+ * both `worktree_path` and `branch_name`, records WHY via
+ * `taskRepo.setWorktreeSkipReason(task.id, 'worktree-missing')` so the board can
+ * say the agent runs in the shared project checkout, and falls back to spawning
+ * at `projectPath`.
  *
  * The demotion keeps the PR anchors that describe the WORK rather than the
  * checkout: `pushed_branch` is never in the patch, and the surviving local
@@ -331,6 +347,9 @@ describe('autoSpawnTasks: stale worktree_path fallback', () => {
     // fallback cwd) still exists, so the spawn proceeds to prepareAgentSpawn
     // rather than being skipped by the "CWD missing" guard right after it.
     vi.mocked(fs.existsSync).mockImplementation((checkedPath) => checkedPath !== STALE_WORKTREE_PATH);
+    // Worktrees off: nothing can recreate this one, so the fallback applies.
+    worktreesEnabled = false;
+    agentExecution = {};
   });
 
   afterEach(() => {
@@ -338,9 +357,42 @@ describe('autoSpawnTasks: stale worktree_path fallback', () => {
     // after this describe, but a rerun/`--repeat-each` should not depend on
     // ordering) see every path as existing again.
     vi.mocked(fs.existsSync).mockImplementation(() => true);
+    worktreesEnabled = true;
+    agentExecution = {};
   });
 
-  it('detects a stale worktree_path, clears it, records worktree-missing, and falls back to the project path', async () => {
+  it('leaves a task whose worktree can be made again as it is, not running, with no agent in the shared checkout', async () => {
+    worktreesEnabled = true;
+    mockTaskList.mockReturnValue([
+      { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' },
+    ]);
+
+    const sessionManager = await runAutoSpawn();
+
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSetWorktreeSkipReason).not.toHaveBeenCalled();
+    expect(mockPrepareAgentSpawn).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({
+      taskId: TASK_ID,
+      projectId: 'proj-123',
+      cwd: STALE_WORKTREE_PATH,
+      startBlockedReason: 'worktree-missing',
+    });
+  });
+
+  it('falls back for a task whose agent runs on a remote server, since no worktree is made for it', async () => {
+    worktreesEnabled = true;
+    agentExecution = { claude: { mode: 'remote' } };
+    mockTaskList.mockReturnValue([
+      { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' },
+    ]);
+
+    await runAutoSpawn();
+
+    expect(mockSetWorktreeSkipReason).toHaveBeenCalledWith(TASK_ID, 'worktree-missing');
+  });
+
+  it('detects a stale worktree_path with worktrees off, clears it, records worktree-missing, and falls back to the project path', async () => {
     mockTaskList.mockReturnValue([
       { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: STALE_WORKTREE_PATH, branch_name: 'stale-branch' },
     ]);

@@ -164,6 +164,21 @@ export async function startCommandTerminalRestore(context: IpcContext, projectId
 }
 
 /**
+ * Settle the launch's restore without starting anything, for a project this
+ * instance does not own: a copied database must not bring agents back in another
+ * instance's folder. The panel's wait ends at once, and the claimed conversations
+ * stay open for the instance that owns them.
+ */
+export function skipCommandTerminalRestore(context: IpcContext, projectId: string): void {
+  claimCommandTerminalRestore(context, projectId);
+  const pass = passesOf(context).get(projectId);
+  if (!pass || pass.started) return;
+  pass.started = true;
+  pass.claimed = [];
+  pass.markDone();
+}
+
+/**
  * Resolves once the launch's restore and any pty host crash's restore are over,
  * or at the ceiling. Never rejects.
  */

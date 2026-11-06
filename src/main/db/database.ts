@@ -55,7 +55,7 @@ export function configureProjectDbAccess(access: ProjectDbAccess): void {
   projectDbAccess = access;
 }
 
-function projectDbPath(projectId: string): string {
+export function projectDbPath(projectId: string): string {
   return projectDbAccess.projectsDir
     ? path.join(projectDbAccess.projectsDir, `${projectId}.db`)
     : PATHS.projectDb(projectId);

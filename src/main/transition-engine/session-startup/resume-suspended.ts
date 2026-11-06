@@ -9,7 +9,7 @@ import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
-import type { BoardProfile, ConversationExpiredNotice, SessionRecord, Task } from '../../../shared/types';
+import type { BoardProfile, ConversationExpiredNotice, SessionRecord, StartBlockedReason, Task } from '../../../shared/types';
 import { createExpiredRecapSources } from '../expired-recap-sources';
 import { markRecapSession } from '../../automations/turn-end/recap-turns';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
@@ -25,7 +25,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { orderByColumnEntry } from '../column-capacity';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
-import { demoteMissingWorktree } from './missing-worktree';
+import { canRecreateWorktree, demoteMissingWorktree, isWorktreeMissing } from './missing-worktree';
 import { startStartupTimer } from './timing';
 import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
 import { workflowOfTask } from '../../workflows/workflow-home';
@@ -178,6 +178,11 @@ export async function resumeSuspendedSessions(
     ) ?? lane;
   };
 
+  /** What a placeholder says: why the record's start failed, else that its folder is gone. */
+  const placeholderReason = (record: SessionRecord, task: Task): StartBlockedReason | undefined => (
+    record.start_blocked_reason ?? (isWorktreeMissing(task) ? 'worktree-missing' : undefined)
+  );
+
   /**
    * Keep a record this pass will not resume resumable: 'suspended' (system),
    * shown as a paused card with Resume, and gathered again by the next launch.
@@ -191,7 +196,12 @@ export async function resumeSuspendedSessions(
         && !markRecordSuspended(sessionRepo, record.id, 'system')) {
       return false;
     }
-    sessionManager.registerSuspendedPlaceholder({ taskId: record.task_id, projectId, cwd: record.cwd });
+    sessionManager.registerSuspendedPlaceholder({
+      taskId: record.task_id,
+      projectId,
+      cwd: record.cwd,
+      startBlockedReason: placeholderReason(record, task),
+    });
     if (task.session_id) taskRepo.update({ id: task.id, session_id: null });
     return true;
   };
@@ -354,6 +364,7 @@ export async function resumeSuspendedSessions(
           taskId: record.task_id,
           projectId,
           cwd: record.cwd,
+          startBlockedReason: placeholderReason(record, task),
         });
         // Same precondition the two branches below satisfy: SESSION_RESUME needs
         // task.session_id clear to spawn rather than hand back a stale ref.
@@ -392,6 +403,7 @@ export async function resumeSuspendedSessions(
         taskId: record.task_id,
         projectId,
         cwd: record.cwd,
+        startBlockedReason: placeholderReason(record, task),
       });
       if (task.session_id) {
         taskRepo.update({ id: task.id, session_id: null });
@@ -445,7 +457,18 @@ export async function resumeSuspendedSessions(
     const giveUpOutcome = (): string => (canResume ? 'keeping its session resumable' : 'retiring its record');
     try {
       if (!fs.existsSync(record.cwd)) {
-        if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
+        if (isWorktreeMissing(task)) {
+          // The branch is intact, so the task stays as it is, not running, and
+          // Resume recreates the folder. Demoting it would drop the branch name,
+          // and the auto-spawn pass would then start a fresh agent in the shared
+          // checkout. Under the lock for the reason `giveUpPreparation` is: this
+          // record is a pass old by now.
+          if (canRecreateWorktree(task, laneForTask(task), projectDefaultAgent, projectPath, config)) {
+            const kept = await withTaskLock(task.id, async () => keepResumableIfUnchanged(record, task));
+            console.log(`[SESSION_RECOVERY] Worktree ${task.worktree_path} missing -- ${kept ? 'left not running for Resume to recreate' : 'left as it is: it changed meanwhile'}`);
+            skipped++;
+            continue;
+          }
           await demoteMissingWorktree(taskRepo, task, projectPath);
         }
         console.log(`[SESSION_RECOVERY] CWD ${record.cwd} missing -- marking exited`);

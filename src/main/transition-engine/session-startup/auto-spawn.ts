@@ -22,7 +22,7 @@ import { isTaskWorkflowPaused } from '../../workflows/workflow-home';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
-import { demoteMissingWorktree } from './missing-worktree';
+import { canRecreateWorktree, demoteMissingWorktree, isWorktreeMissing } from './missing-worktree';
 import { startStartupTimer } from './timing';
 
 /** What the pty host's crash took down, for a scoped pass (`lostScope`). */
@@ -351,8 +351,21 @@ export async function autoSpawnTasks(
     try {
       let cwd = task.worktree_path || projectPath;
 
-      // Guard: CWD must still exist -- fall back to projectPath if worktree was deleted
-      if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
+      // Guard: CWD must still exist. A worktree that can be made again keeps its
+      // task as it is, not running, and Resume recreates it. A fresh agent in the
+      // shared checkout is not the work this task asked for. Only a task nothing
+      // can recreate one for moves to the project path.
+      if (isWorktreeMissing(task)) {
+        if (canRecreateWorktree(task, lane, projectDefaultAgent, projectPath, config)) {
+          console.log(`[AUTO_SPAWN] Worktree missing for task ${task.id} -- leaving it not running for Resume to recreate`);
+          sessionManager.registerSuspendedPlaceholder({
+            taskId: task.id,
+            projectId,
+            cwd: task.worktree_path as string,
+            startBlockedReason: 'worktree-missing',
+          });
+          continue;
+        }
         console.log(`[AUTO_SPAWN] Worktree missing for task ${task.id} -- falling back to project path`);
         await demoteMissingWorktree(taskRepo, task, projectPath);
         cwd = projectPath;

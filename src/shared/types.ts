@@ -1353,6 +1353,11 @@ export interface Session {
   exitCode: number | null;
   /** True when this session was spawned as a resume of a previous session. */
   resuming: boolean;
+  /**
+   * Why this row's start never reached an agent, so the card can say so. Set on
+   * a suspended or exited row, and gone with the row on the next start.
+   */
+  startBlockedReason?: StartBlockedReason | null;
   /** True for ephemeral command terminal sessions (no task association, no DB persistence). */
   transient?: boolean;
   /**
@@ -1432,6 +1437,15 @@ export type SessionRecordStatus = 'running' | 'queued' | 'suspended' | 'exited' 
  */
 export type SuspendedBy = 'user' | 'system' | 'auto' | 'low_memory';
 
+/**
+ * Why a start never reached an agent.
+ *   - `never-started`: the shell ran, and the agent never reported that it started.
+ *   - `folder-missing`: the folder the agent starts in is gone.
+ *   - `worktree-missing`: the task's worktree is gone. Resume recreates it.
+ *   - `spawn-failed`: the terminal itself could not start.
+ */
+export type StartBlockedReason = 'never-started' | 'folder-missing' | 'worktree-missing' | 'spawn-failed';
+
 export interface SessionRecord {
   id: string;
   task_id: string;
@@ -1468,6 +1482,8 @@ export interface SessionRecord {
    * included: its conversation is still there to resume.
    */
   launch_failed_at: string | null;
+  /** Why this record's start never reached an agent, so a restart can still show it. */
+  start_blocked_reason: StartBlockedReason | null;
   total_cost_usd: number | null;
   total_input_tokens: number | null;
   total_output_tokens: number | null;
@@ -3101,8 +3117,8 @@ export type SessionDisplayState =
   | { kind: 'initializing'; label: string }
   | { kind: 'queued' }
   | { kind: 'running'; activity: ActivityState; usage: SessionUsage | null }
-  | { kind: 'suspended' }
-  | { kind: 'exited'; exitCode: number };
+  | { kind: 'suspended'; startBlockedReason?: StartBlockedReason }
+  | { kind: 'exited'; exitCode: number; startBlockedReason?: StartBlockedReason };
 
 // === Bottom Panel Constants ===
 
@@ -4049,6 +4065,8 @@ export interface MonitorSessionRow {
    * board card's footer says "Starting agent..." instead of a model name.
    */
   modelReported: boolean;
+  /** Why this row's start never reached an agent, for the card's footer. */
+  startBlockedReason: StartBlockedReason | null;
   /** A browser is running for this task in any state (showing, hidden, parked, popped out, or offscreen), for the card's globe. */
   browserRunning: boolean;
   labels: string[];

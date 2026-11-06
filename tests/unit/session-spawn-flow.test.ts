@@ -64,6 +64,7 @@ vi.mock('../../src/main/pty/spawn/pty-spawn', async (importOriginal) => ({
   // The real set of renderer variables a spawn may set: a WSL spawn lists the
   // ones its env carries in WSLENV (see the renderer-variable tests below).
   SPAWN_SETTABLE_CLAUDE_CODE_KEYS: (await importOriginal<typeof import('../../src/main/pty/spawn/pty-spawn')>()).SPAWN_SETTABLE_CLAUDE_CODE_KEYS,
+  AgentCwdMissingError: (await importOriginal<typeof import('../../src/main/pty/spawn/pty-spawn')>()).AgentCwdMissingError,
   resolveShellArgs: (shell: string) => ({ exe: shell, args: [] }),
   buildSpawnEnv: (env: Record<string, string> | undefined) => ({ ...env }),
   resolveSpawnCwd: vi.fn(({ requestedCwd }: { requestedCwd: string }) => ({
@@ -109,7 +110,7 @@ vi.mock('../../src/shared/paths', async (importOriginal) => ({
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
-import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentCwdMissingError, resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { safeKillPty } from '../../src/main/pty/lifecycle/pty-kill';
 import { removeAdapterHooks } from '../../src/main/pty/lifecycle/adapter-lifecycle';
@@ -244,6 +245,54 @@ function makeInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInpu
 }
 
 // ---- Tests ----
+
+// A spawn refuses an agent whose folder is gone, and `makeInput`'s folder is made up.
+const existsOnDisk = fs.existsSync;
+const GONE_FOLDER = '/home/dev/project/.kangentic/worktrees/gone';
+beforeEach(() => {
+  vi.spyOn(fs, 'existsSync').mockImplementation((target) => (
+    target === '/home/dev/project' || (target !== GONE_FOLDER && existsOnDisk(target))
+  ));
+});
+
+describe('performSpawn - a folder that is gone', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('refuses an agent, and starts nothing', async () => {
+    const context = makeContext();
+
+    await expect(performSpawn(makeInput({ cwd: GONE_FOLDER, agentParser: makeAdapter({}) }), context))
+      .rejects.toBeInstanceOf(AgentCwdMissingError);
+
+    expect(context.host.spawn).not.toHaveBeenCalled();
+    expect(context.registry.listByTaskId('task-001')).toEqual([]);
+  });
+
+  it('refuses before it touches a sibling, so a respawn leaves the old session whole', async () => {
+    const context = makeContext();
+    const siblingPty = { sealUserInput: vi.fn() };
+    seedRow(context, { id: 'sess-old', status: 'running' });
+    context.registry.get('sess-old')!.pty = siblingPty as never;
+
+    await expect(performSpawn(makeInput({ id: 'sess-new', cwd: GONE_FOLDER, agentParser: makeAdapter({}) }), context))
+      .rejects.toBeInstanceOf(AgentCwdMissingError);
+
+    expect(siblingPty.sealUserInput).not.toHaveBeenCalled();
+    expect(safeKillPty).not.toHaveBeenCalled();
+    expect(context.registry.get('sess-old')?.pty).toBe(siblingPty);
+  });
+
+  it('lets a plain shell through to its home directory fallback', async () => {
+    const context = makeContext();
+
+    const session = await performSpawn(makeInput({ cwd: GONE_FOLDER }), context);
+
+    expect(session.status).toBe('running');
+    expect(resolveSpawnCwd).toHaveBeenCalledWith(expect.objectContaining({ requestedCwd: GONE_FOLDER }));
+  });
+});
 
 describe('performSpawn - a command too long to type', () => {
   // The launch that fails in the wild: a shell still in its startup files keeps
@@ -2066,19 +2115,19 @@ describe('performSpawn - the exit releases the cwd the command was built for', (
   it('keeps cwd as the PTY start dir and commandCwd as the requested folder, and releases with the latter', async () => {
     const context = makeContext();
     vi.mocked(resolveSpawnCwd).mockReturnValueOnce({ effectiveCwd: '/home/dev', cwdFixupCommand: null });
-    const input = makeInput({ cwd: '/mock/project/.kangentic/worktrees/task-001', agentParser: makeAdapter({}) });
+    const input = makeInput({ agentParser: makeAdapter({}) });
 
     await performSpawn(input, context);
     const session = context.registry.get(input.id!)!;
     expect(session.cwd).toBe('/home/dev');
-    expect(session.commandCwd).toBe('/mock/project/.kangentic/worktrees/task-001');
+    expect(session.commandCwd).toBe('/home/dev/project');
 
     ptyExitHarness.onExitCallback!({ exitCode: 0 });
 
     expect(removeAdapterHooks).toHaveBeenCalledTimes(1);
     const released = vi.mocked(removeAdapterHooks).mock.calls[0][0];
     expect(released.id).toBe(input.id);
-    expect(released.commandCwd).toBe('/mock/project/.kangentic/worktrees/task-001');
+    expect(released.commandCwd).toBe('/home/dev/project');
   });
 });
 

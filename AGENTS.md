@@ -46,6 +46,7 @@ src/
     ipc/          # IPC handler registration
     mobile-bridge/  # Mobile companion app bridge: identity, signed roster, QR pairing,
                     #   capability router, relay transport client (consumes @kangentic/protocol)
+    project-ownership/  # Whether this instance owns a project's folder (token + marker), and the set-aside the sweep moves to
     pr/           # PR subsystem (mirrors agent/boards): shared/ contract + errors,
                   #   adapters/github/ connector, pr-registry, linking, refresh, scheduler
     pty/          # PTY session manager, shell resolver
@@ -157,6 +158,8 @@ open):
 - `worktrees/<slug>/` - git worktree checkouts
 - `removed-worktrees/<folder>-<timestamp>-<random>/` - worktrees a Done move set aside, deleted in the background
   while no Post-Worktree Script runs
+- `project-owner.json` - the marker that says which per-project database owns this folder
+- `set-aside/<worktrees|tasks>/<name>-<timestamp>-<random>/` - orphans the sweep moved aside, kept 14 days
 
 ### Database
 - Global DB (`<configDir>/index.db`) for projects list. configDir is `%APPDATA%/kangentic/`
@@ -275,6 +278,7 @@ indexes it and Cursor gets no copy.
 - `dictation-out-of-process.md` - `sherpa-onnx-node` is imported only inside the `kangentic-dictation` utilityProcess worker.
 - `pop-out-surface-registry.md` - every `BrowserWindow` comes from `createWindow` or the pop-out manager, through the registries.
 - `spawn-entry-point-parity.md` - every agent spawn routes through `spawnAgent` / `prepareAgentSpawn` and `runSpawnPreamble`.
+- `project-folder-ownership.md` - only a database that proved it owns a folder sweeps it; a missing worktree never deletes a card; a read never copies settings into a project.
 - `linux-package-dependencies.md` - rpm dependencies are soname capabilities, never package names.
 - `release-gates-fail-loudly.md` - a release-path step that guarantees something fails loudly when it cannot.
 - `task-template-vars-parity.md` - promptTemplate keywords are declared once in `TASK_TEMPLATE_VARS`.

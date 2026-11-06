@@ -65,10 +65,12 @@ vi.mock('../../src/main/db/database', () => ({
 // which is set per-test in beforeEach. All other methods are stubs.
 const mockGetLatestForTask = vi.fn(() => null as SessionRecord | null);
 const mockMarkLaunchFailed = vi.fn();
+const mockSetStartBlockedReason = vi.fn();
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     markLaunchFailed = mockMarkLaunchFailed;
+    setStartBlockedReason = mockSetStartBlockedReason;
     // No own-record row, so applySuspendDbWrites falls back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
     getLatestForTask = mockGetLatestForTask;
@@ -95,6 +97,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: vi.fn(),
   promoteRecord: vi.fn(),
   recoverStaleSessionId: vi.fn(),
+  settleQueuedRecord: vi.fn(),
 }));
 
 vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
@@ -170,6 +173,7 @@ vi.mock('../../src/main/ipc/handlers/session-resume', async (importOriginal) => 
 
 // Import under test AFTER all mocks are registered.
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
+import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 import { notifySpawnBlocked } from '../../src/main/ipc/helpers';
@@ -211,6 +215,11 @@ function createMockContext() {
       kill: vi.fn(async () => {}),
       // Called by the agent-never-started listener when its pause does not land.
       retireAgentlessSession: vi.fn(),
+      // The agent-start-refused listener's two ends: why, or no pause to hold it.
+      markStartBlocked: vi.fn(),
+      retireRefusedStart: vi.fn(),
+      // Read when a pause settles a queued record.
+      isResuming: vi.fn(() => false),
       // Whether the launch gets its one retry. No, unless a test says so.
       mayRetryLaunch: vi.fn((_sessionId?: string) => false),
       // What the report found in the launch's output. Nothing, unless a test says so.
@@ -620,6 +629,108 @@ describe('agent-never-started listener', () => {
 
     expect(markRecordSuspended).not.toHaveBeenCalled();
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+  });
+
+  it('puts the reason on the row and the record when the launch failed for good', async () => {
+    const context = registerWithLiveSession('sess-never');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-never', 'never-started'));
+    expect(mockSetStartBlockedReason).toHaveBeenCalledWith('sess-never', 'never-started');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A queued session whose folder went while it waited stops with a visible reason
+// ---------------------------------------------------------------------------
+
+describe('agent-start-refused listener', () => {
+  const QUEUED_SESSION = {
+    id: 'sess-queued',
+    taskId: 'task-queued',
+    transient: false,
+    status: 'queued',
+    resuming: false,
+    projectId: 'proj-1',
+  } as Session;
+  const REFUSAL = new AgentCwdMissingError('/project/.kangentic/worktrees/1003');
+
+  function registerWithQueuedSession(
+    liveSessionId: string,
+    task: { id: string; title: string; worktree_path: string | null } | null,
+  ): ReturnType<typeof createMockContext> {
+    vi.clearAllMocks();
+    capturedSessionEventHandlers.clear();
+    mockGetLatestForTask.mockReturnValue({
+      id: 'sess-queued',
+      task_id: 'task-queued',
+      agent_session_id: 'agent-queued',
+      status: 'queued',
+      suspended_by: null,
+    } as SessionRecord);
+    mockGetProjectRepos.mockReturnValue({
+      tasks: {
+        getById: vi.fn(() => ({ id: 'task-queued', session_id: liveSessionId, swimlane_id: 'lane-merge' })),
+        update: vi.fn(),
+      },
+      swimlanes: { getById: vi.fn(() => null) },
+    });
+    const context = createMockContext();
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    context.sessionManager.getSession.mockImplementation((sessionId?: string) => (
+      sessionId === liveSessionId ? ({ ...QUEUED_SESSION, id: liveSessionId } as Session) : null
+    ));
+    mockTaskRepositoryGetById.mockReturnValue(task as never);
+    registerSessionHandlers(context as never);
+    return context;
+  }
+
+  async function fireRefused(): Promise<void> {
+    capturedSessionEventHandlers.get('agent-start-refused')?.('sess-queued', QUEUED_SESSION, REFUSAL);
+    await withTaskLock('task-queued', async () => {});
+  }
+
+  it('pauses the task, marks the launch failed, and says why on the row and in the notice', async () => {
+    const task = { id: 'task-queued', title: 'Merge', worktree_path: '/project/.kangentic/worktrees/1003' };
+    const context = registerWithQueuedSession('sess-queued', task);
+
+    await fireRefused();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledWith(context, task, 'agent', REFUSAL, 'proj-1'));
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-queued');
+    expect(mockMarkLaunchFailed).toHaveBeenCalledWith('sess-queued');
+    expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-queued', 'worktree-missing');
+    expect(mockSetStartBlockedReason).toHaveBeenCalledWith('sess-queued', 'worktree-missing');
+  });
+
+  it('names a plain folder for a cwd that is no worktree', async () => {
+    const context = registerWithQueuedSession('sess-queued', { id: 'task-queued', title: 'Merge', worktree_path: null });
+
+    capturedSessionEventHandlers.get('agent-start-refused')?.('sess-queued', QUEUED_SESSION, new AgentCwdMissingError('/project'));
+    await withTaskLock('task-queued', async () => {});
+
+    await vi.waitFor(() => expect(context.sessionManager.markStartBlocked).toHaveBeenCalledWith('sess-queued', 'folder-missing'));
+  });
+
+  it('retires the row when a newer session holds the task, so nothing stays queued', async () => {
+    const context = registerWithQueuedSession('sess-newer', null);
+
+    await fireRefused();
+
+    await vi.waitFor(() => expect(context.sessionManager.retireRefusedStart).toHaveBeenCalledWith('sess-queued'));
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('retires the row of a session with no project', () => {
+    const context = registerWithQueuedSession('sess-queued', null);
+    context.sessionManager.getSessionProjectId.mockReturnValue(null);
+
+    capturedSessionEventHandlers.get('agent-start-refused')?.('sess-queued', QUEUED_SESSION, REFUSAL);
+
+    expect(context.sessionManager.retireRefusedStart).toHaveBeenCalledWith('sess-queued');
   });
 });
 

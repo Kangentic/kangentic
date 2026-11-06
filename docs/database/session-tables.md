@@ -57,6 +57,7 @@ sources:
 | cli_target | TEXT | | NULL |
 | start_head_sha | TEXT | | NULL |
 | launch_failed_at | TEXT | | NULL |
+| start_blocked_reason | TEXT | | NULL |
 
 `transcript_path` is the transcript file the agent reported, written from its status line when it changes. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in.
 
@@ -83,6 +84,8 @@ Each record's `tool_call_count` and `tool_breakdown` hold its own run only, and 
 `last_pty_cols` / `last_pty_rows`: the PTY grid the session last had, its spawn grid and then every applied resize except a phone's (a phone-held grid is the size guard's to give back). Written by `SessionRepository.updatePtyGrid` from the session manager's `pty-resize` event (`ipc/handlers/session-grid-persistence.ts`), at each change rather than at suspend, so an OS kill keeps it too and the synchronous quit path writes nothing. Read back as `SpawnSessionInput.restoredGrid` when the session is resumed with no in-memory predecessor to take a grid from: startup recovery after a desktop restart, a pty host crash, or a Resume or move after a restart (through the spawn intent of the record it retires). A grid under 20 rows is not restored. NULL = never recorded.
 
 `launch_failed_at`: when a FRESH launch was found never to have started, UTC ISO, written by `SessionRepository.markLaunchFailed` under the task lock as its pause lands. The agent wrote no conversation, so `assessResumeConversation` reads the record as `never-started` when it has no turns, and a Resume replays the record's `prompt` with no template over it ([A failed fresh launch keeps its prompt](../architecture/sessions/agent-absence-sweep.md#cadence-and-what-a-retirement-does)). NULL on every other record, a resume that failed included.
+
+`start_blocked_reason`: why this record's start never reached an agent (`StartBlockedReason`): `never-started`, `folder-missing`, `worktree-missing` or `spawn-failed`. Written by `SessionRepository.setStartBlockedReason` when a start fails for good, and read by startup recovery onto the suspended placeholder, so a card still says why after a restart. The registry row carries the same value as `Session.startBlockedReason`, which the card and Agent Monitor footers read: a warning-toned label in place of "Paused", with the reason in the hover tip. Each start is a new record, so a later start clears it. TEXT with no CHECK constraint. NULL for every session that started.
 
 `start_head_sha`: the worktree HEAD an isolated column's session started on, read just before its spawn (`TransitionEngineServices.readStartHead`) and written at insert. When the task's main conversation resumes after such sessions, its return recap lists the first-parent commits since the earliest of them that recorded one (`SessionRepository.listIsolatedSince`, see [Resume](../architecture/sessions/resume.md#a-return-to-the-main-conversation-opens-on-a-recap)). Startup recovery copies it onto the record it writes for the same pass. NULL for a main session, when HEAD could not be read, and for rows from before migration 97; a recap then lists what a later session's anchor shows, or no commits.
 

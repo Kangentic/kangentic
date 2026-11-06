@@ -251,6 +251,10 @@ msgstr "Elimina attività completata"
 msgid "Delete task"
 msgstr "Elimina attività"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Didn't start"
+msgstr ""
+
 #: src/renderer/components/board/BoardDialogs.tsx
 #, fuzzy
 msgid "Dismiss"
@@ -283,6 +287,10 @@ msgid "Edit {columnName} column"
 msgstr "Modifica colonna {columnName}"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Folder missing"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
@@ -297,6 +305,10 @@ msgstr "Inattivo da {duration}"
 #, fuzzy
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
 msgstr "Se questa attività viene ripresa, l'albero di lavoro verrà ricreato dall'ultimo commit del ramo."
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Its worktree folder is gone. Resume makes it again from the branch."
+msgstr ""
 
 #: src/renderer/components/board/BoardDialogs.tsx
 #, fuzzy
@@ -511,6 +523,18 @@ msgstr "ID attività copiato"
 msgid "Task moved"
 msgstr "Attività spostata"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The agent never reported that it started."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The folder this agent starts in is gone."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The terminal could not start. Its window shows why."
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
@@ -588,6 +612,10 @@ msgstr "Workflow"
 #, fuzzy
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
 msgstr "Workflow, {workflowCount, plural, one {# workflow} many {# workflow} other {# workflow}}, {runningWorkflowCount, plural, one {# in esecuzione} many {# in esecuzione} other {# in esecuzione}}"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Worktree missing"
+msgstr ""
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
 #, fuzzy

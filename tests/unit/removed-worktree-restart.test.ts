@@ -37,6 +37,7 @@ import {
   _whenRemovedWorktreeDeletionIdleForTests,
 } from '../../src/main/git/removed-worktrees';
 import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
+import { ownershipOf } from './helpers/verified-ownership';
 import { deleteTaskWorktree } from '../../src/main/ipc/helpers/task-cleanup';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task } from '../../src/shared/types';
@@ -107,7 +108,7 @@ async function openProject(): Promise<TaskRepository> {
     reapTaskProcesses: async () => [],
   };
   await cleanupStaleResourcesAsync(
-    projectPath,
+    ownershipOf(projectPath),
     tasks,
     new TaskMoveRepository(db),
     swimlanes,

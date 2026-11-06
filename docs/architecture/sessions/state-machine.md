@@ -46,7 +46,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 |-------|-------|-------------|
 | `queued` | Both | Waiting for a concurrency slot or a column's agent limit to open |
 | `running` | Both | PTY is live, Claude Code CLI process is active |
-| `suspended` | Both | PTY killed, but session ID and files preserved for resume |
+| `suspended` | Both | PTY killed, but session ID and files preserved for resume. A start that never reached an agent leaves one too, with `Session.startBlockedReason` set so the card says why |
 | `exited` | Both | Process exited naturally or was killed; terminal state |
 | `orphaned` | DB only | App crashed while session was running; discovered on next launch |
 
@@ -57,6 +57,9 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `queued` | `running` | Concurrency slot opens, `SessionQueue` promotes |
 | `queued` | `exited` | A fresh start killed, paused or moved while still queued (a queued resume goes to `suspended`, next row) |
 | `queued` | `suspended` | A queued resume that is quit, paused or moved before it starts (`settleQueuedRecord` to `suspendQueuedResume`). The record it resumed was already retired, so this one keeps the conversation |
+| `queued` | `suspended` | Its folder went while it waited, found at promotion (`agent-start-refused`). The registry row pauses with a reason and the record settles as in the two rows above, so Resume is there to press |
+| (none) | `suspended` | A direct start whose folder is gone, refused by `AgentCwdMissingError` before the old session is touched. `showRefusedStart` registers a suspended row with the reason, or puts it on the paused row the task already has, and the caller still rejects. A running session is left alone |
+| (none) | `suspended` | Startup recovery finds a task whose worktree folder is gone and `canRecreateWorktree` says Resume can make it again. The task keeps its row and branch, and `registerSuspendedPlaceholder` carries `worktree-missing`. A task nothing can recreate a worktree for falls back to the project checkout instead |
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column (a move to Done also closes the task's pop-out windows and destroys its offscreen lane, `closeTaskWindows`) |
 | `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
 | `running` | `suspended` | The user pauses it (`suspended_by='user'`), or the idle timeout does while it waits on the user (`suspended_by='auto'`). Both go through `pauseTaskSession`, which writes the record before the PTY goes down. Both are held pauses: no restart, column move or auto-spawn starts the task again until the user resumes it. So is a `'low_memory'` row an earlier version wrote, except that a restart resumes one on a running workflow's task; nothing writes that value now |

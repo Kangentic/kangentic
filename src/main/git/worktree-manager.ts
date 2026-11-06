@@ -1035,6 +1035,18 @@ export class WorktreeManager {
       }
       logCreateStep('stale-dir', staleStartedAt, ` (reuseHusk=${reuseEmptyHusk})`);
       options?.signal?.throwIfAborted();
+    } else if (task.worktree_path) {
+      // The folder went behind git's back. Git still has it registered and
+      // refuses to add it again ("missing but already registered worktree"),
+      // and the branch stays checked out there. Pruned rather than `--force`d,
+      // so a genuine conflict with another worktree still surfaces. A failed
+      // prune is left for the add to report.
+      try {
+        await this.git.raw(['worktree', 'prune']);
+      } catch (error) {
+        console.warn(`[WORKTREE] prune before recreating ${worktreePath} failed: ${(error as Error).message}`);
+      }
+      options?.signal?.throwIfAborted();
     }
     const longPathsConfig = longPathsCommandConfig();
     // Reusing an empty husk needs --force so git clears any stale
