@@ -174,6 +174,7 @@ An adapter says how its transcript reaches this computer in one of three ways, a
 | Agent | What is copied | Declared by |
 |---|---|---|
 | Claude Code | The one file it appends to under `~/.claude/projects/<slug>/`, filed under the slug of the folder on the host | `remoteTranscriptFiles()` |
+| Cursor CLI | The one file it appends to under `~/.cursor/projects/<slug>/agent-transcripts/<id>/`, filed under the slug of the folder on the host | `remoteTranscriptFiles()` |
 | Kimi Code | `~/.kimi-code/session_index.jsonl` from the session's start, then the wire it names, `<session folder>/agents/main/wire.jsonl` | `remoteTranscriptIndex()`, `remoteTranscriptFiles()` |
 | Goose | `goose session export --name <name> --format json` | `remoteTranscriptSnapshot()` |
 | OpenCode | `opencode export <id> --pure`, or `session export <id> --standalone` on OpenCode 2 | `remoteTranscriptSnapshot()` |
@@ -210,7 +211,7 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **A remote project's folder must be inside the user's home on the host.** The helper reads and writes only beneath the home, so a folder such as `/srv/app` is refused when it is added, with the home it must be in. Link or move the project under the home to use it.
 - **A remote project whose folder is not a git repository shares one folder.** Every task works in it, so two agents edit the same files. The Add project form says so.
 - **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session.
-- **Transcripts are copied for Claude Code, Kimi Code, Goose and OpenCode.** See [Transcripts](#transcripts). The others are empty in the viewer, the index and the ledger.
+- **Transcripts are copied for Claude Code, Cursor CLI, Kimi Code, Goose and OpenCode.** See [Transcripts](#transcripts). The others are empty in the viewer, the index and the ledger. Cursor's `create-chat` writes nothing until the first turn, so the copy is empty until then.
 - **A quit takes no last export.** A quit is one `suspendAll` frame, so a Goose or OpenCode copy stops at the export before it until that conversation next runs. A session ended any other way takes its last export.
 - **A large export can end short.** The tail's last pass stops near 9.6 MB, so an export still arriving when its session is released keeps the last whole copy. The next session of that conversation exports again.
 - **An export that takes over 12 seconds is stopped,** because a request to the pty host gets 15. The last whole copy stays and the next tick tries again. An export of 100 MB took about a second on the machine measured, so this is a host under heavy load or a slower disk.

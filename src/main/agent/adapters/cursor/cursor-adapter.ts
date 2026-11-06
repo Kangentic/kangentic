@@ -12,7 +12,7 @@ import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-na
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { RemoteFileDeclaration } from '../../shared/remote-files';
-import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { execCliForTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { cachedCursorModelDisplayName, discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
@@ -37,7 +37,7 @@ import {
   type CursorKangenticMcpEntry,
 } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import { locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
+import { cursorTranscriptFilePath, locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
 import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
@@ -48,6 +48,7 @@ import type {
   SessionUsage,
   SessionContext,
   SessionAttachment,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
 } from '../../../../shared/types';
@@ -242,8 +243,24 @@ export class CursorAdapter implements AgentAdapter {
   /**
    * On a remote host over SSH the CLI is `cursor-agent` from the host's own login PATH (#913). The
    * installer's other name, `agent`, is shared with Grok's CLI, so the unambiguous one is declared.
+   * The conversation's JSONL is copied to this computer (`remoteTranscriptFiles`).
    */
   readonly remoteCliName = 'cursor-agent';
+
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file Cursor appends to under
+   * `~/.cursor/projects/<slug>/agent-transcripts/<id>/`, in this computer's mirror of the host's home,
+   * where every Cursor reader already looks for it. A remote task works in one folder for its whole
+   * life (its worktree on the host, or the project's folder when it has none), so the folder Cursor
+   * started in is the folder it resumes in, and the slug is the same file's. `create-chat` writes
+   * nothing until the first turn, so the copy is empty until then. Subagent transcripts are not carried.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [cursorTranscriptFilePath(options.cwd, options.agentSessionId, place)];
+  }
+
   /**
    * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
    * so the viewer shows no clock and orders the conversation by file order.

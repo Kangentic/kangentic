@@ -9,6 +9,8 @@
  *   host inside the file.
  * - the create-chat test: an interactive session on a host opens a chat id made by a Cursor on this
  *   computer, which the host's Cursor does not know, so the start fails.
+ * - the transcript path test: the copy the viewer reads is filed under a slug of this computer's
+ *   folder, so it never matches the file Cursor writes on the host.
  * - the release test: Kangentic's entry stays in the user's `.cursor/mcp.json` after the session.
  */
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,6 +18,7 @@ import path from 'node:path';
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor';
 import { CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY } from '../../src/main/agent/adapters/cursor/answer-workspace';
 import { cursorTranscriptFilePath } from '../../src/main/agent/adapters/cursor/session-paths';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
 import { settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost } from './ssh-adapter-spawn-harness';
@@ -140,9 +143,16 @@ describe('a Cursor session on a remote host', () => {
 
   it('derives the transcript folder from the working directory as the host names it', async () => {
     const workspace = await newWorkspace();
+    const adapter = new CursorAdapter();
     const transcript = cursorTranscriptFilePath(workspace.projectFolder, CHAT_ID, workspace.place);
     expect(transcript).toBe(path.join(workspace.mirrorHome, '.cursor', 'projects', 'home-dev-app', 'agent-transcripts', CHAT_ID, `${CHAT_ID}.jsonl`));
-    // The mirror holds no transcript, so a read finds nothing and does not wait.
-    expect(await new CursorAdapter().locateSessionHistoryFile(CHAT_ID, workspace.projectFolder, workspace.place)).toBeNull();
+    // Named before the file exists, so the tail can start as soon as Cursor writes it.
+    expect(adapter.remoteTranscriptFiles({
+      agentSessionId: CHAT_ID,
+      cwd: workspace.projectFolder,
+      cliTarget: toStoredCliTarget(workspace.place)!,
+    })).toEqual([transcript]);
+    // The mirror holds no transcript yet (`create-chat` writes nothing until the first turn).
+    expect(await adapter.locateSessionHistoryFile(CHAT_ID, workspace.projectFolder, workspace.place)).toBeNull();
   });
 });
