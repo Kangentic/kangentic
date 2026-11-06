@@ -1304,6 +1304,9 @@ export async function handleTaskMove(
             interpolatedAuto = interpolateTaskTemplate(effectiveAutoCommand, templateUsesVar(effectiveAutoCommand, 'attachments')
               ? await withAttachmentsOnHost(resolvedProjectPath, attachmentPaths, moveVars, signal)
               : moveVars);
+            // A newer move waits on this lock, and the copy stopped for it, so this message would say the files ran
+            // out of time. Its column decides what the agent reads now. A throw here would escape: Phase 1 has no catch.
+            if (signal.aborted) return null;
           }
           // Whether the burst below actually carries the COLUMN's message, as
           // opposed to the task's own pin or nothing at all. Two things read it:

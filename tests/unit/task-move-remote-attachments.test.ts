@@ -99,6 +99,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
 vi.mock('../../src/main/pr/pr-linking', () => ({ autoLinkPRForTask: vi.fn() }));
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
+import { abortInFlightMove } from '../../src/main/ipc/handlers/task-move-controllers';
 import { supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
 
 const TASK_ID = 'task-remote-0001';
@@ -114,6 +115,7 @@ let hostAttachment: string;
 let hostHolds: Map<string, Buffer>;
 let linkDown: boolean;
 let hostAsked: number;
+let supersededDuringCopy: boolean;
 
 function answer(stdout: string): HostCommandResult {
   return { code: 0, stdout, stderr: '', timedOut: false };
@@ -124,6 +126,7 @@ async function fakeHost(request: HostCommandRequest): Promise<HostCommandResult>
   if (linkDown) throw new Error('the link is down');
   const [, script, , ...args] = request.args;
   if (script.includes('position=0')) {
+    if (supersededDuringCopy) abortInFlightMove(TASK_ID);
     return answer(args.map((hostPath, index) => `KG:size:${index + 1}:${hostHolds.get(hostPath)?.length ?? '-'}`).join('\n'));
   }
   const [hostPath, , step] = args;
@@ -223,6 +226,7 @@ beforeEach(async () => {
   hostHolds = new Map();
   linkDown = false;
   hostAsked = 0;
+  supersededDuringCopy = false;
   setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: HOST_PROJECT } : null));
   setHostAccessLookup(() => hostAccess);
 });
@@ -258,6 +262,20 @@ describe('a column message typed into a live remote agent', () => {
     expect(text).toContain('(Not copied to this host, so not readable here: shot.png.');
     expect(text).not.toContain(hostAttachment);
     expect(text).toContain('Review the screenshot:');
+  });
+
+  // Without the check a replaced move tells the agent its files ran out of time, and then the newer column's message lands too.
+  it('delivers nothing when a newer move replaces it during the copy', async () => {
+    supersededDuringCopy = true;
+    hoisted.columnMessage.message = 'Review the screenshot:{{attachments}}';
+    const context = makeContext();
+
+    await move(context);
+
+    expect(hostHolds.size).toBe(0);
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(hoisted.turnWaits).toHaveLength(0);
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
   });
 
   // Without the gate every warm message would pay a round trip to the host for attachments it never mentions.
