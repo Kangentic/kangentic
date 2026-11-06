@@ -149,6 +149,10 @@ msgstr "{nextFileCombo} - 下一個變更的檔案"
 msgid "{oldPath} to {newPath}"
 msgstr "{oldPath} 改為 {newPath}"
 
+#: src/renderer/components/dialogs/DescriptionLimitNote.tsx
+msgid "{overage, plural, one {# character over the limit} other {# characters over the limit}}"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 msgid "{pattern}: {rule}, as in {sample}."
 msgstr "{pattern}：{rule}，例如 {sample}。"
@@ -2436,6 +2440,10 @@ msgstr "文字比對"
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "The agent CLI this task runs on"
 msgstr "此任務使用的代理 CLI"
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "The folder could not be used."

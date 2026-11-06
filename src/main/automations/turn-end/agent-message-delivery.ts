@@ -367,6 +367,16 @@ const OPENING_SETTLE_WAIT_MS = 15_000;
  * own settle on top.
  */
 const OPENING_QUIET_MS = 500;
+/**
+ * How long an opening prompt waits for the agent's input box under the task
+ * lock. A boot usually takes a few seconds. Past this a screen the agent shows
+ * first needs a person (Claude's approval of a new project MCP server, or of
+ * external imports), and the wait goes on in the background
+ * (`OPENING_BOOT_SCREEN_WAIT_MS`).
+ */
+export const OPENING_INPUT_WAIT_MS = 20_000;
+/** How long an opening prompt waits for a person to answer a boot screen. */
+export const OPENING_BOOT_SCREEN_WAIT_MS = 60 * 60_000;
 const OPENING_ABORT_REASON = 'The task moved on before its opening prompt was sent.';
 
 /**
@@ -400,17 +410,19 @@ export function awaitQueuedSessionStart(context: IpcContext, sessionId: string, 
 /**
  * Type a task's opening prompt into an agent whose command line could not
  * carry it (`SpawnOutcome.typedOpening`: adopted after starting during the
- * task's worktree setup script, or a CLI that takes no starting prompt), and
- * wait for it to land. The prompt is what the command line would have carried,
- * so it goes as the command line would deliver it: whole, and first.
+ * task's worktree setup script, a CLI that takes no starting prompt, or a prompt
+ * too long for the launch), and wait for it to land. The prompt is what the
+ * command line would have carried, so it goes as the command line would deliver
+ * it: whole, and first.
  *
  * Waits for the agent to be on screen (`awaitAgentReady`, bounded by the same
- * ceiling the launch overlay uses) and for its screen to be quiet, then
- * delivers through the decision every path uses (`shouldPaste`): a bracketed
- * paste for text with line breaks (the task template's XML), keystrokes for one
- * line or a slash command, which a paste would never run (a column whose message
- * is the opening prompt, such as `/code-review`). Awaited either way, so the
- * column's later messages, held messages and pastes are all scheduled after it.
+ * ceiling the launch overlay uses), at its input box (`awaitInputReady`) and for
+ * its screen to be quiet, then delivers through the decision every path uses
+ * (`shouldPaste`): a bracketed paste for text with line breaks (the task
+ * template's XML), keystrokes for one line or a slash command, which a paste
+ * would never run (a column whose message is the opening prompt, such as
+ * `/code-review`). Awaited either way, so the column's later messages, held
+ * messages and pastes are all scheduled after it.
  *
  * Returns null once the prompt reached the agent, or why it did not. Never
  * throws: a failure is logged and returned, and the agent stays up for the
@@ -434,6 +446,17 @@ export async function deliverOpeningPromptAndWait(
     if (!ready && !isSessionLive(context, input.sessionId)) {
       console.warn(`[agent-message] Task ${taskLabel}: the agent exited before its opening prompt was sent`);
       return { outcome: 'failed', reason: 'The agent exited before its first prompt was sent.' };
+    }
+    // An adopted early agent is already past this. A launch that held its prompt
+    // back for its length is not, and the paste's Enter would answer that screen.
+    const atInput = await context.sessionManager.awaitInputReady(input.sessionId, OPENING_INPUT_WAIT_MS, signal);
+    if (!atInput) {
+      if (signal.aborted) return { outcome: 'cancelled', reason: OPENING_ABORT_REASON };
+      if (!isSessionLive(context, input.sessionId)) {
+        return { outcome: 'failed', reason: 'The agent exited before its first prompt was sent.' };
+      }
+      console.warn(`[agent-message] Task ${taskLabel}: the agent did not reach its input box for its opening prompt`);
+      return { outcome: 'failed', reason: 'The agent did not reach its input box in time for its first prompt.' };
     }
     const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
       signal,

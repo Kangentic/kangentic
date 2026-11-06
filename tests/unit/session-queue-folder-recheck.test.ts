@@ -35,9 +35,17 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+// The limit is Windows', which CI's Linux never reaches. `typed-launch.test.ts`
+// pins the measurement; here it is only what the spawn does with the answer.
+const commandFits = vi.hoisted(() => ({ value: true }));
+vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/pty/spawn/typed-launch')>()),
+  commandFitsShell: () => commandFits.value,
+}));
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
-import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentCommandTooLongError, AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { AgentParser, Session } from '../../src/shared/types';
 
@@ -85,10 +93,97 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-queue-recheck-'));
   goneFolder = path.join(tmpDir, 'worktree');
   fs.mkdirSync(goneFolder);
+  commandFits.value = true;
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe('an agent whose command is too long for its shell', () => {
+  it('starts no PTY, rejects for its caller, and leaves a row that says why', async () => {
+    const manager = makeManager();
+    commandFits.value = false;
+
+    await expect(manager.spawn({ taskId: 'task-direct', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser }))
+      .rejects.toBeInstanceOf(AgentCommandTooLongError);
+
+    expect(pty.spawn).not.toHaveBeenCalled();
+    expect(manager.listSessions()).toEqual([expect.objectContaining({
+      taskId: 'task-direct',
+      status: 'suspended',
+      startBlockedReason: 'prompt-too-long',
+    })]);
+  });
+
+  it('leaves a running agent alone: the refusal comes before the sibling drain', async () => {
+    const manager = makeManager();
+    manager.setMaxConcurrent(2);
+    const running = await manager.spawn({ taskId: 'task-direct', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser });
+    const ptyHandle = vi.mocked(pty.spawn).mock.results[0].value as ReturnType<typeof createMockPty>;
+    commandFits.value = false;
+
+    await expect(manager.spawn({ taskId: 'task-direct', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser }))
+      .rejects.toBeInstanceOf(AgentCommandTooLongError);
+
+    expect(ptyHandle.kill).not.toHaveBeenCalled();
+    expect(manager.listSessions()).toEqual([expect.objectContaining({ id: running.id, status: 'running', startBlockedReason: undefined })]);
+  });
+
+  it('settles a queued start at its promotion, with the reason on the refusal', async () => {
+    const manager = makeManager();
+    const refusals: Error[] = [];
+    manager.on('agent-start-refused', (_sessionId: string, _session: Session, error: Error) => refusals.push(error));
+    await manager.spawn({ taskId: 'task-running', projectId: 'project-1', command: '', cwd: tmpDir });
+    const queued = await manager.spawn({ taskId: 'task-queued', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser });
+    expect(queued.status).toBe('queued');
+    commandFits.value = false;
+
+    manager.setMaxConcurrent(2);
+    await flushUntil(() => refusals.length === 1);
+
+    expect(refusals[0]).toBeInstanceOf(AgentCommandTooLongError);
+    expect(refusals[0]).toMatchObject({ reason: 'prompt-too-long' });
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves no row for a Command Terminal, whose start rejects to its own window', async () => {
+    const manager = makeManager();
+    commandFits.value = false;
+
+    await expect(manager.spawn({ taskId: 'terminal', projectId: 'project-1', command: 'agent', cwd: tmpDir, agentParser, transient: true }))
+      .rejects.toBeInstanceOf(AgentCommandTooLongError);
+
+    expect(manager.listSessions()).toEqual([]);
+  });
+
+  it('forgets an input-in-alternate-screen mark of the id it refused, since no row keeps that id', async () => {
+    const manager = makeManager();
+    commandFits.value = false;
+
+    await expect(manager.spawn({
+      id: 'refused-alt-screen',
+      taskId: 'task-direct',
+      projectId: 'project-1',
+      command: 'agent',
+      cwd: tmpDir,
+      agentParser,
+      inputInAlternateScreen: true,
+    })).rejects.toBeInstanceOf(AgentCommandTooLongError);
+
+    // An id still in the set with no row reads as gone (false) after the wait;
+    // an id out of the set has no alternate screen to wait for (true at once).
+    await expect(manager.awaitInputReady('refused-alt-screen', 0)).resolves.toBe(true);
+  });
+
+  it('leaves a raw command to fail in its own terminal', async () => {
+    const manager = makeManager();
+    commandFits.value = false;
+
+    const session = await manager.spawn({ taskId: 'task-raw', projectId: 'project-1', command: 'agent', cwd: tmpDir });
+
+    expect(session.status).toBe('running');
+  });
 });
 
 describe('a queued agent whose folder went while it waited', () => {

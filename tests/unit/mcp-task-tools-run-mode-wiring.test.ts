@@ -67,7 +67,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
 // (a two-context handler that bypasses the mocked callHandler above). Mock it
 // here so this suite stays DB-free; unused by the tests below.
 vi.mock('../../src/main/agent/commands/task-commands', () => ({
-  TASK_DESCRIPTION_MAX_LENGTH: 50_000,
+  TASK_DESCRIPTION_MAX_LENGTH: 27_500,
   handleMoveTaskToProject: vi.fn(),
 }));
 

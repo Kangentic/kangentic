@@ -16,13 +16,13 @@ import type { FirstOutputTracker } from './first-output-tracker';
 import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
-import { AgentCwdMissingError, resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
+import { AgentCommandTooLongError, AgentCwdMissingError, resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
 import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
 import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hook-transport';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
-import { buildTypedLaunch, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
+import { buildTypedLaunch, commandFitsShell, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -277,6 +277,12 @@ export async function performSpawn(
   // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI
   // installed in that distro), else the Terminal setting, as before.
   const shell = input.shell ?? await context.getShell();
+  // A command its shell cannot start never reaches a PTY, and ahead of the
+  // sibling drain for the reason the folder check above is. Agents only: a raw
+  // command's failure shows in its own terminal.
+  if (input.agentParser && input.command && !commandFitsShell({ command: input.command, shell, platform: process.platform })) {
+    throw new AgentCommandTooLongError();
+  }
   // EVERY registry row for the task, not the first match. The registry holds
   // one row per task by contract, but a stale suspended placeholder (a repeat
   // project open) or a suspended-in-place row (a settings restart) could

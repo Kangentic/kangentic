@@ -74,7 +74,7 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
 // Import under test (after all mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { handleCreateTask, handleUpdateTask } from '../../src/main/agent/commands/task-commands';
+import { handleCreateTask, handleUpdateTask, TASK_DESCRIPTION_MAX_LENGTH } from '../../src/main/agent/commands/task-commands';
 import { BACKLOG_DESCRIPTION_MAX_LENGTH } from '../../src/main/agent/commands/backlog-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
@@ -184,17 +184,16 @@ describe('handleUpdateTask - labels survive a large description (round-trip guar
 });
 
 // ---------------------------------------------------------------------------
-// TASK_DESCRIPTION_MAX_LENGTH raised to 50,000 (from the prior 10,000 cap) -
-// a description in the 10,001-50,000 range must survive both the
-// handleCreateTask (board path) and handleUpdateTask (full-replace) slices
-// in full, not get truncated back down to the old cap.
+// TASK_DESCRIPTION_MAX_LENGTH is above the backlog's 10,000 cap - a description
+// between the two must survive both the handleCreateTask (board path) and
+// handleUpdateTask (full-replace) slices in full, not get cut down to it.
 // ---------------------------------------------------------------------------
 
-// Comfortably past the old 10,000-character cap but well under the new
-// 50,000-character cap - proves the raise, not just "not truncated to zero".
+// Comfortably past the 10,000-character cap and under the task cap - proves the
+// gap between them, not just "not truncated to zero".
 const DESCRIPTION_OVER_OLD_TASK_CAP = 'z'.repeat(BACKLOG_DESCRIPTION_MAX_LENGTH + 10_000);
 
-describe('handleCreateTask - persists the full description up to the raised 50,000 cap', () => {
+describe('handleCreateTask - persists the full description up to the task cap', () => {
   let context: CommandContext;
 
   beforeEach(() => {
@@ -221,9 +220,21 @@ describe('handleCreateTask - persists the full description up to the raised 50,0
     expect(createInput.description).toHaveLength(DESCRIPTION_OVER_OLD_TASK_CAP.length);
     expect(createInput.description).toBe(DESCRIPTION_OVER_OLD_TASK_CAP);
   });
+
+  // A path past the Zod schema reaches the handler, and a cut prompt starts as
+  // if nothing happened.
+  it('refuses a description past the task cap rather than cutting it', async () => {
+    const result = await handleCreateTask(
+      { title: 'Too long', description: 'z'.repeat(TASK_DESCRIPTION_MAX_LENGTH + 2) },
+      context,
+    );
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('limit by 2') });
+    expect(mockTaskRepoCreate).not.toHaveBeenCalled();
+  });
 });
 
-describe('handleUpdateTask - persists the full full-replace description up to the raised 50,000 cap', () => {
+describe('handleUpdateTask - persists the full full-replace description up to the task cap', () => {
   let context: CommandContext;
 
   beforeEach(() => {
@@ -253,11 +264,11 @@ describe('handleUpdateTask - persists the full full-replace description up to th
 });
 
 // ---------------------------------------------------------------------------
-// Backlog items keep the lower BACKLOG_DESCRIPTION_MAX_LENGTH cap even though
-// board tasks were raised to 50,000. handleCreateTask must reject an
-// over-cap Backlog create with a structured error rather than silently
-// truncating (handleCreateBacklogTask's internal .slice() would otherwise
-// mask the overflow).
+// Backlog items keep the lower BACKLOG_DESCRIPTION_MAX_LENGTH cap, below the
+// board tasks' own. handleCreateTask must reject an over-cap Backlog create
+// with a structured error rather than silently truncating
+// (handleCreateBacklogTask's internal .slice() would otherwise mask the
+// overflow).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------

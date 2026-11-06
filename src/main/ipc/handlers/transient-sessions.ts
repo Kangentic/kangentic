@@ -37,7 +37,7 @@ import type {
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { reportPreflightFailure } from '../../pty/agent-launch-report';
-import { AgentCwdMissingError } from '../../pty/spawn/pty-spawn';
+import { AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -508,10 +508,10 @@ export async function startCommandTerminal(
     if (!restore) trackFeatureUsed('command_terminal');
     return { session, slot: reservation.slot, branch, ...(checkoutError ? { checkoutError } : {}) };
   } catch (error) {
-    // A typed refusal is an answer, a project folder that went is another, and a
+    // A typed refusal is an answer, a start the spawn refused is another, and a
     // shell that did not start reported from its own spawn, so only what nothing
     // expected reports here.
-    if (!(error instanceof CommandTerminalStartError) && !(error instanceof AgentCwdMissingError)) {
+    if (!(error instanceof CommandTerminalStartError) && !(error instanceof AgentStartRefusedError)) {
       reportPreflightFailure({
         cause: 'command_terminal',
         error,

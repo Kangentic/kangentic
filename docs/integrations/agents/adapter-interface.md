@@ -94,6 +94,10 @@ own `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`). An agent without the capability sta
 script, as before, unless the project turns `git.holdPromptForInitScript` off, which needs no
 typing.
 
+The same answer decides what happens to a fresh prompt too long for its command line: typed in on
+an agent that declares it, refused on the card on any other, for the same reason
+([A prompt too long for its command line](../../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
+
 The same answer marks the session (`SpawnSessionInput.inputInAlternateScreen`), so a background
 paste (a held message, a Send message row, the setup-failure note) waits until the TUI has entered
 the alternate screen or the agent has taken a prompt (`SessionManager.awaitInputReady`). An agent

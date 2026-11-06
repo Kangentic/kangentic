@@ -1339,6 +1339,10 @@ msgstr "智能体在远程服务器上运行"
 msgid "The automation did not start."
 msgstr "自动化未启动。"
 
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."
 msgstr "列表已刷新。"

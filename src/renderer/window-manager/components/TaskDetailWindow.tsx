@@ -33,6 +33,7 @@ import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
+import { taskDescriptionOverage } from '../../../shared/task-description-limit';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { PriorityBadge } from '../../components/backlog/PriorityBadge';
 import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog';
@@ -461,9 +462,10 @@ export function TaskDetailWindow({
     setConfirmDiscard(false);
     void handleSave({ closeAfterSave: true });
   }, [actions.saving, handleSave]);
-  // The Save button is disabled on a branch-name error, so neither Ctrl+S nor
-  // the prompt may save then.
-  const canSaveEdits = !branchConfig.branchNameError;
+  // The Save button is disabled on a branch-name error or a description over the
+  // limit, so neither Ctrl+S nor the prompt may save then.
+  const descriptionOverage = taskDescriptionOverage(description, task.description);
+  const canSaveEdits = !branchConfig.branchNameError && descriptionOverage === 0;
 
   // The user's own layout changes resize this window's terminal: each lands at
   // once, and the terminal holds its last frame at the new size until the
@@ -635,6 +637,7 @@ export function TaskDetailWindow({
   const descriptionRef = useRef(description);
   const labelsRef = useRef(labels);
   const priorityRef = useRef(priority);
+  const descriptionOverageRef = useRef(descriptionOverage);
   // The save Ctrl+S runs, read after its blur flush has committed (see the
   // taskDetail.save binding below), so it sees the form the blur just wrote.
   const latestHandleSaveRef = useRef(handleSave);
@@ -644,10 +647,13 @@ export function TaskDetailWindow({
     descriptionRef.current = description;
     labelsRef.current = labels;
     priorityRef.current = priority;
+    descriptionOverageRef.current = descriptionOverage;
     latestHandleSaveRef.current = handleSave;
   });
   useEffect(() => {
-    if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
+    // A draft past the limit stays in the form, where its note says why: main
+    // would refuse it, and this save has no one to report that to.
+    if (!hadSessionContext.current && hasSessionContext && editingRef.current && descriptionOverageRef.current === 0) {
       updateTask({
         id: task.id,
         title: titleRef.current,
@@ -986,7 +992,8 @@ export function TaskDetailWindow({
                   onSubmit={() => void handleSave()}
                   submitLabel={t`Save`}
                   busy={actions.saving}
-                  disabled={!!branchConfig.branchNameError}
+                  disabled={!canSaveEdits}
+                  disabledReason={descriptionOverage > 0 ? t`The description is too long to start an agent with.` : null}
                   leading={isInTodo ? (
                     <button
                       type="button"

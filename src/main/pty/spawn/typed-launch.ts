@@ -2,6 +2,7 @@ import path from 'node:path';
 import {
   adaptCommandForShell,
   buildSpawnClearPrelude,
+  isCmdShell,
   isFishShell,
   isNushellShell,
   isPowerShellShell,
@@ -10,7 +11,88 @@ import {
   quoteArg,
   toWslPath,
 } from '../../../shared/paths';
+import { isWindowsBatchShim } from '../../agent/shared/npm-shim-target';
 import { parseWslShellSpec, type WslShellSpec } from '../process-tag/task-process-tag';
+
+/** CreateProcess's limit on a command line, in characters: 32,767 less its terminating NUL. */
+export const WINDOWS_COMMAND_LINE_LIMIT = 32_766;
+
+/** cmd.exe's limit on the line it reads, which a `.cmd` or `.bat` head runs through too. */
+export const CMD_COMMAND_LINE_LIMIT = 8_191;
+
+/** Linux's MAX_ARG_STRLEN: the most bytes one argument to `exec` can hold. */
+export const LINUX_ARGUMENT_BYTE_LIMIT = 131_072;
+
+/**
+ * Whether a launch's arguments reach Linux's `exec`: on Linux, and from a WSL
+ * shell, whose CLI runs in the distro. A description under
+ * `TASK_DESCRIPTION_MAX_LENGTH` cannot reach this limit, but an imported one can.
+ * macOS has no limit per argument, and its 1 MiB for a whole launch is out of
+ * reach.
+ */
+export function launchRunsOnLinux(input: { shell: string; platform: NodeJS.Platform }): boolean {
+  return input.platform === 'linux' || (input.platform === 'win32' && parseWslShellSpec(input.shell) !== null);
+}
+
+/**
+ * The longest command line a Windows launch can have, in characters, or null off
+ * Windows and under a WSL shell, where a launch has no such limit.
+ */
+export function commandLineLimit(input: {
+  /** The program the command starts: an agent's path, or a built command's head. */
+  program: string;
+  shell: string;
+  platform: NodeJS.Platform;
+}): number | null {
+  if (input.platform !== 'win32' || parseWslShellSpec(input.shell) !== null) return null;
+  const throughCmd = isCmdShell(input.shell.toLowerCase()) || isWindowsBatchShim(input.program);
+  return throughCmd ? CMD_COMMAND_LINE_LIMIT : WINDOWS_COMMAND_LINE_LIMIT;
+}
+
+/**
+ * A built command's first token, without the quotes `quoteArg` gave it. A POSIX
+ * shell's apostrophe is `'\''` inside single quotes, which does not end the token.
+ */
+function commandHead(command: string): string {
+  const trimmed = command.trimStart();
+  const quote = trimmed[0];
+  if (quote === "'") {
+    const quoted = /^'((?:[^']|'\\'')*)'/.exec(trimmed);
+    return quoted ? quoted[1].replaceAll("'\\''", "'") : trimmed.slice(1);
+  }
+  if (quote === '"') {
+    const closing = trimmed.indexOf(quote, 1);
+    return closing === -1 ? trimmed.slice(1) : trimmed.slice(1, closing);
+  }
+  const space = trimmed.search(/\s/);
+  return space === -1 ? trimmed : trimmed.slice(0, space);
+}
+
+/**
+ * What a command takes up as a process's command line, as opposed to as typed.
+ * PowerShell's backtick escapes are spent before the process starts, so they
+ * count for nothing. A `"` a Git Bash keeps inside single quotes reaches the
+ * Windows program as `\"`, so it counts for two.
+ */
+function processCommandLineLength(command: string, shellName: string): number {
+  if (isPowerShellShell(shellName)) return command.replace(/`([\s\S])/g, '$1').length;
+  if (isCmdShell(shellName)) return command.length;
+  return command.length + (command.match(/"/g)?.length ?? 0);
+}
+
+/**
+ * Whether a built command can start at all under `shell`. A launch past its
+ * limit fails in the shell with the agent never started, and nothing reports it
+ * for minutes, so the spawn refuses one before it has a PTY
+ * (`AgentCommandTooLongError`). On Linux this measures the whole command, which
+ * is never shorter than its longest argument.
+ */
+export function commandFitsShell(input: { command: string; shell: string; platform: NodeJS.Platform }): boolean {
+  if (launchRunsOnLinux(input)) return Buffer.byteLength(input.command, 'utf8') <= LINUX_ARGUMENT_BYTE_LIMIT;
+  const limit = commandLineLimit({ program: commandHead(input.command), shell: input.shell, platform: input.platform });
+  if (limit === null) return true;
+  return processCommandLineLength(input.command, input.shell.toLowerCase()) <= limit;
+}
 
 /**
  * The longest line, in bytes with its Enter, that a spawn types into a shell.

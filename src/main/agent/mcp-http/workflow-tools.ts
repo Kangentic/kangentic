@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { callHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
+import { TASK_DESCRIPTION_MAX_LENGTH } from '../../../shared/task-description-limit';
 import { PERMISSION_MODES, RUN_MODES } from '../../../shared/workflow-run-settings';
 import { MAX_WORKFLOW_TASKS } from '../../workflows/workflow-limits';
 
@@ -55,7 +56,7 @@ const TASK_PLAN_APPROVAL_SHAPE = {
 const PLANNED_TASK_SCHEMA = z.object({
   key: z.string().max(60).describe('A short key for this task, unique in the plan, used by links ("api", "ui").'),
   title: z.string().max(300).describe('The task\'s title.'),
-  description: z.string().max(40_000).optional().describe('What the task\'s agent should do. Write the plan into it: the agent reads it as its brief.'),
+  description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe(`What the task's agent should do. Write the plan into it: the agent reads it as its brief. At most ${TASK_DESCRIPTION_MAX_LENGTH} characters: it rides the agent's command line.`),
   project: z.string().optional().describe('Put the task on another registered project\'s board (name or id) when its work is in that repository. Omit for this project. Use only projects the user named.'),
   existingTask: z.string().optional().describe('Take in a task already in To Do on that board (its number or id) instead of creating one.'),
   routeStart: z.string().optional().describe(`The first column it visits. ${COLUMN_NAME_DESCRIPTION} Omit to start in the first column after To Do.`),
@@ -177,7 +178,7 @@ export function registerWorkflowTools(
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         title: z.string().max(300),
-        description: z.string().max(40_000).optional(),
+        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional(),
         taskProject: z.string().optional().describe('Put it on another project\'s board (name or id). Omit for this workflow\'s project.'),
         routeStart: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),
         routeLast: z.string().optional().describe(COLUMN_NAME_DESCRIPTION),

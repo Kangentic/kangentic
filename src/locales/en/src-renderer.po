@@ -1326,6 +1326,10 @@ msgstr "The agent runs on a remote server"
 msgid "The automation did not start."
 msgstr "The automation did not start."
 
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "The description is too long to start an agent with."
+msgstr "The description is too long to start an agent with."
+
 #: src/renderer/stores/project-store.ts
 msgid "The list has been refreshed."
 msgstr "The list has been refreshed."

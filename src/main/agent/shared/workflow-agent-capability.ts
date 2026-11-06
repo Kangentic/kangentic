@@ -13,9 +13,10 @@ import type { AgentAdapter } from '../agent-adapter';
  * - Its conversation can be resumed: Kangentic chose its session id, the CLI
  *   creates one before launch (`createSessionId`), or the session's own id is
  *   captured after launch. The workflow records it and resumes by it.
- * - Its fresh launch carries the workflow prompt. The workflow agent's start
- *   types nothing on a fresh session, so a CLI with no starting prompt
- *   (`freshPromptDelivery: 'typed'`) would sit idle with no instructions.
+ * - Its fresh launch carries the workflow prompt. The start types a first
+ *   message in only when it is too long for the command line, so a CLI with no
+ *   starting prompt (`freshPromptDelivery: 'typed'`) would sit idle with no
+ *   instructions.
  *
  * Read-only is an enhancement on top: where an adapter declares
  * `supportsReadOnlyLaunch` the agent launches without edit or shell tools, and

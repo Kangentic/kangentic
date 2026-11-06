@@ -1083,6 +1083,74 @@ describe('the workflow agent\'s reads across projects', () => {
       });
     });
 
+    // The first message carries the task the workflow was made from, and the
+    // template and columns take about 4,000 characters of their own, so a task
+    // near its limit runs past a Windows command line.
+    describe('a first message too long for the command line on Windows', () => {
+      const LONG_BRIEF = `Upgrade every dependency.\n\n${'Check the build on each platform.\n'.repeat(1_000)}`;
+      const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+      beforeEach(() => {
+        Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+        mockPasteAgentMessage.mockClear();
+        makeStartsReachSpawn();
+        Object.assign(context, { boardConfigManager: { getDefaultBaseBranchForPath: () => 'main' } });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', hostPlatform);
+      });
+
+      function adapterThatMayBeTyped(mayBeTyped: boolean): void {
+        const usable = agentRegistry.get('claude') as unknown as Record<string, unknown>;
+        spies.push(vi.spyOn(agentRegistry, 'get').mockReturnValue({ ...usable, firstPromptMayBeTyped: () => mayBeTyped } as unknown as AgentAdapter));
+      }
+
+      async function openOnALongBrief(): Promise<string> {
+        const workflowId = service.createWorkflow('home', { brief: LONG_BRIEF }).id;
+        await agent.openWorkflowAgent(context, 'home', workflowId, {});
+        return workflowId;
+      }
+
+      it('is typed in by an agent whose input box can be told from a boot screen', async () => {
+        adapterThatMayBeTyped(true);
+
+        const workflowId = await openOnALongBrief();
+
+        expect(buildCommand.mock.calls[0][0]).toMatchObject({ resume: false, prompt: undefined });
+        expect(spawn.mock.calls[0][0]).toMatchObject({ inputInAlternateScreen: true });
+        expect(markIdleAuthoritative).toHaveBeenCalledWith('session-restarted');
+        expect(mockPasteAgentMessage).toHaveBeenCalledWith(context, expect.objectContaining({
+          taskId: workflowId,
+          sessionId: 'session-restarted',
+          message: expect.stringContaining('Upgrade every dependency.'),
+        }));
+      });
+
+      it('stays on the command for any other agent, for the spawn to refuse', async () => {
+        adapterThatMayBeTyped(false);
+
+        await openOnALongBrief();
+
+        expect(String(buildCommand.mock.calls[0][0].prompt)).toContain('Upgrade every dependency.');
+        expect(mockPasteAgentMessage).not.toHaveBeenCalled();
+      });
+
+      // A slash command runs only as keystrokes, far too slow at this length, so
+      // it stays on the command even for an agent that could type a long prompt.
+      it('stays on the command when the first message is a slash command', async () => {
+        adapterThatMayBeTyped(true);
+        Object.assign(context.configManager, { load: () => ({ workflows: { agentPrompt: '/plan-workflow {{brief_xml}}' } }) });
+
+        await openOnALongBrief();
+
+        expect(String(buildCommand.mock.calls[0][0].prompt)).toMatch(/^\/plan-workflow /);
+        expect(String(buildCommand.mock.calls[0][0].prompt)).toContain('Upgrade every dependency.');
+        expect(mockPasteAgentMessage).not.toHaveBeenCalled();
+        expect(markIdleAuthoritative).not.toHaveBeenCalled();
+      });
+    });
+
     // In these two the fake's suspend leaves the row running, as in the tests
     // above, so a Resume finds a live agent and starts nothing: what is pinned
     // is whether the user's Pause still stands when the restart is owed.

@@ -35,6 +35,7 @@ vi.mock('../../src/main/transition-engine/turn-completion', () => ({
 import {
   deliverAgentMessageAndWait,
   deliverAgentMessageInBackground,
+  deliverOpeningPromptAndWait,
   needsPaste,
   shouldPaste,
 } from '../../src/main/automations/turn-end/agent-message-delivery';
@@ -48,6 +49,7 @@ function makeContext(sessionStatus: string | null = 'running') {
   return {
     sessionManager: {
       getSession: vi.fn((id: string) => (sessionStatus ? { id, status: sessionStatus } : undefined)),
+      awaitAgentReady: vi.fn(async () => true),
       // At its input box, or an agent that draws none in the alternate screen.
       awaitInputReady: vi.fn(async () => true),
     },
@@ -104,6 +106,77 @@ describe('shouldPaste', () => {
     // Typed as keystrokes, its line breaks would be flattened to spaces.
     expect(shouldPaste('/src/main/workflows/workflow-step.ts is the file.\nIt moves the task on.')).toBe(true);
     expect(shouldPaste('/mock/screenshot.png\nshows the bug')).toBe(true);
+  });
+});
+
+describe('deliverOpeningPromptAndWait', () => {
+  const OPENING = `<task>${'x'.repeat(30_000)}</task>`;
+
+  beforeEach(async () => {
+    await resetPastes();
+  });
+
+  // A launch that held its prompt back for its length is not past the screens
+  // an adopted early agent is, and the paste's Enter would answer one.
+  it('sends nothing into a screen the agent shows before its input box', async () => {
+    const context = makeContext();
+    context.sessionManager.awaitInputReady.mockResolvedValueOnce(false);
+
+    const notSent = await deliverOpeningPromptAndWait(context as never, {
+      taskId: TASK_ID, sessionId: SESSION_ID, prompt: OPENING, verifier: null,
+    });
+
+    expect(notSent).toEqual({ outcome: 'failed', reason: 'The agent did not reach its input box in time for its first prompt.' });
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('reads a cancel while it waits as a cancel, which nothing announces', async () => {
+    const context = makeContext();
+    const moved = new AbortController();
+    context.sessionManager.awaitInputReady.mockImplementationOnce(async () => {
+      moved.abort();
+      return false;
+    });
+
+    const notSent = await deliverOpeningPromptAndWait(context as never, {
+      taskId: TASK_ID, sessionId: SESSION_ID, prompt: OPENING, verifier: null, signal: moved.signal,
+    });
+
+    expect(notSent?.outcome).toBe('cancelled');
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('reports an agent that went away while the input-box wait ran as exited, not as a timeout', async () => {
+    const context = makeContext();
+    // The session is live when the first check runs (so the earlier isSessionLive
+    // return does not fire) and gone by the time the input-box wait ends.
+    let status = 'running';
+    context.sessionManager.getSession.mockImplementation((id: string) => ({ id, status }));
+    context.sessionManager.awaitInputReady.mockImplementationOnce(async () => {
+      status = 'exited';
+      return false;
+    });
+
+    const notSent = await deliverOpeningPromptAndWait(context as never, {
+      taskId: TASK_ID, sessionId: SESSION_ID, prompt: OPENING, verifier: null,
+    });
+
+    expect(notSent).toEqual({ outcome: 'failed', reason: 'The agent exited before its first prompt was sent.' });
+    expect(context.terminalSubmit.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('pastes the whole prompt once the agent is at its input box', async () => {
+    const context = makeContext();
+
+    const delivered = deliverOpeningPromptAndWait(context as never, {
+      taskId: TASK_ID, sessionId: SESSION_ID, prompt: OPENING, verifier: null,
+    });
+    await settle();
+    expect(context.sessionManager.awaitInputReady).toHaveBeenCalledWith(SESSION_ID, expect.any(Number), expect.any(AbortSignal));
+    turnWaits[0].resolve('idle' as TurnCompletionResult);
+
+    await expect(delivered).resolves.toBeNull();
+    expect(context.terminalSubmit.submitContent).toHaveBeenCalledWith(SESSION_ID, OPENING, expect.anything());
   });
 });
 
