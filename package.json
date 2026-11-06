@@ -119,7 +119,7 @@
     "p-queue": "^9.3.0",
     "pixelmatch": "^8.0.0",
     "playwright": "^1.60.0",
-    "postcss": "^8.5.31",
+    "postcss": "^8.5.32",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-colorful": "^5.7.0",
