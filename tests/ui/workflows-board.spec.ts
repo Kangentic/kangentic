@@ -449,6 +449,24 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
+  test('a card whose agent is still starting stays in its own column on a drag', async () => {
+    // #414 has no session at all, which alone reads as stopped. Main reporting spawn
+    // progress for it means it is being set up: in motion, so locked.
+    const { browser, page } = await launch();
+    try {
+      await page.evaluate(() => {
+        (window as unknown as { __mockFireSpawnProgress: (taskId: string, label: string) => void }).__mockFireSpawnProgress('t414', 'Creating worktree');      });
+      await expect.poll(() => page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { spawnProgress: Record<string, string> } } };
+      }).__zustandStores.session.getState().spawnProgress['t414'])).toBe('Creating worktree');
+      await dragToColumn(page, 't414', 'Testing');
+      await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+      await expect(page.locator('[data-swimlane-name="Testing"] [data-task-id="t414"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   for (const activity of ['thinking', 'permission'] as const) {
     test(`a drag stays in its own column while the card's agent is ${activity === 'thinking' ? 'working' : 'at a permission prompt'}`, async () => {
       const { browser, page } = await launch({ agents: { 414: activity } });

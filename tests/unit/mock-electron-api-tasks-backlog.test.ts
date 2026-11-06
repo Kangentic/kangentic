@@ -17,6 +17,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { loadMockElectronApi, plain } from './helpers/load-mock-electron-api';
+import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
 
 interface BacklogItem {
   id: string;
@@ -189,7 +190,9 @@ describe('mock tasks.update: the per-task automations hold', () => {
   it('refuses a hold on a running workflow task, as main does, and holds an ordinary task', async () => {
     const bridge = holdScenario();
 
-    await expect(holdOf(bridge, WORKFLOW_TASK_ID, true)).rejects.toThrow(/so its automations cannot be paused/);
+    // The whole sentence main throws (display id 35, workflow title 'Refusal' in the seed), so the
+    // mock's hand-typed copy cannot drift from `WORKFLOW_REFUSALS.noTaskHold`.
+    await expect(holdOf(bridge, WORKFLOW_TASK_ID, true)).rejects.toThrow(WORKFLOW_REFUSALS.noTaskHold('#35', 'Refusal'));
     expect(await holdOf(bridge, WORKFLOW_TASK_ID, false)).toBe(false);
     expect(await holdOf(bridge, ORDINARY_TASK_ID, true)).toBe(true);
 

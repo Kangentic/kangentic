@@ -2,6 +2,7 @@ import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
 import { automationMovesTask, automationMoveTargetName, canColumnRun } from '../../shared/automation-manifest';
 import { doneColumn, nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { resolveProjectDefaultBaseBranch } from '../ipc/helpers/default-base-branch';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import type { IpcContext } from '../ipc/ipc-context';
@@ -51,11 +52,12 @@ import { readWorktreeWork } from '../git/worktree-head';
  *   the only way a workflow task stops and notifies the owner: a change from
  *   the plan, something the owner must weigh in on, or a decision to make.
  * - A reply that ends on the `No changes needed:` line goes straight to Done,
- *   past the rest of the route, once the branch shows it is true: no commits
- *   ahead of the base and a clean worktree (`noChangesBlocker`). With no check
- *   to pay for. It moves through `moveOn`, so a held background command holds
- *   it, and a branch that has changes moves nothing and the nudge says why. The
- *   turn-end runner reads the line before the rows (owner's decision, 2026-11-05).
+ *   past the rest of the route, with no check to pay for, once the branch shows
+ *   it is true: no commits ahead of the base and a clean worktree
+ *   (`noChangesBlocker`). It moves through `moveOn`, so a held background command
+ *   holds it, and a branch that has changes moves nothing and the nudge says why.
+ *   The turn-end runner reads the line before the rows (owner's decision,
+ *   2026-11-05).
  * - Not done, with work of the agent's own still open by the hook events (a
  *   background shell it holds, a subagent past its turn end), is still
  *   working. It comes from `SessionManager.getOpenWork`, never from the
@@ -224,8 +226,7 @@ export function heldBackgroundShells(context: IpcContext, sessionId: string): Op
 export async function noChangesBlocker(context: IpcContext, projectPath: string | null, task: Task): Promise<string | null> {
   if (!task.worktree_path) return null;
   const baseBranch = task.resolved_base_branch || task.base_branch
-    || (projectPath ? context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch : null)
-    || 'main';
+    || (projectPath ? resolveProjectDefaultBaseBranch(context, projectPath) : 'main');
   const work = await readWorktreeWork(task.worktree_path, baseBranch);
   if (work === null || work.commitsNotOnBase === null) {
     return `your "No changes needed" line moved nothing, because this branch could not be read against ${baseBranch}`;
@@ -331,7 +332,8 @@ export async function runWorkflowStep(
   const { task, column } = subject;
   const repos = getProjectRepos(context, payload.projectId);
   const route = describeStepRoute(repos.swimlanes.list(), task, column.id);
-  const deps = conditionCheckDeps(context, context.projectRepo.getById(payload.projectId)?.path ?? null);
+  const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
+  const deps = conditionCheckDeps(context, projectPath);
   const call: ConditionCheckCall = { projectId: payload.projectId, taskId: task.id, swimlaneId: column.id, job: 'workflow_step' };
   const ask = (rows: ConditionPromptRow[]): ConditionPromptInput => ({
     task: { title: task.title, description: task.description, labels: task.labels, prUrl: task.pr_url, prState: task.pr_state, prMergeReadiness: task.pr_merge_readiness },
@@ -393,7 +395,6 @@ export async function runWorkflowStep(
   const noChangesWhy = noChangesReason(agentReply)
     ?? (input.releaseHeldMove === 'no-changes' ? HELD_NO_CHANGES_RELEASED_REASON : null);
   if (noChangesWhy !== null) {
-    const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
     const blocker = await noChangesBlocker(context, projectPath, task);
     if (input.signal.aborted) return;
     const afterBranchRead = settled();
@@ -479,7 +480,6 @@ export async function runWorkflowStep(
       record({ met: true, reason: answer.reason, detail: `Step done. ${held}`, backgroundCallId: answerCallId });
       return result('move-held', answer.reason, { heldMoveTo: next.name, ...(noChanges ? { heldNoChanges: true } : {}) });
     }
-    const projectPath = context.projectRepo.getById(payload.projectId)?.path ?? null;
     // Recorded once the move has an outcome, so the log never says a task moved
     // when the move was refused. Either way the row marks this reply as judged.
     try {

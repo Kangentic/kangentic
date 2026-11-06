@@ -2163,25 +2163,6 @@ export function runProjectMigrations(db: Database.Database): void {
 }
 
 /**
- * Workflows: a set of linked tasks with its own agent.
- *
- * The workflow and its links live in its HOME project's database; its tasks
- * live on their own boards and carry the workflow's id and home project id.
- * Every task column is nullable with no default, so every existing task reads
- * as an ordinary one and a build from before these columns still inserts.
- *
- * `task_links` has no foreign key to tasks: either end can be a task in another
- * project's database, so a task delete removes its links in code
- * (`TaskRepository.delete`). It does cascade from its workflow, which is always
- * in this database.
- *
- * One transaction, like the `run_mode` and usage-lineage migrations. The
- * workflow engine's probe (`probeWorkflowProject`) checks only for the
- * `workflows` table before it reads `tasks.workflow_id`, so the table and the
- * column must land together. A run that failed between them used to leave a
- * board the probe could not read until the next open finished the migration.
- */
-/**
  * Migration: a workflow task cannot pause its automations (owner's decision,
  * 2026-11-05), so a card held before that has no switch left. Clears it on every
  * workflow task not yet in Done. It reads no `workflows` row, because a task's
@@ -2206,6 +2187,25 @@ function releaseWorkflowTaskHolds(db: Database.Database): void {
   })();
 }
 
+/**
+ * Workflows: a set of linked tasks with its own agent.
+ *
+ * The workflow and its links live in its HOME project's database; its tasks
+ * live on their own boards and carry the workflow's id and home project id.
+ * Every task column is nullable with no default, so every existing task reads
+ * as an ordinary one and a build from before these columns still inserts.
+ *
+ * `task_links` has no foreign key to tasks: either end can be a task in another
+ * project's database, so a task delete removes its links in code
+ * (`TaskRepository.delete`). It does cascade from its workflow, which is always
+ * in this database.
+ *
+ * One transaction, like the `run_mode` and usage-lineage migrations. The
+ * workflow engine's probe (`probeWorkflowProject`) checks only for the
+ * `workflows` table before it reads `tasks.workflow_id`, so the table and the
+ * column must land together. A run that failed between them used to leave a
+ * board the probe could not read until the next open finished the migration.
+ */
 function runWorkflowsMigration(db: Database.Database): void {
   writeTransaction(db, () => migrateWorkflows(db))();
 }

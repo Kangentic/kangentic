@@ -211,7 +211,7 @@ src/main/workflows/
     gate (`isSendBackOnly`). The check asks whether the agent finished what it can do alone
     (`personGateCondition`), and a yes stops the card: `stepExitVerdict` answers `stopsHere`, and
     the step returns `waiting`, with one notice a visit and no nudge. Measured on 15 real turn
-    endings, three runs each on Haiku at low: 43 of 45 right against hand labels, where the usual
+    endings, three runs each on Haiku at low, it got 43 of 45 right against hand labels, and the usual
     wording got 17 of 45. A no is a real stall and gets its nudge, and so does a yes on a turn with no
     final message, which gives a person nothing to act on. A board that wants unattended merges says
     so with a forward row.
