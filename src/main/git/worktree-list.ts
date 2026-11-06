@@ -168,6 +168,15 @@ async function countLeftRight(git: GitClient, ref: string): Promise<{ behind: nu
   }
 }
 
+/** `gitAt` throws at once for a folder that does not exist; a worktree removed under us is no error. */
+function gitAtOrNull(directory: string): GitClient | null {
+  try {
+    return gitAt(directory);
+  } catch {
+    return null;
+  }
+}
+
 async function buildRecord(
   entry: ParsedWorktree,
   projectId: string,
@@ -186,12 +195,8 @@ async function buildRecord(
   };
 
   // Worktree may have been removed externally between `worktree list` and now.
-  let worktreeGit: GitClient;
-  try {
-    worktreeGit = gitAt(entry.path);
-  } catch {
-    return baseRecord;
-  }
+  const worktreeGit = gitAtOrNull(entry.path);
+  if (!worktreeGit) return baseRecord;
 
   // Dirty status. status() throws on a half-broken worktree (mid-rebase,
   // missing HEAD); we treat those as "unknown" rather than fail.
