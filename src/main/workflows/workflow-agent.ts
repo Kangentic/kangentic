@@ -23,6 +23,7 @@ import { resumePromptRidesCommandLine } from '../transition-engine/resume-prompt
 import { pasteAgentMessageInBackground } from '../automations/turn-end/agent-message-delivery';
 import { serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
+import { agentPathsForProject } from '../remote/host-paths';
 import { resolveSpawnCli, type SpawnCli } from '../remote/remote-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../browser/browser-automation-config';
@@ -507,7 +508,11 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   await Promise.all(exits);
   for (const session of sessions) {
     try {
-      fs.rmSync(path.join(session.cwd, '.kangentic', 'sessions', workflowId), { recursive: true, force: true });
+      // A remote session's cwd is the host's folder, and this removes this computer's copy of the session
+      // folder. The relay's release removes the host's.
+      const project = context.projectRepo.getById(session.projectId);
+      const localFolder = project ? agentPathsForProject(project).fromAgent(session.cwd) : session.cwd;
+      fs.rmSync(path.join(localFolder, '.kangentic', 'sessions', workflowId), { recursive: true, force: true });
     } catch {
       // Best-effort cleanup.
     }

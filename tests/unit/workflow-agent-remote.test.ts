@@ -165,6 +165,17 @@ describe('a workflow\'s agent on a remote project', () => {
     expect((adapter.buildCommand.mock.calls[0][0] as { cliTarget: { kind: string } }).cliTarget.kind).toBe('ssh');
   });
 
+  it('removes this computer\'s session folder when it ends, though a live session reports the host\'s folder', async () => {
+    await agent.openWorkflowAgent(context, 'home', workflowId, {});
+    manager.sessions[0].cwd = HOST_PROJECT;
+    const localFolder = path.join(shell, '.kangentic', 'sessions', workflowId);
+    expect(fs.existsSync(localFolder)).toBe(true);
+
+    await agent.endWorkflowAgent(context, workflowId);
+
+    expect(fs.existsSync(localFolder)).toBe(false);
+  });
+
   it('shows a host that is not connected in its own words, and starts nothing', async () => {
     setRemoteLaunchResolver({ resolve: async () => { throw new Error('This host is not connected.'); } });
 
