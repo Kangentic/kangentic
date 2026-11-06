@@ -180,7 +180,8 @@ blocks its `.ps1` or the sibling is missing. So:
    (`deferredOpening`, as a queued session's does) and goes in once they answer. A queued session
    makes the same two waits once it is promoted. Every later message waits behind it
    (`afterRecapTurn`), since a row's Enter would answer the same screen. If the opening does not
-   land, those messages are dropped, not sent, because that screen may still be up. A move during
+   land, those messages are not sent, because that screen may still be up, and held messages go
+   back on hold. A move during
    the wait is a cancel (`trackMessageDelivery`), and so is a pause, with no notice. A move while
    the session is still queued is not: the row stays queued, and its agent needs the prompt when
    its turn comes. Measured on Claude 2.1.319 through a
