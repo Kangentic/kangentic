@@ -4,6 +4,7 @@ import { geminiModelDisplayName } from './model-display-name';
 import path from 'node:path';
 import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
+  type RemoteTranscriptSearch,
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
@@ -301,8 +302,34 @@ export function geminiChatsDir(cwd: string, place: CliPlace | null = null): stri
  */
 export function geminiChatFilePattern(agentSessionId: string): RegExp {
   if (agentSessionId.length === 0) return /(?!)/;
-  const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
+  return new RegExp(`^session-.*${escapedShortId(agentSessionId)}\\.jsonl?$`, 'i');
+}
+
+/** The first 8 characters of the id, as a chat file's name holds them, ready for a regular expression. */
+function escapedShortId(agentSessionId: string): string {
+  return agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A chat lies in `tmp/<project>/chats`, two levels below where the search starts. */
+const HOST_CHAT_DEPTH = 2;
+
+/**
+ * How a chat on a host is found and where its copy goes. The host looks under every project folder of
+ * `tmp`, because the folder is the CLI's choice (a slug from its `projects.json`, with a number after a
+ * clash, and a host's worktrees are all numbers), so the cwd only predicts it. The copy goes to the folder
+ * the readers here look in, named for the session.
+ *
+ * Only `.jsonl` matches. It is append-only at v0.66.0: `$rewindTo` and `$patch` are lines of their own, and
+ * the one rewrite swaps the file through a rename, which the tail reads as a new file. The legacy `.json` is
+ * rewritten whole in place, which an offset tail would corrupt, and a resume migrates it to `.jsonl`.
+ */
+export function geminiHostChatSearch(agentSessionId: string, cwd: string, place: CliPlace): RemoteTranscriptSearch {
+  return {
+    directory: path.join(geminiHomeDir(place), 'tmp'),
+    depth: HOST_CHAT_DEPTH,
+    fileName: `^session-.*${escapedShortId(agentSessionId)}\\.jsonl$`,
+    localPath: path.join(geminiChatsDir(cwd, place), `session-copy-${agentSessionId.slice(0, 8)}.jsonl`),
+  };
 }
 
 /**

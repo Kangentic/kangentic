@@ -18,6 +18,7 @@ import { RemoteSessionRelay, type RemoteSessionFiles } from '../../src/main/remo
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import { prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import type { SshCliPlace } from '../../src/main/agent/shared/cli-target';
+import type { RemoteTranscriptFile } from '../../src/shared/types';
 import { dialHelper, makeHelperRig } from './helpers/remote-link-rig';
 
 const teardown: Array<() => void> = [];
@@ -48,7 +49,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: string[] } = {}): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: RemoteTranscriptFile[] } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -65,7 +66,7 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
       ? Promise.reject(new Error('the host could not watch the folder'))
       : link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) })),
     unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
-    watchFiles: (_hostId, sessionId, tailed) => link.requestHelper('watchFiles', { sessionId, files: tailed }),
+    watchFiles: (_hostId, sessionId, tailed, searches) => link.requestHelper('watchFiles', { sessionId, files: tailed, ...(searches?.length ? { searches } : {}) }),
     unwatchFiles: (_hostId, sessionId) => link.requestHelper('unwatchFiles', { sessionId }),
     removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
     removeEmptyDirectories: (_hostId, paths) => link.requestHelper('removeEmptyDirectories', { paths }),
@@ -756,4 +757,338 @@ describe('a session\'s transcript', () => {
     rig.relay.deliverChunk(chunk(0, 'z', true));
     expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('z');
   });
+
+  it('empties a copy an earlier session left that is longer than the host\'s file, and only on this session\'s first chunk', async () => {
+    fs.mkdirSync(path.dirname(localTranscript()), { recursive: true });
+    fs.writeFileSync(localTranscript(), 'an earlier and much longer conversation\n');
+    const rig = await makeRig({ transcriptFiles: [localTranscript()] });
+    const chunk = (offset: number, text: string, size: number) => ({
+      type: 'fileChunk' as const, sessionId: 's1', key: '0', offset, reset: false, size, data: Buffer.from(text).toString('base64'),
+    });
+
+    rig.relay.deliverChunk(chunk(0, 'short\n', 6));
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('short\n');
+
+    // A later chunk at offset 0 is the same session's: the size it carries can lag the copy, so it empties nothing.
+    rig.relay.deliverChunk(chunk(6, 'more\n', 11));
+    rig.relay.deliverChunk(chunk(0, 'short\n', 6));
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe('short\nmore\n');
+  });
+
+  it('leaves a shared index alone, whose first chunk two sessions can read at different sizes', async () => {
+    const indexCopy = path.join(scratch, 'mirror', '.kimi-code', 'session_index.jsonl');
+    fs.mkdirSync(path.dirname(indexCopy), { recursive: true });
+    fs.writeFileSync(indexCopy, 'a line another session already copied\n');
+    const rig = await makeRig({ transcriptFiles: [] });
+    await rig.relay.release('s1');
+    await rig.relay.register({
+      hostId: 'host-a',
+      sessionId: 's2',
+      place: rig.place,
+      localSessionDirectory: rig.localSession,
+      statusOutputPath: rig.statusPath,
+      transcripts: { files: () => [], index: { path: indexCopy, folder: hostProject, sessionIdsIn: () => [] } },
+    });
+
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's2', key: '0', offset: 0, reset: false, size: 2, data: Buffer.from('a ').toString('base64') });
+
+    expect(fs.readFileSync(indexCopy, 'utf8')).toBe('a line another session already copied\n');
+  });
+
+  it('keeps a copy that is the start of the host\'s file, so a resume does not empty a conversation on the screen', async () => {
+    const conversation = `${'{"n":1}\n'.repeat(4)}`;
+    fs.mkdirSync(path.dirname(localTranscript()), { recursive: true });
+    fs.writeFileSync(localTranscript(), conversation);
+    const rig = await makeRig({ transcriptFiles: [localTranscript()] });
+
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, size: conversation.length + 8, data: Buffer.from('{"n":1}\n').toString('base64') });
+
+    expect(fs.readFileSync(localTranscript(), 'utf8')).toBe(conversation);
+  });
+});
+
+describe('a transcript under the project\'s folder, not the host\'s home', () => {
+  const localFile = (): string => path.join(shellFolder, '.kangentic', 'sessions', 's1', 'copilot-config', 'session-state', 'abc', 'events.jsonl');
+  const hostFile = (): string => path.join(hostProject, '.kangentic', 'sessions', 's1', 'copilot-config', 'session-state', 'abc', 'events.jsonl');
+
+  it('is copied to the same place under the shell folder, as a session folder or a working folder holds it', async () => {
+    fs.mkdirSync(path.dirname(hostFile()), { recursive: true });
+    fs.writeFileSync(hostFile(), '{"type":"session.start"}\n');
+
+    await makeRig({ transcriptFiles: [localFile()] });
+
+    await waitFor(() => fs.existsSync(localFile()) && fs.readFileSync(localFile(), 'utf8') === '{"type":"session.start"}\n');
+  });
+
+  it('is refused when the path is the root itself, which is a folder and no file to copy', async () => {
+    const rig = await makeRig({ transcriptFiles: [shellFolder] });
+
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, data: Buffer.from('x').toString('base64') });
+
+    expect(fs.statSync(shellFolder).isDirectory()).toBe(true);
+  });
+});
+
+describe('a transcript the host finds by a search', () => {
+  const mirrorSessions = (): string => path.join(scratch, 'mirror', '.codex', 'sessions');
+  const copy = (): string => path.join(mirrorSessions(), '0000', '00', '00', 'rollout-copy-abc.jsonl');
+  const search = () => ({ directory: mirrorSessions(), depth: 3, fileName: '^rollout-.*-abc\\.jsonl$', localPath: copy() });
+
+  function writeOnHost(relative: string, content: string): string {
+    const file = path.join(hostHome, '.codex', 'sessions', ...relative.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it('lands at the path the adapter registered, whatever the file is called on the host', async () => {
+    const hostFile = writeOnHost('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', '{"n":1}\n');
+
+    await makeRig({ transcriptFiles: [search()] });
+
+    await waitFor(() => fs.existsSync(copy()) && fs.readFileSync(copy(), 'utf8') === '{"n":1}\n', 4000);
+    fs.appendFileSync(hostFile, '{"n":2}\n');
+    await waitFor(() => fs.readFileSync(copy(), 'utf8') === '{"n":1}\n{"n":2}\n');
+    expect(fs.existsSync(path.join(mirrorSessions(), '2026'))).toBe(false);
+  });
+
+  it('is refused when the copy would land outside the mirror and the project, whatever the search names', async () => {
+    const outside = path.join(scratch, 'elsewhere', 'rollout-copy-abc.jsonl');
+    writeOnHost('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', '{"n":1}\n');
+
+    const rig = await makeRig({ transcriptFiles: [{ ...search(), localPath: outside }] });
+    rig.relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, data: Buffer.from('x').toString('base64') });
+
+    expect(fs.existsSync(outside)).toBe(false);
+  });
+});
+
+describe('an older program on the host, which does not know a search', () => {
+  const copy = (): string => path.join(scratch, 'mirror', '.codex', 'sessions', '0000', '00', '00', 'rollout-copy-abc.jsonl');
+  const plainCopy = (): string => path.join(scratch, 'mirror', '.claude', 'projects', 'p', 'abc.jsonl');
+
+  /** Answers as a program from before searches does: `searches` is ignored, and nothing says it looks. */
+  function olderProgram(): { relay: RemoteSessionRelay; logs: string[]; registration: Parameters<RemoteSessionRelay['register']>[0]; asked: Array<{ files: unknown[] }> } {
+    const logs: string[] = [];
+    const asked: Array<{ files: unknown[] }> = [];
+    const files = {
+      writeFiles: async () => undefined,
+      writeFileRaw: async () => undefined,
+      watchHooks: async () => undefined,
+      unwatchHooks: async () => undefined,
+      watchFiles: async (_hostId: string, _sessionId: string, tailed: unknown[]) => {
+        asked.push({ files: tailed });
+        return { sizes: {} };
+      },
+      unwatchFiles: async () => undefined,
+      removeFiles: async () => undefined,
+      removeEmptyDirectories: async () => undefined,
+      runCommand: async () => ({ code: 0, stdout: '', stderr: '', timedOut: false }),
+    } satisfies RemoteSessionFiles;
+    const relay = new RemoteSessionRelay({ files, log: (line) => logs.push(line) });
+    teardown.push(() => relay.dispose());
+    const localSession = path.join(shellFolder, '.kangentic', 'sessions', 's1');
+    fs.mkdirSync(localSession, { recursive: true });
+    const place: SshCliPlace = { kind: 'ssh', hostId: 'host-a', home: hostHome, shellName: 'sh', localHome: path.join(scratch, 'mirror'), roots: [{ local: shellFolder, host: hostProject }] };
+    return {
+      relay,
+      logs,
+      asked,
+      registration: { hostId: 'host-a', sessionId: 's1', place, localSessionDirectory: localSession, statusOutputPath: path.join(localSession, 'status.json') },
+    };
+  }
+
+  const search = () => ({ directory: path.join(scratch, 'mirror', '.codex', 'sessions'), depth: 3, fileName: '^rollout-.*-abc\\.jsonl$', localPath: copy() });
+
+  it('copies nothing for a search, says so once, and the session and its plain files go on', async () => {
+    const { relay, logs, asked, registration } = olderProgram();
+
+    await relay.register({ ...registration, transcriptFiles: [plainCopy(), search()] });
+
+    expect(relay.has('s1')).toBe(true);
+    expect(asked[0].files).toHaveLength(1);
+    expect(fs.existsSync(copy())).toBe(false);
+    expect(logs.filter((line) => line.includes('cannot search'))).toHaveLength(1);
+    relay.deliverChunk({ type: 'fileChunk', sessionId: 's1', key: '0', offset: 0, reset: false, data: Buffer.from('plain').toString('base64') });
+    expect(fs.readFileSync(plainCopy(), 'utf8')).toBe('plain');
+  });
+
+  it('says so when the id arrives after the start, and only once however often it is asked again', async () => {
+    const { relay, logs, registration } = olderProgram();
+    await relay.register({ ...registration, transcripts: { files: (id) => (id === 'abc' || id === 'def' ? [search(), `${plainCopy()}.${id}`] : []) } });
+
+    relay.setAgentSessionId('s1', 'abc');
+    relay.setAgentSessionId('s1', 'def');
+
+    await vi.waitFor(() => expect(logs.filter((line) => line.includes('cannot search'))).toHaveLength(1));
+  });
+
+  it('says so once across the register and a later id that changes the set of files', async () => {
+    const { relay, logs, asked, registration } = olderProgram();
+    await relay.register({
+      ...registration,
+      transcriptFiles: [plainCopy(), search()],
+      transcripts: { files: (id) => [search(), `${plainCopy()}.${id}`] },
+    });
+    expect(logs.filter((line) => line.includes('cannot search'))).toHaveLength(1);
+    const askedAtRegister = asked.length;
+
+    relay.setAgentSessionId('s1', 'abc');
+
+    // The id names a different set of files, so the host is asked again with the search still in it.
+    await vi.waitFor(() => expect(asked.length).toBeGreaterThan(askedAtRegister));
+    // Intentional fixed wait: the answer is noted a tick after the ask is recorded, and non-occurrence cannot be polled.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(logs.filter((line) => line.includes('cannot search'))).toHaveLength(1);
+  });
+});
+
+describe('a transcript chunk with an offset the tail never sends', () => {
+  const plainCopy = (): string => path.join(scratch, 'mirror', '.claude', 'projects', 'p', 'abc.jsonl');
+  const chunk = (fields: { offset: number; reset: boolean; size?: number; text?: string }) => ({
+    type: 'fileChunk' as const,
+    sessionId: 's1',
+    key: '0',
+    offset: fields.offset,
+    reset: fields.reset,
+    ...(fields.size === undefined ? {} : { size: fields.size }),
+    data: Buffer.from(fields.text ?? 'X').toString('base64'),
+  });
+
+  it.each([
+    ['a reset at a non-zero offset', { offset: 3, reset: true }],
+    ['a negative offset', { offset: -1, reset: false }],
+    ['a fractional offset', { offset: 1.5, reset: false }],
+    ['an offset past the size it reports', { offset: 10, reset: false, size: 5 }],
+  ])('is dropped, the copy unchanged and a line logged: %s', async (_name, fields) => {
+    const logs: string[] = [];
+    const files = {
+      writeFiles: async () => undefined,
+      writeFileRaw: async () => undefined,
+      watchHooks: async () => undefined,
+      unwatchHooks: async () => undefined,
+      watchFiles: async () => ({ sizes: {} }),
+      unwatchFiles: async () => undefined,
+      removeFiles: async () => undefined,
+      removeEmptyDirectories: async () => undefined,
+      runCommand: async () => ({ code: 0, stdout: '', stderr: '', timedOut: false }),
+    } satisfies RemoteSessionFiles;
+    const relay = new RemoteSessionRelay({ files, log: (line) => logs.push(line) });
+    teardown.push(() => relay.dispose());
+    const localSession = path.join(shellFolder, '.kangentic', 'sessions', 's1');
+    fs.mkdirSync(localSession, { recursive: true });
+    const place: SshCliPlace = { kind: 'ssh', hostId: 'host-a', home: hostHome, shellName: 'sh', localHome: path.join(scratch, 'mirror'), roots: [{ local: shellFolder, host: hostProject }] };
+    await relay.register({ hostId: 'host-a', sessionId: 's1', place, localSessionDirectory: localSession, statusOutputPath: path.join(localSession, 'status.json'), transcriptFiles: [plainCopy()] });
+
+    relay.deliverChunk(chunk({ offset: 0, reset: false, text: 'abc' }));
+    relay.deliverChunk(chunk(fields));
+
+    expect(fs.readFileSync(plainCopy(), 'utf8')).toBe('abc');
+    expect(logs.filter((line) => line.includes('impossible offset'))).toHaveLength(1);
+  });
+});
+
+describe('a resume that needs a folder an earlier session left on the host', () => {
+  const localSession = (record: string): string => path.join(shellFolder, '.kangentic', 'sessions', record);
+  const seed = () => ({
+    source: path.join(localSession('s0'), 'copilot-config', 'session-state', 'abc'),
+    target: path.join(localSession('s1'), 'copilot-config', 'session-state', 'abc'),
+  });
+
+  function relayWith(result: { code: number | null; stdout: string; stderr: string; timedOut: boolean } | Error): { relay: RemoteSessionRelay; logs: string[]; commands: Array<{ file: string; args: string[] }>; registration: Parameters<RemoteSessionRelay['register']>[0] } {
+    const logs: string[] = [];
+    const commands: Array<{ file: string; args: string[] }> = [];
+    const files = {
+      writeFiles: async () => undefined,
+      writeFileRaw: async () => undefined,
+      watchHooks: async () => undefined,
+      unwatchHooks: async () => undefined,
+      watchFiles: async () => ({ sizes: {}, searching: true }),
+      unwatchFiles: async () => undefined,
+      removeFiles: async () => undefined,
+      removeEmptyDirectories: async () => undefined,
+      runCommand: async (_hostId: string, request: { file: string; args: string[] }) => {
+        commands.push(request);
+        if (result instanceof Error) throw result;
+        return result;
+      },
+    } satisfies RemoteSessionFiles;
+    const relay = new RemoteSessionRelay({ files, log: (line) => logs.push(line) });
+    teardown.push(() => relay.dispose());
+    fs.mkdirSync(localSession('s1'), { recursive: true });
+    const place: SshCliPlace = { kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'sh', localHome: path.join(scratch, 'mirror'), roots: [{ local: shellFolder, host: '/home/dev/api' }] };
+    return { relay, logs, commands, registration: { hostId: 'host-a', sessionId: 's1', place, localSessionDirectory: localSession('s1'), statusOutputPath: path.join(localSession('s1'), 'status.json') } };
+  }
+
+  it('names both folders on the host, every value an argument, before the session is registered', async () => {
+    const { relay, commands, registration } = relayWith({ code: 0, stdout: '', stderr: '', timedOut: false });
+
+    await relay.register({ ...registration, resumeSeed: seed() });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].file).toBe('sh');
+    expect(commands[0].args.slice(2)).toEqual([
+      'sh',
+      '/home/dev/api/.kangentic/sessions/s0/copilot-config/session-state/abc',
+      '/home/dev/api/.kangentic/sessions/s1/copilot-config/session-state/abc',
+    ]);
+    expect(commands[0].args[1]).not.toContain('session-state');
+  });
+
+  it.each([
+    ['exits non-zero', { code: 71, stdout: '', stderr: 'the earlier session\'s folder is not on the host\n', timedOut: false }],
+    ['cannot be asked', new Error('the link is down')],
+  ])('still starts the session when the copy %s, and says why in the log', async (_name, result) => {
+    const { relay, logs, registration } = relayWith(result);
+
+    await relay.register({ ...registration, resumeSeed: seed() });
+
+    expect(relay.has('s1')).toBe(true);
+    expect(logs.some((line) => line.includes('starts empty'))).toBe(true);
+  });
+
+  it('runs nothing for a folder outside the project', async () => {
+    const { relay, commands, logs, registration } = relayWith({ code: 0, stdout: '', stderr: '', timedOut: false });
+
+    await relay.register({ ...registration, resumeSeed: { ...seed(), source: path.join(scratch, 'elsewhere') } });
+
+    expect(commands).toEqual([]);
+    expect(logs.some((line) => line.includes('outside the project'))).toBe(true);
+  });
+
+  it.skipIf(!hasSh)('copies the folder on a real shell, leaves a target already there alone, and leaves nothing half made', async () => {
+    const script = (await captureSeedScript()).script;
+    // Forward slashes, as a host's paths are, whatever this computer's are.
+    const onHost = (...segments: string[]): string => [hostHome.replace(/\\/g, '/'), ...segments].join('/');
+    const source = onHost('source');
+    const target = onHost('config', 'session-state', 'abc');
+    fs.mkdirSync(source, { recursive: true });
+    fs.writeFileSync(path.join(source, 'events.jsonl'), 'the conversation\n');
+
+    expect(spawnSync('sh', ['-c', script, 'sh', source, target]).status).toBe(0);
+    expect(fs.readFileSync(path.join(target, 'events.jsonl'), 'utf8')).toBe('the conversation\n');
+    expect(fs.readdirSync(path.dirname(target))).toEqual(['abc']);
+    expect(fs.readdirSync(onHost('config'))).toEqual(['session-state']);
+
+    fs.writeFileSync(path.join(source, 'events.jsonl'), 'changed\n');
+    expect(spawnSync('sh', ['-c', script, 'sh', source, target]).status).toBe(0);
+    expect(fs.readFileSync(path.join(target, 'events.jsonl'), 'utf8')).toBe('the conversation\n');
+
+    const missing = spawnSync('sh', ['-c', script, 'sh', onHost('gone'), onHost('config', 'session-state', 'def')]);
+    expect(missing.status).toBe(71);
+    expect(fs.existsSync(onHost('config', 'session-state', 'def'))).toBe(false);
+
+    // A hostile folder name stays one argument.
+    const hostile = onHost('a b; touch pwned');
+    fs.mkdirSync(hostile);
+    expect(spawnSync('sh', ['-c', script, 'sh', hostile, onHost('copied')], { cwd: hostHome }).status).toBe(0);
+    expect(fs.existsSync(onHost('pwned'))).toBe(false);
+  });
+
+  async function captureSeedScript(): Promise<{ script: string }> {
+    const { relay, commands, registration } = relayWith({ code: 0, stdout: '', stderr: '', timedOut: false });
+    await relay.register({ ...registration, resumeSeed: seed() });
+    relay.dispose();
+    return { script: commands[0].args[1] };
+  }
 });

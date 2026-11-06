@@ -218,7 +218,9 @@ export class CopilotCommandBuilder {
       );
       // A resume starts in a new config home: bring the session's folder over,
       // or Copilot starts an empty session under the same id (session-state.ts).
-      if (options.resume && options.sessionId) {
+      // A host's copy is the relay's (`remoteResumeSeed`): what Copilot reads is
+      // there, and one seeded here would sit under the copy the host then sends.
+      if (options.resume && options.sessionId && place?.kind !== 'ssh') {
         seedResumedSessionState({
           configHome: sessionConfigDir,
           sessionId: options.sessionId,

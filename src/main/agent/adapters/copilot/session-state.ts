@@ -44,7 +44,7 @@ export function sessionStateRoot(configHome: string): string {
  * outside `session-state/`. Kangentic's ids are UUIDs; this keeps any other
  * value from being read as a path.
  */
-function isSessionFolderName(sessionId: string): boolean {
+export function isSessionFolderName(sessionId: string): boolean {
   return sessionId.length > 0 && sessionId !== '.' && sessionId !== '..' && path.basename(sessionId) === sessionId;
 }
 

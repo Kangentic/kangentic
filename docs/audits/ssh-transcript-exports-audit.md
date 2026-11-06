@@ -1,16 +1,19 @@
 ---
 type: Audit
-title: SSH transcripts, Kimi, Goose and OpenCode probe audit
-description: "What real Kimi Code 2.5.1, Goose 1.57.0 and OpenCode 1.19.5 and 2.2.5 do on a Linux host (2026-11-05), run against a stub model: Kimi's session layout and an index line that appears on the first message, Goose's and OpenCode's own exports hold everything the readers need, and a 100 MB export takes about a second, so the link is the cost."
-tags: [audit, ssh, remote, transcripts, kimi, goose, opencode]
+title: SSH transcripts, agent CLI probe audit
+description: "What real Kimi Code 2.5.1, Goose 1.57.0 and OpenCode 1.19.5 and 2.2.5 do on a Linux host (2026-11-05), run against a stub model: Kimi's session layout and an index line that appears on the first message, Goose's and OpenCode's own exports hold everything the readers need, and a 100 MB export takes about a second, so the link is the cost. Then what real Codex 0.167.0, Gemini 0.67.0, Aider 0.86.2 and Droid 1.5.0 do (2026-11-06): each file is appended to and keeps its inode across a resume, and which claims rest on source or on a run."
+tags: [audit, ssh, remote, transcripts, kimi, goose, opencode, codex, gemini, aider, droid]
 sources:
   - resource: src/main/agent/adapters/kimi/session-index.ts
   - resource: src/main/agent/adapters/kimi/kimi-home.ts
   - resource: src/main/agent/adapters/goose/session-store.ts
   - resource: src/main/agent/adapters/opencode/distro-sessions.ts
   - resource: src/main/remote/helper/file-tail.ts
+  - resource: src/main/agent/adapters/codex/transcript-parser.ts
+  - resource: src/main/agent/adapters/gemini/session-history-parser.ts
+  - resource: src/main/agent/adapters/droid/command-builder.ts
 ---
-# SSH transcripts, Kimi, Goose and OpenCode probe audit (2026-11-05)
+# SSH transcripts, agent CLI probe audit (2026-11-05 and 2026-11-06)
 
 Claude Code's transcript on a host is one file a tail can copy. Kimi's file is named by an index, and
 Goose and OpenCode keep every conversation in one shared SQLite database. All three adapters were built
@@ -111,3 +114,40 @@ can hold a pid and would defeat the log-once check, so a failed export now logs 
   needed raising.
 - A fresh Kimi session has to find its id from the index, because the exit hint can land after the session
   is released, and never lands after a force kill.
+
+## Codex, Gemini, Aider and Droid (2026-11-06)
+
+The same rig on `node:24-bookworm`, with the stand-in taught OpenAI Responses (Codex) and Gemini's
+`generateContent`. `remote-transcript-real-cli.test.ts` holds a real conversation and a resume in each CLI, and
+all four pass, with the four cases above still passing beside them. Each run makes a real shell tool call. It
+proves the path from a CLI's files to a reader, as above, not a spawn through the app or a real `ssh`.
+
+**Read from source.** Gemini at v0.66.0 (`chatRecordingService.ts`): every write is `appendFileSync`, including
+`$rewindTo` and `$patch`. The one rewrite, a resume of an unreadable file, renames the old file aside and swaps a
+new one in, a new inode the tail already reads as starting over. So no snapshot mode and no detection of an
+in-place rewrite were built. The folder is `getShortId` from `projects.json`: `slugify(basename)`, then `-1` on a
+clash. Codex at rust-v0.163.0 (`rollout/src/recorder.rs`, `compression.rs`): a new session's file is created at its
+first persist, a resume reopens the original path, and a rollout 7 days cold can become `.jsonl.zst`, with a resume
+writing the plain file back first.
+
+**Measured.** For all four, the test compares bytes, because a reader skips a line it cannot parse, so a text
+assertion passes over a corrupted copy. After each session the copy equals the host's file byte for byte, and a
+resume keeps the host file's inode and every earlier byte. That is one resume on a short conversation, and it says
+nothing about a CLI's own later rewrite, such as a compaction or a title change in a TUI.
+
+- **Codex 0.167.0.** `sessions/2026/11/06/rollout-2026-11-06T16-02-27-<id>.jsonl`. A resume grew the file from
+  38,239 to 46,579 bytes. `codex features list` shows `local_thread_store_compression` as
+  `under development`, off, so the `.jsonl.zst` path above did not run here. The committed 0.154.0 SessionStart
+  capture does carry `transcript_path`. Kangentic does not depend on it, because a host's hooks may be untrusted.
+- **Gemini 0.67.0.** `tmp/kangentic-real-cli-project-kc1r10/chats/session-2026-11-06T16-02-42039972.jsonl`, from a
+  folder named `kangentic-real-cli-project-KC1R10`, so the slug is lowercased as the source says. No clash was run:
+  the `7-1` case rests on the source and a unit test.
+- **Aider 0.86.2.** The history grew across `--restore-chat-history`.
+- **Droid 1.5.0, `droid exec` with a BYOK model.** The real SessionStart hook ran the transport script from a
+  `--settings` file the relay had pushed, and its record reached this computer's inbox, which is the id the file is
+  named by. `~/.factory/sessions/<slug>/<id>.jsonl` sits beside `<id>.settings.json` and `<id>.settings.json.bak`. A
+  resume by `exec -s` extended it.
+
+**Not run.** Copilot needs a GitHub sign-in on the host, so its copy rests on the layout measured locally and on
+real event logs read through the real readers. Droid's TUI needs a Factory sign-in, so `--resume` in a TUI on a host
+has not run. Neither CLI was started by the app.

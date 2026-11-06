@@ -39,10 +39,16 @@ process, a path tested against the wrong disk, an environment that overwrites th
   for want of a path.
 - **A transcript is copied, never read from the host in place.** The conversation viewer, the search
   index and the token ledger read this computer's disk, and for a session on a host the adapter names
-  the transcript (`remoteTranscriptFiles()`, as the path its own readers build under `cliHomeDir`), the
-  helper tails the host's file by byte offset, and the relay writes each chunk at its offset into this
-  computer's mirror of the host's home (`PATHS.remoteHomeMirror`). The relay writes only to a path it
-  registered, so a host names a key and never a path. A reader treats that copy as what has arrived so
+  the transcript (`remoteTranscriptFiles()`, as the path its own readers build), the helper tails the
+  host's file by byte offset, and the relay writes each chunk at its offset into this computer's mirror
+  of the host's home (`PATHS.remoteHomeMirror`), or under the project's shell folder for a file the CLI
+  keeps in a session or working folder (`rootPathToHost`). The relay writes only to a path it
+  registered, so a host names a key and never a path. A file whose name the id does not give is a
+  search (`RemoteTranscriptSearch`): the helper finds it and sends it under its key, and never says
+  what it found, so the copy's path is the one the adapter registered. A hook's id comes from the host,
+  so an id is checked to be a plain name before it becomes part of a path here. An offset tail is right
+  only for a file that is appended to: a CLI's file rewritten in place is never declared, and Gemini's
+  legacy `.json` is refused by the search's pattern. A reader treats that copy as what has arrived so
   far: empty at first, stale while the link is down, and never proof that a conversation is gone. So
   nothing deletes, prunes or demotes for want of a copy: `conversationAvailable` answers true for a host
   rather than reading a null locate as gone.
@@ -155,15 +161,20 @@ process, a path tested against the wrong disk, an environment that overwrites th
   outage, no overlap, one poll for many subscribers, no `fs.watch` on the stand-in).
 - **Tests (transcripts):** `tests/unit/remote-transcript-tail.test.ts` pins the file tail on real files (the
   backfill, the pace, a chunk edge inside a multi-byte character, a replaced or emptied file, the unpaced
-  last pass) and Claude's declared file, and `tests/unit/remote-session-relay.test.ts` runs the whole path
-  through the real link and helper: a copy that grows, a file that appears late, the end of the file in the
-  copy when the session is released, a path outside the mirror refused, and a chunk written at its offset.
+  last pass, a search's depth, order, backoff and last look, no symlink followed) and Claude's declared
+  file, and `tests/unit/remote-session-relay.test.ts` runs the whole path through the real link and helper:
+  a copy that grows, a file that appears late, the end of the file in the copy when the session is
+  released, a path outside the mirror and the roots refused, a chunk written at its offset, a stale longer
+  copy emptied, a search landing at the registered path, an older program that ignores a search, and a
+  resume's folder copied on the host.
   `tests/unit/remote-transcript-sources.test.ts` pins late registration, the id from an index and when it
   refuses one, the export's schedule, staging and reset on a fake host, and on POSIX the real script through
   the real helper (past a frame's cap, a failed or empty export, a hostile argument). `<agent>-ssh-transcript`
   tests read real captures through the real readers. `remote-transcript-fixed-path-agents.test.ts` pins the
   files of the CLIs whose path follows from the id and folder (Qwen, Grok, Antigravity) against each CLI's own
-  layout, and that `locateSessionHistoryFile` finds the copy once it has arrived and never waits for it. An
+  layout, and that `locateSessionHistoryFile` finds the copy once it has arrived and never waits for it.
+  `remote-transcript-host-agents.test.ts` does the same for Codex, Gemini, Copilot, Aider and Droid, on real
+  captures, with a Gemini slug that is not the folder's name and an id that is no plain name. An
   adapter that declares a transcript for a host must let its locator answer from the mirror: a locator that
   returns null for any host reads the copy as absent. `resume-conversation-guard-ssh.test.ts` pins `unknown`
   whatever copy this computer holds, and `register-all-command-terminal-history.test.ts` the kept row.

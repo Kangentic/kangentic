@@ -36,6 +36,7 @@ import type {
   AdapterRuntimeStrategy,
   SubmissionContextType,
   SubmissionVerifier,
+  StoredCliTarget,
   TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -156,9 +157,10 @@ export class AiderAdapter implements AgentAdapter {
   readonly supportsWslCli = true;
   // On a remote host over SSH (#913) the CLI is `aider` from the host's login PATH. Aider edits no
   // file outside its session folder, so there is nothing to declare in `remoteFiles`. The idle
-  // notification takes the WSL hook transport's path (a host path for an `ssh` place), and the
-  // chat history Aider keeps in the project folder stays on the host: the readers below look in this
-  // computer's empty shell folder and find nothing, so live cost and tokens are not shown there.
+  // notification takes the WSL hook transport's path (a host path for an `ssh` place). The chat
+  // history Aider keeps in the working folder is copied to the same place under this computer's
+  // shell folder (`remoteTranscriptFiles`), where the conversation readers below look. Live cost and
+  // tokens stay off there, as for every agent on a host.
   readonly remoteCliName = 'aider';
 
   // Detection is the shared AgentDetector, by composition.
@@ -180,6 +182,15 @@ export class AiderAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+  }
+
+  /**
+   * The session's chat history on a host. It sits in the working folder, so the copy goes to the same
+   * name in that folder's stand-in here, under the project's shell folder. A session with no id keeps
+   * Aider's shared default file, which no conversation owns, so it is not copied.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    return options.cliTarget.kind === 'ssh' ? [aiderHistoryPath(options.cwd, options.agentSessionId)] : [];
   }
 
   // Aider has no trust mechanism - no-op
