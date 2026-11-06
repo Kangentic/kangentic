@@ -4,6 +4,11 @@ import {
   stripAnsiEscapes,
   filterAltScreenContent,
 } from '../../src/main/pty/buffer/transcript-writer';
+import {
+  getSyncWorkByLabel,
+  relaySlowSyncSpans,
+  setSyncSpanLabelSink,
+} from '../../src/main/diagnostics/event-loop-lag';
 
 describe('stripAnsiEscapes', () => {
   it('strips SGR color codes', () => {
@@ -224,6 +229,49 @@ describe('filterAltScreenContent', () => {
     const second = filterAltScreenContent(input, false);
     expect(first).toEqual(second);
     expect(first.content).toBe('before');
+  });
+});
+
+describe('TranscriptWriter flush lag spans', () => {
+  afterEach(() => {
+    setSyncSpanLabelSink(null);
+    relaySlowSyncSpans(null);
+  });
+
+  it('measures opening the project sink and writing the chunk as two separate spans', () => {
+    // Counting is independent of elapsed time: every span is counted under its
+    // label once spans are being timed, and the label sink reports the span
+    // running at each call, so nothing here waits on a threshold.
+    relaySlowSyncSpans(() => undefined);
+    const countsBefore = getSyncWorkByLabel();
+    const openCountBefore = countsBefore['transcript:open']?.count ?? 0;
+    const flushCountBefore = countsBefore['transcript:flush']?.count ?? 0;
+
+    let activeLabel: string | null = null;
+    setSyncSpanLabelSink((label) => { activeLabel = label; });
+
+    let labelDuringOpen: string | null = null;
+    let labelDuringWrite: string | null = null;
+    const appendChunk = vi.fn(() => { labelDuringWrite = activeLabel; });
+    const spanWriter = new TranscriptWriter(
+      () => 'project-1',
+      () => {
+        labelDuringOpen = activeLabel;
+        return { appendChunk };
+      },
+    );
+
+    spanWriter.onData('session-under-test', 'chunk text');
+    spanWriter.remove('session-under-test');
+
+    expect(appendChunk).toHaveBeenCalledTimes(1);
+    expect(appendChunk).toHaveBeenCalledWith('session-under-test', 'chunk text');
+    expect(labelDuringOpen).toBe('transcript:open');
+    expect(labelDuringWrite).toBe('transcript:flush');
+
+    const countsAfter = getSyncWorkByLabel();
+    expect(countsAfter['transcript:open'].count - openCountBefore).toBe(1);
+    expect(countsAfter['transcript:flush'].count - flushCountBefore).toBe(1);
   });
 });
 
