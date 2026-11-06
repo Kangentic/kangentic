@@ -2,9 +2,9 @@ import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { lingui } from '@lingui/vite-plugin';
-import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json' with { type: 'json' };
 import { refreshHookSignatures } from './scripts/vite-refresh-hook-signatures.mjs';
@@ -98,6 +98,13 @@ function resolveSentryVitePlugins() {
       + 'which pins NODE_ENV, rather than invoking vite directly.',
     );
   }
+  // Loaded here so only a release build pays for the plugin. Required, not
+  // imported, so the plugin's CommonJS build runs, whose `require('sentry')` is
+  // what tests/unit/sentry-upload-gate.test.ts replaces to keep it off the network.
+  const requireFromConfig = createRequire(import.meta.url);
+  const { sentryVitePlugin } = requireFromConfig('@sentry/vite-plugin') as typeof import('@sentry/vite-plugin');
+  const { createSourcemapUploadLedger, createViteUploadGate } = requireFromConfig('./scripts/sentry-upload-gate.js');
+  const uploadLedger = createSourcemapUploadLedger();
   return [
     sentryVitePlugin({
       org: 'kangentic',
@@ -111,8 +118,12 @@ function resolveSentryVitePlugins() {
       errorHandler: (error: Error) => { throw error; },
       sourcemaps: {
         filesToDeleteAfterUpload: ['.vite/build/renderer/**/*.map'],
+        resolveSourceMap: uploadLedger.resolveSourceMap,
       },
     }),
+    // After the Sentry plugin, so it reads the ledger once the upload is done.
+    // An upload that matches nothing only warns, which errorHandler never sees.
+    createViteUploadGate(uploadLedger),
   ];
 }
 

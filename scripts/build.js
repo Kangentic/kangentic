@@ -4,6 +4,7 @@ const path = require('path');
 const esbuild = require('esbuild');
 const { copyExternalScripts } = require('./copy-external-scripts');
 const { assertNodeSupportsLingui, checkCatalogs, compileCatalogsForMain } = require('./i18n-catalogs');
+const { createSourcemapUploadLedger, createEsbuildUploadGate } = require('./sentry-upload-gate');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -172,6 +173,8 @@ function resolveSentryEsbuildPlugins() {
   if (!uploadSourcemaps) return [];
   assertUploadCanActuallyRun();
   const { sentryEsbuildPlugin } = require('@sentry/esbuild-plugin');
+  // Every bundle shares this one plugin array, and so this one ledger.
+  const uploadLedger = createSourcemapUploadLedger();
   return [
     sentryEsbuildPlugin({
       org: SENTRY_ORG,
@@ -186,8 +189,12 @@ function resolveSentryEsbuildPlugins() {
       errorHandler: (error) => { throw error; },
       sourcemaps: {
         filesToDeleteAfterUpload: ['.vite/build/*.map'],
+        resolveSourceMap: uploadLedger.resolveSourceMap,
       },
     }),
+    // After the Sentry plugin, so it reads the ledger once the upload is done.
+    // An upload that matches nothing only warns, which errorHandler never sees.
+    createEsbuildUploadGate(uploadLedger),
   ];
 }
 

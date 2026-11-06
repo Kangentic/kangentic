@@ -49,6 +49,7 @@ import { FuseV1Options as RealFuseV1Options, FuseVersion as RealFuseVersion, get
 const require = createRequire(import.meta.url);
 const ELECTRON_FUSES_RESOLVED_PATH = require.resolve('@electron/fuses');
 const VERIFY_UNPACKED_WORKER_RESOLVED_PATH = require.resolve('../../build/verify-unpacked-worker.js');
+const VERIFY_NO_SOURCE_MAPS_RESOLVED_PATH = require.resolve('../../build/verify-no-source-maps.js');
 const INSTALL_SPAWN_HELPER_RESOLVED_PATH = require.resolve('../../build/install-spawn-helper.js');
 
 interface FakeFlipFusesCall {
@@ -91,6 +92,26 @@ function buildFakeContext(overrides: {
   };
 }
 
+/** Puts `fakeExports` at `resolvedPath` in Node's require cache, so a `require` of
+ *  that module returns it. Returns the function that puts back what was there. */
+function replaceCachedModule(resolvedPath: string, fakeExports: unknown): () => void {
+  const originalCacheEntry = require.cache[resolvedPath];
+  require.cache[resolvedPath] = {
+    id: resolvedPath,
+    filename: resolvedPath,
+    loaded: true,
+    exports: fakeExports,
+  } as unknown as NodeJS.Module;
+
+  return () => {
+    if (originalCacheEntry) {
+      require.cache[resolvedPath] = originalCacheEntry;
+    } else {
+      delete require.cache[resolvedPath];
+    }
+  };
+}
+
 /** Installs a fake `@electron/fuses` export at its real resolved path in
  *  Node's require cache, so afterPack.js's `require('@electron/fuses')`
  *  returns it instead of the real package - the real `flipFuses` opens and
@@ -114,24 +135,10 @@ function installFakeElectronFuses(): {
     FuseV1Options: RealFuseV1Options,
   };
 
-  const originalCacheEntry = require.cache[ELECTRON_FUSES_RESOLVED_PATH];
-  require.cache[ELECTRON_FUSES_RESOLVED_PATH] = {
-    id: ELECTRON_FUSES_RESOLVED_PATH,
-    filename: ELECTRON_FUSES_RESOLVED_PATH,
-    loaded: true,
-    exports: fakeModule,
-  } as unknown as NodeJS.Module;
-
   return {
     calls,
     configs,
-    restore: () => {
-      if (originalCacheEntry) {
-        require.cache[ELECTRON_FUSES_RESOLVED_PATH] = originalCacheEntry;
-      } else {
-        delete require.cache[ELECTRON_FUSES_RESOLVED_PATH];
-      }
-    },
+    restore: replaceCachedModule(ELECTRON_FUSES_RESOLVED_PATH, fakeModule),
   };
 }
 
@@ -184,23 +191,9 @@ function installFakeVerifyUnpackedWorker(
     PTY_HOST_PROBE_DEPENDENCIES: [],
   };
 
-  const originalCacheEntry = require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH];
-  require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH] = {
-    id: VERIFY_UNPACKED_WORKER_RESOLVED_PATH,
-    filename: VERIFY_UNPACKED_WORKER_RESOLVED_PATH,
-    loaded: true,
-    exports: fakeModule,
-  } as unknown as NodeJS.Module;
-
   return {
     calls,
-    restore: () => {
-      if (originalCacheEntry) {
-        require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH] = originalCacheEntry;
-      } else {
-        delete require.cache[VERIFY_UNPACKED_WORKER_RESOLVED_PATH];
-      }
-    },
+    restore: replaceCachedModule(VERIFY_UNPACKED_WORKER_RESOLVED_PATH, fakeModule),
   };
 }
 
@@ -225,24 +218,29 @@ function installFakeInstallSpawnHelper(throwError?: Error): {
     },
   };
 
-  const originalCacheEntry = require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH];
-  require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH] = {
-    id: INSTALL_SPAWN_HELPER_RESOLVED_PATH,
-    filename: INSTALL_SPAWN_HELPER_RESOLVED_PATH,
-    loaded: true,
-    exports: fakeModule,
-  } as unknown as NodeJS.Module;
-
   return {
     calls,
-    restore: () => {
-      if (originalCacheEntry) {
-        require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH] = originalCacheEntry;
-      } else {
-        delete require.cache[INSTALL_SPAWN_HELPER_RESOLVED_PATH];
-      }
-    },
+    restore: replaceCachedModule(INSTALL_SPAWN_HELPER_RESOLVED_PATH, fakeModule),
   };
+}
+
+/** The asar paths afterPack.js handed the source map gate, for the current test. */
+const verifyNoSourceMapsCalls: string[] = [];
+/** When set, the fake source map gate throws it, as the real one does on a `.map`. */
+let verifyNoSourceMapsError: Error | undefined;
+let restoreVerifyNoSourceMaps: () => void = () => undefined;
+
+/** Installs a fake `verifyNoSourceMaps` at build/verify-no-source-maps.js's real resolved
+ *  path. A fake appOutDir holds no asar, so the real gate would refuse every test here;
+ *  tests/unit/verify-no-source-maps.test.ts runs the real one against real asars. Installed
+ *  for every test in this file, by the beforeEach below. */
+function installFakeVerifyNoSourceMaps(): () => void {
+  return replaceCachedModule(VERIFY_NO_SOURCE_MAPS_RESOLVED_PATH, {
+    verifyNoSourceMaps: ({ asarPath }: { asarPath: string }): void => {
+      verifyNoSourceMapsCalls.push(asarPath);
+      if (verifyNoSourceMapsError) throw verifyNoSourceMapsError;
+    },
+  });
 }
 
 /** afterPack.js's own default export, typed to only what these tests call. */
@@ -312,6 +310,62 @@ beforeEach(() => {
   // each test's fakes (installed just before that import) are the ones
   // afterPack.js actually captures.
   vi.resetModules();
+  verifyNoSourceMapsCalls.length = 0;
+  verifyNoSourceMapsError = undefined;
+  restoreVerifyNoSourceMaps = installFakeVerifyNoSourceMaps();
+});
+
+afterEach(() => {
+  restoreVerifyNoSourceMaps();
+});
+
+describe('afterPack: the source map gate', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { platform: 'darwin' as const, arch: 'arm64' as const, archEnum: 3, resources: ['Kangentic.app', 'Contents', 'Resources'] },
+    { platform: 'win32' as const, arch: 'x64' as const, archEnum: 1, resources: ['resources'] },
+    { platform: 'linux' as const, arch: 'x64' as const, archEnum: 1, resources: ['resources'] },
+  ])('reads the app.asar electron-builder packed on $platform', async ({ platform, arch, archEnum, resources }) => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir(platform, arch);
+      await afterPack(buildFakeContext({ platform, appOutDir, arch: archEnum }));
+
+      expect(verifyNoSourceMapsCalls).toEqual([path.join(appOutDir, ...resources, 'app.asar')]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
+
+  it('fails the package before any fuse flips when the gate throws', async () => {
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker();
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    verifyNoSourceMapsError = new Error('source map in the package');
+    try {
+      const afterPack = await importAfterPack();
+      const { appOutDir } = packedAppOutDir('win32', 'x64');
+
+      await expect(afterPack(buildFakeContext({ platform: 'win32', appOutDir }))).rejects.toBe(verifyNoSourceMapsError);
+      expect(fakeFuses.calls).toEqual([]);
+    } finally {
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
 });
 
 describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', () => {

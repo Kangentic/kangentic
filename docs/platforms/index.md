@@ -6,7 +6,7 @@
 
 ## Packaging
 
-* [Packaging and security](packaging-and-security.md) - How native modules (better-sqlite3, node-pty, koffi, sqlite-vec, onnxruntime) are packaged and unpacked from the asar, the afterPack worker checks, Electron fuses, the NSIS ACL grant, the auto-update platform guard per OS, and the Linux deb and rpm dependencies.
+* [Packaging and security](packaging-and-security.md) - How native modules (better-sqlite3, node-pty, koffi, sqlite-vec, onnxruntime) are packaged and unpacked from the asar, the afterPack worker and source map checks, Electron fuses, the NSIS ACL grant, the auto-update platform guard per OS, and the Linux deb and rpm dependencies.
 
 ## Per-OS behavior
 
