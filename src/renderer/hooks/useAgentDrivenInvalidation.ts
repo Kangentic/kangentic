@@ -21,8 +21,8 @@
  * Whether a push toasts is decided by PROVENANCE, not volume: a change an
  * agent made is news, a reconcile the app performed is not. Two channels
  * exist purely to carry the quiet half, and both invalidate without toasting:
- *   - `onSessionResync` fires after a column-model-change restart (and the
- *     orphan-worktree prune, and auto-spawn reconcile) to keep the board
+ *   - `onSessionResync` fires after a column-model-change restart (and
+ *     auto-spawn reconcile) to keep the board
  *     store's task.session_id current - a board-consistency reconcile the
  *     user already knows they triggered. An agent's or a plan exit's move
  *     sends it at its commit point, ahead of its one toast at settle.
