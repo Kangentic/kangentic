@@ -81,11 +81,15 @@ beforeEach(() => {
 describe('dev ports on a project that runs on an SSH host', () => {
   const syncNow = vi.fn(async () => undefined);
   const statusOf = vi.fn(async (): Promise<PortForwardStatus[]> => []);
+  const listeningPorts = vi.fn(async (): Promise<number[]> => []);
+  const hostContext = { ...context, hostAccess: () => ({ hostId: 'host-a', listeningPorts }) } as unknown as CommandContext;
 
   beforeEach(() => {
     syncNow.mockClear();
     statusOf.mockReset();
     statusOf.mockResolvedValue([]);
+    listeningPorts.mockReset();
+    listeningPorts.mockResolvedValue([]);
     setPortForwardPlan({
       hostOfProject: (projectId: string) => (projectId === 'proj-1' ? 'host-a' : null),
       syncNow,
@@ -96,22 +100,56 @@ describe('dev ports on a project that runs on an SSH host', () => {
   afterEach(() => setPortForwardPlan(null));
 
   it('tells the agent to start its server on the host, that the port will reach the user\'s computer, and to confirm it', async () => {
-    const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('Reserved port 7300');
     expect(result.message).toContain('forwards it to the same port on the user\'s computer');
     expect(result.message).toContain('kangentic_check_dev_ports');
-    expect(result.data).toMatchObject({ ports: [7300], onRemoteHost: true });
+    expect(result.data).toMatchObject({ ports: [7300], onRemoteHost: true, location: 'host' });
     // The forward is asked for before the answer, so the agent's first check already sees it.
     expect(syncNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('never hands out a port a server on the host listens on', async () => {
+    listeningPorts.mockResolvedValue([7300, 7301]);
+
+    await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
+
+    const options = reserveDevPorts.mock.calls[0][3] as { takenOnHost: ReadonlySet<number>; rangeStart: number };
+    expect([...options.takenOnHost]).toEqual([7300, 7301]);
+    expect(options.rangeStart).toBe(7300);
+  });
+
+  it('says the ports are free on both sides, and no longer that they are free on one machine', async () => {
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
+
+    expect(result.message).toContain('free on the host and on the user\'s computer');
+    expect(result.message).not.toContain('on this machine');
+  });
+
+  it('reserves nothing when the host cannot say what it is listening on', async () => {
+    listeningPorts.mockRejectedValue(new Error('the link is down'));
+
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, hostContext);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('the link is down');
+    expect(reserveDevPorts).not.toHaveBeenCalled();
+  });
+
+  it('reserves nothing when the project has no way to its host', async () => {
+    const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
+
+    expect(result.success).toBe(false);
+    expect(reserveDevPorts).not.toHaveBeenCalled();
   });
 
   it('says nothing of a host for a project on this computer', async () => {
     const result = await handleReserveDevPorts({ taskId: 'task-1' }, { ...context, projectId: 'local-1' } as unknown as CommandContext);
 
     expect(result.message).not.toContain('remote host');
-    expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1 });
+    expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1, location: 'local' });
     expect(syncNow).not.toHaveBeenCalled();
   });
 
@@ -123,13 +161,62 @@ describe('dev ports on a project that runs on an SSH host', () => {
       { port: 7301, state: 'waiting' },
       { port: 7302, state: 'blocked', detail: 'Port 7302 is already in use on this computer.' },
     ]);
+    listeningPorts.mockResolvedValue([7300]);
 
-    const result = await handleCheckDevPorts({ taskId: 'task-1' }, context);
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, hostContext);
 
-    expect(result.message).toContain('7300 (forwarding: http://localhost:7300 reaches your server)');
+    expect(result.message).toContain('7300 (forwarding: http://localhost:7300 on the user\'s computer reaches your server at http://localhost:7300 on the host)');
     expect(result.message).toContain('7301 (waiting: nothing is listening on the host yet)');
     expect(result.message).toContain('7302 (blocked: Port 7302 is already in use on this computer.)');
-    expect((result.data as { forwards: unknown[] }).forwards).toHaveLength(3);
+    const forwards = (result.data as { forwards: Array<Record<string, unknown>> }).forwards;
+    expect(forwards).toHaveLength(3);
+    expect(forwards[0]).toMatchObject({ localUrl: 'http://localhost:7300', hostUrl: 'http://localhost:7300' });
+  });
+
+  it('returns both ends of a port, and judges a server by the host, since a forward keeps listening here after it stops', async () => {
+    getDevPortsForTask.mockReturnValue([7300]);
+    // The forward's own ssh holds 7300 on this computer, and nothing listens on the host any more.
+    describeDevPorts.mockResolvedValue([status(7300, 'this-task', true)]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, hostContext);
+
+    expect(result.message).toContain('7300 (yours, nothing listening on the host - free to start on)');
+    const statuses = (result.data as { statuses: Array<{ listening: unknown }> }).statuses;
+    expect(statuses[0].listening).toEqual({ local: true, host: false });
+    expect(result.data).toMatchObject({ location: 'host' });
+  });
+
+  it('tells an agent a server it started on a port it did not reserve is out of the Browser pane\'s reach', async () => {
+    describeDevPorts.mockResolvedValue([status(4200, null, false)]);
+    listeningPorts.mockResolvedValue([4200]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200] }, hostContext);
+
+    expect(result.message).toContain('4200 (a server is running on the host, not reserved, so it is not forwarded');
+  });
+
+  it('calls a port free only when both sides are', async () => {
+    describeDevPorts.mockResolvedValue([status(4200, null, false), status(4201, null, true)]);
+    listeningPorts.mockResolvedValue([]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200, 4201] }, hostContext);
+
+    expect(result.message).toContain('4200 (free on the host and the user\'s computer');
+    expect(result.message).toContain('4201 (IN USE on the user\'s computer');
+  });
+
+  it('never reads a host it could not ask as free', async () => {
+    getDevPortsForTask.mockReturnValue([7300]);
+    describeDevPorts.mockResolvedValue([status(7300, 'this-task', false)]);
+    listeningPorts.mockRejectedValue(new Error('the link is down'));
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1' }, hostContext);
+
+    expect(result.message).toContain('7300 (unknown');
+    expect(result.message).toContain('the link is down');
+    expect(result.message).not.toContain('free to start on');
+    const statuses = (result.data as { statuses: Array<{ listening: unknown }> }).statuses;
+    expect(statuses[0].listening).toEqual({ local: false, host: null });
   });
 
   it('adds nothing about forwarding when a local project is checked', async () => {
@@ -149,7 +236,7 @@ describe('handleReserveDevPorts', () => {
     const result = await handleReserveDevPorts({ taskId: 'task-1' }, context);
     expect(result.success).toBe(true);
     expect(reserveDevPorts).toHaveBeenCalledWith('proj-1', 'task-1', 1, { rangeStart: 7300, rangeEnd: 7499 });
-    expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1 });
+    expect(result.data).toEqual({ ports: [7300], requested: 1, reserved: 1, location: 'local' });
   });
 
   it('passes the caller\'s project, never a value from the arguments', async () => {
@@ -203,7 +290,7 @@ describe('handleReserveDevPorts', () => {
     const result = await handleReserveDevPorts({ taskId: 'task-1', count: 3 }, context);
     expect(result.success).toBe(true);
     expect(result.message).toContain('7300, 7301, 7302');
-    expect(result.data).toEqual({ ports: [7300, 7301, 7302], requested: 3, reserved: 3 });
+    expect(result.data).toEqual({ ports: [7300, 7301, 7302], requested: 3, reserved: 3, location: 'local' });
   });
 
   it('says so when the range ran out mid-request, and still returns what it got', async () => {
@@ -214,7 +301,7 @@ describe('handleReserveDevPorts', () => {
     const result = await handleReserveDevPorts({ taskId: 'task-1', count: 3 }, context);
     expect(result.success).toBe(true);
     expect(result.message).toContain('2 of 3');
-    expect(result.data).toEqual({ ports: [7300, 7301], requested: 3, reserved: 2 });
+    expect(result.data).toEqual({ ports: [7300, 7301], requested: 3, reserved: 2, location: 'local' });
   });
 
   it('refuses an exhausted range with an action, not just a diagnosis', async () => {
@@ -280,6 +367,7 @@ describe('handleCheckDevPorts', () => {
     expect(reserveDevPorts).not.toHaveBeenCalled();
     expect(result.data).toEqual({
       ports: [7300, 7301],
+      location: 'local',
       statuses: [status(7300, 'this-task', true), status(7301, 'this-task', false)],
     });
   });

@@ -6,6 +6,8 @@ import { getProcessMetrics } from '../../diagnostics/process-metrics';
 import { PATHS } from '../../config/paths';
 import { ROTATED_FILE_SUFFIX } from '../../diagnostics/async-file-queue';
 import { enumerateWorktrees } from '../../git/worktree-list';
+import { agentPathsOf } from '../../remote/host-paths';
+import type { CommandContext } from '../commands';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
 import { PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS } from './annotations';
@@ -84,13 +86,14 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return true;
       });
       const tail = filtered.slice(-(limit ?? 200));
+      const note = appLocationNote(resolved.context);
       if (tail.length === 0) {
         return textResult(
-          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
-          { items: [] },
+          `${note}No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
+          { items: [], location: 'local' },
         );
       }
-      return textResult(tail.map(formatLogLine).join('\n'), { items: tail });
+      return textResult(`${note}${tail.map(formatLogLine).join('\n')}`, { items: tail, location: 'local' });
     },
   );
 
@@ -141,8 +144,9 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
           // Directory does not exist yet (no crash written there) - fine.
         }
       }
+      const note = appLocationNote(resolved.context);
       if (files.length === 0) {
-        return textResult(`No crashes recorded${project ? ` for project ${project}` : ''}.`);
+        return textResult(`${note}No crashes recorded${project ? ` for project ${project}` : ''}.`);
       }
       // Filenames are derived from ISO timestamps with `:` and `.` swapped to
       // `-`. Lexicographic descending sort matches reverse-chronological,
@@ -162,9 +166,9 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
       }
       if (records.length === 0) {
-        return textResult('No matching crashes.', { items: [] });
+        return textResult(`${note}No matching crashes.`, { items: [], location: 'local' });
       }
-      return textResult(JSON.stringify(records, null, 2), { items: records });
+      return textResult(`${note}${JSON.stringify(records, null, 2)}`, { items: records, location: 'local' });
     },
   );
 
@@ -173,12 +177,12 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_process_metrics',
     {
       description:
-        'Snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility, etc.) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads live state from the running app; not project-scoped.',
+        'Snapshot of memory + CPU usage per Electron process (main, renderer, GPU, utility, etc.) plus version + uptime info. Useful when investigating "why is kangentic slow / heavy" or filing a bug report. Reads live state from the running app on the user\'s computer, never a remote host; not project-scoped.',
       inputSchema: z.object({}),
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async () => {
-      const metrics = getProcessMetrics();
+      const metrics = { location: 'local', ...getProcessMetrics() };
       return textResult(JSON.stringify(metrics, null, 2), metrics as unknown as Record<string, unknown>);
     },
   );
@@ -233,13 +237,14 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return true;
       });
       const tail = filtered.slice(-(limit ?? 200));
+      const note = appLocationNote(resolved.context);
       if (tail.length === 0) {
         return textResult(
-          `No IPC entries${date ? ` for ${date}` : ''}${channel ? ` on channel ${channel}` : ''}. Settings -> Developer -> Record IPC Traffic must be on; the recorder writes only while the toggle is enabled.`,
-          { items: [] },
+          `${note}No IPC entries${date ? ` for ${date}` : ''}${channel ? ` on channel ${channel}` : ''}. Settings -> Developer -> Record IPC Traffic must be on; the recorder writes only while the toggle is enabled.`,
+          { items: [], location: 'local' },
         );
       }
-      return textResult(tail.map((entry) => JSON.stringify(entry)).join('\n'), { items: tail });
+      return textResult(`${note}${tail.map((entry) => JSON.stringify(entry)).join('\n')}`, { items: tail, location: 'local' });
     },
   );
 
@@ -281,6 +286,11 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** What an agent on a host reads first from a tool about Kangentic itself. Nothing for a local project. */
+function appLocationNote(context: CommandContext): string {
+  return agentPathsOf(context).location === 'host' ? '[From Kangentic on the user\'s computer, not your host]\n' : '';
 }
 
 function readJsonLines<T>(filePath: string): T[] {
