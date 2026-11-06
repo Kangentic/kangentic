@@ -9,6 +9,7 @@ import {
   captureWorkerStderr,
   redactHomeDirectory,
   summarizeStderrTail,
+  watchdogLine,
 } from '../../src/main/utility-process/stderr-tail';
 
 /**
@@ -196,6 +197,31 @@ describe('summarizeStderrTail', () => {
     expect(summary).not.toBeNull();
     expect(summary?.length).toBe(40);
     expect(summary?.endsWith('...')).toBe(true);
+  });
+});
+
+describe('watchdogLine', () => {
+  it('returns the trimmed line from a CRLF tail, with no carriage return', () => {
+    const tail = 'warming up\r\n[retrieval] event loop held 3 s in transcript:parse-qwen\r\nexit\r\n';
+    expect(watchdogLine(tail)).toBe('[retrieval] event loop held 3 s in transcript:parse-qwen');
+  });
+
+  it('returns the newest of two watchdog lines', () => {
+    const tail = [
+      '[retrieval] event loop held 2 s in first-step',
+      'noise between',
+      '[retrieval] event loop held 5 s in second-step',
+      'trailing noise',
+    ].join('\n');
+    expect(watchdogLine(tail)).toBe('[retrieval] event loop held 5 s in second-step');
+  });
+
+  it('returns null when no line names a held loop', () => {
+    expect(watchdogLine('Error: Cannot find module\n  at load\n')).toBeNull();
+  });
+
+  it('returns null for an empty tail', () => {
+    expect(watchdogLine('')).toBeNull();
   });
 });
 
