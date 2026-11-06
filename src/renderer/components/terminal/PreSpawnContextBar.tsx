@@ -4,9 +4,7 @@ import { agentDisplayName } from '../../utils/agent-display-name';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { ProfilePicker } from './ProfilePicker';
-import { pill } from './context-bar-pill';
-
-const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0';
+import { pill, plainContextBarClass } from './context-bar-pill';
 
 interface PreSpawnContextBarProps {
   taskId: string;
@@ -37,7 +35,7 @@ export function PreSpawnContextBar({ taskId }: PreSpawnContextBarProps) {
   const resolvedAgent = task.agent ?? currentProject?.default_agent ?? DEFAULT_AGENT;
 
   return (
-    <div className={containerClass} data-testid="prespawn-context-bar">
+    <div className={plainContextBarClass} data-testid="prespawn-context-bar">
       {/* First in the row: the profile determines the agent/model/effort shown
           to its right. This is where a task is usually tiered - open in To Do,
           nothing running yet, before the first auto-spawn column. */}
