@@ -204,6 +204,39 @@ describe('making a worktree on the host', () => {
     await expect(backend.ensureWorktree(task, gitConfig, { signal: controller.signal })).rejects.toThrow();
     expect(run).not.toHaveBeenCalled();
   });
+
+  // The task let go of the worktree while git ran, so no row will ever name it. Only the host's `created`
+  // proves a worktree is there to take back.
+  it('asks the host to remove a worktree it made after the signal aborted, and rejects as aborted', async () => {
+    const controller = new AbortController();
+    const { backend, calls } = backendWith(async (request) => {
+      if (calls.length === 1) {
+        controller.abort();
+        return answer('KG:created\nKG:branch:fix-login-bug-abcdef12\n');
+      }
+      expect(request.args.at(-1)).toBe('/home/dev/api/.kangentic/worktrees/7');
+      return answer('KG:removed\n');
+    });
+
+    await expect(backend.ensureWorktree(task, gitConfig, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].args.slice(3)).toEqual([HOST_REPO, '/home/dev/api/.kangentic/worktrees/7']);
+    expect(calls[1].args[1]).toContain('worktree remove');
+    expect(calls[1].args[1]).not.toBe(calls[0].args[1]);
+  });
+
+  it('sends no removal when the script did not say it made the worktree, and still rejects as aborted', async () => {
+    const controller = new AbortController();
+    const { backend, calls } = backendWith(async () => {
+      controller.abort();
+      return answer('KG:skip:not-a-repo\n');
+    });
+
+    await expect(backend.ensureWorktree(task, gitConfig, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(calls).toHaveLength(1);
+  });
 });
 
 describe('removing a worktree from the host', () => {
@@ -573,6 +606,28 @@ describe.runIf(hasShellAndGit)('on a real repository', () => {
     expect(await backend.removeWorktree(created.worktreePath)).toBe(true);
     expect(fs.existsSync(hostWorktree)).toBe(false);
     expect(git('worktree', 'list', '--porcelain')).not.toContain('.kangentic/worktrees/7');
+  });
+
+  it('rejects, and never answers zero, for a worktree where git status fails', async () => {
+    const backend = hostBackend();
+    const created = await backend.ensureWorktree(task, gitConfig);
+    if ('skipped' in created) throw new Error('skipped');
+    const hostWorktree = path.join(repo, '.kangentic', 'worktrees', '7');
+    // A damaged index: git still finds the top of the worktree, and its status cannot be read.
+    fs.writeFileSync(path.join(repo, '.git', 'worktrees', '7', 'index'), 'not an index');
+    expect(spawnSync('git', ['status', '--porcelain'], { cwd: hostWorktree }).status).not.toBe(0);
+
+    await expect(backend.pendingChanges(created.worktreePath)).rejects.toThrow('Git could not read');
+  });
+
+  it('rejects for a folder that is no worktree but sits inside a repository, which git would read as the parent', async () => {
+    const backend = hostBackend();
+    const hostFolder = path.join(repo, '.kangentic', 'worktrees', '9');
+    fs.mkdirSync(hostFolder, { recursive: true });
+    fs.writeFileSync(path.join(hostFolder, 'stray.txt'), 'x');
+    fs.mkdirSync(path.join(shell, '.kangentic', 'worktrees', '9'), { recursive: true });
+
+    await expect(backend.pendingChanges(path.join(shell, '.kangentic', 'worktrees', '9'))).rejects.toThrow('not a worktree git can read');
   });
 
   it('clears a husk left at the path and makes the worktree again', async () => {

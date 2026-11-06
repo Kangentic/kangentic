@@ -46,7 +46,9 @@ export async function listInstalledVersions(root: string): Promise<InstalledProg
       const marker = await fs.stat(path.join(root, name, '.complete'));
       found.push({ version: name, completedAtMs: marker.mtimeMs });
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      // ENOTDIR is a stray file with a version-like name, which says nothing about the versions beside it.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     }
   }
   return found.sort((left, right) => left.completedAtMs - right.completedAtMs);

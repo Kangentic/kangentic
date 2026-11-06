@@ -85,7 +85,7 @@ import type {
   TurnStartCause,
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
-import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
+import { hostPathForTarget, isPlainIdName, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
@@ -855,6 +855,12 @@ export class SessionManager extends EventEmitter {
         // recoverStaleSessionId() handles all cases - emit unconditionally.
         const session = this.registry.get(sessionId);
         if (!session) return;
+        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
+        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
+        if (session.hostId && !isPlainIdName(agentReportedId)) {
+          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
+          return;
+        }
         // Every caller here heard the id from the agent or found it in a file the
         // agent wrote. A caller-owned id set at spawn never comes this way.
         session.agentIdReportedAt ??= Date.now();

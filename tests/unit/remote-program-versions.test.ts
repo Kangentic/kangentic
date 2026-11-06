@@ -58,6 +58,16 @@ describe('listing installed versions', () => {
     expect((await listInstalledVersions(root)).map((installed) => installed.version)).toEqual(['0.51.0', '0.52.0', '0.53.0']);
   });
 
+  it('skips a regular file with a version-like name, and still lists and prunes the real versions beside it', async () => {
+    install('0.51.0', 40);
+    install('0.52.0', 1);
+    fs.writeFileSync(path.join(root, '0.53.0'), 'a stray file, not an install');
+
+    expect((await listInstalledVersions(root)).map((installed) => installed.version)).toEqual(['0.51.0', '0.52.0']);
+    expect(await pruneOldVersions({ root, keep: new Set(), olderThanDays: 30, nowMs: Date.now() })).toEqual(['0.51.0']);
+    expect(fs.readdirSync(root).sort()).toEqual(['0.52.0', '0.53.0']);
+  });
+
   it('lists nothing when the folder is not there', async () => {
     expect(await listInstalledVersions(path.join(root, 'absent'))).toEqual([]);
   });

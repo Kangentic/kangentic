@@ -3,7 +3,8 @@
  * delivered as bytes or a stream, a slow command ended by the timeout. Spawns only the running Node,
  * so Windows and Linux CI both run it.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createSshRunner } from '../../src/main/remote/link/ssh-run';
 
@@ -27,6 +28,35 @@ describe('createSshRunner', () => {
     const pieces = Array.from({ length: 50 }, (_, index) => Buffer.from(`piece ${index};`));
     const result = await run('ignored', { stdin: Readable.from(pieces) });
     expect(result.stdout).toBe(pieces.map((piece) => piece.toString()).join(''));
+  });
+
+  // A stream with no error listener would throw out of the pty host, and a pipe left open would leave ssh waiting.
+  it('rejects with the error of a stdin stream that fails, ends the child, and raises no uncaught exception', async () => {
+    let child: ChildProcess | null = null;
+    const run = createSshRunner({
+      sshPath: process.execPath,
+      args: ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'],
+      spawnProcess: ((...spawnArguments: Parameters<typeof spawn>) => {
+        child = spawn(...spawnArguments);
+        return child;
+      }) as typeof spawn,
+    });
+    const failure = new Error('the file being sent went away');
+    const failing = new Readable({ read() { this.destroy(failure); } });
+    const uncaught: Error[] = [];
+    const onUncaught = (error: Error): void => { uncaught.push(error); };
+    process.on('uncaughtException', onUncaught);
+    try {
+      await expect(run('ignored', { stdin: failing })).rejects.toBe(failure);
+      const started = child as ChildProcess | null;
+      if (!started) throw new Error('the runner never started a child');
+      await vi.waitFor(() => expect(started.exitCode !== null || started.signalCode !== null).toBe(true), { timeout: 5000 });
+      // Intentional fixed wait: an uncaught exception is raised on a later tick, and non-occurrence cannot be polled.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+    expect(uncaught).toEqual([]);
   });
 
   it('ends a command that outlives its timeout, with a code of null and a sentence saying so', async () => {

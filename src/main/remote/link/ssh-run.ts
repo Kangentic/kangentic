@@ -82,6 +82,13 @@ export function createSshRunner(config: SshRunnerConfig): SshRunner {
     const input = options.stdin;
     if (input === undefined) child.stdin?.end();
     else if (Buffer.isBuffer(input)) child.stdin?.end(input);
-    else input.pipe(child.stdin as NodeJS.WritableStream);
+    else {
+      // A stream with no listener throws its error out of the pty host, and a pipe leaves ssh waiting for input.
+      input.once('error', (error) => {
+        killChildTreeNow(child, { leadsGroup: false });
+        reject(error);
+      });
+      input.pipe(child.stdin as NodeJS.WritableStream);
+    }
   });
 }
