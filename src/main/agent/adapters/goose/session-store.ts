@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionUsage } from '../../../../shared/types';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { loadBetterSqlite3 } from '../../shared/sqlite-loader';
 
 /**
@@ -80,6 +81,10 @@ const loggedReadFailures = new Set<string>();
  * empty conversation.
  */
 export function withGooseDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
+  return timeSyncWork('transcript:read-goose', () => readGooseDatabase(dbPath, fallback, read));
+}
+
+function readGooseDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
   if (!fs.existsSync(dbPath)) return fallback;
   const DatabaseConstructor = loadBetterSqlite3();
   if (!DatabaseConstructor) return fallback;
