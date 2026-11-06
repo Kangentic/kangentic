@@ -179,6 +179,16 @@ All 15 adapters that declare `supportsWslCli` declare `remoteCliName` and run on
 - moving the tasks away puts every file back as the user had it, removes the files that were not theirs, and removes the session folders;
 - a hook fired on the host reaches this computer's event log, in order.
 
+### Which agents a remote project has
+
+A remote project's pickers (Settings > Agent, the Column Manager, New Task) list what the host has installed, never this computer's PATH. `agents.list` reads the project's remote and asks the host `<cli> --version` through its login shell for each agent that declares a CLI name there (`host-agent-probe.ts`). Each agent comes back with one of three answers:
+
+- **Found,** with the host's version. The CLI path field shows the CLI's name there and is read-only, because a spawn on a host runs the host's own CLI and ignores a path typed here.
+- **Not found,** only when the host's shell says so (the program cannot start, or exit 127).
+- **Not checked,** when the host could not be asked (the link is down, the program timed out, it refused `--version`), with the reason under the field. A failed ask is never read as an absence, and such a list is not kept, so the next open asks again.
+
+Capabilities come from running the CLI, so a host's agents carry none and the model pickers fall back to free-form input. A whole answer is kept per host until the link reconnects or Re-detect is pressed. A spawn asks the same question first and refuses an agent the host lacks with "Claude Code (claude) was not found on Build server. Install it there, or choose another agent for this project." A host that cannot be asked does not block the spawn.
+
 Real CLIs are the Beta gate: the mocks do not run hooks themselves, ask for a login, or draw a real TUI, and the real Codex hook-trust read and Cursor's `create-chat` have only met fakes.
 
 ### Transcripts

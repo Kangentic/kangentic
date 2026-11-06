@@ -14,7 +14,7 @@ import { syncProjectMcpConfig } from './projects';
 import { resolvePickerStartFolder } from '../helpers/picker-start-folder';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { refreshPlanApprovals } from '../../plan-approval/plan-approval-writer';
-import { listAgents, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
+import { listAgents, listAgentsOnHost, invalidateAgentListCache, nameLearnedModels } from '../../agent/agent-list';
 import { agentRegistry } from '../../agent/agent-registry';
 import { tryAcquireSummarizeSlot } from '../../agent/shared/summarize-rate-limit';
 import { resolveAutomationAgent, runNamingCall } from '../../automations/automation-agent';
@@ -387,6 +387,13 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean, projectPath?: string): Promise<AgentDetectionInfo[]> => {
     const globalConfig = context.configManager.load();
     const targetProjectPath = projectPath ?? context.currentProjectPath ?? undefined;
+    // A remote project's agent runs on its host, so its inventory is what the host has installed:
+    // this computer's PATH says nothing about it.
+    const hosting = context.remoteHosting;
+    const remote = targetProjectPath && hosting ? hosting.remoteOfProjectPath(targetProjectPath) : null;
+    if (remote && hosting) {
+      return listAgentsOnHost(remote.hostId, (cliName) => hosting.probeAgent(remote.hostId, cliName), forceRefresh ?? false);
+    }
     const effectiveConfig = targetProjectPath ? context.configManager.getEffectiveConfig(targetProjectPath) : globalConfig;
     const agents = await listAgents(effectiveConfig.agent.cliPaths, forceRefresh ?? false);
     return nameLearnedModels(agents, globalConfig.discoveredModelsByAgent);

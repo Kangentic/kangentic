@@ -134,6 +134,8 @@ describe('resolving a project path to its remote', () => {
   it('hands a host file removal its expected text, or the host removes a file the user just changed', async () => {
     const removeFiles = vi.spyOn(RemoteHostService.prototype, 'removeFiles').mockResolvedValue({ removed: 1 });
     vi.spyOn(RemoteHostService.prototype, 'hostInfo').mockResolvedValue({ home: '/home/dev', shellName: 'bash' } as never);
+    // A spawn asks the host whether the CLI is installed before it builds anything.
+    vi.spyOn(RemoteHostService.prototype, 'runCommand').mockResolvedValue({ code: 0, stdout: 'claude 2.1.0', stderr: '', timedOut: false });
     hostingWithProjects();
 
     const launch = await resolveRemoteLaunch({

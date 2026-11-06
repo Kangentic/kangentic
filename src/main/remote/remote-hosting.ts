@@ -26,6 +26,9 @@ import { createRemoteWorktreeResolver } from './remote-worktrees';
 import { setRemoteGitResolver } from '../git/remote-git';
 import { createRemoteGitResolver } from './host-git';
 import { RemoteHostService } from './remote-host-service';
+import { probeAgentOnHost, type HostAgentProbe } from './host-agent-probe';
+import { invalidateHostAgentList } from '../agent/agent-list';
+import type { ProjectRemote } from '../../shared/types';
 import { RemoteSessionRelay } from './remote-session-relay';
 
 export interface RemoteHosting {
@@ -40,6 +43,10 @@ export interface RemoteHosting {
   connectHost(hostId: string): Promise<void>;
   /** Connect every stored host at once, recording what could not be reached. A host that is off delays no other. */
   connectAll(): Promise<void>;
+  /** The host and folder a project's shell folder stands for, or null for a project on this computer. */
+  remoteOfProjectPath(projectPath: string): ProjectRemote | null;
+  /** Whether an agent's CLI is installed on a host, asked of the host itself. */
+  probeAgent(hostId: string, cliName: string): Promise<HostAgentProbe>;
 }
 
 export interface RemoteHostingDeps {
@@ -102,6 +109,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   // A link reports its own state; a drop is a state here, never the end of a session.
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
     status.noteLink(event.hostId, event.state, event.detail);
+    // What is installed there may have changed while the link was away, and a list read with it down is unknown.
+    if (event.state === 'connected') invalidateHostAgentList(event.hostId);
     // Once per host per run, when its link first comes up: tidy the versions of the program a host kept.
     if (event.state === 'connected' && !pruned.has(event.hostId)) {
       pruned.add(event.hostId);
@@ -134,6 +143,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
     runCommand: (hostId, request) => hostService.runCommand(hostId, request),
     homeMirror: (hostId) => PATHS.remoteHomeMirror(hostId),
+    probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
+    hostName: (hostId) => hosts.getById(hostId)?.name ?? null,
   }));
 
   // The reserved dev-server ports of remote projects reach this computer once a server listens on them
@@ -174,6 +185,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     status,
     admin: null,
     connectHost,
+    remoteOfProjectPath,
+    probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
     async connectAll() {
       // connectHost never throws, so one host that fails or hangs holds up no other.
       await Promise.all(hosts.list().map((host) => connectHost(host.id)));
