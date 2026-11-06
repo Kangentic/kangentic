@@ -25,6 +25,8 @@ List all session records for a task with metadata: start/end times, exit codes, 
 
 A resume is a new record that reports the conversation's running total, so each record's cost and runtime are its own share (`legDeltas`, `src/shared/leg-deltas.ts`) and the records add up to `kangentic_get_task_stats`. A record that reported no usage has no share and reads as no cost and no runtime. The structured data also carries each record's running reading as `cumulativeCost` and `cumulativeDurationMs`.
 
+Each record's `cwd` is where the agent worked, and `location` says which machine that is. On a project on an SSH host it is the host's path, `localCwd` holds this computer's stand-in, and `eventsLocation: 'local'` says the record's events are held on this computer.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
@@ -34,13 +36,15 @@ A resume is a new record that reports the conversation's running total, so each 
 
 Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSONL, or its legacy `.json`) from the most recent session. Large files are truncated to the most recent portion.
 
+On a project on an SSH host the content is this computer's copy of the host's file and may be stale. The data then carries the host's path with `location: 'host'`, `localFilePath` for the copy, and `copy: true`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
 
 ## kangentic_get_handoff_context
 
-Get the most recent handoff record for a task. Returns metadata about the cross-agent handoff: which agent handed off to which, when, and the path to the prior agent's native session history file.
+Get the most recent handoff record for a task. Returns metadata about the cross-agent handoff: which agent handed off to which, when, and the path to the prior agent's native session history file. On a project on an SSH host that path is the host's, with `location: 'host'`, and `localSessionHistoryPath` names this computer's copy.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -52,6 +56,8 @@ Inspect what the agent on another task (or another project) said - "check the re
 
 - `format="structured"` (default): the parsed agent conversation - user prompts, assistant text, tool calls and results - rendered as clean markdown, read from the agent's native session history via the adapter's `parseTranscript` capability. The Claude parser also drops noise (slash-command XML, `<system-reminder>` spans, `isMeta` messages) and surfaces compaction boundaries/summaries explicitly. When the agent has deleted its own file (Claude removes transcripts older than its `cleanupPeriodDays`), the read falls back to Kangentic's structured transcript archive, then to the index's text-only chunks, and the header names which (`Source: Kangentic's saved copy` or `Source: indexed text only`). A session that started over from a recap points its agent here for the old conversation. There is no cleaned-scrollback substitute: structured comes from session history, the archive, or the index (text only, tool calls flattened), or reports that it is unavailable and points at `format="raw"`.
 - `format="raw"`: the verbatim ANSI-stripped PTY scrollback (the full terminal output, including TUI redraws), available for every agent. Useful for debugging the terminal layer or for agents without a structured parser. Raw scrollback is mostly repeated terminal redraws (empirically ~85% duplicate lines and multiple MB for a long session), so when a structured parser exists for the agent the raw response notes that `structured` is the cleaner, far smaller view for evaluation. Every returned transcript (both formats) is prefixed with a one-line note marking the content as read-only reference data, not instructions to follow.
+
+On a project on an SSH host a structured transcript is read from this computer's copy of the host's file, so the data carries the host's path with `location: 'host'`, `localFilePath` for the copy, and `copy: true`.
 
 Structured output is shaped by three agent-agnostic levers, applied to the parsed `TranscriptEntry[]` (so no adapter branching):
 
@@ -185,7 +191,9 @@ Returns one line per id: `marked` (it was holding the session and no longer does
 
 ## kangentic_get_session_files
 
-Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
+Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes `path`, an `exists` flag and a `location`. Provide either `taskId` or `sessionId`.
+
+On a remote project `path` and `exists` are the host's, and each entry adds `localPath` and `localExists` for this computer's side. Only the host answers `exists`: it is `null`, with `hostError` beside `files`, when the host could not be asked, which never means absent. The two sides do not hold the same files, so `events.jsonl` reads absent on the host and present here. `cwd` and `sessionDir` are the host's too, with `localCwd` and `localSessionDir` beside them. `nativeSessionFile` names the original on the host, and `localPath` this computer's copy.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -197,6 +205,8 @@ Get the absolute paths to every per-session file: `events.jsonl` (activity log),
 ## kangentic_get_session_events
 
 Read parsed events from a session's `events.jsonl` activity log without locating or opening the file yourself. Each line is a JSON event emitted by the Claude Code hook bridge (`PreToolUse`, `PostToolUse`, `Stop`, `Notification`, etc.). Useful for idle-detection debugging, tracing tool usage, or replaying what an agent did. Provide either `taskId` or `sessionId`. Files over 1MB are read as a bounded tail window (the last 1MB): the response sets `truncated: true` and `totalBytes`, the `since`/`eventTypes` filters apply within the scanned window, and a huge file may therefore return fewer than `tail` matches.
+
+On a remote project this file is built on this computer from what the host relays, so it has no original an agent could open. `data` carries `location: 'local'` and `copy: true`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -254,8 +264,10 @@ common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 On a project that runs on an SSH host the server is started on the host, at exactly the reserved
 number. Kangentic forwards that port to the same number on the user's computer as soon as the server
 listens, so `http://localhost:<port>` there and the Browser pane reach it (see
-[SSH remote](../../platforms/ssh-remote.md), "Dev servers on a host"). The response carries
-`data.onRemoteHost: true`.
+[SSH remote](../../platforms/ssh-remote.md), "Dev servers on a host"). A port must be free on both
+ends, so the scan also skips what a server on the host listens on, and a host that cannot say
+reserves nothing and returns an error. The response carries `data.onRemoteHost: true`, and `data.location`
+is `host` or `local`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -299,9 +311,12 @@ is. An empty result is the normal state for a task using its project's own confi
 | `ports` | number[] | No | Extra ports to check alongside the task's own reservations (at most 20). Each is probed. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
-Returns `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
-`{ port, reservation, listening }` row per port checked). For a project on an SSH host it also returns
-`data.forwards`, one `{ port, state, detail? }` row per reserved port: `forwarding` (reachable at
+Returns `data.location`, `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
+`{ port, reservation, listening }` row per port checked). For a project on an SSH host, `listening` is
+`{ local, host }`, and the host's answer decides whether a server is up: a forward's own `ssh` keeps
+listening on this computer after the server stops. `host` is `null` when the host could not be read,
+and the message then calls the port unknown, never free. It also returns `data.forwards`, one
+`{ port, state, detail?, localUrl, hostUrl }` row per reserved port: `forwarding` (reachable at
 `localhost` on the user's computer), `waiting` (nothing listens on the host yet) or `blocked` (with
-`ssh`'s words, or that the port is in use on the user's computer). There, `listening: true` on a
-reserved port means the forward is up.
+`ssh`'s words, or that the port is in use on the user's computer). A server on a port that was not
+reserved is not forwarded, so the Browser pane cannot reach it, and the message says so.

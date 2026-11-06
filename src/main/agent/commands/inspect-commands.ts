@@ -195,6 +195,7 @@ export async function handleGetTranscript(
             id: targetSessionId,
             sessionType: record.session_type,
             agentSessionId: record.agent_session_id,
+            // host-value-ok: the adapter reads this computer's copy by the folder the row records
             cwd: record.cwd,
             cliTarget: record.cli_target,
             transcriptPath: record.transcript_path,

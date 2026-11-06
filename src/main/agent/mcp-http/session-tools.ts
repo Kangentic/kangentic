@@ -1,7 +1,8 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
-import { callHandler, runHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
+import { appendNoticeLine, callHandler, runHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
+import { agentPathsOf } from '../../remote/host-paths';
 import { TRANSCRIPT_TAIL_MAX, TRANSCRIPT_CHAR_BUDGET_MAX } from '../../../shared/transcript-format';
 import type { RequestResolver } from './project-resolver';
 
@@ -268,7 +269,7 @@ export function registerSessionTools(
   server.registerTool(
     'kangentic_reserve_dev_ports',
     {
-      description: 'Reserve free TCP ports before you start a dev server, so two agents working at the same time never bind the same one. Kangentic does NOT decide what your ports should be - your project already does, in angular.json, a vite config, a compose file - so nothing is reserved until you ask. What Kangentic can do that your project cannot is see every task and every project on this machine at once. Ask ONLY when your configured port might already be taken (several tasks in one column run concurrently, and they all default to the same port). Request every port you are about to bind in ONE call: a project needing an API and a frontend asks for 2, because asking twice leaves a window where another task takes the second. Each returned port has been probed as genuinely free, not merely unclaimed. Fewer ports than requested means the range ran out - fall back to your project\'s own configured ports for the rest. Ports stay reserved for the task until it is deleted, so a restart reuses the same ones.',
+      description: 'Reserve free TCP ports before you start a dev server, so two agents working at the same time never bind the same one. Kangentic does NOT decide what your ports should be - your project already does, in angular.json, a vite config, a compose file - so nothing is reserved until you ask. What Kangentic can do that your project cannot is see every task and every project on this machine at once. Ask ONLY when your configured port might already be taken (several tasks in one column run concurrently, and they all default to the same port). Request every port you are about to bind in ONE call: a project needing an API and a frontend asks for 2, because asking twice leaves a window where another task takes the second. Each returned port has been probed as genuinely free, not merely unclaimed, and on a remote project it is free on both the host and the user\'s computer. Fewer ports than requested means the range ran out - fall back to your project\'s own configured ports for the rest. Ports stay reserved for the task until it is deleted, so a restart reuses the same ones.',
       inputSchema: z.object({
         taskId: z.string().optional().describe('The task reserving the ports (numeric display ID or UUID). Defaults to your own task.'),
         count: z.number().int().min(1).max(10).optional().describe('How many ports you are about to bind. Default 1. Ask for all of them at once.'),
@@ -284,7 +285,7 @@ export function registerSessionTools(
   server.registerTool(
     'kangentic_check_dev_ports',
     {
-      description: 'Report what Kangentic has reserved for a task AND whether anything is actually listening on those ports right now. Every port is probed, so this also answers the case the reservation ledger cannot: a dev server started outside Kangentic, on a port Kangentic never handed out. Pass `ports` to ask about specific numbers - your project\'s own configured 4200 or 3000, say - and each comes back as reserved-by-you, reserved-by-another-task, in-use-outside-Kangentic, or free. Use it to recover ports you were given earlier in a session (after a resume, or before restarting a server) instead of reserving again, and to check a port before binding it. Reserves nothing.',
+      description: 'Report what Kangentic has reserved for a task AND whether anything is actually listening on those ports right now. Every port is probed, so this also answers the case the reservation ledger cannot: a dev server started outside Kangentic, on a port Kangentic never handed out. Pass `ports` to ask about specific numbers - your project\'s own configured 4200 or 3000, say - and each comes back as reserved-by-you, reserved-by-another-task, in-use-outside-Kangentic, or free. On a remote project a server is judged on the host, and `listening` is `{ local, host }`. Use it to recover ports you were given earlier in a session (after a resume, or before restarting a server) instead of reserving again, and to check a port before binding it. Reserves nothing.',
       inputSchema: z.object({
         taskId: z.string().optional().describe('Task ID (numeric display ID or UUID). Defaults to your own task.'),
         ports: z.array(z.number().int().min(1).max(65535)).max(20).optional().describe('Extra ports to check alongside this task\'s own reservations, for example the ports your project config pins. Each is probed, so ask about the ones you are about to bind.'),
@@ -307,6 +308,14 @@ export function registerSessionTools(
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ sql, project }) => withProject(resolver, project, (ctx) => callHandler('query_db', { sql }, ctx, 'Query error')),
+    async ({ sql, project }) => withProject(resolver, project, async (ctx) => {
+      const result = await callHandler('query_db', { sql }, ctx, 'Query error');
+      // Rows are shown as stored, and an agent on a host needs to read the path columns as its own.
+      const paths = agentPathsOf(ctx);
+      return paths.location === 'host'
+        // host-value-ok: names the columns, reads none
+        ? appendNoticeLine(result, `Note: worktree_path and cwd in these rows are this computer's stand-in. ${paths.shellFolder} is ${paths.projectFolder} on the host.`)
+        : result;
+    }),
   );
 }

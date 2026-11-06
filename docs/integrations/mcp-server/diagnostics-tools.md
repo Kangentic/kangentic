@@ -13,9 +13,11 @@ sources:
 ---
 # Diagnostics tools
 
+The logs, crashes, IPC traffic and process metrics are Kangentic's own, on the user's computer. Each answer carries `location: 'local'`, and on a project on an SSH host the text says so, so an agent there does not read them as its own machine's.
+
 ## kangentic_query_db
 
-Run a read-only SQL query against the project database. The connection uses `PRAGMA query_only = ON` to prevent any write operations.
+Run a read-only SQL query against the project database. The connection uses `PRAGMA query_only = ON` to prevent any write operations. Rows are returned as stored, so on a project on an SSH host a final line says what `worktree_path` and `cwd` hold: this computer's stand-in, and which folder that is on the host.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -76,6 +78,8 @@ Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jso
 Enumerate worktrees for one or every registered project. Each `WorktreeRecord` carries path, branch, the base branch its work is based on (`baseRef`: the task's own base, else the base it was cut from, else the project default; the main checkout included), dirty flag, commits ahead/behind that base (measured against `origin/<base>` first, then the local ref; the branch's own upstream only when no base resolves, which then says how current the branch is with its own remote rather than with the base), and last-commit timestamp. Pure read-only and never fetches: the counts are as current as the remote-tracking refs, which the background fetch scheduler keeps refreshed for the focused project. Useful for finding a task's branch, locating dirty work, or checking whether a tree is behind the base it was cut from.
 
 Git runs in the pty host, four or five runs per worktree, four worktrees at a time, so a walk does not hold main. Those processes still add up across many projects, so pass `project` when one project is enough.
+
+Each project and record carries `location`. On a project on an SSH host, `projectPath` and each `path` are the host's, with `shellFolder` and `localPath` for this computer's stand-in, and the facts are the host's git's. A worktree outside the project's folder, which a person made by hand, has no stand-in, so only what `git worktree list` printed is known of it. A host that cannot answer leaves `worktrees` empty and sets `error` on that project, which says nothing about what the host holds, and the walk goes on to the other projects.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

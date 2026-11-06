@@ -157,9 +157,12 @@ const HIDDEN_SESSION_EXIT = 'hidden-session-exit';
 /** How often `awaitAltScreen` reads the alt-screen mirror while it waits. */
 const ALT_SCREEN_POLL_MS = 100;
 
-/** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
+/**
+ * A Command Terminal's per-session directory, created by `startCommandTerminal` under the folder its command was
+ * built for. A remote session's `cwd` is the host's folder, which names nothing on this computer.
+ */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
-  return path.join(session.cwd, '.kangentic', 'sessions', session.id);
+  return path.join(session.commandCwd ?? session.cwd, '.kangentic', 'sessions', session.id);
 }
 
 /** Best-effort: the directory only holds the bridges' status and event files. */

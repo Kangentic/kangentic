@@ -6,6 +6,7 @@ import {
 } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { TaskRepository } from '../../db/repositories/task-repository';
+import { HOST_NOT_AVAILABLE } from '../../remote/host-transfer';
 import { getPortForwardPlan } from '../../remote/port-forward-plan';
 import type { PortForwardStatus } from '../../remote/protocol/messages';
 import { resolveTask } from './task-resolver';
@@ -78,11 +79,23 @@ export const handleReserveDevPorts: CommandHandler = async (
     };
   }
 
+  // A port must be free where the server binds it and where its forward does, and this computer's probe sees only
+  // the second. A host that cannot say reserves nothing: an unknown is not a free port.
+  const plan = getPortForwardPlan();
+  const onHost = plan?.hostOfProject(context.projectId) != null;
+  let takenOnHost: Set<number> | null = null;
+  if (onHost) {
+    const read = await readHostListening(context);
+    if ('error' in read) return { success: false, error: `No ports were reserved, because the host's listening ports could not be read: ${read.error}` };
+    takenOnHost = read.ports;
+  }
+
+  const range = context.getDevServerPortRange();
   const ports = await reserveDevPorts(
     context.projectId,
     taskId,
     count,
-    context.getDevServerPortRange(),
+    takenOnHost ? { ...range, takenOnHost } : range,
   );
 
   if (ports.length === 0) {
@@ -95,26 +108,59 @@ export const handleReserveDevPorts: CommandHandler = async (
   // A project on an SSH host runs its server there. The number is reserved on the user's computer (the
   // ledger and the bind probe are theirs), and Kangentic carries it from the host to the same number here
   // once a server listens on it there (`port-forward-plan.ts`), so localhost and the Browser pane reach it.
-  const plan = getPortForwardPlan();
-  const onHost = plan?.hostOfProject(context.projectId) != null;
   if (onHost) await plan?.syncNow();
   const hostNote = onHost
     ? ' This project runs on a remote host: start your server there on exactly this port. Kangentic forwards it to the same port on the user\'s computer as soon as the server is listening (within a few seconds), so http://localhost:<port> on their computer and the Browser pane reach it. Confirm with kangentic_check_dev_ports.'
     : '';
+  const exclusive = onHost
+    ? 'They are free on the host and on the user\'s computer, and no other task will be given them.'
+    : 'Nothing else on this machine will be given them.';
   return {
     success: true,
     message: (ports.length < count
       ? `Reserved ${ports.length} of ${count} requested ports: ${ports.join(', ')}. The range ran out - use your project's own configured ports for the rest.`
-      : `Reserved ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')} for this task. Nothing else on this machine will be given them.`) + hostNote,
-    data: { ports, requested: count, reserved: ports.length, ...(onHost ? { onRemoteHost: true } : {}) },
+      : `Reserved ${ports.length === 1 ? 'port' : 'ports'} ${ports.join(', ')} for this task. ${exclusive}`) + hostNote,
+    data: { ports, requested: count, reserved: ports.length, location: onHost ? 'host' : 'local', ...(onHost ? { onRemoteHost: true } : {}) },
   };
 };
 
+/** The ports a server on the project's host listens on, or why that could not be read. Never an empty list for "unknown". */
+async function readHostListening(context: CommandContext): Promise<{ ports: Set<number> } | { error: string }> {
+  const access = context.hostAccess?.() ?? null;
+  if (!access) return { error: HOST_NOT_AVAILABLE };
+  try {
+    return { ports: new Set(await access.listeningPorts()) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** One forwarded port, in the words the agent should act on. */
 function describeForward(forward: PortForwardStatus): string {
-  if (forward.state === 'forwarding') return `${forward.port} (forwarding: http://localhost:${forward.port} reaches your server)`;
+  if (forward.state === 'forwarding') {
+    return `${forward.port} (forwarding: http://localhost:${forward.port} on the user's computer reaches your server at http://localhost:${forward.port} on the host)`;
+  }
   if (forward.state === 'blocked') return `${forward.port} (blocked: ${forward.detail ?? 'ssh could not forward it'})`;
   return `${forward.port} (waiting: nothing is listening on the host yet)`;
+}
+
+/**
+ * One port on a project whose servers run on a host. The host says whether a server is up: on this computer the
+ * port may be held by the forward's own `ssh`, which keeps listening after the server stops. A host that could not
+ * be read leaves the answer unknown, never free.
+ */
+function describeHostStatus(status: DevPortStatus, onHost: boolean | null): string {
+  if (onHost === null) return `${status.port} (unknown: the host's listening ports could not be read)`;
+  const notForwarded = 'not reserved, so it is not forwarded and the Browser pane cannot reach it';
+  if (status.reservation === 'this-task') {
+    return onHost ? `${status.port} (yours, server running on the host)` : `${status.port} (yours, nothing listening on the host - free to start on)`;
+  }
+  if (status.reservation === 'other-task') {
+    return onHost ? `${status.port} (reserved by another task, server running on the host - do not use)` : `${status.port} (reserved by another task - do not use)`;
+  }
+  if (onHost) return `${status.port} (a server is running on the host, ${notForwarded})`;
+  if (status.listening) return `${status.port} (IN USE on the user's computer by something outside Kangentic, so a forward of it would fail)`;
+  return `${status.port} (free on the host and the user's computer - not reserved, nothing listening)`;
 }
 
 /** One port's two-source answer, in the words the agent should act on. */
@@ -195,34 +241,57 @@ export const handleCheckDevPorts: CommandHandler = async (
     };
   }
 
+  // On a project that runs on an SSH host a port has two ends, and the server's is the host's.
+  const plan = getPortForwardPlan();
+  const hostId = plan?.hostOfProject(context.projectId) ?? null;
+  const hostRead = hostId ? await readHostListening(context) : null;
+  const listeningOnHost = (port: number): boolean | null => {
+    if (!hostRead || 'error' in hostRead) return null;
+    return hostRead.ports.has(port);
+  };
+
   const statuses = await describeDevPorts(taskId, toProbe);
   const mine = statuses.filter((status) => status.reservation === 'this-task');
   const others = statuses.filter((status) => status.reservation !== 'this-task');
+  const describe = (status: DevPortStatus): string => (hostId ? describeHostStatus(status, listeningOnHost(status.port)) : describeStatus(status));
 
   const lines: string[] = [];
   if (mine.length > 0) {
-    lines.push(`Reserved by this task: ${mine.map(describeStatus).join(', ')}.`);
+    lines.push(`Reserved by this task: ${mine.map(describe).join(', ')}.`);
   } else {
     lines.push('This task has no reserved ports, which is the normal state.');
   }
   if (others.length > 0) {
-    lines.push(`Also checked: ${others.map(describeStatus).join(', ')}.`);
+    lines.push(`Also checked: ${others.map(describe).join(', ')}.`);
   }
 
-  // On a project that runs on an SSH host, whether each of the task's ports reaches the user's computer.
-  const plan = getPortForwardPlan();
-  const hostId = plan?.hostOfProject(context.projectId) ?? null;
+  // Whether each of the task's ports reaches the user's computer.
   const forwards = hostId && plan ? await plan.statusOf(hostId) : [];
   const forwardsOfMine = forwards.filter((forward) => mine.some((status) => status.port === forward.port));
   if (hostId && forwardsOfMine.length > 0) {
-    lines.push(`Forwarded from the host to this computer: ${forwardsOfMine.map(describeForward).join(', ')}.`);
+    lines.push(`Forwarded from the host to the user's computer: ${forwardsOfMine.map(describeForward).join(', ')}.`);
   }
+  if (hostRead && 'error' in hostRead) lines.push(`The host's listening ports could not be read: ${hostRead.error}`);
 
   return {
     success: true,
     message: lines.join(' '),
     // `ports` stays the task's own reservations so a caller reading just that
     // field gets what it always got; `statuses` is the two-source answer.
-    data: { ports: held, statuses, ...(hostId ? { forwards: forwardsOfMine } : {}) },
+    data: {
+      ports: held,
+      location: hostId ? 'host' : 'local',
+      ...(hostId
+        ? {
+            // `host` null means it could not be read, never that nothing listens.
+            statuses: statuses.map((status) => ({ ...status, listening: { local: status.listening, host: listeningOnHost(status.port) } })),
+            forwards: forwardsOfMine.map((forward) => ({
+              ...forward,
+              localUrl: `http://localhost:${forward.port}`,
+              hostUrl: `http://localhost:${forward.port}`,
+            })),
+          }
+        : { statuses }),
+    },
   };
 };

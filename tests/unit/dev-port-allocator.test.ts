@@ -245,6 +245,17 @@ describe('reserveDevPorts', () => {
     expect(ports).toEqual([]);
   });
 
+  it('never hands out a port a server on the project\'s host holds, though it is free here', async () => {
+    const [port] = await reserveDevPorts('proj-1', 'probe', 1);
+    releaseDevPortForTask('probe');
+
+    const refused = await reserveDevPorts('proj-1', 'task-1', 1, { rangeStart: port, rangeEnd: port, takenOnHost: new Set([port]) });
+    expect(refused).toEqual([]);
+
+    const taken = await reserveDevPorts('proj-1', 'task-1', 1, { rangeStart: port, rangeEnd: port, takenOnHost: new Set() });
+    expect(taken).toEqual([port]);
+  });
+
   it('never hands out a port an IPv6-only server holds', async () => {
     // The reserve path has to inherit the probe fix, not just isPortFree: this
     // is the case where Kangentic would have handed an agent a port Vite was

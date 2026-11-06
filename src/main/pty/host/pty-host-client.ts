@@ -77,6 +77,9 @@ export interface PtyHostLifecycleListener {
   onHostUp(restarted: boolean): void;
 }
 
+/** How long past the link's own wait a `remote` request stays open, so the link's answer arrives first. */
+const REMOTE_ANSWER_GRACE_MS = 2_000;
+
 /** How one request is waited for. */
 export interface PtyHostRequestOptions<Result> {
   /** Replaces the transport's default budget for this request. */
@@ -457,6 +460,11 @@ export class PtyHostClient {
 
   /** Add or remove an SSH host's link, or ask its helper (#913). The result depends on the operation. */
   remote(request: RemoteHostRequest): Promise<unknown> {
+    // A request that names how long the link may wait outlasts the transport's own default, or it would fail
+    // here while the host still ran it. The grace lets the link's answer, a timeout included, arrive first.
+    if (request.op === 'helper' && request.timeoutMs !== undefined) {
+      return this.transport.request('remote', request, { timeoutMs: request.timeoutMs + REMOTE_ANSWER_GRACE_MS });
+    }
     return this.transport.request('remote', request);
   }
 

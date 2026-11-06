@@ -226,12 +226,16 @@ export function getDevPortForTask(taskId: string): number | null {
  * a short result as "use my own configured ports for the rest" rather than an
  * error. Already-held ports are returned first and do not count against fresh
  * reservations, so calling twice with the same count is stable.
+ *
+ * `takenOnHost` is for a project on an SSH host: the ports a server there listens
+ * on, which this computer's probe cannot see. A port must be free on both sides,
+ * because the server binds it there and its forward binds it here.
  */
 export async function reserveDevPorts(
   projectId: string,
   taskId: string,
   count: number,
-  options?: DevPortRangeOptions,
+  options?: DevPortRangeOptions & { takenOnHost?: ReadonlySet<number> },
 ): Promise<number[]> {
   const wanted = Math.max(1, Math.floor(count));
   const held = devPortRepository.listForTask(taskId).map((lease) => lease.port);
@@ -242,6 +246,7 @@ export async function reserveDevPorts(
 
   for (let port = start; port <= end && reserved.length < wanted; port += 1) {
     if (devPortRepository.getByPort(port)) continue;
+    if (options?.takenOnHost?.has(port)) continue;
     // Sequential by design: a parallel sweep would open the whole range's
     // worth of sockets just to find a few.
     if (!(await isPortFree(port))) continue;

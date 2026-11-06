@@ -57,7 +57,7 @@ import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import { resolveMcpCaller, callerBrowserOwner } from './mcp-http/caller-task';
-import { browserCaptureDirectory } from './mcp-http/browser-capture-file';
+import { browserCaptureDirectory, deliverCapture, fetchFilesFromHost } from './mcp-http/browser-capture-file';
 import {
   registerBrowserTools,
   type AutomationConfigReader,
@@ -210,6 +210,8 @@ export async function startMcpHttpServer(
         sessionCwd: callerSessionId ? sessionManager?.getSessionCommandCwd(callerSessionId) ?? null : null,
         projectId,
       }),
+      deliverCapture: (saved) => deliverCapture(saved, projectPath()),
+      fetchDroppedFiles: (paths, directory) => fetchFilesFromHost(paths, directory, projectPath()),
       // A narrow adapter over SessionManager: these tools only need to resolve
       // the caller's own task, or its Command Terminal's slot. The lane's
       // cookie jar is keyed by that owner, so no worktree path lookup is

@@ -288,7 +288,8 @@ export type RemoteHostRequest =
    */
   | { op: 'setForwards'; hostId: string; ports: number[] }
   | { op: 'listForwards'; hostId: string }
-  | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown; raw?: Uint8Array };
+  /** `timeoutMs` replaces the link's default wait, for a request that runs longer than a file job. */
+  | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown; raw?: Uint8Array; timeoutMs?: number };
 
 export type HelperMethod = keyof HelperRequestMap;
 export type RemoteMethod = PtyHostMethod | HelperMethod;

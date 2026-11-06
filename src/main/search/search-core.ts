@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
 import { sessionOutputPaths } from '../transition-engine/session-paths';
 import { agentRegistry } from '../agent/agent-registry';
+import { agentPathsForProject } from '../remote/host-paths';
 import type {
   SessionEvent,
   SearchHit,
@@ -422,9 +423,11 @@ function pushProjectHits(
   for (const project of projects) {
     if (budget.project <= 0) return;
     const nameMatch = findFirstMatch(project.name, needleLower);
-    const pathMatch = findFirstMatch(project.path, needleLower);
+    // A remote project's own path is an empty folder here: the one a person or an agent knows it by is the host's.
+    const paths = agentPathsForProject(project);
+    const pathMatch = findFirstMatch(paths.projectFolder, needleLower);
     if (!nameMatch && !pathMatch) continue;
-    let haystack = project.path;
+    let haystack = paths.projectFolder;
     let match = pathMatch;
     if (nameMatch) {
       haystack = project.name;
@@ -436,7 +439,8 @@ function pushProjectHits(
       kind: 'project',
       projectId: project.id,
       projectName: project.name,
-      projectPath: project.path,
+      projectPath: paths.projectFolder,
+      location: paths.location,
       snippet: snippet.snippet,
       matchStart: snippet.matchStart,
       matchEnd: snippet.matchEnd,

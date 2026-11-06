@@ -239,6 +239,7 @@ describe('worktree-list ahead/behind: the base branch, not the tracking ref', ()
       // reports nothing it could not read.
       expect(project.worktrees.find((worktree) => worktree.path === TASK_WORKTREE_PATH)).toEqual({
         path: TASK_WORKTREE_PATH,
+        location: 'local',
         branch: 'feature/task-a',
         baseRef: null,
         dirty: false,

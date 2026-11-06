@@ -375,10 +375,25 @@ export async function importHostKey(hostId: string, sourcePath: string, deps: Ss
   const target = path.join(directory, 'id_imported');
   const content = await readUsablePrivateKey(sourcePath);
   await fs.rm(target, { force: true });
-  // On Windows the new file inherits the ACL of Kangentic's folder in the user's profile, which
-  // `ssh.exe` accepts because only the user and the system can read it.
-  await fs.writeFile(target, content.endsWith('\n') ? content : `${content}\n`, { mode: 0o600 });
+  await fs.writeFile(target, '', { mode: 0o600 });
+  // Restricted while empty, so the key is never readable under the folder's ACL.
+  if (deps.platform === 'win32') await restrictToOwnerOnWindows(target, deps);
+  await fs.writeFile(target, content.endsWith('\n') ? content : `${content}\n`);
   return target;
+}
+
+/**
+ * Give a file the ACL Windows' `ssh-keygen` gives a key it makes. A file mode means nothing there, so a new
+ * file inherits its folder's ACL, and the profile can carry more than the user: Codex's Windows sandbox grants
+ * a group read on it. `ssh.exe` then refuses the key as unprotected, for a sign-in that never reaches the host.
+ */
+async function restrictToOwnerOnWindows(filePath: string, deps: SshSetupDeps): Promise<void> {
+  const systemRoot = process.env.SystemRoot;
+  const icacls = systemRoot ? path.win32.join(systemRoot, 'System32', 'icacls.exe') : 'icacls';
+  const { username } = os.userInfo();
+  const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${username}` : username;
+  const result = await deps.run(icacls, [filePath, '/inheritance:r', '/grant:r', `${account}:F`, '*S-1-5-18:F'], { env: childProcessEnv(), timeout: 30_000 });
+  if (result.code !== 0) throw new Error(result.stdout.trim() || result.stderr.trim() || 'Could not restrict who can read the key file.');
 }
 
 /**

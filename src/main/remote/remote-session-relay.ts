@@ -137,7 +137,7 @@ const SNAPSHOT_MIN_INTERVAL_MS = 30_000;
  * The tail's backfill runs at about 1.2 MB a second, and a 100 MB export would otherwise never finish arriving.
  */
 const SNAPSHOT_BYTES_PER_SECOND = 200_000;
-/** Inside the 15 s a request to the pty host gets. An export of 100 MB measured about a second. */
+/** An export of 100 MB measured about a second, so one past this is a host in trouble, and the next tick tries again. */
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 /** The most a reader waits for an ending session's last export: the export's bound, its last pass, and a margin. */
 const SETTLE_WAIT_MS = 30_000;

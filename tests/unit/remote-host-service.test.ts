@@ -205,4 +205,20 @@ describe('asking a host', () => {
 
     await expect(service.pathPresence('host-a', ['/home/dev/api'])).rejects.toThrow('the link is down');
   });
+
+  it('never turns a failed read of the host\'s ports into "nothing is listening"', async () => {
+    const { service } = makeService({ send: vi.fn(async () => { throw new Error('the link is down'); }) });
+
+    await expect(service.listeningPorts('host-a')).rejects.toThrow('the link is down');
+  });
+
+  it('asks the link to wait past a command\'s own bound, so the host\'s answer gets back', async () => {
+    const { service, sent } = makeService();
+
+    await service.runCommand('host-a', { file: 'sh', args: [], timeoutMs: 600_000 });
+
+    const request = sent.find((candidate) => candidate.op === 'helper');
+    expect(request).toMatchObject({ method: 'runCommand' });
+    expect(request?.op === 'helper' && request.timeoutMs).toBeGreaterThan(600_000);
+  });
 });

@@ -31,7 +31,7 @@ Use `kangentic_list_projects` (below) to discover valid selectors.
 
 List every Kangentic project registered on this machine. Use the returned name or id as the `project` argument on any other `kangentic_*` tool.
 
-No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timestamp, and an `isActive` flag marking the project the MCP client is bound to.
+No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timestamp, and an `isActive` flag marking the project the MCP client is bound to. A project on an SSH host shows its path on that host and the host's id, and `structuredContent` adds `location` and `shellFolder`, this computer's folder for it.
 
 ### kangentic_move_task_to_project
 

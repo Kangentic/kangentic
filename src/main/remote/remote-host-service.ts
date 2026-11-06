@@ -46,6 +46,9 @@ export interface RemoteHostServiceDeps {
   createRunner?: (config: { sshPath: string; args: string[] }) => SshRunner;
 }
 
+/** How long past a run's own bound the link waits, so the host's answer to a timeout gets back here. */
+const COMMAND_ANSWER_GRACE_MS = 10_000;
+
 export class HostProgramMissingError extends Error {
   constructor() {
     super('This build of Kangentic does not include the program to install on a host. A development build makes it with npm run build:host.');
@@ -175,9 +178,23 @@ export class RemoteHostService {
     return this.helper(hostId, 'removeEmptyDirectories', { paths });
   }
 
-  /** Run a program on the host to completion, through the user's shell, for a CLI's own probe. */
-  runCommand(hostId: string, request: HelperRequestMap['runCommand']['params']): Promise<HelperRequestMap['runCommand']['result']> {
-    return this.helper(hostId, 'runCommand', request);
+  /**
+   * Run a program on the host to completion, through the user's shell. The link waits past the run's own
+   * bound, so a long run (a `run_script` automation) ends with the host's answer, not a timeout here.
+   */
+  async runCommand(hostId: string, request: HelperRequestMap['runCommand']['params']): Promise<HelperRequestMap['runCommand']['result']> {
+    return await this.deps.send({
+      op: 'helper',
+      hostId,
+      method: 'runCommand',
+      params: request,
+      timeoutMs: request.timeoutMs + COMMAND_ANSWER_GRACE_MS,
+    }) as HelperRequestMap['runCommand']['result'];
+  }
+
+  /** The ports a server on the host listens on. A failed read rejects: an empty list says nothing is listening. */
+  async listeningPorts(hostId: string): Promise<number[]> {
+    return (await this.helper(hostId, 'listeningPorts', {})).ports;
   }
 
   readFile(hostId: string, filePath: string, maxBytes?: number): Promise<HelperRequestMap['readFile']['result']> {
