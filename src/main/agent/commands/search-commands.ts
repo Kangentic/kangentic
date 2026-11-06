@@ -3,18 +3,33 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { listActiveSwimlanes } from './column-resolver';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
-import type { Task, BacklogTask } from '../../../shared/types';
+import type { Task, BacklogTask, ValueLocation } from '../../../shared/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { taskKnowledgeFor } from './task-knowledge-lines';
 import { sliceKeepingPairs } from '../shared/slice-keeping-pairs';
+import { agentPathsOf, type AgentPaths } from '../../remote/host-paths';
+
+/** What follows a path in a message when it is not on this computer. Nothing for a local project, whose message never changes. */
+function hostNote(paths: AgentPaths): string {
+  return paths.location === 'host' ? ' (on the host)' : '';
+}
+
+/** A task's worktree in a tool's data: the host's path for a remote project, with this computer's stand-in beside it. */
+function worktreeFields(task: Task, paths: AgentPaths): { worktreePath: string | null; location: ValueLocation; localWorktreePath?: string | null } {
+  return {
+    worktreePath: paths.toAgent(task.worktree_path),
+    location: paths.location,
+    ...(paths.location === 'host' ? { localWorktreePath: task.worktree_path } : {}),
+  };
+}
 
 /** One matched task as the task reads print it. */
-function taskLine(task: Task, column: string): string {
+function taskLine(task: Task, column: string, paths: AgentPaths): string {
   const parts = [`"${task.title}" [${column}]`];
   if (task.branch_name) parts.push(`branch: ${task.branch_name}`);
   if (task.base_branch) parts.push(`base: ${task.base_branch}`);
-  if (task.worktree_path) parts.push(`worktree: ${task.worktree_path}`);
+  if (task.worktree_path) parts.push(`worktree: ${paths.toAgent(task.worktree_path)}${hostNote(paths)}`);
   if (task.pr_url) parts.push(`PR: ${task.pr_url}`);
   else if (task.pr_number) parts.push(`PR #${task.pr_number}`);
   // Said only when set: an agent reading its own task learns the board will
@@ -267,6 +282,7 @@ export const handleFindTask: CommandHandler = async (
     };
   }
 
+  const paths = agentPathsOf(context);
   const sections: string[] = [];
   const totalHits = taskMatches.length + backlogMatches.length;
   sections.push(`Found ${totalHits} match(es):`);
@@ -282,7 +298,7 @@ export const handleFindTask: CommandHandler = async (
     const descriptionChars = descriptionCharsFor(taskMatches.length);
     const lines = taskMatches.map((task) => {
       const column = task.archived_at !== null ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown');
-      return [taskLine(task, column), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+      return [taskLine(task, column, paths), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
     });
     sections.push(lines.join('\n'));
   }
@@ -310,7 +326,7 @@ export const handleFindTask: CommandHandler = async (
         column: task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'),
         branchName: task.branch_name,
         baseBranch: task.base_branch,
-        worktreePath: task.worktree_path,
+        ...worktreeFields(task, paths),
         prNumber: task.pr_number,
         prUrl: task.pr_url,
         useWorktree: task.use_worktree,
@@ -338,12 +354,15 @@ export const handleGetCurrentTask: CommandHandler = async (
 ): Promise<CommandResponse> => {
   const cwdRaw = typeof params.cwd === 'string' && params.cwd ? params.cwd : null;
   const branchRaw = typeof params.branch === 'string' && params.branch ? params.branch : null;
+  const callerTaskId = context.callerTaskId ?? null;
 
-  if (!cwdRaw && !branchRaw) {
+  if (!cwdRaw && !branchRaw && !callerTaskId) {
     return { success: false, error: 'Provide at least one of: cwd, branch.' };
   }
 
-  const cwdNormalized = cwdRaw ? normalizePath(cwdRaw) : null;
+  // An agent on a host names its folder as the host does, and the task row holds this computer's stand-in.
+  const paths = agentPathsOf(context);
+  const cwdNormalized = cwdRaw ? normalizePath(paths.fromAgent(cwdRaw)) : null;
   const branchLower = branchRaw ? branchRaw.toLowerCase() : null;
 
   // The worktree folder name, used only as a lenient fallback below (the primary
@@ -371,7 +390,7 @@ export const handleGetCurrentTask: CommandHandler = async (
   }
   allTasks.push(...taskRepo.listArchived());
 
-  const matches = allTasks.filter((task) => {
+  let matches = allTasks.filter((task) => {
     if (cwdNormalized && task.worktree_path) {
       const taskPath = normalizePath(task.worktree_path);
       if (taskPath === cwdNormalized) return true;
@@ -383,6 +402,17 @@ export const handleGetCurrentTask: CommandHandler = async (
     return false;
   });
 
+  // A task with no worktree runs in the project's own folder, which it shares with every other such task, so that
+  // folder names one only when a single one has a session. An agent's own task settles anything else: a named cwd
+  // or branch still wins, because an agent may ask about a worktree that is not its own.
+  if (matches.length === 0 && cwdNormalized && cwdNormalized === normalizePath(paths.shellFolder)) {
+    const inProjectFolder = allTasks.filter((task) => !task.worktree_path && task.session_id && !task.archived_at);
+    if (inProjectFolder.length === 1) matches = inProjectFolder;
+  }
+  if (matches.length === 0 && callerTaskId) {
+    matches = allTasks.filter((task) => task.id === callerTaskId);
+  }
+
   const toData = (task: Task) => ({
     id: task.id,
     displayId: task.display_id,
@@ -391,7 +421,7 @@ export const handleGetCurrentTask: CommandHandler = async (
     column: task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'),
     branchName: task.branch_name,
     baseBranch: task.base_branch,
-    worktreePath: task.worktree_path,
+    ...worktreeFields(task, paths),
     prNumber: task.pr_number,
     prUrl: task.pr_url,
     useWorktree: task.use_worktree,
@@ -423,7 +453,7 @@ export const handleGetCurrentTask: CommandHandler = async (
   const columnOf = (task: Task): string => (task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'));
   const descriptionChars = descriptionCharsFor(matches.length);
   const blockOf = (task: Task): string =>
-    [taskLine(task, columnOf(task)), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+    [taskLine(task, columnOf(task), paths), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
   const withKnowledge = (task: Task) => ({ ...toData(task), knowledge: knowledge.knowledgeByTask.get(task.id) ?? null });
   const notes = knowledge.notes.length > 0 ? `\n${knowledge.notes.join('\n')}` : '';
 

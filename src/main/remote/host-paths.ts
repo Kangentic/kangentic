@@ -47,6 +47,11 @@ export interface AgentPaths {
    * that made the copy, so it needs no network. Null for a path outside the mirror, and for a session not on a host.
    */
   mirrorToAgent: (localPath: string, record: { cli_target?: string | null } | null | undefined) => string | null;
+  /**
+   * A file a session keeps, wherever this computer reads it from, as the agent names the original: a mirror copy
+   * through the session row, anything else through the project's folder. The path itself for a local project.
+   */
+  sessionFileToAgent: (localPath: string, record: { cli_target?: string | null } | null | undefined) => string;
 }
 
 const LOCAL_ROOTS: SshCliPlace['roots'] = [];
@@ -62,6 +67,7 @@ function localAgentPaths(projectPath: string): AgentPaths {
     fromAgent: (agentPath) => agentPath,
     isHostPath: () => false,
     mirrorToAgent: () => null,
+    sessionFileToAgent: (localPath) => localPath,
   };
 }
 
@@ -70,25 +76,28 @@ export function agentPathsForProject(project: Pick<Project, 'path' | 'remote'>):
   const { remote } = project;
   if (!remote) return localAgentPaths(project.path);
   const roots: SshCliPlace['roots'] = [{ local: project.path, host: remote.path }];
+  const mirrorToAgent: AgentPaths['mirrorToAgent'] = (localPath, record) => {
+    const place = placeOfRecord(record);
+    return isSshPlace(place) ? mirrorPathToHost(localPath, place) : null;
+  };
+  const toAgent = <Value extends string | null | undefined>(localPath: Value): Value => {
+    if (!localPath || !isUnderLocalRoot(localPath, roots)) return localPath;
+    return localPathToHost(localPath, roots) as Value;
+  };
   return {
     location: 'host',
     hostId: remote.hostId,
     shellFolder: project.path,
     projectFolder: remote.path,
     roots,
-    toAgent: <Value extends string | null | undefined>(localPath: Value): Value => {
-      if (!localPath || !isUnderLocalRoot(localPath, roots)) return localPath;
-      return localPathToHost(localPath, roots) as Value;
-    },
+    toAgent,
     fromAgent: <Value extends string | null | undefined>(agentPath: Value): Value => {
       if (!agentPath || !isUnderHostRoot(agentPath, roots)) return agentPath;
       return hostPathToLocal(agentPath, roots) as Value;
     },
     isHostPath: (candidate) => isUnderHostRoot(candidate, roots),
-    mirrorToAgent: (localPath, record) => {
-      const place = placeOfRecord(record);
-      return isSshPlace(place) ? mirrorPathToHost(localPath, place) : null;
-    },
+    mirrorToAgent,
+    sessionFileToAgent: (localPath, record) => mirrorToAgent(localPath, record) ?? toAgent(localPath),
   };
 }
 

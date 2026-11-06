@@ -10361,7 +10361,9 @@ export type SearchHit =
     })
   | (SearchHitBase & {
       kind: 'project';
+      /** The project's folder as `location` names it: on a remote project, the host's path. */
       projectPath: string;
+      location: ValueLocation;
     })
   | (SearchHitBase & {
       kind: 'conversation';
@@ -10791,8 +10793,12 @@ export interface IpcLogEntry {
  * Includes the main checkout plus every git worktree. Pure read-only.
  */
 export interface WorktreeRecord {
-  /** Absolute path to the worktree root. */
+  /** Absolute path to the worktree root, as `location` names it: on a remote project, the host's path. */
   path: string;
+  /** Which machine `path` is on. */
+  location: ValueLocation;
+  /** This computer's empty stand-in for the worktree. Only on a remote project, and absent for a worktree it has none for. */
+  localPath?: string;
   /** Currently checked-out branch name, or null for detached HEAD. */
   branch: string | null;
   /**
@@ -10832,8 +10838,14 @@ export interface WorktreeRecord {
 export interface ProjectWorktrees {
   projectId: string;
   projectName: string;
+  /** The project's folder as `location` names it: on a remote project, the host's path. */
   projectPath: string;
+  location: ValueLocation;
+  /** This computer's folder for a remote project. Only on a remote project. */
+  shellFolder?: string;
   worktrees: WorktreeRecord[];
+  /** Why a remote project's host could not list them. An empty `worktrees` with this set says nothing about the host. */
+  error?: string;
 }
 
 

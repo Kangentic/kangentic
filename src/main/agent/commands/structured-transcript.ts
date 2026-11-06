@@ -1,5 +1,5 @@
 import { agentRegistry } from '../agent-registry';
-import { placeOfRecord } from '../shared/cli-target';
+import { isSshPlace, mirrorPathToHost, placeOfRecord } from '../shared/cli-target';
 import {
   filterTranscriptView,
   searchTranscript,
@@ -66,13 +66,16 @@ export async function renderStructuredTranscript(
     };
   }
 
+  const place = placeOfRecord({ cli_target: record.cliTarget });
   const parsed = await adapter.parseTranscript(
     record.agentSessionId,
     record.cwd,
-    placeOfRecord({ cli_target: record.cliTarget }),
+    place,
     record.transcriptPath ?? null,
   );
   const { sourcePath } = parsed;
+  // On a host this reads this computer's copy, which holds what has arrived so far. The agent can open the original.
+  const hostSourcePath = sourcePath && isSshPlace(place) ? mirrorPathToHost(sourcePath, place) : null;
   // The same per-span clamp every other reader applies: one 30 MB tool result
   // would otherwise travel whole into the render and the reply.
   let entries = truncateEntries(parsed.entries);
@@ -86,7 +89,7 @@ export async function renderStructuredTranscript(
   }
 
   if (entries.length === 0) {
-    const where = sourcePath ? ` at ${sourcePath}` : '';
+    const where = hostSourcePath ? ` from ${hostSourcePath} on the host` : sourcePath ? ` at ${sourcePath}` : '';
     return {
       success: true,
       message: `No structured transcript found${where}. The native session history may not exist yet. Re-run with format="raw" for the terminal scrollback.`,
@@ -129,6 +132,7 @@ export async function renderStructuredTranscript(
   const headerParts = [`Session: ${record.id.slice(0, 8)}...`, 'Format: structured', `View: ${view}`];
   if (savedSource === 'archive') headerParts.push('Source: Kangentic\'s saved copy (the agent deleted its own file)');
   if (savedSource === 'index') headerParts.push('Source: indexed text only (the agent deleted its own file; tool calls are flattened)');
+  if (savedSource === null && hostSourcePath) headerParts.push(`Source: a copy of ${hostSourcePath} on the host, as far as it has arrived`);
   if (search) headerParts.push(`Search: "${search}"`);
   headerParts.push(`Entries: ${budgeted.renderedEntries}/${totalParsed}`);
   let header = headerParts.join(' | ');
@@ -157,7 +161,9 @@ export async function renderStructuredTranscript(
       renderedEntryCount: budgeted.renderedEntries,
       omittedEntryCount: budgeted.omittedByTail + budgeted.omittedByBudget,
       truncated: budgeted.truncated,
-      filePath: sourcePath,
+      filePath: hostSourcePath ?? sourcePath,
+      location: hostSourcePath ? 'host' : 'local',
+      ...(hostSourcePath ? { localFilePath: sourcePath, copy: true } : {}),
       ...(search ? { matchCount: searched.length } : {}),
     },
   };

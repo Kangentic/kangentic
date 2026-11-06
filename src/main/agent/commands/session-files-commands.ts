@@ -5,6 +5,9 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { agentRegistry } from '../../agent/agent-registry';
 import { placeOfRecord } from '../shared/cli-target';
+import { agentPathsOf, type AgentPaths } from '../../remote/host-paths';
+import type { HostAccess } from '../../remote/host-transfer';
+import type { ValueLocation } from '../../../shared/types';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -76,7 +79,56 @@ function resolveSession(
   return { session: picked };
 }
 
-function buildSessionFiles(projectRoot: string, sessionId: string) {
+/**
+ * One file of a session as an agent is told it. On a remote project `path` and `exists` are the host's, and only the
+ * host answers `exists`: null when it could not be asked, which never means absent. A session's folder is on both
+ * machines and they do not hold the same files: the host has the settings and hook folders while the session runs,
+ * and `events.jsonl` is built here from what it relays, so it reads absent there with `localExists` true.
+ */
+interface SessionFileEntry {
+  path: string;
+  exists: boolean | null;
+  location: ValueLocation;
+  localPath?: string;
+  localExists?: boolean;
+}
+
+/** Each file's entry, with one ask of the host for all of them. A host that cannot answer leaves `exists` null and says why. */
+async function describeSessionFiles(
+  localPaths: readonly string[],
+  hostPathOf: (localPath: string) => string,
+  paths: AgentPaths,
+  hostAccess: HostAccess | null,
+): Promise<{ entries: SessionFileEntry[]; hostError: string | null }> {
+  if (paths.location === 'local') {
+    return {
+      entries: localPaths.map((filePath) => ({ path: filePath, exists: fs.existsSync(filePath), location: 'local' })),
+      hostError: null,
+    };
+  }
+  const hostPaths = localPaths.map(hostPathOf);
+  let presence: Array<'present' | 'absent'> | null = null;
+  let hostError: string | null = hostAccess ? null : 'This project\'s host is not available.';
+  if (hostAccess) {
+    try {
+      presence = await hostAccess.pathPresence(hostPaths);
+    } catch (error) {
+      hostError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return {
+    entries: localPaths.map((localPath, index) => ({
+      path: hostPaths[index],
+      exists: presence ? presence[index] === 'present' : null,
+      location: 'host',
+      localPath,
+      localExists: fs.existsSync(localPath),
+    })),
+    hostError,
+  };
+}
+
+function sessionFilePaths(projectRoot: string, sessionId: string) {
   const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', sessionId);
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
   const files = {
@@ -87,11 +139,7 @@ function buildSessionFiles(projectRoot: string, sessionId: string) {
     mcpJson: path.join(sessionDir, 'mcp.json'),
     responsesDir: path.join(sessionDir, 'responses'),
   };
-  const filesWithExists: Record<string, { path: string; exists: boolean }> = {};
-  for (const [key, filePath] of Object.entries(files)) {
-    filesWithExists[key] = { path: filePath, exists: fs.existsSync(filePath) };
-  }
-  return { sessionDir, files: filesWithExists };
+  return { sessionDir, files };
 }
 
 /**
@@ -116,13 +164,21 @@ export async function handleGetSessionFiles(
   }
   const session = resolved.session;
   const projectRoot = context.getProjectPath();
-  const { sessionDir, files } = buildSessionFiles(projectRoot, session.id);
+  const paths = agentPathsOf(context);
+  const { sessionDir, files } = sessionFilePaths(projectRoot, session.id);
 
-  // Locate the agent's native session file (Claude JSONL, Codex JSONL, Gemini JSON)
+  // Locate the agent's native session file (Claude JSONL, Codex JSONL, Gemini JSON).
+  // On a host this path is this computer's copy, and `sessionFileToAgent` names the original.
   const nativeSessionFilePath = await locateNativeSessionFile(session);
-  const nativeSessionFile = nativeSessionFilePath
-    ? { path: nativeSessionFilePath, exists: fs.existsSync(nativeSessionFilePath) }
-    : null;
+  const fileKeys = Object.keys(files) as Array<keyof typeof files>;
+  const localPaths = [...fileKeys.map((key) => files[key]), ...(nativeSessionFilePath ? [nativeSessionFilePath] : [])];
+  const { entries, hostError } = await describeSessionFiles(
+    localPaths,
+    (localPath) => paths.sessionFileToAgent(localPath, session),
+    paths,
+    context.hostAccess?.() ?? null,
+  );
+  const hostSessionDir = paths.toAgent(sessionDir);
 
   return {
     success: true,
@@ -132,15 +188,18 @@ export async function handleGetSessionFiles(
       taskId: session.task_id,
       sessionType: session.session_type,
       status: session.status,
-      cwd: session.cwd,
+      cwd: paths.toAgent(session.cwd),
       startedAt: session.started_at,
       exitedAt: session.exited_at,
       suspendedAt: session.suspended_at,
-      sessionDir,
-      files,
-      nativeSessionFile,
+      sessionDir: hostSessionDir,
+      location: paths.location,
+      ...(paths.location === 'host' ? { localCwd: session.cwd, localSessionDir: sessionDir } : {}),
+      ...(hostError ? { hostError } : {}),
+      files: Object.fromEntries(fileKeys.map((key, index) => [key, entries[index]])),
+      nativeSessionFile: nativeSessionFilePath ? entries[fileKeys.length] : null,
     },
-    message: `Session ${session.id} (${session.status}) at ${sessionDir}`,
+    message: `Session ${session.id} (${session.status}) at ${hostSessionDir}`,
   };
 }
 
@@ -189,13 +248,17 @@ export const handleGetSessionEvents: CommandHandler = async (
   const projectRoot = context.getProjectPath();
   const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', session.id);
   const eventsJsonlPath = path.join(sessionDir, 'events.jsonl');
+  // This file is built on this computer from what a host relays, so it has no original an agent there could open.
+  const onHost = agentPathsOf(context).location === 'host';
+  const source = onHost ? 'this computer\'s record of the session (you cannot open this file from the host)' : eventsJsonlPath;
+  const location = { location: 'local' as const, ...(onHost ? { copy: true } : {}) };
 
   const eventsJsonlExists = await fs.promises.access(eventsJsonlPath).then(() => true, () => false);
   if (!eventsJsonlExists) {
     return {
       success: true,
       message: `No events.jsonl for session ${session.id}`,
-      data: { sessionId: session.id, eventsJsonlPath, totalLines: 0, returned: 0, events: [] },
+      data: { sessionId: session.id, eventsJsonlPath, ...location, totalLines: 0, returned: 0, events: [] },
     };
   }
 
@@ -234,10 +297,11 @@ export const handleGetSessionEvents: CommandHandler = async (
     : '';
   return {
     success: true,
-    message: `Returned ${tailed.length} events from ${eventsJsonlPath}${truncationNote}`,
+    message: `Returned ${tailed.length} events from ${source}${truncationNote}`,
     data: {
       sessionId: session.id,
       eventsJsonlPath,
+      ...location,
       totalLines,
       returned: tailed.length,
       truncated,
