@@ -4,6 +4,8 @@ paths:
   - "src/main/agent/commands/**"
   - "src/main/agent/mcp-http-server.ts"
   - "src/main/remote/host-paths.ts"
+  - "src/main/remote/host-transfer.ts"
+  - "src/main/git/worktree-list.ts"
   - "docs/integrations/mcp-server/**"
   - "tests/unit/mcp-*.test.ts"
 ---
@@ -31,6 +33,10 @@ port reported "genuinely free" that was only free on this computer.
   (`agentPathsForProject`, `src/main/remote/host-paths.ts`) maps a stand-in to the host path
   (`toAgent`) and an agent-typed host path back (`fromAgent`). A tool does not call
   `localPathToHost` or compare paths itself.
+- **The host's value goes in the `message`.** `callHandler` sends `message` and drops `data`, so for
+  most tools `data` never reaches the agent, and a value or label that sits only there fixes
+  nothing. A tool that prints JSON (`list_worktrees`, `get_session_files`) carries it in that JSON. A
+  local project's message stays byte for byte what it was.
 - **A fact about this computer stays local and is labeled.** The Browser pane, a forwarded local port,
   the app's own logs and Kangentic's process metrics are the user's computer. They are returned as
   they are, with `location: 'local'` in `data` and a short note in the message, so an agent on a host
@@ -41,26 +47,36 @@ port reported "genuinely free" that was only free on this computer.
   `location` is `'local'` and every value is unchanged.
 - **An input path is a host path by default for a remote project.** A path the agent passes (an
   attachment, a `cwd`, a file to drop) names a file on the host. Reading it from this disk finds
-  nothing, or a different file of the same path on macOS and Linux. Fetch it through the helper, or
-  refuse it with a sentence. A failure is reported to the agent, never swallowed.
+  nothing, or a different file of the same path on macOS and Linux. Fetch it through
+  `remote/host-transfer.ts`, or refuse it with a sentence. A path outside the host's home, and a
+  symlink, are refused. A failure is reported to the agent, never swallowed.
 - **A copy is labeled as a copy.** A transcript, an events file or a session file that reaches this
   computer through the relay is a copy of the host's. Its content is the host's and may be stale. Its
   local path is not openable by the agent, so a tool returns the host path of the original beside it.
 - **A check that tests a path on this disk is wrong for a remote project.** `isGitRepo(projectPath)`,
   `fs.existsSync(worktree_path)` and a local bind probe each answer about the stand-in. A remote
-  project asks the host through its resolver (`remoteGitRunnerFor`, the helper's `pathPresence`,
-  its listening-ports read). A failed ask is an error, never "free" or "absent"
-  ([[ssh-remote]]).
+  project asks the host through its resolver (`isProjectGitRepo`, `remoteGitRunnerFor`,
+  `hostAccess.pathPresence`, `hostAccess.listeningPorts`). A failed ask is an error, never "free" or
+  "absent" ([[ssh-remote]]).
+- **A string map is not a file.** `toAgent` says what a stand-in is called on the host, not that a
+  file is there. A session's folder holds different files on each machine, and what this computer
+  writes under the shell folder (an attachment, a capture) exists on the host only once it was
+  copied. A tool that returns such a path has the host say whether it is there, or labels it.
 
 ## Enforcement (self-maintaining)
 
-- **Test (mechanical, CI):** `tests/unit/mcp-tool-host-values.test.ts` scans every handler under
-  `src/main/agent/commands/` and `src/main/agent/mcp-http/` that reads `worktree_path`,
-  `sessions.cwd` or `getProjectPath()` into a response, and fails unless it goes through
-  `agentPaths`. A tool whose output is correctly local or has no path is listed in the test's
-  allowlist with a reason, so a new tool that prints a path fails CI instead of passing silently.
-  The per-tool remote fixtures (`tests/unit/mcp-remote-*.test.ts`) pin the host values. These land
-  with the follow-up task that implements the helper; until then this rule is review-only.
+- **Test (mechanical, CI):** `tests/unit/mcp-tool-host-values.test.ts` classifies every tool
+  registered under `src/main/agent/mcp-http/`, as `host-value`, `local` or no path with a reason, and
+  fails on one unclassified or one that is gone, so a new tool says which layer it answers from.
+  It also fails on a line under `src/main/agent/commands/`, `src/main/agent/mcp-http/` or in
+  `src/main/git/worktree-list.ts` that reads `worktree_path`, a row's `cwd`, `getProjectPath()` or
+  `project.path` without going through `agentPaths` or a `// host-value-ok: <reason>` marker. A scan
+  cannot prove what a value means: this makes each read a decision someone wrote down. The per-tool
+  fixtures (`tests/unit/mcp-remote-*.test.ts`) pin the values, on a remote fixture that names a
+  shell folder here and a folder on the host.
+- **Test (helper):** `tests/unit/remote-host-paths.test.ts` pins the round trip, a sibling folder,
+  case on Windows, null, and the identity for a local project. `tests/unit/remote-host-transfer.test.ts`
+  runs the transfer scripts on a real shell, past a frame, with a hostile name and a symlink escape.
 - **Review:** `/code-review` flags a new or changed tool that returns a path, pid, port or URL
   without `location`, reads `worktree_path`, `sessions.cwd` or `project.path` straight into a
   response, or tests a path on this disk for a project that may be remote.

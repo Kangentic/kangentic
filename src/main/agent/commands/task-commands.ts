@@ -155,6 +155,7 @@ function scheduleLinkTimeResolve(
 ): void {
   void linkPRForTask(taskId, {
     tasks: taskRepo,
+    // host-value-ok: gitAt maps this folder to the host
     projectPath: context.getProjectPath(),
     defaultBaseBranch: context.getDefaultBaseBranch?.(),
     resolveOptions: context.getPrResolveOptions?.(),
@@ -336,6 +337,7 @@ export const handleCreateTask: CommandHandler = async (
   // above, which ignores `branchName` entirely.
   let branchNote = '';
   if (branchName) {
+    // host-value-ok: gitAt maps this folder to the host
     const { conflict, unchecked } = await describeBranchConflict(context.getProjectPath(), branchName);
     if (conflict) return { success: false, error: conflict };
     branchNote = unchecked ?? '';
@@ -407,6 +409,7 @@ export const handleCreateTask: CommandHandler = async (
   let attachmentNote = '';
   if (prepared) {
     const attachmentRepo = new AttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { failures } = addPreparedAttachments(
       prepared,
@@ -635,6 +638,7 @@ function applyTaskUpdate(
   let attachmentNote = '';
   if (newAttachments && newAttachments.length > 0) {
     const attachmentRepo = new AttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { added, failures } = addPreparedAttachments(
       hostAttachments ?? readLocalAttachments(newAttachments),
@@ -755,6 +759,7 @@ function applyTaskUpdate(
 function describeSearchedAnchors(task: Task): string {
   const anchors: string[] = [];
   if (task.pr_number != null) anchors.push(`PR #${task.pr_number}`);
+  // host-value-ok: only whether the row has one
   if (task.worktree_path) anchors.push('its worktree branch');
   else if (task.branch_name) anchors.push(`branch "${task.branch_name}"`);
   if (task.pushed_branch) anchors.push(`pushed branch "${task.pushed_branch}"`);
@@ -815,6 +820,7 @@ export const handleLinkPr: CommandHandler = async (
   try {
     result = await linkPRForTask(task.id, {
       tasks: taskRepo,
+      // host-value-ok: gitAt maps this folder to the host
       projectPath: context.getProjectPath(),
       defaultBaseBranch: context.getDefaultBaseBranch?.(),
       resolveOptions: context.getPrResolveOptions?.(),
@@ -1296,6 +1302,7 @@ export function handleMoveTaskToProject(
   if (task.session_id) {
     return { success: false, error: `Task #${task.display_id} has an active session and cannot be moved to another project.` };
   }
+  // host-value-ok: a stand-in exists exactly while its worktree does on the host
   if (task.worktree_path && fs.existsSync(task.worktree_path)) {
     return { success: false, error: `Task #${task.display_id} still has a worktree on disk and cannot be moved to another project.` };
   }
@@ -1324,6 +1331,7 @@ export function handleMoveTaskToProject(
 
   const sourceAttachmentRepo = new AttachmentRepository(sourceDb);
   const targetAttachmentRepo = new AttachmentRepository(targetDb);
+  // host-value-ok: the attachment store is on this computer
   const targetProjectPath = target.getProjectPath();
   const failedAttachments: string[] = [];
   for (const attachment of sourceAttachmentRepo.list(task.id)) {

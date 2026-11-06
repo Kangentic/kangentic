@@ -106,6 +106,7 @@ export async function enumerateWorktrees(
       location: paths.location,
       ...(paths.location === 'host' ? { shellFolder: paths.shellFolder } : {}),
     };
+    // host-value-ok: the shell folder, which exists while the project does
     if (!fs.existsSync(project.path)) {
       results.push({ ...shape, worktrees: [] });
       continue;
@@ -113,6 +114,7 @@ export async function enumerateWorktrees(
 
     let parsed: ParsedWorktree[];
     try {
+      // host-value-ok: gitAt maps this folder to the host
       parsed = await parseWorktreeList(project.path, paths);
     } catch (error) {
       results.push({ ...shape, worktrees: [], error: error instanceof Error ? error.message : String(error) });
@@ -121,6 +123,7 @@ export async function enumerateWorktrees(
     const records = await mapWithConcurrency(
       mapToThisComputer(parsed, project, paths),
       WORKTREE_READ_CONCURRENCY,
+      // host-value-ok: the row's form, which the base lookup compares against
       (entry) => buildRecord(entry, project.id, project.path, paths, options.resolveBaseRef),
     );
     results.push({ ...shape, worktrees: records });
@@ -137,6 +140,7 @@ function mapToThisComputer(parsed: readonly ParsedWorktree[], project: Project, 
   if (!project.remote) return parsed.map((entry) => ({ ...entry, gitDirectory: entry.path }));
   const main = parsed.find((entry) => entry.isMainCheckout);
   const onGitSpelling = main && project.remote.path !== main.path
+    // host-value-ok: this is the map, from the local side
     ? agentPathsForProject({ path: project.path, remote: { hostId: project.remote.hostId, path: main.path } })
     : paths;
   return parsed.map((entry) => {

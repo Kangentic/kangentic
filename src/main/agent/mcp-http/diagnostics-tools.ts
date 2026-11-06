@@ -67,6 +67,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
       // Two files: the per-project one (the normal case), and the app's
@@ -124,6 +125,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       // Two directories: the per-project one (the normal case), and the
       // app's global config dir, where crash-capture.ts falls back when no
@@ -222,6 +224,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       if ('error' in resolved) {
         return errorResult(resolved.error);
       }
+      // host-value-ok: Kangentic's own logs, on this computer and labeled local
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
       const filePath = path.join(projectPath, '.kangentic', 'logs', `ipc-${targetDate}.jsonl`);

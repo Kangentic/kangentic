@@ -440,6 +440,7 @@ export const handleListSessions: CommandHandler = (
     return { success: false, error: `Task "${taskId}" not found` };
   }
 
+  // host-value-ok: the events file is this computer's on any project, labeled local below
   const projectRoot = context.getProjectPath();
   const paths = agentPathsOf(context);
   const records = db.prepare(
@@ -514,6 +515,7 @@ export const handleListSessions: CommandHandler = (
       agentSessionId: record.agent_session_id,
       cwd: paths.toAgent(record.cwd),
       location: paths.location,
+      // host-value-ok: the stand-in, in the field named for it
       ...(paths.location === 'host' ? { localCwd: record.cwd } : {}),
       // Written here from what a host relays: this computer's file on any project.
       eventsJsonlPath: sessionOutputPaths(
@@ -587,6 +589,7 @@ export async function handleGetSessionHistory(
   }
 
   const filePath = await adapter.locateSessionHistoryFile(
+    // host-value-ok: the adapter reads this computer's copy by the folder the row records
     record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path,
   );
   if (!filePath) {

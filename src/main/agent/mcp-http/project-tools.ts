@@ -30,6 +30,7 @@ export function registerProjectTools(server: McpServer, resolver: RequestResolve
       const lines = projects.map((project) => {
         const activeTag = project.isActive ? ' [active]' : '';
         const hostTag = project.hostId ? ` on host ${project.hostId}` : '';
+        // host-value-ok: listProjects already holds the host path here
         return `- ${project.name}${activeTag} (id: ${project.id}, path: ${project.path}${hostTag}, lastOpened: ${project.lastOpened})`;
       });
       return {

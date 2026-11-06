@@ -11,7 +11,9 @@
  * control; everything else (filter, render, header) is the real code.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as path from 'node:path';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import type { TranscriptEntry } from '../../src/shared/types';
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -57,6 +59,45 @@ function useAdapter(entries: TranscriptEntry[], sourcePath: string | null = null
 
 beforeEach(() => {
   vi.mocked(agentRegistry.getBySessionType).mockReset();
+});
+
+describe('renderStructuredTranscript on a remote session', () => {
+  const MIRROR = path.resolve('/mock/config/remote-homes/h1');
+  const copy = path.join(MIRROR, '.claude', 'projects', 'proj', 'agent-session-1.jsonl');
+  const cliTarget = serializeCliTarget({ kind: 'ssh', hostId: 'h1', home: '/home/dev', shellName: 'bash', localHome: MIRROR, roots: [] });
+  const onHost = (): StructuredTranscriptRequest => {
+    const base = request();
+    return { ...base, record: { ...base.record, cliTarget } };
+  };
+
+  it('says the transcript is a copy, and names the original the agent can open', async () => {
+    useAdapter(savedEntries, copy);
+
+    const response = await renderStructuredTranscript(onHost());
+
+    expect(response.message).toContain('Source: a copy of /home/dev/.claude/projects/proj/agent-session-1.jsonl on the host');
+    expect(response.message).not.toContain('remote-homes');
+    expect(response.data).toMatchObject({ filePath: '/home/dev/.claude/projects/proj/agent-session-1.jsonl', localFilePath: copy, location: 'host', copy: true });
+  });
+
+  it('names the host\'s file, not this computer\'s mirror, when no copy has arrived yet', async () => {
+    useAdapter([], copy);
+
+    const response = await renderStructuredTranscript(onHost());
+
+    expect(response.message).toContain('from /home/dev/.claude/projects/proj/agent-session-1.jsonl on the host');
+    expect(response.message).not.toContain('remote-homes');
+  });
+
+  it('reports a local session as it always did', async () => {
+    useAdapter(savedEntries, '/home/me/.claude/a.jsonl');
+
+    const response = await renderStructuredTranscript(request());
+
+    expect(response.message).not.toContain('on the host');
+    expect(response.data).toMatchObject({ filePath: '/home/me/.claude/a.jsonl', location: 'local' });
+    expect(response.data).not.toHaveProperty('copy');
+  });
 });
 
 describe('renderStructuredTranscript saved-conversation fallback', () => {

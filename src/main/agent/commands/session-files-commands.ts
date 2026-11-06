@@ -150,6 +150,7 @@ async function locateNativeSessionFile(session: SessionRow): Promise<string | nu
   if (!session.agent_session_id) return null;
   const adapter = agentRegistry.getBySessionType(session.session_type);
   if (!adapter) return null;
+  // host-value-ok: the adapter reads this computer's copy by the folder the row records
   return adapter.locateSessionHistoryFile(session.agent_session_id, session.cwd, placeOfRecord(session), session.transcript_path);
 }
 
@@ -163,6 +164,7 @@ export async function handleGetSessionFiles(
     return { success: false, error: resolved.error ?? 'Unknown error resolving session' };
   }
   const session = resolved.session;
+  // host-value-ok: each file below is mapped to the host or labeled local
   const projectRoot = context.getProjectPath();
   const paths = agentPathsOf(context);
   const { sessionDir, files } = sessionFilePaths(projectRoot, session.id);
@@ -194,6 +196,7 @@ export async function handleGetSessionFiles(
       suspendedAt: session.suspended_at,
       sessionDir: hostSessionDir,
       location: paths.location,
+      // host-value-ok: the stand-in, in the field named for it
       ...(paths.location === 'host' ? { localCwd: session.cwd, localSessionDir: sessionDir } : {}),
       ...(hostError ? { hostError } : {}),
       files: Object.fromEntries(fileKeys.map((key, index) => [key, entries[index]])),
@@ -245,6 +248,7 @@ export const handleGetSessionEvents: CommandHandler = async (
     return { success: false, error: resolved.error ?? 'Unknown error resolving session' };
   }
   const session = resolved.session;
+  // host-value-ok: each file below is mapped to the host or labeled local
   const projectRoot = context.getProjectPath();
   const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', session.id);
   const eventsJsonlPath = path.join(sessionDir, 'events.jsonl');

@@ -14,6 +14,10 @@ sources:
   - resource: src/main/remote/host-router.ts
   - resource: src/main/remote/remote-launch.ts
   - resource: src/main/remote/remote-session-relay.ts
+  - resource: src/main/remote/host-paths.ts
+  - resource: src/main/remote/host-transfer.ts
+  - resource: src/main/remote/host-attachments.ts
+  - resource: src/main/remote/host-script.ts
   - resource: src/main/remote/helper/helper-server.ts
   - resource: src/main/remote/helper/host-command.ts
   - resource: src/main/remote/host-file-sync.ts
@@ -115,7 +119,22 @@ An MCP tool answers from the layer the fact belongs to:
 - **A path the agent passes in is a host path.** An attachment or a file to drop is fetched from the host, or refused with a sentence. It is never read from this disk.
 - **A copy is labeled as one.** A transcript, events file or session file the relay brought here holds the host's content, possibly stale, and its local path is not openable by the agent. The tool returns the host path of the original beside it.
 
-Status: the rule is [mcp-tool-host-values](../../.claude/rules/mcp-tool-host-values.md). The tools do not apply it yet. A follow-up task builds the shared helper and audits every tool, and the scan test that fails a new tool which prints a path without it lands with that task. Until then `kangentic_get_current_task`, `kangentic_find_task`, `kangentic_list_worktrees`, `kangentic_list_projects`, the session file tools, the Browser `saveToFile` option and the dev-port tools can return this computer's values for a remote project.
+The rule is [mcp-tool-host-values](../../.claude/rules/mcp-tool-host-values.md), and `remote/host-paths.ts` is the one map between the two names for a folder. `callHandler` sends a tool's `message` and drops its `data`, so the host's value is in the message, not only in `data`. A local project's messages are unchanged.
+
+A session's folder is on both machines and holds different files on each. The host has the settings and hook folders while the session runs. `events.jsonl` is built on this computer from what the host relays, so it has no original there. `kangentic_get_session_files` asks the host which files exist, and answers `exists: null` when it cannot ask, which never means absent.
+
+## What runs where
+
+Bytes cross through `remote/host-transfer.ts`: `sh` scripts over `runCommand`, one base64 chunk at a time, because the helper's file jobs decode text and a new helper method has no handler on a daemon a relay rejoins with no version check. The scripts hold a path beneath the host's home themselves and refuse a symlink, because `runCommand` does not check its arguments. So a file in `/tmp` on the host cannot be attached, and the agent is told to copy it into its working folder.
+
+- **An opening prompt names the host.** `{{worktreePath}}`, `{{projectPath}}` and `{{attachments}}` resolve to the host's paths for every prompt and automation (`resolveTaskTemplateVars`), and a handoff's history file names the original rather than this computer's mirror of it.
+- **Attachments are copied to the host before the agent starts,** to the path the prompt names, and on a column move whose message names them. A file already there at the same size is left. One that cannot be copied is named where the prompt lists them, and the agent starts anyway. A file attached while an agent runs reaches the host at its next start or such a move.
+- **An attachment an agent names is fetched from the host,** and a file of the same path on this computer is never read. One that cannot be fetched is named in the tool's message. `kangentic_browser_drop_files` fetches each file the same way before it drops anything.
+- **A Browser capture saved to a file is copied to the host,** into the agent's working folder. The pane is on this computer, so the capture is made here. A copy that fails fails the save.
+- **`run_script` runs on the host,** in the task's worktree, through `sh`, with the same `KANGENTIC_*` variables. Its output is discarded, because a reply is one frame. A variable past 32 KiB is left out and named in the run's detail, because Linux refuses one past 128 KiB and a request is one frame too. A superseded move stops waiting for the script, but nothing can reach a running command on a host, so it goes on to its own timeout there.
+- **`webhook` and `notify` run on this computer.** `localhost` in a webhook's URL is this computer, not the host.
+- **A workflow's own agent runs on the host,** in the project's folder, through the same launch as a task's agent. It reads another project only on the same host, by its path there. A request for a project on another machine grants nothing and says so.
+- **Dev ports are checked on both ends.** A reserved port is free on the host and on this computer, because the server binds it there and its forward binds it here. A host that cannot say reserves nothing.
 
 ## Worktrees on a host
 
@@ -227,11 +246,13 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 - **A host whose `sshd` sets `AllowTcpForwarding no` cannot forward.** The port shows as blocked with `ssh`'s own refusal.
 - **A remote project's folder must be inside the user's home on the host.** The helper reads and writes only beneath the home, so a folder such as `/srv/app` is refused when it is added, with the home it must be in. Link or move the project under the home to use it.
 - **A remote project whose folder is not a git repository shares one folder.** Every task works in it, so two agents edit the same files. The Add project form says so.
+- **A remote project's `kangentic.json` is not read from the host.** The board config is read from the shell folder here, so a file committed on the host never reaches the app, and a change made here stays here. That covers everything the file declares, the Stop script included.
+- **A custom branch is not checked out for a task with no worktree.** The checkout tests for commits with this computer's git, which finds no repository in the shell folder, and skips. A task with a worktree gets its branch on the host as usual.
 - **A remote session has no process-tree watching.** The background-shell watcher and the session-id filesystem pass read this computer's disk, so they are off for a remote session.
 - **Transcripts are copied for Claude Code, Cursor CLI, Qwen Code, Grok Build, Antigravity CLI, Kimi Code, Goose and OpenCode.** See [Transcripts](#transcripts). Codex, Gemini, Copilot, Aider and Droid are empty in the viewer, the index and the ledger. Codex and Gemini name their file with a timestamp the id does not give, and Copilot and Aider keep theirs outside the host's home mirror. Droid's id is never captured on a host, so there is no conversation to name. Qwen's and Grok's live model and token readers stay off for a host, and their ledger reads the copy. Cursor's `create-chat` writes nothing until the first turn, so the copy is empty until then.
 - **A quit takes no last export.** A quit is one `suspendAll` frame, so a Goose or OpenCode copy stops at the export before it until that conversation next runs. A session ended any other way takes its last export.
 - **A large export can end short.** The tail's last pass stops near 9.6 MB, so an export still arriving when its session is released keeps the last whole copy. The next session of that conversation exports again.
-- **An export that takes over 12 seconds is stopped,** because a request to the pty host gets 15. The last whole copy stays and the next tick tries again. An export of 100 MB took about a second on the machine measured, so this is a host under heavy load or a slower disk.
+- **An export that takes over 12 seconds is stopped.** The last whole copy stays and the next tick tries again. An export of 100 MB took about a second on the machine measured, so this is a host under heavy load or a slower disk.
 - **A conversation exported on a host does not page.** Goose and OpenCode on a host show the newest 16 MB in the viewer behind a notice, with no way to read further back, and the search index holds the same tail of a Goose conversation. OpenCode's index covers the whole export.
 - **A second Kimi in one folder gets its id only at exit.** A force kill of such a session leaves it with no id, so nothing is copied for it. Two tasks in worktrees have separate folders and are not affected.
 - **A Kimi the user starts by hand in a session's folder can be taken for that session, until it exits.** Between the spawn and the session's first message, a hand-run Kimi there writes the only new line in the index, and the viewer shows that conversation. The id from the index is provisional, so the session's exit hint replaces it on a clean exit. A force kill prints no hint, and the wrong id stays.

@@ -69,6 +69,7 @@ export async function renderStructuredTranscript(
   const place = placeOfRecord({ cli_target: record.cliTarget });
   const parsed = await adapter.parseTranscript(
     record.agentSessionId,
+    // host-value-ok: the adapter reads this computer's copy by the folder the row records
     record.cwd,
     place,
     record.transcriptPath ?? null,

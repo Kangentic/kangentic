@@ -37,6 +37,20 @@ describe('buildServerInstructions', () => {
     expect(instructions).toContain('in the X board');
   });
 
+  it('tells an agent on a host where it is, and that the Browser pane is not there', () => {
+    const instructions = buildServerInstructions(makeResolver([makeProject({ name: 'Remote', path: '/home/dev/proj', location: 'host', isActive: true })]));
+
+    expect(instructions).toContain('REMOTE PROJECT:');
+    expect(instructions).toContain('in /home/dev/proj');
+    expect(instructions).toContain('localhost in the Browser pane is their computer');
+  });
+
+  it('says nothing of a host to an agent on a project on this computer', () => {
+    const instructions = buildServerInstructions(makeResolver([makeProject({ name: 'Local', location: 'local', isActive: true })]));
+
+    expect(instructions).not.toContain('REMOTE PROJECT:');
+  });
+
   it('names the active project explicitly when one is present', () => {
     const instructions = buildServerInstructions(
       makeResolver([

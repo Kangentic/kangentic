@@ -136,6 +136,7 @@ function createBacklogItem(
   let attachmentNote = '';
   if (attachments && attachments.length > 0) {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { failures } = addPreparedAttachments(
       hostAttachments ?? readLocalAttachments(attachments),
@@ -244,6 +245,7 @@ function updateBacklogItem(
   let attachmentNote = '';
   if (newAttachments && newAttachments.length > 0) {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+    // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { added, failures } = addPreparedAttachments(
       hostAttachments ?? readLocalAttachments(newAttachments),
@@ -353,6 +355,7 @@ export const handlePromoteBacklog: CommandHandler = (
 
   const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
   const attachmentRepo = new AttachmentRepository(db);
+  // host-value-ok: the attachment store is on this computer
   const projectPath = context.getProjectPath();
 
   const promoted: Array<{ taskId: string; title: string }> = [];

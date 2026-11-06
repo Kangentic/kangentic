@@ -185,7 +185,9 @@ Returns one line per id: `marked` (it was holding the session and no longer does
 
 ## kangentic_get_session_files
 
-Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes an `exists` flag. Provide either `taskId` or `sessionId`.
+Get the absolute paths to every per-session file: `events.jsonl` (activity log), `status.json` (usage/metrics), `settings.json`, `commands.jsonl` (MCP queue), `mcp.json`, the `responses/` directory, and the agent's native session history file (Claude JSONL, Codex JSONL, or Gemini JSONL, or its legacy `.json`). Session directories are keyed by Kangentic PTY session id under `.kangentic/sessions/<id>/`. Each file entry includes `path`, an `exists` flag and a `location`. Provide either `taskId` or `sessionId`.
+
+On a remote project `path` and `exists` are the host's, and each entry adds `localPath` and `localExists` for this computer's side. Only the host answers `exists`: it is `null`, with `hostError` beside `files`, when the host could not be asked, which never means absent. The two sides do not hold the same files, so `events.jsonl` reads absent on the host and present here. `cwd` and `sessionDir` are the host's too, with `localCwd` and `localSessionDir` beside them. `nativeSessionFile` names the original on the host, and `localPath` this computer's copy.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -197,6 +199,8 @@ Get the absolute paths to every per-session file: `events.jsonl` (activity log),
 ## kangentic_get_session_events
 
 Read parsed events from a session's `events.jsonl` activity log without locating or opening the file yourself. Each line is a JSON event emitted by the Claude Code hook bridge (`PreToolUse`, `PostToolUse`, `Stop`, `Notification`, etc.). Useful for idle-detection debugging, tracing tool usage, or replaying what an agent did. Provide either `taskId` or `sessionId`. Files over 1MB are read as a bounded tail window (the last 1MB): the response sets `truncated: true` and `totalBytes`, the `since`/`eventTypes` filters apply within the scanned window, and a huge file may therefore return fewer than `tail` matches.
+
+On a remote project this file is built on this computer from what the host relays, so it has no original an agent could open. `data` carries `location: 'local'` and `copy: true`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -254,8 +258,10 @@ common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 On a project that runs on an SSH host the server is started on the host, at exactly the reserved
 number. Kangentic forwards that port to the same number on the user's computer as soon as the server
 listens, so `http://localhost:<port>` there and the Browser pane reach it (see
-[SSH remote](../../platforms/ssh-remote.md), "Dev servers on a host"). The response carries
-`data.onRemoteHost: true`.
+[SSH remote](../../platforms/ssh-remote.md), "Dev servers on a host"). A port must be free on both
+ends, so the scan also skips what a server on the host listens on, and a host that cannot say
+reserves nothing and returns an error. The response carries `data.onRemoteHost: true`, and `data.location`
+is `host` or `local`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -299,9 +305,12 @@ is. An empty result is the normal state for a task using its project's own confi
 | `ports` | number[] | No | Extra ports to check alongside the task's own reservations (at most 20). Each is probed. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
-Returns `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
-`{ port, reservation, listening }` row per port checked). For a project on an SSH host it also returns
-`data.forwards`, one `{ port, state, detail? }` row per reserved port: `forwarding` (reachable at
+Returns `data.location`, `data.ports` (the task's own reservations, unchanged) and `data.statuses` (one
+`{ port, reservation, listening }` row per port checked). For a project on an SSH host, `listening` is
+`{ local, host }`, and the host's answer decides whether a server is up: a forward's own `ssh` keeps
+listening on this computer after the server stops. `host` is `null` when the host could not be read,
+and the message then calls the port unknown, never free. It also returns `data.forwards`, one
+`{ port, state, detail?, localUrl, hostUrl }` row per reserved port: `forwarding` (reachable at
 `localhost` on the user's computer), `waiting` (nothing listens on the host yet) or `blocked` (with
-`ssh`'s words, or that the port is in use on the user's computer). There, `listening: true` on a
-reserved port means the forward is up.
+`ssh`'s words, or that the port is in use on the user's computer). A server on a port that was not
+reserved is not forwarded, so the Browser pane cannot reach it, and the message says so.

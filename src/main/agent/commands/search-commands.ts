@@ -20,6 +20,7 @@ function worktreeFields(task: Task, paths: AgentPaths): { worktreePath: string |
   return {
     worktreePath: paths.toAgent(task.worktree_path),
     location: paths.location,
+    // host-value-ok: the stand-in, in the field named for it
     ...(paths.location === 'host' ? { localWorktreePath: task.worktree_path } : {}),
   };
 }
@@ -391,7 +392,9 @@ export const handleGetCurrentTask: CommandHandler = async (
   allTasks.push(...taskRepo.listArchived());
 
   let matches = allTasks.filter((task) => {
+    // host-value-ok: matched against the row, after fromAgent mapped the cwd to its form
     if (cwdNormalized && task.worktree_path) {
+      // host-value-ok: the same comparison, in the row's form
       const taskPath = normalizePath(task.worktree_path);
       if (taskPath === cwdNormalized) return true;
       if (slug && taskPath.endsWith(`/${slug}`)) return true;
@@ -406,6 +409,7 @@ export const handleGetCurrentTask: CommandHandler = async (
   // folder names one only when a single one has a session. An agent's own task settles anything else: a named cwd
   // or branch still wins, because an agent may ask about a worktree that is not its own.
   if (matches.length === 0 && cwdNormalized && cwdNormalized === normalizePath(paths.shellFolder)) {
+    // host-value-ok: only whether the row has one
     const inProjectFolder = allTasks.filter((task) => !task.worktree_path && task.session_id && !task.archived_at);
     if (inProjectFolder.length === 1) matches = inProjectFolder;
   }

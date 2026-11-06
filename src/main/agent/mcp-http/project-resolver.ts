@@ -51,6 +51,7 @@ export interface ProjectSummary {
 }
 
 function findTaskByWorktreePath(tasks: readonly Task[], worktreePath: string): Task | undefined {
+  // host-value-ok: compares the row with a path enumerateWorktrees mapped to this computer's form
   return tasks.find((task) => task.worktree_path != null && isSamePath(task.worktree_path, worktreePath));
 }
 

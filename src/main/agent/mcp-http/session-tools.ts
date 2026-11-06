@@ -313,6 +313,7 @@ export function registerSessionTools(
       // Rows are shown as stored, and an agent on a host needs to read the path columns as its own.
       const paths = agentPathsOf(ctx);
       return paths.location === 'host'
+        // host-value-ok: names the columns, reads none
         ? appendNoticeLine(result, `Note: worktree_path and cwd in these rows are this computer's stand-in. ${paths.shellFolder} is ${paths.projectFolder} on the host.`)
         : result;
     }),
