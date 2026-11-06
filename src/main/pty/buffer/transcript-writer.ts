@@ -164,9 +164,14 @@ export class TranscriptWriter {
     const projectId = this.projectBySession.get(sessionId);
     if (!projectId) return;
     try {
-      // A synchronous INSERT (and, the first time for a project, its database
-      // open) on the host's terminal thread: labelled for the lag report.
-      timeSyncWork('transcript:flush', () => this.sinkFor(projectId)?.appendChunk(sessionId, chunk));
+      // The first flush for a project opens its database, and every flush runs
+      // a synchronous INSERT, both on the host's terminal thread. Two labels in
+      // the lag report, so a slow one says which. The one 1.3 s flush seen (1 of
+      // 172) was all INSERT on a connection already open. Its cause was not
+      // measured: no write transaction held the lock past 438 ms that day, so
+      // the busy timeout stays as it is.
+      const sink = timeSyncWork('transcript:open', () => this.sinkFor(projectId));
+      timeSyncWork('transcript:flush', () => sink?.appendChunk(sessionId, chunk));
     } catch (error) {
       // Best effort - don't crash the session if DB write fails
       console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);

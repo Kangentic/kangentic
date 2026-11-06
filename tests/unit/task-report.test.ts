@@ -118,8 +118,8 @@ function methodsCalled(): string[] {
 }
 
 /** What `getLatestAgentSessionForTask` answers: the newest record of the task that names a conversation. */
-function latestAgentSession(fields: { session_type: string; agent_session_id: string; cwd: string; cli_target?: string | null }): LatestAgentSessionRecord {
-  return { cli_target: null, ...fields };
+function latestAgentSession(fields: { session_type: string; agent_session_id: string; cwd: string; cli_target?: string | null; transcript_path?: string | null }): LatestAgentSessionRecord {
+  return { cli_target: null, transcript_path: null, ...fields };
 }
 
 /**
@@ -430,11 +430,26 @@ describe('readTaskLastMessage', () => {
     expect(hoisted.retrievalCall).toHaveBeenCalledWith(
       'transcript.finalReply',
       {
-        facts: { sessionType: 'codex', agentSessionId: 'conversation-b', cwd: '/mock/second', cliTarget: null },
+        facts: { sessionType: 'codex', agentSessionId: 'conversation-b', cwd: '/mock/second', cliTarget: null, transcriptPath: null },
         remoteTargets: REMOTE_TARGETS_SENTINEL,
       },
       { timeoutMs: 15_000 },
     );
+  });
+
+  it('hands the worker the path the agent reported, since a resumed conversation can stay outside the folder its cwd maps to', async () => {
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({
+      session_type: 'claude',
+      agent_session_id: 'conversation-a',
+      cwd: '/mock/project/.kangentic/worktrees/918',
+      transcript_path: '/home/dev/.claude/projects/-mock-project/conversation-a.jsonl',
+    }));
+    hoisted.retrievalCall.mockResolvedValue({ text: 'Done.', uuid: 'reply-1', ts: Date.parse('2026-10-13T03:00:00.000Z') });
+
+    await readTaskLastMessage(PROJECT_ID, TASK_ID);
+
+    const [, params] = hoisted.retrievalCall.mock.calls[0] as [string, { facts: Record<string, unknown> }];
+    expect(params.facts.transcriptPath).toBe('/home/dev/.claude/projects/-mock-project/conversation-a.jsonl');
   });
 
   it('hands the worker the stored target of a session that ran in a WSL distro, parsed', async () => {

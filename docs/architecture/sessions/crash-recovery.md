@@ -129,8 +129,8 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   show in a stall report without counting as stalls of the I/O thread. The I/O thread keeps the
   pin a tree stop needs (`pinRun`). After three worker crashes, or a worker that fails to start,
   the host starts processes itself again. Only node-pty stays on the I/O thread, since a PTY's
-  handle belongs to the thread that spawned it: `pty:spawn` and `pty:spawnRaw`, 5 to 38 ms under
-  load.
+  handle belongs to the thread that spawned it: `pty:spawn` and `pty:spawnRaw`, 5 to 38 ms in a
+  load test and up to 781 ms across a working day.
 - **Dev diagnostics.** A dev build's host runs its own event-loop monitor and answers four `dev*`
   requests, which a production host refuses: `devLagReport` (its stalls, delay windows, GC pauses
   and every span per label, which the inspection server's event-loop-lag route serves as

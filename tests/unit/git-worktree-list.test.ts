@@ -3,8 +3,7 @@
  *
  * Two layers. The no-projects paths pin what the MCP tool falls into when no
  * project is registered. The ahead/behind cases drive `enumerateWorktrees`
- * against a mocked `simple-git` (the pattern tests/unit/branch-summary.test.ts
- * uses) and pin WHICH ref the counts are measured against: the base branch the
+ * against a mocked git client and pin WHICH ref the counts are measured against: the base branch the
  * work is based on when the injected resolver names one (`origin/<base>`
  * first, then the local ref), and the branch's own upstream only when no base
  * resolves. A branch can be 0 behind its remote and far behind its base; the
@@ -33,7 +32,7 @@ const { projectsFixture, mockGit } = vi.hoisted(() => ({
   projectsFixture: [] as Array<{ id: string; name: string; path: string }>,
   mockGit: {
     raw: vi.fn<(args: string[]) => Promise<string>>(),
-    status: vi.fn(async () => ({ isClean: () => true })),
+    status: vi.fn(async () => ({ files: [], not_added: [] })),
   },
 }));
 
@@ -47,8 +46,8 @@ vi.mock('../../src/main/db/repositories/project-repository', () => ({
 // Every path is "present": the fixture paths never touch the disk.
 vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => mockGit),
+vi.mock('../../src/main/git/git-client', () => ({
+  gitAt: vi.fn(() => mockGit),
 }));
 
 const PROJECT_PATH = '/mock/repo';

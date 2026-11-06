@@ -152,6 +152,9 @@ export async function readTaskLastMessage(projectId: string, taskId: string): Pr
           agentSessionId: newest.agent_session_id,
           cwd: newest.cwd,
           cliTarget: parseStoredCliTarget(newest.cli_target),
+          // What the agent reported it is writing: a resumed conversation can
+          // stay outside the folder its cwd maps to.
+          transcriptPath: newest.transcript_path,
         },
         remoteTargets: collectRemoteTargets(agentRegistry),
       },

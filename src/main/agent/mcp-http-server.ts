@@ -453,7 +453,7 @@ export function buildConfiguredMcpServer(
   // inspection bridge. Production builds drop both the import (top of file) and
   // this call via `__KANGENTIC_DEV__` dead-code elimination.
   if (__KANGENTIC_DEV__) {
-    registerDevtoolsMcpTools(mcpServer);
+    registerDevtoolsMcpTools(mcpServer, resolver);
   }
 
   return mcpServer;

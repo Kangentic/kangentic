@@ -384,6 +384,25 @@ describe('timeSyncWork attribution ring', () => {
     expect(report.recentSlowSyncWork.some((span) => span.label === 'db:transaction')).toBe(false);
   });
 
+  it('keeps spawn worker starts out of the long ring, so they cannot evict a stall that held a terminal', async () => {
+    const {
+      startEventLoopLagMonitor, stopEventLoopLagMonitor, recordRelayedSyncSpan, getEventLoopLagReport,
+    } = await loadMonitor();
+    startEventLoopLagMonitor();
+    recordRelayedSyncSpan('pty-host:transcript:flush', 1301);
+    for (let index = 0; index < 150; index++) {
+      recordRelayedSyncSpan('pty-host:spawn-worker:exec:spawn:git:readWorktreeHead', 300);
+    }
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.recentLongSyncWork.map((span) => [span.label, span.ms])).toEqual([
+      ['pty-host:transcript:flush', 1301],
+    ]);
+    // Still counted and still in the relayed ring: only the long ring leaves them out.
+    expect(report.syncWorkByLabel['pty-host:spawn-worker:exec:spawn:git:readWorktreeHead']).toMatchObject({ count: 150, maxMs: 300 });
+    expect(report.recentRelayedSlowSyncWork).toHaveLength(151);
+  });
+
   it('drops a relayed span while this process runs no monitor', async () => {
     const { recordRelayedSyncSpan, getEventLoopLagReport, getSyncWorkByLabel } = await loadMonitor();
     recordRelayedSyncSpan('worker:db:checkpoint', 40);

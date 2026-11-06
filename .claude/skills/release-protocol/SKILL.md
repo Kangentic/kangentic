@@ -77,7 +77,9 @@ Run Pre-flight Checks 1 to 4 below first. They settle where you are and bring `H
    tree already matches `package-lock.json`, so continue. On exit 1 or 2, run `npm ci` and re-run
    the verifier. Do not run `npm ci` unconditionally: it deletes `node_modules`, which the live
    dev server is usually running Electron out of. A fresh worktree has no `node_modules`, so the
-   verifier fails there and `npm ci` installs it.
+   verifier fails there and `npm ci` installs it. A worktree whose `node_modules` is a link (a
+   `/preview` makes one) runs `npm install` instead, never `npm ci`: `npm ci` through the link
+   exits 0 and empties the main checkout's tree.
 6. **Verify changelog parity across the whole tag sequence.** This step exists because the
    sequence has already drifted once: eight versions reached npm with no entry, because the tags
    were hand-created on feature commits instead of through this skill, and Step 3 only ever

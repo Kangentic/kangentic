@@ -33,7 +33,8 @@
  * shared ring a busy host's 16 ms spans evicted main's own within minutes. Any
  * span of `LONG_SYNC_THRESHOLD_MS` or more, from either source, is also kept in
  * `recentLongSyncWork`, so a multi-second stall stays attributable long after
- * the 16 ms ones around it have rotated out.
+ * the 16 ms ones around it have rotated out. Spawn worker spans are the
+ * exception: they hold no thread that main or a terminal waits on.
  *
  * The rings hold the latest few; the counters beside them hold everything.
  * `syncWorkByLabel` counts every span per label, with its total, its worst and
@@ -156,6 +157,13 @@ const SLOW_SYNC_RING_SIZE = 200;
 /** A span this long froze typing for a user who was watching. */
 const LONG_SYNC_THRESHOLD_MS = 100;
 const LONG_SYNC_RING_SIZE = 100;
+/**
+ * A span on the pty host's spawn worker holds that thread alone, not main or a
+ * terminal, so it stays out of the long ring. Those starts passed 100 ms often
+ * enough to fill the ring within about an hour, which cost a 1.3 s `transcript:flush`
+ * the spans around it. The relayed ring and the per-label counts still have them.
+ */
+const SPAWN_WORKER_LABEL_SEGMENT = 'spawn-worker:';
 const DURATION_EDGES_MS = [4, 8, 16, 32, 64, 128, 256] as const;
 export const DELAY_RESOLUTION_MS = 1;
 const DELAY_WINDOW_MS = 10_000;
@@ -224,7 +232,9 @@ function recordSpan(label: string, elapsed: number, ring: SlowSyncWork[] = recen
   if (elapsed < SLOW_SYNC_THRESHOLD_MS) return;
   const span = { at: new Date().toISOString(), label, ms: Math.round(elapsed) };
   pushBounded(ring, span, SLOW_SYNC_RING_SIZE);
-  if (elapsed >= LONG_SYNC_THRESHOLD_MS) pushBounded(recentLongSyncWork, span, LONG_SYNC_RING_SIZE);
+  if (elapsed >= LONG_SYNC_THRESHOLD_MS && !label.includes(SPAWN_WORKER_LABEL_SEGMENT)) {
+    pushBounded(recentLongSyncWork, span, LONG_SYNC_RING_SIZE);
+  }
 }
 
 /**
