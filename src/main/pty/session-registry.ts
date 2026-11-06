@@ -12,8 +12,17 @@ import type {
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
-import type { LaunchStartPath } from '../../shared/types';
+import type { LaunchStartPath, StartBlockedReason } from '../../shared/types';
 import type { LaunchOutputClass } from './agent-launch-report';
+
+/** A suspended row for a task with no live session, so its Resume stays reachable. */
+export interface SuspendedPlaceholderInput {
+  taskId: string;
+  projectId: string;
+  cwd: string;
+  /** Why the task is not running, when that is more than a plain pause. */
+  startBlockedReason?: StartBlockedReason | null;
+}
 
 /**
  * Internal per-session state owned by the main process. The subset
@@ -93,6 +102,8 @@ export interface ManagedSession {
   commandTerminalLabel?: string | null;
   /** The user renamed or cleared this terminal's name, so the namer stands down. */
   commandTerminalNamedByUser?: boolean;
+  /** Why this row's start never reached an agent (`Session.startBlockedReason`). */
+  startBlockedReason?: StartBlockedReason | null;
   /**
    * Someone typed, pasted or sent something into this session (see
    * `Session.hasUserInput`). Set once by `SessionManager.markUserInput`, or at
@@ -294,6 +305,7 @@ export interface ManagedSessionSummary {
   status: SessionStatus;
   startedAt: string;
   exitCode: number | null;
+  startBlockedReason: StartBlockedReason | null;
   agentName: string | null;
   isolatedSwimlaneId: string | null;
   transient: boolean;
@@ -341,6 +353,7 @@ export function toSession(session: ManagedSession): Session {
     commandTerminalLabel: session.commandTerminalLabel ?? null,
     commandTerminalNamedByUser: session.commandTerminalNamedByUser || undefined,
     hasUserInput: session.hasUserInput || undefined,
+    startBlockedReason: session.startBlockedReason ?? undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
   };
@@ -595,6 +608,7 @@ export class SessionRegistry {
       status: session.status,
       startedAt: session.startedAt,
       exitCode: session.exitCode,
+      startBlockedReason: session.startBlockedReason ?? null,
       agentName: session.agentName ?? null,
       isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
       transient: session.transient,
@@ -658,7 +672,7 @@ export class SessionRegistry {
    * the manager wrapper leaves the renderer dependent on the next
    * `syncSessions()` to learn about the placeholder.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+  registerSuspendedPlaceholder(input: SuspendedPlaceholderInput): Session | null {
     const existingRows = this.listByTaskId(input.taskId);
     if (existingRows.some((row) => row.status !== 'exited')) return null;
     for (const exitedRow of existingRows) {
@@ -682,6 +696,7 @@ export class SessionRegistry {
       exitSequence: ['\x03'],
       // A placeholder spawned nothing, so it runs under no mode.
       permissionMode: null,
+      startBlockedReason: input.startBlockedReason ?? null,
     };
     this.sessions.set(id, session);
     return toSession(session);

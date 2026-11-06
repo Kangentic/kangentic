@@ -2321,4 +2321,12 @@ function migrateWorkflows(db: Database.Database): void {
   if (!sessionHasLaunchFailedAt) {
     db.exec('ALTER TABLE sessions ADD COLUMN launch_failed_at TEXT DEFAULT NULL');
   }
+
+  // Why a start never reached an agent, so a card can say so after a restart too.
+  // NULL for every session that started.
+  const sessionHasStartBlockedReason = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
+    .some((column) => column.name === 'start_blocked_reason');
+  if (!sessionHasStartBlockedReason) {
+    db.exec('ALTER TABLE sessions ADD COLUMN start_blocked_reason TEXT DEFAULT NULL');
+  }
 }

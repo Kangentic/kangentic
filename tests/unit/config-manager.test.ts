@@ -523,10 +523,10 @@ describe('Config Manager -- terminal.* project-override migration', () => {
   });
 });
 
-describe('Config Manager -- agent.cliPaths project seed', () => {
+describe('Config Manager -- agent.cliPaths project reads', () => {
   // agent.cliPaths became project scoped (#286). A project with no paths of its
-  // own takes the global ones on its first read; Settings edits only the
-  // project's copy from then on.
+  // own reads the global ones through the merge, and a read writes nothing into
+  // its config file.
   function projectOverridesPath(projectDir: string): string {
     return path.join(projectDir, '.kangentic', 'config.json');
   }
@@ -540,66 +540,39 @@ describe('Config Manager -- agent.cliPaths project seed', () => {
     fs.writeFileSync(configPath, JSON.stringify({ agent: { cliPaths } }));
   }
 
-  it('copies the configured global paths into a project that has none, keeping its other settings', async () => {
-    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe', codex: null, gemini: '' });
-    const projectDir = path.join(tmpDir, 'proj-seed');
-    writeProjectOverrides(projectDir, { theme: 'forest', agent: { permissionMode: 'plan' } });
-
-    const cm = await createConfigManager();
-    const overrides = cm.loadProjectOverrides(projectDir);
-
-    expect(overrides?.agent).toEqual({ permissionMode: 'plan', cliPaths: { claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' } });
-    expect(overrides?.theme).toBe('forest');
-    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
-    expect(raw.agent.cliPaths).toEqual({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
-  });
-
-  it('leaves a project that already has paths of its own untouched, an empty map included', async () => {
+  it('never writes this instance\'s paths into a project on a read', async () => {
+    // A preview's stub CLI reached all 16 real projects this way: a read of a
+    // project with no `cliPaths` saved the global ones into it.
     writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
-    const ownPaths = path.join(tmpDir, 'proj-own');
-    const emptyPaths = path.join(tmpDir, 'proj-empty');
-    writeProjectOverrides(ownPaths, { agent: { cliPaths: { claude: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude' } } });
-    writeProjectOverrides(emptyPaths, { agent: { cliPaths: {} } });
-    const backdated = new Date(Date.now() - 60_000);
-    fs.utimesSync(projectOverridesPath(ownPaths), backdated, backdated);
-    fs.utimesSync(projectOverridesPath(emptyPaths), backdated, backdated);
-    const ownBefore = fs.statSync(projectOverridesPath(ownPaths)).mtimeMs;
-    const emptyBefore = fs.statSync(projectOverridesPath(emptyPaths)).mtimeMs;
-
-    const cm = await createConfigManager();
-    expect(cm.loadProjectOverrides(ownPaths)?.agent?.cliPaths).toEqual({ claude: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude' });
-    expect(cm.loadProjectOverrides(emptyPaths)?.agent?.cliPaths).toEqual({});
-
-    expect(fs.statSync(projectOverridesPath(ownPaths)).mtimeMs).toBe(ownBefore);
-    expect(fs.statSync(projectOverridesPath(emptyPaths)).mtimeMs).toBe(emptyBefore);
-  });
-
-  it('does not rewrite a project when no global path is configured', async () => {
-    writeGlobalCliPaths({ claude: null });
-    const projectDir = path.join(tmpDir, 'proj-no-global');
-    writeProjectOverrides(projectDir, { theme: 'sky' });
-    const backdated = new Date(Date.now() - 60_000);
-    fs.utimesSync(projectOverridesPath(projectDir), backdated, backdated);
-    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
-
-    const cm = await createConfigManager();
-    const overrides = cm.loadProjectOverrides(projectDir);
-
-    expect(overrides).not.toHaveProperty('agent');
-    expect(fs.statSync(projectOverridesPath(projectDir)).mtimeMs).toBe(before);
-  });
-
-  it('seeds once: a later global change no longer reaches the project', async () => {
-    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\old\\claude.exe' });
-    const projectDir = path.join(tmpDir, 'proj-once');
-    writeProjectOverrides(projectDir, {});
+    const projectDir = path.join(tmpDir, 'proj-no-paths');
+    writeProjectOverrides(projectDir, { theme: 'forest', agent: { permissionMode: 'plan' } });
+    const before = fs.readFileSync(projectOverridesPath(projectDir), 'utf-8');
 
     const cm = await createConfigManager();
     cm.loadProjectOverrides(projectDir);
-    cm.save({ agent: { ...cm.load().agent, cliPaths: { claude: 'C:\\Users\\dev\\new\\claude.exe' } } });
+    cm.getEffectiveConfig(projectDir);
 
-    expect(cm.loadProjectOverrides(projectDir)?.agent?.cliPaths).toEqual({ claude: 'C:\\Users\\dev\\old\\claude.exe' });
-    expect(cm.getEffectiveConfig(projectDir).agent.cliPaths.claude).toBe('C:\\Users\\dev\\old\\claude.exe');
+    expect(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8')).toBe(before);
+  });
+
+  it('resolves the global paths for a project that has none, with nothing written', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
+    const projectDir = path.join(tmpDir, 'proj-inherits');
+    writeProjectOverrides(projectDir, { agent: { permissionMode: 'plan' } });
+
+    const cm = await createConfigManager();
+
+    expect(cm.getEffectiveConfig(projectDir).agent.cliPaths.claude).toBe('C:\\Users\\dev\\.local\\bin\\claude.exe');
+  });
+
+  it('keeps a project\'s own paths, which outrank the global ones', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
+    const projectDir = path.join(tmpDir, 'proj-own');
+    writeProjectOverrides(projectDir, { agent: { cliPaths: { claude: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude' } } });
+
+    const cm = await createConfigManager();
+
+    expect(cm.getEffectiveConfig(projectDir).agent.cliPaths.claude).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude');
   });
 
   it('lets a cleared project path auto-detect instead of falling back to the global value', async () => {

@@ -205,6 +205,10 @@ msgstr "删除已完成任务"
 msgid "Delete task"
 msgstr "删除任务"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Didn't start"
+msgstr ""
+
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Dismiss"
 msgstr "关闭"
@@ -231,6 +235,10 @@ msgid "Edit {columnName} column"
 msgstr "编辑 {columnName} 列"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Folder missing"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgctxt "Agent status"
 msgid "Idle"
 msgstr "空闲"
@@ -242,6 +250,10 @@ msgstr "已空闲 {duration}"
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
 msgstr "如果恢复此任务，将根据分支的最新提交重新创建工作树。"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Its worktree folder is gone. Resume makes it again from the branch."
+msgstr ""
 
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Keep Working"
@@ -417,6 +429,18 @@ msgstr "已复制任务 ID"
 msgid "Task moved"
 msgstr "任务已移动"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The agent never reported that it started."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The folder this agent starts in is gone."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "The terminal could not start. Its window shows why."
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
 msgctxt "Agent status"
@@ -483,6 +507,10 @@ msgstr "工作流"
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
 msgstr "工作流，{workflowCount, plural, other {# 个工作流}}，{runningWorkflowCount, plural, other {# 个运行中}}"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Worktree missing"
+msgstr ""
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
 msgid "You can move it back to the board later."

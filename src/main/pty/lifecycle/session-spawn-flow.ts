@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +16,7 @@ import type { FirstOutputTracker } from './first-output-tracker';
 import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
-import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
+import { AgentCwdMissingError, resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
 import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
 import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hook-transport';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
@@ -263,6 +264,14 @@ export async function performSpawn(
 ): Promise<Session> {
   if (isShuttingDown()) {
     throw new Error('Cannot spawn session during shutdown');
+  }
+
+  // An agent never falls back to the home directory (`resolveSpawnCwd` is for
+  // plain shells). Ahead of the sibling drain, so a respawn into a folder that
+  // went does not kill the old PTY and then refuse. A queued session passes
+  // through here at promotion, so this is also where it looks at its folder again.
+  if (input.agentParser && !fs.existsSync(input.cwd)) {
+    throw new AgentCwdMissingError(input.cwd);
   }
 
   // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI

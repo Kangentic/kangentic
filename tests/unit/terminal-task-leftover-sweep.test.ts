@@ -15,6 +15,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { purgeExpiredSetAside } from '../../src/main/project-ownership/set-aside';
+
+// The real purge, wrapped so a test can read the proof it was handed.
+vi.mock('../../src/main/project-ownership/set-aside', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/project-ownership/set-aside')>();
+  return { ...actual, purgeExpiredSetAside: vi.fn(actual.purgeExpiredSetAside) };
+});
+
 import {
   sweepTerminalTaskLeftovers,
   cleanupStaleResources,
@@ -22,6 +30,7 @@ import {
   _resetTerminalTaskSweepForTests,
   type LeftoverSweepOptions,
 } from '../../src/main/transition-engine/resource-cleanup';
+import { ownershipOf } from './helpers/verified-ownership';
 import type { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import type { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
@@ -258,7 +267,7 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     const tail = makeAsyncTail();
 
     await cleanupStaleResourcesAsync(
-      PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
+      ownershipOf(PROJECT_PATH), tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
     );
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
@@ -277,13 +286,27 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     }
   });
 
+  it('purges the set-aside folder with the same proof it was given', async () => {
+    const tail = makeAsyncTail();
+    const proof = ownershipOf(PROJECT_PATH);
+    const purge = vi.mocked(purgeExpiredSetAside);
+    purge.mockClear();
+
+    await cleanupStaleResourcesAsync(
+      proof, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
+    );
+
+    expect(purge).toHaveBeenCalledTimes(1);
+    expect(purge.mock.calls[0][0]).toBe(proof);
+  });
+
   it('still runs every later pass when the sweep\'s reap throws: a failed sweep never aborts the project open', async () => {
     const tail = makeAsyncTail();
     tail.reapTaskProcesses.mockRejectedValueOnce(new Error('host gone'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await expect(cleanupStaleResourcesAsync(
-      PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
+      ownershipOf(PROJECT_PATH), tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, leftovers(true),
     )).resolves.toBeUndefined();
 
     expect(tail.listAllInSwimlane).toHaveBeenCalled();
@@ -297,7 +320,7 @@ describe('cleanupStaleResources without its leftovers argument', () => {
   it('never reaps: the default is stopping off, so a caller that forgot the setting kills nothing', async () => {
     const tail = makeAsyncTail();
 
-    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo);
+    await cleanupStaleResources(ownershipOf(PROJECT_PATH), tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo);
 
     // The async tail did run (and an archived task was there to sweep), so the
     // missing reap is the default's doing and not a fixture that never got that far.
@@ -309,7 +332,7 @@ describe('cleanupStaleResources without its leftovers argument', () => {
     const tail = makeAsyncTail();
     const options = leftovers(true);
 
-    await cleanupStaleResources(PROJECT_PATH, tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, options);
+    await cleanupStaleResources(ownershipOf(PROJECT_PATH), tail.taskRepo, tail.taskMoveRepo, tail.swimlaneRepo, tail.sessionRepo, tail.sessionManager, tail.automationRunRepo, () => {}, options);
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
   });

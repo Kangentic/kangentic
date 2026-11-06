@@ -4,16 +4,12 @@
  *
  * Covers three contracts:
  *
- *   1. pruneOrphanedTasksAndNotify (module-private): pushes
- *      IPC.TASK_SESSION_RESYNC with the project id only when the awaited
- *      pruneOrphanedWorktreeTasks resolves > 0; guards on
- *      `mainWindow && !mainWindow.isDestroyed()`; swallows a prune rejection
- *      (logs, treats as 0) and never rejects itself, so it never blocks
- *      session recovery. Exercised via its caller activateAllProjects, which
- *      awaits it directly (no setImmediate indirection).
+ *   1. The ownership gate, on all three open paths: only an owner sweeps, a
+ *      foreign folder gets no recovery either, and an unclaimed one still
+ *      recovers its own rows.
  *
  *   2. registerProjectHandlers' PROJECT_OPEN cold-open block: runs inside a
- *      setImmediate callback, in order - await prune -> fire
+ *      setImmediate callback, in order - await the ownership check -> fire
  *      cleanupStaleResourcesAsync WITHOUT awaiting -> await
  *      resumeSuspendedSessions -> await autoSpawnTasks.
  *      `context.recoveredProjects.add(id)` happens SYNCHRONOUSLY before the
@@ -56,7 +52,7 @@ const state = vi.hoisted(() => ({
   // resume between them, and the host-loss restore. Kept apart from `callOrder`,
   // which older cases pin to an exact list.
   restoreTimeline: [] as string[],
-  pruneResult: 0 as number | Error,
+  standing: { kind: 'owned', ownership: { projectPath: '' } } as { kind: string; ownership?: { projectPath: string }; ownerDatabase?: string },
   cleanupError: null as Error | null,
   cleanupGate: null as { promise: Promise<void>; resolve: () => void } | null,
   resumeError: null as Error | null,
@@ -127,6 +123,7 @@ vi.mock('../../src/main/transition-engine/session-startup', () => ({
 vi.mock('../../src/main/ipc/handlers/command-terminal-restore', () => ({
   claimCommandTerminalRestore: vi.fn(() => { state.restoreTimeline.push('claimCommandTerminalRestore'); }),
   startCommandTerminalRestore: vi.fn(async () => { state.restoreTimeline.push('startCommandTerminalRestore'); }),
+  skipCommandTerminalRestore: vi.fn(() => { state.restoreTimeline.push('skipCommandTerminalRestore'); }),
   forgetCommandTerminalRestore: vi.fn(),
   restoreLostCommandTerminals: vi.fn(async (_context: unknown, projectId: string) => {
     state.restoreTimeline.push(`restoreLostCommandTerminals:${projectId}`);
@@ -139,11 +136,23 @@ vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
     if (state.cleanupGate) await state.cleanupGate.promise;
     if (state.cleanupError) throw state.cleanupError;
   }),
-  pruneOrphanedWorktreeTasks: vi.fn(async () => {
-    state.callOrder.push('pruneOrphanedWorktreeTasks');
-    if (state.pruneResult instanceof Error) throw state.pruneResult;
-    return state.pruneResult;
+  sweepAutomationRuns: vi.fn(() => {
+    state.callOrder.push('sweepAutomationRuns');
+    return 0;
   }),
+}));
+
+// Whether a proof is granted is project-ownership.test.ts's business. Here only
+// what each open path does with the answer.
+vi.mock('../../src/main/project-ownership/project-ownership', () => ({
+  verifyProjectOwnership: vi.fn(async () => state.standing),
+}));
+
+// What the spare pool does at open is covered where it lives. Here only whether an
+// open path hands it the proof.
+vi.mock('../../src/main/ipc/helpers/spare-worktrees', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/spare-worktrees')>()),
+  sweepSpareWorktreesAtOpen: vi.fn(),
 }));
 
 vi.mock('../../src/main/git/worktree-manager', () => ({
@@ -170,6 +179,7 @@ vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({})),
   getExistingProjectDb: vi.fn(() => ({})),
   closeProjectDb: vi.fn(),
+  projectDbPath: vi.fn((projectId: string) => `/data/projects/${projectId}.db`),
 }));
 
 vi.mock('../../src/main/config/apply-runtime-config', () => ({
@@ -251,7 +261,7 @@ vi.mock('../../src/main/ipc/helpers/tool-breakdown-repair', () => ({
 // file's exercised code paths that calls swimlaneRepo.list() /
 // taskRepo.countAll() directly rather than merely passing the repo instance
 // to an already-mocked function - every other consumer
-// (pruneOrphanedWorktreeTasks, cleanupStaleResourcesAsync,
+// (cleanupStaleResourcesAsync,
 // resumeSuspendedSessions, autoSpawnTasks) is itself mocked and never invokes
 // a method on the repo it's handed. Left as the REAL trivial-constructor
 // class (per the file header's rationale), swimlaneRepo.list()/
@@ -308,6 +318,7 @@ import {
 } from '../../src/main/ipc/handlers/projects';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
 import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
+import { sweepSpareWorktreesAtOpen } from '../../src/main/ipc/helpers/spare-worktrees';
 import { autoSpawnForTask, ensureGitignore } from '../../src/main/ipc/helpers';
 import {
   claimCommandTerminalRestore,
@@ -430,7 +441,7 @@ beforeEach(() => {
   state.existingPaths.clear();
   state.callOrder = [];
   state.restoreTimeline = [];
-  state.pruneResult = 0;
+  state.standing = { kind: 'owned', ownership: { projectPath: '' } };
   state.cleanupError = null;
   state.cleanupGate = null;
   state.resumeError = null;
@@ -447,68 +458,101 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. pruneOrphanedTasksAndNotify (exercised via activateAllProjects)
+// 1. The ownership gate
 // ---------------------------------------------------------------------------
 
-describe('pruneOrphanedTasksAndNotify (via activateAllProjects)', () => {
-  it('pushes TASK_SESSION_RESYNC with the project id when the prune deletes rows', async () => {
-    const context = createMockContext();
-    const project = makeProject();
+describe('the ownership gate at a cold open', () => {
+  const FOREIGN = { kind: 'foreign', ownerDatabase: '/data/other/projects/project.db' };
+  const UNCLAIMED = { kind: 'unclaimed' };
+
+  async function activate(context: MockContext, project: Project): Promise<void> {
     context.projectRepo.list.mockReturnValue([project]);
     state.existingPaths.add(project.path);
-    state.pruneResult = 3;
-
     await activateAllProjects(asIpcContext(context));
+  }
 
-    expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1);
-    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_SESSION_RESYNC, project.id);
-  });
+  async function openFromSidebar(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.getById.mockReturnValue(project);
+    state.existingPaths.add(project.path);
+    registerProjectHandlers(asIpcContext(context));
+    await capturedHandlers.get(IPC.PROJECT_OPEN)?.(null, project.id);
+    await vi.waitFor(() => expect(state.callOrder.length).toBeGreaterThan(0), { timeout: 2000 });
+  }
 
-  it('does not push TASK_SESSION_RESYNC when the prune deletes nothing', async () => {
-    const context = createMockContext();
-    const project = makeProject();
+  async function openByPath(context: MockContext, project: Project): Promise<void> {
     context.projectRepo.list.mockReturnValue([project]);
     state.existingPaths.add(project.path);
-    state.pruneResult = 0;
+    await openProjectByPath(asIpcContext(context), project.path);
+    await vi.waitFor(() => expect(state.callOrder.length).toBeGreaterThan(0), { timeout: 2000 });
+  }
 
-    await activateAllProjects(asIpcContext(context));
+  describe.each([
+    ['activateAllProjects', activate],
+    ['PROJECT_OPEN', openFromSidebar],
+    ['openProjectByPath', openByPath],
+  ])('%s', (_path, open) => {
+    it('an owner sweeps with its proof, then recovers', async () => {
+      const proof = { projectPath: '/proof' };
+      state.standing = { kind: 'owned', ownership: proof };
 
-    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
-  });
+      await open(createMockContext(), makeProject());
+      await vi.waitFor(() => expect(state.callOrder).toContain('autoSpawnTasks'), { timeout: 2000 });
 
-  it('swallows a prune rejection as 0, never pushes, and never blocks session recovery', async () => {
-    const context = createMockContext();
-    const project = makeProject();
-    context.projectRepo.list.mockReturnValue([project]);
-    state.existingPaths.add(project.path);
-    state.pruneResult = new Error('prune exploded');
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(state.callOrder).toEqual(['cleanupStaleResourcesAsync', 'resumeSuspendedSessions', 'autoSpawnTasks']);
+      expect(vi.mocked(cleanupStaleResourcesAsync).mock.calls[0][0]).toBe(proof);
+    });
 
-    // Must resolve, not reject: a prune failure never propagates.
-    await expect(activateAllProjects(asIpcContext(context))).resolves.toBeUndefined();
+    it('an owner sweeps its spare worktrees with the same proof', async () => {
+      const proof = { projectPath: '/proof' };
+      state.standing = { kind: 'owned', ownership: proof };
+      const context = createMockContext();
 
-    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
-    // Recovery continued past the failed prune: cleanup/resume/autoSpawn all ran.
-    expect(state.callOrder).toEqual([
-      'pruneOrphanedWorktreeTasks',
-      'cleanupStaleResourcesAsync',
-      'resumeSuspendedSessions',
-      'autoSpawnTasks',
-    ]);
-    errorSpy.mockRestore();
-  });
+      await open(context, makeProject());
+      await vi.waitFor(() => expect(state.callOrder).toContain('autoSpawnTasks'), { timeout: 2000 });
 
-  it('does not push when mainWindow is destroyed, even though the prune deleted rows', async () => {
-    const context = createMockContext();
-    const project = makeProject();
-    context.projectRepo.list.mockReturnValue([project]);
-    context.mainWindow.isDestroyed.mockReturnValue(true);
-    state.existingPaths.add(project.path);
-    state.pruneResult = 5;
+      expect(sweepSpareWorktreesAtOpen).toHaveBeenCalledTimes(1);
+      const [calledContext, calledProof] = vi.mocked(sweepSpareWorktreesAtOpen).mock.calls[0];
+      expect(calledContext).toBe(asIpcContext(context));
+      expect(calledProof).toBe(proof);
+    });
 
-    await activateAllProjects(asIpcContext(context));
+    it.each([
+      ['a foreign folder', FOREIGN],
+      ['an unclaimed folder', UNCLAIMED],
+    ])('%s never sweeps spare worktrees', async (_label, standing) => {
+      state.standing = standing;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+      await open(createMockContext(), makeProject());
+      await vi.waitFor(() => expect(state.restoreTimeline.length).toBeGreaterThan(0), { timeout: 2000 });
+      await flushSetImmediate();
+
+      expect(state.callOrder).toContain('sweepAutomationRuns');
+      expect(sweepSpareWorktreesAtOpen).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('a foreign folder is neither swept nor recovered: its database may be a copy', async () => {
+      state.standing = FOREIGN;
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await open(createMockContext(), makeProject());
+      await vi.waitFor(() => expect(state.restoreTimeline).toContain('skipCommandTerminalRestore'), { timeout: 2000 });
+
+      expect(state.callOrder).toEqual(['sweepAutomationRuns']);
+      expect(state.restoreTimeline).not.toContain('startCommandTerminalRestore');
+      warnSpy.mockRestore();
+    });
+
+    it('an unclaimed folder is not swept, and its own rows still recover', async () => {
+      state.standing = UNCLAIMED;
+
+      await open(createMockContext(), makeProject());
+      await vi.waitFor(() => expect(state.callOrder).toContain('autoSpawnTasks'), { timeout: 2000 });
+
+      expect(state.callOrder).toEqual(['sweepAutomationRuns', 'resumeSuspendedSessions', 'autoSpawnTasks']);
+      expect(state.restoreTimeline).toContain('startCommandTerminalRestore');
+    });
   });
 });
 
@@ -616,10 +660,9 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
       expect(state.callOrder).toContain('autoSpawnTasks');
     }, { timeout: 2000 });
 
-    // Full ordering held despite the switch: prune -> cleanup (fired) ->
+    // Full ordering held despite the switch: cleanup (fired) ->
     // resume -> autoSpawn, none skipped.
     expect(state.callOrder).toEqual([
-      'pruneOrphanedWorktreeTasks',
       'cleanupStaleResourcesAsync',
       'resumeSuspendedSessions',
       'autoSpawnTasks',
@@ -873,7 +916,6 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     // One attempt per run: a broken DB is not retried on every switch.
     expect(context.snapshottedProjects.has(project.id)).toBe(true);
     expect(state.callOrder).toEqual([
-      'pruneOrphanedWorktreeTasks',
       'cleanupStaleResourcesAsync',
       'resumeSuspendedSessions',
       'autoSpawnTasks',
@@ -1659,21 +1701,6 @@ describe('the Command Terminal restore around project recovery', () => {
       }
     });
 
-    it('still starts the terminals when the orphan prune rejects', async () => {
-      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      try {
-        const context = createMockContext();
-        const project = makeProject();
-        state.pruneResult = new Error('prune exploded');
-
-        await open(context, project);
-        await waitForAutoSpawn();
-
-        expect(state.restoreTimeline).toEqual(CLAIM_RESUME_START);
-      } finally {
-        errorSpy.mockRestore();
-      }
-    });
   });
 
   // The deferred PROJECT_OPEN body has no outer catch, so a synchronous throw
@@ -2037,7 +2064,6 @@ describe('where each project open sends a task that never had an agent (firstAge
 
 describe('startToolBreakdownRepair (the one-time tool breakdown duration repair)', () => {
   const COLD_OPEN_RECOVERY = [
-    'pruneOrphanedWorktreeTasks',
     'cleanupStaleResourcesAsync',
     'resumeSuspendedSessions',
     'autoSpawnTasks',

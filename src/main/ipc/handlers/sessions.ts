@@ -34,7 +34,8 @@ import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
-import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, StartBlockedReason, TaskResolvePrResult } from '../../../shared/types';
+import { startBlockedReasonForCwd, type AgentCwdMissingError } from '../../pty/spawn/pty-spawn';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -768,6 +769,17 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     });
   };
 
+  /** Why a start failed, on the row for the card and on the record for a restart. */
+  const recordStartBlocked = (sessionId: string, projectId: string, reason: StartBlockedReason): void => {
+    context.sessionManager.markStartBlocked(sessionId, reason);
+    try {
+      new SessionRepository(getProjectDb(projectId)).setStartBlockedReason(sessionId, reason);
+    } catch (error) {
+      // The row already says it. A closed database costs the reason after a restart.
+      console.warn('[SESSION_START] Could not record why a start failed:', error);
+    }
+  };
+
   // The agent-absence sweep found a running session whose CLI is gone and is
   // about to retire it through kill(). That kill is intentional by design, so
   // this is the only moment the CLI's own account of its end can be read.
@@ -805,7 +817,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       retire();
       return;
     }
-    const notifyFailure = (): void => notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
+    const notifyFailure = (): void => {
+      recordStartBlocked(sessionId, projectId, 'never-started');
+      notifyStartupFailureIfNamed(session, 0, projectId, 'The agent never reported that it started.');
+    };
     const retryWindow = new AbortController();
     registerResumeController(session.taskId, retryWindow);
     void pauseTaskSession(context, session.taskId, {
@@ -840,6 +855,39 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       retire();
     }).finally(() => {
       releaseResumeController(session.taskId, retryWindow);
+    });
+  });
+
+  // A queued session reached the front and its folder had gone while it waited
+  // (#1003 waited 17 minutes for the Merge slot). It pauses, so its card shows
+  // Resume, and Resume recreates a worktree. The queue is not the place to run git
+  // and a post-worktree script. A fresh launch is marked failed, so that Resume
+  // starts it with its own prompt: the id minted for it names no conversation.
+  context.sessionManager.on('agent-start-refused', (sessionId: string, session: Session, error: AgentCwdMissingError) => {
+    const retire = (): void => context.sessionManager.retireRefusedStart(sessionId);
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (!projectId) {
+      retire();
+      return;
+    }
+    void pauseTaskSession(context, session.taskId, {
+      projectId,
+      suspendedBy: 'system',
+      stillEligible: (liveSession) => liveSession.id === sessionId,
+      onAccepted: () => {
+        if (!session.resuming) new SessionRepository(getProjectDb(projectId)).markLaunchFailed(sessionId);
+      },
+    }).then((outcome) => {
+      if (outcome !== 'paused') {
+        retire();
+        return;
+      }
+      recordStartBlocked(sessionId, projectId, startBlockedReasonForCwd(error.cwd));
+      const task = new TaskRepository(getProjectDb(projectId)).getById(session.taskId);
+      if (task) notifySpawnBlocked(context, task, 'agent', error, projectId);
+    }).catch((pauseError: unknown) => {
+      console.warn('[SESSION_QUEUE] Pause after a refused start failed:', pauseError);
+      retire();
     });
   });
 

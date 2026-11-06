@@ -61,6 +61,51 @@ describe('sessions.launch_failed_at', () => {
   });
 });
 
+describe('sessions.start_blocked_reason', () => {
+  function reasonColumns(database: Database.Database): Array<{ name: string; type: string; dflt_value: string | null }> {
+    return (database.pragma('table_info(sessions)') as Array<{ name: string; type: string; dflt_value: string | null }>)
+      .filter((column) => column.name === 'start_blocked_reason');
+  }
+
+  it('is added in place to a sessions table made before it, and a second run changes nothing', () => {
+    const database = openProjectDatabase();
+    new SessionRepository(database).insert({ ...BASE_ROW, id: 'session-old' });
+    database.exec('ALTER TABLE sessions DROP COLUMN start_blocked_reason');
+
+    runProjectMigrations(database);
+    expect(reasonColumns(database)).toEqual([expect.objectContaining({ type: 'TEXT', dflt_value: 'NULL' })]);
+    expect(new SessionRepository(database).getLatestForTask('task-1')?.start_blocked_reason).toBeNull();
+
+    expect(() => runProjectMigrations(database)).not.toThrow();
+    expect(reasonColumns(database)).toHaveLength(1);
+  });
+
+  it('survives on the newest record when a retry fails too, which is the record a restart reads', () => {
+    // The launch that retried is the one the failure is recorded against, so the
+    // reason never sits on a record a newer one has replaced.
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    repository.insert({ ...BASE_ROW, id: 'session-first' });
+    repository.insert({ ...BASE_ROW, id: 'session-retry', started_at: '2026-01-01T00:00:05.000Z' });
+
+    repository.setStartBlockedReason('session-retry', 'never-started');
+
+    expect(repository.getLatestForTask('task-1')).toMatchObject({ id: 'session-retry', start_blocked_reason: 'never-started' });
+  });
+
+  it('starts clear on a new record, so the next start drops the reason', () => {
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    repository.insert({ ...BASE_ROW, id: 'session-failed' });
+    repository.setStartBlockedReason('session-failed', 'folder-missing');
+
+    const next = repository.insert({ ...BASE_ROW, id: 'session-next', started_at: '2026-01-01T00:00:05.000Z' });
+
+    expect(next.start_blocked_reason).toBeNull();
+    expect(repository.getLatestForTask('task-1')?.start_blocked_reason).toBeNull();
+  });
+});
+
 describe('SessionRepository.markLaunchFailed', () => {
   it('writes a UTC ISO timestamp for that record only', () => {
     const database = openProjectDatabase();

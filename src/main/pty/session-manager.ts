@@ -42,7 +42,8 @@ import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
-import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
+import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
+import { AgentCwdMissingError, startBlockedReasonForCwd } from './spawn/pty-spawn';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
@@ -72,6 +73,7 @@ import type {
   PerToolStat,
   PtyResizeOrigin,
   SessionResizeResult,
+  StartBlockedReason,
   StoredCliTarget,
 } from '../../shared/types';
 import type {
@@ -668,6 +670,12 @@ export class SessionManager extends EventEmitter {
         } catch (error) {
           // A teardown took the session over while it spawned: not a failure.
           if (isAbortError(error)) return;
+          // Its folder went while it waited. The queue moves on either way, so
+          // the row is settled here, or the card would read Queued for good.
+          if (error instanceof AgentCwdMissingError && input.id) {
+            this.refuseQueuedStart(input.id, error);
+            return;
+          }
           throw error;
         } finally {
           this.spawningCount--;
@@ -2485,6 +2493,9 @@ export class SessionManager extends EventEmitter {
     this.spawningCount++;
     try {
       return await this.doSpawn(input);
+    } catch (error) {
+      if (error instanceof AgentCwdMissingError) this.showRefusedStart(input);
+      throw error;
     } finally {
       this.spawningCount--;
       // Essential on failure path (doSpawn throws before onExit is registered).
@@ -2492,6 +2503,40 @@ export class SessionManager extends EventEmitter {
       // the real promotion happens later in onExit when the PTY exits.
       this.sessionQueue.notifySlotFreed();
     }
+  }
+
+  /**
+   * A direct start refused because its folder is gone. The caller raises the
+   * notice, but a toast closes, so the card holds the reason too: a suspended
+   * row, which is also what gives the task its Resume. A row the task already
+   * has takes the reason instead, and a live one is left as it is, since the old
+   * agent kept running through the refusal.
+   */
+  private showRefusedStart(input: SpawnSessionInput): void {
+    if (input.transient) return;
+    const reason = startBlockedReasonForCwd(input.cwd);
+    const placeholder = this.registerSuspendedPlaceholder({
+      taskId: input.taskId,
+      projectId: input.projectId,
+      cwd: input.cwd,
+      startBlockedReason: reason,
+    });
+    if (placeholder) return;
+    const paused = this.registry.listByTaskId(input.taskId).find((row) => row.status === 'suspended');
+    if (paused) this.markStartBlocked(paused.id, reason);
+  }
+
+  /**
+   * A queued start refused because its folder is gone. A task's listener pauses
+   * it and says why (`ipc/handlers/sessions.ts`). `emit` is false with no
+   * listener, and a transient session has no task to pause.
+   */
+  private refuseQueuedStart(sessionId: string, error: AgentCwdMissingError): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    console.warn(`[SessionManager] Refused to start queued session ${sessionId.slice(0, 8)}: ${error.message}`);
+    if (!session.transient && this.emit('agent-start-refused', sessionId, toSession(session), error)) return;
+    this.retireRefusedStart(sessionId);
   }
 
   /**
@@ -2779,6 +2824,32 @@ export class SessionManager extends EventEmitter {
     if (!session || session.hasUserInput) return;
     session.hasUserInput = true;
     this.emit('session-changed', sessionId, toSession(session));
+  }
+
+  /** Put the reason a start failed on its row, for the card. A row already replaced is a no-op. */
+  markStartBlocked(sessionId: string, reason: StartBlockedReason): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    session.startBlockedReason = reason;
+    this.emit('session-changed', sessionId, toSession(session));
+  }
+
+  /**
+   * A promotion refused for a missing folder, when no task can hold the failure:
+   * nothing paused the row, so it is taken off `queued` here or it stays there.
+   * A Command Terminal ends, and anything else exits as a failed spawn does.
+   */
+  retireRefusedStart(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session || session.status !== 'queued') return;
+    if (isCommandTerminalSession(session)) {
+      this.endCommandTerminalForAgentExit(sessionId, session, { immediate: true });
+      return;
+    }
+    session.status = 'exited';
+    session.exitCode = -1;
+    this.emit('session-changed', sessionId, toSession(session));
+    this.emit('exit', sessionId, -1);
   }
 
   /**
@@ -4914,7 +4985,7 @@ export class SessionManager extends EventEmitter {
    * syncSessions(), leaving a window where stale sessions[] entries from
    * before a project switch can mask the real placeholder state.
    */
-  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session | null {
+  registerSuspendedPlaceholder(input: SuspendedPlaceholderInput): Session | null {
     const exitedRows = this.registry.listByTaskId(input.taskId).filter((row) => row.status === 'exited');
     const session = this.registry.registerSuspendedPlaceholder(input);
     if (!session) return null;

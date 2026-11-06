@@ -15,6 +15,8 @@ sources:
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
   - resource: src/main/git/removed-worktrees.ts
+  - resource: src/main/project-ownership/project-ownership.ts
+  - resource: src/main/project-ownership/set-aside.ts
   - resource: src/main/git/spare-worktree.ts
   - resource: src/main/worktree-task-lookup.ts
   - resource: src/main/window-utils.ts
@@ -544,10 +546,22 @@ the next open.
 
 ### On Project Open
 
-- **`pruneOrphanedWorktreeTasks()`** (`src/main/transition-engine/resource-cleanup.ts`) -- Scans the tasks whose `worktree_path` directory is gone and deletes them, except a task in a To Do lane (a To Do move removes the directory before it clears `worktree_path`, so the To Do sweep clears those fields instead), a workflow task, and a task with a running or queued session. It re-reads the lane after its existence probes, so a task moved to To Do during the probes is kept.
+Every pass below takes a `VerifiedOwnership`, so an instance that does not own the folder runs none of them (`.claude/rules/project-folder-ownership.md`). On 2026-11-05 a second instance with a copy of `index.db` and empty per-project databases read every folder as orphaned and deleted 23 worktrees, 1,811 session folders and 113 task folders across 16 projects.
+
+The proof is a token in the per-project database (`schema_meta.folder_owner_token`), mirrored in `.kangentic/project-owner.json`. `verifyProjectOwnership` reads the two once per cold open and answers one of three ways:
+
+- `owned`: the marker names this database and the token matches. A relocated project stays owned, and its marker's path is refreshed.
+- `foreign`: the marker was written for this folder and names another database that still exists. That covers a fresh database and a full copy of the data directory, which holds the same token. Nothing is swept, recovered or started there, and the marker is left alone.
+- `unclaimed`: no valid marker and no evidence. Nothing is swept, and the database's own rows still recover.
+
+With no valid marker (every project before this shipped, a copied folder, a moved data directory) a database claims the folder only if it holds a task and a row names an entry on disk, or the swept folders are empty. An empty database never claims.
+
+- **A task whose worktree folder is gone** keeps its card. Nothing deletes it: the branch is intact, and Resume recreates the folder at the same path (`createWorktree` prunes first, because git refuses a path still registered). See [Crash recovery](../sessions/crash-recovery.md) for what the startup passes do with it.
 - **`retryFailedDoneCleanups()`** - Every Done task whose `worktree_path` is still set: a removal that failed, or a quit before the Done move reached it. It moves the worktree aside as a Done move does, and removes it in place only when that fails.
 - **The spare worktree's startup pass** (`sweepSpareWorktreesAtOpen`, beside `cleanupStaleResourcesAsync`) - Discards a `spare_` folder no task names whose build was cut off (no ready record) or whose settings are stale, and keeps a ready one. The orphan sweep never takes a `spare_` folder. See [The spare worktree](worktree-creation.md#the-spare-worktree).
 - **`scheduleRemovedWorktreeDeletion()`** - Starts the deleter on `.kangentic/removed-worktrees/`, so a copy a quit left behind is deleted on the next open. Starting it again while it runs only makes it list the folder once more.
+- **`pruneOrphanedDirectories()`** - Clears folders under `worktrees/`, `sessions/` and `tasks/` that no row or live session names and that are past a 10 minute grace. It counts first and clears nothing in a folder where 5 or more orphans are over half of it, reporting that refusal to Sentry. `worktrees/` and `tasks/` entries move to `.kangentic/set-aside/<kind>/`, because a worktree can hold uncommitted work and a task folder holds attachments with no other copy. `sessions/` entries are deleted. A failed move keeps the folder.
+- **`purgeExpiredSetAside()`** - Deletes what has been set aside for 14 days, read from the time in the entry's name, because a rename keeps the old mtime. To restore one, move it back by hand before then.
 
 ### On Project Close/Delete
 

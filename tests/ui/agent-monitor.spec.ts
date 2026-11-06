@@ -469,6 +469,12 @@ test.describe('agent monitor', () => {
       await expect(parked.getByLabel('Paused', { exact: true })).toHaveCount(0);
       await expect(parked.locator('[data-testid="monitor-card-usage"]')).toHaveCount(0);
 
+      // A start that never reached an agent says so here as on the board card.
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused' ? Object.assign({}, row, { startBlockedReason: 'never-started' }) : row
+      ))));
+      await expect(parked.locator('[data-testid="monitor-card-status"]')).toHaveText('Didn\'t start');
+
       // A running agent that has not named its model yet is still starting, and
       // a queued session is waiting for a slot.
       await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => {

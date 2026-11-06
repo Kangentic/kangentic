@@ -68,6 +68,30 @@ export function assertRemovedWorktreeEntry(projectPath: string, entryPath: strin
 }
 
 /**
+ * Rename `sourcePath` into `root` under a name unique per move, which also
+ * records when it moved (`asideTimeOf`). Throws when the rename fails, with
+ * nothing moved.
+ */
+export async function moveIntoFolderWithUniqueName(root: string, sourcePath: string): Promise<string> {
+  const uniqueName = `${path.basename(sourcePath)}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  const destination = path.join(root, uniqueName);
+  await fs.promises.mkdir(root, { recursive: true });
+  await renameWithRetry(sourcePath, destination);
+  return destination;
+}
+
+/** Older than anything `moveIntoFolderWithUniqueName` wrote, so the "time" is a word. */
+const EARLIEST_ASIDE_TIME_MS = Date.UTC(2026, 0, 1);
+
+/** When `moveIntoFolderWithUniqueName` made this name, or null for any other name. */
+export function asideTimeOf(name: string): number | null {
+  const match = /-([0-9a-z]+)-[0-9a-f]{6}$/.exec(name);
+  if (!match) return null;
+  const movedAtMs = parseInt(match[1], 36);
+  return Number.isFinite(movedAtMs) && movedAtMs >= EARLIEST_ASIDE_TIME_MS ? movedAtMs : null;
+}
+
+/**
  * Rename `worktreePath` into the removed-worktrees folder. The name is unique
  * per move, because a task can reach Done again before its first copy is gone.
  * Returns the new path, or null when the rename failed: a process still holds
@@ -75,13 +99,8 @@ export function assertRemovedWorktreeEntry(projectPath: string, entryPath: strin
  * it), or the folders are on different volumes. On null nothing moved.
  */
 export async function moveIntoRemovedWorktrees(projectPath: string, worktreePath: string): Promise<string | null> {
-  const root = removedWorktreesRootFor(projectPath);
-  const uniqueName = `${path.basename(worktreePath)}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
-  const destination = path.join(root, uniqueName);
   try {
-    await fs.promises.mkdir(root, { recursive: true });
-    await renameWithRetry(worktreePath, destination);
-    return destination;
+    return await moveIntoFolderWithUniqueName(removedWorktreesRootFor(projectPath), worktreePath);
   } catch (error) {
     const errnoError = error as NodeJS.ErrnoException;
     console.warn(

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from '../../git/original-fs';
 import { ipcMain } from 'electron';
+import type Database from 'better-sqlite3';
 import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX, PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../../shared/ipc-channels';
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
@@ -10,10 +11,12 @@ import {
   claimCommandTerminalRestore,
   forgetCommandTerminalRestore,
   restoreLostCommandTerminals,
+  skipCommandTerminalRestore,
   startCommandTerminalRestore,
   type LostCommandTerminal,
 } from './command-terminal-restore';
-import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
+import { cleanupStaleResourcesAsync, sweepAutomationRuns } from '../../transition-engine/resource-cleanup';
+import { verifyProjectOwnership, type ProjectStanding } from '../../project-ownership/project-ownership';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
@@ -22,7 +25,7 @@ import { deleteRemovedWorktreesNow } from '../../git/removed-worktrees';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
-import { getProjectDb, getExistingProjectDb, closeProjectDb } from '../../db/database';
+import { getProjectDb, getExistingProjectDb, closeProjectDb, projectDbPath } from '../../db/database';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
@@ -499,28 +502,110 @@ async function resolveDefaultAgent(configManager: ConfigManager): Promise<string
   return DEFAULT_AGENT;
 }
 
+/** What a cold open's startup passes read, opened once per open. */
+interface ColdOpenRepositories {
+  db: Database.Database;
+  taskRepo: TaskRepository;
+  sessionRepo: SessionRepository;
+  swimlaneRepo: SwimlaneRepository;
+  automationRunRepo: AutomationRunRepository;
+  taskMoveRepo: TaskMoveRepository;
+}
+
+function coldOpenRepositories(db: Database.Database): ColdOpenRepositories {
+  return {
+    db,
+    taskRepo: new TaskRepository(db),
+    sessionRepo: new SessionRepository(db),
+    swimlaneRepo: new SwimlaneRepository(db),
+    automationRunRepo: new AutomationRunRepository(db),
+    taskMoveRepo: new TaskMoveRepository(db),
+  };
+}
+
 /**
- * Await the orphan-worktree prune for a project and, when it actually deleted
- * rows, push a TASK_SESSION_RESYNC so the renderer reloads (or invalidates)
- * that project's board. The prune runs off the awaited open path now, so the
- * renderer's first task-list load can race it and briefly show a task the
- * prune is about to delete; the push closes that window. Never rejects -
- * a prune failure must not block session recovery.
+ * This instance's standing on the project's folder, read once per cold open
+ * before anything sweeps or starts (`project-folder-ownership.md`). Never rejects.
  */
-async function pruneOrphanedTasksAndNotify(
+async function verifyOwnershipAtOpen(project: Project, repositories: ColdOpenRepositories): Promise<ProjectStanding> {
+  const standing = await verifyProjectOwnership(
+    project.path,
+    projectDbPath(project.id),
+    repositories.db,
+    repositories.taskRepo,
+    repositories.sessionRepo,
+  );
+  if (standing.kind === 'foreign') {
+    console.warn(`[PROJECT_OPEN] ${project.name} belongs to another database (${standing.ownerDatabase}), so nothing is swept or started in it`);
+  } else if (standing.kind === 'unclaimed') {
+    console.log(`[PROJECT_OPEN] Nothing in ${project.name} is swept this open: this database has shown no claim to its folder`);
+  }
+  return standing;
+}
+
+/**
+ * The fire-and-forget half of a cold open. Only an owner sweeps. Without the
+ * proof, the one thing left to do is close out this database's own automation
+ * runs, which reads no folder.
+ */
+function runStartupCleanup(
   context: IpcContext,
   project: Project,
-  taskRepo: TaskRepository,
-  swimlaneRepo: SwimlaneRepository,
-  sessionRepo: SessionRepository,
+  standing: ProjectStanding,
+  repositories: ColdOpenRepositories,
+): void {
+  const { taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, automationRunRepo } = repositories;
+  const onRunsInterrupted = notifyRunsInterrupted(context, project.id);
+  if (standing.kind !== 'owned') {
+    const interrupted = sweepAutomationRuns(automationRunRepo);
+    if (interrupted > 0) onRunsInterrupted(interrupted);
+    return;
+  }
+  cleanupStaleResourcesAsync(standing.ownership, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, onRunsInterrupted, leftoverSweepOptions(context, project.path))
+    .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
+  sweepSpareWorktreesAtOpen(context, standing.ownership, taskRepo);
+}
+
+/**
+ * What a cold open does once its database is open: verify ownership, sweep, bring
+ * back what the database says was running, then start what its spawning columns
+ * are missing. A foreign folder gets no recovery: its database may be a copy, and
+ * its agents are already running in the instance that owns it.
+ *
+ * On a failure a user's open logs it and carries on. `stopOnFailure` rejects
+ * instead, for a background activation, which must stay cold so the user's next
+ * open retries recovery.
+ */
+async function runColdOpenPasses(
+  context: IpcContext,
+  project: Project,
+  repositories: ColdOpenRepositories,
+  { stopOnFailure }: { stopOnFailure: boolean },
 ): Promise<void> {
-  const pruned = await pruneOrphanedWorktreeTasks(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-    .catch((error) => {
-      console.error(`[PROJECT_OPEN] Worktree prune failed for ${project.name}:`, error);
-      return 0;
-    });
-  if (pruned > 0 && context.mainWindow && !context.mainWindow.isDestroyed()) {
-    context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, project.id);
+  const standing = await verifyOwnershipAtOpen(project, repositories);
+  const recovers = standing.kind !== 'foreign';
+  const boardProfiles = (): ReturnType<IpcContext['boardConfigManager']['getBoardProfiles']> => context.boardConfigManager.getBoardProfiles(project.path);
+  try {
+    runStartupCleanup(context, project, standing, repositories);
+    if (recovers) {
+      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+    }
+  } catch (error) {
+    if (stopOnFailure) throw error;
+    console.error('[PROJECT_OPEN] Session recovery failed:', error);
+  } finally {
+    // After the resume, so tasks keep first claim on the session cap, and not
+    // awaited: it never rejects, and a task's first agent need not wait on it.
+    // In a `finally`, so a chain that throws settles its claims.
+    if (recovers) void startCommandTerminalRestore(context, project.id);
+    else skipCommandTerminalRestore(context, project.id);
+  }
+  if (!recovers) return;
+  try {
+    await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), { startFirstAgent: firstAgentStarter(context, project.id) });
+  } catch (error) {
+    if (stopOnFailure) throw error;
+    console.error('[PROJECT_OPEN] Session reconciliation failed:', error);
   }
 }
 
@@ -726,39 +811,20 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     // Stays synchronous: guards a rapid double-open from re-running recovery.
     context.recoveredProjects.add(project.id);
 
-    const db = getProjectDb(project.id);
-    const taskRepo = new TaskRepository(db);
-    const sessionRepo = new SessionRepository(db);
-    const swimlaneRepo = new SwimlaneRepository(db);
-    const automationRunRepo = new AutomationRunRepository(db);
-    const taskMoveRepo = new TaskMoveRepository(db);
+    const repositories = coldOpenRepositories(getProjectDb(project.id));
 
     // Before anything can list Earlier, which would end the rows it restores from.
     claimCommandTerminalRestore(context, project.id);
 
-    // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
-    // before session recovery reads the DB, but the whole chain runs off the
-    // awaited open path. The remaining passes (backlog cleanup + orphan
-    // directory removal) run hundreds of filesystem ops on repos with
-    // leftover worktrees and previously blocked recovery for minutes, so
+    // The whole chain runs off the awaited open path. The cleanup passes (backlog
+    // cleanup + orphan directory removal) run hundreds of filesystem ops on repos
+    // with leftover worktrees and previously blocked recovery for minutes, so
     // they are fired without awaiting.
     const openedProject = project;
-    runWithProjectLogContext(project.name, () =>
-      pruneOrphanedTasksAndNotify(context, openedProject, taskRepo, swimlaneRepo, sessionRepo)
-        .then(() => {
-          cleanupStaleResourcesAsync(openedProject.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
-            .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
-          sweepSpareWorktreesAtOpen(context, openedProject.path, taskRepo);
-          return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
-        })
-        .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        // After the resume, so tasks keep first claim on the session cap, and not
-        // awaited: it never rejects, and a task's first agent need not wait on it.
-        .then(() => { void startCommandTerminalRestore(context, openedProject.id); })
-        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), { startFirstAgent: firstAgentStarter(context, openedProject.id) }))
-        .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err))
-        .then(() => startToolBreakdownRepair(openedProject)),
-    );
+    runWithProjectLogContext(project.name, async () => {
+      await runColdOpenPasses(context, openedProject, repositories, { stopOnFailure: false });
+      startToolBreakdownRepair(openedProject);
+    }).catch((error) => console.error('[PROJECT_OPEN] Cold open failed:', error));
   }
 
   return project;
@@ -975,31 +1041,13 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       // Awaited (not fire-and-forget) to keep per-project sequencing
       // deterministic; this whole closure already runs in the background.
       await ensureGitignore(project.path);
-      const db = timeSyncWork('project:activate-open-db', () => getProjectDb(project.id));
-      const taskRepo = new TaskRepository(db);
-      const sessionRepo = new SessionRepository(db);
-      const swimlaneRepo = new SwimlaneRepository(db);
-      const automationRunRepo = new AutomationRunRepository(db);
-      const taskMoveRepo = new TaskMoveRepository(db);
+      const repositories = coldOpenRepositories(timeSyncWork('project:activate-open-db', () => getProjectDb(project.id)));
 
-      // See openProjectByPath: before anything can list Earlier, and started
-      // after the resume. In a `finally`, so a chain that throws settles its claims.
+      // See openProjectByPath: before anything can list Earlier.
       claimCommandTerminalRestore(context, project.id);
-      try {
-        // See openProjectByPath for rationale: the awaited prune ensures
-        // recovery reads a clean DB; the slow async passes run in the
-        // background and may still be in flight when activateAllProjects
-        // resolves.
-        await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
-        cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
-          .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
-        sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
-
-        await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
-      } finally {
-        void startCommandTerminalRestore(context, project.id);
-      }
-      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, project.id) });
+      // See openProjectByPath for rationale: the slow async passes run in the
+      // background and may still be in flight when activateAllProjects resolves.
+      await runColdOpenPasses(context, project, repositories, { stopOnFailure: true });
       // Deliberately AFTER the chain (unlike the open paths, which mark up
       // front to guard rapid double-opens): a failed background activation
       // stays cold, so the user's next explicit open retries recovery.
@@ -1134,32 +1182,11 @@ export function registerProjectHandlers(context: IpcContext): void {
       // attach.
       setImmediate(() => {
         runWithProjectLogContext(project.name, async () => {
-          const db = getProjectDb(id);
-          const taskRepo = new TaskRepository(db);
-          const sessionRepo = new SessionRepository(db);
-          const swimlaneRepo = new SwimlaneRepository(db);
-          const automationRunRepo = new AutomationRunRepository(db);
-          const taskMoveRepo = new TaskMoveRepository(db);
+          const repositories = coldOpenRepositories(getProjectDb(id));
 
-          // See openProjectByPath: before anything can list Earlier, and started
-          // after the resume. In a `finally`, so a chain that throws settles its claims.
+          // See openProjectByPath: before anything can list Earlier.
           claimCommandTerminalRestore(context, id);
-          try {
-            // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
-            // completes before session recovery reads the DB; the slow
-            // filesystem passes are fired without awaiting.
-            await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
-            cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
-              .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
-            sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
-
-            await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
-              .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
-          } finally {
-            void startCommandTerminalRestore(context, id);
-          }
-          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, id) })
-            .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
+          await runColdOpenPasses(context, project, repositories, { stopOnFailure: false });
           startToolBreakdownRepair(project);
         });
       });
