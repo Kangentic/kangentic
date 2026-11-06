@@ -67,7 +67,7 @@ vi.mock('../../src/main/git/worktree-manager', async (importOriginal) => {
 
 vi.mock('../../src/main/git/git-checks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/git/git-checks')>();
-  return { ...actual, isGitRepo: (...args: unknown[]) => mockIsGitRepo(...args) };
+  return { ...actual, isProjectGitRepo: (...args: unknown[]) => mockIsGitRepo(...args) };
 });
 
 // Defensive: imported (directly or transitively) by task-commands.ts. Stubbed so

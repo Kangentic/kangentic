@@ -6,7 +6,14 @@ import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attac
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
-import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
+import {
+  addPreparedAttachments,
+  attachmentFailureNote,
+  fetchHostAttachments,
+  readLocalAttachments,
+  type AttachmentRequest,
+  type PreparedAttachments,
+} from './attachment-input';
 import { resolveForceFresh, resolveSessionTarget } from '../../transition-engine/session-isolation';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
@@ -33,7 +40,8 @@ import { linkPRForTask } from '../../pr/pr-linking';
 import { prReadinessNote } from '../../pr/pr-readiness-note';
 import { prNumberFromUrl } from '../../../shared/pr-url';
 import { WorktreeManager } from '../../git/worktree-manager';
-import { isGitRepo } from '../../git/git-checks';
+import { isProjectGitRepo } from '../../git/git-checks';
+import { RemoteGitUnavailableError } from '../../git/remote-git';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { NEVER_AUTO_SPAWN_ROLES, type Task, type TaskUpdateInput, type PermissionMode, type PlanApproval, type TaskRunMode, type Swimlane } from '../../../shared/types';
@@ -184,23 +192,31 @@ function scheduleLinkTimeResolve(
  * (which this same guard rejects, so it is a guaranteed loop).
  *
  * Fails OPEN. A probe that throws (git missing, corrupt repo) must never block a
- * create it cannot reason about.
+ * create it cannot reason about. A remote project's agent is told so: its host going
+ * quiet is a reason the check did not run, and the create still stands.
  */
 async function describeBranchConflict(
   projectPath: string,
   branchName: string,
-): Promise<string | null> {
-  if (!isGitRepo(projectPath)) return null;
+): Promise<{ conflict: string | null; unchecked: string | null }> {
+  if (!isProjectGitRepo(projectPath)) return { conflict: null, unchecked: null };
 
   let holdingPath: string | null;
   try {
     holdingPath = await new WorktreeManager(projectPath).findWorktreeHoldingBranch(branchName);
   } catch (error) {
     console.warn(`[create_task] Could not check whether branch "${branchName}" is in use:`, error);
-    return null;
+    const unchecked = error instanceof RemoteGitUnavailableError
+      ? ` Branch '${branchName}' was not checked against the host's worktrees: ${error.message}`
+      : null;
+    return { conflict: null, unchecked };
   }
-  if (!holdingPath) return null;
+  if (!holdingPath) return { conflict: null, unchecked: null };
 
+  return { conflict: branchConflictMessage(branchName, holdingPath), unchecked: null };
+}
+
+function branchConflictMessage(branchName: string, holdingPath: string): string {
   return `Cannot create this task: branch '${branchName}' is already checked out at ${holdingPath}. `
     + `Git allows a branch in only one working tree at a time, so this task's worktree could not be `
     + `created and its agent would never start. No task was created. Retrying this same call will `
@@ -318,9 +334,11 @@ export const handleCreateTask: CommandHandler = async (
   // both simpler and correct for a task filed into a quiet column today and
   // dragged into a spawning one tomorrow. Runs after the Backlog early-return
   // above, which ignores `branchName` entirely.
+  let branchNote = '';
   if (branchName) {
-    const conflict = await describeBranchConflict(context.getProjectPath(), branchName);
+    const { conflict, unchecked } = await describeBranchConflict(context.getProjectPath(), branchName);
     if (conflict) return { success: false, error: conflict };
+    branchNote = unchecked ?? '';
   }
 
   const db = context.getProjectDb();
@@ -333,6 +351,11 @@ export const handleCreateTask: CommandHandler = async (
     return { success: false, error: resolution.error };
   }
   const { swimlane: targetSwimlane } = resolution;
+
+  // Read before the row exists: a host's files take a moment, and the board shows nothing half made meanwhile.
+  const prepared = attachments && attachments.length > 0
+    ? await fetchHostAttachments(attachments, context) ?? readLocalAttachments(attachments)
+    : null;
 
   const task = taskRepo.create({
     title,
@@ -381,17 +404,16 @@ export const handleCreateTask: CommandHandler = async (
   }
 
   // Process file attachments if provided
-  if (attachments && attachments.length > 0) {
+  let attachmentNote = '';
+  if (prepared) {
     const attachmentRepo = new AttachmentRepository(db);
     const projectPath = context.getProjectPath();
-    for (const entry of attachments) {
-      try {
-        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
-        attachmentRepo.add(projectPath, task.id, fileData.filename, fileData.base64Data, fileData.mediaType);
-      } catch (error) {
-        console.error(`[create_task] Failed to attach file "${entry.filePath}":`, error);
-      }
-    }
+    const { failures } = addPreparedAttachments(
+      prepared,
+      (file) => attachmentRepo.add(projectPath, task.id, file.filename, file.base64Data, file.mediaType),
+      'create_task',
+    );
+    attachmentNote = attachmentFailureNote(failures);
   }
 
   context.onTaskCreated(createdTask, targetSwimlane.name, targetSwimlane.id);
@@ -411,14 +433,26 @@ export const handleCreateTask: CommandHandler = async (
       automationsDisabled: createdTask.automations_disabled,
     },
     message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`
-      + (createdTask.automations_disabled ? '. Its column automations are paused.' : ''),
+      + (createdTask.automations_disabled ? '. Its column automations are paused.' : '')
+      + branchNote
+      + attachmentNote,
   };
 };
 
 export const handleUpdateTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): CommandResponse | Promise<CommandResponse> => {
+  // A host's files take a round trip. A project here stays synchronous, as its callers read it.
+  const fromHost = fetchHostAttachments(params.attachments as AttachmentRequest[] | null | undefined, context);
+  return fromHost ? fromHost.then((prepared) => applyTaskUpdate(params, context, prepared)) : applyTaskUpdate(params, context, null);
+};
+
+function applyTaskUpdate(
+  params: Record<string, unknown>,
+  context: CommandContext,
+  hostAttachments: PreparedAttachments | null,
+): CommandResponse {
   const taskId = params.taskId as string;
   // Every field gated on `!== null` below is normalized to null, so an omitted
   // key reads the same as the explicit `null` the MCP tool layer forwards,
@@ -598,18 +632,17 @@ export const handleUpdateTask: CommandHandler = (
 
   // Attach files if provided (additive - existing attachments are untouched).
   let attachmentsAdded = 0;
+  let attachmentNote = '';
   if (newAttachments && newAttachments.length > 0) {
     const attachmentRepo = new AttachmentRepository(db);
     const projectPath = context.getProjectPath();
-    for (const entry of newAttachments) {
-      try {
-        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
-        attachmentRepo.add(projectPath, task.id, fileData.filename, fileData.base64Data, fileData.mediaType);
-        attachmentsAdded += 1;
-      } catch (error) {
-        console.error(`[update_task] Failed to attach file "${entry.filePath}":`, error);
-      }
-    }
+    const { added, failures } = addPreparedAttachments(
+      hostAttachments ?? readLocalAttachments(newAttachments),
+      (file) => attachmentRepo.add(projectPath, task.id, file.filename, file.base64Data, file.mediaType),
+      'update_task',
+    );
+    attachmentsAdded = added;
+    attachmentNote = attachmentFailureNote(failures);
     // Re-fetch so the response and onTaskUpdated carry the fresh derived attachment_count.
     updated = taskRepo.getById(task.id) ?? updated;
   }
@@ -623,7 +656,7 @@ export const handleUpdateTask: CommandHandler = (
   if (!hasScalarChange && attachmentsAdded === 0 && !planApprovalChanged) {
     const attachmentsRequested = newAttachments?.length ?? 0;
     return attachmentsRequested > 0
-      ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.` }
+      ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.${attachmentNote}` }
       : { success: false, error: 'No fields provided to update' };
   }
 
@@ -686,7 +719,8 @@ export const handleUpdateTask: CommandHandler = (
       + (settingsChanged && updated.session_id
         ? ' A running session restarts if it is not already on these settings, which ends its current turn.'
           + ' A queued session starts with them.'
-        : ''),
+        : '')
+      + attachmentNote,
     data: {
       id: updated.id,
       displayId: updated.display_id,
@@ -712,7 +746,7 @@ export const handleUpdateTask: CommandHandler = (
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };
-};
+}
 
 /**
  * The anchors the ladder searched for a task, for a not-found message that
