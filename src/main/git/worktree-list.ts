@@ -123,8 +123,7 @@ export async function enumerateWorktrees(
     const records = await mapWithConcurrency(
       mapToThisComputer(parsed, project, paths),
       WORKTREE_READ_CONCURRENCY,
-      // host-value-ok: the row's form, which the base lookup compares against
-      (entry) => buildRecord(entry, project.id, project.path, paths, options.resolveBaseRef),
+      (entry) => buildRecord(entry, project.id, paths, options.resolveBaseRef),
     );
     results.push({ ...shape, worktrees: records });
   }
@@ -234,7 +233,6 @@ function gitAtOrNull(directory: string): GitClient | null {
 async function buildRecord(
   entry: MappedWorktree,
   projectId: string,
-  projectPath: string,
   paths: AgentPaths,
   resolveBaseRef: EnumerateWorktreesOptions['resolveBaseRef'],
 ): Promise<WorktreeRecord> {
@@ -289,8 +287,8 @@ async function buildRecord(
   try {
     baseBranch = resolveBaseRef?.({
       projectId,
-      projectPath,
-      // The form the task row holds, which is the stand-in for a remote project.
+      // Both in the form the task row holds, which is the stand-in for a remote project.
+      projectPath: paths.shellFolder,
       worktreePath: entry.gitDirectory,
       branch: entry.branch,
       isMainCheckout: entry.isMainCheckout,

@@ -11,6 +11,12 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', async (importOriginal) 
   const actual = await importOriginal<typeof import('../../src/main/agent/mcp-http/handler-helpers')>();
   return { ...actual, callHandler: vi.fn(async () => ({ content: [{ type: 'text', text: '| id |\n| 1 |' }] })) };
 });
+// The tools also read the app's own config dir; point it at an empty folder so "nothing recorded" is deterministic.
+const configDirHolder = vi.hoisted(() => ({ value: '' }));
+vi.mock('../../src/main/config/paths', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/config/paths')>();
+  return { ...actual, PATHS: { ...actual.PATHS, get configDir() { return configDirHolder.value || actual.PATHS.configDir; } } };
+});
 vi.mock('../../src/main/diagnostics/process-metrics', () => ({ getProcessMetrics: vi.fn(() => ({ processes: [] })) }));
 vi.mock('../../src/main/git/worktree-list', () => ({ enumerateWorktrees: vi.fn(async () => []) }));
 
@@ -38,6 +44,7 @@ let scratch: string;
 
 beforeEach(() => {
   scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-remote-labels-'));
+  configDirHolder.value = path.join(scratch, 'config-dir');
 });
 
 afterEach(() => {
@@ -76,6 +83,51 @@ describe('Kangentic\'s own diagnostics', () => {
     registerDiagnosticsTools(server as never, resolverFor(null));
 
     expect((await call('kangentic_tail_logs')).content[0].text).not.toContain('From Kangentic');
+  });
+
+  const NOTE = '[From Kangentic on the user\'s computer, not your host]';
+  const TOOLS = ['kangentic_tail_logs', 'kangentic_get_recent_crashes', 'kangentic_get_ipc_log'];
+
+  it('carry the note and location: local even when nothing is recorded (no crashes, no logs, no IPC)', async () => {
+    const { server, call } = fakeServer();
+    registerDiagnosticsTools(server as never, resolverFor(REMOTE));
+
+    for (const tool of TOOLS) {
+      const result = await call(tool);
+      expect(result.content[0].text.startsWith(NOTE), tool).toBe(true);
+      expect(result.structuredContent, tool).toMatchObject({ items: [], location: 'local' });
+    }
+    expect((await call('kangentic_get_recent_crashes')).content[0].text).toContain('No crashes recorded');
+  });
+
+  it('carry the note and location: local when there are records', async () => {
+    const day = '2026-01-02';
+    const logs = path.join(scratch, '.kangentic', 'logs');
+    fs.mkdirSync(path.join(logs, 'crashes'), { recursive: true });
+    fs.writeFileSync(path.join(logs, `${day}.log`), `${JSON.stringify({ ts: `${day}T00:00:00Z`, level: 'error', source: 'main', args: ['boom'] })}\n`);
+    fs.writeFileSync(path.join(logs, `ipc-${day}.jsonl`), `${JSON.stringify({ ts: `${day}T00:00:00Z`, channel: 'task:list' })}\n`);
+    fs.writeFileSync(path.join(logs, 'crashes', `${day}.json`), JSON.stringify({ ts: `${day}T00:00:00Z`, kind: 'main-uncaught-exception' }));
+    const { server, call } = fakeServer();
+    registerDiagnosticsTools(server as never, resolverFor(REMOTE));
+
+    for (const [tool, args] of [['kangentic_tail_logs', { date: day }], ['kangentic_get_recent_crashes', {}], ['kangentic_get_ipc_log', { date: day }]] as const) {
+      const result = await call(tool, args);
+      expect(result.content[0].text.startsWith(NOTE), tool).toBe(true);
+      expect(result.structuredContent, tool).toMatchObject({ location: 'local' });
+      expect((result.structuredContent as { items: unknown[] }).items, tool).toHaveLength(1);
+    }
+  });
+
+  it('put no note in the text of a local project, empty or not', async () => {
+    const { server, call } = fakeServer();
+    registerDiagnosticsTools(server as never, resolverFor(null));
+
+    for (const tool of TOOLS) {
+      const result = await call(tool);
+      expect(result.content[0].text, tool).not.toContain('From Kangentic');
+      expect(result.structuredContent, tool).toMatchObject({ location: 'local' });
+    }
+    expect((await call('kangentic_get_recent_crashes')).content[0].text).toBe('No crashes recorded.');
   });
 });
 

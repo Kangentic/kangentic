@@ -116,6 +116,25 @@ describe('the environment that crosses to a host', () => {
     expect(omitted).toEqual(['B']);
   });
 
+  it('weighs a value by its bytes, so a shorter string of multi-byte characters is the one left out at the limit', () => {
+    // Three fillers, then two contenders. In characters the euro value (10,805) is the smaller of the two, in bytes
+    // (32,405) it is the larger. Only one of them fits beside the fillers under 128 KiB: the lighter.
+    const environment = {
+      filler1: 'f'.repeat(31_000),
+      filler2: 'f'.repeat(31_000),
+      filler3: 'f'.repeat(31_000),
+      ascii: 'a'.repeat(32_000),
+      multibyte: '€'.repeat(10_800),
+    };
+    expect(environment.multibyte.length).toBeLessThan(environment.ascii.length);
+    expect(Buffer.byteLength(environment.multibyte)).toBeGreaterThan(Buffer.byteLength(environment.ascii));
+
+    const { fits, omitted } = boundedHostEnvironment(environment);
+
+    expect(omitted).toEqual(['multibyte']);
+    expect(Object.keys(fits).sort()).toEqual(['ascii', 'filler1', 'filler2', 'filler3']);
+  });
+
   it('stays inside a frame however many values there are', () => {
     const many = Object.fromEntries(Array.from({ length: 20 }, (_unused, index) => [`V${index}`, 'x'.repeat(20_000)]));
 

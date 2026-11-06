@@ -129,7 +129,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
 - **Bytes cross through `remote/host-transfer.ts`, over `runCommand`.** The helper's file jobs decode
   text, and a new helper method has no handler on a daemon a relay rejoins with no version check.
   Its scripts hold a path beneath the home and refuse a symlink themselves, because `runCommand`
-  does not check its arguments, and the deepest folder that exists is checked before any is made.
+  does not check its arguments. A write refuses a path with a `.` or `..` in it, then checks the
+  deepest folder that exists before any is made.
 - **What runs for a remote project's task runs on the host.** A `run_script` row runs there, with
   its output discarded and its variables bounded to a frame (`remote/host-script.ts`). A workflow's
   own agent starts through `resolveSpawnCli` like a task's. A superseded move cannot stop a script
@@ -137,7 +138,8 @@ process, a path tested against the wrong disk, an environment that overwrites th
 - **A prompt names the host, and what it names is there.** `resolveTaskTemplateVars` maps every path
   it gives a prompt or an automation, and a task's attachments are copied to those paths before
   its agent starts (`remote/host-attachments.ts`). One that cannot be copied is named in the prompt
-  in place of its path.
+  in place of its path. The copy runs under the task's lock, which has no timeout, so it has a
+  budget, stops on the move's signal, and what is left then is named the same way.
 - **A request that names how long it runs outlasts both default waits.** `RemoteHostRequest.timeoutMs`
   reaches the link and the pty host transport, whose own default is 15 s. Without it a long
   `runCommand` fails in main while the host still runs it.

@@ -153,6 +153,15 @@ describe('kangentic_list_sessions', () => {
     expect(result.data[0]).toMatchObject({ cwd: `${HOST_PROJECT}/.kangentic/worktrees/12`, location: 'host', eventsLocation: 'local' });
     expect(result.data[0].localCwd).toBe(path.join(shell, '.kangentic', 'worktrees', '12'));
   });
+
+  it('reports a local project\'s cwd as it is, labeled local, with no localCwd', () => {
+    const localContext = { ...context, agentPaths: () => agentPathsForProject({ path: shell, remote: null }) } as unknown as CommandContext;
+
+    const result = handleListSessions({ taskId }, localContext) as { data: Array<Record<string, unknown>> };
+
+    expect(result.data[0]).toMatchObject({ cwd: path.join(shell, '.kangentic', 'worktrees', '12'), location: 'local' });
+    expect(result.data[0]).not.toHaveProperty('localCwd');
+  });
 });
 
 describe('kangentic_get_session_history', () => {

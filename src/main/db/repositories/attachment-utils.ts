@@ -63,5 +63,5 @@ export function attachmentFromBytes(bytes: Buffer, namedPath: string, overrideFi
 export function readFileAsAttachment(filePath: string, overrideFilename?: string): ReadFileResult {
   const stat = fs.statSync(filePath);
   if (stat.size > MAX_ATTACHMENT_BYTES) throw new Error(attachmentTooLargeMessage(stat.size));
-  return attachmentFromBytes(fs.readFileSync(filePath), filePath, overrideFilename);
+  return attachmentFromBytes(fs.readFileSync(filePath), filePath, overrideFilename ?? path.basename(filePath));
 }

@@ -413,8 +413,15 @@ export const handleGetCurrentTask: CommandHandler = async (
     const inProjectFolder = allTasks.filter((task) => !task.worktree_path && task.session_id && !task.archived_at);
     if (inProjectFolder.length === 1) matches = inProjectFolder;
   }
+  // The fallback stays for a named folder too: a host whose home is a symlink has an agent's cwd no map can read back.
+  // The note keeps that from reading as a match for what was named.
+  let ownTaskNote = '';
   if (matches.length === 0 && callerTaskId) {
     matches = allTasks.filter((task) => task.id === callerTaskId);
+    const namedProjectFolder = cwdNormalized === normalizePath(paths.shellFolder);
+    if (matches.length > 0 && (branchLower || (cwdNormalized && !namedProjectFolder))) {
+      ownTaskNote = 'No task matches the cwd or branch you named, so this is your own task.\n';
+    }
   }
 
   const toData = (task: Task) => ({
@@ -465,7 +472,7 @@ export const handleGetCurrentTask: CommandHandler = async (
     const task = matches[0];
     return {
       success: true,
-      message: `Current task:\n${blockOf(task)}${notes}`,
+      message: `${ownTaskNote}Current task:\n${blockOf(task)}${notes}`,
       data: withKnowledge(task),
     };
   }

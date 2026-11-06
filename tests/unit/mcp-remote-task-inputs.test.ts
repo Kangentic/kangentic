@@ -13,6 +13,7 @@ import { handleCreateBacklogTask } from '../../src/main/agent/commands/backlog-c
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AttachmentRepository } from '../../src/main/db/repositories/attachment-repository';
+import { BacklogAttachmentRepository } from '../../src/main/db/repositories/backlog-attachment-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { isGitRepo, isProjectGitRepo } from '../../src/main/git/git-checks';
 import { RemoteGitUnavailableError, setRemoteGitResolver, type RemoteGitRunner } from '../../src/main/git/remote-git';
@@ -30,6 +31,8 @@ let context: CommandContext;
 let worktreeList: () => Promise<string>;
 let hostFiles: Map<string, Buffer>;
 let linkDown: boolean;
+/** Files the fake host reports as past the read script's cap: it names the size and answers `KG:toobig`. */
+let reportedSizes: Map<string, number>;
 
 function hostGit(): RemoteGitRunner {
   return {
@@ -47,6 +50,8 @@ async function fakeHostRead(request: HostCommandRequest): Promise<HostCommandRes
   const [hostPath, offsetText, lengthText] = request.args.slice(3);
   const file = hostFiles.get(hostPath);
   if (!file) return { code: 0, stdout: 'KG:missing\n', stderr: '', timedOut: false };
+  const reportedSize = reportedSizes.get(hostPath);
+  if (reportedSize !== undefined) return { code: 0, stdout: `KG:size:${reportedSize}\nKG:toobig\n`, stderr: '', timedOut: false };
   const chunk = file.subarray(Number(offsetText), Number(offsetText) + Number(lengthText));
   return { code: 0, stdout: `KG:size:${file.length}\nKG:out:${chunk.toString('base64')}\n`, stderr: '', timedOut: false };
 }
@@ -57,6 +62,7 @@ beforeEach(() => {
   fs.mkdirSync(shell);
   hostFiles = new Map();
   linkDown = false;
+  reportedSizes = new Map();
   worktreeList = async () => `worktree ${HOST_PROJECT}\nHEAD 1111\nbranch refs/heads/main\n\nworktree ${HOST_PROJECT}/.kangentic/worktrees/3\nHEAD 2222\nbranch refs/heads/${HELD_BRANCH}\n\n`;
   setRemoteGitResolver((directory) => (directory === shell ? hostGit() : null));
 
@@ -191,6 +197,55 @@ describe('an attachment an agent on a host names', () => {
 
     expect(result.success).toBe(true);
     expect(result.message).toContain('no such file on the host');
+  });
+});
+
+describe('an attachment past the size cap', () => {
+  const HUGE = '/home/dev/proj/huge.bin';
+
+  beforeEach(() => {
+    hostFiles.set(HUGE, Buffer.from([1]));
+    reportedSizes.set(HUGE, 60 * 1024 * 1024);
+  });
+
+  it('is reported by create_task, which still creates the task with no attachment row', async () => {
+    const result = await handleCreateTask({ title: 'Too big', column: 'Planning', attachments: [{ filePath: HUGE }] }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('File too large');
+    expect(new AttachmentRepository(db).list((result.data as { taskId: string }).taskId)).toEqual([]);
+  });
+
+  it('is reported by update_task, which still applies the other change', async () => {
+    const taskId = await createdTaskId();
+
+    const result = await handleUpdateTask({ taskId, title: 'Renamed', attachments: [{ filePath: HUGE }] }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('File too large');
+    expect(tasks().getById(taskId)?.title).toBe('Renamed');
+    expect(new AttachmentRepository(db).list(taskId)).toEqual([]);
+  });
+
+  it('is reported by the backlog create, which still creates the item with no attachment row', async () => {
+    const result = await handleCreateBacklogTask({ title: 'Later', attachments: [{ filePath: HUGE }] }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('File too large');
+    expect(new BacklogAttachmentRepository(db).list((result.data as { id: string }).id)).toEqual([]);
+  });
+});
+
+describe('a host that is not available', () => {
+  it('is reported by create_task as the reason the file is not attached, and the task is still created', async () => {
+    const unavailable = { ...context, hostAccess: () => null } as unknown as CommandContext;
+
+    const result = await handleCreateTask({ title: 'No host', column: 'Planning', attachments: [{ filePath: '/home/dev/proj/a.png' }] }, unavailable);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('One file was not attached');
+    expect(result.message).toContain('host is not available');
+    expect(tasks().list().some((task) => task.title === 'No host')).toBe(true);
   });
 });
 

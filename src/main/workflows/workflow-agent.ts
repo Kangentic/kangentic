@@ -159,6 +159,11 @@ function readableCheckout(home: Pick<Project, 'remote'> | undefined, project: Pi
   return home?.remote && project.remote?.hostId === home.remote.hostId ? project.remote.path : null;
 }
 
+/** A project's folder as an agent on its own machine names it. */
+function agentFolderOf(project: Pick<Project, 'path' | 'remote'>): string {
+  return project.remote?.path ?? resolveProjectRoot(project.path);
+}
+
 /** What a request for another project's code came to. */
 export interface ProjectAccessResult {
   name: string;
@@ -189,12 +194,12 @@ export function requestWorkflowAgentProjectAccess(
 ): ProjectAccessResult {
   const project = context.projectRepo.getById(projectId);
   if (!project) throw new Error('That project is no longer in Kangentic.');
-  if (projectId === homeProjectId) return { name: project.name, path: project.remote?.path ?? resolveProjectRoot(project.path), when: 'home' };
+  if (projectId === homeProjectId) return { name: project.name, path: agentFolderOf(project), when: 'home' };
   // The home is the id the agent's scope names, which can outlive its project.
   const homeDb = getExistingProjectDb(homeProjectId);
   if (!homeDb) throw new Error('This workflow no longer exists.');
   const checkout = readableCheckout(context.projectRepo.getById(homeProjectId), project);
-  if (!checkout) return { name: project.name, path: project.remote?.path ?? resolveProjectRoot(project.path), when: 'elsewhere' };
+  if (!checkout) return { name: project.name, path: agentFolderOf(project), when: 'elsewhere' };
   new WorkflowRepository(homeDb).addAgentReadProject(workflowId, projectId);
   return { name: project.name, path: checkout, when: syncWorkflowAgentAccess(context, homeProjectId, workflowId) };
 }

@@ -31,7 +31,8 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { announceTaskBoardChange, announceTaskWrite, announceToMainWindow } from '../helpers/task-write-announce';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
-import { copyAttachmentsToHost, withFailedAttachmentsNoted } from '../../remote/host-attachments';
+import { withAttachmentsOnHost } from '../../remote/host-attachments';
+import { templateUsesVar } from '../../../shared/task-template-vars';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone } from '../../analytics/usage';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
@@ -1284,10 +1285,6 @@ export async function handleTaskMove(
           let interpolatedAuto = '';
           if (effectiveAutoCommand?.trim()) {
             const attachmentPaths = attachments.getPathsForTask(task.id);
-            // A file attached since this agent started: the message names it where the agent reads it.
-            const attachmentsNotCopied = effectiveAutoCommand.includes('{{attachments}}')
-              ? await copyAttachmentsToHost(resolvedProjectPath, attachmentPaths)
-              : [];
             const moveVars = resolveTaskTemplateVars({
               task,
               defaultBaseBranch: effectiveDefaultBranch,
@@ -1303,8 +1300,9 @@ export async function handleTaskMove(
                 : null,
               workflow: readWorkflowPromptFacts(task, resolvedProjectId),
             });
-            interpolatedAuto = interpolateTaskTemplate(effectiveAutoCommand, attachmentsNotCopied.length > 0
-              ? { ...moveVars, attachments: withFailedAttachmentsNoted(moveVars.attachments ?? '', attachmentsNotCopied) }
+            // A file attached since this agent started: the message names it where the agent reads it.
+            interpolatedAuto = interpolateTaskTemplate(effectiveAutoCommand, templateUsesVar(effectiveAutoCommand, 'attachments')
+              ? await withAttachmentsOnHost(resolvedProjectPath, attachmentPaths, moveVars, signal)
               : moveVars);
           }
           // Whether the burst below actually carries the COLUMN's message, as

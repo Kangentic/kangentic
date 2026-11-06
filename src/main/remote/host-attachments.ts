@@ -8,12 +8,21 @@
  * A file the host already holds at the same size is left: attachments are written once and never edited. One that
  * cannot be copied keeps the spawn going, because an agent with a note is better than a task that will not start
  * over a screenshot. The note goes where the prompt lists the attachments, so the agent reads it beside them.
+ *
+ * Both callers hold the task's lock, which has no timeout, and every other operation on the task waits behind it. So
+ * the whole copy has a budget, and what is left when it runs out is a failure like any other, noted in the prompt.
  */
 
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { mapWithConcurrency } from '../shared/map-with-concurrency';
 import { agentPathsForProjectPath } from './host-paths';
-import { hostAccessFor, hostFileSizes, writeHostBytes } from './host-transfer';
+import { HOST_NOT_AVAILABLE, hostAccessFor, hostFileSizes, writeHostBytes } from './host-transfer';
+
+/** Room for a 50 MB attachment at a few hundred milliseconds a chunk, and no longer than a person waits on a move. */
+const COPY_BUDGET_MS = 120_000;
+/** Each chunk is one round trip, so files side by side pay the link's latency once. */
+const COPY_CONCURRENCY = 3;
 
 export interface AttachmentCopyFailure {
   /** The path the agent is told. */
@@ -29,14 +38,22 @@ async function localSize(localPath: string): Promise<number | null> {
   return (await fs.stat(localPath).catch(() => null))?.size ?? null;
 }
 
-/** Copy what the host does not hold yet. Nothing to do for a project on this computer, or a task with no attachments. */
-export async function copyAttachmentsToHost(projectPath: string | null | undefined, localPaths: readonly string[]): Promise<AttachmentCopyFailure[]> {
+/**
+ * Copy what the host does not hold yet. Nothing to do for a project on this computer, or a task with no attachments.
+ * `signal` is the caller's, so a superseding move does not wait out the budget.
+ */
+export async function copyAttachmentsToHost(
+  projectPath: string | null | undefined,
+  localPaths: readonly string[],
+  signal?: AbortSignal,
+  budgetMs: number = COPY_BUDGET_MS,
+): Promise<AttachmentCopyFailure[]> {
   if (!projectPath || localPaths.length === 0) return [];
   const paths = agentPathsForProjectPath(projectPath);
-  if (paths.location === 'local' || !paths.hostId) return [];
+  if (!paths.hostId) return [];
   const hostPaths = localPaths.map((localPath) => paths.toAgent(localPath));
   const access = hostAccessFor(paths.hostId);
-  if (!access) return hostPaths.map((hostPath) => ({ hostPath, reason: 'this project\'s host is not available' }));
+  if (!access) return hostPaths.map((hostPath) => ({ hostPath, reason: HOST_NOT_AVAILABLE }));
 
   let sizesOnHost: Array<number | null>;
   try {
@@ -45,17 +62,18 @@ export async function copyAttachmentsToHost(projectPath: string | null | undefin
     return hostPaths.map((hostPath) => ({ hostPath, reason: reasonOf(error) }));
   }
 
-  const failures: AttachmentCopyFailure[] = [];
-  for (const [index, localPath] of localPaths.entries()) {
+  const stop = AbortSignal.any([AbortSignal.timeout(budgetMs), ...(signal ? [signal] : [])]);
+  const failures = await mapWithConcurrency(localPaths, COPY_CONCURRENCY, async (localPath, index): Promise<AttachmentCopyFailure | null> => {
     const hostPath = hostPaths[index];
     try {
-      if (sizesOnHost[index] !== null && sizesOnHost[index] === await localSize(localPath)) continue;
-      await writeHostBytes(access, hostPath, await fs.readFile(localPath));
+      if (sizesOnHost[index] !== null && sizesOnHost[index] === await localSize(localPath)) return null;
+      await writeHostBytes(access, hostPath, await fs.readFile(localPath), stop);
+      return null;
     } catch (error) {
-      failures.push({ hostPath, reason: reasonOf(error) });
+      return { hostPath, reason: reasonOf(error) };
     }
-  }
-  return failures;
+  });
+  return failures.filter((failure) => failure !== null);
 }
 
 /**
@@ -68,4 +86,16 @@ export function withFailedAttachmentsNoted(attachmentsText: string, failures: re
   const arrived = attachmentsText.split('\n').filter((line) => line && !failed.has(line));
   const notes = failures.map((failure) => `(Not copied to this host, so not readable here: ${path.posix.basename(failure.hostPath)}. ${failure.reason})`);
   return `\n${[...arrived, ...notes].join('\n')}`;
+}
+
+/** A prompt's variables once the task's attachments are on the host: `vars` itself unless one did not get there. */
+export async function withAttachmentsOnHost<Vars extends { attachments?: string }>(
+  projectPath: string | null | undefined,
+  localPaths: readonly string[],
+  vars: Vars,
+  signal?: AbortSignal,
+): Promise<Vars> {
+  const failures = await copyAttachmentsToHost(projectPath, localPaths, signal);
+  if (failures.length === 0) return vars;
+  return { ...vars, attachments: withFailedAttachmentsNoted(vars.attachments ?? '', failures) };
 }

@@ -219,6 +219,30 @@ describe('dev ports on a project that runs on an SSH host', () => {
     expect(statuses[0].listening).toEqual({ local: false, host: null });
   });
 
+  it('tells an agent a port another task reserved is not its to use, whether or not a server runs on it', async () => {
+    describeDevPorts.mockResolvedValue([status(7310, 'other-task', false), status(7311, 'other-task', false)]);
+    listeningPorts.mockResolvedValue([7311]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [7310, 7311] }, hostContext);
+
+    expect(result.message).toContain('7310 (reserved by another task - do not use)');
+    expect(result.message).toContain('7311 (reserved by another task, server running on the host - do not use)');
+    expect(result.message).not.toContain('free');
+  });
+
+  it('reports unknown, never free, when the project has no access to its host', async () => {
+    getDevPortsForTask.mockReturnValue([7300]);
+    describeDevPorts.mockResolvedValue([status(7300, 'this-task', false), status(4200, null, false)]);
+
+    const result = await handleCheckDevPorts({ taskId: 'task-1', ports: [4200] }, context);
+
+    expect(result.message).toContain('7300 (unknown');
+    expect(result.message).toContain('4200 (unknown');
+    expect(result.message).not.toContain('free');
+    const statuses = (result.data as { statuses: Array<{ listening: unknown }> }).statuses;
+    expect(statuses[0].listening).toEqual({ local: false, host: null });
+  });
+
   it('adds nothing about forwarding when a local project is checked', async () => {
     getDevPortsForTask.mockReturnValue([7300]);
     describeDevPorts.mockResolvedValue([status(7300, 'this-task', true)]);

@@ -6,6 +6,7 @@ import {
 } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { TaskRepository } from '../../db/repositories/task-repository';
+import { HOST_NOT_AVAILABLE } from '../../remote/host-transfer';
 import { getPortForwardPlan } from '../../remote/port-forward-plan';
 import type { PortForwardStatus } from '../../remote/protocol/messages';
 import { resolveTask } from './task-resolver';
@@ -126,7 +127,7 @@ export const handleReserveDevPorts: CommandHandler = async (
 /** The ports a server on the project's host listens on, or why that could not be read. Never an empty list for "unknown". */
 async function readHostListening(context: CommandContext): Promise<{ ports: Set<number> } | { error: string }> {
   const access = context.hostAccess?.() ?? null;
-  if (!access) return { error: 'this project\'s host is not available' };
+  if (!access) return { error: HOST_NOT_AVAILABLE };
   try {
     return { ports: new Set(await access.listeningPorts()) };
   } catch (error) {

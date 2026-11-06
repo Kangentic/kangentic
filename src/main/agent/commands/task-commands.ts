@@ -10,8 +10,8 @@ import {
   addPreparedAttachments,
   attachmentFailureNote,
   fetchHostAttachments,
-  readLocalAttachments,
-  type AttachmentRequest,
+  localAttachments,
+  withHostAttachments,
   type PreparedAttachments,
 } from './attachment-input';
 import { resolveForceFresh, resolveSessionTarget } from '../../transition-engine/session-isolation';
@@ -354,9 +354,9 @@ export const handleCreateTask: CommandHandler = async (
   }
   const { swimlane: targetSwimlane } = resolution;
 
-  // Read before the row exists: a host's files take a moment, and the board shows nothing half made meanwhile.
+  // Fetched before the row exists: a host's files take a moment, and the board shows nothing half made meanwhile.
   const prepared = attachments && attachments.length > 0
-    ? await fetchHostAttachments(attachments, context) ?? readLocalAttachments(attachments)
+    ? await fetchHostAttachments(attachments, context) ?? localAttachments(attachments)
     : null;
 
   const task = taskRepo.create({
@@ -445,11 +445,7 @@ export const handleCreateTask: CommandHandler = async (
 export const handleUpdateTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse | Promise<CommandResponse> => {
-  // A host's files take a round trip. A project here stays synchronous, as its callers read it.
-  const fromHost = fetchHostAttachments(params.attachments as AttachmentRequest[] | null | undefined, context);
-  return fromHost ? fromHost.then((prepared) => applyTaskUpdate(params, context, prepared)) : applyTaskUpdate(params, context, null);
-};
+): CommandResponse | Promise<CommandResponse> => withHostAttachments(params.attachments, context, (prepared) => applyTaskUpdate(params, context, prepared));
 
 function applyTaskUpdate(
   params: Record<string, unknown>,
@@ -641,7 +637,7 @@ function applyTaskUpdate(
     // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { added, failures } = addPreparedAttachments(
-      hostAttachments ?? readLocalAttachments(newAttachments),
+      hostAttachments ?? localAttachments(newAttachments),
       (file) => attachmentRepo.add(projectPath, task.id, file.filename, file.base64Data, file.mediaType),
       'update_task',
     );

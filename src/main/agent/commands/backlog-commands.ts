@@ -6,9 +6,8 @@ import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attac
 import {
   addPreparedAttachments,
   attachmentFailureNote,
-  fetchHostAttachments,
-  readLocalAttachments,
-  type AttachmentRequest,
+  localAttachments,
+  withHostAttachments,
   type PreparedAttachments,
 } from './attachment-input';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
@@ -75,11 +74,7 @@ export const handleListBacklog: CommandHandler = (
 export const handleCreateBacklogTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse | Promise<CommandResponse> => {
-  // A host's files take a round trip. A project here stays synchronous, as its callers read it.
-  const fromHost = fetchHostAttachments(params.attachments as AttachmentRequest[] | null | undefined, context);
-  return fromHost ? fromHost.then((prepared) => createBacklogItem(params, context, prepared)) : createBacklogItem(params, context, null);
-};
+): CommandResponse | Promise<CommandResponse> => withHostAttachments(params.attachments, context, (prepared) => createBacklogItem(params, context, prepared));
 
 function createBacklogItem(
   params: Record<string, unknown>,
@@ -139,7 +134,7 @@ function createBacklogItem(
     // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { failures } = addPreparedAttachments(
-      hostAttachments ?? readLocalAttachments(attachments),
+      hostAttachments ?? localAttachments(attachments),
       (file) => backlogAttachmentRepo.add(projectPath, item.id, file.filename, file.base64Data, file.mediaType),
       'create_backlog_task',
     );
@@ -164,10 +159,7 @@ function createBacklogItem(
 export const handleUpdateBacklogItem: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse | Promise<CommandResponse> => {
-  const fromHost = fetchHostAttachments(params.attachments as AttachmentRequest[] | null | undefined, context);
-  return fromHost ? fromHost.then((prepared) => updateBacklogItem(params, context, prepared)) : updateBacklogItem(params, context, null);
-};
+): CommandResponse | Promise<CommandResponse> => withHostAttachments(params.attachments, context, (prepared) => updateBacklogItem(params, context, prepared));
 
 function updateBacklogItem(
   params: Record<string, unknown>,
@@ -248,7 +240,7 @@ function updateBacklogItem(
     // host-value-ok: the attachment store is on this computer
     const projectPath = context.getProjectPath();
     const { added, failures } = addPreparedAttachments(
-      hostAttachments ?? readLocalAttachments(newAttachments),
+      hostAttachments ?? localAttachments(newAttachments),
       (file) => backlogAttachmentRepo.add(projectPath, existing.id, file.filename, file.base64Data, file.mediaType),
       'update_backlog_item',
     );

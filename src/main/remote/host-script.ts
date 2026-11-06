@@ -46,9 +46,10 @@ export function boundedHostEnvironment(environment: Record<string, string>): { f
   const fits: Record<string, string> = {};
   const omitted: string[] = [];
   let total = 0;
-  const bySize = Object.entries(environment).sort(([, left], [, right]) => left.length - right.length);
-  for (const [name, value] of bySize) {
-    const bytes = Buffer.byteLength(name) + Buffer.byteLength(value);
+  const bySize = Object.entries(environment)
+    .map(([name, value]) => ({ name, value, bytes: Buffer.byteLength(name) + Buffer.byteLength(value) }))
+    .sort((left, right) => left.bytes - right.bytes);
+  for (const { name, value, bytes } of bySize) {
     if (bytes > MAX_VARIABLE_BYTES || total + bytes > MAX_ENVIRONMENT_BYTES) {
       omitted.push(name);
       continue;
@@ -63,8 +64,8 @@ export function boundedHostEnvironment(environment: Record<string, string>): { f
 export function hostScriptRunner(projectPath: string | null | undefined, localFolder: string): HostScriptRunner | null {
   if (!projectPath) return null;
   const paths = agentPathsForProjectPath(projectPath);
-  if (paths.location === 'local' || !paths.hostId) return null;
   const { hostId } = paths;
+  if (!hostId) return null;
   return async ({ script, environment, timeoutMs }) => {
     const access = hostAccessFor(hostId);
     if (!access) throw new Error('This project\'s host is not available, so the script did not run.');

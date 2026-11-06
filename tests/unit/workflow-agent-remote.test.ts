@@ -16,7 +16,20 @@ const harness = vi.hoisted(() => ({
   dbs: new Map<string, unknown>(),
   adapter: null as unknown,
   firstMessageInput: null as unknown,
+  // What the host file pull answers, and a hook that runs inside it (the point between the CLI search and the push).
+  pulled: null as unknown,
+  duringPull: null as (() => void) | null,
 }));
+vi.mock('../../src/main/remote/host-file-sync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/remote/host-file-sync')>();
+  return {
+    ...actual,
+    pullHostFilesFor: vi.fn(async () => {
+      harness.duringPull?.();
+      return harness.pulled;
+    }),
+  };
+});
 vi.mock('../../src/main/db/database', () => ({
   getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
   getProjectDb: (projectId: string) => harness.dbs.get(projectId),
@@ -145,6 +158,8 @@ describe('a workflow\'s agent on a remote project', () => {
   });
 
   afterEach(async () => {
+    harness.pulled = null;
+    harness.duringPull = null;
     await agent.endWorkflowAgent(context, workflowId);
     setRemoteLaunchResolver(null);
     vi.restoreAllMocks();
@@ -163,6 +178,83 @@ describe('a workflow\'s agent on a remote project', () => {
     expect(manager.spawn).toHaveBeenCalledTimes(1);
     expect(manager.spawn.mock.calls[0][0]).toMatchObject({ cwd: shell, remote: { hostId: 'host-1', cwd: HOST_PROJECT }, cliTarget: { kind: 'ssh' } });
     expect((adapter.buildCommand.mock.calls[0][0] as { cliTarget: { kind: string } }).cliTarget.kind).toBe('ssh');
+  });
+
+  function fakeSync(push: () => Promise<void> = async () => undefined) {
+    return { push: vi.fn(push), abandon: vi.fn() };
+  }
+
+  it('pulls the host\'s files before trust is written, and pushes them before the spawn', async () => {
+    const sync = fakeSync();
+    harness.pulled = sync;
+    const adapter = harness.adapter as { ensureTrust: ReturnType<typeof vi.fn> };
+
+    await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    const pull = vi.mocked((await import('../../src/main/remote/host-file-sync')).pullHostFilesFor);
+    expect(pull.mock.invocationCallOrder[0]).toBeLessThan(adapter.ensureTrust.mock.invocationCallOrder[0]);
+    expect(sync.push).toHaveBeenCalledTimes(1);
+    expect(sync.push.mock.invocationCallOrder[0]).toBeLessThan(manager.spawn.mock.invocationCallOrder[0]);
+    expect(sync.abandon).not.toHaveBeenCalled();
+  });
+
+  it('starts nothing and releases the command hold when the push to the host fails', async () => {
+    const sync = fakeSync(async () => { throw new Error('push to the host failed'); });
+    harness.pulled = sync;
+    const adapter = harness.adapter as { removeHooks: ReturnType<typeof vi.fn> };
+
+    await expect(agent.openWorkflowAgent(context, 'home', workflowId, {})).rejects.toThrow('push to the host failed');
+
+    expect(manager.spawn).not.toHaveBeenCalled();
+    expect(adapter.removeHooks).toHaveBeenCalledTimes(1);
+    expect(adapter.removeHooks.mock.calls[0][0]).toBe(shell);
+  });
+
+  it('abandons the pull, releases the hold and spawns nothing when the workflow is deleted mid-start', async () => {
+    const sync = fakeSync();
+    harness.pulled = sync;
+    harness.duringPull = () => new WorkflowRepository(harness.dbs.get('home') as Database.Database).delete(workflowId);
+    const adapter = harness.adapter as { removeHooks: ReturnType<typeof vi.fn> };
+
+    const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    expect(JSON.stringify(status)).toContain('This workflow no longer exists.');
+    expect(sync.abandon).toHaveBeenCalledTimes(1);
+    expect(sync.push).not.toHaveBeenCalled();
+    expect(adapter.removeHooks).toHaveBeenCalledTimes(1);
+    expect(manager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('abandons the pull, releases the hold and spawns nothing when the user pauses during the restart for read access', async () => {
+    await agent.openWorkflowAgent(context, 'home', workflowId, {});
+    expect(manager.spawn).toHaveBeenCalledTimes(1);
+    const adapter = harness.adapter as { removeHooks: ReturnType<typeof vi.fn> };
+    const sync = fakeSync();
+    harness.pulled = sync;
+    // The Pause lands while the restart finds the CLI, after the agent was suspended and before it spawns.
+    harness.duringPull = () => { void agent.pauseWorkflowAgent(context, workflowId); };
+
+    // A sibling checkout the running agent was not started with owes it a restart (a `continuation` start).
+    expect(agent.requestWorkflowAgentProjectAccess(context, 'home', workflowId, 'sibling').when).toBe('now');
+
+    await expect.poll(() => sync.abandon.mock.calls.length, { timeout: 3000 }).toBe(1);
+    expect(sync.push).not.toHaveBeenCalled();
+    expect(manager.spawn).toHaveBeenCalledTimes(1);
+    expect(adapter.removeHooks).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks an adapter that creates its own session id for one on the host, passing the ssh target', async () => {
+    const adapter = harness.adapter as { supportsCallerSessionId: boolean; createSessionId?: ReturnType<typeof vi.fn> };
+    adapter.supportsCallerSessionId = false;
+    adapter.createSessionId = vi.fn(async () => 'created-session-id');
+
+    await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+    expect(adapter.createSessionId).toHaveBeenCalledTimes(1);
+    const [, projectRoot, target] = adapter.createSessionId.mock.calls[0] as unknown[];
+    expect(projectRoot).toBe(shell);
+    expect(target).toMatchObject({ kind: 'ssh', hostId: 'host-1' });
+    expect(manager.spawn.mock.calls[0][0]).toMatchObject({ agentSessionId: 'created-session-id' });
   });
 
   it('removes this computer\'s session folder when it ends, though a live session reports the host\'s folder', async () => {

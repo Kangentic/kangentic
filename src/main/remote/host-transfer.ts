@@ -25,6 +25,9 @@ const CHUNK_BYTES = 144 * 1024;
 const CHUNK_TIMEOUT_MS = 30_000;
 const LINE_PREFIX = 'KG:';
 
+/** Why a transfer did not start, for a tool's message or a prompt's note. */
+export const HOST_NOT_AVAILABLE = 'this project\'s host is not available';
+
 export interface HostCommandAccess {
   runCommand(request: HostCommandRequest): Promise<HostCommandResult>;
 }
@@ -77,17 +80,21 @@ export type HostFileRead =
   | { kind: 'missing' };
 
 /**
- * Sets `$home` to the real path of the user's home and refuses `$1` unless it is absolute. `inside_home <folder>`
- * passes only when the real path of the folder lies beneath it. The real paths, so a host whose `/home` is itself a
- * link still passes, and a symlinked folder that leads out of the home does not.
+ * Sets `$home` to the real path of the user's home. `inside_home <folder>` passes only when the real path of the
+ * folder lies beneath it. The real paths, so a host whose `/home` is itself a link still passes, and a symlinked
+ * folder that leads out of the home does not.
  */
-const GUARD = `
-case "$1" in /*) ;; *) echo KG:refused; exit 0 ;; esac
+const HOME_CHECK = `
 home=$(cd "$HOME" 2>/dev/null && pwd -P) || { echo KG:error:no-home; exit 3; }
 inside_home() {
   real=$(cd "$1/" 2>/dev/null && pwd -P) || return 1
   case "$real/" in "$home"/*) return 0 ;; *) return 1 ;; esac
 }`.trim();
+
+/** The home check, for a script that takes one path as `$1` and refuses it unless it is absolute. */
+const GUARD = `
+case "$1" in /*) ;; *) echo KG:refused; exit 0 ;; esac
+${HOME_CHECK}`.trim();
 
 /** Arguments are `path offset length max`. A file past `max` is reported, never read. */
 const READ_SCRIPT = `
@@ -108,13 +115,16 @@ echo "KG:out:$(tail -c +$((offset + 1)) "$file" | head -c "$length" | base64 | t
 /**
  * Arguments are `path id step size`, and a `write` step's chunk is on stdin as base64. The first chunk starts the
  * staging file, each later one adds to it, and `finish` renames it in only when it holds exactly `size` bytes.
- * The deepest folder that exists is checked before any is made, so `mkdir` cannot be led outside the home.
+ * A path with a `.` or `..` in it is refused first: `mkdir -p` walks a `..` that follows a folder it just made, which
+ * no check of the folders already there can see. Then the deepest folder that exists is checked before any is made,
+ * so `mkdir` cannot be led outside the home.
  */
 const WRITE_SCRIPT = `
 ${GUARD}
 target=$1; id=$2; step=$3; size=$4
 case "$id" in ''|*[!0-9a-z]*) echo KG:error:bad-id; exit 3 ;; esac
 case "$size" in ''|*[!0-9]*) echo KG:error:bad-number; exit 3 ;; esac
+case "$target/" in */../*|*/./*) echo KG:refused; exit 0 ;; esac
 parent=\${target%/*}
 probe=$parent
 while [ -n "$probe" ] && [ ! -d "$probe/" ]; do probe=\${probe%/*}; done
@@ -137,12 +147,17 @@ esac
 echo KG:ok
 `.trim();
 
-/** Arguments are the paths. One `KG:size:<position>:<bytes>` line each, in order, with `-` for what is no plain file. */
+/**
+ * Arguments are the paths. One `KG:size:<position>:<bytes>` line each, in order, with `-` for what is no plain file
+ * beneath the home, so a size says nothing about a file a read would refuse.
+ */
 const SIZES_SCRIPT = `
+${HOME_CHECK}
 position=0
 for file; do
   position=$((position + 1))
-  if [ -f "$file" ] && [ ! -L "$file" ]; then echo "KG:size:$position:$(wc -c <"$file" | tr -d ' ')"; else echo "KG:size:$position:-"; fi
+  case "$file" in /*) ;; *) echo "KG:size:$position:-"; continue ;; esac
+  if [ -f "$file" ] && [ ! -L "$file" ] && inside_home "\${file%/*}"; then echo "KG:size:$position:$(wc -c <"$file" | tr -d ' ')"; else echo "KG:size:$position:-"; fi
 done
 `.trim();
 
@@ -214,14 +229,20 @@ export async function hostFileSizes(access: HostCommandAccess, hostPaths: readon
   return answers.map(([, size]) => (size !== undefined && /^\d+$/.test(size) ? Number(size) : null));
 }
 
-/** Write a file on the host, making its folders. Replaces a file already there, and leaves nothing behind on a failure. */
-export async function writeHostBytes(access: HostCommandAccess, hostPath: string, bytes: Buffer): Promise<void> {
+/**
+ * Write a file on the host, making its folders. Replaces a file already there, and leaves nothing behind on a failure.
+ * `stop` ends it between chunks, which are the only points a caller can reach: one chunk's ask runs to its own bound.
+ */
+export async function writeHostBytes(access: HostCommandAccess, hostPath: string, bytes: Buffer, stop?: AbortSignal): Promise<void> {
   const what = `write ${hostPath}`;
+  const outOfTime = new HostTransferError(`Copying ${hostPath} ran out of time.`);
+  if (stop?.aborted) throw outOfTime;
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const size = String(bytes.length);
   try {
     let sent = 0;
     do {
+      if (stop?.aborted) throw outOfTime;
       const chunk = bytes.subarray(sent, sent + CHUNK_BYTES);
       const step = sent === 0 ? 'first' : 'more';
       const lines = await ask(access, scriptRequest(WRITE_SCRIPT, [hostPath, id, step, size], chunk.toString('base64')), what);

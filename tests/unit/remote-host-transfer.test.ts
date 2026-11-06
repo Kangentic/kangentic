@@ -70,6 +70,53 @@ describe('an answer that is not the file', () => {
     await expect(writeHostBytes(access, '/home/dev/a.bin', Buffer.alloc(200 * 1024))).rejects.toThrow(/link dropped/);
     expect(steps).toEqual(['first', 'more', 'abort']);
   });
+
+  it('stops the write and drops the staging file when the host refuses the path', async () => {
+    const steps: string[] = [];
+    const access: HostCommandAccess = {
+      runCommand: async (request) => {
+        steps.push(request.args[5] ?? '');
+        return { code: 0, stdout: 'KG:refused\n', stderr: '', timedOut: false };
+      },
+    };
+    await expect(writeHostBytes(access, '/home/dev/a.bin', Buffer.from('x'))).rejects.toThrow(/home folder/);
+    expect(steps).toEqual(['first', 'abort']);
+  });
+});
+
+describe('a write that runs out of time', () => {
+  it('sends no request at all when the signal is already aborted', async () => {
+    let requests = 0;
+    const access: HostCommandAccess = {
+      runCommand: async () => {
+        requests += 1;
+        return { code: 0, stdout: 'KG:ok\n', stderr: '', timedOut: false };
+      },
+    };
+    const stop = AbortSignal.abort();
+
+    await expect(writeHostBytes(access, '/home/dev/a.bin', Buffer.from('x'), stop)).rejects.toThrow(/ran out of time/);
+    await expect(writeHostBytes(access, '/home/dev/a.bin', Buffer.from('x'), stop)).rejects.toBeInstanceOf(HostTransferError);
+    expect(requests).toBe(0);
+  });
+
+  it('sends no further chunk once the signal aborts after the first, and tells the host to drop its staging file', async () => {
+    const controller = new AbortController();
+    const steps: string[] = [];
+    const access: HostCommandAccess = {
+      runCommand: async (request) => {
+        const step = request.args[5] ?? '';
+        steps.push(step);
+        if (step === 'first') controller.abort();
+        return { code: 0, stdout: 'KG:ok\n', stderr: '', timedOut: false };
+      },
+    };
+
+    // Three chunks long, so there is a chunk after the first to withhold.
+    await expect(writeHostBytes(access, '/home/dev/a.bin', Buffer.alloc(300 * 1024), controller.signal)).rejects.toThrow(/ran out of time/);
+
+    expect(steps).toEqual(['first', 'abort']);
+  });
 });
 
 const hasPosixShell = process.platform !== 'win32'
@@ -194,6 +241,40 @@ describe.runIf(hasPosixShell)('on a real shell', () => {
     await expect(writeHostBytes(host, path.join(home, 'file-link'), Buffer.from('x'))).rejects.toThrow(/home folder/);
     expect(fs.readdirSync(elsewhere)).toEqual(['secret.txt']);
     expect(fs.readFileSync(path.join(elsewhere, 'secret.txt'), 'utf8')).toBe('secret');
+  });
+
+  it('refuses a . or .. component before it makes any folder, so a climb that follows a new folder leaves nothing behind', async () => {
+    // mkdir -p would make `nope`, then walk out of it and make `zzz` beside the home. Neither may exist afterwards.
+    await expect(writeHostBytes(host, `${home}/nope/../../zzz/f.txt`, Buffer.from('x'))).rejects.toThrow(/home folder/);
+    expect(fs.existsSync(path.join(home, 'nope'))).toBe(false);
+    expect(fs.existsSync(path.join(scratch, 'zzz'))).toBe(false);
+
+    await expect(writeHostBytes(host, `${home}/made/./f.txt`, Buffer.from('x'))).rejects.toThrow(/home folder/);
+    expect(fs.existsSync(path.join(home, 'made'))).toBe(false);
+    expect(fs.readdirSync(home)).toEqual([]);
+  });
+
+  it('sizes only plain files beneath the home: a file outside it, a relative path and a link that leads out are not there', async () => {
+    const elsewhere = path.join(scratch, 'elsewhere');
+    fs.mkdirSync(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, 'secret.txt'), 'secret');
+    fs.writeFileSync(path.join(scratch, 'outside.txt'), 'outside');
+    fs.writeFileSync(path.join(home, 'first.bin'), Buffer.alloc(3));
+    fs.writeFileSync(path.join(home, 'second.bin'), Buffer.alloc(7));
+    fs.writeFileSync(path.join(home, 'relative.bin'), Buffer.alloc(4));
+    fs.symlinkSync(path.join(elsewhere, 'secret.txt'), path.join(home, 'file-link'));
+    fs.symlinkSync(elsewhere, path.join(home, 'folder-link'));
+
+    const sizes = await hostFileSizes(host, [
+      path.join(home, 'second.bin'),
+      path.join(scratch, 'outside.txt'),
+      'relative.bin', // the shell runs in the home, so this file is there, but a relative path is never trusted
+      path.join(home, 'file-link'),
+      path.join(home, 'folder-link', 'secret.txt'),
+      path.join(home, 'first.bin'),
+    ]);
+
+    expect(sizes).toEqual([7, null, null, null, null, 3]);
   });
 
   it('still works when the home itself is reached through a link', async () => {

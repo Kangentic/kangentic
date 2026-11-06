@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deliverCapture,
   deliverLocally,
+  droppedFileName,
   fetchFilesFromHost,
   saveScreenshotToFile,
   writeBrowserCaptureFile,
@@ -28,6 +29,8 @@ let captures: string;
 let hostFiles: Map<string, Buffer>;
 let removed: string[];
 let linkDown: boolean;
+/** Files the fake host reports as past the read script's cap, by the size it names. */
+let reportedSizes: Map<string, number>;
 
 function answer(stdout: string): HostCommandResult {
   return { code: 0, stdout, stderr: '', timedOut: false };
@@ -45,6 +48,8 @@ async function fakeHost(request: HostCommandRequest): Promise<HostCommandResult>
   const [hostPath, offset, length] = args;
   const file = hostFiles.get(hostPath);
   if (!file) return answer('KG:missing\n');
+  const reportedSize = reportedSizes.get(hostPath);
+  if (reportedSize !== undefined) return answer(`KG:size:${reportedSize}\nKG:toobig\n`);
   return answer(`KG:size:${file.length}\nKG:out:${file.subarray(Number(offset), Number(offset) + Number(length)).toString('base64')}\n`);
 }
 
@@ -72,6 +77,7 @@ beforeEach(() => {
   hostFiles = new Map();
   removed = [];
   linkDown = false;
+  reportedSizes = new Map();
   setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: HOST_PROJECT } : null));
   setHostAccessLookup(() => access);
 });
@@ -175,5 +181,120 @@ describe('browser_drop_files on a remote project', () => {
 
   it('asks nothing for a project on this computer', async () => {
     expect(await fetchFilesFromHost(['/any/file.png'], captures, path.join(scratch, 'local-project'))).toBeNull();
+  });
+
+  it('refuses a file past the drop cap, naming the cap', async () => {
+    hostFiles.set('/home/dev/proj/huge.bin', Buffer.from([1]));
+    reportedSizes.set('/home/dev/proj/huge.bin', 60 * 1024 * 1024);
+
+    const fetched = await fetchFilesFromHost(['/home/dev/proj/huge.bin'], captures, shell);
+
+    expect(fetched?.localPaths).toEqual([]);
+    expect(fetched?.failures).toHaveLength(1);
+    expect(fetched?.failures[0]).toContain('past the 50MB');
+  });
+
+  it('lands a host name that holds a backslash directly inside its own drop folder', async () => {
+    const hostPath = '/home/dev/proj/a\\..\\..\\evil.png';
+    hostFiles.set(hostPath, Buffer.from([9, 8, 7]));
+
+    const fetched = await fetchFilesFromHost([hostPath], captures, shell);
+
+    expect(fetched?.failures).toEqual([]);
+    const [localPath] = (fetched as { localPaths: string[] }).localPaths;
+    // drop-<id>/<index>/<one file name>, and nothing above or beside it was written.
+    expect(path.relative(captures, localPath).split(path.sep)).toEqual([expect.stringMatching(/^drop-[0-9a-f]{6}$/), '0', expect.not.stringMatching(/[\\/:]/)]);
+    expect(fs.readFileSync(localPath)).toEqual(Buffer.from([9, 8, 7]));
+    expect(fs.readdirSync(captures)).toHaveLength(1);
+    expect(fs.existsSync(path.join(scratch, 'evil.png'))).toBe(false);
+  });
+
+  it('is told the host is not available when there is no access to it', async () => {
+    setHostAccessLookup(() => null);
+
+    const fetched = await fetchFilesFromHost(['/home/dev/proj/a.png'], captures, shell);
+
+    expect(fetched?.localPaths).toEqual([]);
+    expect(fetched?.failures).toHaveLength(1);
+    expect(fetched?.failures[0]).toContain('/home/dev/proj/a.png');
+    expect(fetched?.failures[0]).toContain('host is not available');
+  });
+});
+
+describe('a capture for a host that is not available', () => {
+  it('rejects, and names why, rather than giving the agent a path that names nothing', async () => {
+    setHostAccessLookup(() => null);
+
+    await expect(saveScreenshotToFile(captures, 'screenshot', shot, toHost)).rejects.toThrow(/host is not available/);
+  });
+});
+
+describe('the prune of dropped files', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  function folderAged(name: string, ageMs: number): string {
+    const folder = path.join(captures, name);
+    fs.mkdirSync(path.join(folder, '0'), { recursive: true });
+    fs.writeFileSync(path.join(folder, '0', 'kept.png'), 'x');
+    const when = new Date(Date.now() - ageMs);
+    // Set last: writing into the folder above would move its mtime.
+    fs.utimesSync(folder, when, when);
+    return folder;
+  }
+
+  it('removes a drop folder over a day old on the next fetch, and keeps a fresh one and a folder that is no drop', async () => {
+    const old = folderAged('drop-aaaaaa', 2 * DAY_MS);
+    const fresh = folderAged('drop-bbbbbb', 60 * 1000);
+    const notADrop = folderAged('screenshots-old', 2 * DAY_MS);
+    hostFiles.set('/home/dev/proj/a.png', Buffer.from([1]));
+
+    const fetched = await fetchFilesFromHost(['/home/dev/proj/a.png'], captures, shell);
+
+    expect(fetched?.failures).toEqual([]);
+    expect(fs.existsSync(old)).toBe(false);
+    expect(fs.existsSync(fresh)).toBe(true);
+    expect(fs.existsSync(notADrop)).toBe(true);
+  });
+});
+
+describe('droppedFileName', () => {
+  const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i;
+
+  it.each([
+    '/h/a\\..\\..\\evil.bat',
+    '/h/a:b.png',
+    '/h/..',
+    '/h/.',
+    '/h/',
+    '/h/name. ',
+    '/h/CON',
+    '/h/nul.txt',
+    '/h/com1',
+    '/h/a\u0001b\u007f.txt',
+    '/h/My file (1).png',
+  ])('makes %j one safe name that stays inside a Windows folder', (hostPath) => {
+    const name = droppedFileName(hostPath);
+
+    expect(name).not.toMatch(/[\\/:]/);
+    expect(name).not.toBe('');
+    expect(name).not.toMatch(/[. ]$/);
+    expect(name).not.toMatch(WINDOWS_DEVICE);
+    const folder = 'C:\\d\\0';
+    const joined = path.win32.join(folder, name);
+    expect(path.win32.dirname(joined)).toBe(folder);
+  });
+
+  it('gives a name nothing could be made of the placeholder `file`', () => {
+    for (const hostPath of ['/h/..', '/h/.', '/h/', '/h/. . ']) expect(droppedFileName(hostPath)).toBe('file');
+  });
+
+  it('leaves the characters that do no harm, and cuts what only decorates the end', () => {
+    expect(droppedFileName('/h/My file (1).png')).toBe('My file (1).png');
+    expect(droppedFileName('/h/name. ')).toBe('name');
+  });
+
+  it('turns a backslash and a colon into something that is not a separator or a stream', () => {
+    expect(droppedFileName('/h/a:b.png')).not.toContain(':');
+    expect(droppedFileName('/h/a\\..\\..\\evil.bat').endsWith('evil.bat')).toBe(true);
   });
 });

@@ -87,14 +87,14 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return true;
       });
       const tail = filtered.slice(-(limit ?? 200));
-      const note = appLocationNote(resolved.context);
       if (tail.length === 0) {
-        return textResult(
-          `${note}No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
-          { items: [], location: 'local' },
+        return localTextResult(
+          resolved.context,
+          `No log entries${date ? ` for ${date}` : ''}${since ? ` since ${since}` : ''} in ${filePath} or ${fallbackFilePath}.`,
+          [],
         );
       }
-      return textResult(`${note}${tail.map(formatLogLine).join('\n')}`, { items: tail, location: 'local' });
+      return localTextResult(resolved.context, tail.map(formatLogLine).join('\n'), tail);
     },
   );
 
@@ -146,9 +146,8 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
           // Directory does not exist yet (no crash written there) - fine.
         }
       }
-      const note = appLocationNote(resolved.context);
       if (files.length === 0) {
-        return textResult(`${note}No crashes recorded${project ? ` for project ${project}` : ''}.`);
+        return localTextResult(resolved.context, `No crashes recorded${project ? ` for project ${project}` : ''}.`, []);
       }
       // Filenames are derived from ISO timestamps with `:` and `.` swapped to
       // `-`. Lexicographic descending sort matches reverse-chronological,
@@ -168,9 +167,9 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         }
       }
       if (records.length === 0) {
-        return textResult(`${note}No matching crashes.`, { items: [], location: 'local' });
+        return localTextResult(resolved.context, 'No matching crashes.', []);
       }
-      return textResult(`${note}${JSON.stringify(records, null, 2)}`, { items: records, location: 'local' });
+      return localTextResult(resolved.context, JSON.stringify(records, null, 2), records);
     },
   );
 
@@ -240,14 +239,14 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
         return true;
       });
       const tail = filtered.slice(-(limit ?? 200));
-      const note = appLocationNote(resolved.context);
       if (tail.length === 0) {
-        return textResult(
-          `${note}No IPC entries${date ? ` for ${date}` : ''}${channel ? ` on channel ${channel}` : ''}. Settings -> Developer -> Record IPC Traffic must be on; the recorder writes only while the toggle is enabled.`,
-          { items: [], location: 'local' },
+        return localTextResult(
+          resolved.context,
+          `No IPC entries${date ? ` for ${date}` : ''}${channel ? ` on channel ${channel}` : ''}. Settings -> Developer -> Record IPC Traffic must be on; the recorder writes only while the toggle is enabled.`,
+          [],
         );
       }
-      return textResult(`${note}${tail.map((entry) => JSON.stringify(entry)).join('\n')}`, { items: tail, location: 'local' });
+      return localTextResult(resolved.context, tail.map((entry) => JSON.stringify(entry)).join('\n'), tail);
     },
   );
 
@@ -294,6 +293,11 @@ function today(): string {
 /** What an agent on a host reads first from a tool about Kangentic itself. Nothing for a local project. */
 function appLocationNote(context: CommandContext): string {
   return agentPathsOf(context).location === 'host' ? '[From Kangentic on the user\'s computer, not your host]\n' : '';
+}
+
+/** A local answer with both things an agent on a host needs: the note it reads and the label in the data. */
+function localTextResult(context: CommandContext, text: string, items: unknown[]): ReturnType<typeof textResult> {
+  return textResult(`${appLocationNote(context)}${text}`, { items, location: 'local' });
 }
 
 function readJsonLines<T>(filePath: string): T[] {

@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cliPathForTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import { resolveTaskTemplateVars, type TaskTemplateContext } from '../../src/main/agent/shared/task-template-resolvers';
-import { copyAttachmentsToHost, withFailedAttachmentsNoted } from '../../src/main/remote/host-attachments';
+import { copyAttachmentsToHost, withAttachmentsOnHost, withFailedAttachmentsNoted } from '../../src/main/remote/host-attachments';
 import { setRemoteProjectLookup } from '../../src/main/remote/host-paths';
 import { setHostAccessLookup, type HostAccess } from '../../src/main/remote/host-transfer';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
@@ -24,6 +24,8 @@ let hostAttachment: string;
 let hostHolds: Map<string, Buffer>;
 let writes: string[];
 let linkDown: boolean;
+/** Runs when a write script is asked, before the host answers, so a test can hold a write open. */
+let onWrite: ((step: string) => Promise<void>) | null;
 
 function answer(stdout: string): HostCommandResult {
   return { code: 0, stdout, stderr: '', timedOut: false };
@@ -37,6 +39,7 @@ async function fakeHost(request: HostCommandRequest): Promise<HostCommandResult>
     return answer(args.map((hostPath, index) => `KG:size:${index + 1}:${hostHolds.get(hostPath)?.length ?? '-'}`).join('\n'));
   }
   const [hostPath, , step] = args;
+  if (onWrite) await onWrite(step);
   if (step === 'first') {
     hostHolds.set(hostPath, Buffer.from(request.stdin ?? '', 'base64'));
     writes.push(hostPath);
@@ -69,6 +72,7 @@ beforeEach(() => {
   hostHolds = new Map();
   writes = [];
   linkDown = false;
+  onWrite = null;
   setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: HOST_PROJECT } : null));
   setHostAccessLookup(() => access);
 });
@@ -139,6 +143,89 @@ describe('a task\'s attachments', () => {
 
   it('leave the text alone when everything arrived', () => {
     expect(withFailedAttachmentsNoted(`\n${hostAttachment}`, [])).toBe(`\n${hostAttachment}`);
+  });
+});
+
+/** Attachment files on this computer, each long enough to cross the link in two chunks. */
+function attachmentFiles(count: number, bytes: number): string[] {
+  return Array.from({ length: count }, (_unused, index) => {
+    const localPath = path.join(shell, '.kangentic', 'tasks', 't', 'attachments', `file-${index}.bin`);
+    fs.writeFileSync(localPath, Buffer.alloc(bytes, index + 1));
+    return localPath;
+  });
+}
+
+describe('a copy that runs out of time', () => {
+  it('turns a caller\'s aborted signal into a failure for the file, rather than a throw', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const failures = await copyAttachmentsToHost(shell, [attachment], controller.signal);
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0].hostPath).toBe(hostAttachment);
+    expect(failures[0].reason).toMatch(/ran out of time/);
+    expect(writes).toEqual([]);
+  });
+
+  it('turns a spent budget on a slow host into a failure naming each file left', async () => {
+    onWrite = () => new Promise((resolve) => setTimeout(resolve, 40));
+    const localPaths = attachmentFiles(5, 160 * 1024);
+
+    const failures = await copyAttachmentsToHost(shell, localPaths, undefined, 1);
+
+    // Each file is two chunks, so each is stopped between them or before its first, whichever the budget reaches.
+    expect(failures.map((failure) => failure.hostPath).sort()).toEqual(
+      localPaths.map((localPath) => `${HOST_PROJECT}/.kangentic/tasks/t/attachments/${path.basename(localPath)}`).sort(),
+    );
+    for (const failure of failures) expect(failure.reason).toContain(`Copying ${failure.hostPath} ran out of time`);
+  });
+
+  it('copies files side by side, three writes in flight at once and no more', async () => {
+    let inFlight = 0;
+    let mostInFlight = 0;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    onWrite = async (step) => {
+      if (step !== 'first') return;
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      await held;
+      inFlight -= 1;
+    };
+    const localPaths = attachmentFiles(6, 10);
+
+    const copying = copyAttachmentsToHost(shell, localPaths);
+    await vi.waitFor(() => expect(inFlight).toBe(3));
+    release();
+    const failures = await copying;
+
+    expect(failures).toEqual([]);
+    expect(mostInFlight).toBe(3);
+    expect(writes).toHaveLength(6);
+  });
+});
+
+describe('the variables once the attachments are on the host', () => {
+  it('are the same object when nothing failed', async () => {
+    const vars = { attachments: `\n${hostAttachment}`, title: 'Task' };
+
+    const resolved = await withAttachmentsOnHost(shell, [attachment], vars);
+
+    expect(resolved).toBe(vars);
+  });
+
+  it('are a copy whose attachments carry the note when a file did not arrive', async () => {
+    linkDown = true;
+    const vars = { attachments: `\n${hostAttachment}`, title: 'Task' };
+
+    const resolved = await withAttachmentsOnHost(shell, [attachment], vars);
+
+    expect(resolved).not.toBe(vars);
+    expect(resolved.title).toBe('Task');
+    expect(resolved.attachments).toContain('Not copied to this host');
+    expect(resolved.attachments.split('\n')).not.toContain(hostAttachment);
+    expect(vars.attachments).toBe(`\n${hostAttachment}`);
   });
 });
 

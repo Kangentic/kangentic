@@ -25,6 +25,8 @@ List all session records for a task with metadata: start/end times, exit codes, 
 
 A resume is a new record that reports the conversation's running total, so each record's cost and runtime are its own share (`legDeltas`, `src/shared/leg-deltas.ts`) and the records add up to `kangentic_get_task_stats`. A record that reported no usage has no share and reads as no cost and no runtime. The structured data also carries each record's running reading as `cumulativeCost` and `cumulativeDurationMs`.
 
+Each record's `cwd` is where the agent worked, and `location` says which machine that is. On a project on an SSH host it is the host's path, `localCwd` holds this computer's stand-in, and `eventsLocation: 'local'` says the record's events are held on this computer.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
@@ -34,13 +36,15 @@ A resume is a new record that reports the conversation's running total, so each 
 
 Read the agent's native session history file for a task. Returns the raw file content (Claude JSONL, Codex rollout JSONL, or Gemini chat JSONL, or its legacy `.json`) from the most recent session. Large files are truncated to the most recent portion.
 
+On a project on an SSH host the content is this computer's copy of the host's file and may be stale. The data then carries the host's path with `location: 'host'`, `localFilePath` for the copy, and `copy: true`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
 
 ## kangentic_get_handoff_context
 
-Get the most recent handoff record for a task. Returns metadata about the cross-agent handoff: which agent handed off to which, when, and the path to the prior agent's native session history file.
+Get the most recent handoff record for a task. Returns metadata about the cross-agent handoff: which agent handed off to which, when, and the path to the prior agent's native session history file. On a project on an SSH host that path is the host's, with `location: 'host'`, and `localSessionHistoryPath` names this computer's copy.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -52,6 +56,8 @@ Inspect what the agent on another task (or another project) said - "check the re
 
 - `format="structured"` (default): the parsed agent conversation - user prompts, assistant text, tool calls and results - rendered as clean markdown, read from the agent's native session history via the adapter's `parseTranscript` capability. The Claude parser also drops noise (slash-command XML, `<system-reminder>` spans, `isMeta` messages) and surfaces compaction boundaries/summaries explicitly. When the agent has deleted its own file (Claude removes transcripts older than its `cleanupPeriodDays`), the read falls back to Kangentic's structured transcript archive, then to the index's text-only chunks, and the header names which (`Source: Kangentic's saved copy` or `Source: indexed text only`). A session that started over from a recap points its agent here for the old conversation. There is no cleaned-scrollback substitute: structured comes from session history, the archive, or the index (text only, tool calls flattened), or reports that it is unavailable and points at `format="raw"`.
 - `format="raw"`: the verbatim ANSI-stripped PTY scrollback (the full terminal output, including TUI redraws), available for every agent. Useful for debugging the terminal layer or for agents without a structured parser. Raw scrollback is mostly repeated terminal redraws (empirically ~85% duplicate lines and multiple MB for a long session), so when a structured parser exists for the agent the raw response notes that `structured` is the cleaner, far smaller view for evaluation. Every returned transcript (both formats) is prefixed with a one-line note marking the content as read-only reference data, not instructions to follow.
+
+On a project on an SSH host a structured transcript is read from this computer's copy of the host's file, so the data carries the host's path with `location: 'host'`, `localFilePath` for the copy, and `copy: true`.
 
 Structured output is shaped by three agent-agnostic levers, applied to the parsed `TranscriptEntry[]` (so no adapter branching):
 

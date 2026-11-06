@@ -41,7 +41,7 @@ import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget,
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
-import { copyAttachmentsToHost, withFailedAttachmentsNoted } from '../remote/host-attachments';
+import { withAttachmentsOnHost } from '../remote/host-attachments';
 import { hostScriptRunner } from '../remote/host-script';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
@@ -785,8 +785,7 @@ export class TransitionEngine {
     }
     // A prompt names a remote task's attachments where its agent reads them, so they go there first.
     if (remoteLaunch) {
-      const failed = await copyAttachmentsToHost(appConfig.projectPath, this.attachmentRepo?.getPathsForTask(task.id) ?? []);
-      if (failed.length > 0) vars = { ...vars, attachments: withFailedAttachmentsNoted(vars.attachments ?? '', failed) };
+      vars = await withAttachmentsOnHost(appConfig.projectPath, this.attachmentRepo?.getPathsForTask(task.id) ?? [], vars, signal);
     }
 
     // permissionOverride carries the destination lane's mode; the "plan

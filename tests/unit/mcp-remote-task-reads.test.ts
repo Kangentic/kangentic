@@ -114,6 +114,49 @@ describe('kangentic_get_current_task on a remote project', () => {
     const result = await handleGetCurrentTask({ cwd: HOST_PROJECT }, { ...context, callerTaskId: 'two' });
 
     expect(dataOf(result).id).toBe('two');
+    // The project folder was named and is where the caller works, so nothing was missed to explain.
+    expect(result.message).not.toContain('No task matches');
+  });
+
+  describe('a name that matches no task', () => {
+    const NOTE = 'No task matches the cwd or branch you named, so this is your own task.';
+
+    it('answers with the caller\'s own task and says the name matched nothing, for a branch', async () => {
+      taskFixtures.push(task({}));
+
+      const result = await handleGetCurrentTask({ branch: 'no/such-branch' }, { ...context, callerTaskId: 'task-12' });
+
+      expect(dataOf(result).id).toBe('task-12');
+      expect(result.message?.startsWith(NOTE)).toBe(true);
+    });
+
+    it('says so for a cwd too', async () => {
+      taskFixtures.push(task({}));
+
+      const result = await handleGetCurrentTask({ cwd: '/somewhere/else/entirely' }, { ...context, callerTaskId: 'task-12' });
+
+      expect(dataOf(result).id).toBe('task-12');
+      expect(result.message?.startsWith(NOTE)).toBe(true);
+    });
+
+    it('says nothing when the caller named nothing', async () => {
+      taskFixtures.push(task({}));
+
+      const result = await handleGetCurrentTask({}, { ...context, callerTaskId: 'task-12' });
+
+      expect(dataOf(result).id).toBe('task-12');
+      expect(result.message).not.toContain('No task matches');
+    });
+
+    it('stays "No task found" for an unmatched name with no caller', async () => {
+      taskFixtures.push(task({}));
+
+      const byCwd = await handleGetCurrentTask({ cwd: '/somewhere/else/entirely' }, context);
+      const byBranch = await handleGetCurrentTask({ branch: 'no/such-branch' }, context);
+
+      expect(byCwd.message).toBe('No task found for current context.');
+      expect(byBranch.message).toBe('No task found for current context.');
+    });
   });
 
   it('answers with the caller\'s own task when asked nothing', async () => {

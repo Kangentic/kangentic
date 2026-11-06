@@ -96,7 +96,7 @@ interface SessionFileEntry {
 /** Each file's entry, with one ask of the host for all of them. A host that cannot answer leaves `exists` null and says why. */
 async function describeSessionFiles(
   localPaths: readonly string[],
-  hostPathOf: (localPath: string) => string,
+  session: SessionRow,
   paths: AgentPaths,
   hostAccess: HostAccess | null,
 ): Promise<{ entries: SessionFileEntry[]; hostError: string | null }> {
@@ -106,7 +106,7 @@ async function describeSessionFiles(
       hostError: null,
     };
   }
-  const hostPaths = localPaths.map(hostPathOf);
+  const hostPaths = localPaths.map((localPath) => paths.sessionFileToAgent(localPath, session));
   let presence: Array<'present' | 'absent'> | null = null;
   let hostError: string | null = hostAccess ? null : 'This project\'s host is not available.';
   if (hostAccess) {
@@ -174,12 +174,7 @@ export async function handleGetSessionFiles(
   const nativeSessionFilePath = await locateNativeSessionFile(session);
   const fileKeys = Object.keys(files) as Array<keyof typeof files>;
   const localPaths = [...fileKeys.map((key) => files[key]), ...(nativeSessionFilePath ? [nativeSessionFilePath] : [])];
-  const { entries, hostError } = await describeSessionFiles(
-    localPaths,
-    (localPath) => paths.sessionFileToAgent(localPath, session),
-    paths,
-    context.hostAccess?.() ?? null,
-  );
+  const { entries, hostError } = await describeSessionFiles(localPaths, session, paths, context.hostAccess?.() ?? null);
   const hostSessionDir = paths.toAgent(sessionDir);
 
   return {
@@ -255,14 +250,14 @@ export const handleGetSessionEvents: CommandHandler = async (
   // This file is built on this computer from what a host relays, so it has no original an agent there could open.
   const onHost = agentPathsOf(context).location === 'host';
   const source = onHost ? 'this computer\'s record of the session (you cannot open this file from the host)' : eventsJsonlPath;
-  const location = { location: 'local' as const, ...(onHost ? { copy: true } : {}) };
+  const locationFields = { location: 'local' as const, ...(onHost ? { copy: true } : {}) };
 
   const eventsJsonlExists = await fs.promises.access(eventsJsonlPath).then(() => true, () => false);
   if (!eventsJsonlExists) {
     return {
       success: true,
       message: `No events.jsonl for session ${session.id}`,
-      data: { sessionId: session.id, eventsJsonlPath, ...location, totalLines: 0, returned: 0, events: [] },
+      data: { sessionId: session.id, eventsJsonlPath, ...locationFields, totalLines: 0, returned: 0, events: [] },
     };
   }
 
@@ -305,7 +300,7 @@ export const handleGetSessionEvents: CommandHandler = async (
     data: {
       sessionId: session.id,
       eventsJsonlPath,
-      ...location,
+      ...locationFields,
       totalLines,
       returned: tailed.length,
       truncated,

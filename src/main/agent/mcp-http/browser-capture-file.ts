@@ -5,11 +5,18 @@ import { randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { pruneShotsDir, type FileScreenshotResponse, type InlineScreenshotResponse } from '../../browser/cdp/screenshot';
 import { agentPathsForProjectPath } from '../../remote/host-paths';
-import { hostAccessFor, readHostBytes, writeHostBytes } from '../../remote/host-transfer';
+import { HOST_NOT_AVAILABLE, hostAccessFor, readHostBytes, writeHostBytes } from '../../remote/host-transfer';
 import type { ValueLocation } from '../../../shared/types';
 
 /** What one dropped file may weigh. The same bound as an attachment fetched from a host. */
 const MAX_DROPPED_FILE_BYTES = 50 * 1024 * 1024;
+/** As long as a capture is kept, the rule the dev screenshot folder set. */
+const MAX_DROP_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** What a Windows file name cannot hold, or holds as more than a name: `\` is a separator and `:` opens a data stream. */
+const UNSAFE_NAME_CHARACTERS = /[\\/:*?"<>|\p{Cc}]/gu;
+/** Names Windows gives to a device, with or without an extension. */
+const WINDOWS_DEVICE_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\.|$)/i;
 
 /**
  * Where `saveToFile` on `kangentic_browser_screenshot`, `_screenshot_element`
@@ -137,7 +144,7 @@ export function deliverCapture(saved: SavedCaptureFile, projectPath: string | nu
   const { hostId } = paths;
   return (async () => {
     const access = hostAccessFor(hostId);
-    if (!access) throw new Error('this project\'s host is not available');
+    if (!access) throw new Error(HOST_NOT_AVAILABLE);
     const hostPath = paths.toAgent(saved.filePath);
     await writeHostBytes(access, hostPath, await fs.promises.readFile(saved.filePath));
     if (saved.pruned.length > 0) {
@@ -147,6 +154,31 @@ export function deliverCapture(saved: SavedCaptureFile, projectPath: string | nu
     }
     return { filePath: hostPath, fileUri: hostFileUri(hostPath), bytes: saved.bytes, location: 'host', localFilePath: saved.filePath };
   })();
+}
+
+/**
+ * A host's file name as one name on this computer. POSIX lets a name hold `\`, `:` and `..`, and the agent picks both
+ * the name and the bytes, so on Windows a name left as it is writes wherever it walks to. The same on every platform,
+ * so a test on Linux proves what Windows needs.
+ */
+export function droppedFileName(hostPath: string): string {
+  const name = (hostPath.split('/').pop() ?? '').replace(UNSAFE_NAME_CHARACTERS, '_').replace(/[. ]+$/, '');
+  if (!name) return 'file';
+  return WINDOWS_DEVICE_NAME.test(name) ? `_${name}` : name;
+}
+
+/**
+ * Remove the folders of drops a day old. A page reads a dropped file when it uses it, which can be at a form's submit
+ * much later, so a folder cannot go with its drop. The rolling prune never reaches these: it counts files in one folder.
+ */
+async function pruneOldDrops(directory: string): Promise<void> {
+  const entries = await fs.promises.readdir(directory, { withFileTypes: true }).catch(() => []);
+  const oldest = Date.now() - MAX_DROP_AGE_MS;
+  await Promise.all(entries.filter((entry) => entry.isDirectory() && entry.name.startsWith('drop-')).map(async (entry) => {
+    const folder = path.join(directory, entry.name);
+    const stat = await fs.promises.stat(folder).catch(() => null);
+    if (stat && stat.mtimeMs < oldest) await fs.promises.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+  }));
 }
 
 /**
@@ -161,7 +193,8 @@ export async function fetchFilesFromHost(
   const paths = projectPath ? agentPathsForProjectPath(projectPath) : null;
   if (!paths?.hostId) return null;
   const access = hostAccessFor(paths.hostId);
-  if (!access) return { localPaths: [], failures: hostPaths.map((hostPath) => `${hostPath}: this project's host is not available`) };
+  if (!access) return { localPaths: [], failures: hostPaths.map((hostPath) => `${hostPath}: ${HOST_NOT_AVAILABLE}`) };
+  await pruneOldDrops(directory);
   const target = path.join(directory, `drop-${randomBytes(3).toString('hex')}`);
   const localPaths: string[] = [];
   const failures: string[] = [];
@@ -175,7 +208,7 @@ export async function fetchFilesFromHost(
       // Each in its own folder, so two files of one name both keep it, and the page sees the name the agent gave.
       const folder = path.join(target, String(index));
       await fs.promises.mkdir(folder, { recursive: true });
-      const localPath = path.join(folder, hostPath.split('/').pop() || 'file');
+      const localPath = path.join(folder, droppedFileName(hostPath));
       await fs.promises.writeFile(localPath, read.bytes);
       localPaths.push(localPath);
     } catch (error) {

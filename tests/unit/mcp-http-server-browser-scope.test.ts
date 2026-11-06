@@ -56,6 +56,9 @@ import { startMcpHttpServer, type McpHttpServerHandle } from '../../src/main/age
 import { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { CommandContext } from '../../src/main/agent/commands/types';
+import type { BrowserToolDependencies } from '../../src/main/agent/mcp-http/browser-tools';
+import { setRemoteProjectLookup } from '../../src/main/remote/host-paths';
+import { setHostAccessLookup } from '../../src/main/remote/host-transfer';
 
 function makeResolver(projectId: string): RequestResolver {
   const fakeIpcContext = { projectRepo: { list: () => [] } } as unknown as IpcContext;
@@ -269,5 +272,59 @@ describe('startMcpHttpServer - resolveBrowser captureDirectory wiring (saveToFil
     const captureDirectory = await startAndPost(resolverWithProjectPath('proj-1', null), '/mcp/proj-1', undefined);
 
     expect(captureDirectory()).toBe(path.join(os.tmpdir(), 'kangentic-captures', 'proj-1'));
+  });
+});
+
+describe('startMcpHttpServer - resolveBrowser host wiring (deliverCapture, fetchDroppedFiles)', () => {
+  let handle: McpHttpServerHandle | undefined;
+  const shell = path.join(os.tmpdir(), 'kangentic-remote-shell');
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+    registerBrowserToolsSpy.mockClear();
+    setRemoteProjectLookup(null);
+    setHostAccessLookup(null);
+  });
+
+  async function dependenciesFor(projectPath: string): Promise<BrowserToolDependencies> {
+    const fakeIpcContext = { projectRepo: { list: () => [] } } as unknown as IpcContext;
+    const resolver = new RequestResolver({
+      ipcContext: fakeIpcContext,
+      defaultContext: { getProjectPath: () => projectPath } as unknown as CommandContext,
+      defaultProjectId: 'proj-1',
+      defaultProjectName: 'Test Project',
+    });
+    handle = await startMcpHttpServer(
+      () => resolver,
+      () => ({ enabled: true, allowInteraction: false, allowNavigation: false, allowEval: false, restrictNavigationToLocalhost: false }),
+      { bindAddress: '127.0.0.1' },
+      () => ({ sessionManager: makeFakeSessionManager() as never, terminalSubmit: { submitContent: vi.fn(() => Promise.resolve()) } }),
+    );
+    await postToPath(Number(new URL(handle.baseUrl).port), '/mcp/proj-1', handle.token);
+    return registerBrowserToolsSpy.mock.calls[0]?.[2];
+  }
+
+  const saved = { filePath: path.join(shell, 'captures', 'dom.html'), fileUri: 'file:///x', bytes: 1, pruned: [] };
+
+  // Without the project path reaching them, a remote project's captures stay on this computer and its dropped
+  // files are read from this disk, which is the bug the host copy exists to fix.
+  it('hands both host-aware dependencies the request project\'s path, so a remote project reaches its host', async () => {
+    setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: '/home/dev/proj' } : null));
+    setHostAccessLookup(() => null);
+    const dependencies = await dependenciesFor(shell);
+
+    await expect(dependencies.deliverCapture?.(saved)).rejects.toThrow();
+    const fetched = await dependencies.fetchDroppedFiles?.(['/home/dev/proj/a.png'], path.join(shell, 'drops'));
+    expect(fetched?.failures.length).toBeGreaterThan(0);
+  });
+
+  it('leaves a project on this computer alone: captures stay local and nothing is fetched', async () => {
+    setRemoteProjectLookup(() => null);
+    setHostAccessLookup(() => { throw new Error('a host was asked'); });
+    const dependencies = await dependenciesFor(path.join(os.tmpdir(), 'kangentic-local-project'));
+
+    expect(await dependencies.deliverCapture?.(saved)).toMatchObject({ filePath: saved.filePath, location: 'local' });
+    expect(await dependencies.fetchDroppedFiles?.(['/tmp/a.png'], path.join(shell, 'drops'))).toBeNull();
   });
 });

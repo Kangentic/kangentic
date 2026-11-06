@@ -103,7 +103,7 @@ Read the `outerHTML` of the first element matching a selector. Capability tier: 
 | `taskId` | string | No | Target a surface by task. |
 | `selector` | string | No | CSS selector (or `text=` / `aria=` form). Defaults to `html`. |
 | `includeBox` | boolean | No | Also return the element's `{x, y, width, height}` viewport box. |
-| `saveToFile` | boolean | No | Write the `outerHTML` to an `.html` file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ selector, filePath, bytes }` instead of it. |
+| `saveToFile` | boolean | No | Write the `outerHTML` to an `.html` file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ selector, filePath, bytes, location }` instead of it, with `localFilePath` on a project on an SSH host. |
 
 Returns `{ selector, outerHTML }`, plus `box` when `includeBox` is set. `box` is `null` when the element matched but CDP returned no usable box model. With `saveToFile` the page's HTML goes to a file at the `observe` tier, so a DOM capture for an artifact needs neither `allowEval`, which is off by default, nor another browser. Error modes: `selector-not-found`, and `save-failed` when the file cannot be written.
 
@@ -345,6 +345,6 @@ Evaluate a JavaScript expression in the loaded page's origin and return its valu
 | `sessionId` | string | No | Target a surface by its handle. |
 | `taskId` | string | No | Target a surface by task. |
 | `expression` | string | Yes | JavaScript expression to evaluate. The resolved value is returned. |
-| `saveToFile` | boolean | No | Write the value to a file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ filePath, bytes }` instead of the value. |
+| `saveToFile` | boolean | No | Write the value to a file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ filePath, bytes, location }` instead of the value, with `localFilePath` on a project on an SSH host. |
 
-Returns `{ value }` with the serialized result, or `{ filePath, bytes }` with `saveToFile`: a string value (page HTML, CSS, a URL list) is written as it is to a `.txt` file, anything else as indented JSON to a `.json` file. Error modes: `evaluate-failed`, carrying the page-side error text, and `save-failed` when the file cannot be written.
+Returns `{ value }` with the serialized result, or `{ filePath, bytes, location }` with `saveToFile`: a string value (page HTML, CSS, a URL list) is written as it is to a `.txt` file, anything else as indented JSON to a `.json` file. Error modes: `evaluate-failed`, carrying the page-side error text, and `save-failed` when the file cannot be written.
