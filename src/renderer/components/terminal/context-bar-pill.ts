@@ -18,8 +18,11 @@
  * Keep that property if you touch these strings.
  */
 
+/** The bar of a task with no running agent: the pre-spawn bar and the queued one. */
+export const plainContextBarClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0';
+
 /** A value confirmed by agent telemetry. */
-export const pill = 'px-2 py-0.5 rounded border border-transparent bg-surface-raised whitespace-nowrap select-none';
+export const pill ='px-2 py-0.5 rounded border border-transparent bg-surface-raised whitespace-nowrap select-none';
 
 /** A configured value the agent has not confirmed. Reached via `pillForProvenance`. */
 const provisionalPill = 'px-2 py-0.5 rounded border border-dashed border-edge bg-transparent whitespace-nowrap select-none';

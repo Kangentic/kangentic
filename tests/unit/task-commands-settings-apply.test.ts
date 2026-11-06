@@ -120,6 +120,7 @@ describe('handleUpdateTask - live session settings', () => {
     expect(context.onTaskSettingsChanged).toHaveBeenCalledOnce();
     expect(context.onTaskSettingsChanged).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-uuid-1' }), changed);
     expect(result.message).toContain('restarts if it is not already on these settings');
+    expect(result.message).toContain('A queued session starts with them.');
   });
 
   // The apply reads a changed field's source from the live session, so a
