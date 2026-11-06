@@ -15,8 +15,10 @@
  * - A watchdog thread checks the heartbeat every second. After five checks
  *   with no beat, about 5 s, well inside the 15 s kill, it writes one line to
  *   stderr: `[retrieval-worker] event loop held 5 s in index:chunk-window`.
- *   That stderr is the tail the restart policy already puts in its crash log
- *   line and latch report, so main needs no change to carry it.
+ *   That stderr is the tail the restart policy puts in its crash log line and
+ *   latch report, and the latch report also copies the line onto its own
+ *   crash's entry (`watchdogLine`), so a report of three crashes says which
+ *   one held the loop.
  *
  * The watchdog writes with `fs.writeSync` on the stderr descriptor. A worker
  * thread's `console` and `process.stderr` are forwarded through the thread
@@ -33,6 +35,7 @@
 
 import { Worker } from 'node:worker_threads';
 import { setSyncSpanLabelSink } from '../../diagnostics/event-loop-lag';
+import { EVENT_LOOP_HELD_PHRASE } from '../../utility-process/stderr-tail';
 
 /** Longest label kept, in UTF-8 bytes. Labels are short fixed identifiers. */
 export const LABEL_BYTES = 96;
@@ -81,7 +84,7 @@ setInterval(() => {
   const seconds = Math.round((checksWithoutBeat * checkIntervalMs) / 1000);
   const where = label ? 'in ' + label : 'outside any labelled step';
   try {
-    fs.writeSync(fd, prefix + ' event loop held ' + seconds + ' s ' + where + '\\n');
+    fs.writeSync(fd, prefix + ' ${EVENT_LOOP_HELD_PHRASE} ' + seconds + ' s ' + where + '\\n');
   } catch {
     // The descriptor is gone: the process is exiting.
   }

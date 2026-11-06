@@ -9,6 +9,7 @@ import type { ParsedTranscriptWindow, TranscriptPageReadRequest, TranscriptPageR
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
 import type { CliPlace } from '../../shared/cli-target';
 
@@ -119,6 +120,10 @@ export function readGrokTranscriptPage(
 
 /** Parse whole lines into entries, each stamped with the byte its line starts at. */
 function parseGrokLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-grok', () => collectGrokEntries(agentSessionId, lines));
+}
+
+function collectGrokEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   const parseTimeTs = Date.now();
   for (const { text: line, byte, line: lineNumber } of lines) {

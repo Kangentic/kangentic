@@ -3,6 +3,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { contentPartsText, parseRecordTime } from './wire-parser';
 
 /** Kimi uuids number lines (see below), so the tail, its notice and every page count them. */
@@ -85,6 +86,10 @@ export function readKimiTranscriptPage(
  * between reads.
  */
 function parseKimiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-kimi', () => collectKimiEntries(agentSessionId, lines));
+}
+
+function collectKimiEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   let pendingAssistantText = '';
   let pendingTs = 0;

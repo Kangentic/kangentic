@@ -84,7 +84,10 @@ connection.
   loop, and reads the line it wrote while the loop was still held. It also fails when the thread
   requires anything but a `node:` built-in, or when `worker_threads` is imported anywhere else in
   `src/main` but the pty host's spawn worker, the one other thread, which loads no native module
-  either ([[pty-host-out-of-process]]).
+  either ([[pty-host-out-of-process]]). It fails when an adapter that reads a transcript window has
+  no `transcript:parse-` span: each parses in its own code after the read's `await`, so nothing
+  shared can label it. `tests/unit/retrieval-worker-held-step.test.ts` holds the loop inside a
+  handler through the real entry and reads `in method:<name>`.
 - **Review:** a new main-side caller of a retrieval-store method compiles (types are erased), so
   the boundary test catches it only when it pulls a declaration into main's bundle. `/code-review`
   flags a direct `getProjectDb` read of a `memory_*` table from main.

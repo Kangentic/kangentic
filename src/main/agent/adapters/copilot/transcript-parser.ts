@@ -3,6 +3,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 
 /**
  * Copilot CLI's session event log, `<config home>/session-state/<id>/events.jsonl`
@@ -65,6 +66,10 @@ export function readCopilotTranscriptPage(
 
 /** Parse whole lines into entries, each stamped with the byte its line starts at. */
 export function parseCopilotLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-copilot', () => collectCopilotEntries(agentSessionId, lines));
+}
+
+function collectCopilotEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const { text, byte } of lines) {
     if (text.length === 0) continue;

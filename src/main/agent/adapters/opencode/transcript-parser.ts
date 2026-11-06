@@ -3,6 +3,7 @@ import type DatabaseType from 'better-sqlite3';
 import type { TranscriptEntry, TranscriptBlock, TranscriptTurnUsage } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
 import { openCodeV2RowEntries, type OpenCodeV2MessageRow } from './v2-messages';
@@ -67,6 +68,10 @@ export function parseOpenCodeTranscriptAtPath(dbPath: string, sessionId: string)
 
 /** Run a read-only query against the database, or answer `fallback` when it cannot be opened or read. */
 export function withDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
+  return timeSyncWork('transcript:read-opencode', () => readDatabase(dbPath, fallback, read));
+}
+
+function readDatabase<Value>(dbPath: string, fallback: Value, read: (database: DatabaseType.Database) => Value): Value {
   if (!fs.existsSync(dbPath)) return fallback;
   const DatabaseConstructor = loadBetterSqlite3();
   if (!DatabaseConstructor) return fallback;

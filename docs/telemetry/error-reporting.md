@@ -406,8 +406,16 @@ in one Sentry org, one triage surface.
   nothing itself, but not which one held the loop. For that, the worker runs an event-loop watchdog
   thread (`src/main/retrieval/worker/event-loop-watchdog.ts`). When its heartbeat stops for about
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
-  `timeSyncWork` span that was running (or `outside any labelled step` when none was), so the line
-  is in the stderr tail by the 15 s kill.
+  innermost `timeSyncWork` span that was running (or `outside any labelled step` when none was), so
+  the line is in the stderr tail by the 15 s kill. Every handler's synchronous slice runs inside a
+  `method:<name>` span, and each agent's transcript parse has one of its own
+  (`transcript:parse-codex`, or `transcript:read-goose` and `transcript:read-opencode` for the two
+  agents that read a database),
+  because a parse runs after its read's `await`, outside any span around the call. The shared
+  steps have `transcript:split-lines`, `transcript:previews` and `transcript:final-reply`.
+  The stderr tail is one worker's text and cannot say which crash wrote it, so a
+  crash with a watchdog line also carries it on its own `crashes` entry, read at report time:
+  `request_timeout method=transcript.trailRead watchdog="[retrieval-worker] event loop held 5 s in transcript:parse-codex"`.
 - **Every failed launch has one report.** A user whose terminal never starts leaves, and most of
   these failures throw nothing, so `src/main/pty/agent-launch-report.ts` is the one way a launch
   failure reaches Sentry. Each report has a `stage`, and each stage its own error name:

@@ -3,6 +3,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 
 /**
  * Cursor numbers nothing in the file, so entry uuids are `<sessionId>:<line>`
@@ -91,6 +92,10 @@ function unwrapTag(text: string, tag: string): string | null {
 }
 
 function parseCursorLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-cursor', () => collectCursorEntries(agentSessionId, lines));
+}
+
+function collectCursorEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;

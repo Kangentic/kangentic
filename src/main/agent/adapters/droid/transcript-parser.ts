@@ -4,6 +4,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { droidSessionsDirForCwd } from './session-id-capture';
 import type { CliPlace } from '../../shared/cli-target';
 
@@ -84,6 +85,10 @@ export function readDroidTranscriptPage(
 
 /** Parse whole lines into entries, each stamped with the byte its line starts at. */
 function parseDroidLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  return timeSyncWork('transcript:parse-droid', () => collectDroidEntries(agentSessionId, lines));
+}
+
+function collectDroidEntries(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;

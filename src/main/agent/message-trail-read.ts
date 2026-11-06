@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import type { AgentAdapter } from './agent-adapter';
 import type { AssistantMessageTrailEntry, TranscriptEntry } from '../../shared/types';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 import { placeFromStored, type CliPlace } from './shared/cli-target';
 import { assistantMessagePreviews } from './shared/message-preview';
 import { getCachedTranscript } from './transcript-cache';
@@ -120,7 +121,7 @@ export async function readFinalReply(
       tailBytes: FINAL_REPLY_TAIL_BYTES,
       maxWindows: FINAL_REPLY_MAX_WINDOWS,
     });
-    return finalAgentReply(read.entries);
+    return replyOf(read.entries);
   }
   const parseTranscript = adapter.parseTranscript;
   if (parseTranscript) {
@@ -129,7 +130,7 @@ export async function readFinalReply(
       facts.agentSessionId,
       () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd, place, facts.transcriptPath ?? null),
     );
-    return finalAgentReply(cached.entries);
+    return replyOf(cached.entries);
   }
   return null;
 }
@@ -162,9 +163,15 @@ async function anchoredStart(
   return Math.max(byteOffset, size - FINAL_REPLY_TAIL_BYTES);
 }
 
+function replyOf(entries: TranscriptEntry[]): AgentReply | null {
+  return timeSyncWork('transcript:final-reply', () => finalAgentReply(entries));
+}
+
 function previewsOf(entries: TranscriptEntry[]): AssistantMessageTrailEntry[] {
   if (entries.length === 0) return [];
-  return assistantMessagePreviews(entries, { count: MESSAGE_TRAIL_MAX_ENTRIES, maxChars: MESSAGE_TRAIL_ENTRY_MAX_CHARS });
+  return timeSyncWork('transcript:previews', () => (
+    assistantMessagePreviews(entries, { count: MESSAGE_TRAIL_MAX_ENTRIES, maxChars: MESSAGE_TRAIL_ENTRY_MAX_CHARS })
+  ));
 }
 
 async function readWindows(

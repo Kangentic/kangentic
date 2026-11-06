@@ -2,6 +2,7 @@ import type { TranscriptEntry, TranscriptUsage } from '../../../../shared/types'
 import type { ParsedTranscript } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+import { timeSyncWork } from '../../../diagnostics/event-loop-lag';
 import { aiderHistoryPath } from './history-paths';
 import {
   AIDER_SESSION_HEADER,
@@ -181,7 +182,7 @@ export async function parseAiderTranscript(agentSessionId: string, cwd: string):
   try {
     const window = await readJsonlWindow(sourcePath, { maxBytes: parseWindowBytes(), countOmittedLines: true });
     if (window.totalBytes === 0) return { entries: [], sourcePath: null };
-    const entries = parseAiderHistoryMarkdown(window.text, agentSessionId, window.omittedLineCount);
+    const entries = timeSyncWork('transcript:parse-aider', () => parseAiderHistoryMarkdown(window.text, agentSessionId, window.omittedLineCount));
     return { entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes), sourcePath };
   } catch {
     return { entries: [], sourcePath: null };
@@ -202,7 +203,7 @@ export async function aiderTranscriptUsage(agentSessionId: string, cwd: string):
     let startByte = 0;
     for (;;) {
       const window = await readJsonlWindow(filePath, { startByte, maxBytes: parseWindowBytes() });
-      const summary = summarizeAiderHistory(window.text);
+      const summary = timeSyncWork('transcript:parse-aider', () => summarizeAiderHistory(window.text));
       inputTokens += summary.totals.sent;
       outputTokens += summary.totals.received;
       reportCount += summary.reportCount;
