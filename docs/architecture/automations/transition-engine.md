@@ -180,8 +180,9 @@ line.
 move keywords and `{{agentReply}}`), and 2 only in a workflow agent's first
 message (`{{columns}}` and `{{brief_xml}}`), each marked below. That first
 message (Settings > Workflows) is the third context: it is written before any
-task exists, so it offers only `{{projectName}}`, `{{projectPath}}`,
-`{{baseBranch}}` (the project's default) and its own two.
+task exists, so it offers only `{{projectName}}`, `{{projectPath}}` (the
+host's folder, for a project on an SSH host), `{{baseBranch}}` (the project's
+default) and its own two.
 
 **Two substitution rules, split by SOURCE rather than by destination.**
 
@@ -213,9 +214,9 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{workflow_xml}}` | A workflow task's `<workflow>` block: the workflow's name, the task's route, the `<column>` it is in as the prompt is built, the tasks it built on (with their branch and PR) and the tasks waiting on it, then how its turns are judged (end a turn only with the column's work done or when only the owner can settle what it is stuck on, and then with the `Needs owner: <the question>` line, for a change from the plan, something the owner must weigh in on, or a decision between options; progress notes go beside the next tool call; `kangentic_move_task` with `"next"`, or, in a column that runs the task in plan mode, that approving the plan moves the task on to the next route column so the agent does not move it itself; `kangentic_mark_background_service` for a background command left running after the turn; and which route columns run in a conversation of their own, an isolated session target: an agent in one is told the main conversation sees only its commits and its final message, and an agent in the main conversation is told those columns do not see it and that it hears what they did when it comes back). Read by the engine (`readWorkflowPromptFacts`, whose `ownConversation` lists those columns) and escaped. Empty, and dropped, for a task outside a workflow, so an ordinary task's default prompt is unchanged. |
 | `{{taskId}}` | Task UUID |
 | `{{taskNumber}}` | The task's `#N`, the number people say out loud (`display_id`) |
-| `{{projectPath}}` | Main project checkout path (empty if no project is open) - always the base repo, even when the task has a worktree |
+| `{{projectPath}}` | Main project checkout path (empty if no project is open) - always the base repo, even when the task has a worktree. On a project on an SSH host, the project's folder on the host, since the agent works there |
 | `{{projectName}}` | The project's name as it reads in the sidebar (empty if no project is open) |
-| `{{worktreePath}}` | Worktree directory path (empty if none) - a raw read, never falls back to a project-level path |
+| `{{worktreePath}}` | Worktree directory path (empty if none) - a raw read, never falls back to a project-level path. On a project on an SSH host, the worktree's path on the host |
 | `{{branchName}}` | Git branch name (empty if none) - a raw read, never falls back to a project-level branch |
 | `{{baseBranch}}` | Effective base branch: the task's `base_branch` override, else the project's configured default (board config, then app config, then `'main'`) |
 | `{{prUrl}}` | Pull request URL (empty if none) |
@@ -224,7 +225,7 @@ Note what drop-and-collapse means for a FLAG-shaped placeholder in an
 | `{{issueKey}}` | The linked tracker issue's key, such as a Jira key or a GitHub issue number (empty if none) |
 | `{{issueUrl}}` | The linked tracker issue's URL (empty if none) |
 | `{{labels}}` | The task's labels, comma-separated (empty if none) |
-| `{{attachments}}` | Bare file paths (one per line) when present |
+| `{{attachments}}` | Bare file paths (one per line) when present. On a project on an SSH host, the paths on the host, where the files are copied before the agent starts |
 | `{{port}}` | Lowest dev-server port this task has RESERVED (empty if none, which is the normal state) - a raw read, never falls back to another task's port |
 | `{{column}}` | The column the automation belongs to. Automations only |
 | `{{fromColumn}}` | The column the task moved out of (empty for a task born into a column). Automations only |
