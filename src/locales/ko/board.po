@@ -27,6 +27,11 @@ msgstr "\"{movedTaskTitle}\"이(가) 이제 열에 있습니다."
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, other {앞에 작업 #개 대기 중...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -328,6 +333,11 @@ msgstr "새 작업"
 msgid "New workflow"
 msgstr "새 워크플로"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "다음 순서 대기 중..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "No completed tasks yet"
@@ -359,11 +369,6 @@ msgstr "세션 일시 중지"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "일시 중지됨"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "대기 중 {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy

@@ -165,6 +165,11 @@ msgstr "Henüz araç çağrısı yok"
 msgid "Notice"
 msgstr "Bildirim"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "Değiştirmek için bu görevi duraklatın"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

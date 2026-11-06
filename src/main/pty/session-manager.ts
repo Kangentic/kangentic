@@ -2355,6 +2355,24 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Have a waiting session start with these settings. Its place in line, its id
+   * and its prompt stay as they are. False when it has left the queue, was queued
+   * with no way to rebuild (a startup spawn), or the rebuild threw, so its command
+   * stands. An adapter's build writes files and may throw, and the callers have
+   * already saved the settings, one of them in a loop over every affected task.
+   */
+  rebuildQueuedCommand(sessionId: string, settings: { model: string | null; effort: string | null }): boolean {
+    const input = this.sessionQueue.entries.find((entry) => entry.id === sessionId);
+    if (!input?.rebuildCommand) return false;
+    try {
+      return this.sessionQueue.replaceCommand(sessionId, input.rebuildCommand(settings));
+    } catch (error) {
+      console.error(`[SessionManager] Could not rebuild the queued command for session ${sessionId.slice(0, 8)}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Keep a task's column slot across an in-place restart, whose suspend would
    * otherwise hand it to the next task in line. The caller releases it once the
    * task's new spawn has been made. A task with no slot has nothing to keep: a

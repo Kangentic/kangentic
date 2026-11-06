@@ -165,6 +165,11 @@ msgstr "Zatím žádná volání nástrojů"
 msgid "Notice"
 msgstr "Oznámení"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+#, fuzzy
+msgid "Pause this task to change it"
+msgstr "Chcete-li tuto úlohu změnit, pozastavte ji"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Plan approved automatically"

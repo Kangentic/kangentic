@@ -7346,6 +7346,12 @@ export interface SpawnSessionInput {
   taskId: string;
   projectId: string;
   command: string;
+  /**
+   * The same launch with other settings, so a session still waiting in the queue
+   * can take a model or effort change. Set by the engine; a spawn with none starts
+   * with the command it was queued with.
+   */
+  rebuildCommand?: (settings: { model: string | null; effort: string | null }) => string;
   cwd: string;
   /** What started this session. Required, so a new spawn sink has to say. */
   startPath: LaunchStartPath;

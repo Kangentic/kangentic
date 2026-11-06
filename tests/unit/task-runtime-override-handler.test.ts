@@ -29,6 +29,8 @@ const hoisted = vi.hoisted(() => ({
   restartSessionForSettingsChange: vi.fn(async () => ({ ok: true })),
   /** When set, the reconcile mock treats the task's pointer as a dead session. */
   stalePointer: { value: false },
+  /** The status the reconcile mock reports for the live session. */
+  liveStatus: { value: 'running' as 'running' | 'queued' },
   /**
    * The live session's own record, read for `applied_effort`. Null by default:
    * no record, so the pick's effort source is the agent's report or nothing.
@@ -88,7 +90,7 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
     }
     return {
       task,
-      liveSession: task.session_id ? { id: task.session_id, taskId, status: 'running' } : null,
+      liveSession: task.session_id ? { id: task.session_id, taskId, status: hoisted.liveStatus.value } : null,
     };
   },
 }));
@@ -129,6 +131,7 @@ interface MockContext {
   sessionManager: {
     suspend: ReturnType<typeof vi.fn>;
     getSessionAgentName: ReturnType<typeof vi.fn>;
+    rebuildQueuedCommand: ReturnType<typeof vi.fn>;
     getUsageCache: ReturnType<typeof vi.fn>;
     getFirstReportedEffort: ReturnType<typeof vi.fn>;
   };
@@ -157,6 +160,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     sessionManager: {
       suspend: vi.fn(async () => {}),
       getSessionAgentName: vi.fn(() => undefined),
+      rebuildQueuedCommand: vi.fn(() => false),
       // Empty by default: the agent reports no effort, so the pick's effort
       // source falls back to the session record.
       getUsageCache: vi.fn((): Record<string, unknown> => ({})),
@@ -196,6 +200,7 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
     hoisted.sessionRecord.value = null;
     hoisted.latestRecord.value = null;
+    hoisted.liveStatus.value = 'running';
     capturedHandlers.clear();
 
     task = createMockTask();
@@ -335,6 +340,41 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     }
   });
 
+  describe('a queued session', () => {
+    beforeEach(() => {
+      hoisted.liveStatus.value = 'queued';
+      mockAgentRegistryGet.mockReturnValue({});
+      hoisted.sessionRecord.value = { id: 'session-1', applied_model: 'haiku', applied_effort: 'low' };
+    });
+
+    it('takes the pick on its waiting command, and keeps its prompt, session and place', async () => {
+      // A queued start has no agent to restart. Suspending one that never ran
+      // exits its record, and the respawn finds nothing to resume and no template,
+      // so the agent would start with no prompt and lose its place in line.
+      context.sessionManager.rebuildQueuedCommand.mockReturnValue(true);
+
+      const result = await callHandler({ taskId: 'task-1', model: 'sonnet', effort: 'high' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(taskRepo.updateOverrides).toHaveBeenCalledWith('task-1', { model_override: 'sonnet', effort_override: 'high' });
+      expect(context.sessionManager.rebuildQueuedCommand).toHaveBeenCalledWith('session-1', { model: 'sonnet', effort: 'high' });
+      expect(hoisted.updateAppliedSettings).toHaveBeenCalledWith('session-1', { model: 'sonnet', effort: 'high' });
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+
+    it('records nothing as applied when the queue could not take it', async () => {
+      // A startup spawn's entry has no rebuild, and a promotion in flight has left
+      // the queue: the pick waits for the next spawn.
+      context.sessionManager.rebuildQueuedCommand.mockReturnValue(false);
+
+      const result = await callHandler({ taskId: 'task-1', model: 'sonnet' });
+
+      expect(result).toEqual({ ok: true, mode: 'persisted' });
+      expect(hoisted.updateAppliedSettings).not.toHaveBeenCalled();
+      expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns mode:"persisted" without further work when the spec is a no-op delta', async () => {
     // Task already has model_override='sonnet' and its session launched with
     // it; user picks 'sonnet' again.
@@ -372,6 +412,19 @@ describe('TASK_SET_RUNTIME_OVERRIDE handler', () => {
     // never asks the adapter for one.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
     expect(getInjectionSequence).not.toHaveBeenCalled();
+  });
+
+  it('a running session with a changed concrete target restarts and never touches the queue', async () => {
+    hoisted.liveStatus.value = 'running';
+    mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => ['/model sonnet']) });
+    // Would swallow the pick if the handler asked the queue about a live session.
+    context.sessionManager.rebuildQueuedCommand.mockReturnValue(true);
+
+    const result = await callHandler({ taskId: 'task-1', model: 'sonnet', effort: 'high' });
+
+    expect(result).toEqual({ ok: true, mode: 'restart' });
+    expect(context.sessionManager.rebuildQueuedCommand).not.toHaveBeenCalled();
+    expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
   });
 
   it('EFFORT-only change restarts with applying-settings even when the adapter offers a live slash', async () => {

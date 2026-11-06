@@ -23,6 +23,11 @@ msgstr "「{movedTaskTitle}」現在位於欄中。"
 msgid "\"{taskTitle}\""
 msgstr "「{taskTitle}」"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, other {前方還有 # 個任務...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
 msgstr "{backlogItemCount, plural, other {待辦清單，{backlogItemCountText} 個項目}}"
@@ -266,6 +271,11 @@ msgstr "新增任務"
 msgid "New workflow"
 msgstr "新增工作流程"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "即將開始..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "No completed tasks yet"
 msgstr "尚無已完成的任務"
@@ -291,11 +301,6 @@ msgstr "暫停工作階段"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "已暫停"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "排入佇列中 {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."

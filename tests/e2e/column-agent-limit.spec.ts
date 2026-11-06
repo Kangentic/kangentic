@@ -91,7 +91,7 @@ test.describe('Column agent limit', () => {
     await expect.poll(() => statusOf(second), { timeout: 15000 }).toBe('queued');
 
     await expect(page.locator('[data-task-id]').filter({ hasText: second }).getByTestId('status-bar'))
-      .toHaveText('Queued 2/2...', { timeout: 10000 });
+      .toHaveText('Next in line...', { timeout: 10000 });
 
     // Leaving with its agent still running frees the column with no process
     // ending: only the move's own drain can start the next task.

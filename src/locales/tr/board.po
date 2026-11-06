@@ -27,6 +27,11 @@ msgstr "\"{movedTaskTitle}\" artık sütunda."
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, one {Önünde # görev var...} other {Önünde # görev var...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -328,6 +333,11 @@ msgstr "Yeni görev"
 msgid "New workflow"
 msgstr "Yeni iş akışı"
 
+#: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
+msgid "Next in line..."
+msgstr "Sıradaki..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 #, fuzzy
 msgid "No completed tasks yet"
@@ -359,11 +369,6 @@ msgstr "Oturumu duraklat"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "Duraklatıldı"
-
-#: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
-msgid "Queued {position}/{total}..."
-msgstr "Sırada {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 #, fuzzy

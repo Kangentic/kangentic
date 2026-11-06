@@ -134,6 +134,10 @@ msgstr "No tool calls yet"
 msgid "Notice"
 msgstr "Notice"
 
+#: src/renderer/components/terminal/QueuedContextBar.tsx
+msgid "Pause this task to change it"
+msgstr "Pause this task to change it"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Plan approved automatically"
 msgstr "Plan approved automatically"

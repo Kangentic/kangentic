@@ -6,6 +6,7 @@ tags: [terminal, dialog, changes, diff, browser]
 sources:
   - resource: src/renderer/components/terminal/TerminalPanel.tsx
   - resource: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+  - resource: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
   - resource: src/renderer/components/dialogs/task-detail/changes/
   - resource: src/main/git/task-changes.ts
   - resource: src/main/git/diff-service.ts
@@ -81,6 +82,14 @@ Click a task card to open the detail dialog. From here you can:
 **Closing by clicking outside.** Task-detail windows are modeless, so clicking empty space outside one closes it. The rule is a denylist, not an allowlist: a control, a task card, or a running terminal still acts on your first click, so clicking outside never costs you a click you meant for something else, and overlays mounted outside the window shell (the settings panel, palettes, dialogs) never dismiss it either. Set the policy at **Settings > Behavior > Windows > Close on Outside Click**: `Off`, `Single Window` (only when one is open), `Focused Window` (the default), or `All Windows`. Closing a window never kills its session; the agent keeps running and reattaches when you reopen the task.
 
 **Closing with unsaved edits.** Closing a window while its edit form has unsaved changes (the X, Escape, Mod+Shift+W, a middle-click on the header, or a click outside) asks first. **Save** writes the edits and closes the window, even when the task's agent is running. **Discard** drops them and closes. **Keep editing** returns to the form. Enter picks the focused button, and focus starts on Save. When the custom branch name is invalid the form cannot save, so the prompt offers only Discard and Keep editing. Mod+S in the form saves the same way its Save button does.
+
+### Queued task
+
+A task waiting for an agent slot has no terminal yet, so its window shows its place in line. The heading says **Next in line**, or how many tasks go first ("2 tasks ahead"), with a count of the waiting tasks beside it ("1 of 2"). Under it, one line says why the task waits and leads to the setting: "Merge runs one agent at a time" opens the Column Manager on that column, and "Up to 8 agents run at a time" opens Settings. In an Agent Monitor window the Column Manager cannot open, so that line is plain text.
+
+The line itself is one connected track. The running task comes first, with its activity mark in its row, and its row turns amber when the agent is waiting on you, since everything behind it waits too. This task is lit in blue and numbered, and the tasks behind it follow. A row opens its task. The Max concurrent sessions line starts at the first waiting task and leaves out tasks a full column holds back, since those cannot take a free slot.
+
+The **Changes** pill works while a task waits and opens beside the line. The bottom bar shows the agent, model and effort the task will start with, read only: pause the task to change them. A model or effort change made another way, such as an agent's `kangentic_update_task`, reaches the waiting start, so the task starts with it.
 
 ### Changes Panel
 

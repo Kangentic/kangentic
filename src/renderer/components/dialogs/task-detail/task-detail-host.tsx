@@ -116,6 +116,13 @@ export interface TaskDetailHostValue {
   canOpenConversation: boolean;
 
   /**
+   * Whether the Column Manager can open from here. It mounts on the board layer
+   * for the open board's project, the same limit as `canOpenConversation`, so the
+   * monitor's host keeps a queued task's reason and drops its link.
+   */
+  canOpenColumnManager: boolean;
+
+  /**
    * A hook returning the title the host's board has now for a task, or undefined
    * when this host has no live copy of it. The agent queue lists tasks from a
    * snapshot main sends only when the line changes, and a rename does not change

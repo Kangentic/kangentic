@@ -23,6 +23,10 @@ msgstr "\"{movedTaskTitle}\" is now in column."
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+msgstr "{ahead, plural, one {# task ahead...} other {# tasks ahead...}}"
+
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
 msgstr "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -265,6 +269,10 @@ msgstr "New Task"
 msgid "New workflow"
 msgstr "New workflow"
 
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Next in line..."
+msgstr "Next in line..."
+
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "No completed tasks yet"
 msgstr "No completed tasks yet"
@@ -290,10 +298,6 @@ msgstr "Pause session"
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "Paused"
-
-#: src/renderer/components/board/task-card-view.tsx
-msgid "Queued {position}/{total}..."
-msgstr "Queued {position}/{total}..."
 
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."

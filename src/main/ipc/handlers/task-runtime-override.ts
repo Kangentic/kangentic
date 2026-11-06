@@ -19,6 +19,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { getProjectDb } from '../../db/database';
 import type {
+  Task,
   TaskSetRuntimeOverrideInput,
   TaskSetRuntimeOverrideResult,
 } from '../../../shared/types';
@@ -33,6 +34,39 @@ import type { IpcContext } from '../ipc-context';
 export interface SettingsFieldsChanged {
   model: boolean;
   effort: boolean;
+}
+
+/** The model and effort a task should run at: the row as it stands, folded through its Board Profile. */
+function resolveTaskTargets(context: IpcContext, projectId: string, projectPath: string, task: Task) {
+  const { swimlanes } = getProjectRepos(context, projectId);
+  const lane = applyProfileToLane(
+    swimlanes.getById(task.swimlane_id),
+    loadTaskProfile(context, task, projectPath),
+  );
+  return resolveTargetSettings({ task, lane, project: context.projectRepo.getById(projectId) });
+}
+
+/**
+ * Have a queued session start at the task's current settings. It has no agent to
+ * restart, and a start that never ran would respawn with no prompt and lose its
+ * place in line, so its waiting command is rebuilt instead. Synchronous, so it
+ * needs no task lock.
+ *
+ * A session the queue could not rebuild keeps the command it was queued with,
+ * and the settings apply from its next spawn. That includes a promotion already
+ * spawning, whose row still reads queued with its entry gone from the line.
+ * Restarting that one would suspend an agent as it starts its opening turn and
+ * resume it idle. Its `applied_*` keep what it launched with, so the next settings
+ * change or column move still sees the difference.
+ */
+export function applyTaskSettingsToQueuedStart(context: IpcContext, projectId: string, projectPath: string, task: Task): void {
+  if (!task.session_id) return;
+  const { targetModel: model, targetEffort: effort } = resolveTaskTargets(context, projectId, projectPath, task);
+  if (!context.sessionManager.rebuildQueuedCommand(task.session_id, { model, effort })) {
+    console.log(`[TASK_RUNTIME_OVERRIDE] Queued session ${task.session_id.slice(0, 8)} keeps its command; its settings apply from its next spawn.`);
+    return;
+  }
+  new SessionRepository(getProjectDb(projectId)).updateAppliedSettings(task.session_id, { model, effort });
 }
 
 /**
@@ -75,19 +109,14 @@ export async function applyTaskSettingsToLiveSession(
   // live: a model pick then suspended a dead session and respawned it. With
   // the pointer cleared it lands on `persisted`, and the override is picked up
   // at the next spawn.
-  const { task } = reconcileTaskSessionRef(context, projectId, taskId);
+  const { task, liveSession } = reconcileTaskSessionRef(context, projectId, taskId);
   if (!task.session_id) return { ok: true, mode: 'persisted' };
+  if (liveSession?.status === 'queued') {
+    applyTaskSettingsToQueuedStart(context, projectId, projectPath, task);
+    return { ok: true, mode: 'persisted' };
+  }
 
-  const { swimlanes } = getProjectRepos(context, projectId);
-  const lane = applyProfileToLane(
-    swimlanes.getById(task.swimlane_id),
-    loadTaskProfile(context, task, projectPath),
-  );
-  const { targetModel, targetEffort } = resolveTargetSettings({
-    task,
-    lane,
-    project: context.projectRepo.getById(projectId),
-  });
+  const { targetModel, targetEffort } = resolveTaskTargets(context, projectId, projectPath, task);
 
   const ownRecord = resolveOwnSessionRecord(
     new SessionRepository(getProjectDb(projectId)),
@@ -131,10 +160,11 @@ export async function applyTaskSettingsToLiveSession(
  * one exists (`applyTaskSettingsToLiveSession`).
  *
  * Two apply paths, picked by what changed:
- *   - `persisted`: no live session, no change to a concrete value, or the
+ *   - `persisted`: no running session, no change to a concrete value, or the
  *     session already runs at the pick (say after a manual `/effort`). The
  *     override lands in the DB and the next manual spawn/resume picks it up via
- *     `prepare-spawn.ts`.
+ *     `prepare-spawn.ts`. A queued session starts with it
+ *     (`applyTaskSettingsToQueuedStart`).
  *   - `restart`: a MODEL or EFFORT change to a concrete value. We `suspend`
  *     (NOT kill) so the agent's session file stays on disk for `--resume <id>`,
  *     then re-spawn with the new overrides as launch flags via the shared

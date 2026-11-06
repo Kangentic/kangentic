@@ -17,6 +17,7 @@ sources:
   - resource: src/main/agent/adapters/claude/slash-command-verifier.ts
   - resource: src/main/agent/shared/submitted-text-verifier.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
+  - resource: src/main/ipc/handlers/task-runtime-override.ts
 ---
 # Command injection
 
@@ -37,7 +38,8 @@ Profile edit resumes idle instead. A null target is the "Default" column and nev
 restarts: `--resume` keeps whatever the session runs at.
 
 A column or Board Profile edit (`propagateStrategyToLiveSessions`) restarts every running session
-in that column it changes, each resuming idle. Each restart runs under its own task lock and first
+in that column it changes, each resuming idle. A queued session in that column is not restarted:
+`applyTaskSettingsToQueuedStart` rebuilds its waiting command and it keeps its place in line. Each restart runs under its own task lock and first
 re-reads the task: if a move, a ContextBar pick, or an earlier edit already restarted or moved the
 session, it skips. An edit that did not change effort never restarts for effort, so drift it never
 touched (a manual `/effort`) leaves the turn alone; a move still realigns it.
@@ -50,6 +52,8 @@ hand with `/effort`, or the model a Default column kept the session on, saves th
 restart. Only the fields the pick touched count, so an effort pick never restarts to realign a
 model the session drifted from. The record it reads is the live session's own
 (`resolveOwnSessionRecord`), not the task's newest, which can belong to an isolated track.
+A queued session takes the same pick without a restart: the call returns `persisted` and rebuilds
+the waiting command.
 
 An agent or the phone setting a model or effort pin, a profile, or a run mode through
 `kangentic_update_task` reaches the running session the same way: the MCP host calls
@@ -57,8 +61,10 @@ An agent or the phone setting a model or effort pin, a profile, or a run mode th
 as changed only when the write moved its stored value; a profile or run-mode change counts for
 both. So an agent re-sending the run mode the task already has leaves a manual `/effort` alone.
 Until now that write only took effect at the next spawn, and a move still reads the pin first, so
-nothing realigned the session. The restart ends the session's current turn, which is the
-calling agent's own turn when it updates its own task; the tool's reply says so.
+nothing realigned the session. A running session restarts, which ends its current turn (the
+calling agent's own turn when it updates its own task), and the tool's reply says so. A queued
+session has no turn to end: its waiting command is rebuilt, and the reply also says it starts with
+the new settings (`task-commands.ts`).
 
 Effort used to switch live with a typed `/effort`. That could not be confirmed where it mattered
 most: a plan-exit move always lands mid-turn, a mid-turn `/effort` writes no transcript entry, and
@@ -122,7 +128,9 @@ prompt cache; a resume that also changes `--effort` has not been sampled yet.
 Nothing is recorded as applied by the plan. A restart records `applied_model` / `applied_effort`
 itself: `restartSessionForSettingsChange` and a move's Phase 3 both end in a spawn or resume that
 writes `SessionRepository.updateAppliedSettings` with the resolved spawn overrides, so the *next*
-transition diffs against what the session was launched with.
+transition diffs against what the session was launched with. A queued session's rebuild records
+them the same way, after `rebuildQueuedCommand` succeeds. When the rebuild does not happen, nothing
+is recorded and the session keeps the values it was queued with.
 
 ## Why verification exists
 

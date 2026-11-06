@@ -47,6 +47,11 @@ msgstr "„{taskTitle}” a táblán van."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} sikertelen)"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
+msgstr "{ahead, plural, one {# feladat van előtte} other {# feladat van előtte}}"
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
@@ -61,6 +66,11 @@ msgstr "{automationCount, plural, one {# automatizálás fut itt} other {# autom
 #, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, one {# képpontból {changedCount} eltér} other {# képpontból {changedCount} eltér}}"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "{columnName} runs {maxAgents, plural, one {one agent} other {# agents}} at a time"
+msgstr "{maxAgents, plural, one {{columnName} egyszerre egy ügynököt futtat} other {{columnName} egyszerre # ügynököt futtat}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -193,6 +203,7 @@ msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{position} of {total}"
 msgstr "{position}/{total}"
@@ -206,10 +217,6 @@ msgstr "{reason} A hiba előtt mentve: {savedBeforeFailing}."
 #, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, például: {sample}</0>"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
-msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -805,8 +812,9 @@ msgid "Columns"
 msgstr "Oszlopok"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr ""
+msgstr "Az oszlopok a feladat fő beszélgetését használják közösen, hacsak nem adsz ennek az oszlopnak sajátot. Az elkülönített oszlop minden belépéskor új beszélgetést indít, ami kódellenőrzéshez vagy bármely olyan menethez illik, amelynek nem szabad örökölnie a korábbi munkát."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 msgid "Command Terminal"
@@ -1067,8 +1075,9 @@ msgid "Couldn't switch branch"
 msgstr "Nem sikerült ágat váltani"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
-msgstr ""
+msgstr "Azokat a feladatokat számolja, amelyek ügynöke dolgozik vagy rád vár. A Beállításokban megadott egyidejű munkamenetek maximális száma továbbra is érvényes."
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1676,8 +1685,9 @@ msgid "Main"
 msgstr "Fő"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
-msgstr ""
+msgstr "A Fő folytatja a feladat beszélgetését, az Elkülönített pedig minden belépéskor újat indít."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1805,6 +1815,11 @@ msgstr "Következő módosítás"
 #, fuzzy
 msgid "Next column"
 msgstr "Következő oszlop"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Next in line"
+msgstr "Következő a sorban"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #, fuzzy
@@ -2060,9 +2075,10 @@ msgid "On turn end"
 msgstr "Kör végén"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "One at a time"
-msgstr ""
+msgstr "Egyszerre egy"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -2143,6 +2159,11 @@ msgstr "Beállítások megnyitása"
 msgid "Open that board to edit its profiles"
 msgstr "Nyissa meg azt a táblát a profiljai szerkesztéséhez"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Open the board to change this"
+msgstr "A módosításhoz nyissa meg a táblát"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Open worktree"
@@ -2164,8 +2185,9 @@ msgid "Opens this part of the conversation"
 msgstr "Megnyitja a beszélgetés ezen részét"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Other tasks wait in this column and start in the order they arrived."
-msgstr ""
+msgstr "A többi feladat ebben az oszlopban vár, és érkezési sorrendben indul."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2337,17 +2359,14 @@ msgid "Pull Request"
 msgstr "Pull request"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Queued"
-msgstr ""
+msgstr "Sorban áll"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "Sorban áll (kattintson a szüneteltetéshez)"
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "Queued {position}/{total}"
-msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2522,8 +2541,9 @@ msgid "Run in the project folder"
 msgstr "Futtatás a projektmappában"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Run one agent in this column at a time"
-msgstr ""
+msgstr "Egyszerre egy ügynök futtatása ebben az oszlopban"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2804,8 +2824,9 @@ msgid "Start"
 msgstr "Indítás"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start a new conversation on every entry."
-msgstr ""
+msgstr "Új beszélgetés indítása minden belépéskor."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -3201,6 +3222,11 @@ msgctxt "file status"
 msgid "Untracked"
 msgstr "Nem követett"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
+msgid "Up to {maxConcurrent, plural, one {# agent runs} other {# agents run}} at a time"
+msgstr "{maxConcurrent, plural, one {Egyszerre legfeljebb # ügynök fut} other {Egyszerre legfeljebb # ügynök fut}}"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Update from base"
@@ -3303,8 +3329,9 @@ msgid "Whether you approve each plan or Kangentic does. A workflow task can over
 msgstr "Ön hagyja jóvá az egyes terveket, vagy a Kangentic. Egy munkafolyamat-feladat ezt felülbírálhatja a saját maga számára."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Which conversation this column uses"
-msgstr ""
+msgstr "Az oszlop által használt beszélgetés"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
@@ -3327,9 +3354,10 @@ msgid "Workflow step"
 msgstr "Munkafolyamat-lépés"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Working"
-msgstr ""
+msgstr "Dolgozik"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

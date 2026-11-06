@@ -118,26 +118,48 @@ describe('queuePlaceOf', () => {
     reads([...holders, ...waiting].map((taskId, index) => capped(taskId, `2026-01-0${index + 1}`))),
   );
 
-  it('counts the running agent first in a column, so the numbers match the column', () => {
+  it('counts waiting tasks only, so the running agent never inflates the number', () => {
     const snapshot = snapshotWith(['running'], ['second', 'third'], ['second', 'third']);
 
-    expect(queuePlaceOf(snapshot, 'session-second')).toMatchObject({ kind: 'column', position: 2, total: 3 });
-    expect(queuePlaceOf(snapshot, 'session-third')).toMatchObject({ kind: 'column', position: 3, total: 3 });
+    expect(queuePlaceOf(snapshot, 'session-second')).toMatchObject({ kind: 'column', position: 1, total: 2 });
+    expect(queuePlaceOf(snapshot, 'session-third')).toMatchObject({ kind: 'column', position: 2, total: 2 });
   });
 
-  it('counts every agent over a limit that was turned on late', () => {
+  it('reads a lone waiter as first of one over a limit that was turned on late', () => {
     const snapshot = snapshotWith(['one', 'two'], ['waiting'], ['waiting']);
-    expect(queuePlaceOf(snapshot, 'session-waiting')).toMatchObject({ kind: 'column', position: 3, total: 3 });
+    expect(queuePlaceOf(snapshot, 'session-waiting')).toMatchObject({ kind: 'column', position: 1, total: 1 });
   });
 
   it('reads a task its column does not hold back as waiting for a free agent slot', () => {
     const snapshot = snapshotWith([], ['first'], ['other', 'first']);
-    expect(queuePlaceOf(snapshot, 'session-first')).toEqual({ kind: 'global', position: 2, total: 2 });
+    expect(queuePlaceOf(snapshot, 'session-first')).toMatchObject({ kind: 'global', position: 2, total: 2 });
   });
 
   it('holds the second in an idle column to its column', () => {
     const snapshot = snapshotWith([], ['first', 'second'], ['first', 'second']);
     expect(queuePlaceOf(snapshot, 'session-second')).toMatchObject({ kind: 'column', position: 2, total: 2 });
+  });
+
+  it('leaves a task its column holds out of the agent line, since it cannot take a free slot', () => {
+    // queue order: held (full column), free, last. The queue skips held, so free is next.
+    const snapshot = buildQueueSnapshot(
+      [entry('held'), entry('free'), entry('last')],
+      [holder('running')],
+      reads([capped('running', '2026-01-01'), capped('held', '2026-01-02')]),
+    );
+    const place = queuePlaceOf(snapshot, 'session-free');
+
+    expect(place).toMatchObject({ kind: 'global', position: 1, total: 2 });
+    expect(place?.kind === 'global' ? place.tasks.map((task) => task.taskId) : []).toEqual(['free', 'last']);
+  });
+
+  it('keeps a task its column has room for in the agent line', () => {
+    const snapshot = buildQueueSnapshot(
+      [entry('first'), entry('free')],
+      [],
+      reads([capped('first', '2026-01-01')]),
+    );
+    expect(queuePlaceOf(snapshot, 'session-free')).toMatchObject({ kind: 'global', position: 2, total: 2 });
   });
 
   describe('a column with room for more than one agent', () => {
@@ -154,14 +176,14 @@ describe('queuePlaceOf', () => {
     );
 
     it('reads a waiter the column has room for as waiting for a free agent slot', () => {
-      expect(queuePlaceOf(snapshotOfLimitTwo(), 'session-first')).toEqual({ kind: 'global', position: 1, total: 2 });
+      expect(queuePlaceOf(snapshotOfLimitTwo(), 'session-first')).toMatchObject({ kind: 'global', position: 1, total: 1 });
     });
 
     it('holds the waiter past the limit to its column', () => {
       expect(queuePlaceOf(snapshotOfLimitTwo(), 'session-second')).toMatchObject({
         kind: 'column',
-        position: 3,
-        total: 3,
+        position: 2,
+        total: 2,
         line: { maxAgents: 2 },
       });
     });
@@ -176,13 +198,13 @@ describe('queuePlaceOf', () => {
           capped('first', '2026-01-03', 'merge', 2),
         ]),
       );
-      expect(queuePlaceOf(snapshot, 'session-first')).toMatchObject({ kind: 'column', position: 3, total: 3 });
+      expect(queuePlaceOf(snapshot, 'session-first')).toMatchObject({ kind: 'column', position: 1, total: 1 });
     });
   });
 
   it('counts a task in no limited column among all queued tasks', () => {
     const snapshot = buildQueueSnapshot([entry('a'), entry('b'), entry('c')], [], reads([]));
-    expect(queuePlaceOf(snapshot, 'session-b')).toEqual({ kind: 'global', position: 2, total: 3 });
+    expect(queuePlaceOf(snapshot, 'session-b')).toMatchObject({ kind: 'global', position: 2, total: 3 });
   });
 
   it('is null for a session not in the line', () => {

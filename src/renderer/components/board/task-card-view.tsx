@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Loader2, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
@@ -76,8 +77,10 @@ function useQueuedStatus(sessionId: string | undefined): { label: string; tip: s
   const { t } = useLingui();
   const place = useQueuePlace(sessionId);
   if (!place) return { label: t`Queued...`, tip: undefined };
-  const { position, total } = place;
-  const label = t`Queued ${position}/${total}...`;
+  const ahead = place.position - 1;
+  const label = ahead === 0
+    ? t`Next in line...`
+    : plural(ahead, { one: '# task ahead...', other: '# tasks ahead...' });
   if (place.kind === 'global') return { label, tip: t`Waiting for a free agent slot.` };
   const columnName = place.line.columnName;
   return { label, tip: t`Waiting for a slot in ${columnName}.` };
