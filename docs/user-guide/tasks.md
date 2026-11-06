@@ -141,8 +141,8 @@ Right-click any task card on the board to open a context menu with:
   tooltip; the header shows no toggle for it
 - **Pause automations** / **Resume automations** - on any task, whatever its column or state (an
   archived task's menu does not offer it): holds the task out of every column's automations (see
-  [Automations](columns-and-automations.md#automations)). On a workflow task it also holds the task
-  out of its workflow while the rest runs (see [Workflows](workflows.md#workflows))
+  [Automations](columns-and-automations.md#automations)). A running or paused workflow's task does
+  not offer it: to stop work there, pause the workflow (see [Workflows](workflows.md#workflows))
 - **Open workflow** - on a task in a workflow (see [Workflows](workflows.md#workflows))
 - **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
 - **Move to** - submenu listing all other columns as move targets

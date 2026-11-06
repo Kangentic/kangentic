@@ -215,14 +215,15 @@ src/main/workflows/
     wording got 17 of 45. A no is a real stall and gets its nudge, and so does a yes on a turn with no
     final message, which gives a person nothing to act on. A board that wants unattended merges says
     so with a forward row.
-  - **Only the agent's own word stops a task** (owner's decision, 2026-10-31). A reply whose last
+  - **Only the agent's own word stops a task, bar one column shape** (owner's decision, 2026-10-31). A reply whose last
     line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
     (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works
     in a human gate too. Case and markdown marks are forgiven, and the label ends at a colon or a
     spaced dash, so a last sentence that only starts with the words is not the line. The
     `<workflow>` block and every nudge tell the agent to end on that line only for a change from the
     plan, something the owner must weigh in on, or a decision between options, and to act on
-    anything else. No other wording in a reply stops a task.
+    anything else. No other wording in a reply stops a task. The one other stop is a column with only
+    send-back rows, where the check's yes stops the card (above).
   - **Still working comes from the hook events, never from the reply.** A step judged not done
     whose agent still holds a background shell, or a subagent running past its turn end
     (`SessionManager.getOpenWork`, the activity engine's open-work ledger), is `working`, with no

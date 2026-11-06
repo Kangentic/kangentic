@@ -112,7 +112,9 @@ to the next column on its route, and the last one to Done; not done leaves it wh
 with a Move to column automation that moves the task forward on the agent's last line (a Text match
 such as "Verdict: Ready") has said what finishes it. There a task moves on only when that last line
 matches a forward one. A reply that matches none of them, or matches only one that sends the task
-back, is treated as not finished, whatever the Automation agent made of it. A task
+back, does not move the task on, whatever the Automation agent made of it. In a column whose
+only rows send the task back, the card stops once the agent has finished what it can do alone (see
+Columns only you move a card out of). A task
 that finishes a plan moves on when its plan is approved, and its agent's first prompt says so. The
 agent may also move its task on itself with `kangentic_move_task` and "next", except in a plan
 column, where its prompt says the approval does it, and not from a column its task already left
@@ -159,7 +161,8 @@ gets its nudges, and so does a turn that ends with no final message. To let a ru
 
 **When a step does not finish.** Nothing an agent writes stops a running workflow's task unless it
 says that only you can settle it: a change from the plan, something you must weigh in on, or a
-decision between options. The agent says so by ending its reply with a `Needs owner: <the question>` line, which
+decision between options. The one other stop is a column with only send-back rows, where the card
+stops once the agent has finished what it can do alone. The agent says so by ending its reply with a `Needs owner: <the question>` line, which
 every workflow task is told about. When a turn ends with the step not done:
 
 - **It ends on the Needs owner line.** You get a notice with the question, at once, and nothing is
