@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { Gauge } from 'lucide-react';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { useTaskDetailHost } from './task-detail-host';
-import { useBoardStore } from '../../../stores/board-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useSessionStore } from '../../../stores/session-store';
 import { useQueuePlace } from '../../../hooks/useQueuePlace';
@@ -129,7 +128,6 @@ function WaitingItem({ task, place, self, showProject }: { task: QueueTask; plac
 function QueueReason({ place }: { place: QueuePlace }) {
   const { t } = useLingui();
   const host = useTaskDetailHost();
-  const openBoardManager = useBoardStore((state) => state.openBoardManager);
   const maxConcurrent = useConfigStore((state) => state.config.agent.maxConcurrentSessions);
   const setSettingsOpen = useConfigStore((state) => state.setSettingsOpen);
   const linkClass = `${REASON_FRAME} cursor-pointer hover:text-fg hover:underline`;
@@ -155,7 +153,8 @@ function QueueReason({ place }: { place: QueuePlace }) {
       </span>
     </>
   );
-  if (!host.canOpenColumnManager) {
+  const { openColumnManager } = host;
+  if (!openColumnManager) {
     return (
       <Tooltip label={t`Open the board to change this`}>
         <span className={REASON_FRAME} data-testid="queue-reason">{content}</span>
@@ -163,7 +162,7 @@ function QueueReason({ place }: { place: QueuePlace }) {
     );
   }
   return (
-    <button type="button" className={linkClass} data-testid="queue-reason" onClick={() => openBoardManager(swimlaneId)}>
+    <button type="button" className={linkClass} data-testid="queue-reason" onClick={() => openColumnManager(swimlaneId)}>
       {content}
     </button>
   );

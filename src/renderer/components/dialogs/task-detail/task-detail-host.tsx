@@ -116,11 +116,12 @@ export interface TaskDetailHostValue {
   canOpenConversation: boolean;
 
   /**
-   * Whether the Column Manager can open from here. It mounts on the board layer
-   * for the open board's project, the same limit as `canOpenConversation`, so the
-   * monitor's host keeps a queued task's reason and drops its link.
+   * Open the Column Manager on one column, or null where it cannot open from here.
+   * It mounts on the board layer for the open board's project, the same limit as
+   * `canOpenConversation`, so the monitor's host keeps a queued task's reason and
+   * drops its link.
    */
-  canOpenColumnManager: boolean;
+  openColumnManager: ((swimlaneId: string) => void) | null;
 
   /**
    * A hook returning the title the host's board has now for a task, or undefined
