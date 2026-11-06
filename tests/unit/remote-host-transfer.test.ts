@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { HostTransferError, readHostBytes, writeHostBytes, type HostCommandAccess } from '../../src/main/remote/host-transfer';
+import { hostFileSizes, HostTransferError, readHostBytes, writeHostBytes, type HostCommandAccess } from '../../src/main/remote/host-transfer';
 import { runHostCommand } from '../../src/main/remote/helper/host-command';
 import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
@@ -151,6 +151,16 @@ describe.runIf(hasPosixShell)('on a real shell', () => {
     expect(await readHostBytes(host, path.join(home, 'no', 'folder.png'), 1024)).toEqual({ kind: 'missing' });
     fs.writeFileSync(path.join(home, 'big.bin'), Buffer.alloc(4096));
     expect(await readHostBytes(host, path.join(home, 'big.bin'), 1024)).toEqual({ kind: 'too-large', size: 4096 });
+  });
+
+  it('sizes each file in order, and reads a folder, a symlink and a missing file as not there', async () => {
+    fs.writeFileSync(path.join(home, 'a.bin'), Buffer.alloc(5));
+    fs.mkdirSync(path.join(home, 'folder'));
+    fs.symlinkSync(path.join(home, 'a.bin'), path.join(home, 'link'));
+
+    const sizes = await hostFileSizes(host, ['a.bin', 'gone', 'folder', 'link'].map((name) => path.join(home, name)));
+
+    expect(sizes).toEqual([5, null, null, null]);
   });
 
   it('keeps a hostile name an argument', async () => {

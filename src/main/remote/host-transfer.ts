@@ -37,6 +37,18 @@ export interface HostAccess extends HostCommandAccess {
   listeningPorts(): Promise<number[]>;
 }
 
+let hostAccessLookup: ((hostId: string) => HostAccess | null) | null = null;
+
+/** Set once at startup, as the other remote resolvers are, so a caller holding only a host id needs no new dependency. */
+export function setHostAccessLookup(lookup: ((hostId: string) => HostAccess | null) | null): void {
+  hostAccessLookup = lookup;
+}
+
+/** What may be asked of a host, or null before the SSH feature has started. */
+export function hostAccessFor(hostId: string): HostAccess | null {
+  return hostAccessLookup?.(hostId) ?? null;
+}
+
 /** The asks above bound to one host. */
 export function hostAccessOf(
   service: Pick<RemoteHostService, 'runCommand' | 'pathPresence' | 'removeFiles' | 'listeningPorts'>,
@@ -125,6 +137,15 @@ esac
 echo KG:ok
 `.trim();
 
+/** Arguments are the paths. One `KG:size:<position>:<bytes>` line each, in order, with `-` for what is no plain file. */
+const SIZES_SCRIPT = `
+position=0
+for file; do
+  position=$((position + 1))
+  if [ -f "$file" ] && [ ! -L "$file" ]; then echo "KG:size:$position:$(wc -c <"$file" | tr -d ' ')"; else echo "KG:size:$position:-"; fi
+done
+`.trim();
+
 function scriptRequest(script: string, args: readonly string[], stdin?: string): HostCommandRequest {
   return { file: 'sh', args: ['-c', script, 'kangentic-transfer', ...args], timeoutMs: CHUNK_TIMEOUT_MS, ...(stdin === undefined ? {} : { stdin }) };
 }
@@ -182,6 +203,15 @@ export async function readHostBytes(access: HostCommandAccess, hostPath: string,
   }
   if (received !== expected) throw new HostTransferError(`The host sent less of ${hostPath} than it said it held.`);
   return { kind: 'bytes', bytes: Buffer.concat(chunks, received) };
+}
+
+/** Each file's size on the host, in the order asked, or null for what is not there. One ask for all of them. */
+export async function hostFileSizes(access: HostCommandAccess, hostPaths: readonly string[]): Promise<Array<number | null>> {
+  if (hostPaths.length === 0) return [];
+  const lines = await ask(access, scriptRequest(SIZES_SCRIPT, hostPaths), 'check which files it holds');
+  const answers = lines.filter((line) => line.startsWith('size:')).map((line) => line.slice('size:'.length).split(':'));
+  if (answers.length !== hostPaths.length) throw new HostTransferError('The host answered about a different number of files than it was asked about.');
+  return answers.map(([, size]) => (size !== undefined && /^\d+$/.test(size) ? Number(size) : null));
 }
 
 /** Write a file on the host, making its folders. Replaces a file already there, and leaves nothing behind on a failure. */

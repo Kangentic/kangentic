@@ -34,7 +34,7 @@ import type { TaskKnowledge } from '../retrieval/task-knowledge';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { taskSummariesOn } from '../../shared/answer-agent';
 import { agentPathsForProject } from '../remote/host-paths';
-import { hostAccessOf } from '../remote/host-transfer';
+import { hostAccessFor } from '../remote/host-transfer';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -55,10 +55,7 @@ export function buildCommandContextForProject(
     getProjectDb: () => getProjectDb(projectId),
     getProjectPath: () => projectPath,
     agentPaths: () => agentPaths,
-    hostAccess: () => {
-      const hostService = ipcContext.remoteHosting?.hostService;
-      return hostService && agentPaths.hostId ? hostAccessOf(hostService, agentPaths.hostId) : null;
-    },
+    hostAccess: () => (agentPaths.hostId ? hostAccessFor(agentPaths.hostId) : null),
     getDevServerPortRange: () => {
       const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
       return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };

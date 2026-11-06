@@ -41,6 +41,8 @@ import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget,
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
+import { copyAttachmentsToHost, withFailedAttachmentsNoted } from '../remote/host-attachments';
+import { hostScriptRunner } from '../remote/host-script';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
@@ -620,6 +622,7 @@ export class TransitionEngine {
         // checkout when it has none. The old `workingDir` setting existed to opt
         // INTO the worktree, which is what happens by default here.
         cwd: task.worktree_path || config.projectPath || process.cwd(),
+        runOnHost: hostScriptRunner(config.projectPath, task.worktree_path || config.projectPath || process.cwd()),
         projectId: config.projectId,
         projectPath: config.projectPath,
         projectName: config.projectName ?? null,
@@ -779,6 +782,11 @@ export class TransitionEngine {
     // in a WSL distro opens it by the path the distro sees.
     if (cliTarget && handoffPromptPrefix) {
       handoffPromptPrefix = mapHandoffSessionPath(handoffPromptPrefix, (hostPath) => cliPathForTarget(hostPath, cliTarget));
+    }
+    // A prompt names a remote task's attachments where its agent reads them, so they go there first.
+    if (remoteLaunch) {
+      const failed = await copyAttachmentsToHost(appConfig.projectPath, this.attachmentRepo?.getPathsForTask(task.id) ?? []);
+      if (failed.length > 0) vars = { ...vars, attachments: withFailedAttachmentsNoted(vars.attachments ?? '', failed) };
     }
 
     // permissionOverride carries the destination lane's mode; the "plan

@@ -31,6 +31,7 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { announceTaskBoardChange, announceTaskWrite, announceToMainWindow } from '../helpers/task-write-announce';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
+import { copyAttachmentsToHost, withFailedAttachmentsNoted } from '../../remote/host-attachments';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone } from '../../analytics/usage';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
@@ -1280,23 +1281,32 @@ export async function handleTaskMove(
           // enter group sends it after checking both.
           const columnMessage = resolvedColumnMessage && !resolvedColumnMessage.guarded ? resolvedColumnMessage : null;
           const effectiveAutoCommand = resolveEffectiveAutoCommand(task.auto_command, columnMessage?.message);
-          const interpolatedAuto = effectiveAutoCommand?.trim()
-            ? interpolateTaskTemplate(effectiveAutoCommand, resolveTaskTemplateVars({
-                task,
-                defaultBaseBranch: effectiveDefaultBranch,
-                attachmentPaths: attachments.getPathsForTask(task.id),
-                devPort: getDevPortForTask(task.id),
-                projectPath: resolvedProjectPath,
-                projectName: context.projectRepo.getById(resolvedProjectId)?.name ?? null,
-                // A real move, so the move keywords resolve. The column here is
-                // the DESTINATION: this is the message that column sends on
-                // entry, injected into a session that is already live.
-                move: toLane
-                  ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
-                  : null,
-                workflow: readWorkflowPromptFacts(task, resolvedProjectId),
-              }))
-            : '';
+          let interpolatedAuto = '';
+          if (effectiveAutoCommand?.trim()) {
+            const attachmentPaths = attachments.getPathsForTask(task.id);
+            // A file attached since this agent started: the message names it where the agent reads it.
+            const attachmentsNotCopied = effectiveAutoCommand.includes('{{attachments}}')
+              ? await copyAttachmentsToHost(resolvedProjectPath, attachmentPaths)
+              : [];
+            const moveVars = resolveTaskTemplateVars({
+              task,
+              defaultBaseBranch: effectiveDefaultBranch,
+              attachmentPaths,
+              devPort: getDevPortForTask(task.id),
+              projectPath: resolvedProjectPath,
+              projectName: context.projectRepo.getById(resolvedProjectId)?.name ?? null,
+              // A real move, so the move keywords resolve. The column here is
+              // the DESTINATION: this is the message that column sends on
+              // entry, injected into a session that is already live.
+              move: toLane
+                ? { column: toLane.name, fromColumn: fromLane?.name ?? null, toColumn: toLane.name, trigger: 'enter' }
+                : null,
+              workflow: readWorkflowPromptFacts(task, resolvedProjectId),
+            });
+            interpolatedAuto = interpolateTaskTemplate(effectiveAutoCommand, attachmentsNotCopied.length > 0
+              ? { ...moveVars, attachments: withFailedAttachmentsNoted(moveVars.attachments ?? '', attachmentsNotCopied) }
+              : moveVars);
+          }
           // Whether the burst below actually carries the COLUMN's message, as
           // opposed to the task's own pin or nothing at all. Two things read it:
           // the delivery mode, and the runner's skip list.
