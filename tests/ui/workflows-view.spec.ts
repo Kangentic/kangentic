@@ -1115,6 +1115,25 @@ test.describe('Workflows inspector', () => {
     }
   });
 
+  test('a stopped card\'s menu on the canvas is unlocked: Move to rows enabled, Backlog and Archive say to remove it first', async () => {
+    // #414 works in Executing with no agent running, so it has stopped and is the person's.
+    const { browser, page } = await launch('running');
+    try {
+      await card(page, 't414').click({ button: 'right' });
+      const menu = byTestId(page, 'workflow-card-menu');
+      await expect(menu).toBeVisible();
+      const rows = menu.locator('[data-testid="context-move-to"]');
+      await expect(rows.filter({ hasText: 'Code Review' })).not.toHaveAttribute('aria-disabled', 'true');
+      await expect(rows.filter({ hasText: 'Testing' })).not.toHaveAttribute('aria-disabled', 'true');
+      // To Do stays refused, with the sentence that says what to do instead of the lock's.
+      await expect(rows.filter({ hasText: 'To Do' })).toHaveAccessibleDescription('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+      await expect(menu.locator('[data-testid="context-send-to-backlog"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
+      await expect(menu.locator('[data-testid="context-archive-task"]')).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Delete from a card whose session will not stop warns, keeps the task, and raises no unhandled rejection', async () => {
     // #414 works in Executing with a running session, so Delete must stop that
     // session first. The confirm is skipped: this is about the kill that fails,

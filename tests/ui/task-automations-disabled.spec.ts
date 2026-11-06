@@ -808,6 +808,33 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
     }
   });
 
+  test('a row of a running workflow\'s task left held keeps its Resume', async () => {
+    const heldTaskId = 'task-ad-monitor-workflow-held';
+    const workflowId = 'wf-ad-monitor-held';
+    const { browser, page } = await launch(
+      {
+        workflows: [{ workflow: { id: workflowId, title: 'Monitor held', state: 'running', draft: null, color_slot: 5, source_task_id: null } }],
+        tasks: [{
+          id: heldTaskId, displayId: 35, title: 'Monitored held workflow task', lane: 'Executing',
+          description: 'Held before the rule changed.', workflowId, automationsDisabled: true,
+        }],
+      },
+      monitorInitScript({
+        sessionId: 'sess-ad-monitor-workflow-held', taskId: heldTaskId, taskTitle: 'Monitored held workflow task', displayId: 35, project: 'open',
+        workflow: { id: workflowId, title: 'Monitor held', colorSlot: 5 },
+      }),
+    );
+    try {
+      await openMonitor(page);
+      const menu = await openRowMenu(page, 'sess-ad-monitor-workflow-held');
+
+      await expect(menu.getByTestId('monitor-menu-open-on-board')).toBeVisible();
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a toggle on a row of the open project reaches the board card under the overlay', async () => {
     const openTaskId = 'task-ad-monitor-open';
     const { browser, page } = await launch(
@@ -989,6 +1016,32 @@ test.describe('per-task automations switch: the Workflows canvas', () => {
       // The Open on board row keeps it from passing on an empty menu.
       await expect(menu.getByTestId('workflow-card-menu-open-on-board')).toBeVisible();
       await expect(menu.getByTestId('context-toggle-automations')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a canvas card left held keeps its Resume, and the switch resumes it', async () => {
+    const { browser, page } = await launch({
+      workflows: [{ workflow: { id: WORKFLOW_ID, title: 'Canvas held', state: 'running', draft: null, color_slot: 5, source_task_id: null, agent_name: 'claude' } }],
+      tasks: [{
+        id: TASK_ID, displayId: 62, title: 'Task left held', lane: 'Executing', description: 'Held before the rule changed.',
+        workflowId: WORKFLOW_ID, automationsDisabled: true,
+      }],
+    });
+    try {
+      await byTestId(page, 'view-toggle-workflows').click();
+      const card = page.locator(`[data-testid="workflow-canvas-card"][data-workflow-task-key="${TASK_ID}"]`);
+      await card.waitFor({ state: 'visible', timeout: 10000 });
+
+      await card.click({ button: 'right' });
+      const menu = byTestId(page, 'workflow-card-menu');
+      await menu.waitFor({ state: 'visible' });
+      await expect(menu.getByTestId('workflow-card-menu-open-on-board')).toBeVisible();
+      await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
+
+      await menu.getByTestId('context-toggle-automations').click();
+      await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: TASK_ID, automations_disabled: false }]);
     } finally {
       await browser.close();
     }

@@ -53,7 +53,8 @@ interface StepTaskOptions {
   /** False leaves the task in no workflow at all. */
   inWorkflow?: boolean;
   archived?: boolean;
-  /** The task's own automations are paused: a person is working it by hand. */
+  /** The task is left with its own automations switch held, as an older build could leave it. */
+  automationsDisabled?: boolean;
 }
 
 describe('isRunningWorkflowStepTask', () => {
@@ -78,7 +79,7 @@ describe('isRunningWorkflowStepTask', () => {
 
   /** A task as the positive case has it unless the options flip a fact. Returns its id. */
   function addStepTask(options: StepTaskOptions = {}): string {
-    const { board = 'home', place = 'middle', workflowState = 'running', inWorkflow = true, archived = false } = options;
+    const { board = 'home', place = 'middle', workflowState = 'running', inWorkflow = true, archived = false, automationsDisabled = false } = options;
     const workflows = new WorkflowRepository(databaseOf('home'));
     const workflow = workflows.create({});
     workflows.setState(workflow.id, workflowState);
@@ -100,6 +101,8 @@ describe('isRunningWorkflowStepTask', () => {
         : undefined,
     });
     if (archived) tasks.archive(task.id);
+    // Written to the row directly: the repository clears the switch on some paths.
+    if (automationsDisabled) databaseOf(board).prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(task.id);
     return task.id;
   }
 
@@ -147,6 +150,16 @@ describe('isRunningWorkflowStepTask', () => {
     // `workflowOfTask` also answers null for a task with no workflow id, so this
     // pins the outcome rather than the early return in front of it.
     expectFlipToFalse({ inWorkflow: false });
+  });
+
+  // A workflow task cannot set the switch now, but a card left held must be judged like any other
+  // and not fall out of its workflow's step check unnoticed.
+  it('is true for a running workflow task left with its automations switch held', () => {
+    const taskId = addStepTask({ automationsDisabled: true });
+    const stored = databaseOf('home').prepare('SELECT automations_disabled AS held FROM tasks WHERE id = ?').get(taskId) as { held: number };
+    expect(stored.held).toBe(1);
+
+    expect(isRunningWorkflowStepTask('home', taskId)).toBe(true);
   });
 
   it('reads the workflow\'s state in its home database for a task on another board', () => {

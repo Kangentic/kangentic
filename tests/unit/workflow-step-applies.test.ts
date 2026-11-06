@@ -66,6 +66,11 @@ describe('workflowStepApplies', () => {
     expect(workflowStepApplies(stepTask(addWorkflow('running')), 'home')).toBe(true);
   });
 
+  it('is true for a task of a running workflow left with its automations switch held', () => {
+    const heldTask = { ...stepTask(addWorkflow('running')), automations_disabled: true };
+    expect(workflowStepApplies(heldTask, 'home')).toBe(true);
+  });
+
   it('is false for a task of a paused workflow', () => {
     expect(workflowStepApplies(stepTask(addWorkflow('paused')), 'home')).toBe(false);
   });

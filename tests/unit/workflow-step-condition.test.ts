@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   describeStepRoute,
+  isSendBackOnly,
   stepExitVerdict,
   workflowBlockerConditions,
   workflowStepCondition,
@@ -322,6 +323,15 @@ describe('stepExitVerdict', () => {
   it('treats a row whose target names no column as no forward exit', () => {
     expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'Verdict: Ready')).toBeNull();
     expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'No changes to review.')).toBeNull();
+  });
+
+  // Decision: a dangling row (its target column no longer exists) is not a forward exit, so a
+  // column with one send-back row and one dangling row is send-back-only. Stopping for a person
+  // is the safe direction: the step never moves the card on past a row it cannot resolve.
+  it('reads a send-back row beside a dangling row as send-back-only, and stops the card on a reply matching the dangling row', () => {
+    const rows = [BACK_FOR_REVISIONS, exitTo('Verdict: Ready', null)];
+    expect(isSendBackOnly(codeReview, rows)).toBe(true);
+    expect(stepExitVerdict(codeReview, rows, 'Verdict: Ready')).toEqual({ accepted: true, stopsHere: true });
   });
 
   it('ignores a row whose Text match can match no line, since it never runs', () => {

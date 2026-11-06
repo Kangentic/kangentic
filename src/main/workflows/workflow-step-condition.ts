@@ -70,7 +70,7 @@ const WAITS_ON_NO_ONE = 'the final message is not waiting on the user for an ans
  * on. So a wait on a person is a yes here, and only work the agent can still do
  * is a no. Measured with `scripts/eval-condition-check.mjs` on 15 real turn
  * endings from such a column, three runs each on Haiku at low, against hand
- * labels: 43 of 45 right, where the usual wording got 17 of 45.
+ * labels. It got 43 of 45 right, and the usual wording got 17 of 45.
  */
 function personGateCondition(column: Pick<Swimlane, 'name' | 'description'>, route: StepRoute): string {
   const purpose = column.description?.trim();

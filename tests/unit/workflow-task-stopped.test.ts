@@ -39,7 +39,7 @@ describe('isWorkflowTaskStopped', () => {
   let messageScheduled: boolean;
   const releases: Array<() => void> = [];
 
-  beforeEach(() => {
+  function resetFacts(): void {
     liveSession = { id: SESSION_ID, status: 'running' };
     activity = 'idle';
     keysBlocker = null;
@@ -47,7 +47,9 @@ describe('isWorkflowTaskStopped', () => {
     heldByBackgroundWork = false;
     messageScheduled = false;
     hoisted.inFlightSpawns = {};
-  });
+  }
+
+  beforeEach(resetFacts);
 
   afterEach(() => {
     for (const release of releases.splice(0)) release();
@@ -150,6 +152,51 @@ describe('isWorkflowTaskStopped', () => {
     it('stays locked in Done: moving it out would un-finish a blocker', () => {
       liveSession = undefined;
       expect(stopped({ ...WORKING_COLUMN, role: 'done' })).toBe(false);
+    });
+  });
+
+  // The board asks first, so a drag never slides a card into a column main refuses. Main sees
+  // more than the board, so main may read in motion where the board reads stopped (that race
+  // gets the refusal toast). The invariant is one way: board stopped implies main stopped, for
+  // the facts both can see.
+  describe('the board never reads a card stopped where main reads it in motion', () => {
+    const cases: Array<{
+      name: string;
+      arrange: () => void;
+      column: Swimlane;
+      facts: Parameters<typeof isStoppedOnBoard>[0];
+    }> = [
+      { name: 'no session', arrange: () => { liveSession = undefined; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: null, activity: undefined, starting: false } },
+      { name: 'queued', arrange: () => { liveSession = { id: SESSION_ID, status: 'queued' }; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: 'queued', activity: undefined, starting: false } },
+      { name: 'running idle', arrange: () => { activity = 'idle'; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: 'running', activity: 'idle', starting: false } },
+      { name: 'running thinking', arrange: () => { activity = 'thinking'; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: 'running', activity: 'thinking', starting: false } },
+      { name: 'running permission', arrange: () => { activity = 'permission'; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: 'running', activity: 'permission', starting: false } },
+      { name: 'starting', arrange: () => { liveSession = undefined; starting = true; }, column: WORKING_COLUMN, facts: { columnRole: null, sessionStatus: null, activity: undefined, starting: true } },
+      { name: 'To Do column', arrange: () => { liveSession = undefined; }, column: { ...WORKING_COLUMN, role: 'todo' }, facts: { columnRole: 'todo', sessionStatus: null, activity: undefined, starting: false } },
+      { name: 'Done column', arrange: () => { liveSession = undefined; }, column: { ...WORKING_COLUMN, role: 'done' }, facts: { columnRole: 'done', sessionStatus: null, activity: undefined, starting: false } },
+    ];
+
+    it.each(cases)('$name', ({ arrange, column, facts }) => {
+      arrange();
+      const boardStopped = isStoppedOnBoard(facts);
+      expect(!boardStopped || stopped(column)).toBe(true);
+    });
+
+    it('is not vacuous: at least one fact reads stopped on both, and at least one in motion on both', () => {
+      const stoppedOnBoth = cases.filter(({ arrange, column, facts }) => {
+        resetFacts();
+        arrange();
+        return isStoppedOnBoard(facts) && stopped(column);
+      });
+      const inMotionOnBoth = cases.filter(({ arrange, column, facts }) => {
+        resetFacts();
+        arrange();
+        return !isStoppedOnBoard(facts) && !stopped(column);
+      });
+      expect(stoppedOnBoth.map((entry) => entry.name)).toEqual(['no session', 'running idle']);
+      expect(inMotionOnBoth.map((entry) => entry.name)).toEqual(
+        ['queued', 'running thinking', 'running permission', 'starting', 'To Do column', 'Done column'],
+      );
     });
   });
 });

@@ -21,6 +21,15 @@ describe('noChangesReason', () => {
     expect(noChangesReason('No change needed: the setting exists')).toBe('the setting exists');
   });
 
+  // Windows agents write CRLF replies. The Linux CI never sees one otherwise.
+  it('reads a CRLF reply, with trailing blank lines, as the same line', () => {
+    expect(noChangesReason('Checked.\r\n\r\nNo changes needed: already fixed\r\n')).toBe('already fixed');
+  });
+
+  it('reads a reply with a lone trailing carriage return as the same line', () => {
+    expect(noChangesReason('Checked.\nNo changes needed: already fixed\r')).toBe('already fixed');
+  });
+
   it('reads only the last line: a line quoted mid-message is not the line', () => {
     expect(noChangesReason('I will not write "No changes needed: x" here.\n\nCarrying on with the tests.')).toBeNull();
     expect(noChangesReason(null)).toBeNull();
