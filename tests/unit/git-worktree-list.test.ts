@@ -217,6 +217,51 @@ describe('worktree-list ahead/behind: the base branch, not the tracking ref', ()
     expect(record).toMatchObject({ baseRef: null, commitsBehind: null, commitsAhead: null });
   });
 
+  it('keeps a bare record for a worktree whose folder vanished, without failing its siblings', async () => {
+    // gitAt throws synchronously for a directory that no longer exists (a
+    // worktree removed between `git worktree list` and the per-worktree reads).
+    routeGit({ revList: async () => '5\t1\n' });
+    const { gitAt } = await import('../../src/main/git/git-client');
+    vi.mocked(gitAt).mockImplementation((directory: string) => {
+      if (directory === TASK_WORKTREE_PATH) throw new Error(`ENOENT: no such directory '${directory}'`);
+      return mockGit as unknown as ReturnType<typeof gitAt>;
+    });
+    const resolveBaseRef = vi.fn(() => 'main');
+    try {
+      const { enumerateWorktrees } = await import('../../src/main/git/worktree-list');
+
+      const result = await enumerateWorktrees({ resolveBaseRef });
+
+      expect(result).toHaveLength(1);
+      const project = result[0];
+      expect(project.worktrees.map((worktree) => worktree.path)).toEqual([PROJECT_PATH, TASK_WORKTREE_PATH]);
+      // The vanished worktree keeps the branch from the porcelain list and
+      // reports nothing it could not read.
+      expect(project.worktrees.find((worktree) => worktree.path === TASK_WORKTREE_PATH)).toEqual({
+        path: TASK_WORKTREE_PATH,
+        branch: 'feature/task-a',
+        baseRef: null,
+        dirty: false,
+        commitsAhead: null,
+        commitsBehind: null,
+        lastCommitTs: null,
+        isMainCheckout: false,
+      });
+      // The base is never resolved for it, and the other worktree is read in full.
+      expect(resolveBaseRef).toHaveBeenCalledTimes(1);
+      expect(project.worktrees.find((worktree) => worktree.path === PROJECT_PATH)).toMatchObject({
+        branch: 'feature/main-checkout-work',
+        baseRef: 'main',
+        commitsBehind: 5,
+        commitsAhead: 1,
+        lastCommitTs: '2026-09-01T00:00:00Z',
+        isMainCheckout: true,
+      });
+    } finally {
+      vi.mocked(gitAt).mockImplementation(() => mockGit as unknown as ReturnType<typeof gitAt>);
+    }
+  });
+
   it('tells the resolver which worktree it is asked about, main checkout included', async () => {
     routeGit({ revList: async () => '0\t0\n' });
     const { enumerateWorktrees } = await import('../../src/main/git/worktree-list');
