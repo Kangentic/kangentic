@@ -13,9 +13,10 @@
  * Shell names are passed as strings, never read from `process.platform`, so
  * every case runs the same on Windows, macOS and CI's Linux.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   RESUME_PROMPT_COMMAND_LINE_CAP,
+  freshPromptTypedForLength,
   resumePromptRidesCommandLine,
 } from '../../src/main/transition-engine/resume-prompt-delivery';
 import { commandLineLength } from '../../src/main/agent/shared/prompt-budget';
@@ -232,5 +233,53 @@ describe('quoteArgKeepsNewlines', () => {
       expect(output).toContain('\\n');
       expect(output).not.toContain('\n');
     });
+  });
+});
+
+// freshPromptTypedForLength reads process.platform itself, so each case runs as
+// Windows, where the 8,191 character .cmd line applies. The stub is restored in
+// afterEach, which runs after a throwing test too.
+describe('freshPromptTypedForLength', () => {
+  const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const CMD_SHIM = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\agent.cmd';
+  const NATIVE_CLI = 'C:\\Users\\dev\\AppData\\Local\\Programs\\agent.exe';
+  const TOO_LONG_FOR_A_SHIM = 'x'.repeat(9_000);
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', hostPlatform);
+  });
+
+  function typed(overrides: Partial<Parameters<typeof freshPromptTypedForLength>[0]>): boolean {
+    return freshPromptTypedForLength({
+      prompt: TOO_LONG_FOR_A_SHIM,
+      mayBeTyped: true,
+      agentPath: CMD_SHIM,
+      shell: 'powershell',
+      ...overrides,
+    });
+  }
+
+  it('is true for a prompt that does not fit a .cmd shim, on an adapter that may type it', () => {
+    expect(typed({})).toBe(true);
+  });
+
+  it('is false when the adapter may not be typed into, however long the prompt', () => {
+    expect(typed({ mayBeTyped: false })).toBe(false);
+  });
+
+  it('is false for a slash command, however long', () => {
+    expect(typed({ prompt: `/upgrade-deps ${TOO_LONG_FOR_A_SHIM}` })).toBe(false);
+  });
+
+  it('is false for a prompt that fits', () => {
+    expect(typed({ prompt: 'Fix the login flow' })).toBe(false);
+  });
+
+  it('is false for the same prompt through a native program, whose line is longer', () => {
+    expect(typed({ agentPath: NATIVE_CLI })).toBe(false);
   });
 });

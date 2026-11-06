@@ -10,9 +10,10 @@ import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { BacklogTaskUpdateInput } from '../../../shared/types';
 
 // Backlog items keep a lower description cap than board tasks (whose cap is
-// TASK_DESCRIPTION_MAX_LENGTH in task-commands.ts). handleCreateTask enforces
-// this before routing a `column: "Backlog"` create here, so an over-cap
-// backlog description fails loudly instead of being silently truncated.
+// TASK_DESCRIPTION_MAX_LENGTH in src/shared/task-description-limit.ts).
+// handleCreateTask enforces this before routing a `column: "Backlog"` create
+// here, so an over-cap backlog description fails loudly instead of being
+// silently truncated.
 export const BACKLOG_DESCRIPTION_MAX_LENGTH = 10_000;
 
 export const handleListBacklog: CommandHandler = (
