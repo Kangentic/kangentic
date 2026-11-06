@@ -1089,13 +1089,13 @@ export function App() {
       }));
     }
 
-    // This install cannot update itself until the user moves it - DESKTOP-1A,
-    // the macOS read-only-volume case. Main composes the body and latches it
-    // for the app's lifetime, so this toasts it verbatim under its title, same
-    // as onWriteFailed above. Persistent rather than timed: unlike a failed
-    // write, this does not resolve on its own, and the updater already uses a
-    // persistent toast for the other thing the user has to act on (see
-    // updater-store's no-release-notes branch).
+    // This install cannot update itself until the user acts: the macOS read-only
+    // volume (DESKTOP-1A) or a .deb install with no package manager (DESKTOP-R).
+    // Main chooses the body and latches it for the app's lifetime, so this
+    // toasts it verbatim under its title, same as onWriteFailed above.
+    // Persistent rather than timed: unlike a failed write, this does not resolve
+    // on its own, and the updater already uses a persistent toast for the other
+    // thing the user has to act on (see updater-store's no-release-notes branch).
     if (window.electronAPI?.updater?.onUpdateBlocked) {
       cleanups.push(window.electronAPI.updater.onUpdateBlocked((message) => {
         useToastStore.getState().addToast({

@@ -28,7 +28,7 @@ To install a specific release, run `npx kangentic@<version>`. The launcher versi
 
 ## Updates
 
-The app updates itself. On Windows and macOS a downloaded update installs when you quit. On Linux, click **Restart to update** and enter your password. If that fails, run `npx kangentic@latest`, then quit and reopen the app.
+The app updates itself. On Windows and macOS a downloaded update installs when you quit. On Linux, click **Restart to update** and enter your password. If that fails, run `npx kangentic@latest`, then quit and reopen the app. That needs a package manager too, so it also fails on a host with no `apt`, `dpkg` or `rpm`.
 
 ## Requirements
 
