@@ -1998,9 +1998,17 @@ msgid "None"
 msgstr "Yok"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not found"
 msgstr "Bulunamadı"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy

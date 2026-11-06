@@ -366,6 +366,14 @@ export interface AgentDetectionInfo {
   unsupportedTarget?: boolean;
   /** True when this agent can run a CLI installed inside a WSL distro. */
   supportsWslCli?: boolean;
+  /** Set when the inventory was read for a remote project: the host the CLI was looked for on,
+   *  in place of this computer. `path` is then the CLI's name there, and `version` the host's. */
+  hostId?: string;
+  /** What the host said of this CLI: found, not installed there, or unknown because the ask failed
+   *  (`detectionError` holds the reason). Only set with `hostId`. */
+  hostStatus?: 'found' | 'missing' | 'unknown';
+  /** True when this agent cannot run on a host yet (it declares no CLI name there). */
+  unsupportedOnHost?: boolean;
   /** True = logged in, false = installed but not authenticated, null/undefined = N/A or not probed. */
   authenticated?: boolean | null;
   permissions: AgentPermissionEntry[];

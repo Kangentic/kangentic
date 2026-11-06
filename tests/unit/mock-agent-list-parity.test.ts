@@ -69,7 +69,7 @@ function readMockAgentListNames(): string[] {
   const source = fs.readFileSync(MOCK_ELECTRON_API_PATH, 'utf-8');
   // The prefix only: the mock's `list` also takes a second argument for main's own read.
   const startMarker = 'list: async function (_forceRefresh';
-  const endMarker = 'return defaults.map(function (agent) {';
+  const endMarker = 'defaults.map(function (agent) {';
   const startIndex = source.indexOf(startMarker);
   const endIndex = startIndex === -1 ? -1 : source.indexOf(endMarker, startIndex);
   if (startIndex === -1 || endIndex === -1) {

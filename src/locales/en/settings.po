@@ -1618,8 +1618,16 @@ msgid "None"
 msgstr "None"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr "Not checked"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not found"
 msgstr "Not found"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr "Not on hosts yet"
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 msgctxt "hotkey"

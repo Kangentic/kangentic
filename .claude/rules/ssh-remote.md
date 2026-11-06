@@ -120,6 +120,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `place.files.runCommand` run the program through the user's shell on the host, with a timeout
   that stops its process group. `cliInvocationForTarget` throws for a host: it would start a
   process on this computer.
+- **A remote project's agent inventory is the host's.** `agent:list` for a remote project is
+  `listAgentsOnHost` over `probeAgentOnHost` (`<cli> --version` on the host), never `adapter.detect`,
+  which finds this computer's CLI. The answer has three states: only the host's own "not found" is
+  `missing`, and a failed ask is `unknown` with its reason, which is never cached and never shown as
+  "Not found". A spawn refuses `missing` with `RemoteAgentMissingError` and goes on for `unknown`.
 - **A tool the agent calls answers from the layer its fact belongs to.** The MCP server runs here
   and the agent runs on the host, so a path read from `task.worktree_path`, `sessions.cwd` or
   `project.path` is this computer's empty stand-in, not where the agent works. A fact about where
@@ -217,6 +222,16 @@ process, a path tested against the wrong disk, an environment that overwrites th
   variables, the copy and the note, and `workflow-agent-remote.test.ts` a workflow agent's start and
   what it may read. `remote-host-service.test.ts`, `remote-host-router.test.ts` and
   `pty-host-client-remote-pid.test.ts` pin a long request's wait through all three layers.
+- **Tests (agent inventory):** `tests/unit/remote-host-agent-detection.test.ts` pins the three
+  answers (found with the version; missing only on the helper's "could not start" or exit 127; a
+  dropped link, a timeout and a refusal as unknown with the reason), that the host's inventory never
+  calls a local `detect`, that only a whole answer is kept, that a link coming back, a forced refresh
+  and another host each ask again, and that a spawn is refused with the host and CLI named on
+  `missing` and goes on for `unknown`. `tests/ui/add-remote-project.spec.ts` pins the Agent tab for a
+  remote project (the host's version, a read-only path, and "Not checked" in place of "Not found").
+- **Tests (resume on connect):** `tests/unit/project-open-lifecycle.test.ts` pins that a host's first
+  connection recovers its opened remote projects (resume and first spawn, no sweep) and leaves
+  others alone; `tests/unit/remote-hosting-status.test.ts` that the hook fires once per host per run.
 - **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
   with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
   to prepare (the case a down link reaches) or the spawn throws, and that a local spawn that throws

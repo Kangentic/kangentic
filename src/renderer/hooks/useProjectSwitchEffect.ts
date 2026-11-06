@@ -449,6 +449,10 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // "saved !== selected" and skipped the refetch on same-period switches,
       // leaving the previous project's totals on screen. No-ops when closed.
       useUsageDashboardStore.getState().onProjectSwitched();
+
+      // The agent inventory follows the project: a remote project's is what its host has installed,
+      // and CLI paths are per project. Unforced, so it is the cached list unless the project differs.
+      useConfigStore.getState().loadAgentList().catch(() => undefined);
     } else {
       useBoardStore.setState({
         tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false,
@@ -466,6 +470,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       });
       // Reset effective config to global defaults (no project overrides)
       useConfigStore.getState().loadConfig();
+      useConfigStore.getState().loadAgentList().catch(() => undefined);
     }
   }, [currentProject]);
 }

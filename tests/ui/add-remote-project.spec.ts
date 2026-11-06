@@ -199,6 +199,45 @@ test('removing the host in Settings takes its projects out of the sidebar', asyn
   await expect(row).toHaveCount(0);
 });
 
+test('a remote project\'s Agent tab shows what the host has installed, and never says Not found for a host it could not ask', async () => {
+  await addHost('Build server');
+  const projectName = `agents-${Date.now()}`;
+  await page.locator('[data-testid="sidebar-new-project-button"]').click();
+  await page.locator('[data-testid="add-project-host"]').click();
+  const form = page.locator('[data-testid="add-remote-project"]');
+  await form.locator('[data-testid="add-remote-project-folder"]').fill(`/srv/${projectName}`);
+  await form.locator('[data-testid="add-remote-project-submit"]').click();
+  await expect(form).toHaveCount(0);
+
+  await page.locator('[data-testid="settings-button"]').click();
+  await page.locator('[data-testid="settings-tab-agent"]').click();
+
+  // Claude is on the host, with the host's version, and the path is the host's own PATH lookup: nothing to type.
+  const claudeStatus = page.locator('[data-testid="agent-cli-status-claude"]');
+  await expect(claudeStatus).toContainText('v2.1.80');
+  await expect(page.locator('[data-testid="agent-cli-path-claude"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="agent-cli-path-claude"]')).toHaveAttribute('placeholder', 'claude');
+
+  // Another agent that this computer might have is judged by the host alone.
+  const codex = await page.evaluate(async () => (await window.electronAPI.agents.list()).find((agent) => agent.name === 'codex'));
+  expect(codex).toMatchObject({ found: false, hostStatus: 'missing', path: 'codex' });
+  expect(codex?.capabilities).toBeUndefined();
+
+  // A host that could not be asked is not a host without the CLI.
+  await page.evaluate(() => {
+    (window as unknown as { __mockHostAgents: Record<string, string> }).__mockHostAgents = { claude: 'unknown' };
+  });
+  await page.locator('[data-testid="agent-cli-status-claude"]').locator('xpath=ancestor::*[.//button[@aria-label="Re-detect agent"]][1]').getByRole('button', { name: 'Re-detect agent' }).click();
+  await expect(claudeStatus).toContainText('Not checked');
+  await expect(claudeStatus).not.toContainText('Not found');
+  await expect(page.locator('[data-testid="agent-cli-detail-claude"]')).toContainText('Connection timed out');
+
+  await page.evaluate(() => {
+    delete (window as unknown as { __mockHostAgents?: unknown }).__mockHostAgents;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+});
+
 test('shows a host that cannot be reached as its own reason, never as a missing folder', async () => {
   await addHost('Build server');
   await page.evaluate(() => {

@@ -17,6 +17,8 @@ import * as path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { cliPathForTarget, isUnderLocalRoot, resolveCliTarget, type CliTarget, type SshCliPlace } from '../agent/shared/cli-target';
 import type { ProjectRemote, SpawnRemote } from '../../shared/types';
+import { UserConfigurationError } from '../../shared/user-configuration-error';
+import type { HostAgentProbe } from './host-agent-probe';
 import type { HelperRequestMap, HostCommandRequest, HostCommandResult, HostFileWrite } from './protocol/messages';
 
 export type SshCliTarget = SshCliPlace & { linuxCliPath: string };
@@ -44,6 +46,18 @@ export class RemoteAgentUnsupportedError extends Error {
     // No agent is named as the alternative: which adapters run on a host is theirs to declare (`remoteCliName`).
     super(`${displayName} cannot run on a remote host yet. Choose another agent for this project, or run this task on this computer.`);
     this.name = 'RemoteAgentUnsupportedError';
+  }
+}
+
+/**
+ * The agent's CLI is not installed on the host. Without this the host's shell prints its own
+ * "command not found" in the terminal and the session ends, which reads as the agent failing. A
+ * user error, not a fault: it stays out of error reporting, as a missing local CLI does.
+ */
+export class RemoteAgentMissingError extends UserConfigurationError {
+  constructor(readonly agentName: string, displayName: string, cliName: string, hostName: string) {
+    super(`${displayName} (${cliName}) was not found on ${hostName}. Install it there, or choose another agent for this project.`);
+    this.name = 'RemoteAgentMissingError';
   }
 }
 
@@ -108,6 +122,10 @@ export interface RemoteLaunchResolverDeps {
   runCommand(hostId: string, request: HostCommandRequest): Promise<HostCommandResult>;
   /** This computer's mirror folder for a host's home. */
   homeMirror(hostId: string): string;
+  /** Whether the agent's CLI is installed on the host. A spawn is refused only on `missing`: an `unknown` answer goes on. */
+  probeAgent?(hostId: string, cliName: string): Promise<HostAgentProbe>;
+  /** The host's name as the user gave it, for the refusal's sentence. */
+  hostName?(hostId: string): string | null;
 }
 
 export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): RemoteLaunchResolver {
@@ -116,6 +134,11 @@ export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): Remo
       const remote = projectPath ? deps.remoteOfProjectPath(projectPath) : null;
       if (!projectPath || !remote) return null;
       if (!adapter.remoteCliName) throw new RemoteAgentUnsupportedError(adapter.name, adapter.displayName);
+
+      const probe = await deps.probeAgent?.(remote.hostId, adapter.remoteCliName);
+      if (probe?.status === 'missing') {
+        throw new RemoteAgentMissingError(adapter.name, adapter.displayName, adapter.remoteCliName, deps.hostName?.(remote.hostId) ?? 'the host');
+      }
 
       const info = await deps.hostInfo(remote.hostId);
       const place: SshCliTarget = {

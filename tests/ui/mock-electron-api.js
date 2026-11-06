@@ -4129,13 +4129,35 @@
             defaultPermission: 'default',
           },
         ];
-        return defaults.map(function (agent) {
+        var inventory = defaults.map(function (agent) {
           var override = overrides[agent.name];
           // What lets a plan column's Plan approval offer Automatic for the agent.
           var withPlanApproval = PLAN_APPROVING_AGENTS.indexOf(agent.name) !== -1
             ? Object.assign({}, agent, { supportsPlanAutoApproval: true })
             : agent;
           return override ? Object.assign({}, withPlanApproval, override) : withPlanApproval;
+        });
+        // A remote project's agents run on its host, so main answers with what the host has: the CLI's
+        // name in place of a path, the host's version, and no capabilities (they come from running the
+        // CLI). Claude is installed there unless a spec sets window.__mockHostAgents =
+        // { codex: 'found', claude: 'missing' | 'unknown' }; any other agent is missing.
+        var targetProject = _projectPath
+          ? projects.find(function (project) { return project.path === _projectPath; })
+          : projects.find(function (project) { return project.id === currentProjectId; });
+        if (!targetProject || !targetProject.remote) return inventory;
+        var hostStates = (typeof window !== 'undefined' && window.__mockHostAgents) || {};
+        return inventory.map(function (agent) {
+          var status = hostStates[agent.name] || (agent.name === 'claude' ? 'found' : 'missing');
+          var hostEntry = Object.assign({}, agent, {
+            hostId: targetProject.remote.hostId,
+            hostStatus: status,
+            found: status === 'found',
+            path: agent.name,
+            version: status === 'found' ? '2.1.80' : null,
+            detectionError: status === 'unknown' ? 'ssh: connect to host lab port 22: Connection timed out' : undefined,
+          });
+          delete hostEntry.capabilities;
+          return hostEntry;
         });
       },
       // Tests can set window.__mockProbeExecutionServer = function (agentName) { ... }
