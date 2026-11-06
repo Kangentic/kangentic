@@ -128,8 +128,9 @@ task merges picks it up.
 
 Blocked groups get no phase, and the task lists them. The description is the plan, and each group's
 brief is attached, because the attachments reach the agent's opening prompt anyway. Descriptions stay
-under 25,000 characters. The field allows 27,500, but the briefs' paths ride the same command line,
-and past its limit most agents refuse to start
+under 25,000 characters, which leaves room for the briefs' paths. The field allows 27,500, and the
+paths ride the same command line: past the shell's limit the spawn refuses the start, except on an
+agent that can take the prompt typed
 ([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
 
 What a release adds is part of the job: workarounds it makes removable, deprecated APIs, new APIs that
