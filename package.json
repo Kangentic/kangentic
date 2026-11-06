@@ -135,7 +135,7 @@
     "simple-git": "^4.0.2",
     "tailwindcss": "^4.3.0",
     "three": "^0.185.1",
-    "turndown": "^7.2.4",
+    "turndown": "^7.2.5",
     "turndown-plugin-gfm": "^1.0.2",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
