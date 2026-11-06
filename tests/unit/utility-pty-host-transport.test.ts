@@ -48,6 +48,7 @@ vi.mock('../../src/main/utility-process/stderr-tail', () => ({
   StderrTail: class { snapshot(): string { return ''; } },
   captureWorkerStderr: vi.fn(),
   summarizeStderrTail: (text: string) => text,
+  watchdogLine: () => null,
 }));
 // The packaged mapping, so the entry-path test can tell the two trees apart.
 vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target.replace('app.asar', 'app.asar.unpacked') }));
