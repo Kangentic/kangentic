@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { RequestResolver } from '../../main/agent/mcp-http/project-resolver';
 import { registerDevtoolsPreviewTools } from './preview-tools';
 
 /**
@@ -9,6 +10,6 @@ import { registerDevtoolsPreviewTools } from './preview-tools';
  * Production builds drop this entire module via dead-code elimination
  * because the import in mcp-http-server.ts is gated.
  */
-export function registerDevtoolsMcpTools(server: McpServer): void {
-  registerDevtoolsPreviewTools(server);
+export function registerDevtoolsMcpTools(server: McpServer, resolver: RequestResolver): void {
+  registerDevtoolsPreviewTools(server, resolver);
 }

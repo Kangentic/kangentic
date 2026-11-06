@@ -9,15 +9,22 @@
  * every row-held report would stop at main while the worker read only the cwd,
  * and the tests that call `readFinalReply` directly would still pass.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
-const hoisted = vi.hoisted(() => ({ call: vi.fn() }));
+const hoisted = vi.hoisted(() => ({
+  call: vi.fn(),
+  RetrievalUnavailableError: class extends Error {},
+}));
 
-vi.mock('../../src/main/retrieval/retrieval-client', () => ({ retrievalClient: { call: hoisted.call } }));
+vi.mock('../../src/main/retrieval/retrieval-client', () => ({
+  retrievalClient: { call: hoisted.call },
+  RetrievalUnavailableError: hoisted.RetrievalUnavailableError,
+}));
 vi.mock('../../src/main/retrieval/remote-targets', () => ({ collectRemoteTargets: vi.fn(() => []) }));
 vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: {} }));
 
-import { tryReadSessionFinalReply } from '../../src/main/automations/turn-end/final-reply-reader';
+import { AGENT_REPLY_RETRY_DELAY_MS, tryReadSessionFinalReply } from '../../src/main/automations/turn-end/final-reply-reader';
+import { DEFAULT_BACKOFF_MS } from '../../src/main/utility-process/restart-policy';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 
 const REPORTED_PATH = '/home/dev/.claude/projects/-mock-project/agent-1.jsonl';
@@ -62,5 +69,53 @@ describe('tryReadSessionFinalReply', () => {
       expect.objectContaining({ facts: expect.objectContaining({ transcriptPath: null }) }),
       expect.anything(),
     );
+  });
+});
+
+describe('a reply read that meets a retrieval worker restart', () => {
+  const REPLY = { text: 'On to Merge', uuid: 'a-2', ts: 0 };
+
+  beforeEach(() => {
+    hoisted.call.mockReset();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads the reply from the next worker, once the restart policy lets one start', async () => {
+    hoisted.call
+      .mockRejectedValueOnce(new hoisted.RetrievalUnavailableError('did not answer in time'))
+      .mockResolvedValueOnce(REPLY);
+
+    const pending = tryReadSessionFinalReply({ sessionId: 'session-1' }, repositoryWith(REPORTED_PATH));
+    await vi.advanceTimersByTimeAsync(AGENT_REPLY_RETRY_DELAY_MS - 1);
+    expect(hoisted.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(await pending).toEqual({ ok: true, reply: REPLY });
+    expect(hoisted.call).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits past the restart policy\'s first backoff', () => {
+    expect(AGENT_REPLY_RETRY_DELAY_MS).toBeGreaterThan(DEFAULT_BACKOFF_MS[0]);
+  });
+
+  it('reports a failure, not an empty reply, when the retry finds no worker either', async () => {
+    hoisted.call.mockRejectedValue(new hoisted.RetrievalUnavailableError('restarting'));
+
+    const pending = tryReadSessionFinalReply({ sessionId: 'session-1' }, repositoryWith(REPORTED_PATH));
+    await vi.advanceTimersByTimeAsync(AGENT_REPLY_RETRY_DELAY_MS);
+
+    expect(await pending).toEqual({ ok: false });
+    expect(hoisted.call).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a read the worker answered with its own error', async () => {
+    hoisted.call.mockRejectedValue(new Error('the transcript could not be parsed'));
+
+    expect(await tryReadSessionFinalReply({ sessionId: 'session-1' }, repositoryWith(REPORTED_PATH))).toEqual({ ok: false });
+    expect(hoisted.call).toHaveBeenCalledTimes(1);
   });
 });

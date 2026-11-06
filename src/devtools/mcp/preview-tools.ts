@@ -1,9 +1,9 @@
 import * as http from 'node:http';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
-import { enumeratePreviewInstances } from '../main/instances';
+import { enumeratePreviewInstances, findRespondingPreviews } from '../main/instances';
 import { readLockfile, isLockfilePidAlive } from '../main/lockfile';
-import type { PreviewInstanceRecord } from '../shared/types';
+import type { RequestResolver } from '../../main/agent/mcp-http/project-resolver';
 
 /**
  * Dev-only MCP tools that wrap the localhost inspection bridge. Each
@@ -17,8 +17,8 @@ import type { PreviewInstanceRecord } from '../shared/types';
  *
  * Instance resolution: each tool accepts an optional `instanceId` which
  * matches `WorktreePath`. When omitted, the tool defaults to the only
- * running responding instance and returns a structured error when
- * multiple are running (so the agent picks deliberately).
+ * responding instance in the calling project and returns a structured
+ * error when multiple are running (so the agent picks deliberately).
  *
  * Error envelope: every tool returns either
  *   { content: [{ type: 'text', text: <success body or stringified data> }] }
@@ -72,11 +72,13 @@ type BridgeResult = BridgeSuccess | BridgeFailure;
 
 /**
  * Resolve a preview instance by its `worktreePath` (the stable id).
- * When `instanceId` is omitted, picks the unique responding instance
- * and errors when there are 0 or >1.
+ * When `instanceId` is omitted, picks the unique responding instance in
+ * the calling project and errors when there are 0 or >1. That look starts
+ * no git: each instance only needs its lockfile read.
  */
 async function resolveInstance(
   instanceId: string | undefined,
+  projectPath: string,
 ): Promise<{ port: number } | BridgeFailure> {
   if (instanceId) {
     const lockfile = readLockfile(instanceId);
@@ -101,14 +103,13 @@ async function resolveInstance(
     return { port: lockfile.port };
   }
 
-  const instances = await enumeratePreviewInstances();
-  const responding = instances.filter((entry) => entry.lockfileStatus === 'responding');
+  const responding = await findRespondingPreviews(projectPath);
   if (responding.length === 0) {
     return {
       ok: false,
       error: {
         kind: 'no-instance',
-        detail: 'No responding preview instance. Make sure a kangentic dev session is running and `developer.previewInspectionServer` is on.',
+        detail: `No responding preview instance in ${projectPath}. Make sure a kangentic dev session is running and \`developer.previewInspectionServer\` is on. For a preview in another project or outside its worktrees folder, pass instanceId (kangentic_devtools_list_instances lists every one).`,
       },
     };
   }
@@ -118,17 +119,17 @@ async function resolveInstance(
       error: {
         kind: 'multiple-instances',
         detail: `${responding.length} responding instances found. Pass instanceId (worktreePath) to disambiguate. Candidates: ${responding
-          .map((entry: PreviewInstanceRecord) => entry.path)
+          .map((lockfile) => lockfile.projectRoot)
           .join(', ')}.`,
       },
     };
   }
-  return { port: responding[0].lockfile!.port };
+  return { port: responding[0].port };
 }
 
-async function callBridge(options: CallBridgeOptions): Promise<BridgeResult> {
+async function callProjectBridge(options: CallBridgeOptions, projectPath: string): Promise<BridgeResult> {
   const callStart = performance.now();
-  const resolved = await resolveInstance(options.instanceId);
+  const resolved = await resolveInstance(options.instanceId, projectPath);
   const resolveMs = performance.now() - callStart;
   if ('ok' in resolved && resolved.ok === false) {
     return {
@@ -387,9 +388,14 @@ const MUTATING_ANNOTATIONS = {
 } as const;
 
 const INSTANCE_ARG_DESCRIPTION =
-  'Optional instanceId - the absolute worktree path identifying the preview to target. Omit to use the single running instance; the call errors if more than one is running. Use kangentic_devtools_list_instances to discover instanceIds.';
+  'Optional instanceId - the absolute worktree path identifying the preview to target. Omit to use the single running instance in this project; the call errors if more than one is running. Use kangentic_devtools_list_instances to discover instanceIds, including a preview in another project.';
 
-export function registerDevtoolsPreviewTools(server: McpServer): void {
+export function registerDevtoolsPreviewTools(server: McpServer, resolver: RequestResolver): void {
+  // Bound to the request's project: this server is built per request, so the
+  // path cannot live in module state.
+  const callBridge = (options: CallBridgeOptions): Promise<BridgeResult> =>
+    callProjectBridge(options, resolver.defaultContextResolved().context.getProjectPath());
+
   // ── Discovery ────────────────────────────────────────────────────────
   server.registerTool(
     'kangentic_devtools_list_instances',

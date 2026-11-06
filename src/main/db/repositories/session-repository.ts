@@ -98,7 +98,7 @@ export type TaskReportSessionRecord = Pick<SessionRecord,
 export type IsolatedRunRecord = Pick<SessionRecord, 'id' | 'isolated_swimlane_id' | 'agent_session_id' | 'start_head_sha' | 'started_at'>;
 
 /** What reading a conversation's transcript needs: the newest record of the task that names one. */
-export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd' | 'cli_target'> & { agent_session_id: string };
+export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd' | 'cli_target' | 'transcript_path'> & { agent_session_id: string };
 
 /**
  * Sum the stored tool columns of several records: the count from
@@ -429,7 +429,7 @@ export class SessionRepository {
    */
   getLatestAgentSessionForTask(taskId: string): LatestAgentSessionRecord | undefined {
     return this.db.prepare(
-      `SELECT session_type, agent_session_id, cwd, cli_target FROM sessions
+      `SELECT session_type, agent_session_id, cwd, cli_target, transcript_path FROM sessions
        WHERE task_id = ? AND agent_session_id IS NOT NULL
        ORDER BY started_at DESC, id DESC LIMIT 1`
     ).get(taskId) as LatestAgentSessionRecord | undefined;

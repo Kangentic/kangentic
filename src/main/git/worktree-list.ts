@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
-import type { SimpleGit } from 'simple-git';
-import { openSimpleGit } from './simple-git-client';
+import { gitAt, type GitClient } from './git-client';
 import { ProjectRepository } from '../db/repositories/project-repository';
+import { mapWithConcurrency } from '../shared/map-with-concurrency';
 import { isSamePath } from '../../shared/paths';
 import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
 
@@ -19,10 +19,15 @@ import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
  *
  * Pure read-only. Never fetches; the counts are as current as the remote-
  * tracking refs, which the background fetch scheduler keeps refreshed for
- * the focused project. Uses `simple-git` (already a project dep, used by
- * `WorktreeManager` and `DiffService`). Each worktree spawns a couple of
- * git invocations; for a project with many worktrees the calls run in
- * parallel via `Promise.all`.
+ * the focused project.
+ *
+ * Git runs in the pty host (`gitAt`), never on main, where each start blocks
+ * for its CreateProcess on Windows: in a dev build these walks pushed main's
+ * worst 10 s window to 4.6 s, with a worktree creation overlapping it.
+ * Each worktree takes four or five git runs, and the host starts them all on
+ * one spawn worker thread, about 110 ms each on a busy machine. So worktrees are
+ * read `WORKTREE_READ_CONCURRENCY` at a time: with every start queued at once, a
+ * task's own git and an agent CLI run would wait behind the whole enumeration.
  *
  * Failure modes: if a project's path no longer exists on disk, that project
  * appears with an empty `worktrees` array. Individual worktrees that fail
@@ -36,6 +41,9 @@ interface ParsedWorktree {
   branch: string | null;
   isMainCheckout: boolean;
 }
+
+/** Worktrees of one project read at once, and so git runs in flight at most. */
+export const WORKTREE_READ_CONCURRENCY = 4;
 
 /** What the base resolver is told about the worktree it is asked about. */
 export interface WorktreeBaseRefInput {
@@ -84,8 +92,10 @@ export async function enumerateWorktrees(
     }
 
     const parsed = await parseWorktreeList(project.path);
-    const records = await Promise.all(
-      parsed.map(async (entry) => buildRecord(entry, project.id, project.path, options.resolveBaseRef)),
+    const records = await mapWithConcurrency(
+      parsed,
+      WORKTREE_READ_CONCURRENCY,
+      (entry) => buildRecord(entry, project.id, project.path, options.resolveBaseRef),
     );
     results.push({
       projectId: project.id,
@@ -100,7 +110,7 @@ export async function enumerateWorktrees(
 async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]> {
   let raw: string;
   try {
-    raw = await openSimpleGit(projectPath).raw(['worktree', 'list', '--porcelain']);
+    raw = await gitAt(projectPath).raw(['worktree', 'list', '--porcelain']);
   } catch {
     return [];
   }
@@ -145,7 +155,7 @@ async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]>
  * ref does not exist (no remote, base never fetched) or the output is not two
  * integers, so a caller can try the next candidate.
  */
-async function countLeftRight(git: SimpleGit, ref: string): Promise<{ behind: number; ahead: number } | null> {
+async function countLeftRight(git: GitClient, ref: string): Promise<{ behind: number; ahead: number } | null> {
   try {
     const counts = (await git.raw(['rev-list', '--left-right', '--count', `${ref}...HEAD`])).trim();
     const [behindText, aheadText] = counts.split(/\s+/);
@@ -176,19 +186,19 @@ async function buildRecord(
   };
 
   // Worktree may have been removed externally between `worktree list` and now.
-  if (!fs.existsSync(entry.path)) {
+  let worktreeGit: GitClient;
+  try {
+    worktreeGit = gitAt(entry.path);
+  } catch {
     return baseRecord;
   }
 
-  const worktreeGit = openSimpleGit(entry.path);
-
-  // Dirty status. `simple-git`'s status() throws when invoked on a
-  // half-broken worktree (mid-rebase, missing HEAD); we treat those as
-  // "unknown" rather than fail.
+  // Dirty status. status() throws on a half-broken worktree (mid-rebase,
+  // missing HEAD); we treat those as "unknown" rather than fail.
   let dirty: boolean;
   try {
     const status = await worktreeGit.status();
-    dirty = !status.isClean();
+    dirty = status.files.length > 0;
   } catch {
     dirty = false;
   }

@@ -86,6 +86,10 @@ repo. Always run `npm install` in a worktree before running any npm scripts (`np
 typecheck`, `npm run build`, `npx playwright test`, etc.). Without it, binaries like `tsc`
 won't be found.
 
+**Never run `npm ci` in a worktree whose `node_modules` is a link.** `/preview` makes it a junction
+into the main checkout. Measured on npm 12, `npm ci` there exits 0 and empties the main checkout's
+`node_modules`, which the running app uses. `npm install` leaves the main checkout alone.
+
 **Background servers carry `--kangentic-no-activity-hold`:** a server or watcher you start in
 the background and leave running (`npm run demo:serve`, a scratchpad HTTP server) puts that
 flag in its command, as a trailing shell comment when the program rejects unknown flags

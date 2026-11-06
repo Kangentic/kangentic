@@ -67,7 +67,7 @@ const DEFAULT_MAX_CRASHES = 3;
  * The cost of waiting is only that the caller degrades a little longer, which
  * it already does whenever the worker is absent.
  */
-const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
+export const DEFAULT_BACKOFF_MS: readonly number[] = [1_000, 5_000, 15_000];
 const DEFAULT_DECAY_MS = 5 * 60_000;
 /**
  * How long a crash's log line and latch report wait for the dying worker's
