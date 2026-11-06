@@ -1,6 +1,6 @@
 ---
 name: upgrade-deps
-description: Research every npm dependency with a newer eligible release, reading each changelog and migration guide and what the release lets us remove or adopt, and file the upgrade as the fewest board tasks that are safe. Reuses earlier research when nothing moved or a known blocker still stands. Use for "update our packages", "upgrade dependencies", or "what can we upgrade". It files tasks and changes no code. The task agent does the upgrade by following apply.md.
+description: Research every npm dependency with a newer eligible release, reading each changelog and migration guide and what the release lets us remove or adopt, and file the upgrade as one board task that one agent works from start to finish. Reuses earlier research when nothing moved or a known blocker still stands. Use for "update our packages", "upgrade dependencies", or "what can we upgrade". It files one task, never a follow-up, and changes no code. The task agent does the upgrade by following apply.md.
 allowed-tools: Read, Glob, Grep, Write, Edit, Bash(node:*), Bash(npm:*), Bash(git:*), Bash(gh:*), Agent
 argument-hint: [--dry-run] [--refresh] [package or group ...]
 ---
@@ -16,20 +16,21 @@ already done is skipped. A run with nothing new costs one inventory and no agent
 
 **Usage:** `/upgrade-deps [--dry-run] [--refresh] [package or group ...]`
 
-- `--dry-run` researches and prints the planned tasks but files nothing. Research is still cached.
+- `--dry-run` researches and prints the planned task but files nothing. Research is still cached.
 - `--refresh` ignores the cache and researches every group again.
 - Naming packages or groups limits the run to those groups.
 
 **Arguments:** $ARGUMENTS
 
-Run it from the main checkout on an up-to-date `main`, in an Opus session, because this session
-decides what is too big to share a task. It reads the tree it is in, so a worktree behind `main`
-reports versions that already moved, and its agents write to the main checkout's cache.
+Run it on an up-to-date `main`, from the main checkout or a fresh task worktree, in an Opus session,
+because this session judges the briefs and orders the phases. It reads the tree it is in, so a worktree
+behind `main` reports versions that already moved. Its agents write to the main checkout's cache from
+either place.
 
 ## What it covers, and what never moves
 
 The root `package.json` and both workspace packages (`packages/launcher`, `packages/protocol`).
-Packages nothing declares move in a lockfile refresh, the last phase of every task. GitHub Actions
+Packages nothing declares move in a lockfile refresh, the task's last upgrade phase. GitHub Actions
 stay with Dependabot. Everything else is up for a full upgrade, majors and exact pins included,
 unless one of these stops it:
 
@@ -85,8 +86,11 @@ Search active tasks for earlier upgrade work:
 kangentic_search_tasks query: "Upgrade deps", status: "active"
 ```
 
-Note which upgrade task, if any, is waiting in To Do, and which is in progress. Step 5 uses both, so
-that running this often never piles up tasks.
+There is only ever one upgrade task.
+
+**If one is past To Do, stop here.** Name it in the report with how many groups could move, then spawn
+nothing and file nothing. Whatever moved waits for the next run after that task merges, so a run during
+an upgrade costs one inventory.
 
 For every group with a `task`, whatever its `research` state, find that task with
 `kangentic_find_task` and `task.displayId`. A new release moves a filed group to `delta`, and it still
@@ -94,8 +98,6 @@ belongs to that task:
 
 - **Still in To Do:** research it as its state says, then update that task in Step 6 rather than
   filing another.
-- **Further along:** skip its research, leave the group alone, and name the task in the report. A
-  release that lands mid-task waits for the next run.
 - **Done or deleted, and the group still shows as movable:** the work did not land. Set the brief's
   `task` to `null`. Treat a `filed` group as `reuse`, and research a `delta` group as usual.
 
@@ -134,54 +136,38 @@ bundles, and whether the fuses changed.
 The agents write their briefs to disk as they finish, so a stopped run keeps its work. Run the
 inventory again to pick up where it stopped. Do not research anything yourself in the main loop.
 
-## Step 5: Plan the tasks
+## Step 5: Plan the task
 
-Read every brief with `verdict: ready`. Use the fewest tasks that are safe. **Default to one.**
-Two upgrade tasks running at once conflict in `package-lock.json`, so a split costs a rebase as well
-as a PR. Groups become phases inside the task, each with its own commit.
+Read every brief with `verdict: ready`. **All of it goes in one task, worked by one agent.** Never split
+a group out and never file a follow-up, whatever its size or risk. Tasks run one after another wait on
+a merge each, and tasks run in parallel conflict in `package-lock.json`. Groups become phases inside
+the task, each with its own commit.
 
-**Keep one rolling task.** This skill runs as often as you like, so a run must not file a task each
-time:
+If an upgrade task is waiting in To Do, add the new groups to it. Otherwise file a task.
 
-- If an upgrade task is waiting in To Do, add the new groups to it as phases.
-- If an upgrade task is in progress and none is waiting, file one follow-up that starts
-  `Start after #<N> merges.` Later runs add to that follow-up.
-- If neither exists, file a task.
+Order the phases safest first, so a red group late in the run leaves every commit before it standing:
+patches and dev tools, then medium risk groups, then native runtime majors, then the terminal stack
+(`node-pty` and `xterm`), then the lockfile refresh. `apply.md` drops a phase that cannot pass its gates
+and carries on, so a high risk group never needs a task of its own.
 
-Split a group into its own task only when one of these is true, and write the reason down:
-
-- It needs a gate the rest do not, and a failure there would hold them: Electron's restart cycle,
-  or a native runtime major that needs `npm run package` and a load check.
-- Its migration is large enough to swamp the review of everything else: a major with changes across
-  many files, or `risk: high`.
-- It is so uncertain that the safe bumps should land first.
-
-Split tasks run **in sequence**. Order them safest first, and start each later description with
-`Start after #<N> merges.` Three tasks is a lot. More than four means you are splitting by package
-instead of by risk. Only the last task in a sequence carries the lockfile refresh.
-
-A blocked group gets no task. It goes in the task's "Not in this task" section and in the report, so
+A blocked group gets no phase. It goes in the task's "Not in this task" section and in the report, so
 nobody wonders where it went.
 
-**User-visible work gets its own task, never a phase.** Any `adopt` item with `userVisible: true` from
-a `ready` brief goes in one separate `Upgrade deps: user-visible features` task, created with
-`automationsDisabled: true`. It starts from a mockup a person reviews, and the Executing column's Apply
-findings row tells an agent to take its recommended option and carry on, so inside an upgrade task it
-would get built unreviewed. `Needs owner:` does not stop that row. Pausing automations does, and it
-leaves plan approval with the user. Skip this task if there are no such items, and add to it on later
-runs while it waits in To Do.
+**User-visible work is the task's last section.** List every `adopt` item with `userVisible: true` from
+a `ready` brief under "User-visible", after the lockfile refresh. The agent publishes a mockup of each
+and builds nothing until a person approves it. Leave the section out if there are no such items.
 
-## Step 6: File the tasks
+## Step 6: File the task
 
-With `--dry-run`, print the planned titles and descriptions and stop here.
+With `--dry-run`, print the planned title and description and stop here.
 
-Otherwise create each task in To Do with `kangentic_create_task`, with `profile: "Upgrade"` and no
+Otherwise create the task in To Do with `kangentic_create_task`, with `profile: "Upgrade"` and no
 `column`. Title it `Upgrade deps: <what moves>`, and attach the brief of every group in it, as
 `attachments: [{ filePath: "<cacheDir>/briefs/<group>.json" }, ...]`. Then set the label `dependencies`
 in a separate labels-only `kangentic_update_task` call, because labels on a long create can drop.
 
-To change an open task from Step 3, use `kangentic_update_task` with `descriptionEdits`, and pass the
-new or changed briefs in `attachments`, which adds to what is there. Remove a superseded copy with
+To change the waiting task, use `kangentic_update_task` with `descriptionEdits`, and pass the new or
+changed briefs in `attachments`, which adds to what is there. Remove a superseded copy with
 `kangentic_remove_task_attachment`.
 
 Attach the briefs rather than copy them into the description, because the attachment paths reach the
@@ -198,7 +184,7 @@ columns decide how a task runs: code changes go through Planning, Executing and 
 high effort. A pin lasts the task's whole life, so it would bypass that and lock the permission mode
 too, and `autoCommand` replaces the commands the board runs as the task moves.
 
-Each description stands alone, because the task agent shares no context with this run:
+The description stands alone, because the task agent shares no context with this run:
 
 ```markdown
 Follow `.claude/skills/upgrade-deps/apply.md`. Install exactly the versions below. Each group's full
@@ -214,21 +200,23 @@ Must change: <the source edits in a line, or "nothing">
 
 ### Last: lockfile refresh
 
+## User-visible (mockup first)
+<each item: what it adds, the limits a design must respect, what the mockup should answer>
+
 ## Not in this task
 Blocked: <group, reason, what clears it>
-User-visible: <item, and the task that holds it>
 ```
 
 Paraphrase, and never write a contributor's path, because the board is mirrored publicly.
 
-After each task exists, record it on its briefs, so the next run knows it is handled. In each
+After the task exists, record it on its briefs, so the next run knows it is handled. In each
 brief, set `"task": { "displayId": <number>, "filedAt": "<UTC ISO timestamp>" }`.
 
 ## Step 7: Report
 
 End with what the user needs to act on, short:
 
-- The tasks filed or updated, with their numbers and how many groups each holds.
+- The task filed or updated, with its number and how many groups it holds.
 - Blocked groups, each with its reason and what clears it.
 - What the run reused, as a count: "11 groups from the cache, 4 researched".
 - Any registry errors, and anything an agent could not verify.
@@ -238,6 +226,7 @@ If everything is current, blocked or already filed, say that in one line and fil
 ## Rules
 
 - This skill never edits source, runs an install, commits or pushes.
-- Never start a filed task, and never move it. The user drags it when they want it.
+- One upgrade task at a time. Never split it, and never file a follow-up.
+- Never start the filed task, and never move it. The user drags it when they want it.
 - Every version in a task comes from a brief, and every brief's versions come from the inventory.
 - One command per Bash call.

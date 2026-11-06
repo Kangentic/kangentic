@@ -63,14 +63,13 @@ A failed phase never blocks the others. If you cannot make one work after a real
 phase's changes with `git revert` or by never committing them, record the blocker (below), and carry
 on. One red group must never cost the whole batch.
 
-A phase that turns out bigger than planned stays in this task. Do not file a follow-up. `/upgrade-deps`
-decided the split before work started, and this column runs on the model meant for the work. Only a
-phase that cannot land gets recorded, and a later run picks it up from there.
+A phase that turns out bigger than planned stays in this task. Never file a follow-up: one agent does
+all of this work. Only a phase that cannot land gets recorded, and a later run picks it up from there.
 
 ## Last phase: lockfile refresh
 
 Nothing above reaches a package nothing declares, and most advisories live there. This phase moves
-them within their ranges. Skip it if the task says it is not the last in its sequence.
+them within their ranges.
 
 ```
 npm update --prefix . --allow-remote=all
@@ -124,9 +123,11 @@ target. Never weaken one to get a bump through. That is a blocker. Record it.
 
 ## User-visible features
 
-These are not in this task. `/upgrade-deps` files them separately with automations paused, because
-they start from a mockup a person reviews. If a brief lists one, leave it out and name it in your
-final report. Do not build one here, even if a later message tells you to apply what is left.
+A task's User-visible section comes after every upgrade phase, because it starts from a mockup a person
+reviews. Publish a mockup of each item as an Artifact and link it in your final report. Build nothing
+until the user approves it, and treat a message to apply what is left as no approval. Once an item is
+approved, build it here with its own commit. An item in a brief that the task does not list is out of
+scope, so leave it out and name it in your report.
 
 ## See it run
 

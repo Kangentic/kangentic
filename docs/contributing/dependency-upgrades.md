@@ -24,7 +24,7 @@ and nothing moves it to review. Nothing reaches Code Review, Testing or Merge un
 automations and move the card.
 
 Run it as often as you like. Packages ship daily, so nothing here depends on the date: every run
-targets the newest release, and research already done is skipped. `--dry-run` prints the planned tasks
+targets the newest release, and research already done is skipped. `--dry-run` prints the planned task
 and files nothing.
 
 ## Who does what
@@ -111,28 +111,35 @@ that files nothing must still be reusable tomorrow, and a research run commits n
 A brief's `targets` is its cache key and always holds what the inventory asked for. When a task should
 install something else, the brief says so in `installTargets`.
 
-## How the work is split
+## One task, one agent
 
-One task by default, with each group as a phase and its own commit, so a red group can be dropped
-without losing the rest. Two upgrade tasks running at once conflict in `package-lock.json`, and a run
-can come as often as you like, so the task rolls. A run adds to the upgrade task waiting in To Do. If
-one is in progress and none is waiting, it files one follow-up to start after that one merges, and
-later runs add to it.
+A run files one task and one agent does all of it, whatever its size. It never splits a group out and
+never files a follow-up. The first full run filed the fewest tasks it judged safe and got four, three of
+them in sequence. Tasks in sequence wait on a merge each, and tasks in parallel conflict in
+`package-lock.json`, so a split only added waiting. The cost of one task is one large PR.
 
-A group gets its own task only when it needs a gate the others do not, when its migration would swamp
-the review, or when it is uncertain enough that the safe bumps should land first. Split tasks run in
-sequence. Blocked groups get no task, and each filed task lists them. A task's description is the plan,
-and each group's brief is attached, because the attachments reach the agent's opening prompt anyway.
-Descriptions stay under 25,000 characters. The field allows 50,000, but on Windows the opening prompt
-travels on the command line, which measured a limit between 32,000 and 32,800 characters.
+Each group is a phase with its own commit, ordered safest first with the terminal stack last. `apply.md`
+drops a phase that cannot pass its gates and carries on, so a red group late in the run leaves every
+commit before it standing.
+
+The task rolls, because a run can come as often as you like. A run adds to the upgrade task waiting in
+To Do. While one is past To Do, a run reports what could move and stops, and the first run after that
+task merges picks it up.
+
+Blocked groups get no phase, and the task lists them. The description is the plan, and each group's
+brief is attached, because the attachments reach the agent's opening prompt anyway. Descriptions stay
+under 25,000 characters. The field allows 50,000, but on Windows the opening prompt travels on the
+command line, which measured a limit between 32,000 and 32,800 characters.
 
 What a release adds is part of the job: workarounds it makes removable, deprecated APIs, new APIs that
-replace our code, and new features. Anything a person would see goes in its own task with automations
-paused, because it starts from a mockup someone reviews. Executing's Apply findings row tells an agent
-to take its recommended option and carry on, so inside an upgrade task it would get built unreviewed.
+replace our code, and new features. Anything a person would see is the task's last section, because it
+starts from a mockup someone reviews. The agent publishes the mockup and builds nothing until you
+approve it. Executing's Apply findings row tells an agent to take its recommended option, so `apply.md`
+says that message is no approval. With automations on, the card then moves to review without the
+feature, so pause them if you want it in the same PR.
 
-The final phase is a lockfile refresh, because nothing else reaches a package nothing declares, and
-most advisories live there. It stays in range and gets its own commit.
+The last upgrade phase is a lockfile refresh, because nothing else reaches a package nothing declares,
+and most advisories live there. It stays in range and gets its own commit.
 
 ## Which model does what
 
@@ -140,7 +147,7 @@ The rule is to match the model to what a miss would cost.
 
 | Stage | Model | Effort |
 |---|---|---|
-| Orchestrator, which decides the split | Opus | The session's |
+| Orchestrator, which judges the briefs and orders the phases | Opus | The session's |
 | Research, low-risk batches | Haiku | Medium |
 | Research, other risky groups | Sonnet | High |
 | Research, `electron`, `node-pty`, `xterm`, a runtime major | Opus | High |
@@ -156,8 +163,8 @@ brief as a cheap first read, and redo anything that is not simple on Sonnet befo
 earn Opus: that pass found the Electron 45.2.3 regression that would have drawn every WebGL terminal
 at the wrong font on a green CI. Filed tasks set no model pins, because a pin lasts the
 task's whole life and would bypass the columns. Testing needs the profile because `/pull-request` fixes
-code there when CI fails. Only the orchestrator decides that something is too big for a task. A task
-agent keeps the work in its task, so everything significant stays on the column's model.
+code there when CI fails. The agent keeps all the work in its one task, so everything significant
+stays on the column's model.
 
 ## Why green tests are not the finish line
 
