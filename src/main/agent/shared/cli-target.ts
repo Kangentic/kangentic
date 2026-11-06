@@ -131,12 +131,40 @@ export function isUnderLocalRoot(localPath: string, roots: SshCliPlace['roots'])
   return longestRoot(roots, 'local', localPath) !== null;
 }
 
+/**
+ * A path inside a root (the shell folder, a session folder or a worktree stand-in below it) as the host names
+ * it, or null when it is in no root. A root itself is a folder, so it is no file to copy and answers null too.
+ */
+export function rootPathToHost(localPath: string, place: SshCliPlace): string | null {
+  const root = longestRoot(place.roots, 'local', localPath);
+  if (!root || comparableLocal(localPath) === comparableLocal(root.local)) return null;
+  return localPathToHost(localPath, place.roots);
+}
+
+/**
+ * Whether an id can name a file. A hook's id comes from the host, and one that went into a path on this
+ * computer unchecked could climb out of the folder the copy belongs in.
+ */
+export function isPlainIdName(agentSessionId: string): boolean {
+  return /^\w[\w.-]*$/.test(agentSessionId);
+}
+
+/**
+ * The parts of a host path below a folder, to join onto a folder here. A Linux file name can hold a backslash,
+ * which `path.join` on Windows reads as a separator, so a name from a host could climb out of the folder. No file
+ * here has such a name, so the character is replaced and the path names nothing.
+ */
+function localSegments(hostRest: string): string[] {
+  const segments = hostRest.split('/').filter(Boolean);
+  return path.sep === '\\' ? segments.map((segment) => segment.replaceAll('\\', '_')) : segments;
+}
+
 /** A host path as this computer's mirror folder names it, or the path unchanged when it is under no root. */
 export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): string {
   const best = longestRoot(roots, 'host', hostPath);
   if (!best) return hostPath;
   const rest = normalizedHost(hostPath).slice(normalizedHost(best.host).length);
-  return path.join(best.local, ...rest.split('/').filter(Boolean));
+  return path.join(best.local, ...localSegments(rest));
 }
 
 /**
@@ -159,7 +187,7 @@ export function mirrorPathToHost(localPath: string, place: SshCliPlace): string 
  * argument of the export.
  */
 export function remoteExportPath(place: CliPlace | null | undefined, agentName: string, agentSessionId: string | null | undefined): string | null {
-  if (place?.kind !== 'ssh' || !agentSessionId || !/^\w[\w.-]*$/.test(agentSessionId)) return null;
+  if (place?.kind !== 'ssh' || !agentSessionId || !isPlainIdName(agentSessionId)) return null;
   return path.join(place.localHome, '.kangentic', 'transcripts', agentName, `${agentSessionId}.json`);
 }
 
@@ -173,7 +201,7 @@ export function hostPathToMirror(hostPath: string, place: SshCliPlace): string |
   const home = normalizedHost(place.home);
   const normalized = normalizedHost(hostPath);
   if (normalized === home || !normalized.startsWith(`${home}/`)) return null;
-  return path.join(place.localHome, ...normalized.slice(home.length + 1).split('/').filter(Boolean));
+  return path.join(place.localHome, ...localSegments(normalized.slice(home.length + 1)));
 }
 
 export type CliTarget = CliPlace & {

@@ -47,7 +47,7 @@ function assertSafe(pointer: JsonPointer): void {
 function parentOf(root: Record<string, unknown>, pointer: JsonPointer, create: boolean): Record<string, unknown> | null {
   let current = root;
   for (const segment of pointer.slice(0, -1)) {
-    const next = current[segment];
+    const next = ownValue(current, segment);
     if (next === undefined) {
       if (!create) return null;
       const made: Record<string, unknown> = {};
@@ -63,7 +63,13 @@ function parentOf(root: Record<string, unknown>, pointer: JsonPointer, create: b
 }
 
 function clone(value: unknown): unknown {
+  if (value === undefined) throw new JsonPatchError('The patch has no value to write.');
   return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
+/** The file's own value at a key. A parsed object inherits `toString` and the like, which no file holds. */
+function ownValue(parent: Record<string, unknown>, key: string): unknown {
+  return Object.hasOwn(parent, key) ? parent[key] : undefined;
 }
 
 /** Apply the ops to a parsed object in place. True when anything changed. Throws `JsonPatchError` on a bad op or a step that is not an object. */
@@ -76,14 +82,14 @@ export function applyJsonPatch(root: Record<string, unknown>, ops: readonly Json
       case 'set': {
         const parent = parentOf(root, op.at, true);
         if (!parent) break;
-        if (JSON.stringify(parent[key]) === JSON.stringify(op.value) && key in parent) break;
+        if (Object.hasOwn(parent, key) && JSON.stringify(parent[key]) === JSON.stringify(op.value)) break;
         parent[key] = clone(op.value);
         changed = true;
         break;
       }
       case 'setDefault': {
         const parent = parentOf(root, op.at, true);
-        if (!parent || parent[key] !== undefined) break;
+        if (!parent || ownValue(parent, key) !== undefined) break;
         parent[key] = clone(op.value);
         changed = true;
         break;
@@ -91,7 +97,7 @@ export function applyJsonPatch(root: Record<string, unknown>, ops: readonly Json
       case 'addToArray': {
         const parent = parentOf(root, op.at, true);
         if (!parent) break;
-        const existing = parent[key];
+        const existing = ownValue(parent, key);
         if (existing !== undefined && !Array.isArray(existing)) throw new JsonPatchError(`${key} is not an array, so nothing can be added to it.`);
         const list = (existing as unknown[] | undefined) ?? [];
         if (list.some((item) => JSON.stringify(item) === JSON.stringify(op.value))) {
@@ -105,9 +111,9 @@ export function applyJsonPatch(root: Record<string, unknown>, ops: readonly Json
       case 'copyIfAbsent': {
         assertSafe(op.from);
         const parent = parentOf(root, op.at, true);
-        if (!parent || parent[key] !== undefined) break;
+        if (!parent || ownValue(parent, key) !== undefined) break;
         const source = parentOf(root, op.from, false);
-        const found = source ? source[op.from[op.from.length - 1]] : undefined;
+        const found = source ? ownValue(source, op.from[op.from.length - 1]) : undefined;
         parent[key] = clone(Array.isArray(found) ? found : op.fallback);
         changed = true;
         break;

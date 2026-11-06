@@ -27,12 +27,12 @@
 import * as fsSync from 'node:fs';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { localPathToHost, mirrorPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
+import { localPathToHost, mirrorPathToHost, rootPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
 import type { PtyHostEvent } from '../pty/host/protocol';
-import type { AgentParser, RemoteProgramRunner, RemoteTranscriptIndex, RemoteTranscriptSnapshot, StoredCliTarget } from '../../shared/types';
-import type { HostCommandRequest, HostCommandResult, HostFileWrite } from './protocol/messages';
+import type { AgentParser, RemoteProgramRunner, RemoteResumeSeed, RemoteTranscriptFile, RemoteTranscriptIndex, RemoteTranscriptSearch, RemoteTranscriptSnapshot, StoredCliTarget } from '../../shared/types';
+import type { HostCommandRequest, HostCommandResult, HostFileSearch, HostFileWrite } from './protocol/messages';
 
 /** The helper's file jobs, as `RemoteHostService` offers them. */
 export interface RemoteSessionFiles {
@@ -40,8 +40,8 @@ export interface RemoteSessionFiles {
   writeFileRaw(hostId: string, filePath: string, content: string, mode?: number): Promise<unknown>;
   watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<unknown>;
   unwatchHooks(hostId: string, sessionId: string): Promise<unknown>;
-  /** `sizes` is what each file holds now, by key. A program older than this answers none. */
-  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<{ sizes?: Record<string, number> } | undefined>;
+  /** `sizes` is what each file holds now, by key, and `searching` that `searches` is looked for. An older program answers neither. */
+  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>, searches?: HostFileSearch[]): Promise<{ sizes?: Record<string, number>; searching?: boolean } | undefined>;
   unwatchFiles(hostId: string, sessionId: string): Promise<unknown>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
   removeEmptyDirectories(hostId: string, paths: string[]): Promise<unknown>;
@@ -53,8 +53,8 @@ export interface RemoteSessionFiles {
  * `transcriptFiles` is the same answer at spawn; this is how it changes afterwards.
  */
 export interface RemoteTranscriptSource {
-  /** The files tailed by offset for this id, in the mirror. Empty while none can be named. */
-  files(agentSessionId: string): readonly string[];
+  /** The files tailed by offset for this id, each by its path or a search. Empty while none can be named. */
+  files(agentSessionId: string): readonly RemoteTranscriptFile[];
   /** Tailed from the start, with or without an id. Its growth asks `files` again and can name the id. */
   index?: RemoteTranscriptIndex;
   /** How to export a transcript that is no plain file. Null while none can be named. */
@@ -65,11 +65,11 @@ export interface RemoteTranscriptSource {
  * What a session's adapter says about its transcript on a host, asked again once the session's id or an index
  * entry arrives. A remote task works in one folder for its whole life, so `cwd` and the target hold.
  */
-export function remoteTranscriptSource(parser: AgentParser | undefined, cwd: string, cliTarget: StoredCliTarget): RemoteTranscriptSource {
+export function remoteTranscriptSource(parser: AgentParser | undefined, cwd: string, cliTarget: StoredCliTarget, sessionDirectory: string): RemoteTranscriptSource {
   const index = parser?.remoteTranscriptIndex?.({ cwd, cliTarget }) ?? null;
   const snapshotOf = parser?.remoteTranscriptSnapshot?.bind(parser);
   return {
-    files: (agentSessionId) => parser?.remoteTranscriptFiles?.({ agentSessionId, cwd, cliTarget }) ?? [],
+    files: (agentSessionId) => parser?.remoteTranscriptFiles?.({ agentSessionId, cwd, cliTarget, sessionDirectory }) ?? [],
     ...(index ? { index } : {}),
     ...(snapshotOf ? { snapshot: (agentSessionId, runProgram) => snapshotOf({ agentSessionId, cwd, cliTarget, runProgram }) } : {}),
   };
@@ -89,15 +89,18 @@ export interface RemoteSessionRegistration {
    */
   extraFiles?: readonly string[];
   /**
-   * Files the agent keeps appending to on the host, as the path its reader builds in this computer's
-   * mirror of the host's home (`AgentParser.remoteTranscriptFiles`). The host sends each one's bytes as
-   * they are written, and they are written at the same offset here. A path outside the mirror is refused.
+   * Files the agent keeps appending to on the host, as the path its reader builds here, in this computer's
+   * mirror of the host's home or under the project's shell folder (`AgentParser.remoteTranscriptFiles`). The
+   * host sends each one's bytes as they are written, and they are written at the same offset here. A path
+   * in neither place is refused.
    */
-  transcriptFiles?: readonly string[];
+  transcriptFiles?: readonly RemoteTranscriptFile[];
   /** The conversation's id when the spawn has it. One that arrives later comes through `setAgentSessionId`. */
   agentSessionId?: string | null;
   /** How the transcript changes after spawn: a file found late, an index, an export. */
   transcripts?: RemoteTranscriptSource;
+  /** A folder to copy on the host before the agent starts (`AgentParser.remoteResumeSeed`). */
+  resumeSeed?: RemoteResumeSeed | null;
 }
 
 /** A file opened to be written anywhere in, made when it is not there. */
@@ -138,6 +141,23 @@ const SNAPSHOT_BYTES_PER_SECOND = 200_000;
 const SNAPSHOT_TIMEOUT_MS = 12_000;
 /** The most a reader waits for an ending session's last export: the export's bound, its last pass, and a margin. */
 const SETTLE_WAIT_MS = 30_000;
+
+/**
+ * Copies a folder an earlier session left on the host to where the new session reads it, as `cp -R` and a rename,
+ * so a copy cut short is never taken for a whole one. It collects beside the target's parent, not in it: a CLI can
+ * read every folder there as a session, and a timeout stops this script before it cleans up. A target already
+ * there is left alone. Every value is an argument.
+ */
+const RESUME_SEED_SCRIPT = [
+  'source=$1; target=$2',
+  '[ -e "$target" ] && exit 0',
+  '[ -d "$source" ] || { echo "the earlier session\'s folder is not on the host" >&2; exit 71; }',
+  'mkdir -p "${target%/*}" || exit 70',
+  'staged="${target%/*}.seed-$$"',
+  'if cp -R "$source" "$staged" && mv "$staged" "$target"; then exit 0; fi',
+  'rm -rf "$staged"',
+  'exit 72',
+].join('\n');
 
 /**
  * Exports to a temporary file, then swaps it in only when it differs, so a host's tail sees a new file (and
@@ -181,8 +201,39 @@ type TailKind = 'file' | 'index' | 'snapshot';
 interface Tail {
   localPath: string;
   kind: TailKind;
+  /** How the host finds the file, when its name is not known here. */
+  search?: RemoteTranscriptSearch;
+  /** A chunk of this file has landed, so what the copy holds is this session's. */
+  started?: boolean;
   /** Where an export's staged bytes end while none are missing. Null once a chunk could not be written. */
   stagedEnd?: number | null;
+}
+
+/** What one `watchFiles` asks of the host. */
+interface TailRequest {
+  files: Array<{ key: string; path: string }>;
+  searches: HostFileSearch[];
+}
+
+function tailOfFile(file: RemoteTranscriptFile): Tail {
+  return typeof file === 'string' ? { localPath: file, kind: 'file' } : { localPath: file.localPath, kind: 'file', search: file };
+}
+
+/** A search was asked for and the host's program did not say it looks. */
+function programCannotSearch(request: TailRequest, answer: { searching?: boolean } | undefined): boolean {
+  return request.searches.length > 0 && !answer?.searching;
+}
+
+/** Whether a session was told its program cannot search. The session entry holds it, once there is an entry. */
+interface SearchWarning {
+  warnedNoSearch: boolean;
+}
+
+/** Whether a chunk's offset is one the tail sends: a whole number, zero on a reset, and never past the size it reports. */
+function isPlausibleOffset(event: FileChunkEvent): boolean {
+  if (!Number.isSafeInteger(event.offset) || event.offset < 0) return false;
+  if (event.reset && event.offset !== 0) return false;
+  return typeof event.size !== 'number' || event.offset <= event.size;
 }
 
 interface SnapshotState {
@@ -231,6 +282,8 @@ interface Registered extends RemoteSessionRegistration {
   lastSnapshotFailure: string | null;
   /** An export's chunk came with no size, which has been logged. */
   warnedNoSize: boolean;
+  /** The host's program does not search for a file, which has been logged. */
+  warnedNoSearch: boolean;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -313,6 +366,7 @@ export class RemoteSessionRelay {
     const pushedPaths: string[] = [];
     const tails = new Map<string, Tail>();
     let indexBaseline: number | null = null;
+    const searchWarning: SearchWarning = { warnedNoSearch: false };
     try {
       localHooks = wslHookPaths(registration.localSessionDirectory);
       const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
@@ -341,28 +395,27 @@ export class RemoteSessionRelay {
         ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
       );
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
+      if (registration.resumeSeed) await this.copyResumeSeed(registration, registration.resumeSeed);
       // The transcript is extra: an agent with no transcript here still runs. A host that cannot tail it
       // costs the conversation viewer, not the session.
       const wanted: Tail[] = [
         ...(registration.transcripts?.index ? [{ localPath: registration.transcripts.index.path, kind: 'index' as const }] : []),
-        ...(registration.transcriptFiles ?? []).map((localPath) => ({ localPath, kind: 'file' as const })),
+        ...(registration.transcriptFiles ?? []).map(tailOfFile),
       ];
-      const tailRequest: Array<{ key: string; path: string }> = [];
+      const tailRequest: TailRequest = { files: [], searches: [] };
       for (const tail of wanted) {
-        const hostPath = this.hostPathOf(registration, tail.localPath);
-        if (hostPath === null) continue;
-        const key = String(tailRequest.length);
-        tails.set(key, tail);
-        tailRequest.push({ key, path: hostPath });
+        const key = String(tails.size);
+        if (this.addToRequest(registration, key, tail, tailRequest)) tails.set(key, tail);
       }
-      if (tailRequest.length > 0) {
+      if (tails.size > 0) {
         try {
-          const answer = await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest);
+          const answer = await this.options.files.watchFiles(registration.hostId, registration.sessionId, tailRequest.files, tailRequest.searches);
           // Read before the agent starts, so what lies past it is what this session's agent adds. A file with
           // no entry is not there yet. No sizes at all is an older program on the host, and with nothing to
           // tell new lines from old, no id is taken: a wrong one would stick, and resume someone else's.
           const indexKey = [...tails].find(([, tail]) => tail.kind === 'index')?.[0];
           if (indexKey !== undefined) indexBaseline = answer?.sizes ? answer.sizes[indexKey] ?? 0 : null;
+          this.noteSearchAnswer(registration.sessionId, searchWarning, tailRequest, answer);
         } catch (error) {
           tails.clear();
           this.options.log?.(`could not tail the transcript for ${registration.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -412,6 +465,7 @@ export class RemoteSessionRelay {
       snapshotRunning: null,
       lastSnapshotFailure: null,
       warnedNoSize: false,
+      warnedNoSearch: searchWarning.warnedNoSearch,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
@@ -421,13 +475,58 @@ export class RemoteSessionRelay {
     if (entry.transcripts?.snapshot) this.scheduleSnapshot(entry, SNAPSHOT_FIRST_DELAY_MS);
   }
 
-  /** A mirror path as the host names it. One outside the mirror is refused here, so it never reaches the host. */
+  /**
+   * Copy what the agent's resume needs into the session's new folder on the host, before the agent starts. A
+   * failure costs the earlier conversation, not the session, which starts empty and says why in the log.
+   */
+  private async copyResumeSeed(registration: RemoteSessionRegistration, seed: RemoteResumeSeed): Promise<void> {
+    const source = rootPathToHost(seed.source, registration.place);
+    const target = rootPathToHost(seed.target, registration.place);
+    try {
+      if (source === null || target === null) throw new Error('the folder is outside the project');
+      const result = await this.options.files.runCommand(registration.hostId, {
+        file: 'sh',
+        args: ['-c', RESUME_SEED_SCRIPT, 'sh', source, target],
+        timeoutMs: SNAPSHOT_TIMEOUT_MS,
+      });
+      if (result.code !== 0) throw new Error(result.error ?? (result.timedOut ? 'the copy timed out' : (lastLine(result.stderr) || `the copy exited ${String(result.code)}`)));
+    } catch (error) {
+      this.options.log?.(`could not bring the earlier conversation over for ${registration.sessionId.slice(0, 8)}, so it starts empty: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * A path here as the host names it: in the mirror of the host's home, or under a root (a session or working
+   * folder). Any other is refused here, so it never reaches the host and nothing is written to it.
+   */
   private hostPathOf(registration: RemoteSessionRegistration, localPath: string): string | null {
-    const hostPath = mirrorPathToHost(localPath, registration.place);
+    const hostPath = mirrorPathToHost(localPath, registration.place) ?? rootPathToHost(localPath, registration.place);
     if (hostPath === null) {
-      this.options.log?.(`not tailing ${path.basename(localPath)} for ${registration.sessionId.slice(0, 8)}: it is not inside the mirror of the host's home`);
+      this.options.log?.(`not tailing ${path.basename(localPath)} for ${registration.sessionId.slice(0, 8)}: it is in neither the mirror of the host's home nor the project's folder`);
     }
     return hostPath;
+  }
+
+  /** Add one tail to what the host is asked. False when either of its paths is refused. */
+  private addToRequest(registration: RemoteSessionRegistration, key: string, tail: Tail, request: TailRequest): boolean {
+    // Asked of a search too, as the check that its copy lands where a copy may. Only a plain file goes by this path.
+    const hostPath = this.hostPathOf(registration, tail.localPath);
+    if (hostPath === null) return false;
+    if (!tail.search) {
+      request.files.push({ key, path: hostPath });
+      return true;
+    }
+    const directory = this.hostPathOf(registration, tail.search.directory);
+    if (directory === null) return false;
+    request.searches.push({ key, directory, depth: tail.search.depth, fileName: tail.search.fileName });
+    return true;
+  }
+
+  /** Say once, per session, that an older program on the host ignored a search. */
+  private noteSearchAnswer(sessionId: string, warning: SearchWarning, request: TailRequest, answer: { searching?: boolean } | undefined): void {
+    if (warning.warnedNoSearch || !programCannotSearch(request, answer)) return;
+    warning.warnedNoSearch = true;
+    this.options.log?.(`the host's program cannot search for a transcript, so the one of ${sessionId.slice(0, 8)} is not copied. Restart the program on the host.`);
   }
 
   /** Bring what the host tails in line with what is known now. One at a time, and a failure keeps what was tailing. */
@@ -441,36 +540,36 @@ export class RemoteSessionRelay {
   private async applyTails(entry: Registered): Promise<void> {
     if (entry.tailsClosed) return;
     const agentSessionId = entry.currentAgentSessionId;
-    const wanted = new Map<string, TailKind>();
-    if (entry.transcripts?.index) wanted.set(entry.transcripts.index.path, 'index');
+    const wanted = new Map<string, Tail>();
+    const want = (tail: Tail): void => void wanted.set(tail.localPath, tail);
+    if (entry.transcripts?.index) want({ localPath: entry.transcripts.index.path, kind: 'index' });
     if (entry.transcripts && agentSessionId) {
-      for (const localPath of entry.transcripts.files(agentSessionId)) wanted.set(localPath, 'file');
+      for (const file of entry.transcripts.files(agentSessionId)) want(tailOfFile(file));
     } else if (!entry.transcripts) {
-      for (const localPath of entry.transcriptFiles ?? []) wanted.set(localPath, 'file');
+      for (const file of entry.transcriptFiles ?? []) want(tailOfFile(file));
     }
-    if (entry.snapshot) wanted.set(entry.snapshot.spec.localPath, 'snapshot');
+    if (entry.snapshot) want({ localPath: entry.snapshot.spec.localPath, kind: 'snapshot' });
 
     const held = [...entry.tails.values()].map((tail) => tail.localPath);
     if (held.length === wanted.size && held.every((localPath) => wanted.has(localPath))) return;
 
     const tails = new Map<string, Tail>();
-    const request: Array<{ key: string; path: string }> = [];
+    const request: TailRequest = { files: [], searches: [] };
     let nextTailKey = entry.nextTailKey;
-    for (const [localPath, kind] of wanted) {
-      const hostPath = this.hostPathOf(entry, localPath);
-      if (hostPath === null) continue;
-      const kept = [...entry.tails].find(([, tail]) => tail.localPath === localPath);
+    for (const [localPath, tail] of wanted) {
+      const kept = [...entry.tails].find(([, heldTail]) => heldTail.localPath === localPath);
       const key = kept ? kept[0] : String(nextTailKey);
+      if (!this.addToRequest(entry, key, tail, request)) continue;
       if (!kept) nextTailKey += 1;
-      tails.set(key, kept ? kept[1] : { localPath, kind });
-      request.push({ key, path: hostPath });
+      tails.set(key, kept ? kept[1] : tail);
     }
     // The tail keys are set first: a chunk can land before the host's answer does, and an unknown key is dropped.
     const previous = entry.tails;
     entry.tails = tails;
     entry.nextTailKey = nextTailKey;
     try {
-      await this.options.files.watchFiles(entry.hostId, entry.sessionId, request);
+      const answer = await this.options.files.watchFiles(entry.hostId, entry.sessionId, request.files, request.searches);
+      this.noteSearchAnswer(entry.sessionId, entry, request, answer);
     } catch (error) {
       entry.tails = previous;
       throw error;
@@ -708,6 +807,11 @@ export class RemoteSessionRelay {
     const entry = this.sessions.get(event.sessionId);
     const tail = entry?.tails.get(event.key);
     if (!entry || !tail) return;
+    // The tail never sends these. A host that did would leave a hole in the copy, or a huge sparse file here.
+    if (!isPlausibleOffset(event)) {
+      this.options.log?.(`dropped a transcript chunk with an impossible offset for ${event.sessionId.slice(0, 8)}`);
+      return;
+    }
     const isSnapshot = tail.kind === 'snapshot';
     const startsOver = event.reset || event.offset === 0;
     // Nothing resends a chunk, so one that does not follow the last means this export has a piece missing: a
@@ -726,8 +830,13 @@ export class RemoteSessionRelay {
       // Only an export's first chunk may make its staged file: a later one that makes it starts with a hole.
       const descriptor = isSnapshot && !startsOver ? fsSync.openSync(target, 'r+') : openForWriteAt(target);
       try {
-        // The first chunk of an export empties what an earlier one left that never finished arriving.
-        if (isSnapshot ? startsOver : event.reset) fsSync.ftruncateSync(descriptor, 0);
+        // The first chunk of an export empties what an earlier one left that never finished arriving. So does
+        // this session's first chunk of a copy longer than the host's file, which is what an earlier session
+        // left of a file that has since got shorter: nothing else would remove the bytes past its end. Only a
+        // conversation's own file: every session tails a shared index, and two can read its size out of order.
+        const staleCopy = tail.kind === 'file' && !tail.started && typeof event.size === 'number' && fsSync.fstatSync(descriptor).size > event.size;
+        if (isSnapshot ? startsOver : event.reset || staleCopy) fsSync.ftruncateSync(descriptor, 0);
+        tail.started = true;
         const bytes = Buffer.from(event.data, 'base64');
         if (bytes.length > 0) fsSync.writeSync(descriptor, bytes, 0, bytes.length, event.offset);
         chunkEnd += bytes.length;

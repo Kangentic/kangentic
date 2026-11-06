@@ -330,6 +330,162 @@ describe('the helper\'s file tail', () => {
   });
 });
 
+describe('a file the tail finds by a search', () => {
+  const ROLLOUT = '^rollout-.*-abc\\.jsonl$';
+  const search = (depth = 3) => ({ key: 'found', directory: folder, depth, fileName: ROLLOUT });
+
+  function writeRollout(relative: string, content: string): string {
+    const file = path.join(folder, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+    return file;
+  }
+
+  it('finds a file in a dated folder whose name it could not be told, and tails it from then on', async () => {
+    const file = writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'one\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [], [search()]);
+
+    await until(() => bytesOf(events) === 'one\n');
+    fs.appendFileSync(file, 'two\n');
+    await until(() => bytesOf(events) === 'one\ntwo\n');
+
+    expect(events.every((event) => event.key === 'found')).toBe(true);
+  });
+
+  it('finds a file that appears late, which is how Codex writes a new session', async () => {
+    const { tail, events } = tailer({ searchDelayMs: 10, searchMaxDelayMs: 20 });
+    tail.watch('s1', [], [search()]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(events).toEqual([]);
+
+    writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'late\n');
+
+    await until(() => bytesOf(events) === 'late\n');
+  });
+
+  it('finds a resumed session in the folder of the day it began, not only today\'s', async () => {
+    writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-other.jsonl', 'not this one\n');
+    writeRollout('2024/02/29/rollout-2024-02-29T09-14-22-abc.jsonl', 'old conversation\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [], [search()]);
+
+    await until(() => events.length > 0);
+
+    expect(bytesOf(events)).toBe('old conversation\n');
+  });
+
+  it('takes the newest name when two match', async () => {
+    writeRollout('2025/01/01/rollout-2025-01-01T00-00-00-abc.jsonl', 'older\n');
+    writeRollout('2026/01/01/rollout-2026-01-01T00-00-00-abc.jsonl', 'newer\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [], [search()]);
+
+    await until(() => events.length > 0);
+
+    expect(bytesOf(events)).toBe('newer\n');
+  });
+
+  it('looks no deeper than it was told, so a subagent chat one level down is not taken for the conversation', async () => {
+    writeRollout('a/b/c/d/rollout-2026-11-06T09-14-22-abc.jsonl', 'too deep\n');
+    const { tail, events } = tailer({ searchDelayMs: 5, searchMaxDelayMs: 5 });
+    tail.watch('s1', [], [search(3)]);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(events).toEqual([]);
+  });
+
+  it.skipIf(process.platform === 'win32')('neither follows nor takes a symlink, so a search cannot leave the folder it was given', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-tail-outside-'));
+    teardown.push(() => fs.rmSync(outside, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(outside, 'rollout-2026-11-06T09-14-22-abc.jsonl'), 'outside\n');
+    fs.symlinkSync(outside, path.join(folder, 'linked'));
+    fs.symlinkSync(path.join(outside, 'rollout-2026-11-06T09-14-22-abc.jsonl'), path.join(folder, 'rollout-link-abc.jsonl'));
+    const { tail, events } = tailer({ searchDelayMs: 5, searchMaxDelayMs: 5 });
+    tail.watch('s1', [], [search()]);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(events).toEqual([]);
+  });
+
+  it('walks on a backoff while it finds nothing, because a walk reads a folder per day of history', async () => {
+    fs.mkdirSync(path.join(folder, '2026'));
+    const readdir = vi.spyOn(fs.promises, 'readdir');
+    teardown.push(() => readdir.mockRestore());
+    const { tail } = tailer({ intervalMs: 5, searchDelayMs: 100, searchMaxDelayMs: 100 });
+    tail.watch('s1', [], [search()]);
+
+    await new Promise((resolve) => setTimeout(resolve, 230));
+
+    const walks = readdir.mock.calls.filter(([directory]) => directory === folder).length;
+    expect(walks).toBeGreaterThanOrEqual(2);
+    // At the poll's own pace this would be over 40.
+    expect(walks).toBeLessThanOrEqual(4);
+  });
+
+  it('holds the file it found, and stops walking', async () => {
+    writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'one\n');
+    const readdir = vi.spyOn(fs.promises, 'readdir');
+    teardown.push(() => readdir.mockRestore());
+    const { tail, events } = tailer({ intervalMs: 5 });
+    tail.watch('s1', [], [search()]);
+    await until(() => events.length > 0);
+    const walked = readdir.mock.calls.length;
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(readdir.mock.calls.length).toBe(walked);
+  });
+
+  it('looks once more at the last pass, whatever the backoff says, so a short session still sends its file', async () => {
+    const { tail, events } = tailer({ searchDelayMs: 60_000, searchMaxDelayMs: 60_000 });
+    tail.watch('s1', [], [search()]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'the whole session\n');
+
+    await tail.unwatch('s1');
+
+    expect(bytesOf(events)).toBe('the whole session\n');
+  });
+
+  it('keeps what it found and its place when a second watch names the same search', async () => {
+    writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'one\n');
+    const other = path.join(folder, 'other.jsonl');
+    fs.writeFileSync(other, 'x');
+    const { tail, events } = tailer();
+    tail.watch('s1', [], [search()]);
+    await until(() => events.length === 1);
+
+    tail.watch('s1', [{ key: 'plain', path: other }], [search()]);
+    await until(() => events.some((event) => event.key === 'plain'));
+
+    expect(events.filter((event) => event.key === 'found')).toHaveLength(1);
+  });
+
+  it('starts over with a reset when the file it found is swapped, as a rollout restored from its compressed form is', async () => {
+    const file = writeRollout('2026/11/06/rollout-2026-11-06T09-14-22-abc.jsonl', 'one\n');
+    const { tail, events } = tailer();
+    tail.watch('s1', [], [search()]);
+    await until(() => events.length === 1);
+
+    fs.writeFileSync(`${file}.tmp`, 'restored and longer\n');
+    fs.rmSync(file);
+    fs.renameSync(`${file}.tmp`, file);
+
+    await until(() => events.some((event) => event.reset));
+    expect(events.find((event) => event.reset)).toMatchObject({ offset: 0 });
+  });
+
+  it('leaves a file not found yet out of the sizes, as a file that is not there', async () => {
+    const { tail } = tailer();
+    tail.watch('s1', [], [search()]);
+
+    await expect(tail.sizes('s1')).resolves.toEqual({});
+  });
+});
+
 describe('a path in the mirror of the host\'s home, as the host names it', () => {
   const place = (localHome: string): SshCliPlace => ({
     kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome, roots: [],

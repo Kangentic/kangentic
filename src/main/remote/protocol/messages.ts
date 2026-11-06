@@ -86,6 +86,19 @@ export type JsonPatchResult =
   | { applied: true; changed: boolean }
   | { applied: false; changed: false; reason: 'locked' | 'not-an-object' | 'unreadable' | 'bad-patch' };
 
+/**
+ * A file a session's CLI writes under a name only the host can say. The helper walks `directory`, newest name
+ * first and at most `depth` levels down, for a file whose name `fileName` (a regular expression's source)
+ * matches. It sends the file as `key` and never says what it found, so the app decides where the bytes go.
+ */
+export interface HostFileSearch {
+  key: string;
+  /** Absolute, on the host. The helper checks it is beneath the user's home before it is searched. */
+  directory: string;
+  depth: number;
+  fileName: string;
+}
+
 export interface HostFileWrite {
   /** An absolute path on the host, under the user's home. */
   path: string;
@@ -178,8 +191,15 @@ export interface HelperRequestMap {
    * there yet is sent once it exists. A later call names the whole set: a file in both keeps its place.
    * `sizes` is each file's size as the host answers, by key, so what was there before the agent ran can be
    * told from what it adds. A file that is not there has no entry.
+   *
+   * `searches` names files by a pattern, for a CLI that puts a timestamp in the name (`HostFileSearch`). The
+   * field is separate so a program older than it ignores it and keeps the plain files. `searching` says this
+   * program looks for them: with no such answer the copy is not made, and the app says so in its log.
    */
-  watchFiles: { params: { sessionId: string; files: Array<{ key: string; path: string }> }; result: { watching: true; sizes: Record<string, number> } };
+  watchFiles: {
+    params: { sessionId: string; files: Array<{ key: string; path: string }>; searches?: HostFileSearch[] };
+    result: { watching: true; sizes: Record<string, number>; searching?: true };
+  };
   /** Stop, after one last pass that sends the end of each file. */
   unwatchFiles: { params: { sessionId: string }; result: { watching: false } };
   /** Stop, after sending what is already published. */

@@ -11,7 +11,7 @@
 import type { SpawnRemote, SshHost } from '../../shared/types';
 import { installHost, type HostAsset, type InstalledHost } from './link/host-installer';
 import { createSshRunner, type SshRunner } from './link/ssh-run';
-import type { HelperMethod, HelperRequestMap, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
+import type { HelperMethod, HelperRequestMap, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
 import { assertSafeDestination } from './ssh-client';
 
 export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
@@ -157,8 +157,8 @@ export class RemoteHostService {
   }
 
   /** Start sending a session's growing files (its transcript) across the link as `fileChunk` events. */
-  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>): Promise<HelperRequestMap['watchFiles']['result']> {
-    return this.helper(hostId, 'watchFiles', { sessionId, files });
+  watchFiles(hostId: string, sessionId: string, files: Array<{ key: string; path: string }>, searches?: HostFileSearch[]): Promise<HelperRequestMap['watchFiles']['result']> {
+    return this.helper(hostId, 'watchFiles', { sessionId, files, ...(searches && searches.length > 0 ? { searches } : {}) });
   }
 
   unwatchFiles(hostId: string, sessionId: string): Promise<HelperRequestMap['unwatchFiles']['result']> {

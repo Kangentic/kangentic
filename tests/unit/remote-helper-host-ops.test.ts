@@ -439,4 +439,28 @@ describe('files on the host', () => {
     await settle();
     await rejected;
   });
+
+  it('refuses a search whose directory is outside the home, like any other path', async () => {
+    const rig = makeRig();
+    await settle();
+    const attempt = rig.link.requestHelper('watchFiles', {
+      sessionId: 's1',
+      files: [],
+      searches: [{ key: 'found', directory: '/etc', depth: 2, fileName: 'rollout.jsonl' }],
+    });
+    const rejected = expect(attempt).rejects.toThrow('not inside the home folder');
+    await settle();
+    await rejected;
+  });
+
+  it('accepts a search beneath the home and answers that it is searching', async () => {
+    const rig = makeRig();
+    await settle();
+    const answer = await ask(rig.link.requestHelper('watchFiles', {
+      sessionId: 's1',
+      files: [],
+      searches: [{ key: 'found', directory: home, depth: 2, fileName: 'rollout.jsonl' }],
+    }));
+    expect(answer.searching).toBe(true);
+  });
 });
