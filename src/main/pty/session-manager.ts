@@ -855,16 +855,17 @@ export class SessionManager extends EventEmitter {
         // recoverStaleSessionId() handles all cases - emit unconditionally.
         const session = this.registry.get(sessionId);
         if (!session) return;
-        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
-        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
-        if (session.hostId && !isPlainIdName(agentReportedId)) {
-          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
-          return;
-        }
         // Every caller here heard the id from the agent or found it in a file the
         // agent wrote. A caller-owned id set at spawn never comes this way.
         session.agentIdReportedAt ??= Date.now();
         this.noteAgentRan(session);
+        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
+        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
+        // Below the lines above: the agent did run, and a launch read as never started gets a second turn.
+        if (session.hostId && !isPlainIdName(agentReportedId)) {
+          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
+          return;
+        }
         // The host can stop scanning this session's output for an id, unless this one was only worked
         // out, when the agent's own report is still wanted to confirm it.
         if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
