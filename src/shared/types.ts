@@ -6699,6 +6699,33 @@ export interface RemoteTranscriptSnapshot {
   localPath: string;
 }
 
+/**
+ * A transcript whose name only the host can say: the CLI puts a timestamp in it that the session's id does
+ * not give. The host walks `directory`, newest name first, for a file `fileName` matches, and sends its bytes
+ * to `localPath`. The host never says what it found, so nothing it sends picks a path on this computer.
+ */
+export interface RemoteTranscriptSearch {
+  /** The folder to search, as the path its reader builds in this computer's mirror of the host's home. */
+  directory: string;
+  /** How many levels of subfolders below `directory` are searched. */
+  depth: number;
+  /** The source of a regular expression, tested against a file's name. */
+  fileName: string;
+  /** Where the copy goes on this computer, under a name the agent's own readers match. */
+  localPath: string;
+}
+
+/** A transcript file by its path, or the search that finds it. See `AgentParser.remoteTranscriptFiles`. */
+export type RemoteTranscriptFile = string | RemoteTranscriptSearch;
+
+/** A folder on the host to copy before the agent starts. See `AgentParser.remoteResumeSeed`. */
+export interface RemoteResumeSeed {
+  /** The folder to copy, as this computer names it. */
+  source: string;
+  /** Where the copy goes, as this computer names it. Left alone when it is already there. */
+  target: string;
+}
+
 /** Minimal parsing interface for agent-specific runtime behavior. */
 export interface AgentParser {
   /**
@@ -6748,14 +6775,22 @@ export interface AgentParser {
   remoteSessionFiles?(): readonly string[];
   /**
    * Optional: the files this agent keeps appending to for a conversation (its transcript), as the path
-   * its own readers build in this computer's mirror of the host's home (#913). The host sends each one's
-   * bytes as they are written, and they land at the same offset in the mirror, so the conversation viewer,
-   * the search index and the token ledger read a remote conversation as they read a local one. `cwd` is the
-   * session's folder as this computer names it, and `cliTarget` the host. Absent for an agent whose
+   * its own readers build: in this computer's mirror of the host's home, or under the project's shell folder
+   * for a file the CLI keeps in the session or working folder (#913). The host sends each one's bytes as they
+   * are written, and they land at the same offset here, so the conversation viewer, the search index and the
+   * token ledger read a remote conversation as they read a local one. A file whose name the id does not give
+   * is declared as a search (`RemoteTranscriptSearch`). `cwd` is the session's working folder as this computer
+   * names it, `sessionDirectory` its own session folder, and `cliTarget` the host. Absent for an agent whose
    * transcript is not one plain file. Asked again whenever the session's id arrives or its index grows, so a
    * file named only after the session starts is picked up then, and `[]` means nothing is known yet.
    */
-  remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[];
+  remoteTranscriptFiles?(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget; sessionDirectory: string }): readonly RemoteTranscriptFile[];
+  /**
+   * Optional: a folder to copy on the host before the agent starts, for a CLI whose resume needs what an
+   * earlier session left in that session's own folder. Null when there is nothing to bring over. A failed
+   * copy is logged and the session still starts.
+   */
+  remoteResumeSeed?(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): RemoteResumeSeed | null;
   /**
    * Optional: a file the CLI lists its sessions in, which says where a transcript is and what a fresh
    * session's id is, for an agent that prints neither while it runs. It is tailed from the session's start,

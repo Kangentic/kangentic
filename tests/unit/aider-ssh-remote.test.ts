@@ -13,9 +13,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { AiderAdapter } from '../../src/main/agent/adapters/aider';
 import type { AgentAdapter, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
-import type { CliTarget } from '../../src/main/agent/shared/cli-target';
+import { toStoredCliTarget, type CliTarget } from '../../src/main/agent/shared/cli-target';
 import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import { pullHostFilesFor } from '../../src/main/remote/host-file-sync';
+import { HostWorktrees } from '../../src/main/remote/remote-worktrees';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 
@@ -91,6 +92,24 @@ describe('an Aider on a remote host', () => {
     expect(resumed).toContain('--restore-chat-history');
     expect(resumed).not.toContain(toForwardSlash(workspace.projectFolder));
     expect(build(adapter, { sessionId: 'aider-session-7', prompt: undefined })).not.toContain('--restore-chat-history');
+  });
+
+  it('leaves the worktree stand-in removable with a history copy in it, so a Done move takes both', async () => {
+    const standIn = path.join(workspace.projectFolder, '.kangentic', 'worktrees', '7');
+    fs.mkdirSync(standIn, { recursive: true });
+    const adapter = new AiderAdapter();
+    const [copy] = adapter.remoteTranscriptFiles({ agentSessionId: 'aider-session-7', cwd: standIn, cliTarget: toStoredCliTarget(target)! });
+    fs.writeFileSync(copy, '#### a question\n');
+    const worktrees = new HostWorktrees({
+      hostRepoPath: workspace.hostProject,
+      shellFolder: workspace.projectFolder,
+      runCommand: async () => ({ code: 0, stdout: 'KG:removed\n', stderr: '', timedOut: false }),
+      pathPresence: async () => [],
+    });
+
+    await expect(worktrees.removeWorktree(standIn)).resolves.toBe(true);
+
+    expect(fs.existsSync(standIn)).toBe(false);
   });
 
   it('finds no chat history in this computer\'s shell folder, and the verifier answers no without throwing', async () => {

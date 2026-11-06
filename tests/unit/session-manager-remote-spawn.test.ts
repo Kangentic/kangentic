@@ -252,6 +252,64 @@ describe('an id found after a session on a host has started', () => {
   });
 });
 
+describe('an agent session id that arrives for a session on a host', () => {
+  type TelemetryAccess = { telemetry: { notifyAgentSessionId(sessionId: string, id: string): void } };
+  type RegistryAccess = { registry: { get(sessionId: string): { hostId?: string } | undefined } };
+
+  // A hook's id comes from the host and becomes part of a path here, so one that climbs out of a folder
+  // must reach neither a row, the relay nor a listener.
+  it('is dropped when it is no plain name: no row change, no relay call, no agent-session-id event', async () => {
+    const rig = await makeRig();
+    await spawnRemote(rig);
+    const told = vi.spyOn(rig.relay, 'setAgentSessionId');
+    const emitted: string[] = [];
+    rig.manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, id: string) => emitted.push(id));
+    const changed = vi.fn();
+    rig.manager.on('session-changed', changed);
+    const ran = vi.fn();
+    rig.manager.on('agent-ran', ran);
+    const before = rig.manager.getSession('s1')?.agentSessionId;
+    const knownBefore = rig.postedCommands.filter((command) => command.type === 'setAgentSessionIdKnown').length;
+
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x');
+
+    // The agent did report, so the launch counts as run: one read as never started would get a retry.
+    expect(ran).toHaveBeenCalledWith('s1');
+    expect(rig.manager.getSession('s1')?.agentSessionId).toBe(before);
+    expect(told).not.toHaveBeenCalled();
+    expect(emitted).toEqual([]);
+    expect(changed).not.toHaveBeenCalled();
+    expect(rig.postedCommands.filter((command) => command.type === 'setAgentSessionIdKnown')).toHaveLength(knownBefore);
+  });
+
+  it('is taken when it is a plain name', async () => {
+    const rig = await makeRig();
+    await spawnRemote(rig);
+    const told = vi.spyOn(rig.relay, 'setAgentSessionId');
+    const emitted: string[] = [];
+    rig.manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, id: string) => emitted.push(id));
+
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', 'agent-abc.1');
+
+    expect(rig.manager.getSession('s1')?.agentSessionId).toBe('agent-abc.1');
+    expect(told).toHaveBeenCalledWith('s1', 'agent-abc.1');
+    expect(emitted).toEqual(['agent-abc.1']);
+  });
+
+  it('is not checked for a session that is not on a host', async () => {
+    const rig = await makeRig();
+    await spawnRemote(rig);
+    // The same session read as a local one: only a host's id comes from somewhere this computer does not trust.
+    const row = (rig.manager as unknown as RegistryAccess).registry.get('s1');
+    if (!row) throw new Error('the session has no registry row');
+    row.hostId = undefined;
+
+    (rig.manager as unknown as TelemetryAccess).telemetry.notifyAgentSessionId('s1', '../../x');
+
+    expect(rig.manager.getSession('s1')?.agentSessionId).toBe('../../x');
+  });
+});
+
 describe('spawning an agent session on a host', () => {
   it('pushes the session\'s files before the agent exists, then starts the host\'s login shell in the project folder', async () => {
     const rig = await makeRig();

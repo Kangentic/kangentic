@@ -9,8 +9,8 @@
  * - the command test: Droid starts in a folder that exists only on this computer, or is handed a
  *   hooks file that is not on the host.
  * - the release test: Kangentic's MCP entry stays in the user's `.factory/mcp.json` after the session.
- * - the session id test: a session on a host waits on a folder that is not there, or errors, instead of
- *   starting fresh when it is resumed.
+ * - the session id tests: a session on a host waits on a folder that is not there, its transcript is never
+ *   named, or a resume starts a fresh conversation in place of the stored one.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -19,6 +19,7 @@ import { DroidAdapter } from '../../src/main/agent/adapters/droid';
 import { captureSessionIdFromFilesystem } from '../../src/main/agent/adapters/droid/session-id-capture';
 import { pullHostFilesFor, settleHostFiles } from '../../src/main/remote/host-file-sync';
 import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
+import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { makeFakeSshWorkspace, type FakeSshWorkspace } from './helpers/fake-ssh-host';
 import { MCP_TOKEN, MCP_URL, SESSION_ID, expectNoLocalPaths, sessionFolders, spawnOnHost, spawnOptions } from './ssh-adapter-spawn-harness';
 
@@ -40,10 +41,25 @@ const USER_MCP = { mcpServers: { docs: { type: 'http', url: 'https://docs.exampl
 const MCP_PATH = (workspace: FakeSshWorkspace): string => `${workspace.hostProject}/.factory/mcp.json`;
 
 describe('a Droid session on a remote host', () => {
-  it('declares the CLI name and the one file it edits', () => {
+  it('declares the CLI name, the file it edits, the file it reads, and the hooks file the host must hold', () => {
     const adapter = new DroidAdapter();
     expect(adapter.remoteCliName).toBe('droid');
-    expect(adapter.remoteFiles()).toEqual({ home: [], project: ['.factory/mcp.json'] });
+    expect(adapter.remoteFiles()).toEqual({ home: ['.factory/mcp.json'], project: ['.factory/mcp.json'] });
+    expect(adapter.remoteSessionFiles()).toEqual(['droid-settings.json']);
+  });
+
+  it('reads the user\'s own servers from the host and writes nothing back to that file', async () => {
+    const workspace = await newWorkspace();
+    const userFile = '/home/dev/.factory/mcp.json';
+    const content = JSON.stringify({ mcpServers: { playwright: { command: 'npx', args: ['@playwright/mcp'] } } });
+    workspace.host.files.set(userFile, content);
+
+    await spawnOnHost(new DroidAdapter(), workspace, CLI_NAME);
+
+    const settings = JSON.parse(fs.readFileSync(path.join(sessionFolders(workspace).local, 'droid-settings.json'), 'utf8')) as { hooks: unknown };
+    expect(JSON.stringify(settings.hooks)).toContain('playwright');
+    expect(workspace.host.files.get(userFile)).toBe(content);
+    expect(workspace.host.writes.map((write) => write.path)).not.toContain(userFile);
   });
 
   it('merges the Kangentic MCP bridge into the user\'s file, on host paths, with the token only in the environment', async () => {
@@ -64,14 +80,26 @@ describe('a Droid session on a remote host', () => {
     expectNoLocalPaths(workspace, spawn);
   });
 
-  it('starts droid in the project\'s folder on the host and passes no hooks file', async () => {
+  it('starts droid in the project\'s folder on the host, with a hooks file named by its path there', async () => {
     const workspace = await newWorkspace();
     const { command } = await spawnOnHost(new DroidAdapter(), workspace, CLI_NAME);
     expect(command.startsWith('droid --cwd ')).toBe(true);
     expect(command).toContain(workspace.hostProject);
     expect(command).not.toContain(workspace.projectFolder);
-    expect(command).not.toContain('--settings');
-    expect(fs.existsSync(path.join(sessionFolders(workspace).local, 'droid-settings.json'))).toBe(false);
+    expect(command).toContain(`--settings ${quoteArg(`${sessionFolders(workspace).host}/droid-settings.json`, workspace.place.shellName)}`);
+    expect(fs.existsSync(path.join(sessionFolders(workspace).local, 'droid-settings.json'))).toBe(true);
+  });
+
+  it('publishes its hooks through the transport script on the host, so SessionStart reaches this computer', async () => {
+    const workspace = await newWorkspace();
+    await spawnOnHost(new DroidAdapter(), workspace, CLI_NAME);
+
+    const settings = fs.readFileSync(path.join(sessionFolders(workspace).local, 'droid-settings.json'), 'utf8');
+    const hooks = (JSON.parse(settings) as { hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> } }).hooks;
+    const command = hooks.SessionStart[0].hooks[0].command;
+    expect(command).toContain(`${sessionFolders(workspace).host}/wsl-hooks/wsl-hook.sh`);
+    expect(settings).not.toContain(toForwardSlash(workspace.projectFolder));
+    expect(settings).not.toContain('event-bridge.js');
   });
 
   it('creates the file when the host has none, excludes it from git, and removes it again on release', async () => {
@@ -98,9 +126,15 @@ describe('a Droid session on a remote host', () => {
     expect(JSON.parse(workspace.host.files.get(MCP_PATH(workspace)) ?? '{}')).toEqual(USER_MCP);
   });
 
-  it('captures no session id and does not wait: a resume of a host session starts fresh', async () => {
-    const workspace = await newWorkspace();
+  it('reads the id from its SessionStart hook, as the real 0.218.0 payload carries it, which is what names the transcript', () => {
     const adapter = new DroidAdapter();
+    const payload = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'droid-hooks', 'droid-0.218.0-session-start.json'), 'utf8');
+
+    expect(adapter.runtime.sessionId?.fromHook?.(payload)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('does not wait on the filesystem: the id comes from the hook, and only the host holds the session file', async () => {
+    const workspace = await newWorkspace();
     const started = Date.now();
     const captured = await captureSessionIdFromFilesystem({
       spawnedAt: new Date(),
@@ -108,10 +142,20 @@ describe('a Droid session on a remote host', () => {
       cliTarget: toStoredCliTarget(workspace.place),
     });
     expect(captured).toBeNull();
-    expect(await adapter.locateSessionHistoryFile('3f2a9c1e-7b64-4d2a-9c11-0a1b2c3d4e5f', workspace.projectFolder, workspace.place)).toBeNull();
     expect(Date.now() - started).toBeLessThan(1500);
+  });
 
-    // No captured id means no `--resume`: the command is a plain start.
+  it('resumes the stored id on the host, which a session there could not do before the hook reached it', async () => {
+    const workspace = await newWorkspace();
+    const agentSessionId = '3f2a9c1e-7b64-4d2a-9c11-0a1b2c3d4e5f';
+    const { command } = await spawnOnHost(new DroidAdapter(), workspace, CLI_NAME, { resume: true, sessionId: agentSessionId });
+
+    expect(command).toContain(`--resume ${agentSessionId}`);
+  });
+
+  it('starts fresh when no id was reported, as with a Droid that ignores its hooks', async () => {
+    const workspace = await newWorkspace();
+    const adapter = new DroidAdapter();
     const sync = await pullHostFilesFor(adapter, workspace.projectFolder, workspace.place);
     const command = adapter.buildCommand({ ...spawnOptions(workspace, CLI_NAME), resume: true, sessionId: undefined });
     await sync?.push();

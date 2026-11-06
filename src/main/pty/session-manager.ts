@@ -85,7 +85,7 @@ import type {
   TurnStartCause,
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
-import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
+import { hostPathForTarget, isPlainIdName, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
@@ -859,6 +859,13 @@ export class SessionManager extends EventEmitter {
         // agent wrote. A caller-owned id set at spawn never comes this way.
         session.agentIdReportedAt ??= Date.now();
         this.noteAgentRan(session);
+        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
+        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
+        // Below the lines above: the agent did run, and a launch read as never started gets a second turn.
+        if (session.hostId && !isPlainIdName(agentReportedId)) {
+          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
+          return;
+        }
         // The host can stop scanning this session's output for an id, unless this one was only worked
         // out, when the agent's own report is still wanted to confirm it.
         if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });

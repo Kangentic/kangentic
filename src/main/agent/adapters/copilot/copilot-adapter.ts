@@ -9,7 +9,7 @@ import { CopilotCommandBuilder, KANGENTIC_MCP_SERVER_NAME, copilotModelFlagValue
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
 import { CopilotStreamParser, prettifyModelId } from './stream-parser';
-import { SESSION_CONFIG_DIR_NAME, locateCopilotEventsFile } from './session-state';
+import { SESSION_CONFIG_DIR_NAME, isSessionFolderName, kangenticSessionFolders, locateCopilotEventsFile, sessionEventsFile, sessionStateDir } from './session-state';
 import {
   copilotTranscriptToolCounts,
   copilotTranscriptUsage,
@@ -28,7 +28,7 @@ import type {
 } from '../../agent-adapter';
 import type {
   AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities,
-  TranscriptToolCounts, TranscriptUsage,
+  RemoteResumeSeed, StoredCliTarget, TranscriptToolCounts, TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
@@ -138,6 +138,28 @@ export class CopilotAdapter implements AgentAdapter {
    */
   remoteSessionFiles(): readonly string[] {
     return COPILOT_REMOTE_SESSION_FILES;
+  }
+
+  /**
+   * The event log on a host. `--config-dir` makes the session's own folder its config home, so the log is
+   * in the session folder, not the home, and the copy lands at the same place under the shell folder, where
+   * `locateCopilotEventsFile` looks through the project's session records.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): readonly string[] {
+    if (options.cliTarget.kind !== 'ssh' || !isSessionFolderName(options.agentSessionId)) return [];
+    return [sessionEventsFile(path.join(options.sessionDirectory, SESSION_CONFIG_DIR_NAME), options.agentSessionId)];
+  }
+
+  /**
+   * A resume on a host starts in a new config home, and without the session's folder Copilot opens an empty
+   * conversation under the same id. `seedResumedSessionState` does this on this computer. On a host the
+   * folder Copilot reads is there, so the copy runs there. The newest copy here says which record held it.
+   */
+  remoteResumeSeed(options: { agentSessionId: string; cliTarget: StoredCliTarget; sessionDirectory: string }): RemoteResumeSeed | null {
+    if (options.cliTarget.kind !== 'ssh' || !isSessionFolderName(options.agentSessionId)) return null;
+    const configHome = path.join(options.sessionDirectory, SESSION_CONFIG_DIR_NAME);
+    const source = kangenticSessionFolders(path.dirname(options.sessionDirectory), options.agentSessionId, configHome)[0];
+    return source ? { source, target: sessionStateDir(configHome, options.agentSessionId) } : null;
   }
 
   private readonly detector = new CopilotDetector();

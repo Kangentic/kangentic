@@ -216,7 +216,8 @@ export class HostFileSync {
           ...(hostNow !== null && !file.secret ? { keepExistingMode: true } : {}),
         });
         written.push({ file, content: local });
-        if (file.kind === 'project' && file.hostContent === null) created.push(file);
+        // By what the host holds now: a spawn that edited on top of another's work never saw this file absent.
+        if (file.kind === 'project' && hostNow === null) created.push(file);
       }
     }
     if (writes.length > 0) {

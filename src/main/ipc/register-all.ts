@@ -36,6 +36,7 @@ import {
   openProjectByPath as openProjectByPathImpl,
   activateAllProjects as activateAllProjectsImpl,
   recoverSessionsAfterPtyHostLoss,
+  recoverRemoteProjectsOnHost,
   getLastOpenedProject as getLastOpenedProjectImpl,
 } from './handlers/projects';
 import { registerTaskCrudHandlers } from './handlers/task-crud';
@@ -164,6 +165,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     onHostsChanged: () => {
       const mainWindow = requireContext().mainWindow;
       if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SSH_HOSTS_CHANGED);
+    },
+    // A project opened before its host connected kept its paused tasks resumable; resume them now.
+    onHostFirstConnected: (hostId) => {
+      void recoverRemoteProjectsOnHost(requireContext(), hostId);
     },
   });
   // After startup, not before the window: a host that is down must never delay it.
