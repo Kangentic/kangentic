@@ -188,7 +188,7 @@ describe('Antigravity CLI', () => {
 
   it('is named when the id arrives after the start, which is how a new conversation learns it', () => {
     const place = placeAt();
-    const source = remoteTranscriptSource(adapter, shellFolder, toStoredCliTarget(place)!);
+    const source = remoteTranscriptSource(adapter, shellFolder, toStoredCliTarget(place)!, path.join(shellFolder, '.kangentic', 'sessions', 'record'));
 
     expect(source.files(SESSION_ID)).toEqual(filesFor(place));
   });

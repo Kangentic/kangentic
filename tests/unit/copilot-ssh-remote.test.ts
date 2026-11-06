@@ -85,6 +85,18 @@ describe('a Copilot on a remote host: the files it declares', () => {
     expect(workspace.host.writes).toEqual([]);
     expect(workspace.host.removals).toEqual([]);
   });
+
+  it('seeds nothing on this computer for a resume: it would sit under the copy the host then sends, and leave stale bytes after it', async () => {
+    const adapter = new CopilotAdapter();
+    const agentSessionId = '3f2a9c1e-7b64-4d2a-9c11-0a1b2c3d4e5f';
+    const earlierCopy = path.join(workspace.projectFolder, '.kangentic', 'sessions', 'earlier', 'copilot-config', 'session-state', agentSessionId, 'events.jsonl');
+    fs.mkdirSync(path.dirname(earlierCopy), { recursive: true });
+    fs.writeFileSync(earlierCopy, '{"type":"session.start"}\n');
+
+    await spawnOnHost(adapter, workspace, 'copilot', { ...COPILOT_OVERRIDES, resume: true, sessionId: agentSessionId });
+
+    expect(fs.existsSync(path.join(sessionDirectory(), 'copilot-config', 'session-state', agentSessionId))).toBe(false);
+  });
 });
 
 describe('a Copilot on a remote host: the command', () => {

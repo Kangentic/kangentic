@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { RemoteTranscriptSearch, TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { codexHomeDir } from './config-toml';
 import type { CliPlace } from '../../shared/cli-target';
@@ -336,6 +336,30 @@ export async function findCodexTranscriptFile(agentSessionId: string, place: Cli
 function rolloutFilePattern(agentSessionId: string): RegExp {
   const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
+}
+
+/**
+ * The folder rollouts copied from a host land in, under `sessions/`, three levels deep as the readers walk.
+ * One date no rollout has: a resume on a later day reuses the copy instead of starting a second one, and the
+ * date folder on the host could not be told from here anyway. It is the host's own clock, and a resume keeps
+ * the folder of the day the session began.
+ */
+const HOST_COPY_FOLDERS = ['0000', '00', '00'];
+
+/**
+ * How a rollout on a host is found and where its copy goes. The host walks its whole sessions tree, because
+ * a resume appends to the file of the day the session began, and Codex writes a new session's file only at its
+ * first persist, so it may not be there yet. A plain `.jsonl` alone matches: Codex compresses a cold rollout to
+ * `.jsonl.zst`, and a resume writes the plain file back before it appends.
+ */
+export function codexHostRolloutSearch(agentSessionId: string, place: CliPlace): RemoteTranscriptSearch {
+  const sessions = path.join(codexHomeDir(place), 'sessions');
+  return {
+    directory: sessions,
+    depth: HOST_COPY_FOLDERS.length,
+    fileName: rolloutFilePattern(agentSessionId).source,
+    localPath: path.join(sessions, ...HOST_COPY_FOLDERS, `rollout-copy-${agentSessionId}.jsonl`),
+  };
 }
 
 function listDescending(directory: string): string[] {

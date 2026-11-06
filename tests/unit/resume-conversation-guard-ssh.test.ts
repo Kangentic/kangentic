@@ -13,7 +13,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { assessResumeConversation, type ResumeLineageRecord } from '../../src/main/transition-engine/resume-conversation-guard';
+import { AiderAdapter } from '../../src/main/agent/adapters/aider';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { CodexAdapter } from '../../src/main/agent/adapters/codex';
+import { CopilotAdapter } from '../../src/main/agent/adapters/copilot/copilot-adapter';
+import { DroidAdapter } from '../../src/main/agent/adapters/droid';
+import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 import { serializeCliTarget, type SshCliPlace } from '../../src/main/agent/shared/cli-target';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
@@ -122,6 +127,36 @@ describe('a conversation that ran on a host', () => {
 
     fs.writeFileSync(copy, '{"conversation":"an old export"}');
     await expect(assess()).resolves.toBe('unknown');
+  });
+
+  describe.each([
+    ['Codex', () => new CodexAdapter()],
+    ['Gemini', () => new GeminiAdapter()],
+    ['Copilot', () => new CopilotAdapter()],
+    ['Aider', () => new AiderAdapter()],
+    ['Droid', () => new DroidAdapter()],
+  ])('with %s, whose real adapter answers', (_name, makeAdapter) => {
+    const assess = (transcriptPath: string): ReturnType<typeof assessResumeConversation> => assessResumeConversation({
+      adapter: makeAdapter(),
+      agentSessionId: AGENT_SESSION_ID,
+      records: [recordOn('host-a', { transcript_path: transcriptPath })],
+      cwd: projectPath,
+      projectPath,
+      place: sshPlace('host-a'),
+    });
+
+    it('reads the same with no copy, an empty copy and an old copy, so a mirror never decides a resume', async () => {
+      const copy = path.join(projectPath, 'mirror', 'copy.jsonl');
+
+      await expect(assess(copy)).resolves.toBe('unknown');
+
+      fs.mkdirSync(path.dirname(copy), { recursive: true });
+      fs.writeFileSync(copy, '');
+      await expect(assess(copy)).resolves.toBe('unknown');
+
+      fs.writeFileSync(copy, '{"type":"an old line"}\n');
+      await expect(assess(copy)).resolves.toBe('unknown');
+    });
   });
 
   it('still cannot be resumed on a different host, where its files are not: that needs no file to decide', async () => {

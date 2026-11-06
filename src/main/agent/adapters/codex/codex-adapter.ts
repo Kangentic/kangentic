@@ -5,7 +5,7 @@ import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
-import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage, CODEX_PATCH_TOOL, CODEX_PATCH_PATH_FIELD } from './transcript-parser';
+import { parseCodexTranscript, codexHostRolloutSearch, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage, CODEX_PATCH_TOOL, CODEX_PATCH_PATH_FIELD } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
@@ -18,7 +18,7 @@ import { CodexModelCatalogCache, CATALOG_DISCOVERY_WAIT_MS, CATALOG_TTL_MS, FAIL
 import { codexEffortExecArgs } from './command-builder';
 import { codexTranscriptToolCounts, codexTranscriptToolResultTokens, codexTranscriptUsage } from './transcript-usage';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
-import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { isPlainIdName, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type {
@@ -31,7 +31,7 @@ import type {
   TranscriptPageReadRequest,
   TranscriptPageReadResult,
 } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo, TranscriptUsage, TranscriptToolCounts } from '../../../../shared/types';
+import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo, RemoteTranscriptSearch, StoredCliTarget, TranscriptUsage, TranscriptToolCounts } from '../../../../shared/types';
 import type { AnswerFromContextOptions } from '../../agent-adapter';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -173,6 +173,16 @@ export class CodexAdapter implements AgentAdapter {
       home: ['.codex/config.toml'],
       project: [`.kangentic/${CODEX_WSL_HOOK_COPY_NAME}`],
     };
+  }
+
+  /**
+   * The rollout on a host. Its name holds a timestamp the id does not give, so the host searches for it. The
+   * id comes from a hook or the banner, after the session starts, and the relay asks again when it does.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cliTarget: StoredCliTarget }): readonly RemoteTranscriptSearch[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh' || !isPlainIdName(options.agentSessionId)) return [];
+    return [codexHostRolloutSearch(options.agentSessionId, place)];
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {

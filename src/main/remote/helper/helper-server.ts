@@ -387,8 +387,12 @@ export class HelperServer {
     },
     unwatchHooks: (params) => this.hookWatcher.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     watchFiles: async (params) => {
-      this.fileTail.watch(params.sessionId, params.files.map((file) => ({ key: file.key, path: this.homePath(file.path) })));
-      return { watching: true, sizes: await this.fileTail.sizes(params.sessionId) };
+      this.fileTail.watch(
+        params.sessionId,
+        params.files.map((file) => ({ key: file.key, path: this.homePath(file.path) })),
+        (params.searches ?? []).map((search) => ({ ...search, directory: this.homePath(search.directory) })),
+      );
+      return { watching: true, sizes: await this.fileTail.sizes(params.sessionId), searching: true };
     },
     unwatchFiles: (params) => this.fileTail.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     readFile: (params) => this.readFile(params),

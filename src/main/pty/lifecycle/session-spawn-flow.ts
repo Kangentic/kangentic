@@ -491,21 +491,25 @@ export async function performSpawn(
     if (place?.kind !== 'ssh' || !context.remoteSessions || !input.statusOutputPath) {
       throw new Error('This session needs its host connection and its session folder, and one is missing.');
     }
+    const sessionDirectory = path.dirname(input.statusOutputPath);
+    const transcripts = input.cliTarget ? remoteTranscriptSource(input.agentParser, input.cwd, input.cliTarget, sessionDirectory) : null;
     try {
       await context.remoteSessions.register({
         hostId: remotePlan.hostId,
         sessionId: id,
         place,
-        localSessionDirectory: path.dirname(input.statusOutputPath),
+        localSessionDirectory: sessionDirectory,
         statusOutputPath: input.statusOutputPath,
         extraFiles: input.agentParser?.remoteSessionFiles?.() ?? [],
         // The transcript of a conversation whose id the spawn already has (a caller-owned id, or a resume),
         // so the viewer, the search index and the token ledger have it on this computer.
-        transcriptFiles: input.agentSessionId && input.cliTarget
-          ? input.agentParser?.remoteTranscriptFiles?.({ agentSessionId: input.agentSessionId, cwd: input.cwd, cliTarget: input.cliTarget }) ?? []
-          : [],
+        transcriptFiles: input.agentSessionId ? transcripts?.files(input.agentSessionId) ?? [] : [],
         agentSessionId: input.agentSessionId ?? null,
-        ...(input.cliTarget ? { transcripts: remoteTranscriptSource(input.agentParser, input.cwd, input.cliTarget) } : {}),
+        ...(transcripts ? { transcripts } : {}),
+        // Only a resume: finding the earlier folder reads every session record of the project.
+        resumeSeed: input.resuming && input.agentSessionId && input.cliTarget
+          ? input.agentParser?.remoteResumeSeed?.({ agentSessionId: input.agentSessionId, cliTarget: input.cliTarget, sessionDirectory }) ?? null
+          : null,
       });
     } catch (error) {
       registrationError = error instanceof Error ? error : new Error(String(error));

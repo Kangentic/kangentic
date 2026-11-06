@@ -15,11 +15,17 @@
  *   a session are not left behind. It is capped, so a large backfill can end short, and says so in the log.
  * - A file that shrinks or is replaced (another inode) starts over: the first chunk says `reset`, and
  *   Kangentic empties its copy before it writes. A file that is not there yet is skipped until it is.
+ * - A CLI that puts a timestamp in a file's name cannot have the file named from here, so it is searched for
+ *   by a pattern, newest name first, and held once found. A walk reads a folder per day of history, so it runs
+ *   on a backoff instead of every poll. The last pass looks once more, so a session that ended soon after its
+ *   file appeared still sends it. Only regular files match: a symlink is neither followed nor taken.
  *
  * Imports nothing of electron. Runs in the helper on the host.
  */
 
 import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
+import type { HostFileSearch } from '../protocol/messages';
 
 export interface TailedFile {
   /** What the app calls the file, so the host's path never has to be mapped back. */
@@ -50,14 +56,32 @@ export interface FileTailOptions {
   chunksPerScan?: number;
   /** The most chunks one file sends in the last pass at `unwatch`. */
   finalChunks?: number;
+  /** The wait after a search finds nothing, doubled each time up to `searchMaxDelayMs`. */
+  searchDelayMs?: number;
+  searchMaxDelayMs?: number;
 }
 
 const DEFAULT_INTERVAL_MS = 250;
 const DEFAULT_CHUNK_BYTES = 150_000;
 const DEFAULT_CHUNKS_PER_SCAN = 2;
 const DEFAULT_FINAL_CHUNKS = 64;
+const DEFAULT_SEARCH_DELAY_MS = 1_000;
+const DEFAULT_SEARCH_MAX_DELAY_MS = 15_000;
 
-interface TailState extends TailedFile {
+/** A file being looked for, and when to look next. */
+interface SearchState extends HostFileSearch {
+  pattern: RegExp;
+  nextAt: number;
+  /** The wait before the next look, or null before the first has failed. */
+  delayMs: number | null;
+}
+
+interface TailState {
+  key: string;
+  /** Absolute, on the host. Null until a search finds the file, and held from then on. */
+  path: string | null;
+  /** How the file is found, when its name was not given. */
+  search: SearchState | null;
   /** Bytes sent so far: the offset of the next chunk. */
   sent: number;
   /** Device and inode of the file last seen, so a replaced file is told from a grown one. */
@@ -74,6 +98,40 @@ interface Tailing {
   closing: boolean;
 }
 
+function freshFile(file: TailedFile): TailState {
+  return { key: file.key, path: file.path, search: null, sent: 0, identity: null, pendingReset: false };
+}
+
+function freshSearch(search: HostFileSearch): TailState {
+  return {
+    key: search.key,
+    path: null,
+    search: { ...search, pattern: new RegExp(search.fileName), nextAt: 0, delayMs: null },
+    sent: 0,
+    identity: null,
+    pendingReset: false,
+  };
+}
+
+function isSameSearch(kept: SearchState, search: HostFileSearch): boolean {
+  return kept.directory === search.directory && kept.depth === search.depth && kept.fileName === search.fileName;
+}
+
+/** The first regular file `pattern` matches, walking newest name first, so a recent session costs a few reads. */
+async function findFile(directory: string, pattern: RegExp, depth: number): Promise<string | null> {
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+  entries.sort((left, right) => (left.name < right.name ? 1 : -1));
+  const match = entries.find((entry) => entry.isFile() && pattern.test(entry.name));
+  if (match) return path.join(directory, match.name);
+  if (depth === 0) return null;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const found = await findFile(path.join(directory, entry.name), pattern, depth - 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 export class FileTail {
   private readonly tailing = new Map<string, Tailing>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -83,15 +141,18 @@ export class FileTail {
   /**
    * Start tailing a session's files from their first byte. A second call names the session's whole set: a
    * file in both keeps its place, so a transcript found late (a session id that arrives after the start)
-   * does not send the others again, a new one starts from byte 0, and one left out stops.
+   * does not send the others again, a new one starts from byte 0, and one left out stops. `searches` are files
+   * found by a pattern, and one in both calls keeps what it found.
    */
-  watch(sessionId: string, files: readonly TailedFile[]): void {
-    const fresh = (file: TailedFile): TailState => ({ ...file, sent: 0, identity: null, pendingReset: false });
+  watch(sessionId: string, files: readonly TailedFile[], searches: readonly HostFileSearch[] = []): void {
     const existing = this.tailing.get(sessionId);
+    const held = existing && !existing.closing ? existing.files : [];
+    const named = files.map((file) => held.find((kept) => kept.search === null && kept.key === file.key && kept.path === file.path) ?? freshFile(file));
+    const found = searches.map((search) => held.find((kept) => kept.search !== null && kept.key === search.key && isSameSearch(kept.search, search)) ?? freshSearch(search));
     if (existing && !existing.closing) {
-      existing.files = files.map((file) => existing.files.find((kept) => kept.key === file.key && kept.path === file.path) ?? fresh(file));
+      existing.files = [...named, ...found];
     } else {
-      this.tailing.set(sessionId, { files: files.map(fresh), current: null, closing: false });
+      this.tailing.set(sessionId, { files: [...named, ...found], current: null, closing: false });
     }
     if (!this.timer) {
       this.timer = setInterval(() => void this.scanAll(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
@@ -105,7 +166,7 @@ export class FileTail {
     if (!entry) return;
     entry.closing = true;
     if (entry.current) await entry.current;
-    await this.scan(sessionId, entry, this.options.finalChunks ?? DEFAULT_FINAL_CHUNKS);
+    await this.scan(sessionId, entry, this.options.finalChunks ?? DEFAULT_FINAL_CHUNKS, true);
     await this.warnWhenBehind(sessionId, entry);
     // A `watch` of this id during the last pass replaced this entry, and that tail goes on.
     if (this.tailing.get(sessionId) !== entry) return;
@@ -119,6 +180,7 @@ export class FileTail {
   /** The last pass is capped, so a large file still backfilling ends short. The next session here starts over. */
   private async warnWhenBehind(sessionId: string, entry: Tailing): Promise<void> {
     for (const file of entry.files) {
+      if (file.path === null) continue;
       const stats = await fs.stat(file.path).catch(() => null);
       if (stats && file.sent < stats.size) {
         console.warn(`[file-tail] ${sessionId.slice(0, 8)}: stopped ${stats.size - file.sent} bytes before the end of file ${file.key}`);
@@ -130,6 +192,7 @@ export class FileTail {
   async sizes(sessionId: string): Promise<Record<string, number>> {
     const sizes: Record<string, number> = {};
     for (const file of this.tailing.get(sessionId)?.files ?? []) {
+      if (file.path === null) continue;
       const stats = await fs.stat(file.path).catch(() => null);
       if (stats?.isFile()) sizes[file.key] = stats.size;
     }
@@ -150,19 +213,20 @@ export class FileTail {
     await Promise.all([...this.tailing].map(([sessionId, entry]) => this.scan(sessionId, entry, this.options.chunksPerScan ?? DEFAULT_CHUNKS_PER_SCAN)));
   }
 
-  private scan(sessionId: string, entry: Tailing, maxChunks: number): Promise<void> {
+  private scan(sessionId: string, entry: Tailing, maxChunks: number, lastPass = false): Promise<void> {
     if (entry.current) return entry.current;
-    const running = this.runScan(sessionId, entry, maxChunks).finally(() => {
+    const running = this.runScan(sessionId, entry, maxChunks, lastPass).finally(() => {
       if (entry.current === running) entry.current = null;
     });
     entry.current = running;
     return running;
   }
 
-  private async runScan(sessionId: string, entry: Tailing, maxChunks: number): Promise<void> {
+  private async runScan(sessionId: string, entry: Tailing, maxChunks: number, lastPass: boolean): Promise<void> {
     for (const file of entry.files) {
       try {
-        await this.scanFile(sessionId, file, maxChunks);
+        if (file.path === null) await this.searchFor(file, lastPass);
+        if (file.path !== null) await this.scanFile(sessionId, file, file.path, maxChunks);
       } catch (error) {
         // A file the agent removed under us, or one that cannot be read right now: the next poll tries again.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[file-tail] ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
@@ -170,8 +234,20 @@ export class FileTail {
     }
   }
 
-  private async scanFile(sessionId: string, file: TailState, maxChunks: number): Promise<void> {
-    const stats = await fs.stat(file.path).catch(() => null);
+  /** Set `file.path` to the file a search names, once it is there. A miss waits out the backoff, unless this is the last pass. */
+  private async searchFor(file: TailState, lastPass: boolean): Promise<void> {
+    const search = file.search;
+    if (!search || (!lastPass && Date.now() < search.nextAt)) return;
+    file.path = await findFile(search.directory, search.pattern, search.depth);
+    if (file.path === null) {
+      const firstDelayMs = this.options.searchDelayMs ?? DEFAULT_SEARCH_DELAY_MS;
+      search.delayMs = search.delayMs === null ? firstDelayMs : Math.min(search.delayMs * 2, this.options.searchMaxDelayMs ?? DEFAULT_SEARCH_MAX_DELAY_MS);
+      search.nextAt = Date.now() + search.delayMs;
+    }
+  }
+
+  private async scanFile(sessionId: string, file: TailState, filePath: string, maxChunks: number): Promise<void> {
+    const stats = await fs.stat(filePath).catch(() => null);
     if (!stats || !stats.isFile()) return;
     const identity = `${stats.dev}:${stats.ino}`;
     if (file.identity !== null && (identity !== file.identity || stats.size < file.sent)) {
@@ -187,7 +263,7 @@ export class FileTail {
     if (file.sent >= stats.size) return;
 
     const chunkBytes = this.options.chunkBytes ?? DEFAULT_CHUNK_BYTES;
-    const handle = await fs.open(file.path, 'r');
+    const handle = await fs.open(filePath, 'r');
     try {
       // A file swapped in between the stat and the open would read as more of the one it replaced. The
       // next poll sees the new identity and starts over.

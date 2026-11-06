@@ -2461,10 +2461,31 @@ describe('performSpawn - a session on a remote host (#913)', () => {
 
       await performSpawn(remoteInput({ agentParser, agentSessionId: 'abc' }), context);
 
-      expect(remoteTranscriptFiles).toHaveBeenCalledWith({ agentSessionId: 'abc', cwd: shellFolder, cliTarget: sshTarget });
+      expect(remoteTranscriptFiles).toHaveBeenCalledWith({ agentSessionId: 'abc', cwd: shellFolder, cliTarget: sshTarget, sessionDirectory: sessionFolder });
       expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
         transcriptFiles: ['/mirror/.claude/projects/-home-dev-projects-api/abc.jsonl'],
       }));
+    });
+
+    it('asks the parser what a resume needs copied on the host, and hands it to the relay before the PTY starts', async () => {
+      const context = makeContext();
+      const seed = { source: path.join(shellFolder, 'old'), target: path.join(shellFolder, 'new') };
+      const remoteResumeSeed = vi.fn(() => seed);
+
+      await performSpawn(remoteInput({ agentParser: { remoteResumeSeed } as unknown as SpawnSessionInput['agentParser'], agentSessionId: 'abc', resuming: true }), context);
+
+      expect(remoteResumeSeed).toHaveBeenCalledWith({ agentSessionId: 'abc', cliTarget: sshTarget, sessionDirectory: sessionFolder });
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({ resumeSeed: seed }));
+    });
+
+    it('asks nothing of a fresh spawn, whose id is its own: the answer reads every session record of the project', async () => {
+      const context = makeContext();
+      const remoteResumeSeed = vi.fn(() => null);
+
+      await performSpawn(remoteInput({ agentParser: { remoteResumeSeed } as unknown as SpawnSessionInput['agentParser'], agentSessionId: 'abc' }), context);
+
+      expect(remoteResumeSeed).not.toHaveBeenCalled();
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({ resumeSeed: null }));
     });
 
     it('copies no transcript when the spawn has no conversation id yet, or the agent declares none', async () => {
