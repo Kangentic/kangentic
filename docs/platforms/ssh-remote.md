@@ -92,7 +92,8 @@ A remote project shows its host as a 20 by 20 square after its name in the proje
 
 - **A drop keeps the agent running.** The link reports a state, never an exit. When the connection returns Kangentic reattaches, replaying what it missed from the last acknowledged offset.
 - **Quit suspends**, as it does locally, with one message to the program on the host. The quit waits for that message to leave.
-- **A restart with the host out of reach leaves a remote task paused and resumable.** Recovery needs the host's details before it can build the resume, so with the link down the task keeps its paused card and the user resumes it once the host is back. A spawn that throws for a remote task is kept resumable too, where a local one is retired.
+- **A restart with the host out of reach leaves a remote task paused and resumable.** Recovery needs the host's details before it can build the resume, so with the link down the task keeps its paused card. A spawn that throws for a remote task is kept resumable too, where a local one is retired.
+- **The first time a host's link comes up in a run, its paused tasks resume on their own.** The hosts connect after the window, so a project opened at launch can run its recovery while its host is still dialing. When the link connects, the projects on that host whose recovery already ran run it again: the resume and the first spawn only, no sweep. A project opened later finds the link up. A reconnect after a drop does nothing, because what was running never paused.
 - **Only the host proves a path absent.** A host path is checked by the host's own program, never by this computer's disk or a mirror of it, and a failed ask is an error, never "absent". Nothing is pruned, demoted or deleted for want of a path while the link is down.
 
 ## Remote projects

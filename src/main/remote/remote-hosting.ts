@@ -51,6 +51,8 @@ export interface RemoteHostingDeps {
   sshPath?: string;
   /** Told after a host's connection state changes, so the window can redraw. */
   onHostsChanged?: (hostId: string) => void;
+  /** A host's link came up for the first time this run: the projects opened before it can recover their paused tasks. */
+  onHostFirstConnected?: (hostId: string) => void;
   log?: (line: string) => void;
 }
 
@@ -104,6 +106,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     if (event.state === 'connected' && !pruned.has(event.hostId)) {
       pruned.add(event.hostId);
       void pruneOldProgramVersions(event.hostId);
+      deps.onHostFirstConnected?.(event.hostId);
     }
   });
 

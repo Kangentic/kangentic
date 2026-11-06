@@ -315,6 +315,7 @@ import {
   activateAllProjects,
   cleanupProject,
   recoverSessionsAfterPtyHostLoss,
+  recoverRemoteProjectsOnHost,
 } from '../../src/main/ipc/handlers/projects';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
 import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
@@ -2239,5 +2240,66 @@ describe('startToolBreakdownRepair (the one-time tool breakdown duration repair)
 
     await activateAllProjects(asIpcContext(context));
     expect(repairCallsFor(project)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A host's link comes up after the project's cold open already ran
+// ---------------------------------------------------------------------------
+
+describe('recovering a host\'s projects once its link connects', () => {
+  const remoteOnLab = makeProject({ id: 'project-lab', name: 'Lab app', remote: { hostId: 'host-lab', path: '/home/dev/app' } });
+  const remoteOnOtherHost = makeProject({ id: 'project-other', name: 'Other app', remote: { hostId: 'host-other', path: '/home/dev/other' } });
+  const localProject = makeProject({ id: 'project-local', name: 'Local app' });
+  const notYetOpened = makeProject({ id: 'project-late', name: 'Late app', remote: { hostId: 'host-lab', path: '/home/dev/late' } });
+
+  function contextWithOpened(...openedIds: string[]): MockContext {
+    const context = createMockContext();
+    context.projectRepo.list.mockReturnValue([remoteOnLab, remoteOnOtherHost, localProject, notYetOpened]);
+    for (const id of openedIds) context.recoveredProjects.add(id);
+    return context;
+  }
+
+  it('resumes the paused tasks and starts the ones with no agent, for the host\'s opened projects only', async () => {
+    const context = contextWithOpened('project-lab', 'project-other', 'project-local');
+
+    await recoverRemoteProjectsOnHost(asIpcContext(context), 'host-lab');
+
+    // One resume and one spawn pass, for the one project on that host that had already opened.
+    expect(state.callOrder).toEqual(['resumeSuspendedSessions', 'autoSpawnTasks']);
+    expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-lab']);
+    expect(vi.mocked(autoSpawnTasks).mock.calls.map((call) => call[0])).toEqual(['project-lab']);
+  });
+
+  it('runs no sweep: the cold open did that, and only the resume is owed once the link is up', async () => {
+    await recoverRemoteProjectsOnHost(asIpcContext(contextWithOpened('project-lab')), 'host-lab');
+
+    expect(cleanupStaleResourcesAsync).not.toHaveBeenCalled();
+    expect(sweepSpareWorktreesAtOpen).not.toHaveBeenCalled();
+  });
+
+  it('leaves a project that has not opened yet to its own cold open, which will find the link up', async () => {
+    await recoverRemoteProjectsOnHost(asIpcContext(contextWithOpened()), 'host-lab');
+
+    expect(state.callOrder).toEqual([]);
+  });
+
+  it('starts nothing in a folder this database does not own', async () => {
+    state.standing = { kind: 'foreign', ownerDatabase: '/data/other/projects/project.db' };
+
+    await recoverRemoteProjectsOnHost(asIpcContext(contextWithOpened('project-lab')), 'host-lab');
+
+    expect(state.callOrder).toEqual([]);
+  });
+
+  it('goes on to the next project when one project\'s recovery throws', async () => {
+    const context = contextWithOpened('project-lab', 'project-late');
+    state.resumeError = new Error('the host dropped again');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(recoverRemoteProjectsOnHost(asIpcContext(context), 'host-lab')).resolves.toBeUndefined();
+
+    expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-lab', 'project-late']);
+    logged.mockRestore();
   });
 });

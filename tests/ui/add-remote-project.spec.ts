@@ -187,6 +187,12 @@ test('removing the host in Settings takes its projects out of the sidebar', asyn
   await confirmDialog.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
 
+  // The removed project was the open one and the panel was editing it. With no project left the
+  // panel lists only the system tabs, as it does for a window with none open, rather than keeping
+  // the project tabs over a removed project's overrides while the app paints the global config.
+  await expect(page.locator('[data-testid="settings-tab-ssh"]')).toBeVisible();
+  await expect(page.locator('[data-testid="settings-tab-theme"]')).toHaveCount(0);
+
   await page.evaluate(() => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });

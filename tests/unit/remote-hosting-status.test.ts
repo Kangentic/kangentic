@@ -254,6 +254,37 @@ describe('the links living in the pty host', () => {
   });
 });
 
+describe('telling the app a host connected for the first time', () => {
+  function hostingTellingUs() {
+    const sessionManager = makeSessionManager();
+    const connected: string[] = [];
+    createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => ({ list: () => [] }),
+      onHostFirstConnected: (hostId) => connected.push(hostId),
+      log: () => undefined,
+    });
+    return { sessionManager, connected };
+  }
+
+  it('says so once per host per run, so a paused remote task resumes without a manual Resume', () => {
+    const { sessionManager, connected } = hostingTellingUs();
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connecting', detail: null });
+    expect(connected).toEqual([]);
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    expect(connected).toEqual(['host-1']);
+
+    // A drop and a return is the same run, and what was running never paused.
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'reconnecting', detail: null });
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    expect(connected).toEqual(['host-1']);
+
+    sessionManager.emit('remote-link', { hostId: 'host-2', state: 'connected', detail: null });
+    expect(connected).toEqual(['host-1', 'host-2']);
+  });
+});
+
 describe('tidying old program versions on a host', () => {
   const asset = { version: '1.0.0', sha256: 'a'.repeat(64), arch: 'x64' as const, filePath: '/asset.tar.gz' };
 

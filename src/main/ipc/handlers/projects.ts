@@ -610,6 +610,36 @@ async function runColdOpenPasses(
 }
 
 /**
+ * Startup recovery for the remote projects on a host whose link has just come up for the first
+ * time this run. The hosts connect after the window, so a project opened at launch can run its
+ * recovery while its host is still dialing. With the link down the pass keeps every paused remote
+ * task resumable and touches nothing (`remote-link-down-no-mutation.test.ts`), and nothing asked
+ * again once the link arrived, so a task a quit had paused waited for a manual Resume.
+ *
+ * Only a project whose cold open already ran is recovered here: a project opened later runs its
+ * own recovery with the link up. The sweep is not repeated, only the resume and the spawn of tasks
+ * that never had an agent. A task that already has a live session is skipped by both, so a pass
+ * that overlaps the cold open's own does not start a second agent.
+ */
+export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: string): Promise<void> {
+  const remoteProjects = context.projectRepo.list().filter((project) => project.remote?.hostId === hostId && context.recoveredProjects.has(project.id));
+  for (const project of remoteProjects) {
+    try {
+      await runWithProjectLogContext(project.name, async () => {
+        const repositories = coldOpenRepositories(getProjectDb(project.id));
+        const standing = await verifyOwnershipAtOpen(project, repositories);
+        if (standing.kind === 'foreign') return;
+        const boardProfiles = (): ReturnType<IpcContext['boardConfigManager']['getBoardProfiles']> => context.boardConfigManager.getBoardProfiles(project.path);
+        await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+        await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), { startFirstAgent: firstAgentStarter(context, project.id) });
+      });
+    } catch (error) {
+      console.error(`[remote] Recovery for ${project.name} after its host connected failed:`, error);
+    }
+  }
+}
+
+/**
  * What every recovery pass passes `resumeSuspendedSessions` beyond its
  * positional inputs: the expired-conversation notice, and the project's own
  * team-shared default base branch for the recap (read by path, since a pass
