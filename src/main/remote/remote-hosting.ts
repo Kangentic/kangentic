@@ -25,6 +25,7 @@ import { setRemoteWorktreeResolver } from '../git/remote-worktree';
 import { createRemoteWorktreeResolver } from './remote-worktrees';
 import { setRemoteGitResolver } from '../git/remote-git';
 import { createRemoteGitResolver } from './host-git';
+import { setRemoteProjectLookup } from './host-paths';
 import { RemoteHostService } from './remote-host-service';
 import { RemoteSessionRelay } from './remote-session-relay';
 
@@ -109,6 +110,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
 
   const remoteOfProjectPath = (projectPath: string): { hostId: string; path: string } | null =>
     deps.projects().list().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null;
+  // What an agent is told about a path, for a caller that holds only the project's path (a prompt's variables).
+  setRemoteProjectLookup(remoteOfProjectPath);
   // A remote project's worktrees are made and removed on its host, by the git there.
   setRemoteWorktreeResolver(createRemoteWorktreeResolver({
     remoteOfProjectPath,

@@ -33,6 +33,8 @@ import { prResolveOptionsFromGitConfig, prRepollInFlightFromGitConfig } from '..
 import type { TaskKnowledge } from '../retrieval/task-knowledge';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { taskSummariesOn } from '../../shared/answer-agent';
+import { agentPathsForProject } from '../remote/host-paths';
+import { hostAccessOf } from '../remote/host-transfer';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -46,11 +48,17 @@ export function buildCommandContextForProject(
   const project = ipcContext.projectRepo.getById(projectId);
   if (!project) return null;
   const projectPath = project.path;
+  const agentPaths = agentPathsForProject(project);
 
   return {
     projectId,
     getProjectDb: () => getProjectDb(projectId),
     getProjectPath: () => projectPath,
+    agentPaths: () => agentPaths,
+    hostAccess: () => {
+      const hostService = ipcContext.remoteHosting?.hostService;
+      return hostService && agentPaths.hostId ? hostAccessOf(hostService, agentPaths.hostId) : null;
+    },
     getDevServerPortRange: () => {
       const devServer = ipcContext.configManager.getEffectiveConfig(projectPath).devServer;
       return { rangeStart: devServer?.portRangeStart, rangeEnd: devServer?.portRangeEnd };

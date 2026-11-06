@@ -160,6 +160,18 @@ describe('the remote request', () => {
     expect(await asked).toMatchObject({ shellName: 'zsh', shellPath: '/bin/zsh' });
   });
 
+  it('gives the link the wait a long request names', async () => {
+    const rig = makeRig();
+    await addHost(rig);
+    const link = rig.router.hub.linkOf('host-a');
+    if (!link) throw new Error('no link');
+    const requestHelper = vi.spyOn(link, 'requestHelper').mockResolvedValue({ code: 0, stdout: '', stderr: '', timedOut: false });
+
+    await rig.router.handleRequest('remote', { op: 'helper', hostId: 'host-a', method: 'runCommand', params: { file: 'true', args: [], timeoutMs: 7_200_000 }, timeoutMs: 7_210_000 });
+
+    expect(requestHelper).toHaveBeenCalledWith('runCommand', expect.anything(), 7_210_000);
+  });
+
   it('refuses to ask a host it holds no link for', async () => {
     const rig = makeRig();
     await expect(rig.router.handleRequest('remote', { op: 'helper', hostId: 'nobody', method: 'hostInfo', params: {} })).rejects.toThrow('no connection set up');

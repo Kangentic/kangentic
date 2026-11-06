@@ -66,6 +66,12 @@ export interface Project {
   created_at: string;
 }
 
+/**
+ * Which machine a path, URL, pid or port in a tool's answer belongs to: the host an agent works on, or this
+ * computer. A project on this computer answers `local` for everything.
+ */
+export type ValueLocation = 'host' | 'local';
+
 /** Where a remote project's repo lives (#913). */
 export interface ProjectRemote {
   hostId: string;

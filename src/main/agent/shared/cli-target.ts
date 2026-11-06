@@ -131,6 +131,11 @@ export function isUnderLocalRoot(localPath: string, roots: SshCliPlace['roots'])
   return longestRoot(roots, 'local', localPath) !== null;
 }
 
+/** Whether a host path is a root or inside one, so `hostPathToLocal` names it on this computer. */
+export function isUnderHostRoot(hostPath: string, roots: SshCliPlace['roots']): boolean {
+  return longestRoot(roots, 'host', hostPath) !== null;
+}
+
 /** A host path as this computer's mirror folder names it, or the path unchanged when it is under no root. */
 export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): string {
   const best = longestRoot(roots, 'host', hostPath);
