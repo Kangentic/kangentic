@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, KeyRound, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
+import { Check, CircleExclamationPoint, KeyRound, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -45,7 +45,7 @@ function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: 
     case 'reconnecting':
       return { label: i18n._(msg`Reconnecting…`), className: 'text-fg-muted', icon: <Loader2 size={12} className="animate-spin" /> };
     case 'unreachable':
-      return { label: i18n._(msg`Unreachable`), className: 'text-danger', icon: <CircleAlert size={12} /> };
+      return { label: i18n._(msg`Unreachable`), className: 'text-danger', icon: <CircleExclamationPoint size={12} /> };
     case 'stopped':
       return { label: i18n._(msg`Stopped`), className: 'text-fg-faint', icon: <X size={12} /> };
   }

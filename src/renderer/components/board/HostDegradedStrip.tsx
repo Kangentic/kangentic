@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CircleAlert, Loader2, RefreshCw } from 'lucide-react';
+import { CircleExclamationPoint, Loader2, RefreshCw } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { Project } from '../../../shared/types';
 import { useSshStore } from '../../stores/ssh-store';
@@ -44,7 +44,7 @@ export function HostDegradedStrip({ project }: { project: Project }) {
         unreachable ? 'border-danger/40 bg-danger/10 text-danger' : 'border-edge bg-surface-hover/40 text-fg-muted'
       }`}
     >
-      {waiting ? <Loader2 size={13} className="shrink-0 animate-spin" aria-hidden="true" /> : <CircleAlert size={13} className="shrink-0" aria-hidden="true" />}
+      {waiting ? <Loader2 size={13} className="shrink-0 animate-spin" aria-hidden="true" /> : <CircleExclamationPoint size={13} className="shrink-0" aria-hidden="true" />}
       <span className="min-w-0 flex-1 truncate">
         {unreachable
           ? <Trans>{hostName} is unreachable. Its agents keep running.</Trans>

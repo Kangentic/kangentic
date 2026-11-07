@@ -240,9 +240,9 @@ export function AgentTab({ config, globalConfig, agentList }: {
                         {agent.version ? `v${agent.version.replace(/^v/, '')}` : t`Detected`}
                       </>
                     ) : agent.unsupportedOnHost ? (
-                      <><CircleAlert size={13} /><Trans>Not on hosts yet</Trans></>
+                      <><CircleExclamationPoint size={13} /><Trans>Not on hosts yet</Trans></>
                     ) : agent.hostStatus === 'unknown' ? (
-                      <><CircleAlert size={13} /><Trans>Not checked</Trans></>
+                      <><CircleExclamationPoint size={13} /><Trans>Not checked</Trans></>
                     ) : (
                       <><CircleExclamationPoint size={13} /><Trans>Not found</Trans></>
                     )}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, CircleAlert, Folder, Laptop, Loader2, Server } from 'lucide-react';
+import { ChevronRight, CircleExclamationPoint, Folder, Laptop, Loader2, Server } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { SshDirectoryEntry, SshDirectoryListing, SshHostConnectionState } from '../../../shared/types';
 import { useAddProject } from '../../hooks/useAddProject';
@@ -84,7 +84,7 @@ function AddProjectChooser() {
         {hosts.map((status) => (
           <ChooserRow
             key={status.host.id}
-            icon={status.state === 'unreachable' ? <CircleAlert size={16} className="text-danger" /> : <Server size={16} />}
+            icon={status.state === 'unreachable' ? <CircleExclamationPoint size={16} className="text-danger" /> : <Server size={16} />}
             name={status.host.name}
             detail={stateLabel(status.state)}
             testId="add-project-host"
