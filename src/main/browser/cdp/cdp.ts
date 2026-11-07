@@ -1629,9 +1629,12 @@ export async function runtimeEvaluate<T = unknown>(
       expression,
       awaitPromise: options.awaitPromise ?? true,
       returnByValue: options.returnByValue ?? true,
-    })) as { result: { value?: T }; exceptionDetails?: { text?: string } };
+    })) as { result: { value?: T }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
     if (result.exceptionDetails) {
-      return { value: null, error: result.exceptionDetails.text ?? 'evaluation error' };
+      // `text` is only the word "Uncaught" for a thrown error: the error itself
+      // is the exception's description.
+      const { exception, text } = result.exceptionDetails;
+      return { value: null, error: exception?.description ?? text ?? 'evaluation error' };
     }
     return { value: (result.result.value as T | undefined) ?? null, error: null };
   } catch (error) {
