@@ -315,7 +315,10 @@ function commitOnceAgentStarts(context: IpcContext, claim: HeldClaim, sessionId:
  * event of its own still commits. A fresh launch marked failed replays its record's
  * prompt, which holds them, so holding them too would send them twice. Anything
  * else put nothing to the agent: a failed resume replays no prompt, and a launch
- * a person stopped left a conversation that does not hold them.
+ * a person stopped left a conversation that does not hold them. A resume that found
+ * no conversation is marked too, but only after its pause (`markResumeMiss`), so its
+ * ride has settled here unmarked and gone back on hold. What it replays is the fresh
+ * launch's prompt, not its own.
  */
 function settleLaunchRide(context: IpcContext, sessionId: string): void {
   const ride = launchRides.get(sessionId);

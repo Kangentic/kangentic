@@ -80,6 +80,23 @@ describe('a login failure the CLI names', () => {
   });
 });
 
+describe('a repainted TUI frame, whose rows arrive as cursor moves', () => {
+  const LOGIN_LINE = 'Not logged in · Please run /login';
+
+  it('reads a row that is only the login sentence, as it reads a line printed by itself', () => {
+    const frame = `\x1b[1;1HClaude Code\x1b[2;1H${LOGIN_LINE}\x1b[3;1H> `;
+    expect(identify('claude', frame)).toBe('login_required');
+    expect(identify('claude', `Claude Code\r\n${LOGIN_LINE}\r\n> `)).toBe('login_required');
+  });
+
+  it('does not read a sentence a move to another column left glued to the row before it', () => {
+    // Row 2 starts at column 3, so no line break precedes it and the sentence
+    // follows row 1's text on the same line.
+    const frame = `\x1b[1;1HClaude Code\x1b[2;3H${LOGIN_LINE}\x1b[3;1H> `;
+    expect(identify('claude', frame)).toBeNull();
+  });
+});
+
 describe('the line that named it, which the notice shows', () => {
   it('is the CLI\'s own line, with its colour gone', () => {
     const match = agentRegistry.get('claude').identifyUserSetupFailure?.(shellRun('Not logged in · Please run /login'));
