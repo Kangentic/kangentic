@@ -12,6 +12,11 @@
  *
  * - A file is sent once and removed from the host once it is sent. The link retains and replays what
  *   an interrupted connection lost, so a drop loses nothing already handed over.
+ * - A REQUEST is the exception: it is sent once and stays on the host until Kangentic claims it (removes
+ *   it, through `removeFiles`, before it acts on it) or the script that wrote it gives up and removes it
+ *   itself. Whoever removes it first wins, since an unlink happens once. So a call sent while the link was
+ *   down, delivered minutes later, finds its file gone, and is never acted on after the agent has been
+ *   told it failed; and a call that was claimed is never reported as failed.
  * - Records are sent in name order, which is the order their hooks ran (names start with the epoch ns).
  * - A poll, not a watch: inotify drops events without an error under load, and a poll of three small
  *   folders every 100 ms is cheap next to the CLI it serves.
@@ -29,6 +34,12 @@ export interface HookFileEvent {
   folder: HookFolder;
   name: string;
   content: string;
+  /**
+   * A request this watcher left on the host until it is claimed. Set only by a watcher that keeps requests,
+   * so Kangentic claims only those: a program installed before this one removed every file as it sent it,
+   * and a claim on one of its requests would find nothing and drop a call that is waiting.
+   */
+  claim?: boolean;
 }
 
 export interface HookWatcherOptions {
@@ -187,11 +198,19 @@ export class HookWatcher {
           folder,
           name,
           content: fitHookRecord(content, this.options.maxContentJsonBytes ?? DEFAULT_MAX_CONTENT_JSON_BYTES),
+          ...(folder === 'requests' ? { claim: true } : {}),
         });
         entry.sent.add(key);
       }
+      // A request stays until it is claimed or given up on (see the header).
+      if (folder === 'requests') continue;
       // Removed once sent. A removal that fails leaves it in `sent`, so it is not sent again.
       if (await fs.rm(file, { force: true }).then(() => true, () => false)) entry.sent.delete(key);
+    }
+    // A request that is gone was claimed or given up on: forget it, so the set holds what is still there.
+    if (folder === 'requests') {
+      const present = new Set(names.map((name) => `${folder}/${name}`));
+      for (const key of entry.sent) if (key.startsWith('requests/') && !present.has(key)) entry.sent.delete(key);
     }
   }
 

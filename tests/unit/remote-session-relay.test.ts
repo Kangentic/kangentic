@@ -49,7 +49,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: RemoteTranscriptFile[] } = {}): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean; failWatch?: boolean; transcriptFiles?: RemoteTranscriptFile[]; mcpAnswer?: string } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -101,7 +101,7 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     onAppended: () => undefined,
     relayMcp: async (input) => {
       mcpCalls.push(`${input.argument}|${input.body}`);
-      return '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}';
+      return options.mcpAnswer ?? '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}';
     },
   });
   inbox.start();
@@ -246,6 +246,67 @@ describe('an MCP message from the host', () => {
     await waitFor(() => fs.existsSync(path.join(rig.hostSession, 'wsl-hooks', 'responses', '1700000000000000000-88.res')));
     await waitFor(() => fs.statSync(path.join(rig.hostSession, 'wsl-hooks', 'responses', '1700000000000000000-88.res')).size === big.length);
     expect(fs.readFileSync(path.join(rig.hostSession, 'wsl-hooks', 'responses', '1700000000000000000-88.res'), 'utf8')).toBe(big);
+  });
+
+  describe('a request is claimed on the host before it is acted on', () => {
+    const REQUEST = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"kangentic_move_task"}}';
+    const record = `K1\nmcp\ntoken-from-env http://127.0.0.1:1/mcp\n${REQUEST}`;
+
+    it('takes the host\'s copy, so the script that wrote it can no longer give up on a call that is now running', async () => {
+      const rig = await makeRig();
+      const requests = path.join(rig.hostSession, 'wsl-hooks', 'requests');
+
+      fs.writeFileSync(path.join(requests, '1700000000000000000-90.req'), record);
+
+      await waitFor(() => rig.mcpCalls.length === 1);
+      expect(fs.readdirSync(requests)).toEqual([]);
+    });
+
+    it('is dropped, never run, when the script already removed its copy and told the agent it failed', async () => {
+      const rig = await makeRig();
+
+      // As the frame arrives minutes later, after the link was down: the host's copy is long gone.
+      rig.relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'requests', name: '1700000000000000000-91.req', content: record, claim: true });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      expect(rig.mcpCalls).toEqual([]);
+      expect(fs.readdirSync(wslHookPaths(rig.localSession).requests)).toEqual([]);
+    });
+
+    it('is acted on without a claim when the host\'s program does not keep requests, which removed it as it sent it', async () => {
+      const rig = await makeRig();
+
+      rig.relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'requests', name: '1700000000000000000-92.req', content: record });
+
+      await waitFor(() => rig.mcpCalls.length === 1);
+    });
+
+    it('is acted on once, however many times the host sends it', async () => {
+      const rig = await makeRig();
+      const requests = path.join(rig.hostSession, 'wsl-hooks', 'requests');
+      fs.writeFileSync(path.join(requests, '1700000000000000000-93.req'), record);
+      await waitFor(() => rig.mcpCalls.length === 1);
+
+      // A program that re-registers the session sends what it still holds again.
+      rig.relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'requests', name: '1700000000000000000-93.req', content: record, claim: true });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+
+      expect(rig.mcpCalls).toHaveLength(1);
+    });
+  });
+
+  it('turns an answer past the frame\'s cap into an error with the request\'s id, instead of retrying it for good', async () => {
+    const huge = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { data: 'z'.repeat(1_100_000) } });
+    const rig = await makeRig({ mcpAnswer: huge });
+    const hostResponse = path.join(rig.hostSession, 'wsl-hooks', 'responses', '1700000000000000000-94.res');
+
+    fs.writeFileSync(path.join(rig.hostSession, 'wsl-hooks', 'requests', '1700000000000000000-94.req'), 'K1\nmcp\ntoken-from-env http://127.0.0.1:1/mcp\n{"jsonrpc":"2.0","id":1,"method":"tools/call"}');
+
+    await waitFor(() => fs.existsSync(hostResponse));
+    const answer = JSON.parse(fs.readFileSync(hostResponse, 'utf8')) as { id: number; error: { message: string } };
+    expect(answer.id).toBe(1);
+    expect(answer.error.message).toContain('saveToFile');
+    await waitFor(() => fs.readdirSync(wslHookPaths(rig.localSession).responses).length === 0);
   });
 });
 

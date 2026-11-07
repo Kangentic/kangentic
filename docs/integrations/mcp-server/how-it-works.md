@@ -90,7 +90,7 @@ A Kangentic-spawned agent calls an MCP tool (e.g. kangentic_create_task)
 
 ### Discovery
 
-Delivery is per-adapter, because no two of these CLIs accept MCP config the same way. What every path has in common: the URL and token are per-launch, the user's global config is never mutated, and the entry is additive so the user's own MCP servers keep working.
+Delivery is per-adapter, because no two of these CLIs accept MCP config the same way. What every path has in common: the URL and token are per-launch, the user's global config is never mutated, and the entry is additive so the user's own MCP servers keep working. An agent on an SSH host is the one exception to the per-launch rule: its messages go through a relay on this computer that posts to the running server with the current address and token, so a restart of the app does not strand it ([SSH hosts](../../platforms/ssh-remote.md)).
 
 | Agent | Mechanism | Token lands in |
 |-------|-----------|----------------|

@@ -15,10 +15,14 @@
  * Nothing the host sends picks a path: a record's name must have the exact shape the hook script
  * writes and the folder comes from the registration, so a host cannot write elsewhere on this disk.
  * MCP never crosses the link as a connection: the inbox relays each MCP message to the loopback server
- * here. The token is not hidden from the host, though. The agent's MCP config (owner-only, in the session
- * folder) carries it, because the bridge sends it with every request, and the relay posts with the token
- * the request names. A host is trusted like this computer, and what a host's agents can reach is the same
- * either way.
+ * here, at the server's address and with the token it has now, whatever the request names (`wsl-mcp-relay.ts`).
+ * The agent's MCP config (owner-only, in the session folder) still carries a token, because the bridge sends
+ * one with every request, but it is no longer the one that is checked, so it opens nothing off this computer
+ * and goes stale harmlessly when the app restarts. A host is trusted like this computer, and what a host's
+ * agents can reach is the same either way.
+ *
+ * A request is claimed on the host before it is acted on (`claimRequest`), so a call the script already gave up
+ * on is never run, and an answer too large for a frame becomes an error that says so (`forwardResponses`).
  *
  * What the host sends is written synchronously, in the order it arrives (see `deliver`). Everything else
  * here is asynchronous.
@@ -30,6 +34,8 @@ import * as path from 'node:path';
 import { localPathToHost, mirrorPathToHost, rootPathToHost, type SshCliPlace } from '../agent/shared/cli-target';
 import { isPlainRelativePath } from '../agent/shared/remote-files';
 import { wslHookPaths } from '../agent/shared/wsl-hook-transport';
+import { oversizeAnswer } from '../pty/readers/wsl-mcp-relay';
+import { MAX_FRAME_RAW_BYTES } from './protocol/frame-codec';
 import type { PtyHostEvent } from '../pty/host/protocol';
 import type { AgentParser, RemoteProgramRunner, RemoteResumeSeed, RemoteTranscriptFile, RemoteTranscriptIndex, RemoteTranscriptSearch, RemoteTranscriptSnapshot, StoredCliTarget } from '../../shared/types';
 import type { HostCommandRequest, HostCommandResult, HostFileSearch, HostFileWrite } from './protocol/messages';
@@ -126,6 +132,8 @@ const RESPONSE_NAME = /^\d{19}-\d+\.res$/;
  * would otherwise be 300 KB in a body capped at 256 KiB.
  */
 const RESPONSE_JSON_LIMIT_BYTES = 100_000;
+/** The most a raw frame carries (`MAX_FRAME_RAW_BYTES`), less what the request around it takes. */
+const RESPONSE_RAW_LIMIT_BYTES = MAX_FRAME_RAW_BYTES - 4096;
 const RESPONSE_POLL_MS = 100;
 
 /** How soon after the start or an id's arrival the first export runs: a session has nothing to export before. */
@@ -783,11 +791,25 @@ export class RemoteSessionRelay {
         this.options.log?.(`dropped a hook file with an unexpected name for ${event.sessionId.slice(0, 8)}`);
         return;
       }
-      const folder = event.folder === 'inbox' ? entry.localHooks.inbox : entry.localHooks.requests;
+      // A request is claimed on the host before anything here acts on it, and handed on only if this computer
+      // won: the script that wrote it may have given up and told the agent so, and the call must not run then.
+      if (event.folder === 'requests' && event.claim === true) {
+        void this.claimRequest(entry, event);
+        return;
+      }
+      this.writeHookFile(entry, event.folder === 'inbox' ? entry.localHooks.inbox : entry.localHooks.requests, event);
+    } catch (error) {
+      this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Write one delivered file into the local hook folder and wake the reader that watches it. */
+  private writeHookFile(entry: Registered, folder: string, event: HookFileEvent): void {
+    try {
       writeAtomicallySync(path.join(folder, event.name), event.content);
       // The reader watches this file, as it does for a distro; a byte is what wakes it.
       try {
-        // sync-write-ok: part of the ordered delivery above; the reader also polls, so a missed byte costs 250 ms.
+        // sync-write-ok: the reader also polls, so a missed byte costs 250 ms.
         fsSync.appendFileSync(entry.localHooks.signal, 'x');
       } catch {
         // The polling reader still finds the file.
@@ -795,6 +817,26 @@ export class RemoteSessionRelay {
     } catch (error) {
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Take a request off the host, and hand it to the reader only when the removal was ours. The host's copy is
+   * the one the script waits beside: when it is gone the call is ours (the script waits for the answer), and
+   * when it was already gone the script gave up and told the agent, so the call is dropped. A failed removal
+   * (the link went down between the frame and here) drops it too: the script ends the wait with its own error.
+   */
+  private async claimRequest(entry: Registered, event: HookFileEvent): Promise<void> {
+    const hostFile = `${entry.hostHooksDirectory}/requests/${event.name}`;
+    try {
+      const answer = await this.options.files.removeFiles(entry.hostId, [hostFile]) as { removed?: number } | undefined;
+      if (answer?.removed !== 1) return;
+    } catch (error) {
+      this.options.log?.(`could not claim a request from the host for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    // The session may have been released while the claim was on its way.
+    if (this.sessions.get(event.sessionId) !== entry) return;
+    this.writeHookFile(entry, entry.localHooks.requests, event);
   }
 
   /**
@@ -965,8 +1007,21 @@ export class RemoteSessionRelay {
         entry.inFlight.add(name);
         const file = path.join(entry.localHooks.responses, name);
         try {
-          const content = await fs.readFile(file, 'utf8');
+          let content = await fs.readFile(file, 'utf8');
           const target = `${entry.hostHooksDirectory}/responses/${name}`;
+          // A raw body over the frame cap is refused by the link on every try, so the agent would wait for it
+          // for good. An error with the request's id says what happened and ends the wait.
+          const rawBytes = Buffer.byteLength(content, 'utf8');
+          if (rawBytes > RESPONSE_RAW_LIMIT_BYTES) {
+            const replacement = oversizeAnswer(content, rawBytes, RESPONSE_RAW_LIMIT_BYTES);
+            this.options.log?.(`an answer of ${rawBytes} bytes is too large to send to the host for ${sessionId.slice(0, 8)}`);
+            if (replacement === null) {
+              // A notification's answer: nobody waits on it.
+              await fs.rm(file, { force: true });
+              continue;
+            }
+            content = replacement;
+          }
           if (Buffer.byteLength(JSON.stringify(content), 'utf8') > RESPONSE_JSON_LIMIT_BYTES) {
             await this.options.files.writeFileRaw(entry.hostId, target, content, 0o600);
           } else {

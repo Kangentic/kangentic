@@ -30,6 +30,7 @@ import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-know
 import { registerSeedKnowledgeGraphDemoDevIpc } from '../devtools/main/seed-knowledge-graph-demo';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
+import { setMcpRelayServer } from './pty/readers/wsl-mcp-relay';
 import { holdTaskMessage } from './held-messages/held-messages';
 import { recordMcpServerStartFailure } from './agent/mcp-server-start-failure';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -1956,6 +1957,10 @@ app.whenReady().then(async () => {
     // check reports this error as written.
     recordMcpServerStartFailure(err);
   }
+  // The relay a distro or SSH agent's MCP messages go through posts to whichever server is running now, with
+  // its token, whatever address and token that agent was started with (#913). Read when a message arrives,
+  // so a failed start or a quit is a null at that moment and not a stale handle.
+  setMcpRelayServer(() => (mcpServerHandle ? { baseUrl: mcpServerHandle.baseUrl, token: mcpServerHandle.token } : null));
   // Settled either way: a handle on success, a deliberate null on failure.
   // Set once here, after the try/catch, so both paths are covered in one place.
   mcpServerSettled = true;

@@ -18,6 +18,11 @@ import {
   WSL_MCP_REQUEST_HEAD,
   parseWslHookRecord,
   prepareWslHookTransport,
+  WSL_MCP_ANSWER_WAIT_SECONDS,
+  WSL_MCP_NOT_TAKEN_MESSAGE,
+  WSL_MCP_NO_ANSWER_MESSAGE,
+  WSL_MCP_REQUEST_MAX_CHARS,
+  WSL_MCP_TAKE_WAIT_SECONDS,
   wslHookEventCommand,
   wslHookPaths,
   wslHookRecordTime,
@@ -771,6 +776,98 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     expect(fs.readFileSync(paths.signal, 'utf-8')).toBe('x');
     expect(fs.readdirSync(paths.requests)).toEqual([]);
     expect(fs.readdirSync(paths.responses)).toEqual([]);
+  });
+
+  describe('an MCP call the bridge waits on', { timeout: 20_000 }, () => {
+    // The real waits are 12 s of tries before the clock is read, and 30 s and 10 minutes after. The copies keep
+    // the logic and shorten the numbers, and a replacement that changes nothing fails here instead of waiting.
+    function bridgeCopy(sessionDirectory: string, changes: Array<[string, string]>): string {
+      let script = WSL_HOOK_SCRIPT;
+      for (const [from, to] of changes) {
+        expect(script, `the script no longer holds ${from}`).toContain(from);
+        script = script.replace(from, to);
+      }
+      const copy = path.join(sessionDirectory, 'wsl-hook-short-wait.sh');
+      fs.writeFileSync(copy, script);
+      return copy;
+    }
+    // The clock is read from the 401st try on. The check that the CLI is still alive keeps its own, later, threshold,
+    // so a copy that reads the clock early never runs it: `/proc/$PPID` names no folder under Git Bash.
+    const SHORT_CLOCK: Array<[string, string]> = [['"$tries" -ge 401', '"$tries" -ge 4'], [`"$elapsed" -ge ${WSL_MCP_TAKE_WAIT_SECONDS}`, '"$elapsed" -ge 1']];
+    const call = (id: string | number, extra = '') => JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'kangentic_move_task', note: extra } });
+    const lines = (stdout: string) => stdout.split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as { id?: number | string; error?: { code: number; message: string }; result?: unknown });
+
+    it('ends with an error for its id, and removes its request, when nobody takes it', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+      const copy = bridgeCopy(sessionDirectory, SHORT_CLOCK);
+
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(5)}\n`, { scriptPath: copy, env: { KANGENTIC_WSL_HOOK_DIR: paths.directory } });
+
+      expect(result.code).toBe(0);
+      expect(lines(result.stdout)).toEqual([{ jsonrpc: '2.0', id: 5, error: { code: -32603, message: WSL_MCP_NOT_TAKEN_MESSAGE } }]);
+      // Removed by the script itself, so Kangentic can no longer take it and run a call the agent was told failed.
+      expect(fs.readdirSync(paths.requests)).toEqual([]);
+    });
+
+    it('answers a call whose id is a string, and says nothing for a notification, which has no id and waits on nothing', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+      const copy = bridgeCopy(sessionDirectory, SHORT_CLOCK);
+      const notification = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { id: 'inner-id' } });
+
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${notification}\n${call('call-7')}\n`, { scriptPath: copy, env: { KANGENTIC_WSL_HOOK_DIR: paths.directory } });
+
+      expect(lines(result.stdout).map((answer) => answer.id)).toEqual(['call-7']);
+    });
+
+    it('never reports a call as failed once Kangentic took it, however long it then runs', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+      const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+      fs.writeFileSync(eventsPath, '');
+      // Past the shortened take wait, which would have ended an untaken call, and well inside the answer wait.
+      const relayMcp = vi.fn(async (input: McpRelayInput) => {
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        return `${JSON.stringify({ jsonrpc: '2.0', id: (JSON.parse(input.body) as { id: number }).id, result: { done: true } })}\n`;
+      });
+      const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined, relayMcp });
+      openInboxes.push(inbox);
+      inbox.start();
+      const copy = bridgeCopy(sessionDirectory, SHORT_CLOCK);
+
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(6)}\n`, { scriptPath: copy, env: { KANGENTIC_WSL_HOOK_DIR: paths.directory } });
+
+      expect(lines(result.stdout)).toEqual([{ jsonrpc: '2.0', id: 6, result: { done: true } }]);
+    });
+
+    it('says a call it took is still running, with the advice to check what it changed, when no answer comes in time', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+      const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+      fs.writeFileSync(eventsPath, '');
+      const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined, relayMcp: () => new Promise<string>(() => undefined) });
+      openInboxes.push(inbox);
+      inbox.start();
+      const copy = bridgeCopy(sessionDirectory, [...SHORT_CLOCK, [`"$elapsed" -ge ${WSL_MCP_ANSWER_WAIT_SECONDS}`, '"$elapsed" -ge 2']]);
+
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(8)}\n`, { scriptPath: copy, env: { KANGENTIC_WSL_HOOK_DIR: paths.directory } });
+
+      expect(lines(result.stdout)).toEqual([{ jsonrpc: '2.0', id: 8, error: { code: -32603, message: WSL_MCP_NO_ANSWER_MESSAGE } }]);
+    });
+
+    it('refuses a request too large for the link at once, with an error for its id, and publishes nothing', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(3, 'a'.repeat(WSL_MCP_REQUEST_MAX_CHARS + 10))}\n`);
+
+      const [answer] = lines(result.stdout);
+      expect(answer.id).toBe(3);
+      expect(answer.error?.message).toMatch(/^This request is \d+ KB, more than the 146 KB that can be sent to Kangentic from a host\. Send less in one call\.$/);
+      expect(fs.readdirSync(paths.requests)).toEqual([]);
+      expect(fs.readFileSync(paths.signal, 'utf-8')).toBe('');
+    });
   });
 
   /**

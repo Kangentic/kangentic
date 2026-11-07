@@ -341,6 +341,46 @@ describe('HookWatcher', () => {
     watcher.dispose();
   });
 
+  it('keeps a request on the host until it is claimed, sends it once, and marks it as one to claim', async () => {
+    const hooks = makeSession();
+    const events: HookFileEvent[] = [];
+    const watcher = makeWatcher(events);
+    const request = path.join(hooks, 'requests', '1000000000000000000-10.req');
+    fs.writeFileSync(request, 'K1\nmcp\ntoken http://127.0.0.1:1/mcp\n{"jsonrpc":"2.0","id":1,"method":"tools/call"}');
+    fs.writeFileSync(path.join(hooks, 'inbox', '1000000000000000000-11.rec'), 'K1\nidle\n\n{}');
+    watcher.watch('s1', hooks);
+
+    await waitFor(() => events.length === 2);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Not removed: Kangentic removes it to claim it, and the script that wrote it removes it to give up.
+    expect(fs.existsSync(request)).toBe(true);
+    expect(events.filter((event) => event.folder === 'requests')).toHaveLength(1);
+    expect(events.find((event) => event.folder === 'requests')?.claim).toBe(true);
+    // An event is still removed once sent, and is not one to claim.
+    expect(fs.readdirSync(path.join(hooks, 'inbox'))).toEqual([]);
+    expect(events.find((event) => event.folder === 'inbox')?.claim).toBeUndefined();
+    watcher.dispose();
+  });
+
+  it('sends a request again only after it was gone, so a claimed request that reappears under its name is not lost', async () => {
+    const hooks = makeSession();
+    const events: HookFileEvent[] = [];
+    const watcher = makeWatcher(events);
+    const request = path.join(hooks, 'requests', '1000000000000000000-10.req');
+    watcher.watch('s1', hooks);
+    fs.writeFileSync(request, 'K1\nmcp\nt u\n{}');
+    await waitFor(() => events.length === 1);
+
+    // Claimed: gone from the host. A name is a nanosecond clock and a pid, so this is only a guard for the set.
+    fs.rmSync(request);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    fs.writeFileSync(request, 'K1\nmcp\nt u\n{}');
+
+    await waitFor(() => events.length === 2);
+    watcher.dispose();
+  });
+
   it('never sends a file still being written, or one of the wrong kind', async () => {
     const hooks = makeSession();
     const events: HookFileEvent[] = [];

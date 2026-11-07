@@ -167,6 +167,16 @@ process, a path tested against the wrong disk, an environment that overwrites th
   the agent works is the host's value, a fact about this computer is local and labeled, and an input
   path is a host path. The whole rule, with the helper and the `location` label, is
   [[mcp-tool-host-values]].
+- **An MCP call from a host always ends in an answer, and never runs after the agent was told it
+  failed.** The host's watcher keeps a request file until it is claimed. `RemoteSessionRelay.claimRequest`
+  removes the host's copy before anything here acts on it, and the bridge script removes it to give up
+  after 30 seconds; a removal happens once, so a call is claimed or given up on, never both. Only a
+  request the host marked `claim` is claimed (an older program removes them as it sends). The relay
+  posts to the running server with the current token and ignores the address and token the agent was
+  started with (`setMcpRelayServer`), so a restart strands no agent. Every failure is a JSON-RPC error
+  for the call's own id that says what happened and what to do: not taken, no answer, too large to send
+  or to receive, refused token, server off, server failed, timed out. A new failure path ends in one of
+  these, never in a wait with no bound.
 - **Bytes cross through `remote/host-transfer.ts`, over `runCommand`.** The helper's file jobs decode
   text, and a new helper method has no handler on a daemon a relay rejoins with no version check.
   Its scripts hold a path beneath the home and refuse a symlink themselves, because `runCommand`
