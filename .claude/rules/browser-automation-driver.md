@@ -183,6 +183,12 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   not run. `kangentic_browser_handle_dialog` sets the response for the next dialog (or persistently);
   the agent arms, then clicks. Do not redesign this as a reactive prompt.
 
+  **A `beforeunload` is answered twice.** Measured on a live guest: the default dismiss keeps the
+  page and `loadURL` rejects with a bare `ERR_FAILED (-2)`, and an accept armed through CDP alone
+  lets the page leave while `loadURL` still rejects with `ERR_ABORTED (-3)`, because Electron
+  answers it too. So `navigateGuest` gives an armed accept to `will-prevent-unload` as well, and
+  reports a dismissed one as `navigation-refused-by-page`. Keep the dismiss default.
+
   **A drive must not outrun `Page.enable`.** `attachDebugger` is synchronous and its other domain
   enables are fire-and-forget, so the FIRST drive on a guest used to run while `Page.enable` was
   still in flight - and a click that opened a `confirm()` in that window raced ahead of the

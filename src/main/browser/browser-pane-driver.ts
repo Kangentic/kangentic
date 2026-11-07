@@ -6,7 +6,9 @@ import {
 } from './browser-pane-registry';
 import {
   attachDebugger,
+  dismissedBeforeunloadSince,
   ensureFocusEmulation,
+  getDialogResponse,
   isDebuggerAttached,
   waitForDialogInterception,
 } from './cdp/cdp';
@@ -50,6 +52,21 @@ const PANE_NOT_FOCUSED_DETAIL =
   + 'whatever does, such as the user\'s terminal. Pass a selector so the element that should get the '
   + 'key is clicked first, in the same call. If you already passed one, focus left the pane after the '
   + 'click. Keys sent before this point in the call were delivered, so account for them before retrying.';
+
+/**
+ * A page's `beforeunload` kept it open, so the load never ran. The dismiss is the
+ * driver's own default answer, so the page is where it was and anything an agent
+ * does next runs against it. Its own kind, because the fix is specific.
+ */
+class NavigationRefusedByPageError extends Error {
+  constructor(url: string) {
+    super(
+      `The page stayed open: it has a beforeunload handler, and the dialog was dismissed by default, so ${url} `
+      + 'did not load. Call kangentic_browser_handle_dialog with accept true, then navigate again.',
+    );
+    this.name = 'NavigationRefusedByPageError';
+  }
+}
 
 /**
  * The automation policy check, exported so a tool whose side effects happen
@@ -277,6 +294,13 @@ export async function withGuest<T>(
             error: { kind: 'pane-not-focused', detail: PANE_NOT_FOCUSED_DETAIL },
           } as DriverResult<T>;
         }
+        if (error instanceof NavigationRefusedByPageError) {
+          report('navigation-refused-by-page');
+          return {
+            ok: false,
+            error: { kind: 'navigation-refused-by-page', detail: error.message },
+          } as DriverResult<T>;
+        }
         report('driver-error');
         return {
           ok: false,
@@ -336,8 +360,20 @@ export const NAVIGATE_TIMEOUT_MS = 20_000;
  * exposes no way to cancel an in-flight `loadURL`, so the page may still land
  * afterwards. The caller gets a clean error and the guest's queue is released,
  * which is the property that matters here.
+ *
+ * Electron answers a `beforeunload` itself as well as through CDP (see the
+ * dialog rule in `.claude/rules/browser-automation-driver.md`). Measured on a
+ * live guest: with the default dismiss `loadURL` rejects with a bare
+ * `ERR_FAILED (-2)` and the page stays. With accept armed through CDP alone the
+ * page DOES leave, and `loadURL` still rejects with `ERR_ABORTED (-3)`, so the
+ * agent is told a navigation that worked has failed. `will-prevent-unload` is
+ * how Electron takes the same answer, so an armed accept is given to it too.
+ * Read before the load: the dialog's answer consumes a one-shot arm.
  */
 export async function navigateGuest(webContents: WebContents, url: string): Promise<void> {
+  const startedAt = Date.now();
+  const allowUnload = (event: Electron.Event): void => event.preventDefault();
+  if (getDialogResponse(webContents)?.accept === true) webContents.once('will-prevent-unload', allowUnload);
   let timer: NodeJS.Timeout | undefined;
   const bounded = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(
@@ -348,8 +384,12 @@ export async function navigateGuest(webContents: WebContents, url: string): Prom
   });
   try {
     await Promise.race([webContents.loadURL(url), bounded]);
+  } catch (error) {
+    if (dismissedBeforeunloadSince(webContents, startedAt)) throw new NavigationRefusedByPageError(url);
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    webContents.removeListener('will-prevent-unload', allowUnload);
   }
 }
 
