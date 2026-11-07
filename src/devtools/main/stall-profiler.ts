@@ -28,7 +28,7 @@ import * as fsPromises from 'node:fs/promises';
 import * as path from 'node:path';
 import { Session } from 'node:inspector/promises';
 import type { Profiler } from 'node:inspector';
-import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, type ELDHistogram } from 'node:perf_hooks';
 import {
   closeDelayWindow,
   DELAY_BACKSTOP_MS,
@@ -82,7 +82,7 @@ export interface StallProfileSummary {
 
 let session: Session | null = null;
 let directory: string | null = null;
-let delayHistogram: IntervalHistogram | null = null;
+let delayHistogram: ELDHistogram | null = null;
 let checkTimer: ReturnType<typeof setInterval> | null = null;
 let profileStartedAtMs = 0;
 let lastCheckAtMs = 0;

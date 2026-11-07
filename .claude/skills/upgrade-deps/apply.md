@@ -100,6 +100,11 @@ Then:
 1. `git diff package.json` should be empty. If not, restore it and read why.
 2. Check that no direct dependency moved past what a task phase named, and that no group you dropped
    or the task lists as blocked came back. Put one back with `npm install` at its old version.
+   `@types/node` needs the same check though nothing declares it. Only Electron's range holds it to
+   the runtime's major, and `npm update` takes the `*` dependents to the newest major, which fails
+   the typecheck. Run `npm install -D @types/node@<newest 24.x>`, restore `package.json`, then run
+   `npm install --prefix . --allow-remote=all` again, and confirm the hoisted copy stayed on 24.
+   The same update can drop better-sqlite3's `hasInstallScript`: read it again here.
 3. Run `npm audit --package-lock-only` and report the before and after counts in your final report.
    **Never run `npm audit fix --force`.** Its suggested fixes here are downgrades: `@sentry/electron`
    to 7, `electron-builder` to 25, `eslint` to 9.
