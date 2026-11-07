@@ -51,10 +51,6 @@ msgstr "{handedCount, plural, one {Read # related task} other {Read # related ta
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
 msgstr "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
 
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{hours}h"
 msgstr "{hours}h"
@@ -741,7 +737,6 @@ msgstr "under a minute"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
 msgid "Untitled conversation"
 msgstr "Untitled conversation"
 

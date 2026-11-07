@@ -711,9 +711,6 @@ export const IPC = {
    *  Declared in the surface's POP_OUT_SURFACES `channels` too, or a detached
    *  window never sees a word. */
   KNOWLEDGE_GRAPH_ANSWER_STREAM: 'knowledgeGraph:graphAnswerStream',
-  /** Earlier conversations semantically near a task, for proactive recall in
-   *  task detail. The index finding you, rather than waiting to be searched. */
-  KNOWLEDGE_GRAPH_RELATED_TO_TASK: 'knowledgeGraph:relatedToTask',
 
   // Diagnostics (product, all builds): renderer console + window error
   // forwarding to main, where they are persisted to .kangentic/logs/.

@@ -102,8 +102,6 @@ export interface RankRelatedWorkRequest {
   question: string;
   keywordText?: string;
   excludeTaskId?: string;
-  /** The task window's prior work, for a task created at this ISO time. */
-  priorWorkBefore?: string;
   embedder: Embedder | null;
   /** The texts the query vectors are embedded from, in the order the search
    *  uses them (`relatedQueryTexts`, or one text for a task's whole body). */
@@ -126,7 +124,6 @@ export async function rankRelatedWork(request: RankRelatedWorkRequest): Promise<
       question: request.question,
       keywordText: request.keywordText,
       excludeTaskId: request.excludeTaskId,
-      priorWorkBefore: request.priorWorkBefore,
       queryVectors,
       rows: request.rows,
       withExtras: request.withExtras,

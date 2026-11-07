@@ -278,9 +278,8 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
     result: Array<CommitHit & { projectName: string }>;
   };
   /**
-   * `kangentic_search`'s task ranking (groupBy "task", relatedToTask) and the
-   * task window's prior work: one project's related work, ranked as Ask ranks
-   * it, with what its rows show.
+   * `kangentic_search`'s task ranking (groupBy "task", relatedToTask): one
+   * project's related work, ranked as Ask ranks it, with what its rows show.
    * `excludeTaskId` leaves one task out entirely, its conversations and its
    * record. The query vectors are used in the order sent.
    */
@@ -296,12 +295,6 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
       rows?: number;
       /** Read each shown row's facts and its summary (for the strongest). */
       withExtras: boolean;
-      /**
-       * The task window's prior work for a task created at this ISO time: only
-       * tasks created before it, each through a conversation, ranked as
-       * `SearchRelatedWorkInput.priorWork` says.
-       */
-      priorWorkBefore?: string;
     };
     result: RankedRelatedWork;
   };
@@ -464,23 +457,11 @@ export const retrievalHandlers: RetrievalHandlers = {
     }
   }),
   'related.rank': async (params, context) => {
-    const { projectId, excludeTaskId, priorWorkBefore } = params;
-    // Prior work reaches only tasks created before the one it is for, and only
-    // through their conversations: a row names its task and opens one. The
-    // cutoff is parsed once here, and a time that does not parse reaches nothing.
-    const priorWorkBeforeMs = priorWorkBefore === undefined ? undefined : Date.parse(priorWorkBefore);
-    const earlierTaskIds = priorWorkBeforeMs === undefined
-      ? null
-      : new RetrievalStore(context.getDb(projectId)).taskIdsCreatedBefore(priorWorkBeforeMs);
-    const nodes = indexedConversationNodes(projectId, context.getDb).filter((node) => (
-      (!excludeTaskId || node.taskId !== excludeTaskId)
-      && (!earlierTaskIds || (node.taskId !== null && earlierTaskIds.has(node.taskId)))
-    ));
+    const { projectId, excludeTaskId } = params;
+    const nodes = indexedConversationNodes(projectId, context.getDb).filter((node) => !excludeTaskId || node.taskId !== excludeTaskId);
     // Unscoped: every board task is in reach of its own record, so a task with
     // no indexed conversation still ranks.
-    const recordOnlyTasks = earlierTaskIds
-      ? []
-      : boardRecordTasks(projectId, context.getDb).filter((record) => record.taskId !== excludeTaskId);
+    const recordOnlyTasks = boardRecordTasks(projectId, context.getDb).filter((record) => record.taskId !== excludeTaskId);
     const { embedder, vectors } = vectorsOf(params.queryVectors);
     const related = await searchRelatedWork({
       question: params.question,
@@ -491,7 +472,6 @@ export const retrievalHandlers: RetrievalHandlers = {
       embedder,
       queryVectors: vectors,
       getDb: context.getDb,
-      priorWork: priorWorkBeforeMs === undefined ? undefined : { before: priorWorkBeforeMs, taskId: excludeTaskId ?? null },
     });
     const shown = related.handed.slice(0, params.rows ?? related.handed.length);
     const handedDocKeys = new Set(shown.flatMap((task) => task.docKeys));
