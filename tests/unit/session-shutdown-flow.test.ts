@@ -118,6 +118,75 @@ describe('killAllSessions', () => {
     expect(firstOutputClear).toHaveBeenCalledTimes(1);
   });
 
+  // A PTY on a remote host (#913) has a null pid. The quit may not signal it, type into it, count
+  // it, or wait for it: the drain polls local pids only, so a counted remote session would hold the
+  // quit on a process that is not here. The helper ends the agent from the link's one plan frame.
+  describe('a PTY on a remote host', () => {
+    function makeRemoteSession(overrides: Partial<ShutdownSession> = {}) {
+      const write = vi.fn();
+      const kill = vi.fn();
+      const sealUserInput = vi.fn();
+      const session = makeSession({
+        id: 'remote-1',
+        taskId: 'task-9',
+        exitSequence: ['\x03'],
+        pty: { pid: null, write, kill, sealUserInput } as unknown as PtyHandle,
+        ...overrides,
+      });
+      return { session, write, kill, sealUserInput };
+    }
+
+    it('is handed to the link, never killed, typed into or counted', () => {
+      const remote = makeRemoteSession();
+      const endRemoteSession = vi.fn();
+      const { context, killPty, sessionMap } = makeContext([remote.session]);
+
+      const report = killAllSessions({ ...context, endRemoteSession });
+
+      expect(endRemoteSession).toHaveBeenCalledWith(remote.session);
+      expect(killPty).not.toHaveBeenCalled();
+      expect(remote.write).not.toHaveBeenCalled();
+      expect(remote.kill).not.toHaveBeenCalled();
+      expect(report).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
+      expect(sessionMap.size).toBe(0);
+    });
+
+    it('is sealed first and its row lets go of the handle, as any quit-time PTY is', () => {
+      const remote = makeRemoteSession();
+      const { context } = makeContext([remote.session]);
+
+      killAllSessions(context);
+
+      expect(remote.sealUserInput).toHaveBeenCalledTimes(1);
+      expect(remote.session.pty).toBeNull();
+    });
+
+    it('does not stop a local session beside it from being killed and counted', () => {
+      const remote = makeRemoteSession();
+      const local = makeSession({
+        id: 'sess-local',
+        pty: { pid: 4242, write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn() } as unknown as PtyHandle,
+      });
+      const { context, killPty } = makeContext([remote.session, local]);
+
+      const report = killAllSessions(context);
+
+      expect(killPty).toHaveBeenCalledTimes(1);
+      expect(report).toEqual({ pids: [4242], killedCount: 1, deferredCount: 0 });
+    });
+
+    it('detaches the exit listeners it holds, so a late exit cannot run into a deleted session folder', () => {
+      const disposable = makeDisposable();
+      const remote = makeRemoteSession({ ptyDisposables: [disposable] as unknown as pty.IDisposable[] });
+      const { context, detachAndDelete } = makeContext([remote.session]);
+
+      killAllSessions(context);
+
+      expect(disposable.dispose).toHaveBeenCalledTimes(1);
+      expect(detachAndDelete).toHaveBeenCalledWith('remote-1');
+    });
+  });
+
   // The returned report feeds the before-quit exit-callback drain (Sentry
   // DESKTOP-C): the quit is held until these children are gone so node-pty's
   // exit callback is dispatched while JS is still callable. killedCount is the

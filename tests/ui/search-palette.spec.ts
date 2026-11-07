@@ -82,6 +82,7 @@ function preConfigWithSearchHits(
           projectId: '${OTHER_PROJECT_ID}',
           projectName: 'Other Project',
           projectPath: '/mock/other',
+          location: 'local',
           snippet: 'Other Project',
           matchStart: 0,
           matchEnd: 5,

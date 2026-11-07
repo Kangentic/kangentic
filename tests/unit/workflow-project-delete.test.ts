@@ -67,6 +67,8 @@ import type { Workflow } from '../../src/shared/types';
 describe('a project delete and the workflows it is part of', () => {
   let context: IpcContext;
   let wake: ReturnType<typeof vi.fn>;
+  /** Boards hidden because their SSH host was removed: left out of the list, with their database still there. */
+  let hiddenProjectIds: Set<string>;
 
   function database(projectId: string): void {
     const db = openTestDatabase();
@@ -86,10 +88,14 @@ describe('a project delete and the workflows it is part of', () => {
       { id: 'mobile', name: 'kangentic-mobile', path: '/projects/mobile' },
       { id: 'web', name: 'kangentic-web', path: '/projects/web' },
     ];
+    hiddenProjectIds = new Set();
     context = {
       projectRepo: {
-        list: () => projects,
-        getById: (id: string) => projects.find((project) => project.id === id),
+        list: () => projects.filter((project) => !hiddenProjectIds.has(project.id)),
+        listIncludingHidden: () => projects,
+        listHidden: () => projects.filter((project) => hiddenProjectIds.has(project.id)),
+        isHidden: (id: string) => hiddenProjectIds.has(id),
+        getById: (id: string) => projects.find((project) => project.id === id && !hiddenProjectIds.has(id)),
       },
       boardEvents: { emitBoardChanged: vi.fn() },
       sessionManager: { listSessions: () => [] },
@@ -254,6 +260,65 @@ describe('a project delete and the workflows it is part of', () => {
     harness.broken.delete('web');
     expect(tasksOf('web').listByWorkflow(workflow.id)).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('kangentic-web'));
+  });
+
+  describe('a board hidden because its host was removed', () => {
+    it('keeps a workflow whose only surviving task is on the hidden board', async () => {
+      const workflow = await startedWorkflow('home', [
+        { title: 'Phone task', project: 'kangentic-mobile' },
+        { title: 'Web task', project: 'kangentic-web' },
+      ]);
+      hiddenProjectIds.add('web');
+
+      detachProjectFromWorkflows(context, 'mobile');
+
+      expect(workflowsOf('home').getById(workflow.id)?.state).toBe('running');
+      expect(endWorkflowAgent).not.toHaveBeenCalled();
+      expect(tasksOf('web').listByWorkflow(workflow.id)).toHaveLength(1);
+    });
+
+    it('releases its members of a workflow homed in the deleted project, so they do not come back pointing at nothing', async () => {
+      const workflow = await startedWorkflow('mobile', [
+        { title: 'On the phone board', project: 'kangentic-mobile' },
+        { title: 'Web task', project: 'kangentic-web' },
+      ]);
+      hiddenProjectIds.add('web');
+
+      detachProjectFromWorkflows(context, 'mobile');
+
+      expect(tasksOf('web').listByWorkflow(workflow.id)).toEqual([]);
+    });
+
+    it('drops the links homed on it that name the deleted project\'s tasks', async () => {
+      const workflow = await startedWorkflow('web', [
+        { title: 'Web task', project: 'kangentic-web' },
+        { title: 'On the phone board', project: 'kangentic-mobile' },
+      ]);
+      const webTask = tasksOf('web').listByWorkflow(workflow.id)[0];
+      const phoneTask = tasksOf('mobile').listByWorkflow(workflow.id)[0];
+      new TaskLinkRepository(dbOf('web')).insert({ workflow_id: workflow.id, blocker_project_id: 'mobile', blocker_task_id: phoneTask.id, blocked_project_id: 'web', blocked_task_id: webTask.id });
+      hiddenProjectIds.add('web');
+
+      detachProjectFromWorkflows(context, 'mobile');
+
+      expect(new TaskLinkRepository(dbOf('web')).listForWorkflow(workflow.id)).toEqual([]);
+      // Dropped as links, not along with a workflow deleted for having no tasks left.
+      expect(workflowsOf('web').getById(workflow.id)?.state).toBe('running');
+    });
+
+    it('releases its members when the workflow is deleted, and never offers them for deletion', async () => {
+      const workflow = await startedWorkflow('home', [
+        { title: 'Home task', project: 'kangentic' },
+        { title: 'Web task', project: 'kangentic-web' },
+      ]);
+      hiddenProjectIds.add('web');
+
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+
+      expect(tasksOf('web').listByWorkflow(workflow.id)).toEqual([]);
+      expect(tasksOf('web').list().filter((task) => task.title === 'Web task')).toHaveLength(1);
+      expect(released.map((entry) => entry.projectId)).toEqual(['home']);
+    });
   });
 
   it('keeps a workflow when a board is registered but its database file is gone', async () => {

@@ -12,6 +12,10 @@ msgstr ""
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Megnyitja a dokumentációs oldalt."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -77,6 +81,10 @@ msgstr "{displayName}, {percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{hostname} now presents a different key."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -86,6 +94,10 @@ msgstr "{hours, plural, one {# óra van hátra} other {# óra van hátra}}"
 #, fuzzy
 msgid "{label}, always on"
 msgstr "{label}, mindig bekapcsolva"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{liveSessions, plural, one {# terminal running} other {# terminals running}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -117,6 +129,11 @@ msgstr "{percent}%, {displayName}"
 msgid "{percent}%, {timeLeft}"
 msgstr "{percent}%, {timeLeft}"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr "{projectCount, plural, one {# projekt} other {# projekt}}"
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "{releaseBufferMs} ms"
@@ -137,10 +154,24 @@ msgstr "Egy hívás sikertelen volt"
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Lebegő panel az egyes munkamenetek aktivitási állapotáról és utolsó átmeneteiről, a .kangentic/debug mappába is kiírva."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A key with a passphrase must be in your SSH agent."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr "Az SSH-konfigurációban szereplő név is megadható, így állítható be ugrógép vagy port."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "Az előbeállítás kiválasztja az élő és a finomító modellt. Egyéni módban Ön választja ki őket."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr "Privát kulcsfájl; a Kangentic másolatot tárol róla a saját mappájában"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -177,10 +208,20 @@ msgstr "Tudnivalók: {label}"
 msgid "Activity engine debug overlay"
 msgstr "Aktivitásmotor hibakereső rétege"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Add host"
+msgstr "Gazdagép hozzáadása"
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Add shortcut"
 msgstr "Parancsikon hozzáadása"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Address"
+msgstr "Cím"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -462,6 +503,10 @@ msgstr "Függőleges vonal"
 msgid "Basic accuracy"
 msgstr "Alapszintű pontosság"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Before"
+msgstr ""
+
 #: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Behavior"
@@ -471,6 +516,11 @@ msgstr "Működés"
 #, fuzzy
 msgid "Best accuracy"
 msgstr "Legjobb pontosság"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Beta"
+msgstr "Béta"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -538,7 +588,13 @@ msgstr "Böngészőadatok törölve"
 msgid "Browser pane"
 msgstr "Böngészőpanel"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Build server"
+msgstr "Buildkiszolgáló"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Cancel"
 msgstr "Mégse"
@@ -578,6 +634,11 @@ msgstr "Előtér módosítása"
 msgid "Changes"
 msgstr "Módosítások"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Checking"
+msgstr "Ellenőrzés"
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "Checking..."
@@ -592,6 +653,10 @@ msgstr "Válasszon modellt"
 #, fuzzy
 msgid "Choose an agent"
 msgstr "Válasszon ügynököt"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Choose…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -609,6 +674,7 @@ msgid "Clear browser data?"
 msgstr "Törli a böngészőadatokat?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "Adatok törlése"
@@ -765,6 +831,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "Telefon csatlakoztatása E2E-titkosított közvetítőn át."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connected"
 msgstr "Csatlakozva"
@@ -776,6 +843,7 @@ msgid "Connected"
 msgstr "Csatlakozva"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connecting…"
 msgstr "Csatlakozás…"
@@ -790,6 +858,11 @@ msgstr "Környezetsáv"
 #, fuzzy
 msgid "Context window"
 msgstr "Környezetablak"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Continue"
+msgstr "Tovább"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy
@@ -1120,6 +1193,11 @@ msgstr "Letöltés"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "Minden ügynökmunkamenet saját helyi MCP-kiszolgálót kap, és önállóan felderíti ezeket az eszközöket. Az ügynök által létrehozott feladatok értesítéssel jelennek meg a táblán."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1227,6 +1305,11 @@ msgstr "Worktree-be másolandó fájlok"
 #, fuzzy
 msgid "Finds your work by meaning and answers questions."
 msgstr "Jelentés alapján megtalálja a munkáit, és válaszol."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Fingerprint"
+msgstr "Ujjlenyomat"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1358,6 +1441,11 @@ msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys
 msgstr "Tartsa lenyomva a felvételhez, engedje fel az átirat beszúrásához. Módosítás a Gyorsbillentyűk között."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Hosts"
+msgstr "Gazdagépek"
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1383,6 +1471,11 @@ msgstr "A megosztott táblakonfiguráció változásainak alkalmazási módja."
 #, fuzzy
 msgid "How it works"
 msgstr "Működés"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "How Kangentic signs in"
+msgstr "Hogyan jelentkezik be a Kangentic"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
@@ -1550,10 +1643,19 @@ msgstr "A Kangentic a WSL-ből futtatja: {wslAgentList}."
 msgid "Kangentic turned this off after repeated failures."
 msgstr "A Kangentic ismételt hibák miatt kikapcsolta ezt."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr "A Kangentic az Ön SSH-konfigurációját, ügynökét és kulcsait használja, ahogy egy terminál is."
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Kangentic-operated relay"
 msgstr "A Kangentic által üzemeltetett továbbító"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1564,6 +1666,15 @@ msgstr "A felengedés után még rövid ideig rögzít, hogy az utolsó szó ne 
 #, fuzzy
 msgid "Keep editing"
 msgstr "Szerkesztés folytatása"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Key file"
+msgstr "Kulcsfájl"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1663,6 +1774,11 @@ msgstr "Az egyszerre futó ágensek számának korlátozása"
 msgid "Link node_modules"
 msgstr "node_modules csatolása"
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr "Linux gépek, amelyeken a Kangentic SSH-n át ügynököket futtat."
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "Live model"
@@ -1694,6 +1810,11 @@ msgstr "Helyi modell"
 #, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "Minden IPC-hívást naplóz a .kangentic/logs mappába, a módosító csatornákat kitakarva; alapértelmezésként csak a /preview módban van bekapcsolva."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Looking for ssh…"
+msgstr "ssh keresése…"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1781,6 +1902,16 @@ msgstr "Áthelyezés..."
 msgid "Moving between task windows and arranging them."
 msgstr "Váltás a feladatablakok között és elrendezésük."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "My SSH config"
+msgstr "Saját SSH-konfiguráció"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Name"
+msgstr "Név"
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "sort files by"
@@ -1819,6 +1950,10 @@ msgstr "Indexelés szükséges"
 msgid "Needs the Knowledge Graph"
 msgstr "A tudásgráf szükséges"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "New host key"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
@@ -1833,6 +1968,11 @@ msgstr "Még nincs párosított eszköz."
 #, fuzzy
 msgid "No Done tasks yet"
 msgstr "Még nincs kész feladat"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "No hosts yet."
+msgstr "Még nincs gazdagép."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -1866,9 +2006,17 @@ msgid "None"
 msgstr "Nincs"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not checked"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not found"
 msgstr "Nem található"
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not on hosts yet"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCombo.tsx
 #, fuzzy
@@ -1895,6 +2043,10 @@ msgstr "Még nincs commit"
 #, fuzzy
 msgid "Notifications"
 msgstr "Értesítések"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
@@ -1992,14 +2144,25 @@ msgid "Pairing QR code"
 msgstr "Párosítási QR-kód"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Password"
 msgstr "Jelszó"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Password for the host"
+msgstr "A gazdagép jelszava"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "A projekt feladatainak elérési útja a kiszolgálón. Hagyja üresen a kiszolgáló saját alapértelmezett könyvtárához"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Path to the private key"
+msgstr "A privát kulcs elérési útja"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2106,10 +2269,26 @@ msgstr "Előnézet beszéd közben: a streamelés azonnali, a darabolt pontos."
 msgid "Privacy"
 msgstr "Adatvédelem"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Private key"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
 msgstr "Profilozza a fő folyamatot, és az eseményhurok-jelentésben megnevezi az akadás legnehezebb függvényeit; bekapcsolva CPU-t használ."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program {version} (this app is {appVersion})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Program version unknown"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2247,7 +2426,13 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "Előzmények"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Újracsatlakozás"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Reconnecting…"
 msgstr "Újracsatlakozás…"
@@ -2316,6 +2501,7 @@ msgid "Remote"
 msgstr "Távoli"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Remove"
 msgstr "Eltávolítás"
@@ -2324,6 +2510,19 @@ msgstr "Eltávolítás"
 #, fuzzy
 msgid "Remove a task's worktree when the task completes."
 msgstr "A feladat worktree-jének eltávolítása a feladat befejezésekor."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Remove host"
+msgstr "Gazdagép eltávolítása"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2433,6 +2632,7 @@ msgstr "Worktree létrehozása után fut. Windowson a cmd.exe futtatja, így a c
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "Ezen a gépen fut, hacsak nem felhőalapú finomítást választ."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
@@ -2587,6 +2787,11 @@ msgstr "A PR-t késznek jelzi, ha megkerülheted a kötelező felülvizsgálatot
 msgid "Side by side"
 msgstr "Egymás mellett"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "since {since}"
+msgstr "{since} óta"
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "since {sinceTime}"
@@ -2623,6 +2828,26 @@ msgstr "Forráskód beágyazva"
 #, fuzzy
 msgid "Spawn stalled"
 msgstr "Indítás elakadt"
+
+#: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
+msgid "SSH"
+msgstr "SSH"
+
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "SSH client"
+msgstr "SSH-kliens"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh found"
+msgstr "ssh megtalálva"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "ssh not found"
+msgstr "ssh nem található"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2661,6 +2886,11 @@ msgstr "Leállító szkript"
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Leállítja, amit az ügynök futva hagyott a mappájában, ha a feladata kész, visszakerül a Teendők közé, törlődik, vagy a parancsterminálja bezárul."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Leállítva"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2814,6 +3044,10 @@ msgstr "Az első üzenet, amelyet egy új munkafolyamathoz kap."
 msgid "The Kangentic relay"
 msgstr "A Kangentic relay"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -2864,6 +3098,11 @@ msgstr "A saját üzemeltetésű relay, amelyhez csatlakozik, ha a Relay érték
 msgid "The shell, font, cursor and colors every terminal uses."
 msgstr "Az összes terminál shellje, betűtípusa, kurzora és színei."
 
+#: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr "Ezen a gépen lévő ssh program, amellyel a Kangentic csatlakozik."
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
 msgid "The task's description"
@@ -2880,6 +3119,12 @@ msgstr "Téma"
 #, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "Ez a gyorsbillentyű rögzített, nem rendelhető át"
+
+#. placeholder {0}: editProbe.hostname
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2944,10 +3189,36 @@ msgstr "Átírás"
 msgid "Transition and motion effects."
 msgstr "Átmeneti és mozgási effektusok."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if it matches the host. Kangentic records it once, and refuses the host if its key ever changes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust it only if you know the host was rebuilt or reinstalled. Kangentic records it once and connects."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust new key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Trust this key"
+msgstr "Kulcs megbízhatónak jelölése"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
 msgid "Try a different search term"
 msgstr "Próbáljon másik keresőkifejezést"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Type"
+msgstr "Típus"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -2956,6 +3227,7 @@ msgid "Underline"
 msgstr "Aláhúzás"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Unreachable"
 msgstr "Nem érhető el"
@@ -2990,10 +3262,25 @@ msgstr "{TERMINAL_FONT_SIZE_MIN} és {TERMINAL_FONT_SIZE_MAX} közötti érték 
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "Egy téma világos, egy másik sötét rendszermegjelenés esetén."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr "A jelszó egyszeri használatával hozzáad egy, a Kangentic által létrehozott kulcsot. A jelszót nem tárolja"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr "Saját ssh-beállítások használata: konfiguráció, ügynök és kulcsok, ahogy egy terminál teszi"
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Used / total tokens"
 msgstr "Felhasznált / összes token"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr "Egyszer használatos: a Kangentic által ehhez a gazdagéphez létrehozott kulcs hozzáadásához. Sosem tárolódik."
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #, fuzzy

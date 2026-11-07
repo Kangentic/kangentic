@@ -25,6 +25,8 @@ import { WALKTHROUGH_STEPS, resolveNextStep } from '../onboarding/walkthrough-st
 import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation';
 import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
+import { AddProjectDialogs } from '../dialogs/AddProjectDialogs';
+import { HostDegradedStrip } from '../board/HostDegradedStrip';
 import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
@@ -48,6 +50,7 @@ import { useViewToggle } from '../../hooks/useViewToggle';
 import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
 import { useRemoteDetailOwnersSync } from '../../hooks/useRemoteDetailOwnersSync';
 import { useMobileTerminalStreamsSync } from '../../hooks/useMobileTerminalStreamsSync';
+import { useSshHostsSync } from '../../hooks/useSshHostsSync';
 import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
@@ -241,6 +244,7 @@ export function AppLayout() {
   const panelShowsTerminal = terminal.showContent && terminalPanelRendered;
   useRemoteDetailOwnersSync();
   useMobileTerminalStreamsSync();
+  useSshHostsSync();
   // The monitor's ownership half, mounted here rather than in `MonitorDetailLayer`
   // because that layer unmounts whenever the monitor is closed or detached while its
   // window store survives - see `useMonitorDetailOwnership`.
@@ -574,6 +578,7 @@ export function AppLayout() {
           {currentProject ? (
             <>
               <ViewToggle />
+              <HostDegradedStrip project={currentProject} />
               {activeView !== 'backlog' ? (
                 <>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -663,6 +668,7 @@ export function AppLayout() {
       <CommandTerminalBrowserHost />
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
+      <AddProjectDialogs />
       <LeftoverProcessesDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />

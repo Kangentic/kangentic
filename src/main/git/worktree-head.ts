@@ -1,4 +1,5 @@
 import { gitAt } from './git-client';
+import { RemoteGitUnavailableError } from './remote-git';
 import { viaGitRead } from './git-read-queue';
 import { isSafeBranchName } from './push-command';
 
@@ -27,7 +28,10 @@ export async function readWorktreeHead(worktreePath: string): Promise<{ branch: 
  * design). Burst-prone callers (batch Done-moves, PR-link fan-in) use the
  * queued readWorktreeHead instead.
  */
-export async function readWorktreeHeadUnqueued(worktreePath: string): Promise<{ branch: string | null; sha: string | null }> {
+export async function readWorktreeHeadUnqueued(
+  worktreePath: string,
+  options?: { rethrowUnavailable?: boolean },
+): Promise<{ branch: string | null; sha: string | null }> {
   try {
     const git = gitAt(worktreePath);
     const branchRaw = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
@@ -36,7 +40,10 @@ export async function readWorktreeHeadUnqueued(worktreePath: string): Promise<{ 
       branch: branchRaw && branchRaw !== 'HEAD' ? branchRaw : null,
       sha: sha || null,
     };
-  } catch {
+  } catch (error) {
+    // A host that could not be asked (#913) is not a detached HEAD. A caller that shows the branch asks to
+    // hear it, so it can keep what it showed instead of drawing "Detached HEAD" for a link that is down.
+    if (options?.rethrowUnavailable && error instanceof RemoteGitUnavailableError) throw error;
     // Worktree gone or git error.
     return { branch: null, sha: null };
   }

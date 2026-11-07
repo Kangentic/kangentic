@@ -22,6 +22,9 @@ import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hoo
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
+import { planRemoteSpawn } from '../spawn/remote-spawn';
+import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
+import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../remote/remote-session-relay';
 import { directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, commandFitsShell, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
@@ -132,6 +135,15 @@ export interface SpawnFlowContext {
    * this keeps every exited row.
    */
   onPtyExited?: (sessionId: string) => void;
+  /**
+   * What a session on a remote host needs around its PTY (#913): its files pushed to the host and the
+   * host's watcher started before the agent runs, and both ended with the session. A context built
+   * without this cannot start a remote session, which then fails with a sentence.
+   */
+  remoteSessions?: {
+    register(registration: RemoteSessionRegistration): Promise<void>;
+    release(sessionId: string): Promise<void>;
+  };
   /**
    * The session's PTY exited, before anything of the exit was applied. Every
    * ending but a quit passes here (`killAllSessions` detaches the listener), so
@@ -268,21 +280,37 @@ export async function performSpawn(
     throw new Error('Cannot spawn session during shutdown');
   }
 
+  // A session on a remote host decides its shell, cwd, environment and quoting from the host, never
+  // from this computer (remote-spawn.ts). Every local-only decision below branches on this one plan.
+  const remotePlan = input.remote ? planRemoteSpawn(input, input.remote) : null;
+  // The folder on the host that this session's hooks publish into (the relay registers the same one).
+  // An agent whose hook script is a shared copy outside that folder (Codex, Gemini, Qwen, Grok) is
+  // told where to publish through this variable, as a WSL spawn is (below).
+  if (remotePlan && input.eventsOutputPath) {
+    const place = placeFromStored(input.cliTarget ?? null);
+    if (place?.kind === 'ssh') {
+      remotePlan.env[WSL_HOOK_DIRECTORY_ENV] = wslHookPaths(localPathToHost(path.dirname(input.eventsOutputPath), place.roots)).directory.replace(/\\/g, '/');
+    }
+  }
+
   // An agent never falls back to the home directory (`resolveSpawnCwd` is for
   // plain shells). Ahead of the sibling drain, so a respawn into a folder that
   // went does not kill the old PTY and then refuse. A queued session passes
   // through here at promotion, so this is also where it looks at its folder again.
-  if (input.agentParser && !fs.existsSync(input.cwd)) {
+  // Not for a session on a host: this computer's disk cannot say a host's folder is gone, and the
+  // folder here is an empty stand-in. Only the host proves a path absent (#913).
+  if (!remotePlan && input.agentParser && !fs.existsSync(input.cwd)) {
     throw new AgentCwdMissingError(input.cwd);
   }
 
   // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI
-  // installed in that distro), else the Terminal setting, as before.
-  const shell = input.shell ?? await context.getShell();
+  // installed in that distro), else the Terminal setting, as before. A remote
+  // session is typed into the host's shell, named by its program (zsh, fish, ...).
+  const shell = remotePlan ? remotePlan.shellName : (input.shell ?? await context.getShell());
   // A command its shell cannot start never reaches a PTY, and ahead of the
   // sibling drain for the reason the folder check above is. Agents only: a raw
-  // command's failure shows in its own terminal.
-  if (input.agentParser && input.command && !commandFitsShell({ command: input.command, shell, platform: process.platform })) {
+  // command's failure shows in its own terminal. A host is always Linux, whatever this computer is.
+  if (input.agentParser && input.command && !commandFitsShell({ command: input.command, shell, platform: remotePlan ? 'linux' : process.platform })) {
     throw new AgentCommandTooLongError();
   }
   // EVERY registry row for the task, not the first match. The registry holds
@@ -343,15 +371,16 @@ export async function performSpawn(
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
   const shellName = shell.toLowerCase();
-  const { exe: shellExe, args: shellArgs } = resolveShellArgs(shell);
+  const { exe: shellExe, args: shellArgs } = remotePlan ? { exe: remotePlan.file, args: remotePlan.args } : resolveShellArgs(shell);
   // Export KANGENTIC_EVENTS_PATH whenever the session has an events
   // output path. Adapters whose hooks shell out to event-bridge.js read
   // the path from their hook command line, but adapters whose hooks run
   // inline in the agent process (OpenCode plugins) need the path on
   // process.env. Setting it universally is harmless: hook-bridge-based
-  // adapters ignore the env var.
+  // adapters ignore the env var. Not for a remote session: the path is a file on THIS computer,
+  // and the host's hooks publish into their own inbox, which the helper relays back.
   let spawnEnv: Record<string, string> = { ...(input.env ?? {}) };
-  if (input.eventsOutputPath) {
+  if (input.eventsOutputPath && !remotePlan) {
     spawnEnv.KANGENTIC_EVENTS_PATH = input.eventsOutputPath;
   }
   // Tag every process this session's agent starts, so the end of its task, or
@@ -361,7 +390,7 @@ export async function performSpawn(
   // are reaped when the terminal ends (`command-terminal-leftovers.ts`). That
   // replaces any tag inherited from main's environment (Kangentic started from
   // a task's terminal), whose outer reap still stops this app's own tree.
-  const wslShell = parseWslShellSpec(shell) !== null;
+  const wslShell = !remotePlan && parseWslShellSpec(shell) !== null;
   spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
     wslShell,
     inheritedWslEnv: process.env.WSLENV,
@@ -387,14 +416,17 @@ export async function performSpawn(
       }
     }
   }
-  const cleanEnv = buildSpawnEnv(spawnEnv);
+  // A remote session sends the plan's environment as it is: `buildSpawnEnv` would merge in main's
+  // whole environment, and the helper layers a spawn's variables OVER the host's own, so main's
+  // PATH, HOME and TEMP would replace the host's.
+  const cleanEnv = remotePlan ? remotePlan.env : buildSpawnEnv(spawnEnv);
 
-  // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts.
-  const { effectiveCwd, cwdFixupCommand } = resolveSpawnCwd({
-    requestedCwd: input.cwd,
-    shellName,
-    platform: process.platform,
-  });
+  // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts. A remote session's cwd
+  // is a folder on the host: tested against this computer's disk it would not exist, and be
+  // replaced with a local home folder.
+  const { effectiveCwd, cwdFixupCommand } = remotePlan
+    ? { effectiveCwd: remotePlan.cwd, cwdFixupCommand: null }
+    : resolveSpawnCwd({ requestedCwd: input.cwd, shellName, platform: process.platform });
 
   // Spawn at the real fitted dimensions if a resize arrived before the PTY
   // existed under THIS id (a queue promotion: a renderer fit, or the resting-grid
@@ -447,11 +479,63 @@ export async function performSpawn(
     if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
   }
 
+  // A session on a remote host: its files go to the host and the host starts sending its hook
+  // files BEFORE the agent exists, since the agent's first hook can fire in its first second. A
+  // failure here fails the spawn with the host's own words: an agent whose hooks have nowhere to
+  // publish would run with no activity and no plan approval. A registration the host refuses or never
+  // answers is that failure too, reported as a failed spawn (an exited placeholder with the host's
+  // words), never thrown: a throw here left a promoted queue row `queued` for good.
+  //
+  // Every way out of the spawn after this point releases the registration once, through releaseRemote.
+  let remoteReleased = false;
+  const releaseRemote = (): void => {
+    if (!remotePlan || remoteReleased) return;
+    remoteReleased = true;
+    void context.remoteSessions?.release(id);
+  };
+  let registrationError: Error | null = null;
+  if (remotePlan) {
+    const place = placeFromStored(input.cliTarget ?? null);
+    if (place?.kind !== 'ssh' || !context.remoteSessions || !input.statusOutputPath) {
+      throw new Error('This session needs its host connection and its session folder, and one is missing.');
+    }
+    const sessionDirectory = path.dirname(input.statusOutputPath);
+    const transcripts = input.cliTarget ? remoteTranscriptSource(input.agentParser, input.cwd, input.cliTarget, sessionDirectory) : null;
+    try {
+      await context.remoteSessions.register({
+        hostId: remotePlan.hostId,
+        sessionId: id,
+        place,
+        localSessionDirectory: sessionDirectory,
+        statusOutputPath: input.statusOutputPath,
+        extraFiles: input.agentParser?.remoteSessionFiles?.() ?? [],
+        // The transcript of a conversation whose id the spawn already has (a caller-owned id, or a resume),
+        // so the viewer, the search index and the token ledger have it on this computer.
+        transcriptFiles: input.agentSessionId ? transcripts?.files(input.agentSessionId) ?? [] : [],
+        agentSessionId: input.agentSessionId ?? null,
+        ...(transcripts ? { transcripts } : {}),
+        // Only a resume: finding the earlier folder reads every session record of the project.
+        resumeSeed: input.resuming && input.agentSessionId && input.cliTarget
+          ? input.agentParser?.remoteResumeSeed?.({ agentSessionId: input.agentSessionId, cliTarget: input.cliTarget, sessionDirectory }) ?? null
+          : null,
+      });
+    } catch (error) {
+      registrationError = error instanceof Error ? error : new Error(String(error));
+      releaseRemote();
+    }
+    if (!registrationError && context.isSpawnCancelled?.(id)) {
+      releaseRemote();
+      abandonCancelledSpawn(id, null, context);
+    }
+  }
+
   // What the shell gets typed. A launcher file that line sources has to exist
   // before it is typed, so it is written here; a short command never waits. One
   // that cannot be written falls back to typing the whole command, which still
-  // works once the shell has reached its prompt.
-  const launchInput = input.command ? typedLaunchInput(input, input.command, shell) : null;
+  // works once the shell has reached its prompt. A session on a host types its
+  // own line (`remotePlan.typedLine`): the launcher is a file on this computer,
+  // and the host's login shell cannot source it.
+  const launchInput = input.command && !remotePlan ? typedLaunchInput(input, input.command, shell) : null;
   let typedLaunch = launchInput ? buildTypedLaunch(launchInput) : null;
   if (launchInput && typedLaunch?.launcher) {
     const written = await writeLauncher(typedLaunch.launcher, id);
@@ -462,7 +546,7 @@ export async function performSpawn(
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
-  const spawnOutcome = await context.host.spawn({
+  const spawnOutcome = registrationError ? { ok: false as const, error: registrationError, previousScrollback: '' } : await context.host.spawn({
     sessionId: id,
     projectId: carryoverSource?.projectId || input.projectId,
     agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
@@ -477,17 +561,25 @@ export async function performSpawn(
     agentSessionIdKnown: !!input.agentSessionId,
     exitSequence: input.exitSequence ?? ['\x03'],
     taskId: input.taskId,
+    ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
   });
+
+  // A remote session whose PTY did not start has no use for the host's watcher.
+  if (!spawnOutcome.ok) releaseRemote();
 
   // Torn down during the host round trip. Ahead of every outcome branch: a
   // failed spawn's placeholder would bring back a row a remove() announced gone.
-  if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
+  if (context.isSpawnCancelled?.(id)) {
+    releaseRemote();
+    abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
+  }
 
   // The quit can begin during the host round trip. killAll found no row for
   // this session, so nothing else would stop the PTY the host just started,
   // and the host's own shutdown kills no session PTY. Started milliseconds
   // ago, the agent has not reached its boot canary, so no grace is owed.
   if (spawnOutcome.ok && isShuttingDown()) {
+    releaseRemote();
     safeKillPty(spawnOutcome.pty);
     throw new Error('Cannot spawn session during shutdown');
   }
@@ -564,7 +656,12 @@ export async function performSpawn(
     // Asked for this platform's own console only: a WSL shell's close (ConPTY
     // closing wsl.exe, then a hangup in the distro) is not measured, so an
     // agent there is typed into as before.
-    consoleCloseIsGraceful: !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    // A session on a host is asked about THAT platform: Claude's hangup is measured on Linux, and
+    // this computer's console close (Windows) says nothing of a process on the host.
+    consoleCloseIsGraceful: remotePlan
+      ? remotePlan.consoleCloseIsGraceful
+      : !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
     reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
     reportsAgentStart: input.agentParser?.reportsAgentStart === true,
     agentParser: input.agentParser,
@@ -644,14 +741,19 @@ export async function performSpawn(
   // session ID is caller-owned (already set at spawn time) - the
   // 30s "not captured" warning would be a false positive since we
   // never expected the agent to report it.
-  context.sessionIdManager.init(
-    id,
-    input.agentParser,
-    effectiveCwd,
-    session.agentName ?? 'agent',
-    !!input.agentSessionId,
-    input.cliTarget ?? null,
-  );
+  // Not for a remote session: its filesystem pathway looks for the agent's transcript folder on THIS
+  // computer, where the host's does not exist. The hook and output pathways need no init, and a
+  // caller-owned id (Claude's `--session-id`) is already known.
+  if (!remotePlan) {
+    context.sessionIdManager.init(
+      id,
+      input.agentParser,
+      effectiveCwd,
+      session.agentName ?? 'agent',
+      !!input.agentSessionId,
+      input.cliTarget ?? null,
+    );
+  }
 
   // Caller-owned session ID short-circuit: when the adapter declares
   // `supportsCallerSessionId = true` the spawn pipeline pre-generates
@@ -676,7 +778,9 @@ export async function performSpawn(
   // so a previous run's status cannot have flowed. For Claude this is the sole
   // trigger that starts the transcript fallback for a background session.
   const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
-  if (input.agentSessionId && callerOwnedSessionHistory) {
+  // Not for a remote session: the copy of its transcript here backfills on a resume, and the reader
+  // would count that backfill as fresh usage. The live figures come from the status line the hooks carry.
+  if (input.agentSessionId && callerOwnedSessionHistory && !remotePlan) {
     context.sessionHistoryReader.attach({
       sessionId: id,
       agentSessionId: input.agentSessionId,
@@ -772,6 +876,8 @@ export async function performSpawn(
     // Catches the common race where the agent writes ToolEnd just before
     // the PTY exits, but fs.watch hasn't fired the callback yet.
     context.statusFileReader.flushPendingEvents(id);
+    // The host sent the session's last hook files ahead of this exit; its watcher is done.
+    releaseRemote();
 
     // Release this session's hold on what its adapter wrote, so hooks don't
     // accumulate across sessions. Keyed by this session's id: a late exit of a
@@ -868,19 +974,21 @@ export async function performSpawn(
       traceTerminal(id, 'deferred-write-failed', { bytes: text.length, message: String(error) });
     }
   };
-  if (typedLaunch || cwdFixupCommand) {
+  // A session on a host types the line the remote plan quoted for the host's shell.
+  const typedLineToWrite = remotePlan && input.command ? remotePlan.typedLine(input.command) : typedLaunch?.typedLine ?? null;
+  if (typedLineToWrite !== null || cwdFixupCommand) {
     setTimeout(() => {
       if (cwdFixupCommand) {
         writeIfStillOwned(cwdFixupCommand + '\r');
       }
-      if (typedLaunch) {
+      if (typedLineToWrite !== null) {
         // Every command typed here launches an agent: a task's, a Command
         // Terminal's (which ends with its agent, so no usable shell is left)
         // or a workflow's. Each gets the shell's own clear prefixed onto the
         // typed line, so the shell erases its startup preamble and command
         // echo at execution time - see buildSpawnClearPrelude for why this
         // beats every marker heuristic.
-        const cmd = typedLaunch.typedLine;
+        const cmd = typedLineToWrite;
         if (cwdFixupCommand) {
           setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {

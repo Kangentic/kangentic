@@ -48,6 +48,8 @@ function flushAsync(): Promise<void> {
 function makeStubManager(options: {
   agentName: string | undefined;
   transcriptPath?: string | null;
+  /** A session on a host whose last export is still on its way. */
+  settled?: Promise<void>;
 }): SessionManager {
   return {
     getSessionAgentName: vi.fn((_sessionId: string) => options.agentName),
@@ -57,6 +59,7 @@ function makeStubManager(options: {
         : { 'session-1': { transcriptPath: '/path/to/transcript.jsonl' } },
     ),
     getSession: vi.fn(() => ({ startedAt: RUN_STARTED_AT })),
+    remoteTranscriptSettled: vi.fn(() => options.settled ?? null),
   } as unknown as SessionManager;
 }
 
@@ -104,6 +107,25 @@ describe('refineTranscriptToolCounts orchestration', () => {
     const [calledId, calledCounts] = updateTranscriptToolCountsCalls[0];
     expect(calledId).toBe('record-1');
     expect(calledCounts).toEqual(resolvedCounts);
+  });
+
+  it('waits for a session on a host to have its last export here, or the counts total the one before it', async () => {
+    const resolvedCounts: TranscriptToolCounts = { toolCallCount: 2, toolBreakdown: [] };
+    const transcriptToolCounts = vi.fn().mockResolvedValue(resolvedCounts);
+    vi.spyOn(agentRegistry, 'get').mockReturnValue({ transcriptToolCounts } as unknown as AgentAdapter);
+    let settle = (): void => undefined;
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const { repo, updateTranscriptToolCountsCalls } = makeStubRepo();
+
+    refineTranscriptToolCounts(makeStubManager({ agentName: 'stub-agent', settled }), repo, 'session-1', 'record-1');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(transcriptToolCounts).not.toHaveBeenCalled();
+
+    settle();
+    await flushAsync();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(updateTranscriptToolCountsCalls).toEqual([['record-1', resolvedCounts]]);
   });
 
   it('scopes the transcript read to this run, which is all the record covers', async () => {

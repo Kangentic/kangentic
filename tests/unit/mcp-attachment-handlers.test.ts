@@ -219,7 +219,7 @@ describe('handleUpdateTask - attachments (append to an existing task)', () => {
 
     expect(result).toEqual({
       success: false,
-      error: 'Failed to attach any of the 1 requested file(s); no other fields were updated.',
+      error: 'Failed to attach any of the 1 requested file(s); no other fields were updated. One file was not attached. C:/mock/missing.png: ENOENT',
     });
     expect(mockAttachmentRepoAdd).not.toHaveBeenCalled();
     expect(mockTaskRepoUpdate).not.toHaveBeenCalled();

@@ -122,6 +122,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {自動} other {手動}}、このタスクで設定されています（{boardName} の {columnName} 列は{columnValue, select, automatic {自動} other {手動}}）。"
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "タスクは自分自身を待機できません。"
@@ -463,20 +467,24 @@ msgid "Give up after"
 msgstr "中止までの時間"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "このプロジェクト内で実行中の次のエージェントまたはコマンド ターミナルのターミナルに移動します。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "実行中の次のエージェントまたはコマンド ターミナルのターミナルに移動します。別のプロジェクトにある場合はプロジェクトを切り替えます。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal in this project."
-msgstr ""
+msgstr "このプロジェクト内で実行中の前のエージェントまたはコマンド ターミナルのターミナルに移動します。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
-msgstr ""
+msgstr "実行中の前のエージェントまたはコマンド ターミナルのターミナルに移動します。別のプロジェクトにある場合はプロジェクトを切り替えます。"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -691,16 +699,19 @@ msgid "Next column is the first choice: the next column on the task's route, or 
 msgstr "最初の選択肢は「次の列」で、タスクのルート上 (またはボード上) の次の列です。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next project"
-msgstr ""
+msgstr "次のプロジェクト"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in any project"
-msgstr ""
+msgstr "任意のプロジェクトの次のターミナル"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next terminal in this project"
-msgstr ""
+msgstr "このプロジェクトの次のターミナル"
 
 #: src/shared/automation-describe.ts
 #, fuzzy
@@ -748,12 +759,14 @@ msgid "Notifies \"{title}\""
 msgstr "「{title}」を通知"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone."
-msgstr ""
+msgstr "デスクトップとスマートフォンに通知します。"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notifies you on the desktop and your phone. Opening it opens the task."
-msgstr ""
+msgstr "デスクトップとスマートフォンに通知します。通知を開くとタスクが開きます。"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -867,12 +880,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "ボードで新規タスクダイアログを開きます。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the next project in sidebar order."
-msgstr ""
+msgstr "サイドバーの順序で次のプロジェクトを開きます。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the previous project in sidebar order."
-msgstr ""
+msgstr "サイドバーの順序で前のプロジェクトを開きます。"
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -949,16 +964,19 @@ msgid "Previous column"
 msgstr "前の列"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous project"
-msgstr ""
+msgstr "前のプロジェクト"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in any project"
-msgstr ""
+msgstr "任意のプロジェクトの前のターミナル"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous terminal in this project"
-msgstr ""
+msgstr "このプロジェクトの前のターミナル"
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1149,8 +1167,9 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "タスク詳細ダイアログ内の説明パネルを表示または非表示にします。"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the focused Command Terminal's browser pane."
-msgstr ""
+msgstr "フォーカス中のコマンド ターミナルのブラウザー ペインを表示または非表示にします。"
 
 #: src/shared/keybindings.ts
 #, fuzzy
@@ -1395,8 +1414,9 @@ msgid "Toggle Command Terminal"
 msgstr "コマンド ターミナルの切り替え"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal Browser pane"
-msgstr ""
+msgstr "コマンド ターミナルのブラウザー ペインの切り替え"
 
 #: src/shared/keybindings.ts
 #, fuzzy

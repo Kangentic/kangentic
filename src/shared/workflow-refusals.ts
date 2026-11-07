@@ -66,6 +66,9 @@ export const WORKFLOW_REFUSAL_MESSAGES = {
    */
   pausedForAgents: (label: string, workflowTitle: string) =>
     withValues(msg({ message: '{label} is in {workflowTitle}, which is paused. Resume it to move its tasks.' }), { label, workflowTitle }),
+  /** Resuming a workflow with tasks on a project whose SSH host was removed. */
+  hiddenBoard: (workflowTitle: string, boards: string) =>
+    withValues(msg({ message: "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it." }), { workflowTitle, boards }),
   /**
    * Pausing a workflow task's own automations. An agent reaches for this switch
    * to make a task wait, so the sentence says what to use instead.

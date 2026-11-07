@@ -21,7 +21,7 @@ import { WORKFLOW_REFUSALS, WORKFLOW_REFUSAL_MESSAGES, workflowTaskLabel } from 
 import { englishI18n } from '../../src/shared/i18n/english';
 import { translateText } from '../../src/renderer/i18n/translate';
 
-/** The 22 keys of the pre-change `WORKFLOW_REFUSALS` object, in its order. */
+/** The keys of the `WORKFLOW_REFUSALS` object, in its order. */
 const PRE_CHANGE_KEYS = [
   'cannotWait',
   'noBlockerCandidates',
@@ -42,6 +42,7 @@ const PRE_CHANGE_KEYS = [
   'locked',
   'toDoNeedsRemove',
   'pausedForAgents',
+  'hiddenBoard',
   'noTaskHold',
   'removeFirst',
   'notFound',
@@ -93,6 +94,11 @@ const ROWS: RefusalRow[] = [
     key: 'pausedForAgents',
     args: ['#414', 'Usage budgets'],
     expected: '#414 is in Usage budgets, which is paused. Resume it to move its tasks.',
+  },
+  {
+    key: 'hiddenBoard',
+    args: ['Usage budgets', 'kangentic-api'],
+    expected: 'Usage budgets has tasks on kangentic-api, whose SSH host was removed. Add the host again to resume it.',
   },
   {
     key: 'noTaskHold',

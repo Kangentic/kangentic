@@ -9,6 +9,7 @@ import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
 import { useMobileStore } from './stores/mobile-store';
+import { useSshStore } from './stores/ssh-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useWorkflowStore } from './stores/workflow-store';
@@ -1498,6 +1499,8 @@ if (import.meta.hot) {
     useWorkflowStore.getState().loadHomeSummaries(Object.keys(useWorkflowStore.getState().homeSummaries));
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
+    useSshStore.getState().loadHosts();
+    useSshStore.getState().loadClient();
     // Usage dashboard Pattern B: refetch the composite payload from
     // main-process truth (no-ops while the dashboard is closed).
     useUsageDashboardStore.getState().loadDashboardStats();

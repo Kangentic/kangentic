@@ -55,6 +55,13 @@ describe('needsIndex (pure decision table)', () => {
     expect(needsIndex(state, sig({ mtimeMs: 9999, size: 1 }))).toBe(false);
   });
 
+  it("indexes a host's export once it lands, after a pass that found no copy yet", () => {
+    const beforeTheCopy = makeState({ status: 'missing-source', sourcePath: '/mirror/abc.json', sourceMtimeMs: null, sourceSize: null });
+
+    expect(needsIndex(beforeTheCopy, sig({ path: '/mirror/abc.json', mtimeMs: null, size: null }))).toBe(false);
+    expect(needsIndex(beforeTheCopy, sig({ path: '/mirror/abc.json', mtimeMs: 2000, size: 900 }))).toBe(true);
+  });
+
   it("returns false for an 'ok' state whose signature is unchanged", () => {
     expect(needsIndex(makeState({ status: 'ok' }), sig())).toBe(false);
   });

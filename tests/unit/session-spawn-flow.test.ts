@@ -131,6 +131,7 @@ import { removeAdapterHooks } from '../../src/main/pty/lifecycle/adapter-lifecyc
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
 
 // ---- Helpers ----
 
@@ -222,6 +223,11 @@ function makeContext(): SpawnFlowContext {
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
     emit: vi.fn(),
+    // What a session on a remote host needs around its PTY (#913); a local spawn never calls it.
+    remoteSessions: {
+      register: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn().mockResolvedValue(undefined),
+    },
   } as unknown as SpawnFlowContext;
   hostTransports.set(context, transport);
   return context;
@@ -2407,5 +2413,311 @@ describe('performSpawn - the status and events files are emptied before the agen
 
     expect(context.host.spawn).not.toHaveBeenCalled();
     expect(context.registry.get(makeInput().id!)).toBeUndefined();
+  });
+});
+
+describe('performSpawn - a session on a remote host (#913)', () => {
+  // Every local-only decision in the flow (shell, cwd check, environment, platform) describes THIS
+  // computer. None may reach a host: the helper layers a spawn's variables over the host's own, so
+  // a sent PATH or HOME would replace the host's, and a cwd tested against this disk would be
+  // replaced with a local home folder. The quoting itself is pinned in remote-spawn.test.ts.
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+  const hostPath = '/home/dev/projects/api';
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Built with `path`, not a Windows literal: the flow takes `path.dirname` of these, and a drive path
+  // is one relative file name on Linux.
+  const shellFolder = path.join(os.tmpdir(), 'dev', 'remote-projects', 'p1');
+  const sessionFolder = path.join(shellFolder, '.kangentic', 'sessions', 's');
+  const sshTarget = toStoredCliTarget({
+    kind: 'ssh',
+    hostId: 'host-a',
+    home: '/home/dev',
+    shellName: 'fish',
+    localHome: path.join(os.tmpdir(), 'dev', 'remote-homes', 'host-a'),
+    roots: [{ local: shellFolder, host: hostPath }],
+  });
+
+  function remoteInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInput {
+    return makeInput({
+      cwd: shellFolder,
+      env: { CLAUDE_CODE_NO_FLICKER: '1' },
+      statusOutputPath: path.join(sessionFolder, 'status.json'),
+      eventsOutputPath: path.join(sessionFolder, 'events.jsonl'),
+      cliTarget: sshTarget,
+      remote: { hostId: 'host-a', cwd: hostPath, shellName: 'fish' },
+      ...overrides,
+    });
+  }
+
+  describe('the host\'s session folder', () => {
+    it('is registered with the relay BEFORE the host starts the PTY, so the first hook has somewhere to publish', async () => {
+      const context = makeContext();
+      const order: string[] = [];
+      vi.mocked(context.remoteSessions!.register).mockImplementation(async () => { order.push('register'); });
+      vi.mocked(context.host.spawn).mockImplementation((params) => {
+        order.push('spawn');
+        return PtyHostClient.prototype.spawn.call(context.host, params);
+      });
+
+      await performSpawn(remoteInput(), context);
+
+      expect(order).toEqual(['register', 'spawn']);
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
+        hostId: 'host-a',
+        sessionId: makeInput().id,
+        localSessionDirectory: sessionFolder,
+        statusOutputPath: path.join(sessionFolder, 'status.json'),
+        place: expect.objectContaining({ kind: 'ssh', hostId: 'host-a' }),
+      }));
+    });
+
+    it('asks the parser which transcript files to copy from the host, for a conversation whose id the spawn has', async () => {
+      const context = makeContext();
+      const remoteTranscriptFiles = vi.fn(() => ['/mirror/.claude/projects/-home-dev-projects-api/abc.jsonl']);
+      const agentParser = { remoteTranscriptFiles } as unknown as SpawnSessionInput['agentParser'];
+
+      await performSpawn(remoteInput({ agentParser, agentSessionId: 'abc' }), context);
+
+      expect(remoteTranscriptFiles).toHaveBeenCalledWith({ agentSessionId: 'abc', cwd: shellFolder, cliTarget: sshTarget, sessionDirectory: sessionFolder });
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
+        transcriptFiles: ['/mirror/.claude/projects/-home-dev-projects-api/abc.jsonl'],
+      }));
+    });
+
+    it('asks the parser what a resume needs copied on the host, and hands it to the relay before the PTY starts', async () => {
+      const context = makeContext();
+      const seed = { source: path.join(shellFolder, 'old'), target: path.join(shellFolder, 'new') };
+      const remoteResumeSeed = vi.fn(() => seed);
+
+      await performSpawn(remoteInput({ agentParser: { remoteResumeSeed } as unknown as SpawnSessionInput['agentParser'], agentSessionId: 'abc', resuming: true }), context);
+
+      expect(remoteResumeSeed).toHaveBeenCalledWith({ agentSessionId: 'abc', cliTarget: sshTarget, sessionDirectory: sessionFolder });
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({ resumeSeed: seed }));
+    });
+
+    it('asks nothing of a fresh spawn, whose id is its own: the answer reads every session record of the project', async () => {
+      const context = makeContext();
+      const remoteResumeSeed = vi.fn(() => null);
+
+      await performSpawn(remoteInput({ agentParser: { remoteResumeSeed } as unknown as SpawnSessionInput['agentParser'], agentSessionId: 'abc' }), context);
+
+      expect(remoteResumeSeed).not.toHaveBeenCalled();
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({ resumeSeed: null }));
+    });
+
+    it('copies no transcript when the spawn has no conversation id yet, or the agent declares none', async () => {
+      const context = makeContext();
+      const remoteTranscriptFiles = vi.fn(() => ['/mirror/x.jsonl']);
+
+      await performSpawn(remoteInput({ agentParser: { remoteTranscriptFiles } as unknown as SpawnSessionInput['agentParser'] }), context);
+      await performSpawn(remoteInput({ id: 'second-session-id-0000-000000000000', agentSessionId: 'abc' }), context);
+
+      expect(remoteTranscriptFiles).not.toHaveBeenCalled();
+      for (const call of vi.mocked(context.remoteSessions!.register).mock.calls) {
+        expect(call[0].transcriptFiles).toEqual([]);
+      }
+    });
+
+    it('starts no PTY, and fails the spawn with the host\'s words, when the host could not be reached', async () => {
+      // A failed spawn, not a throw: a throw left a promoted queue row `queued` for good, while the
+      // failure path ends it as an exited placeholder the board can show.
+      const context = makeContext();
+      vi.mocked(context.remoteSessions!.register).mockRejectedValue(new Error('Connection refused'));
+      vi.mocked(handleSpawnFailure).mockClear();
+
+      await performSpawn(remoteInput(), context);
+
+      expect(context.host.spawn).not.toHaveBeenCalled();
+      expect(handleSpawnFailure).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(handleSpawnFailure).mock.calls[0][0].message).toBe('Connection refused');
+      expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('is released once when a quit begins while the host starts the PTY', async () => {
+      const context = makeContext();
+      const spawnThroughHost = PtyHostClient.prototype.spawn.bind(context.host);
+      vi.mocked(context.host.spawn).mockImplementationOnce(async (params) => {
+        const outcome = await spawnThroughHost(params);
+        shutdownState.shuttingDown = true;
+        return outcome;
+      });
+
+      try {
+        await expect(performSpawn(remoteInput(), context)).rejects.toThrow('Cannot spawn session during shutdown');
+      } finally {
+        shutdownState.shuttingDown = false;
+      }
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
+    });
+
+    it('is released when the PTY did not start', async () => {
+      const context = makeContext();
+      vi.mocked(context.host.spawn).mockResolvedValue({ ok: false, error: new Error('no shell'), previousScrollback: '' });
+
+      await performSpawn(remoteInput(), context);
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
+    });
+
+    it('is released when the PTY exits, after the last events were flushed', async () => {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+      expect(context.remoteSessions!.release).not.toHaveBeenCalled();
+
+      ptyExitHarness.onExitCallback?.({ exitCode: 0 });
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
+    });
+
+    it('is refused when the context has no relay or the session has no ssh target, rather than starting an agent with no hooks', async () => {
+      const withoutRelay = makeContext();
+      withoutRelay.remoteSessions = undefined;
+      await expect(performSpawn(remoteInput(), withoutRelay)).rejects.toThrow('host connection');
+
+      await expect(performSpawn(remoteInput({ cliTarget: null }), makeContext())).rejects.toThrow('host connection');
+      await expect(performSpawn(remoteInput({ statusOutputPath: undefined }), makeContext())).rejects.toThrow('host connection');
+    });
+
+    it('is never touched by a session on this computer', async () => {
+      const context = makeContext();
+      await performSpawn(makeInput(), context);
+      ptyExitHarness.onExitCallback?.({ exitCode: 0 });
+
+      expect(context.remoteSessions!.register).not.toHaveBeenCalled();
+      expect(context.remoteSessions!.release).not.toHaveBeenCalled();
+    });
+  });
+
+  it('asks the host for its own login shell and names the host', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    const params = lastSpawnParams(context);
+    expect(params.file).toBe('$LOGIN_SHELL');
+    expect(params.args).toEqual([]);
+    expect(params.hostId).toBe('host-a');
+  });
+
+  it('starts the PTY in the host path verbatim and never tests it against this disk', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    expect(lastSpawnParams(context).cwd).toBe(hostPath);
+    expect(resolveSpawnCwd).not.toHaveBeenCalled();
+  });
+
+  it('sends the adapter\'s variables, the task tag and a TERM, and nothing of main\'s environment', async () => {
+    vi.stubEnv('PATH', 'C:\\Windows\\System32');
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\dev');
+    vi.stubEnv('SystemRoot', 'C:\\Windows');
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+
+      const env = lastSpawnParams(context).env;
+      // The hook folder on the host (the relay registers the same one) is the one variable that names a path.
+      expect(env).toEqual({
+        CLAUDE_CODE_NO_FLICKER: '1',
+        KANGENTIC_TASK_ID: 'task-001',
+        KANGENTIC_WSL_HOOK_DIR: '/home/dev/projects/api/.kangentic/sessions/s/wsl-hooks',
+        TERM: 'xterm-256color',
+      });
+      expect(Object.keys(env)).not.toContain('PATH');
+      expect(Object.keys(env)).not.toContain('USERPROFILE');
+      expect(Object.keys(env)).not.toContain('SystemRoot');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not export the events path: it is a file on this computer, and the host publishes into its own inbox', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    expect(Object.keys(lastSpawnParams(context).env)).not.toContain('KANGENTIC_EVENTS_PATH');
+  });
+
+  it('lists nothing in WSLENV, even from a Windows client', async () => {
+    vi.stubEnv('WSLENV', 'USERPROFILE/p');
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+
+      expect(Object.keys(lastSpawnParams(context).env)).not.toContain('WSLENV');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('asks whether closing the console is graceful for the HOST\'s platform, not this computer\'s', async () => {
+    const consoleCloseIsGraceful = vi.fn((platform: NodeJS.Platform) => platform === 'linux');
+    const agentParser = { consoleCloseIsGraceful } as unknown as AgentParser;
+    const context = makeContext();
+    await performSpawn(remoteInput({ agentParser }), context);
+
+    expect(consoleCloseIsGraceful).toHaveBeenCalledWith('linux');
+    expect(consoleCloseIsGraceful).not.toHaveBeenCalledWith(process.platform === 'linux' ? 'win32' : process.platform);
+    expect(context.registry.get(makeInput().id!)?.consoleCloseIsGraceful).toBe(true);
+  });
+
+  it('is not graceful when only this computer\'s console close is the agent\'s exit', async () => {
+    const agentParser = { consoleCloseIsGraceful: (platform: NodeJS.Platform) => platform === 'win32' } as unknown as AgentParser;
+    const context = makeContext();
+    await performSpawn(remoteInput({ agentParser }), context);
+
+    expect(context.registry.get(makeInput().id!)?.consoleCloseIsGraceful).toBe(false);
+  });
+
+  it('records the host on the row and hands back a handle with no pid on this machine', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    const row = context.registry.get(makeInput().id!);
+    expect(row?.hostId).toBe('host-a');
+    expect(row?.pty?.pid).toBeNull();
+    expect(row?.shell).toBe('fish');
+  });
+
+  it('keeps a local session\'s row free of a host and its handle on a real pid', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput(), context);
+
+    const row = context.registry.get(makeInput().id!);
+    expect(row?.hostId).toBeUndefined();
+    expect(row?.pty?.pid).toBe(999);
+    expect(lastSpawnParams(context).hostId).toBeUndefined();
+  });
+
+  it('turns off the readers that look for the agent\'s transcript on this computer', async () => {
+    const context = makeContext();
+    const agentParser = makeAdapter({ withSessionHistory: true });
+    await performSpawn(remoteInput({ agentParser, agentSessionId: 'agent-session-1' }), context);
+
+    expect(context.sessionIdManager.init).not.toHaveBeenCalled();
+    expect(context.sessionHistoryReader.attach).not.toHaveBeenCalled();
+    // The status and events files are this computer's mirror of the host's hooks, so they stay watched.
+    expect(context.statusFileReader.attach).toHaveBeenCalledOnce();
+  });
+
+  it('types the command through the host\'s quoting, for Linux and the host\'s shell', async () => {
+    vi.useFakeTimers();
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput({ command: 'claude --resume abc' }), context);
+      // The line is written on a short timer after the spawn.
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(adaptCommandForShell).toHaveBeenCalledWith('claude --resume abc', 'fish', 'linux');
+      expect(buildSpawnClearPrelude).toHaveBeenCalledWith('fish');
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(ptySpawnMock).toHaveBeenCalledOnce();
   });
 });

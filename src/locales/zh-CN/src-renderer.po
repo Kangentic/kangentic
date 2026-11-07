@@ -132,20 +132,24 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "「{taskTitle}」：「{automationName}」在 {columnName} 运行失败。"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": {detail}"
-msgstr ""
+msgstr "“{taskTitle}”：{detail}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": exited with code {exitCode}."
-msgstr ""
+msgstr "“{taskTitle}”：已退出，退出代码为 {exitCode}。"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{minutes, plural, other {“{taskTitle}”：# 分钟后超时。}}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
-msgstr ""
+msgstr "{seconds, plural, other {“{taskTitle}”：# 秒后超时。}}"
 
 #: src/renderer/utils/worktree-placement.tsx
 msgid "{basePill} will be checked out in the project folder"
@@ -1049,8 +1053,9 @@ msgid "Other work uses it too. Stopping it can break that work."
 msgstr "其他工作也在使用它。停止它可能中断那些工作。"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Part of it runs outside this task's folders. Stopping it stops that too."
-msgstr ""
+msgstr "它有一部分在此任务的文件夹之外运行。停止它也会停止这部分。"
 
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Paste or drop files here"
@@ -1288,8 +1293,9 @@ msgid "Still running: {tasks}."
 msgstr "仍在运行：{tasks}。"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Stop script failed"
-msgstr ""
+msgstr "停止脚本运行失败"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 msgid "Task completed"

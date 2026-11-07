@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { hostPathForTarget, hostPathToMirror, type CliPlace } from '../../shared/cli-target';
 import { parseJsonlRecords } from '../../shared/history-scan';
 import { cachedFileReader } from './cached-file';
 import { kimiCodeHome, kimiSessionIndexPath, kimiWorkDirCompareKey } from './kimi-home';
@@ -11,8 +11,13 @@ import { kimiCodeHome, kimiSessionIndexPath, kimiWorkDirCompareKey } from './kim
  * 2026-11-03): "a top-level `session_index.jsonl` index is maintained (one
  * record per line, each containing `sessionId`, `sessionDir`, and
  * `workDir`)". A deleted session appends `{sessionId, deleted: true}`
- * (`packages/agent-core-v2` session index). Built from the docs and source,
- * not yet checked against a real install.
+ * (`packages/agent-core-v2` session index).
+ *
+ * Checked against a real 2.5.1 on Linux (2026-11-05,
+ * `docs/audits/ssh-transcript-exports-audit.md`): `sessionDir` is absolute, the
+ * line is written by the session's first message and not before, and a resume
+ * adds no line. Relative folders are still read, because the docs do not rule
+ * them out. The `deleted` line was not exercised.
  */
 export interface KimiSessionIndexEntry {
   sessionId: string;
@@ -92,12 +97,29 @@ export function kimiSessionsForWorkDir(
 }
 
 /**
- * A folder from the index as a path on this machine. The docs do not say
- * whether `sessionDir` is absolute, so a relative one is read against the data
- * root it sits in.
+ * A folder from the index as a path on this machine. A real 2.5.1 writes it
+ * absolute. The docs do not promise that, so a relative one is read against the
+ * data root it sits in.
  */
 function hostSessionDir(sessionDir: string, place: CliPlace | null): string {
   const absolute = sessionDir.startsWith('/') || /^[A-Za-z]:[\\/]/.test(sessionDir) || sessionDir.startsWith('\\\\');
   if (!absolute) return path.join(kimiCodeHome(place), sessionDir);
+  // Under a host's home it is always the mirror's: a project at the home itself would otherwise claim it.
+  if (place?.kind === 'ssh') return hostPathToMirror(sessionDir, place) ?? sessionDir;
   return place ? hostPathForTarget(sessionDir, place) : path.normalize(sessionDir);
+}
+
+/**
+ * The ids of the live sessions that lines of the index name in one folder on a
+ * host. For the lines a session on a host added since it started, which is how a
+ * fresh session's id is learned: the CLI prints it only at exit.
+ */
+export function kimiSessionIdsInFolder(text: string, folder: string): string[] {
+  const key = kimiWorkDirCompareKey(folder);
+  const ids = new Set<string>();
+  for (const entry of parseKimiSessionIndex(text)) {
+    if (entry.deleted) ids.delete(entry.sessionId);
+    else if (entry.workDir && kimiWorkDirCompareKey(entry.workDir) === key) ids.add(entry.sessionId);
+  }
+  return [...ids];
 }

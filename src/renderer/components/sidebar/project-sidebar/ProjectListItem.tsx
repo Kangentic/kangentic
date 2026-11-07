@@ -6,6 +6,7 @@ import { MoreHorizontal } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { SidebarActivityCounts } from './SidebarActivityCounts';
 import { SidebarCommandTerminalIndicator } from './SidebarCommandTerminalIndicator';
+import { HostChip } from './HostChip';
 import { Tooltip } from '../../Tooltip';
 import { useSessionStore } from '../../../stores/session-store';
 import { selectCommandTerminalSummary } from '../../../stores/session-store/transient-session-slice';
@@ -147,7 +148,10 @@ function ProjectListItemImpl({
         ) : (
           /* select-none sits on the name span rather than on the clickable row, so it never
              reaches the rename input the row swaps in above. Same placement as GroupHeader. */
-          <span className="truncate font-medium flex-1 min-w-0 select-none">{project.name}</span>
+          <span className="flex flex-1 min-w-0 items-center gap-1.5">
+            <span className="truncate font-medium min-w-0 select-none">{project.name}</span>
+            {project.remote ? <HostChip hostId={project.remote.hostId} /> : null}
+          </span>
         )}
         <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
         {/* Stays in the right-aligned cluster rather than riding the project name.

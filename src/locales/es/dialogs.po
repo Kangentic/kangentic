@@ -47,6 +47,12 @@ msgstr "«{taskTitle}» está en el tablero."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} con error)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} no existe en {1}."
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -313,6 +319,10 @@ msgstr "{fileCount, plural, one {{viewedCount} de # archivo marcado como visto} 
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {{viewedCount} de # archivo visto} many {{viewedCount} de # de archivos vistos} other {{viewedCount} de # archivos vistos}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -343,6 +353,17 @@ msgstr "Agregar automatización"
 #, fuzzy
 msgid "Add column"
 msgstr "Agregar columna"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "Agregar proyecto"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project on {0}"
+msgstr "Agregar proyecto en {0}"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
@@ -595,6 +616,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Rama"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -628,6 +653,7 @@ msgstr "No se puede quitar \"{name}\""
 msgid "Can't update from {baseBranch}"
 msgstr "No se puede actualizar desde {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -668,6 +694,15 @@ msgstr "Cambios - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "Los cambios están abiertos en su propia ventana"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Choose a folder on this machine"
+msgstr "Elegir una carpeta en este equipo"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -896,6 +931,16 @@ msgstr "Condición: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "Confirmar"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Conectado"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Conectando…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1204,6 +1249,10 @@ msgstr "Diferencias"
 #, fuzzy
 msgid "Diff scope"
 msgstr "Ámbito de diferencias"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1575,6 +1624,10 @@ msgstr "Vista previa de imagen"
 msgid "Image sent at lower quality"
 msgstr "Imagen enviada con menor calidad"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -1758,6 +1811,7 @@ msgstr "Modificado"
 msgid "Move to"
 msgstr "Mover a"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1909,6 +1963,10 @@ msgstr "Sin descripción"
 #, fuzzy
 msgid "No files changed"
 msgstr "No hay archivos modificados"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
@@ -2089,6 +2147,10 @@ msgstr "De uno en uno"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Solo se detectó una CLI de agente: instale otra para poder elegir"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2220,6 +2282,10 @@ msgstr "Resumen"
 #, fuzzy
 msgid "Page kept"
 msgstr "Página conservada"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2382,6 +2448,11 @@ msgstr "Ejecutada"
 #, fuzzy
 msgid "Rebase or merge it in the session instead."
 msgstr "Haz rebase o merge en la sesión en su lugar."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Reconectando…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2892,6 +2963,11 @@ msgstr "Detener"
 msgid "Stop {label}"
 msgstr "Detener {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Detenido"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3062,6 +3138,15 @@ msgstr "Esta acción no se puede deshacer."
 msgid "This commit changed no files"
 msgstr "Este commit no modificó ningún archivo"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "This computer"
+msgstr "Este equipo"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3200,6 +3285,11 @@ msgstr "Tipo"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "Cambió menos del 0,1% de los píxeles"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "No accesible"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

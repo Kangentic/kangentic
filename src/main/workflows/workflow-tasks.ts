@@ -1,8 +1,16 @@
-import type { Task } from '../../shared/types';
+import type { Project, Task } from '../../shared/types';
 import { getExistingProjectDb } from '../db/database';
 import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
 import type { IpcContext } from '../ipc/ipc-context';
+
+/** A workflow's task on a board hidden because its SSH host was removed. */
+export interface HiddenWorkflowTask {
+  projectId: string;
+  /** The board's project name, which no other read answers for a hidden project. */
+  board: string;
+  task: Task;
+}
 
 /**
  * Every created task of a workflow, across every project, with its project id.
@@ -20,6 +28,11 @@ export function workflowTasks(context: IpcContext, homeProjectId: string, workfl
  * during the read. A task on one of those is missing from `tasks` without being
  * gone, which is what `linkEndState` needs to tell apart.
  *
+ * A board hidden because its SSH host was removed reads the same way: its tasks
+ * are left out of `tasks`, since nothing can act on them, and it counts as unread
+ * when it holds any, so nothing reads the workflow as having fewer tasks than it
+ * has. `hiddenTasks` names them, for the view's reason and a delete's release.
+ *
  * Only a SQLite failure (a locked, corrupt or half-migrated file) makes a
  * project unread. Anything else is a bug and reaches the caller. Swallowed, it
  * would read as a board holding none of the workflow's tasks and hide the bug.
@@ -28,25 +41,32 @@ export function readWorkflowTasks(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
-): { tasks: Array<{ projectId: string; task: Task }>; unreadProjectIds: Set<string> } {
-  const found: Array<{ projectId: string; task: Task }> = [];
+): { tasks: Array<{ projectId: string; task: Task }>; unreadProjectIds: Set<string>; hiddenTasks: HiddenWorkflowTask[] } {
   const unreadProjectIds = new Set<string>();
-  for (const project of context.projectRepo.list()) {
-    let tasks: Task[];
+  const tasksOn = (project: Pick<Project, 'id'>): Task[] => {
     try {
       const db = getExistingProjectDb(project.id);
-      if (!db) continue;
-      tasks = new TaskRepository(db).listByWorkflow(workflowId);
+      if (!db) return [];
+      return new TaskRepository(db).listByWorkflow(workflowId)
+        .filter((task) => (task.workflow_project_id ?? project.id) === homeProjectId);
     } catch (error) {
       if (!isSqliteError(error)) throw error;
       unreadProjectIds.add(project.id);
-      continue;
+      return [];
     }
-    for (const task of tasks) {
-      if ((task.workflow_project_id ?? project.id) === homeProjectId) found.push({ projectId: project.id, task });
-    }
-  }
-  return { tasks: found, unreadProjectIds };
+  };
+  const found = context.projectRepo.list().flatMap((project) => tasksOn(project).map((task) => ({ projectId: project.id, task })));
+  const hiddenTasks = context.projectRepo.listHidden().flatMap((project) => {
+    const tasks = tasksOn(project);
+    if (tasks.length > 0) unreadProjectIds.add(project.id);
+    return tasks.map((task) => ({ projectId: project.id, board: project.name, task }));
+  });
+  return { tasks: found, unreadProjectIds, hiddenTasks };
+}
+
+/** The names of the hidden boards among these tasks, each once. */
+export function hiddenBoardsOf(hiddenTasks: readonly HiddenWorkflowTask[]): string[] {
+  return [...new Set(hiddenTasks.map((entry) => entry.board))];
 }
 
 /**
@@ -82,7 +102,10 @@ export function linkEndState(
   if (presentTaskIds.has(end.taskId)) return 'present';
   if (unreadProjectIds.has(end.projectId)) return 'held';
   try {
-    if (!context.projectRepo.getById(end.projectId)) return 'gone';
+    if (!context.projectRepo.getById(end.projectId)) {
+      // Hidden because its host was removed is not deleted: the link keeps holding until the host is added back.
+      return context.projectRepo.isHidden(end.projectId) ? 'held' : 'gone';
+    }
     // A registered project whose file is missing is held, not read as gone: it
     // is not provably so, and `getProjectDb` would create an empty one.
     const projectDb = getExistingProjectDb(end.projectId);

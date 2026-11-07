@@ -19,7 +19,7 @@ import { isRecord, openCodeTurnUsage, parseJsonRecord, storeOf, withDatabase } f
  */
 
 /** Characters per estimated token, the rate Claude's tool-result estimate uses (`claude/tool-result-tokens.ts`). */
-const CHARS_PER_TOKEN = 4;
+export const CHARS_PER_TOKEN = 4;
 
 /**
  * One assistant message's tokens, the way Claude's transcript usage counts
@@ -27,7 +27,7 @@ const CHARS_PER_TOKEN = 4;
  * output is what came back (OpenCode keeps reasoning apart from output; both
  * are generated tokens).
  */
-function assistantUsage(tokens: unknown): TranscriptUsage | null {
+export function assistantUsage(tokens: unknown): TranscriptUsage | null {
   const usage = openCodeTurnUsage(tokens);
   if (!usage) return null;
   return {
@@ -119,7 +119,7 @@ function* v2ToolItems(database: DatabaseType.Database, sessionId: string, timeWi
 }
 
 /** The text a tool call returned: OpenCode 2's `state.content` text or `state.error.message` (OpenCode 1's is sized in SQL). */
-function toolResultText(state: unknown): string {
+export function toolResultText(state: unknown): string {
   if (!isRecord(state)) return '';
   if (typeof state.output === 'string') return state.output;
   if (Array.isArray(state.content)) {

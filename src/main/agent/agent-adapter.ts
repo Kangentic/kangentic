@@ -1,5 +1,6 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
 import type { CliPlace, CliTarget } from './shared/cli-target';
+import type { RemoteFileDeclaration } from './shared/remote-files';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type {
   AgentCallUsage,
@@ -542,6 +543,25 @@ export interface AgentAdapter {
    */
   readonly supportsWslCli?: boolean;
 
+  /**
+   * The CLI's executable name on a remote host over SSH (#913), such as `claude`, which the host's
+   * login shell resolves from its own PATH. Present only on an adapter whose builder, trust, hooks and
+   * readers take an `ssh` place (`shared/cli-target.ts`); declare it once that integration is in, as
+   * for `supportsWslCli`. A remote project that runs an agent without it fails the spawn with a
+   * sentence instead of half working. The local CLI is never detected for a remote project.
+   */
+  readonly remoteCliName?: string;
+
+  /**
+   * The files this adapter's trust, hook and MCP code reads and edits outside the session folder, so
+   * the same code works for a CLI on an SSH host (#913). Before `ensureTrust` the spawn pulls each from
+   * the host into the folder that code edits, and after `buildCommand` it pushes what changed back;
+   * the strip at the end of the session is pushed too. Declare every file the adapter writes or
+   * merges into, home-relative or project-relative (`agent/shared/remote-files.ts`). Absent for an
+   * adapter with `remoteCliName` that edits no such file. The adapter's code does not change.
+   */
+  remoteFiles?(): RemoteFileDeclaration;
+
   /** Invalidate any cached detection result (e.g. after user changes CLI path). */
   invalidateDetectionCache(): void;
 
@@ -702,7 +722,7 @@ export interface AgentAdapter {
    * startup recovery, and a Command Terminal call it when
    * `reportsLaunchSessionId` is not true.
    */
-  createSessionId?(cliPath: string, workingDirectory: string): Promise<string | null>;
+  createSessionId?(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
    * True when this launch reports its own conversation id, so a fresh start

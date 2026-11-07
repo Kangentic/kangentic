@@ -263,8 +263,9 @@ msgid "Refresh"
 msgstr "새로 고침"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Resuming terminals..."
-msgstr ""
+msgstr "터미널 재개 중..."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy

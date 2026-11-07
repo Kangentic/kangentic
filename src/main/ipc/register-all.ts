@@ -1,4 +1,6 @@
-import { type BrowserWindow, ipcMain } from 'electron';
+import { app, type BrowserWindow, ipcMain } from 'electron';
+import * as path from 'node:path';
+import { readHostAssets } from '../remote/host-assets';
 import { IPC } from '../../shared/ipc-channels';
 import type { ProjectOpenByPathOverrides, RendererErrorContext, Session } from '../../shared/types';
 import {
@@ -34,6 +36,7 @@ import {
   openProjectByPath as openProjectByPathImpl,
   activateAllProjects as activateAllProjectsImpl,
   recoverSessionsAfterPtyHostLoss,
+  recoverRemoteProjectsOnHost,
   getLastOpenedProject as getLastOpenedProjectImpl,
 } from './handlers/projects';
 import { registerTaskCrudHandlers } from './handlers/task-crud';
@@ -69,6 +72,7 @@ import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
 import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
+import { registerSshHostHandlers } from './handlers/ssh-hosts';
 import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
 import { registerMonitorHandlers } from './handlers/monitor';
@@ -104,6 +108,7 @@ import { fillEarlierRunResultTokens } from './handlers/session-metrics';
 import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
+import { createRemoteHosting } from '../remote/remote-hosting';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
 let context: IpcContext | null = null;
@@ -144,6 +149,30 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const ptyHostTransport = new UtilityPtyHostTransport({ projectsDir: PATHS.projectsDir });
   const sessionManager = new SessionManager({ ptyHostTransport });
   ptyHostTransport.start();
+  // SSH hosts (#913): the host table, the service that connects them, and the resolver both spawn
+  // chokepoints ask. The projects are read through the context, which exists by the first spawn.
+  const remoteHosting = createRemoteHosting({
+    sessionManager,
+    projects: () => requireContext().projectRepo,
+    // The host program this build carries: packaged beside the app, or built by `npm run build:host`.
+    hostAsset: () => {
+      const directory = app.isPackaged ? path.join(process.resourcesPath, 'host') : path.join(app.getAppPath(), 'dist', 'host');
+      // An entry with a download address instead of a file is fetched into configDir on first use.
+      const found = readHostAssets(directory, app.getVersion(), { cacheDirectory: path.join(PATHS.configDir, 'host-assets') });
+      if (found.problem) console.warn(`[remote] ${found.problem}`);
+      return found.assets;
+    },
+    onHostsChanged: () => {
+      const mainWindow = requireContext().mainWindow;
+      if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SSH_HOSTS_CHANGED);
+    },
+    // A project opened before its host connected kept its paused tasks resumable; resume them now.
+    onHostFirstConnected: (hostId) => {
+      void recoverRemoteProjectsOnHost(requireContext(), hostId);
+    },
+  });
+  // After startup, not before the window: a host that is down must never delay it.
+  setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => console.warn('[remote] connecting the hosts failed:', error)));
   // One-shot child processes (version probes, help-text reads, gh and git
   // checks) run in the pty host too: on Windows each spawn's CreateProcess is
   // synchronous on the calling thread.
@@ -305,6 +334,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     boardEvents,
     desktopNotifier,
     spareWorktrees: spareWorktreePool,
+    remoteHosting,
   };
 
   // The bridge needs IpcContext (SessionManager, repos, DiffService,
@@ -371,6 +401,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       const adapter = agentRegistry.get(agentName);
       if (!adapter || !canResumeConversationById(adapter)) return false;
       const place = placeOfRecord({ cli_target: cliTarget });
+      // Only the host proves a conversation gone. What this computer holds of one is a copy that is empty
+      // until it arrives, so the row stays, and a resume finds out on the host.
+      if (place?.kind === 'ssh') return true;
       // Looking in a stopped WSL distro would start it just to draw the list:
       // its row stays, and a resume finds out when it starts the distro anyway.
       if (!(await mayReadPlaceUnattended(place))) return true;
@@ -463,6 +496,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerUsageStatsHandlers(context);
   registerSystemHandlers(context);
   registerMobileBridgeHandlers(context);
+  registerSshHostHandlers(context);
   registerMonitorHandlers(context);
   registerMcpServerHandlers(context);
   registerTaskDetailOwnershipHandlers();

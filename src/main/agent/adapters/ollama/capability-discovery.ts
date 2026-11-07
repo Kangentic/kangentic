@@ -11,7 +11,7 @@
  */
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-import { execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -26,8 +26,9 @@ const HELP_TIMEOUT_MS = 5000;
  * branch joins `args` into a cmd line unquoted, so every arg must be a fixed
  * literal token with no space or shell character (`list`, `run`, `--help`).
  */
-async function readCliOutput(cliPath: string, args: string[], timeoutMs: number): Promise<string> {
-  const target = await resolveCliTarget(cliPath, true);
+async function readCliOutput(cliPath: string, args: string[], timeoutMs: number, knownTarget?: CliTarget | null): Promise<string> {
+  // A target the caller already has (a CLI on an SSH host) is asked there, through the host's helper.
+  const target = knownTarget ?? await resolveCliTarget(cliPath, true);
   if (target) {
     const { stdout } = await execCliForTarget(target, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 });
     return stdout;
@@ -120,11 +121,11 @@ export interface OllamaDiscovery {
  * `thinkLevels: null` with empty `effortLevels`, and the adapter offers the
  * levels an earlier read of that CLI reported in their place.
  */
-export async function discoverOllama(cliPath: string): Promise<OllamaDiscovery> {
+export async function discoverOllama(cliPath: string, target?: CliTarget | null): Promise<OllamaDiscovery> {
   const [models, thinkLevels] = await Promise.all([
-    readCliOutput(cliPath, ['list'], LIST_TIMEOUT_MS).then(parseOllamaModelList, () => [] as string[]),
+    readCliOutput(cliPath, ['list'], LIST_TIMEOUT_MS, target).then(parseOllamaModelList, () => [] as string[]),
     // `run --help` is answered by the CLI itself, so it works with the daemon down.
-    readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS).then(parseOllamaThinkLevels, () => null),
+    readCliOutput(cliPath, ['run', '--help'], HELP_TIMEOUT_MS, target).then(parseOllamaThinkLevels, () => null),
   ]);
   return {
     capabilities: {

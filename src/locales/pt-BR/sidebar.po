@@ -37,6 +37,11 @@ msgstr "{count, plural, one {# terminal de comando em execução (trabalhando)} 
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, one {Seu # projeto ficará sem grupo.} many {Seus # de projetos ficarão sem grupo.} other {Seus # projetos ficarão sem grupo.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "{hostName}: {stateLabel}"
+msgstr "{hostName}: {stateLabel}"
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
 msgid "{idleCount} idle"
@@ -87,6 +92,16 @@ msgstr "Tem certeza de que deseja excluir <0>\"{projectName}\"</0>?"
 #, fuzzy
 msgid "Clear search"
 msgstr "Limpar pesquisa"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Conectado"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Conectando…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -201,6 +216,11 @@ msgstr "Configurações do projeto"
 msgid "Projects"
 msgstr "Projetos"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Reconectando…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy
 msgid "Remove from group"
@@ -222,10 +242,20 @@ msgstr "Pesquisar projetos..."
 msgid "Show sidebar"
 msgstr "Mostrar barra lateral"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Parado"
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "Isso removerá o projeto do Kangentic, mas não excluirá nenhum arquivo do disco."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Inacessível"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

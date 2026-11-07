@@ -200,6 +200,10 @@ export interface ManagedSession {
    *  from `SpawnSessionInput.cliTarget`. Main-side only: its readers and its
    *  reap look here, and the renderer reads the shell. */
   cliTarget?: StoredCliTarget | null;
+  /** The remote host this session's PTY runs on (#913), from `SpawnSessionInput.remote`, or
+   *  null/absent for a PTY on this machine. The quit hands such a row to the link, and no local
+   *  process operation may be aimed at it (its handle has no pid). */
+  hostId?: string | null;
   /** The resolved permission mode the session spawned under (see
    *  `SpawnSessionInput.permissionMode`). Null for a Command Terminal and any
    *  spawn that does not pass one. */

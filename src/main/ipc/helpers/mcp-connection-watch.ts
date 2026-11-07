@@ -49,7 +49,11 @@ export class McpConnectionWatch {
     if (!this.deps.sessions.getSessionAgentName(sessionId)) return;
     const session = this.deps.sessions.getSession(sessionId);
     if (!session) return;
-    const distro = this.deps.sessions.getSessionCliTarget(sessionId)?.distro ?? null;
+    const cliTarget = this.deps.sessions.getSessionCliTarget(sessionId);
+    // A host's agent reaches the server through the stdio bridge main relays, not by dialing it, so
+    // there is no distro to check and nothing a connection test here could tell the user.
+    if (cliTarget?.kind === 'ssh') return;
+    const distro = cliTarget?.distro ?? null;
     const place = distro ? `wsl:${distro.toLowerCase()}` : 'local';
     if (this.answered.has(place) || this.checking.has(place)) return;
     this.checking.add(place);

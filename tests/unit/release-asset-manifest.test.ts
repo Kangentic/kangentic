@@ -130,16 +130,36 @@ const launcherSource = fs.readFileSync(
 );
 
 describe('release asset manifest', () => {
-  it('lists exactly 18 assets, including every updater channel file', () => {
-    // Windows 3; macOS 4 per arch plus one shared latest-mac.yml; Linux 3 per arch. The docs and
-    // the release skill hardcode this count (18 build assets, 19 with the poster zip).
+  it('lists exactly 20 assets, including every updater channel file', () => {
+    // Windows 3; macOS 4 per arch plus one shared latest-mac.yml; Linux 3 per arch; and one host
+    // program archive per CPU for SSH projects. The docs and the release skill hardcode this count
+    // (20 build assets, 21 with the poster zip).
     const assets = expectedReleaseAssets(VERSION);
-    expect(assets).toHaveLength(18);
-    expect(new Set(assets).size).toBe(18);
+    expect(assets).toHaveLength(20);
+    expect(new Set(assets).size).toBe(20);
     expect(CHANNEL_FILES).toEqual(['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']);
     for (const channelFile of CHANNEL_FILES) {
       expect(assets).toContain(channelFile);
     }
+  });
+
+  // The archives are built by scripts/build-host.mjs, named there, and checked by name in
+  // scripts/verify-host-manifest.js. A rename in any one of the three would leave the release gate
+  // waiting for a file nobody attaches, or the installer pointing at one that is not there.
+  it('expects the host archives under the names the manifest check requires', () => {
+    const { manifestProblems, HOST_ARCHES } = {
+      ...(requireFromRepo('./scripts/verify-host-manifest.js') as { manifestProblems: (manifest: unknown, expected: { version: string }) => string[] }),
+      ...(requireFromRepo('./scripts/release-assets.js') as { HOST_ARCHES: string[] }),
+    };
+    const assets = expectedReleaseAssets(VERSION);
+    const entries = HOST_ARCHES.map((arch) => {
+      const file = `kangentic-host-${VERSION}-linux-${arch}.tar.gz`;
+      expect(assets).toContain(file);
+      return { arch, file, sha256: 'b'.repeat(64), size: 1, url: `https://github.com/example/example/releases/download/v${VERSION}/${file}` };
+    });
+
+    expect(manifestProblems({ version: VERSION, node: 'v24.0.0', assets: entries }, { version: VERSION })).toEqual([]);
+    expect(fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build-host.mjs'), 'utf8')).toContain('`kangentic-host-${version}-linux-${arch}.tar.gz`');
   });
 
   it('ships both macOS arches and both Linux arches', () => {

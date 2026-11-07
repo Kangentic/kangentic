@@ -8,7 +8,9 @@ import { getProjectRepos } from './project-repos';
  * Checks that the project still exists at WRITE time: a summary batch or a
  * check the caller stopped waiting for can settle minutes after the project
  * was deleted, and opening a deleted project's database would create an empty
- * one again (the guard `retrieval-service.ts` keeps for the same reason).
+ * one again (the guard `retrieval-service.ts` keeps for the same reason). A
+ * project hidden with its removed host reads as gone here too, so a call that
+ * settles after the Remove is not recorded.
  */
 export function backgroundCallSink(context: IpcContext): BackgroundCallSink {
   return (projectId, input) => {

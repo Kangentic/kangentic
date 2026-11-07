@@ -69,10 +69,45 @@ function rowToLease(row: DevPortRow): DevPortLease {
 
 /**
  * Deliberately narrow. Every method here has a live caller; a read this table
- * could support but nothing asks for (list-everything, list-by-project) is left
- * unwritten rather than kept warm for a hypothetical Settings panel.
+ * could support but nothing asks for (list-by-project) is left unwritten rather
+ * than kept warm for a hypothetical Settings panel.
  */
 export class DevPortRepository {
+  private readonly listeners = new Set<() => void>();
+
+  /**
+   * Told when a lease is claimed or released, so what is derived from the ledger (the ports forwarded
+   * from an SSH host) follows it. Not told of a rollback. A listener must be cheap and must not throw.
+   */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * For the two removals that delete rows with their own SQL inside a larger transaction
+   * (`ProjectRepository.delete`, `SshHostRepository.delete`) and so cannot go through
+   * `releaseByTaskId`. Called after the statement, so a listener that defers sees the rows gone.
+   */
+  notifyChanged(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.warn('[dev-ports] a ledger listener threw:', error);
+      }
+    }
+  }
+
+  /** Every lease, for what must see the whole ledger at once. */
+  listAll(): DevPortLease[] {
+    return softly('listAll', [], () => {
+      const db = getGlobalDb();
+      const rows = db.prepare('SELECT * FROM dev_ports ORDER BY port ASC').all() as DevPortRow[];
+      return rows.map(rowToLease);
+    });
+  }
+
   /** Every port this task holds, lowest first. A task may hold several. */
   listForTask(taskId: string): DevPortLease[] {
     return softly('listForTask', [], () => {
@@ -108,7 +143,7 @@ export class DevPortRepository {
    * A task may hold several ports, so only the PORT is unique here.
    */
   claim(port: number, projectId: string, taskId: string): boolean {
-    return softly('claim', false, () => {
+    const claimed = softly('claim', false, () => {
       const db = getGlobalDb();
       const result = db
         .prepare(
@@ -118,6 +153,8 @@ export class DevPortRepository {
         .run(port, projectId, taskId, new Date().toISOString());
       return result.changes > 0;
     });
+    if (claimed) this.notifyChanged();
+    return claimed;
   }
 
   releaseByTaskId(taskId: string): void {
@@ -125,6 +162,7 @@ export class DevPortRepository {
       const db = getGlobalDb();
       db.prepare('DELETE FROM dev_ports WHERE task_id = ?').run(taskId);
     });
+    this.notifyChanged();
   }
 }
 

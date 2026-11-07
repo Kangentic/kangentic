@@ -263,8 +263,9 @@ msgid "Refresh"
 msgstr "Obnovit"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Resuming terminals..."
-msgstr ""
+msgstr "Obnovování terminálů..."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy

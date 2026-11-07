@@ -27,10 +27,12 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import { installsActivityPlugin, openCodeKangenticMcpEntry, openCodeModelFromCommand } from './command-builder';
+import { activityPluginRoot, installsActivityPlugin, openCodeKangenticMcpEntry, openCodeModelFromCommand } from './command-builder';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
-import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions } from './distro-sessions';
-import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
+import { captureDistroOpenCodeSessionId, distroSessionExportArgs, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions, isDistroOpenCodeV2, isSessionId } from './distro-sessions';
+import { openCodeExportFrom, openCodeExportToolCounts, openCodeExportToolResultTokens, openCodeExportUsage, readOpenCodeExportFile } from './export-reader';
+import { cliPathForTarget, execCliForTarget, hostPathForTarget, parseWslCliPath, placeFromStored, remoteExportPath, resolveCliTarget, targetOfPlace, type CliPlace, type SshCliPlace } from '../../shared/cli-target';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
@@ -57,8 +59,11 @@ import type {
   AgentCapabilities,
   AgentExecutionServer,
   AgentLiveTelemetryUnsupported,
+  RemoteProgramRunner,
   RemoteServerStatus,
+  RemoteTranscriptSnapshot,
   ResolvedExecutionTarget,
+  StoredCliTarget,
   TranscriptToolCounts,
   TranscriptUsage,
 } from '../../../../shared/types';
@@ -106,6 +111,29 @@ const LABELED_SESSION_ID_REGEX = new RegExp(
   'i',
 );
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+
+/** One host's OpenCode binary: the key its version is kept under. */
+function hostVersionKey(place: SshCliPlace): string {
+  return `${place.hostId}\u0000${place.linuxCliPath ?? 'opencode'}`;
+}
+
+/**
+ * An export as a walk reads a file: everything from `startPosition` is one window, whatever the size, in the
+ * positions `openCodeExportFrom` gives. A copy that is not here yet is an empty window with no source.
+ */
+function readExportWindow(filePath: string, startPosition: number): ParsedTranscriptWindow {
+  const all = readOpenCodeExportFile(filePath);
+  if (all.length === 0) return { entries: [], sourcePath: null, nextByteOffset: startPosition, totalBytes: 0, firstByteOffset: startPosition, endByte: startPosition };
+  const { messages, firstPosition, totalPosition } = openCodeExportFrom(all, startPosition);
+  return {
+    entries: mapOpenCodeRemoteEntries(messages),
+    sourcePath: filePath,
+    nextByteOffset: Math.max(startPosition, totalPosition),
+    totalBytes: totalPosition,
+    firstByteOffset: firstPosition,
+    endByte: totalPosition,
+  };
+}
 
 /**
  * The answer run's arguments. OpenCode 1: `--pure` keeps external plugins out
@@ -221,6 +249,8 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly defaultPermission: PermissionMode = 'acceptEdits';
   /** An OpenCode installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a remote host over SSH the CLI is `opencode` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'opencode';
   // OpenCode's TUI scans a bracketed paste for image paths and attaches a
   // match as an `[Image N]` chip, quoted or not, spaces in the path included.
   // Verified against 1.18.30 with png, jpg and gif; a bmp arrives as
@@ -264,6 +294,10 @@ export class OpenCodeAdapter implements AgentAdapter {
   // index job (`knownTargets` / `adoptTargets`).
   private readonly remoteTargetsByCwd = new Map<string, ResolvedExecutionTarget>();
 
+  // `opencode --version` on each SSH host, by host and binary, read by `ensureTrust` before a spawn.
+  // A host's CLI is never detected here, so the builders' choice of OpenCode 1 or 2 flags comes from this.
+  private readonly hostVersions = new Map<string, string>();
+
   /** Declares OpenCode's own dialect of the generic remote-execution capability. */
   readonly remoteExecution = {
     info: {
@@ -292,6 +326,20 @@ export class OpenCodeAdapter implements AgentAdapter {
     },
   };
 
+  /**
+   * What an OpenCode on a remote host has edited on the host (#913): the activity plugin, in the
+   * layout of each major (OpenCode 1 reads `.opencode/plugins/*.js`, OpenCode 2 a folder with an
+   * `index.js`). Only the one that matches the host's major is ever written, and the other is read
+   * and left as it was. MCP rides `OPENCODE_CONFIG_CONTENT` in the environment, so no config file is
+   * touched. The plugin holds no secret.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: [],
+      project: ['.opencode/plugins/kangentic-activity.js', '.opencode/plugins/kangentic-activity/index.js'],
+    };
+  }
+
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
     return identifyOpenCodeUserSetupFailure(finalOutput);
@@ -304,6 +352,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
     forgetDistroOpenCodeVersions();
+    this.hostVersions.clear();
     // The CLI at the path may be another one now, so its list is read again,
     // but kept as the fallback a failed read answers with. A read in flight is
     // dropped and not kept.
@@ -336,10 +385,40 @@ export class OpenCodeAdapter implements AgentAdapter {
     return info?.version ?? null;
   }
 
-  async ensureTrust(_workingDirectory: string): Promise<void> {
+  async ensureTrust(_workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // OpenCode has no trust dialog - no pre-approval needed. See
     // `probeAuth` for the login-state check, which reads
     // ~/.local/share/opencode/auth.json.
+    //
+    // A host over SSH is never detected from this computer, so its CLI's major is asked here, the one
+    // async step that runs before the synchronous `buildCommand` and `buildEnv` pick OpenCode 1 or 2
+    // flags and plugin (#913).
+    if (place?.kind === 'ssh') await this.probeHostVersion(place);
+  }
+
+  /** `opencode --version` on the host, once per host and binary, kept for the builders. A failure is not kept. */
+  private async probeHostVersion(place: SshCliPlace): Promise<void> {
+    const key = hostVersionKey(place);
+    if (this.hostVersions.has(key)) return;
+    try {
+      const { stdout } = await execCliForTarget(
+        { ...place, linuxCliPath: place.linuxCliPath ?? this.remoteCliName },
+        ['--version'],
+        { timeout: 15_000, maxBuffer: 64 * 1024 },
+      );
+      const version = stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /\d+\.\d+/.test(line));
+      if (version) this.hostVersions.set(key, version);
+    } catch (error) {
+      // The spawn goes on with OpenCode 1's command line; a host with no `opencode` fails it with its own words.
+      console.warn(`[opencode] Could not read the host's OpenCode version: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The version the builders choose flags by: the cached detection's, or for a host the one `ensureTrust` read. */
+  private cliVersionFor(agentPath: string, place: CliPlace | null | undefined): string | null {
+    return place?.kind === 'ssh'
+      ? this.hostVersions.get(hostVersionKey(place)) ?? null
+      : this.detector.getCachedVersion(agentPath);
   }
 
   async probeAuth(cliPath: string): Promise<boolean | null> {
@@ -390,7 +469,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     const { agentPath, model, effort, ...rest } = options;
     // Every spawn path runs `detect()` with this path just before, so the
     // version is the one of the CLI this command starts.
-    const cliVersion = this.detector.getCachedVersion(agentPath);
+    const cliVersion = this.cliVersionFor(agentPath, options.cliTarget);
     const command = this.commandBuilder.buildOpenCodeCommand({
       opencodePath: agentPath,
       model,
@@ -422,14 +501,14 @@ export class OpenCodeAdapter implements AgentAdapter {
     // sessions serialize their cleanup in `removeHooks`. Local mode only -
     // remote mode never installs the plugin (see command-builder.ts).
     if (installsActivityPlugin(options)) {
-      this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
+      this.hookHolds.retain(options.ptySessionId, activityPluginRoot(options));
     }
     return command;
   }
 
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, cliVersion: this.detector.getCachedVersion(agentPath), ...rest });
+    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, cliVersion: this.cliVersionFor(agentPath, options.cliTarget), ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -520,6 +599,9 @@ export class OpenCodeAdapter implements AgentAdapter {
         // `session list` reads (distro-sessions.ts).
         if (options.cliTarget) {
           const target = targetOfPlace(placeFromStored(options.cliTarget));
+          // A host's place read back from a session row holds no connection to run `session list`
+          // through (`files` is never stored), so there is nothing to ask. Its id arrives by the plugin.
+          if (target?.kind === 'ssh' && !target.files) return Promise.resolve(null);
           return target ? captureDistroOpenCodeSessionId({ spawnedAt: options.spawnedAt, cwd: options.cwd, target }) : Promise.resolve(null);
         }
         return OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
@@ -614,8 +696,42 @@ export class OpenCodeAdapter implements AgentAdapter {
     // history file to hand off. The PTY-scrollback cleanup path
     // (handoff/transcript-cleanup.ts) is the fallback for these sessions. A
     // distro session's database is the distro's, read only by its own CLI.
-    if (this.remoteTargetsByCwd.has(cwd) || place) return null;
+    if (this.remoteTargetsByCwd.has(cwd)) return null;
+    // A session on a host has its export here, once it has arrived. That file is the conversation's own, so
+    // the staleness check, the archive and the message trail have something to read.
+    const exported = remoteExportPath(place, this.name, agentSessionId);
+    if (exported) return fs.existsSync(exported) ? exported : null;
+    if (place) return null;
     return OpenCodeSessionHistoryParser.locate({ agentSessionId, cwd });
+  }
+
+  /**
+   * How to copy a conversation out of the host's shared database: the CLI's own export, for this major
+   * (`RemoteSessionRelay` runs it into a file and tails that). The major is asked once per host and CLI, and
+   * a failed answer names no export, so the next tick asks again.
+   */
+  async remoteTranscriptSnapshot(options: {
+    agentSessionId: string;
+    cwd: string;
+    cliTarget: StoredCliTarget;
+    runProgram: RemoteProgramRunner;
+  }): Promise<RemoteTranscriptSnapshot | null> {
+    const place = placeFromStored(options.cliTarget);
+    const localPath = remoteExportPath(place, this.name, options.agentSessionId);
+    if (place?.kind !== 'ssh' || !localPath || !isSessionId(options.agentSessionId)) return null;
+    const file = place.linuxCliPath ?? this.remoteCliName;
+    const openCode2 = await isDistroOpenCodeV2({ ...place, linuxCliPath: file }, async (_target, cliArgs) => {
+      const { code, stdout } = await options.runProgram(file, cliArgs);
+      if (code !== 0) throw new Error(`${file} ${cliArgs.join(' ')} exited ${String(code)}`);
+      return { stdout, stderr: '' };
+    }).catch(() => null);
+    if (openCode2 === null) return null;
+    return {
+      file,
+      args: distroSessionExportArgs(options.agentSessionId, openCode2),
+      cwd: cliPathForTarget(options.cwd, place),
+      localPath,
+    };
   }
 
   async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
@@ -627,10 +743,20 @@ export class OpenCodeAdapter implements AgentAdapter {
         sourcePath: `${target.url}/session/${agentSessionId}/message`,
       };
     }
+    // A session on a host reads the copy of its export. Nothing on this computer can ask the host from
+    // here, and this runs in the retrieval worker, so a copy that has not arrived reads as no transcript yet.
+    const exported = remoteExportPath(place, this.name, agentSessionId);
+    if (exported) {
+      const messages = readOpenCodeExportFile(exported);
+      return {
+        entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),
+        sourcePath: messages.length > 0 ? exported : null,
+      };
+    }
     // A distro session is exported by the distro's own CLI, which gives the
     // same entries the server's message API does. A row from before the CLI's
     // path was kept has nothing to run, and reads as no transcript yet.
-    if (place) {
+    if (place?.kind === 'wsl') {
       const distroTarget = targetOfPlace(place);
       if (!distroTarget) return { entries: [], sourcePath: null };
       const messages = await exportDistroOpenCodeSession(distroTarget, agentSessionId, cwd).catch(() => []);
@@ -649,10 +775,13 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   /**
    * Lifetime tokens of a local session, summed over its assistant messages in
-   * `opencode.db` (`transcript-usage.ts`). A remote or distro session has no
-   * local row, so it answers null and the caller keeps the live snapshot.
+   * `opencode.db` (`transcript-usage.ts`), or of a host session's export. A
+   * remote or distro session has no local row, so it answers null and the caller
+   * keeps the live snapshot.
    */
   async transcriptUsage(input: OpenCodeTranscriptReadInput): Promise<TranscriptUsage | null> {
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
+    if (exported) return openCodeExportUsage(readOpenCodeExportFile(exported));
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
     return readOpenCodeTranscriptUsageAtPath(openCodeTranscriptSourcePath(), sessionId);
@@ -664,6 +793,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * session, or one with no tool call.
    */
   async transcriptToolCounts(input: OpenCodeTranscriptReadInput): Promise<TranscriptToolCounts | null> {
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
+    if (exported) return openCodeExportToolCounts(readOpenCodeExportFile(exported), { sinceMs: input.sinceMs, untilMs: input.untilMs });
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
     return readOpenCodeToolCountsAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
@@ -675,6 +806,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * which has no local row, so the earlier-run fill moves on.
    */
   async transcriptToolResultTokens(input: OpenCodeTranscriptReadInput): Promise<Record<string, number> | null> {
+    const exported = remoteExportPath(input.place, this.name, input.agentSessionId);
+    if (exported) return openCodeExportToolResultTokens(readOpenCodeExportFile(exported), { sinceMs: input.sinceMs, untilMs: input.untilMs });
     const sessionId = this.localSessionId(input);
     if (!sessionId) return null;
     return readOpenCodeToolResultTokensAtPath(openCodeTranscriptSourcePath(), sessionId, { sinceMs: input.sinceMs, untilMs: input.untilMs });
@@ -712,7 +845,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * One window of a local session for the conversation indexer, in the
    * transcript reader's position unit (`readOpenCodeTranscriptWindowAtPath`).
    * A remote or distro session has no local database to walk, so it reads as
-   * empty and the indexer keeps what `parseTranscript` gave it.
+   * empty. A host session's export is one document, so what lies past `startByte`
+   * is one window, in positions that hold across exports (`openCodeExportFrom`).
    */
   async parseTranscriptWindow(
     agentSessionId: string,
@@ -722,6 +856,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     _attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
   ): Promise<ParsedTranscriptWindow> {
+    const exported = remoteExportPath(place, this.name, agentSessionId);
+    if (exported) return readExportWindow(exported, startByte);
     const sourcePath = openCodeTranscriptSourcePath();
     if (!this.localSessionId({ agentSessionId, cwd, place })) {
       return { entries: [], sourcePath: null, nextByteOffset: startByte, totalBytes: 0, firstByteOffset: startByte, endByte: startByte };

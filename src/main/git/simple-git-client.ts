@@ -1,5 +1,7 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { stackCallerLabel, withSpawnCaller } from '../diagnostics/spawn-caller';
+import { runRemoteGitCommand } from './git-client';
+import { remoteGitRunnerFor, RemoteGitUnavailableError, type RemoteGitRunner } from './remote-git';
 
 /**
  * The ambient git variables simple-git 4 is told to keep. It removes every
@@ -27,8 +29,40 @@ export const SIMPLE_GIT_ALLOWED_ENVIRONMENT: readonly string[] = ['GIT_CEILING_D
  * reaches the caller (`spawn-caller.ts`).
  */
 export function openSimpleGit(directory: string): SimpleGit {
+  const remote = remoteGitRunnerFor(directory);
+  if (remote) return openRemoteGit(directory, remote);
   const client = simpleGit(directory, { allowEnvironment: SIMPLE_GIT_ALLOWED_ENVIRONMENT });
   return __KANGENTIC_DEV__ ? withCallerAttribution(client) : client;
+}
+
+/**
+ * A client for a repository on an SSH host (#913). The call sites that read a project's git (the Changes panel,
+ * the branch summary, blame, history, the commit graph) use `raw`, so those run on the host through the same
+ * runner `gitAt` uses. Every method the facade does not hold throws `RemoteGitUnavailableError` when called, so a
+ * caller that would have run this computer's git in the empty stand-in fails with a sentence, never with another
+ * repository's answer or a quiet empty result.
+ */
+function openRemoteGit(directory: string, remote: RemoteGitRunner): SimpleGit {
+  // Not a client that spawns on its own: a local client is only the shape the proxy answers for.
+  const shape = simpleGit(directory, { allowEnvironment: SIMPLE_GIT_ALLOWED_ENVIRONMENT });
+  const facade: Record<string, unknown> = {
+    raw: (commands: string[]) => runRemoteGitCommand(remote, commands),
+    revparse: async (options: string[]) => (await runRemoteGitCommand(remote, ['rev-parse', ...options])).trim(),
+    show: (options: string[]) => runRemoteGitCommand(remote, ['show', ...options]),
+    diff: (options: string[]) => runRemoteGitCommand(remote, ['diff', ...options]),
+  };
+  return new Proxy(shape, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && Object.hasOwn(facade, property)) return facade[property];
+      // The client is a thenable; `await`ing it must not call a method that throws.
+      if (property === 'then') return undefined;
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return () => {
+        throw new RemoteGitUnavailableError(`git ${String(property)} is not available for a project on a host yet.`);
+      };
+    },
+  });
 }
 
 function withCallerAttribution(client: SimpleGit): SimpleGit {

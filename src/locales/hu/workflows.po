@@ -498,6 +498,10 @@ msgstr "Szüneteltetve"
 msgid "Paused {pausedTime}"
 msgstr "Szüneteltetve: {pausedTime}"
 
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Paused: {boards} is on a removed host"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy
 msgid "Plan approval"

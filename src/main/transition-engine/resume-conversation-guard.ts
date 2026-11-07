@@ -160,6 +160,13 @@ export async function assessResumeConversation(params: {
     return hadTurns ? 'expired' : 'never-started';
   }
 
+  // A conversation on a remote host (#913) is proven gone only by the host. Its transcript path is a
+  // path on the host, so a test of this computer's disk would find nothing and read as proof, and the
+  // resume would be replaced by a fresh conversation. Absence of evidence is never evidence, so
+  // anything involving a host is `unknown` here and the resume goes ahead. Whether the CLI ran on the
+  // same host (the identity check above) does not depend on any file and still decides.
+  if (spawnPlace?.kind === 'ssh' || newestPlace?.kind === 'ssh') return 'unknown';
+
   if (!hadTurns) {
     if (records.find(Boolean)?.launch_failed_at) return 'never-started';
     // The agent's own report says nothing ever happened, and the transcript it

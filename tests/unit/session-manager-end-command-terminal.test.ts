@@ -86,6 +86,7 @@ describe('SessionManager.endCommandTerminal', () => {
       status: 'running',
       shell: 'pwsh',
       cwd: projectRoot,
+      commandCwd: projectRoot,
       startedAt: new Date().toISOString(),
       exitCode: null,
       resuming: false,
@@ -97,6 +98,18 @@ describe('SessionManager.endCommandTerminal', () => {
     registry.set(session.id, session);
     return session;
   }
+
+  it('deletes a remote terminal\'s folder on this computer, where it was made, not under the host\'s path', async () => {
+    seed({ cwd: '/home/dev/proj', commandCwd: projectRoot });
+    vi.spyOn(manager, 'awaitExit').mockResolvedValue(undefined);
+
+    manager.endCommandTerminal('term-1');
+
+    await vi.waitFor(() => expect(rmSpy).toHaveBeenCalledWith(
+      path.join(projectRoot, '.kangentic', 'sessions', 'term-1'),
+      { recursive: true, force: true },
+    ));
+  });
 
   it('kills, captures the exit, then removes, and deletes the directory only after the exit', async () => {
     seed();

@@ -47,6 +47,12 @@ msgstr "„{taskTitle}“ je na nástěnce."
 msgid "({deleteFailureCount} failed)"
 msgstr "(nezdařilo se: {deleteFailureCount})"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} na hostiteli {1} neexistuje."
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -313,6 +319,10 @@ msgstr "{fileCount, plural, one {{viewedCount} z # souboru označeno jako zobraz
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, one {Zobrazeno {viewedCount} z # souboru} few {Zobrazeno {viewedCount} z # souborů} many {Zobrazeno {viewedCount} z # souboru} other {Zobrazeno {viewedCount} z # souborů}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -343,6 +353,17 @@ msgstr "Přidat automatizaci"
 #, fuzzy
 msgid "Add column"
 msgstr "Přidat sloupec"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "Přidat projekt"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project on {0}"
+msgstr "Přidat projekt na hostiteli {0}"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
@@ -595,6 +616,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Větev"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -628,6 +653,7 @@ msgstr "„{name}“ nelze odebrat"
 msgid "Can't update from {baseBranch}"
 msgstr "Nelze aktualizovat z {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -668,6 +694,15 @@ msgstr "Změny – #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "Změny jsou otevřené ve vlastním okně"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Choose a folder on this machine"
+msgstr "Vybrat složku na tomto počítači"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -896,6 +931,16 @@ msgstr "Podmínka: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "Potvrdit"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Připojeno"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Připojování…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1204,6 +1249,10 @@ msgstr "Rozdíl"
 #, fuzzy
 msgid "Diff scope"
 msgstr "Rozsah rozdílů"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1575,6 +1624,10 @@ msgstr "Náhled obrázku"
 msgid "Image sent at lower quality"
 msgstr "Obrázek odeslán v nižší kvalitě"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -1758,6 +1811,7 @@ msgstr "Změněno"
 msgid "Move to"
 msgstr "Přesunout do"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1909,6 +1963,10 @@ msgstr "Bez popisu"
 #, fuzzy
 msgid "No files changed"
 msgstr "Žádné změněné soubory"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
@@ -2089,6 +2147,10 @@ msgstr "Po jednom"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Zjištěno jen jedno CLI agenta – pro výběr nainstalujte další"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2220,6 +2282,10 @@ msgstr "Přehled"
 #, fuzzy
 msgid "Page kept"
 msgstr "Stránka zachována"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2382,6 +2448,11 @@ msgstr "Spuštěno"
 #, fuzzy
 msgid "Rebase or merge it in the session instead."
 msgstr "Proveďte místo toho rebase nebo merge v relaci."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Opětovné připojování…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2892,6 +2963,11 @@ msgstr "Zastavit"
 msgid "Stop {label}"
 msgstr "Zastavit {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "Zastaveno"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3062,6 +3138,15 @@ msgstr "Tuto akci nelze vrátit zpět."
 msgid "This commit changed no files"
 msgstr "Tento commit nezměnil žádné soubory"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "This computer"
+msgstr "Tento počítač"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3200,6 +3285,11 @@ msgstr "Typ"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "Změněno méně než 0,1 % pixelů"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Nedostupné"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

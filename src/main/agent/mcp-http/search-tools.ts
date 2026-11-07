@@ -584,7 +584,7 @@ function formatHits(
 
   if (projects.length > 0) {
     const lines = projects.map((hit) =>
-      `- ${hit.projectName} (id: ${hit.projectId}, path: ${hit.projectPath}) - ${hit.snippet}`,
+      `- ${hit.projectName} (id: ${hit.projectId}, path: ${hit.projectPath}${hit.location === 'host' ? ' on its host' : ''}) - ${hit.snippet}`,
     );
     sections.push(`## Projects\n${lines.join('\n')}`);
   }

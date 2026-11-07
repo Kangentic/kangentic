@@ -53,6 +53,9 @@ const LONG_PATH_PREFIX = '\\\\?\\';
 export function codexHomeDir(place: CliPlace | null = null): string {
   // A Codex installed in a WSL distro keeps its files in the distro's home,
   // under the CODEX_HOME its own shell sets, reached through the share.
+  // A host's Codex home is not here: readers see this computer's mirror of it, never the local
+  // user's real `~/.codex`.
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.codex');
   if (place) {
     const distroOverride = place.facts.env.CODEX_HOME;
     return distroOverride && distroOverride.trim().length > 0
@@ -101,8 +104,11 @@ export function applyLongPathPrefix(nativePath: string, hadPrefix: boolean): str
   return hadPrefix ? LONG_PATH_PREFIX + nativePath : nativePath;
 }
 
-export function normalizeForCompare(raw: string): string {
+export function normalizeForCompare(raw: string, hostPaths = false): string {
   const stripped = stripLongPathPrefix(raw);
+  // A path on an SSH host is a Linux path whatever this computer is: separators are slashes and
+  // case is part of the name, so `/home/dev/App` and `/home/dev/app` stay two folders.
+  if (hostPaths) return path.posix.normalize(stripped.replace(/\\/g, '/')).replace(/\/+$/, '');
   const normalized = path.normalize(stripped).replace(/[\\/]+$/, '');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
@@ -116,14 +122,14 @@ export function normalizeForCompare(raw: string): string {
  * Scanning stops at the next table header, so a `trust_level` belonging to
  * a different project is never misattributed.
  */
-export function readTrustLevel(configLines: string[], targetPath: string): string | null {
-  const target = normalizeForCompare(targetPath);
+export function readTrustLevel(configLines: string[], targetPath: string, hostPaths = false): string | null {
+  const target = normalizeForCompare(targetPath, hostPaths);
   let insideTarget = false;
 
   for (const line of configLines) {
     const header = parseHeaderLine(line);
     if (header) {
-      insideTarget = normalizeForCompare(header.innerPath) === target;
+      insideTarget = normalizeForCompare(header.innerPath, hostPaths) === target;
       continue;
     }
     // Any other table header ends the section we care about.

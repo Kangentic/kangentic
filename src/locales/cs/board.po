@@ -57,6 +57,11 @@ msgstr "{count, plural, one {# aktivní subagent} few {# aktivní subagenti} man
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# běžící nástroj} few {# běžící nástroje} many {# běžícího nástroje} other {# běžících nástrojů}}"
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "Hostitel {hostName} není dostupný. Jeho agenti dál běží."
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -390,6 +395,21 @@ msgstr "Pozastaveno"
 #, fuzzy
 msgid "Queued..."
 msgstr "Ve frontě..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Znovu připojit"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect to {hostName}"
+msgstr "Znovu připojit k hostiteli {hostName}"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "Probíhá opětovné připojování k hostiteli {hostName}. Jeho agenti dál běží."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy

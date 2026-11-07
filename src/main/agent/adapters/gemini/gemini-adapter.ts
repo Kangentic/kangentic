@@ -1,10 +1,11 @@
 import { identifyGeminiUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { GeminiDetector } from './detector';
-import { GeminiCommandBuilder } from './command-builder';
+import { GeminiCommandBuilder, GEMINI_WSL_HOOK_COPY_NAME } from './command-builder';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
-import { GeminiSessionHistoryParser } from './session-history-parser';
+import { GeminiSessionHistoryParser, geminiHostChatSearch } from './session-history-parser';
 import { parseGeminiTranscript, parseGeminiTranscriptWindow, locateGeminiTranscriptFile, readGeminiTranscriptPage, resolveGeminiTranscriptFile } from './transcript-parser';
 import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
@@ -13,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
-import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { isPlainIdName, placeFromStored, resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
 import type {
   AgentAdapter,
@@ -36,6 +37,8 @@ import type {
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
+  RemoteTranscriptSearch,
+  StoredCliTarget,
   TranscriptToolCounts,
   TranscriptUsage,
 } from '../../../../shared/types';
@@ -57,6 +60,10 @@ interface TranscriptReadInput {
 const GEMINI_SPAWN_LOCATE_ATTEMPTS = 60;
 
 function geminiRunTranscriptPath(input: TranscriptReadInput): string | null {
+  // A chat copied from a host has a name of its own here, so the path the CLI reported may name no file.
+  if (input.place?.kind === 'ssh' && input.agentSessionId && input.cwd) {
+    return resolveGeminiTranscriptFile(input.agentSessionId, input.cwd, input.place, input.transcriptPath);
+  }
   if (input.transcriptPath) return input.transcriptPath;
   if (!input.agentSessionId || !input.cwd) return null;
   return locateGeminiTranscriptFile(input.agentSessionId, input.cwd, input.place ?? null);
@@ -92,6 +99,8 @@ export class GeminiAdapter implements AgentAdapter {
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   /** A Gemini installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /** On a host over SSH the CLI is `gemini` from the host's own login PATH (#913). */
+  readonly remoteCliName = 'gemini';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -141,6 +150,27 @@ export class GeminiAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+  }
+
+  /**
+   * What a Gemini on an SSH host edits outside the session folder. The trust file is read and merged
+   * by `ensureTrust` (without it Gemini disables MCP), the project settings carry the hooks and the
+   * `mcpServers.kangentic` reference entry (the user's own file, merged and stripped), and the hook
+   * script copy is what those hooks run. Nothing here holds a token: the settings name the MCP URL
+   * and token as `${VAR}` references the session's environment fills.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return {
+      home: ['.gemini/trustedFolders.json'],
+      project: ['.gemini/settings.json', `.kangentic/${GEMINI_WSL_HOOK_COPY_NAME}`],
+    };
+  }
+
+  /** The chat on a host. Its name holds a timestamp and its folder is the CLI's choice, so the host searches for it. */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly RemoteTranscriptSearch[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh' || !isPlainIdName(options.agentSessionId)) return [];
+    return [geminiHostChatSearch(options.agentSessionId, options.cwd, place)];
   }
 
   async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
@@ -292,7 +322,10 @@ export class GeminiAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null, reportedPath?: string | null): Promise<string | null> {
+    // A Gemini on a host: its chat is copied here (`remoteTranscriptFiles`), so the conversation readers look at
+    // what has arrived, once. The live telemetry reader keeps answering null (`GeminiSessionHistoryParser.locate`).
+    if (place?.kind === 'ssh') return resolveGeminiTranscriptFile(agentSessionId, cwd, place, reportedPath);
     return GeminiSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 

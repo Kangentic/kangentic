@@ -30,6 +30,7 @@ import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedRe
 import type { WriteOrigin } from '../prompt-draft-ledger';
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
+import type { HelperSessionRecord, RemoteHostRequest, SuspendPlan } from '../../remote/protocol/messages';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -69,6 +70,9 @@ export interface PtyHostSpawnParams {
    *  for the host's loop counts against main's budget for the answer, so a
    *  retry's window counts it too (`retryWindowMs`). */
   sentAtMs?: number;
+  /** The SSH host this PTY runs on (#913), or absent for this computer. The link
+   *  hub routes on it; the local core never sees a spawn that carries one. */
+  hostId?: string;
 }
 
 /** A thrown error, flattened for the wire. */
@@ -134,6 +138,11 @@ export interface RendererPort {
 }
 
 export type PtyHostCommand =
+  /** The app is quitting and these sessions run on `hostId` (#913): how each one ends, which only
+   *  the app knows (it holds the adapters). The link sends it as the one `suspendAll` frame when the
+   *  `shutdown` that follows arrives, so it must be posted first. A command, not a request, because
+   *  the quit path cannot wait for an answer. */
+  | { type: 'remoteQuitPlan'; hostId: string; sessions: SuspendPlan[] }
   /** Straight to the PTY, ahead of anything queued: the exit sequence, a
    *  bracketed-paste packet after a `drainWrites`, a probe's keys. */
   | { type: 'write'; ptyId: number; data: string }
@@ -306,6 +315,9 @@ export interface PtyHostRequestMap {
   getOutputPeek: { params: { sessionId: string }; result: string[] };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };
   ping: { params: Record<string, never>; result: 'pong' };
+  /** Add, remove or ask an SSH host (#913). The pty host holds the links, so a remote terminal
+   *  shares each renderer's one port with the local ones. The result depends on `op`. */
+  remote: { params: RemoteHostRequest; result: unknown };
   /** Close the host's handle on a project's database. A request, not a
    *  command, so a project delete can wait for it before unlinking the file
    *  (Windows will not unlink a file another process has open). */
@@ -407,7 +419,24 @@ export type PtyHostEvent =
   | { type: 'cliError'; processId: number; error: PtyHostError }
   | { type: 'cliExit'; processId: number; code: number | null; signal: string | null }
   /** Its stdio closed, after the last `cliData`; the run is over. */
-  | { type: 'cliClose'; processId: number; code: number | null; signal: string | null };
+  | { type: 'cliClose'; processId: number; code: number | null; signal: string | null }
+  /** An SSH host's connection changed state (#913). Only the link hub emits it, and it is its
+   *  own push: a drop is never an `exit`, because every agent on the host keeps running.
+   *  `detail` is the reason in the peer's or ssh's own words, null when there is none. */
+  | { type: 'remoteLink'; hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }
+  /** What a link found on connect that the app must settle (#913). `lost` are sessions the app held
+   *  alive that the host no longer has; `adoptable` are live ones the app holds no row for. A
+   *  `lost` session is over, so it ends as an exit does. An `adoptable` one is logged and left
+   *  running: nothing adopts it yet, and the next quit's `suspendAll` ends it on the helper's clock. */
+  | { type: 'remoteSessions'; hostId: string; lost: string[]; adoptable: HelperSessionRecord[] }
+  /** A hook file a remote agent published on its host, sent once (#913). Kangentic writes it into the
+   *  same folder on its own disk, where the WSL hook transport's inbox reads it. `status` is the
+   *  status line's JSON, which replaces the last. */
+  | { type: 'hookFile'; sessionId: string; folder: 'inbox' | 'requests' | 'status'; name: string; content: string }
+  /** A piece of a file a remote agent keeps appending to on its host, its transcript (#913). `data` is
+   *  base64 and goes at `offset` in Kangentic's copy; `reset` empties the copy first (the file was
+   *  replaced or shortened). `key` is the name the app gave the file when it asked for it. */
+  | { type: 'fileChunk'; sessionId: string; key: string; offset: number; reset: boolean; size: number; data: string };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

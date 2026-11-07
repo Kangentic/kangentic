@@ -227,7 +227,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5" data-testid={`agent-cli-status-${agent.name}`}>
-                  {agent.cliTarget && (
+                  {agent.cliTarget?.kind === 'wsl' && (
                     <span className="flex-shrink-0 rounded border border-edge px-1.5 text-[11px] leading-[18px] text-fg-muted">
                       <Trans>WSL: {agent.cliTarget.distro}</Trans>
                     </span>
@@ -239,6 +239,10 @@ export function AgentTab({ config, globalConfig, agentList }: {
                         {/* i18n-ok: a version number */}
                         {agent.version ? `v${agent.version.replace(/^v/, '')}` : t`Detected`}
                       </>
+                    ) : agent.unsupportedOnHost ? (
+                      <><CircleExclamationPoint size={13} /><Trans>Not on hosts yet</Trans></>
+                    ) : agent.hostStatus === 'unknown' ? (
+                      <><CircleExclamationPoint size={13} /><Trans>Not checked</Trans></>
                     ) : (
                       <><CircleExclamationPoint size={13} /><Trans>Not found</Trans></>
                     )}
@@ -258,9 +262,11 @@ export function AgentTab({ config, globalConfig, agentList }: {
                   field auto-detects rather than falling back to another value. */}
               <input
                 type="text"
-                value={config.agent.cliPaths[agent.name] || ''}
+                value={agent.hostId ? '' : (config.agent.cliPaths[agent.name] || '')}
                 onChange={(event) => updateProject({ agent: { cliPaths: { [agent.name]: event.target.value || null } } })}
-                placeholder={agent.found ? (agent.path ?? undefined) : t`Enter path manually`}
+                // A remote project runs the host's own CLI, found by the host's PATH: this path is never used there.
+                disabled={agent.hostId !== undefined}
+                placeholder={agent.hostId ? (agent.path ?? undefined) : agent.found ? (agent.path ?? undefined) : t`Enter path manually`}
                 className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
                 data-testid={`agent-cli-path-${agent.name}`}
               />

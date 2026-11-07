@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { execFileAsync } from '../utility-process/off-main-exec';
+import { remoteGitRunnerFor, type RemoteGitRunner } from './remote-git';
 
 /**
  * `gitAt(directory)`: the git client for the task lifecycle's git calls, with
@@ -95,6 +96,9 @@ type ExecFailure = Error & {
  * then stderr. A child that could not start rejects with its own error.
  */
 export async function runGitCommand(directory: string, args: readonly string[]): Promise<string> {
+  // A remote project's folder here is an empty stand-in, so its git runs on the host, under the same rule.
+  const remote = remoteGitRunnerFor(directory);
+  if (remote) return runRemoteGitCommand(remote, args);
   try {
     const { stdout } = await execFileAsync('git', args, {
       cwd: directory,
@@ -114,6 +118,14 @@ export async function runGitCommand(directory: string, args: readonly string[]):
     if (failure.code == null && typeof failure.signal === 'string') return stdout;
     throw error;
   }
+}
+
+/** The same success rule as a local run: a non-zero exit fails only when git wrote to stderr. */
+export async function runRemoteGitCommand(remote: RemoteGitRunner, args: readonly string[]): Promise<string> {
+  const result = await remote.run(args);
+  const stdout = result.stdout.toString('utf8');
+  if (result.code === 0 || result.stderr.length === 0) return stdout;
+  throw new Error(`${stdout}${result.stderr}`);
 }
 
 function directoryExists(directory: string): boolean {

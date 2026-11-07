@@ -47,6 +47,12 @@ msgstr "「{taskTitle}」がボードに追加されました。"
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} 件失敗)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} は {1} に存在しません。"
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -313,6 +319,10 @@ msgstr "{fileCount, plural, other {# 個中 {viewedCount} 個のファイルを�
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, other {# 個中 {viewedCount} 個のファイルを表示済み}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #, fuzzy
 msgid "A narrow pane renders inline"
@@ -343,6 +353,17 @@ msgstr "オートメーションを追加"
 #, fuzzy
 msgid "Add column"
 msgstr "列を追加"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "プロジェクトを追加"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project on {0}"
+msgstr "{0} にプロジェクトを追加"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
@@ -595,6 +616,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "ブランチ"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -628,6 +653,7 @@ msgstr "「{name}」を削除できません"
 msgid "Can't update from {baseBranch}"
 msgstr "{baseBranch} から更新できません"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -668,6 +694,15 @@ msgstr "変更 - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "変更は別ウィンドウで開かれています"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Choose a folder on this machine"
+msgstr "このマシン上のフォルダーを選択"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -896,6 +931,16 @@ msgstr "条件: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "確認"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "接続済み"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "接続中…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1204,6 +1249,10 @@ msgstr "差分"
 #, fuzzy
 msgid "Diff scope"
 msgstr "差分の範囲"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1575,6 +1624,10 @@ msgstr "画像のプレビュー"
 msgid "Image sent at lower quality"
 msgstr "画像を低画質で送信しました"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 #, fuzzy
 msgid "Indexing is off, so no commits are linked"
@@ -1758,6 +1811,7 @@ msgstr "変更"
 msgid "Move to"
 msgstr "移動先"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1909,6 +1963,10 @@ msgstr "説明なし"
 #, fuzzy
 msgid "No files changed"
 msgstr "変更されたファイルはありません"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
@@ -2089,6 +2147,10 @@ msgstr "一度に1つずつ"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "エージェント CLI が 1 つしか検出されていません - 選択するには別の CLI をインストールしてください"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2220,6 +2282,10 @@ msgstr "概要"
 #, fuzzy
 msgid "Page kept"
 msgstr "ページを保持中"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2382,6 +2448,11 @@ msgstr "実行済み"
 #, fuzzy
 msgid "Rebase or merge it in the session instead."
 msgstr "代わりにセッション内でリベースまたはマージしてください。"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "再接続中…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -2892,6 +2963,11 @@ msgstr "停止"
 msgid "Stop {label}"
 msgstr "{label} を停止"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "停止中"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3062,6 +3138,15 @@ msgstr "この操作は元に戻せません。"
 msgid "This commit changed no files"
 msgstr "このコミットで変更されたファイルはありません"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "This computer"
+msgstr "このコンピューター"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3200,6 +3285,11 @@ msgstr "種類"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "変更されたピクセルは 0.1% 未満です"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "接続不可"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

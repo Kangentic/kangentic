@@ -1,0 +1,237 @@
+{
+  "id": "20261105_1",
+  "working_dir": "/home/dev/proj/goose-a",
+  "name": "11111111-2222-4333-8444-555555555555",
+  "user_set_name": true,
+  "session_type": "user",
+  "created_at": "2026-11-05T19:58:06Z",
+  "updated_at": "2026-11-05T19:58:07Z",
+  "extension_data": {},
+  "usage": {
+    "input_tokens": 1234,
+    "output_tokens": 56,
+    "total_tokens": 1290,
+    "cache_read_input_tokens": null,
+    "cache_write_input_tokens": null
+  },
+  "accumulated_usage": {
+    "input_tokens": 3702,
+    "output_tokens": 168,
+    "total_tokens": 3870,
+    "cache_read_input_tokens": 0,
+    "cache_write_input_tokens": 0
+  },
+  "accumulated_cost": null,
+  "schedule_id": null,
+  "recipe": null,
+  "user_recipe_values": null,
+  "conversation": [
+    {
+      "id": "msg_3d2ce150-4363-4e1a-a4a4-3884d2cbaaf0",
+      "role": "user",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "say hello"
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "msg_978c8ece-5bb7-4b8b-a83b-e53a18825c09",
+      "role": "user",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "<turn-context>\n<current-time>2026-11-05 19:58:00 +00:00</current-time>\n<working-directory>/home/dev/proj/goose-a</working-directory>\n</turn-context>"
+        }
+      ],
+      "metadata": {
+        "userVisible": false,
+        "agentVisible": true,
+        "turnContext": true
+      }
+    },
+    {
+      "id": "chatcmpl-probe",
+      "role": "assistant",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "toolRequest",
+          "id": "call_probe_1",
+          "toolCall": {
+            "status": "success",
+            "value": {
+              "name": "shell",
+              "arguments": {
+                "command": "echo probe-tool-output"
+              }
+            }
+          },
+          "_meta": {
+            "goose.toolCall.providerIndex": 0,
+            "goose_extension": "developer"
+          }
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true,
+        "inference": {
+          "provider": "openai",
+          "requestedModel": "stub-model"
+        },
+        "usage": {
+          "inputTokens": 1234,
+          "outputTokens": 56,
+          "totalTokens": 1290,
+          "elapsedMs": 1,
+          "timeToFirstTokenMs": 1
+        }
+      }
+    },
+    {
+      "id": "msg_3b515af1-129b-4591-9f05-9e97099d25d1",
+      "role": "user",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "toolResponse",
+          "id": "call_probe_1",
+          "toolResult": {
+            "status": "success",
+            "value": {
+              "resultType": "complete",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "probe-tool-output",
+                  "annotations": {
+                    "priority": 0
+                  }
+                }
+              ],
+              "structuredContent": {
+                "stdout": "probe-tool-output",
+                "stderr": "",
+                "exit_code": 0
+              },
+              "isError": false
+            }
+          }
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "chatcmpl-probe",
+      "role": "assistant",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "Stub reply from the probe model."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true,
+        "inference": {
+          "provider": "openai",
+          "requestedModel": "stub-model"
+        },
+        "usage": {
+          "inputTokens": 1234,
+          "outputTokens": 56,
+          "totalTokens": 1290,
+          "elapsedMs": 1,
+          "timeToFirstTokenMs": 1
+        }
+      }
+    },
+    {
+      "id": "msg_9c403c56-1650-430b-8ce8-f3a2b2616d79",
+      "role": "user",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "again"
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true
+      }
+    },
+    {
+      "id": "msg_9b314fa8-190e-4ab1-bc94-10e3789fe596",
+      "role": "user",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "<turn-context>\n<current-time>2026-11-05 19:58:00 +00:00</current-time>\n<working-directory>/home/dev/proj/goose-a</working-directory>\n</turn-context>"
+        }
+      ],
+      "metadata": {
+        "userVisible": false,
+        "agentVisible": true,
+        "turnContext": true
+      }
+    },
+    {
+      "id": "chatcmpl-probe",
+      "role": "assistant",
+      "created": 1793908687,
+      "content": [
+        {
+          "type": "text",
+          "text": "Stub reply from the probe model."
+        }
+      ],
+      "metadata": {
+        "userVisible": true,
+        "agentVisible": true,
+        "inference": {
+          "provider": "openai",
+          "requestedModel": "stub-model"
+        },
+        "usage": {
+          "inputTokens": 1234,
+          "outputTokens": 56,
+          "totalTokens": 1290,
+          "elapsedMs": 1,
+          "timeToFirstTokenMs": 1
+        }
+      }
+    }
+  ],
+  "message_count": 6,
+  "last_message_at": "2026-11-05T19:58:07Z",
+  "provider_name": "openai",
+  "model_config": {
+    "model_name": "stub-model",
+    "temperature": null,
+    "max_tokens": null,
+    "toolshim": false,
+    "toolshim_model": null
+  },
+  "goose_mode": "auto",
+  "archived_at": null,
+  "project_id": null,
+  "parent_session_id": null,
+  "last_message_snippet": null,
+  "system_prompt_override": null,
+  "system_prompt_extras": {},
+  "container": null
+}

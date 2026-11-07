@@ -48,6 +48,7 @@ vi.mock('../../src/main/git/worktree-head', () => ({
 }));
 
 import { getBranchSummary } from '../../src/main/git/branch-summary';
+import { RemoteGitUnavailableError } from '../../src/main/git/remote-git';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -287,8 +288,10 @@ describe('getBranchSummary', () => {
         baseBranch: 'main',
       });
 
+      // It asks to hear a host that cannot answer (#913), so a down link is not read as a detached HEAD.
       expect(mockReadWorktreeHead).toHaveBeenCalledWith(
         '/mock/project/.kangentic/worktrees/feat-branch',
+        { rethrowUnavailable: true },
       );
     });
 
@@ -300,7 +303,7 @@ describe('getBranchSummary', () => {
 
       await getBranchSummary({ projectPath: '/mock/project', baseBranch: 'main' });
 
-      expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/project');
+      expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/project', { rethrowUnavailable: true });
     });
   });
 
@@ -337,6 +340,24 @@ describe('getBranchSummary', () => {
         behind: 0,
         lastCommit: null,
       });
+    });
+
+    it('rejects, rather than answering empty, when a project on a host cannot be asked for its ahead/behind counts', async () => {
+      setDefaultWorktreeHead('main');
+      mockGit.raw.mockRejectedValueOnce(new RemoteGitUnavailableError('The link to the host is down.'));
+
+      await expect(getBranchSummary({ projectPath: '/mock/project', baseBranch: 'main' })).rejects.toBeInstanceOf(RemoteGitUnavailableError);
+      // Not retried against the local ref as if origin/main were missing.
+      expect(mockGit.raw).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects when a project on a host cannot be asked for its last commit', async () => {
+      setDefaultWorktreeHead('main');
+      mockGit.raw
+        .mockResolvedValueOnce('0\t1\n')
+        .mockRejectedValueOnce(new RemoteGitUnavailableError('The link to the host is down.'));
+
+      await expect(getBranchSummary({ projectPath: '/mock/project', baseBranch: 'main' })).rejects.toBeInstanceOf(RemoteGitUnavailableError);
     });
 
     it('all-empty summary shape matches GitBranchSummaryResult exactly', async () => {

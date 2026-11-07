@@ -73,6 +73,10 @@ Oz reports no model, context, tokens, cost or rate limits to Kangentic: Warp doc
 
 An `oz` installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with oz's Linux path, `-C` takes the folder as the distro sees it (`/mnt/c/...`), and detection runs `dump-debug-info` inside the distro. The `--mcp` path reaches the distro in its `/mnt` form. A distro on NAT networking cannot reach this machine's loopback, so its `mcp.json` names the WSL hook transport's bridge as a stdio server (`command`, `args`, and the token in `env`); a distro on mirrored networking gets the URL. Built from Warp's CLI docs; not yet run against an `oz` installed in a distro.
 
+## SSH
+
+A Warp `oz` on a remote host over SSH (#913) runs as `oz`, found by the host's login `PATH` (`remoteCliName`), so it must be installed there. `-C` receives the project's folder on the host, not this computer's shell folder. It is checked only against a fake host in `tests/unit/warp-ssh-remote.test.ts`, never against a real `oz` or host. `oz` edits no file Kangentic manages, so `remoteFiles()` declares none. `oz` has no `--version` and is detected only on this computer, so a remote project shows no `oz` version. Whether `oz` can sign in to a Warp account on a host with no browser is unverified. Sign in on the host once before using it from a board.
+
 ## Permission Modes
 
 Warp keeps permissions in agent profiles (`--profile <ID>`, an id from the user's own Warp account), not in per-mode flags. Oz therefore offers one entry, `default` ("Default (set by your Warp agent profile)"), and the profile the user set in Warp decides. A Plan or Auto entry would mislead, because neither maps to a flag: a "Plan Only (Read-Only)" column would run with the profile's full permissions. A column still set to another mode for Oz falls back to the default entry; the command is the same either way.

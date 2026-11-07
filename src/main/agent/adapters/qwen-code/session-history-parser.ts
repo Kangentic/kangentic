@@ -74,6 +74,9 @@ export class QwenSessionHistoryParser {
     cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
+    // A Qwen on an SSH host writes its chats there, and this computer's mirror of the host's home
+    // is empty, so nothing can appear: answer at once instead of polling.
+    if (options.cliTarget?.kind === 'ssh') return null;
     const directory = qwenChatsDir(cwd, placeFromStored(options.cliTarget ?? null));
     const filePath = path.join(directory, `${agentSessionId}.jsonl`);
 

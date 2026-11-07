@@ -57,6 +57,11 @@ msgstr "{count, plural, one {# subagente ativo} many {# de subagentes ativos} ot
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# ferramenta em execução} many {# de ferramentas em execução} other {# ferramentas em execução}}"
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "{hostName} está inacessível. Os agentes dele continuam em execução."
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -390,6 +395,21 @@ msgstr "Pausado"
 #, fuzzy
 msgid "Queued..."
 msgstr "Na fila..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Reconectar"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect to {hostName}"
+msgstr "Reconectar a {hostName}"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "Reconectando a {hostName}. Os agentes dele continuam em execução."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy

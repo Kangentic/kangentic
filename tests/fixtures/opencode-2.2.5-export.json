@@ -1,0 +1,151 @@
+{
+  "info": {
+    "id": "ses_e52b590b0ffeX34T97x3k4cd4Q",
+    "projectID": "global",
+    "model": {
+      "id": "stub-model",
+      "providerID": "stub",
+      "variant": "default"
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 3702,
+      "output": 168,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "outcome": "succeeded",
+    "time": {
+      "created": 1793908699025,
+      "updated": 1793908699284,
+      "busy": 1793908699167,
+      "idle": 1793908699287
+    },
+    "title": "Stub reply from the probe model.",
+    "location": {
+      "directory": "/home/dev/proj/oc-v2"
+    }
+  },
+  "messages": [
+    {
+      "id": "msg_1ad4a6fc9001oLI5aQEWNpg1ak",
+      "time": {
+        "created": 1793908699176
+      },
+      "text": "\"say hello\"",
+      "files": [],
+      "type": "user"
+    },
+    {
+      "id": "msg_1ad4a7037001KTWVlZ9oRv3CKL",
+      "time": {
+        "created": 1793908699194,
+        "streamed": 1793908699237,
+        "completed": 1793908699254
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "stub-model",
+        "providerID": "stub",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "tool",
+          "id": "call_probe_1",
+          "name": "shell",
+          "executed": false,
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "echo probe-tool-output"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "probe-tool-output\n"
+              }
+            ],
+            "metadata": {
+              "status": "completed",
+              "truncated": false,
+              "exit": 0
+            }
+          },
+          "time": {
+            "created": 1793908699232,
+            "ran": 1793908699236,
+            "completed": 1793908699246
+          }
+        }
+      ],
+      "snapshot": {
+        "start": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "end": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "files": []
+      },
+      "finish": "tool-calls",
+      "rawFinish": "tool_calls",
+      "cost": 0,
+      "tokens": {
+        "input": 1234,
+        "output": 56,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1ad4a707c001wzv3OrL45jJQtE",
+      "time": {
+        "created": 1793908699263,
+        "streamed": 1793908699278,
+        "completed": 1793908699284
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "stub-model",
+        "providerID": "stub",
+        "variant": "default"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Stub reply from the probe model."
+        }
+      ],
+      "snapshot": {
+        "start": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "end": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        "files": []
+      },
+      "finish": "stop",
+      "rawFinish": "stop",
+      "cost": 0,
+      "tokens": {
+        "input": 1234,
+        "output": 56,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    {
+      "id": "msg_1ad4a7097001uiE3VHXraAyKce",
+      "time": {
+        "created": 1793908699287
+      },
+      "type": "idle",
+      "outcome": "succeeded"
+    }
+  ]
+}

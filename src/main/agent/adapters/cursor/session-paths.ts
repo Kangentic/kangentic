@@ -19,7 +19,9 @@ export function cursorProjectSlug(cwd: string): string {
  * `~/.cursor/projects/<slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl`
  *
  * A Cursor running in a WSL distro keeps the file under that distro's home,
- * and the slug is the path the distro was given (`/mnt/e/...`).
+ * and the slug is the path the distro was given (`/mnt/e/...`). On a host over
+ * SSH the slug is the folder on the host, and readers look in this computer's
+ * mirror of the host's home.
  */
 export function cursorTranscriptFilePath(
   cwd: string,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -21,6 +21,30 @@ export function SettingsPanel() {
   const currentProject = useProjectStore((state) => state.currentProject);
   const projects = useProjectStore((state) => state.projects);
   const loadAgentList = useConfigStore((state) => state.loadAgentList);
+  const clearProjectSettingsTarget = useConfigStore((state) => state.clearProjectSettingsTarget);
+  const projectsHydrated = useProjectStore((state) => state.hydrated);
+
+  // The project this panel edits can be removed while it is open (deleting an SSH host removes
+  // its projects). Its path then names nothing: the project tabs would stay listed over the
+  // removed project's overrides while the app paints the global config. Only a target that was
+  // a project row and then stopped being one is dropped. A target that never matched a row stays,
+  // and the tabs say so (`settings-project-target.spec.ts`). Hydration gates it so the empty list
+  // before the first load never reads as "removed".
+  const registeredTargetPathRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!projectsHydrated || !projectSettingsPath) {
+      registeredTargetPathRef.current = null;
+      return;
+    }
+    if (projects.some((project) => project.path === projectSettingsPath)) {
+      registeredTargetPathRef.current = projectSettingsPath;
+      return;
+    }
+    if (registeredTargetPathRef.current === projectSettingsPath) {
+      registeredTargetPathRef.current = null;
+      clearProjectSettingsTarget();
+    }
+  }, [projectsHydrated, projectSettingsPath, projects, clearProjectSettingsTarget]);
 
   // Determine if we have a project context (either from sidebar gear icon or current project)
   const hasProject = Boolean(projectSettingsPath || currentProject);
@@ -88,11 +112,17 @@ export function SettingsPanel() {
   // during a close would reopen the panel, and StrictMode's double mount would
   // seed twice. Seeded here, not in setSettingsOpen, because that needs
   // config-store to import project-store, which closes an import cycle.
+  //
+  // A current project the list no longer holds is on its way out (removing its SSH host hides it,
+  // and the list reload can land before the current-project reload). Seeding from it would point
+  // the panel back at the project just dropped above, and the project tabs would stay over a
+  // project that is gone.
   useEffect(() => {
     const state = useConfigStore.getState();
     if (!state.settingsOpen || state.projectSettingsPath || !currentProject) return;
+    if (projectsHydrated && !projects.some((project) => project.id === currentProject.id)) return;
     openProjectSettings(currentProject.path, currentProject.name);
-  }, [projectSettingsPath, currentProject, openProjectSettings]);
+  }, [projectSettingsPath, currentProject, projects, projectsHydrated, openProjectSettings]);
 
   // Remember the active tab (including clamps to a valid tab) so the next open
   // resumes here. Reads back via the initializer above.

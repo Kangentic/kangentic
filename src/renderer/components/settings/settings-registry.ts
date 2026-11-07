@@ -286,6 +286,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'mobileBridge.pairing', tabId: 'mobile', label: msg`Pair a device`, description: msg`Scan a QR code with the Kangentic mobile app to pair a new phone.`, scope: 'global', keywords: ['pair', 'pairing', 'qr', 'scan', 'phone', 'mobile', 'sas', 'code'] },
   { id: 'mobileBridge.devices', tabId: 'mobile', label: msg`Phones`, description: msg`Phones paired to this desktop, identified by key fingerprint.`, scope: 'global', keywords: ['paired', 'devices', 'phone', 'revoke', 'rename', 'fingerprint', 'mobile'] },
   { id: 'mobileBridge.getApp', tabId: 'mobile', label: msg`Kangentic Mobile`, description: msg`The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live.`, scope: 'global', keywords: ['install', 'download', 'get the app', 'app', 'mobile', 'phone', 'android', 'ios', 'docs', 'play', 'store'] },
+  // SSH hosts (#913). Two cards, both machine-global. Hosts is the list and the inline Add host flow.
+  { id: 'ssh.hosts', tabId: 'ssh', label: msg`Hosts`, description: msg`Linux machines Kangentic runs agents on over SSH.`, scope: 'global', keywords: ['ssh', 'remote', 'host', 'server', 'linux', 'machine', 'add host', 'key', 'fingerprint', 'password', 'jump host', 'remove', 'reconnect'] },
+  { id: 'ssh.client', tabId: 'ssh', label: msg`SSH client`, description: msg`The ssh program on this computer that Kangentic connects with.`, scope: 'global', keywords: ['ssh', 'openssh', 'client', 'version', 'install', 'ssh.exe'] },
 ];
 
 /** Lookup by ID for O(1) access. */

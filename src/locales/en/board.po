@@ -47,6 +47,10 @@ msgstr "{count, plural, one {# subagent active} other {# subagents active}}"
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# tool in flight} other {# tools in flight}}"
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "{hostName} is unreachable. Its agents keep running."
+
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -318,6 +322,18 @@ msgstr "Paused"
 #: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "Queued..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnect"
+msgstr "Reconnect"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnect to {hostName}"
+msgstr "Reconnect to {hostName}"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "Reconnecting to {hostName}. Its agents keep running."
 
 #: src/renderer/components/board/Swimlane.tsx
 msgid "Removed from team config"

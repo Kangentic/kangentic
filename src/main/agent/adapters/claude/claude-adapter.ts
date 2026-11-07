@@ -13,6 +13,7 @@ import {
   parseClaudeTranscriptToolCounts,
   parseClaudeTranscriptToolResultTokens,
   readClaudeTranscriptPage,
+  locateClaudeTranscriptFile,
 } from './transcript-parser';
 import {
   CLAUDE_SUBAGENT_SPAWN_TOOL,
@@ -24,6 +25,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
+import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
 import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { resolveRunTranscriptPath, type RunTranscriptInput } from '../../shared/run-transcript-path';
 import { migrateClaudeProjectData } from './project-relocation';
@@ -78,6 +80,7 @@ import type {
   TranscriptUsage,
   TranscriptToolCounts,
   ExitSequenceStep,
+  StoredCliTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { peekModelPickerAliasIds, setLateModelScanListener } from './model-picker-probe';
@@ -329,6 +332,9 @@ export class ClaudeAdapter implements AgentAdapter {
   // run in the distro's shell, its hooks through the WSL transport, its trust,
   // settings and transcripts in the distro's home (cli-target.ts).
   readonly supportsWslCli = true;
+  // On a remote host over SSH the CLI is `claude` from the host's own login PATH; the ssh place
+  // routes its hooks, status line and MCP through the same transport script a distro uses.
+  readonly remoteCliName = 'claude';
   // `--mcp-config` pointing at the session's own `mcp.json`.
   readonly kangenticMcp = 'per-session' as const;
   // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,
@@ -433,7 +439,12 @@ export class ClaudeAdapter implements AgentAdapter {
     // One pass over ~/.claude.json: the directory trusted, the kangentic MCP
     // server enabled, and 2.1.260's fullscreen diff panel kept closed at
     // launch (per spawn on purpose - see diff-panel.ts for why). A Claude in a
-    // WSL distro reads the distro's own file.
+    // WSL distro reads the distro's own file. A Claude on a remote host has its file edited on the
+    // host by the helper, and its settings pulled to the folders the builder reads (remote-trust.ts).
+    if (place?.kind === 'ssh') {
+      await ensureRemoteClaudeSpawnConfig(workingDirectory, place);
+      return;
+    }
     await ensureClaudeSpawnConfig(workingDirectory, place ?? null);
   }
 
@@ -563,6 +574,19 @@ export class ClaudeAdapter implements AgentAdapter {
 
   /** The SessionStart hook runs at launch, resumes included, before any prompt. */
   readonly reportsAgentStart = true;
+
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file Claude appends to under
+   * `~/.claude/projects/<slug>/`, in this computer's mirror of the host's home, where every Claude reader
+   * already looks for it. A remote task works in one folder for its whole life (its worktree on the host, or
+   * the project's folder when it has none), so the folder Claude started in is the folder it resumes in, and
+   * the slug is the same file's. Subagent transcripts are not carried.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [locateClaudeTranscriptFile(options.agentSessionId, options.cwd, place)];
+  }
 
   /**
    * Measured 2026-10-25 on 437 turns of a board's workflow tasks: no healthy

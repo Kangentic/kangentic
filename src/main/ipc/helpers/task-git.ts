@@ -3,6 +3,7 @@ import { gitAt } from '../../git/git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { WorktreeManager, GitQueuePriority, prepareStaleWorktreeForCreation, type GitWaitProgress, type WorktreeCreateResult, type WorktreeSetup } from '../../git/worktree-manager';
+import { remoteWorktreeBackendFor } from '../../git/remote-worktree';
 import { firstLineOf, type SpareInputs, type SpareWorktreePool } from '../../git/spare-worktree';
 import { isSpareEligible, referencedWorktreeFolders, spareHooksFor, spareInputsFor } from './spare-worktrees';
 import { prepareWorktreeFolder, taskWorktreePathFor } from '../../git/task-worktree-folder';
@@ -487,7 +488,9 @@ export async function ensureTaskWorktree(
     recordWorktreeSkip(task, tasks, 'remote-agent');
     return null;
   }
-  const scriptMode = config.git.initScript?.trim() ? options?.initScript : undefined;
+  // A project on a host runs no Post-Worktree Script (it is shell text for this computer), so there is no
+  // setup for an early agent to overlap.
+  const scriptMode = config.git.initScript?.trim() && !remoteWorktreeBackendFor(resolvedProjectPath) ? options?.initScript : undefined;
   // No-commits and base-branch-resolution guards live inside
   // WorktreeManager.ensureWorktree (via resolveWorktreeBase) so every caller - this one, MCP
   // auto-spawn, the branch-switch handler - gets identical behavior.

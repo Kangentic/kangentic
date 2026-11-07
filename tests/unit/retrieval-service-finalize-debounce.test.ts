@@ -109,6 +109,13 @@ class FakeSessionManager extends EventEmitter {
   getSessionProjectId(sessionId: string): string | undefined {
     return this.projectIdBySession.get(sessionId);
   }
+
+  /** What a session on a host waits on for its last export. Absent for one that exports nothing. */
+  readonly settled = new Map<string, Promise<void>>();
+
+  remoteTranscriptSettled(sessionId: string): Promise<void> | null {
+    return this.settled.get(sessionId) ?? null;
+  }
 }
 
 function makeContext(sessionManager: FakeSessionManager, boardEvents = new BoardEventBus()): IpcContext {
@@ -167,6 +174,58 @@ describe('retrievalService - per-session finalize debounce', () => {
     expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
     expect(embedEngineMock.markDirty).toHaveBeenCalledTimes(1);
     expect(embedEngineMock.markDirty).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('holds the finished pass for a session on a host until its last export is here', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-1', 'proj-1');
+    let settle = (): void => undefined;
+    sessionManager.settled.set('sess-1', new Promise((resolve) => { settle = resolve; }));
+
+    sessionManager.emit('exit', 'sess-1');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(conversationIndexerMock.indexSession).not.toHaveBeenCalled();
+
+    settle();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-1', 'sess-1');
+  });
+
+  // The service can be disposed while a held-up export is still on its way. Indexing then would write to a
+  // project database the app has already let go of.
+  it('does not index a session on a host whose last export arrives after the service was disposed', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-1', 'proj-1');
+    let settle = (): void => undefined;
+    sessionManager.settled.set('sess-1', new Promise((resolve) => { settle = resolve; }));
+
+    sessionManager.emit('exit', 'sess-1');
+    await vi.advanceTimersByTimeAsync(5000);
+    retrievalService.dispose();
+
+    settle();
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(conversationIndexerMock.indexSession).not.toHaveBeenCalled();
+    expect(embedEngineMock.markDirty).not.toHaveBeenCalled();
+  });
+
+  it('holds no other project\'s indexing behind a session whose last export is held up', async () => {
+    const context = makeContext(sessionManager);
+    retrievalService.attach(context);
+    sessionManager.registerSession('sess-held', 'proj-held');
+    sessionManager.registerSession('sess-other', 'proj-other');
+    sessionManager.settled.set('sess-held', new Promise(() => undefined));
+
+    sessionManager.emit('exit', 'sess-held');
+    sessionManager.emit('exit', 'sess-other');
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledTimes(1);
+    expect(conversationIndexerMock.indexSession).toHaveBeenCalledWith('proj-other', 'sess-other');
   });
 
   it('debounces per session, not globally: two DIFFERENT sessions each get their own indexSession call', async () => {

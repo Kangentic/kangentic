@@ -54,6 +54,7 @@ describe('formatWorkflow: which board a task is on', () => {
     ];
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },
@@ -105,6 +106,25 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(lineOf(text, api.title)).toContain(`Waits for #${phone.displayId} on "kangentic-mobile".`);
       expect(lineOf(text, ui.title)).toContain(`Waits for #${api.displayId}.`);
       expect(lineOf(text, ui.title)).not.toContain(' on "');
+    });
+  });
+
+  describe('a workflow held by a board whose host was removed', () => {
+    const heldLine = (text: string): string | undefined => text.split('\n').find((candidate) => candidate.startsWith('Held:'));
+
+    it('says which board holds it, and says nothing when no board does', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+
+      expect(view.hiddenBoards).toEqual([]);
+      expect(heldLine(formatWorkflow(view))).toBeUndefined();
+
+      const held = heldLine(formatWorkflow({ ...view, hiddenBoards: ['kangentic-mobile'] }));
+      expect(held).toContain('tasks on kangentic-mobile');
+      expect(held).toContain('SSH host was removed');
+
+      expect(heldLine(formatWorkflow({ ...view, hiddenBoards: ['kangentic-mobile', 'kangentic-api'] }))).toContain('kangentic-mobile, kangentic-api');
     });
   });
 

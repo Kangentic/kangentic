@@ -1,0 +1,110 @@
+name: SSH hosts against a real sshd
+
+# What only this catches: the SSH link, the host program and the first-time sign-in, run for real. Every
+# other tier fakes the connection (an in-memory stream) or the host (a fake place), so a bug in how the
+# real `ssh` client, a real sshd and the helper meet passes all of them. Two of those shipped before this
+# existed: Git's MSYS `ssh` printing `/c/Users/...` paths that created a stray folder at a drive root, and
+# a child `ssh` that kept stdin open and hung Add host. A real host also proves what the fakes cannot say:
+# that the helper daemon survives its connection being killed, and that no byte of terminal output is lost
+# or repeated across a drop.
+#
+# It builds the Docker image of a plain Ubuntu sshd (scripts/probe-ssh-rig), then runs two rigs against it:
+#   - ssh-setup-rig: the steps of Add host against a host that takes a password (learn the host key and
+#     compare it with the host's own, add a key with the password, sign in with it, recover from a changed key).
+#   - ssh-link-rig: the real link and helper, with the connection killed again and again; the PTY must stay
+#     alive and its output must have no gap after every drop.
+#
+# Costs one ubuntu-24.04 job of about 10 minutes (Docker build, an npm ci, a Node tarball from nodejs.org
+# checked against its published SHA-256). Path-filtered, and deliberately NOT a required check, for the reason
+# shell-quoting-posix.yml gives: ci.yml runs at the job cap, and this only has something to say when the
+# remote code, the host program or the rigs change.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/main/remote/**'
+      - 'src/main/agent/shared/cli-target.ts'
+      - 'scripts/ssh-link-rig.mjs'
+      - 'scripts/ssh-link-rig.client.ts'
+      - 'scripts/ssh-setup-rig.mjs'
+      - 'scripts/ssh-setup-rig.client.ts'
+      - 'scripts/probe-ssh-rig/**'
+      - 'scripts/build-host.mjs'
+      - 'scripts/lib/deterministic-tar.mjs'
+      - '.github/workflows/ssh-rig.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/main/remote/**'
+      - 'src/main/agent/shared/cli-target.ts'
+      - 'scripts/ssh-link-rig.mjs'
+      - 'scripts/ssh-link-rig.client.ts'
+      - 'scripts/ssh-setup-rig.mjs'
+      - 'scripts/ssh-setup-rig.client.ts'
+      - 'scripts/probe-ssh-rig/**'
+      - 'scripts/build-host.mjs'
+      - 'scripts/lib/deterministic-tar.mjs'
+      - '.github/workflows/ssh-rig.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ssh-rig-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # No CUDA download from nuget.org in npm ci. The note at the top of ci.yml has the details.
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  # Skips the run below on a push whose tree its PR already tested. See the note at the top of ci.yml.
+  tested-tree:
+    name: Tree already tested
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check the pushed tree against its PR
+        id: tree
+        uses: ./.github/actions/tested-tree
+
+  ssh-rig:
+    name: SSH link and sign-in against a real sshd
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install dependencies (npm ci)
+        run: npm ci
+      - name: Build the sshd image
+        run: docker build --tag kangentic-ssh-rig scripts/probe-ssh-rig
+      # Each rig exits non-zero when any step fails, so a failure here fails the run.
+      - name: First-time sign-in (Add host)
+        run: node scripts/ssh-setup-rig.mjs --work "$RUNNER_TEMP/ssh-setup-rig"
+      - name: Link survives dropped connections
+        run: node scripts/ssh-link-rig.mjs --work "$RUNNER_TEMP/ssh-link-rig" --drops 5
+      # Says which containers ran, for a failure that only shows in the container's own log.
+      - name: Container logs on failure
+        if: ${{ failure() }}
+        run: |
+          docker ps --all --format '{{.Names}} {{.Status}}'
+          docker logs kangentic-ssh-setup-rig || true
+          docker logs kangentic-ssh-rig-link || true

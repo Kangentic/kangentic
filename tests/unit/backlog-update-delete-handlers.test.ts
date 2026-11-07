@@ -324,7 +324,7 @@ describe('handleUpdateBacklogItem', () => {
 
     expect(result).toEqual({
       success: false,
-      error: 'Failed to attach any of the 1 requested file(s); no other fields were updated.',
+      error: 'Failed to attach any of the 1 requested file(s); no other fields were updated. One file was not attached. C:/mock/missing.txt: ENOENT',
     });
     expect(mockBacklogAttachmentRepoAdd).not.toHaveBeenCalled();
     expect(mockBacklogRepoUpdate).not.toHaveBeenCalled();

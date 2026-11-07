@@ -7,7 +7,9 @@ import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
-import type { AppConfig, BoardProfile, PermissionMode, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../../remote/host-file-sync';
+import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -24,7 +26,7 @@ import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
-import { resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
+import { shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 
 /**
@@ -64,8 +66,10 @@ export interface PreparedSpawn {
    * distro's shell for a CLI installed there. The caller spawns in it.
    */
   shell: string;
-  /** Where the CLI runs when it is not this machine (a WSL distro), for the spawn and the session row. */
+  /** Where the CLI runs when it is not this machine (a WSL distro or a host), for the spawn and the session row. */
   cliTarget: StoredCliTarget | null;
+  /** Set when the agent runs on a remote host (#913): the spawn descriptor `performSpawn` takes. */
+  remote: SpawnRemote | null;
   /** Whether the command resumes the agent's conversation (`--resume`). */
   resumed: boolean;
   /**
@@ -117,7 +121,11 @@ export type PrepareResult =
  * `{ agentSessionId }` to produce a `--resume <uuid>` command, or null
  * for a fresh spawn.
  */
-export async function prepareAgentSpawn(input: {
+export function prepareAgentSpawn(input: Parameters<typeof prepareSpawnWithPull>[1]): Promise<PrepareResult> {
+  return withHostFilePull((hostFilePull) => prepareSpawnWithPull(hostFilePull, input));
+}
+
+async function prepareSpawnWithPull(hostFilePull: HostFilePull, input: {
   task: Task;
   swimlane: Swimlane | null;
   cwd: string;
@@ -207,17 +215,22 @@ export async function prepareAgentSpawn(input: {
   const projectFallback = projectModelDefaultsApply(agent, input.projectDefaultAgent);
 
   const cliPathOverride = config.agent.cliPaths[agent] ?? null;
-  const detection = await adapter.detect(cliPathOverride);
-  if (!detection.found || !detection.path) {
+  // The CLI and where it runs, decided as the board path decides it (`resolveSpawnCli`): a remote
+  // project's is the host's own (#913), never detected here; a distro CLI runs in that distro's shell,
+  // whatever the Terminal setting says.
+  const spawnCli = await resolveSpawnCli({ projectPath, cwd, adapter, cliPathOverride });
+  if (!spawnCli) {
     trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
     return { ok: false, reason: 'cli-not-found' };
   }
-  // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
-  // once for this spawn, as the board path does. A distro CLI runs in that
-  // distro's shell, whatever the Terminal setting says.
-  const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+  const { remoteLaunch, cliTarget } = spawnCli;
+  const detectedCliPath = spawnCli.cliPath;
   const shell = shellForTarget(cliTarget) ?? input.resolvedShell;
 
+  // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
+  // before it runs, pushed back after the command is built (#913). Null for any other spawn.
+  const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
+  hostFilePull.sync = hostFiles;
   await adapter.ensureTrust(cwd, cliTarget);
 
   // "Plan always wins, else task -> lane -> global" - the rule lives in
@@ -241,8 +254,9 @@ export async function prepareAgentSpawn(input: {
         sessionRepo: input.sessionRepo,
         // The conversation resumes where this spawn's CLI runs.
         place: cliTarget,
-        // Stops the CLI's own background session holding the conversation, if any.
-        cliPath: detection.path,
+        // Stops the CLI's own background session holding the conversation, if any. Not for a
+        // host's CLI: that would run a command on this computer, where the session is not.
+        cliPath: remoteLaunch ? undefined : detectedCliPath,
       })
     : null;
 
@@ -314,9 +328,10 @@ export async function prepareAgentSpawn(input: {
   const agentSessionId = canResume
     ? resumedAgentSessionId
     : await resolveFreshAgentSessionId(adapter, {
-        cliPath: detection.path,
+        cliPath: detectedCliPath,
         workingDirectory: cwd,
         permissionMode,
+        place: cliTarget,
       });
 
   // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
@@ -324,7 +339,7 @@ export async function prepareAgentSpawn(input: {
   // shell can run, or the prompt is flattened. After the check, since an
   // expired conversation's recap is the one prompt this path ever carries.
   const launch = await resolveShimLaunch({
-    agentPath: detection.path,
+    agentPath: detectedCliPath,
     shell,
     prompt: prompt ?? undefined,
   });
@@ -401,6 +416,8 @@ export async function prepareAgentSpawn(input: {
     releaseCommandHold(adapter, cwd, sessionRecordId);
     throw error;
   }
+  // A push that fails means no caller will spawn this command.
+  await pushHostFilesForSpawn(hostFiles, sessionRecordId, () => releaseCommandHold(adapter, cwd, sessionRecordId));
 
   return {
     ok: true,
@@ -419,12 +436,13 @@ export async function prepareAgentSpawn(input: {
       appliedEffort: commandOptions.effort ?? null,
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
+      remote: remoteLaunch?.remote ?? null,
       resumed: canResume,
       prompt,
       startOver,
       expiredLastActiveAt,
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
-      agentCliVersion: detection.version,
+      agentCliVersion: spawnCli.version,
     },
   };
 }

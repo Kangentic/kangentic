@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
@@ -26,7 +25,7 @@ import { claudePlanToolApprovalSpec, planToolApprovalRules } from './plan-tool-a
 import { buildBackgroundShellHintCommand } from '../../shared/background-shell-hint-hook';
 import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
 import { encodeHookSpec, quoteBridgePath } from '../../shared/hook-utils';
-import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import { cliHomeDir, cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import {
   prepareWslHookTransport,
   wslHookEventCommand,
@@ -215,7 +214,7 @@ export class CommandBuilder {
    * is the one that Claude reads.
    */
   private readUserSettings(place: CliPlace | null = null): ClaudeSettings {
-    const home = place ? place.facts.homeUnc : os.homedir();
+    const home = cliHomeDir(place);
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf-8'));
       return isPlainSettingsObject(parsed) ? parsed : {};

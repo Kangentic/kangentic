@@ -160,6 +160,9 @@ vi.mock('../../src/main/pty/session-manager', async () => {
       spawn = vi.fn();
       kill = vi.fn();
       enableTranscripts = vi.fn();
+      // registerAllIpc builds the SSH hosting (#913), which hands the session manager its relay and sends its host requests.
+      setRemoteSessionRelay = vi.fn();
+      remoteHostRequest = vi.fn();
       setEarlierRunsSource = vi.fn();
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       setMaxConcurrent = vi.fn();
@@ -464,6 +467,26 @@ describe('registerAllIpc command terminal history deps', () => {
         await expect(deps.conversationAvailable('resumable-agent', 'conversation-8', '/mock/project', WSL_TARGET)).resolves.toBe(true);
 
         expect(locateMock(adapter)).not.toHaveBeenCalled();
+      });
+    });
+
+    // Only the host proves a path absent, and this computer holds a copy that may be empty or stale.
+    // Read as gone, the row was deleted, and the conversation vanished from Earlier conversations.
+    describe('a conversation on an SSH host', () => {
+      const SSH_TARGET = JSON.stringify({ kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: '/mock/mirror', roots: [] });
+
+      it('keeps the row when nothing has reached this computer yet', async () => {
+        const adapter = makeAdapter(RESUMABLE_BY_ID, async () => null);
+        agentRegistryGet.mockReturnValue(adapter);
+
+        await expect(deps.conversationAvailable('resumable-agent', 'conversation-9', '/mock/project', SSH_TARGET)).resolves.toBe(true);
+      });
+
+      it('still refuses an agent that cannot resume by id', async () => {
+        const adapter = makeAdapter(NOT_RESUMABLE_BY_ID, async () => null);
+        agentRegistryGet.mockReturnValue(adapter);
+
+        await expect(deps.conversationAvailable('no-resume-agent', 'conversation-10', '/mock/project', SSH_TARGET)).resolves.toBe(false);
       });
     });
   });

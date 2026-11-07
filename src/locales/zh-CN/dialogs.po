@@ -39,6 +39,12 @@ msgstr "「{taskTitle}」已在看板上。"
 msgid "({deleteFailureCount} failed)"
 msgstr "（{deleteFailureCount} 个失败）"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} 在 {1} 上不存在。"
+
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
 #, fuzzy
 msgid "{ahead, plural, one {# task ahead} other {# tasks ahead}}"
@@ -255,6 +261,10 @@ msgstr "{fileCount, plural, other {# 个文件中已标记查看 {viewedCount} �
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
 msgstr "{fileCount, plural, other {# 个文件中已查看 {viewedCount} 个}}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "A folder inside your home on the host, such as ~/code/api"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 msgid "A narrow pane renders inline"
 msgstr "窗格较窄时改为内联显示"
@@ -279,6 +289,17 @@ msgstr "添加自动化"
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 msgid "Add column"
 msgstr "添加列"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "添加项目"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project on {0}"
+msgstr "在 {0} 上添加项目"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"
@@ -484,6 +505,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "分支"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Cache read"
@@ -511,6 +536,7 @@ msgstr "无法移除「{name}」"
 msgid "Can't update from {baseBranch}"
 msgstr "无法从 {baseBranch} 更新"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -544,6 +570,15 @@ msgstr "更改 - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "更改已在单独的窗口中打开"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Choose a folder on this machine"
+msgstr "选择此计算机上的文件夹"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Choose icon"
@@ -731,6 +766,16 @@ msgstr "条件：{condition}"
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 msgid "Confirm"
 msgstr "确认"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "已连接"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "正在连接…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgctxt "board overview column header"
@@ -982,6 +1027,10 @@ msgstr "差异"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Diff scope"
 msgstr "差异范围"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1284,6 +1333,10 @@ msgstr "图像预览"
 msgid "Image sent at lower quality"
 msgstr "图片已按较低质量发送"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "In a git repository, each task gets its own worktree on the host. Otherwise tasks share the folder."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
 msgid "Indexing is off, so no commits are linked"
 msgstr "索引已关闭，因此不会关联任何提交。"
@@ -1434,6 +1487,7 @@ msgstr "已修改"
 msgid "Move to"
 msgstr "移至"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name"
@@ -1557,6 +1611,10 @@ msgstr "无描述"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "No files changed"
 msgstr "无文件更改"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
@@ -1703,6 +1761,10 @@ msgstr "逐个执行"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "仅检测到一个智能体 CLI，请安装其他 CLI 以供选择"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
 msgstr "仅更改名称。已使用此配置方案的任务将继续使用它。"
@@ -1811,6 +1873,10 @@ msgstr "概览"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Page kept"
 msgstr "页面已保留"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -1943,6 +2009,11 @@ msgstr "已运行"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Rebase or merge it in the session instead."
 msgstr "请改为在会话中变基或合并。"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "正在重新连接…"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Refresh PR"
@@ -2359,6 +2430,11 @@ msgstr "停止"
 msgid "Stop {label}"
 msgstr "停止 {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Stopped"
+msgstr "已停止"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
 msgid "Stopped"
@@ -2497,6 +2573,15 @@ msgstr "此操作无法撤销。"
 msgid "This commit changed no files"
 msgstr "此提交未更改任何文件"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "This computer"
+msgstr "此计算机"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "此项现由列的设置处理。移除此项即可使用列设置。"
@@ -2609,6 +2694,11 @@ msgstr "类型"
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "更改的像素不足 0.1%"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "无法连接"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "Unsaved"

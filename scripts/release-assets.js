@@ -28,8 +28,9 @@
  *
  * Adding or dropping an arch changes the asset count the test and the docs
  * hardcode (tests/unit/release-asset-manifest.test.ts, docs/releases/deployment.md,
- * .claude/skills/release/SKILL.md). Those say 18 BUILD assets, and the docs also
- * say a finished release carries 19: release.yml's demo-posters job attaches the
+ * .claude/skills/release/SKILL.md). Those say 20 BUILD assets (18 from the desktop
+ * builds and 2 host archives), and the docs also
+ * say a finished release carries 21: release.yml's demo-posters job attaches the
  * docs poster set after publishing, deliberately outside this list, since this
  * manifest is verified before that job runs.
  */
@@ -46,6 +47,14 @@ const LINUX_TARGETS = [
   { arch: 'x64', debArch: 'amd64', rpmArch: 'x86_64', channelFile: 'latest-linux.yml' },
   { arch: 'arm64', debArch: 'arm64', rpmArch: 'aarch64', channelFile: 'latest-linux-arm64.yml' },
 ];
+
+/**
+ * The CPUs the host program is built for (scripts/build-host.mjs): the program Kangentic installs on a
+ * remote machine for an SSH project. It is not a desktop build, so it has no release leg; the
+ * build-host job attaches one archive per CPU, and the installers carry only a manifest of their
+ * checksums (electron-builder.yml, extraResources) and download the matching archive on first use.
+ */
+const HOST_ARCHES = ['x64', 'arm64'];
 
 /**
  * @param {string} version Version without a leading "v" (e.g. "0.35.0").
@@ -81,6 +90,9 @@ function expectedReleaseAssets(version) {
       `kangentic-${version}-1.${target.rpmArch}.rpm`,
       target.channelFile,
     ]),
+
+    // The host program for SSH projects (one archive per CPU, named as scripts/build-host.mjs names it)
+    ...HOST_ARCHES.map((arch) => `kangentic-host-${version}-linux-${arch}.tar.gz`),
   ];
 }
 
@@ -88,4 +100,4 @@ function expectedReleaseAssets(version) {
  *  broken for that platform even when every binary is present. */
 const CHANNEL_FILES = ['latest.yml', 'latest-mac.yml', ...LINUX_TARGETS.map((target) => target.channelFile)];
 
-module.exports = { expectedReleaseAssets, expectedMacZips, CHANNEL_FILES, MAC_ARCHES, LINUX_TARGETS };
+module.exports = { expectedReleaseAssets, expectedMacZips, CHANNEL_FILES, MAC_ARCHES, LINUX_TARGETS, HOST_ARCHES };

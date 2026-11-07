@@ -159,20 +159,24 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "\"{taskTitle}\": \"{automationName}\" falló en {columnName}."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": {detail}"
-msgstr ""
+msgstr "\"{taskTitle}\": {detail}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": exited with code {exitCode}."
-msgstr ""
+msgstr "\"{taskTitle}\": finalizó con el código {exitCode}."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{minutes, plural, one {\"{taskTitle}\": se agotó el tiempo de espera tras # minuto.} many {\"{taskTitle}\": se agotó el tiempo de espera tras # de minutos.} other {\"{taskTitle}\": se agotó el tiempo de espera tras # minutos.}}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
-msgstr ""
+msgstr "{seconds, plural, one {\"{taskTitle}\": se agotó el tiempo de espera tras # segundo.} many {\"{taskTitle}\": se agotó el tiempo de espera tras # de segundos.} other {\"{taskTitle}\": se agotó el tiempo de espera tras # segundos.}}"
 
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
@@ -1290,8 +1294,9 @@ msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Otros trabajos también lo usan. Detenerlo puede afectarlos."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Part of it runs outside this task's folders. Stopping it stops that too."
-msgstr ""
+msgstr "Una parte se ejecuta fuera de las carpetas de esta tarea. Detenerlo también la detiene."
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1583,8 +1588,9 @@ msgid "Still running: {tasks}."
 msgstr "Aún en ejecución: {tasks}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Stop script failed"
-msgstr ""
+msgstr "Error en el script de detención"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

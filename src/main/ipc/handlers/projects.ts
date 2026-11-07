@@ -49,7 +49,7 @@ import { retrievalService } from '../../retrieval/retrieval-service';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { repairToolBreakdownDurations } from '../helpers/tool-breakdown-repair';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
+import type { Project, ProjectCreateInput, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -610,6 +610,40 @@ async function runColdOpenPasses(
 }
 
 /**
+ * Startup recovery for the remote projects on a host whose link has just come up for the first
+ * time this run. The hosts connect after the window, so a project opened at launch can run its
+ * recovery while its host is still dialing. With the link down the pass keeps every paused remote
+ * task resumable and touches nothing (`remote-link-down-no-mutation.test.ts`), and nothing asked
+ * again once the link arrived, so a task a quit had paused waited for a manual Resume.
+ *
+ * Only a project whose cold open already ran is recovered here: a project opened later runs its
+ * own recovery with the link up. The sweep is not repeated, only the resume and the spawn of tasks
+ * that never had an agent. A task that already has a live session is skipped by both, so a pass
+ * that overlaps the cold open's own does not start a second agent.
+ */
+export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: string): Promise<void> {
+  if (isRevealPending(context, hostId)) {
+    await startRevealedProjects(context, hostId);
+    return;
+  }
+  const remoteProjects = context.projectRepo.list().filter((project) => project.remote?.hostId === hostId && context.recoveredProjects.has(project.id));
+  for (const project of remoteProjects) {
+    try {
+      await runWithProjectLogContext(project.name, async () => {
+        const repositories = coldOpenRepositories(getProjectDb(project.id));
+        const standing = await verifyOwnershipAtOpen(project, repositories);
+        if (standing.kind === 'foreign') return;
+        const boardProfiles = (): ReturnType<IpcContext['boardConfigManager']['getBoardProfiles']> => context.boardConfigManager.getBoardProfiles(project.path);
+        await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+        await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), { startFirstAgent: firstAgentStarter(context, project.id) });
+      });
+    } catch (error) {
+      console.error(`[remote] Recovery for ${project.name} after its host connected failed:`, error);
+    }
+  }
+}
+
+/**
  * What every recovery pass passes `resumeSuspendedSessions` beyond its
  * positional inputs: the expired-conversation notice, and the project's own
  * team-shared default base branch for the recap (read by path, since a pass
@@ -707,6 +741,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // Check if a project with this path already exists
   const projects = context.projectRepo.list();
   let project = projects.find((p) => path.resolve(p.path) === normalized);
+
+  // A hidden project's stand-in folder is no folder to add: a local row at its path would run every start as the
+  // hidden remote project, which `remoteOfProjectPath` finds first, and be refused.
+  if (!project && context.projectRepo.listHidden().some((hidden) => path.resolve(hidden.path) === normalized)) {
+    throw new Error(`${normalized} belongs to a project whose SSH host was removed. Add the host again to bring it back.`);
+  }
 
   // Guard BEFORE any directory-creating side effect (saveProjectOverrides,
   // ensureGitignore, syncProjectMcpConfig all mkdir under the project path).
@@ -995,6 +1035,90 @@ async function recoverTasksAfterPtyHostLoss(
   }
 }
 
+/** One project's startup recovery, shared by the startup pass and a host's projects shown again. */
+async function activateProject(context: IpcContext, project: Project): Promise<void> {
+  if (isShuttingDown()) return;
+  // A missing folder means the project was moved or renamed on disk.
+  // Skip activation entirely: ensureGitignore would recreate an empty
+  // folder at the stale path, and session recovery would retire the
+  // suspended session records because their cwds no longer exist.
+  if (!fs.existsSync(project.path)) {
+    console.warn(`[PROJECT_OPEN] Skipping activation, path missing: ${project.path}`);
+    // Its database is still migrated, never created: the retrieval worker
+    // opens every registered project's database with migrations off (the
+    // usage reader does not skip a missing folder), so it relies on this.
+    timeSyncWork('project:activate-open-db', () => getExistingProjectDb(project.id));
+    return;
+  }
+  // Awaited (not fire-and-forget) to keep per-project sequencing
+  // deterministic; this whole closure already runs in the background.
+  await ensureGitignore(project.path);
+  const repositories = coldOpenRepositories(timeSyncWork('project:activate-open-db', () => getProjectDb(project.id)));
+
+  // See openProjectByPath: before anything can list Earlier.
+  claimCommandTerminalRestore(context, project.id);
+  // See openProjectByPath for rationale: the slow async passes run in the
+  // background and may still be in flight when activateAllProjects resolves.
+  await runColdOpenPasses(context, project, repositories, { stopOnFailure: true });
+  // Deliberately AFTER the chain (unlike the open paths, which mark up
+  // front to guard rapid double-opens): a failed background activation
+  // stays cold, so the user's next explicit open retries recovery.
+  context.recoveredProjects.add(project.id);
+  startToolBreakdownRepair(project);
+}
+
+/** Hosts whose leftovers are being ended now, so the two ways in cannot both do it. */
+const hostsRevealing = new Set<string>();
+
+function isRevealPending(context: IpcContext, hostId: string): boolean {
+  return context.remoteHosting?.hosts.getById(hostId)?.reveal_pending === true;
+}
+
+/**
+ * A removed host was added back, so its projects start as soon as its link is up, which may be now, on the host's
+ * first connection, or on a Reconnect long after. The row says so, which a restart in between does not lose.
+ * Starts them only once, whichever comes first.
+ */
+export async function revealHostProjects(context: IpcContext, hostId: string): Promise<void> {
+  if (context.remoteHosting?.status.get(hostId)?.state === 'connected') await startRevealedProjects(context, hostId);
+}
+
+/**
+ * End what the host still runs for these projects, then recover them. In that order: a Remove with the link down
+ * could not stop its agents, and a resume beside one would run two agents on one conversation. If the host cannot
+ * say, nothing starts, and the next connection tries again.
+ */
+async function startRevealedProjects(context: IpcContext, hostId: string): Promise<void> {
+  if (!isRevealPending(context, hostId) || hostsRevealing.has(hostId)) return;
+  hostsRevealing.add(hostId);
+  const projects = context.projectRepo.listOnHost(hostId);
+  try {
+    await context.remoteHosting?.hostService.endSessionsLeftRunning(hostId, new Set(projects.map((project) => project.id)));
+  } catch (error) {
+    console.warn(`[remote] waiting for host ${hostId.slice(0, 8)} before starting its projects again:`, error);
+    context.remoteHosting?.expectFirstConnect(hostId);
+    return;
+  } finally {
+    hostsRevealing.delete(hostId);
+  }
+  context.remoteHosting?.hosts.clearRevealPending(hostId);
+  await activateProjects(context, projects);
+}
+
+/**
+ * Start recovery for projects that were hidden (their host was removed) and are shown again: they were
+ * never activated this run, or were taken back out of the recovered set when they were hidden, so a task
+ * a removal had suspended starts again with its host. Never rejects; one project's failure is logged.
+ */
+export async function activateProjects(context: IpcContext, projects: Project[]): Promise<void> {
+  const results = await Promise.allSettled(
+    projects.map((project) => runWithProjectLogContext(project.name, () => activateProject(context, project))),
+  );
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') console.error(`[PROJECT_OPEN] Failed to activate project ${projects[index].name}:`, result.reason);
+  });
+}
+
 /**
  * Activate all projects on startup: run session recovery/reconciliation
  * for every project so agent sessions start immediately, not just when
@@ -1016,7 +1140,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (isShuttingDown()) return;
 
   const projects = context.projectRepo.list();
-  const otherProjects = projects.filter(p => p.id !== context.currentProjectId);
+  // A host added back and not connected since: its first connection starts these, after ending what it still runs.
+  const otherProjects = projects.filter((project) => project.id !== context.currentProjectId && !(project.remote && isRevealPending(context, project.remote.hostId)));
   if (otherProjects.length === 0) return;
 
   const results = await Promise.allSettled(
@@ -1024,36 +1149,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
     // emitted recovery/auto-spawn lines (resumeSuspendedSessions /
     // autoSpawnTasks fired in parallel across all projects) are each tagged
     // with the project that produced them, not the focused project.
-    otherProjects.map((project) => runWithProjectLogContext(project.name, async () => {
-      if (isShuttingDown()) return;
-      // A missing folder means the project was moved or renamed on disk.
-      // Skip activation entirely: ensureGitignore would recreate an empty
-      // folder at the stale path, and session recovery would retire the
-      // suspended session records because their cwds no longer exist.
-      if (!fs.existsSync(project.path)) {
-        console.warn(`[PROJECT_OPEN] Skipping activation, path missing: ${project.path}`);
-        // Its database is still migrated, never created: the retrieval worker
-        // opens every registered project's database with migrations off (the
-        // usage reader does not skip a missing folder), so it relies on this.
-        timeSyncWork('project:activate-open-db', () => getExistingProjectDb(project.id));
-        return;
-      }
-      // Awaited (not fire-and-forget) to keep per-project sequencing
-      // deterministic; this whole closure already runs in the background.
-      await ensureGitignore(project.path);
-      const repositories = coldOpenRepositories(timeSyncWork('project:activate-open-db', () => getProjectDb(project.id)));
-
-      // See openProjectByPath: before anything can list Earlier.
-      claimCommandTerminalRestore(context, project.id);
-      // See openProjectByPath for rationale: the slow async passes run in the
-      // background and may still be in flight when activateAllProjects resolves.
-      await runColdOpenPasses(context, project, repositories, { stopOnFailure: true });
-      // Deliberately AFTER the chain (unlike the open paths, which mark up
-      // front to guard rapid double-opens): a failed background activation
-      // stays cold, so the user's next explicit open retries recovery.
-      context.recoveredProjects.add(project.id);
-      startToolBreakdownRepair(project);
-    })),
+    otherProjects.map((project) => runWithProjectLogContext(project.name, () => activateProject(context, project))),
   );
 
   for (let index = 0; index < results.length; index++) {
@@ -1085,12 +1181,27 @@ export function registerProjectHandlers(context: IpcContext): void {
     { notify: true },
   ));
 
-  ipcMain.handle(IPC.PROJECT_CREATE, (_, input) => {
+  ipcMain.handle(IPC.PROJECT_CREATE, async (_, requested: ProjectCreateInput) => {
+    // A project on a host (#913): its folder is checked there, its shell folder is made here, and
+    // `.kangentic/` is kept out of the host repository's git status. The input then goes on as any other.
+    let input = requested;
+    if (requested.remote) {
+      const admin = context.remoteHosting?.admin;
+      if (!admin) throw new Error('Remote projects are not available.');
+      input = await admin.prepareRemoteProject(requested);
+    }
     // Explicit input wins; the inherited defaults only fill what it left unset.
-    const project = context.projectRepo.create({
-      ...getLastProjectAgentDefaults(context.projectRepo, input.path),
-      ...input,
-    });
+    let project: Project;
+    try {
+      project = context.projectRepo.create({
+        ...getLastProjectAgentDefaults(context.projectRepo, input.path),
+        ...input,
+      });
+    } catch (error) {
+      // The shell folder the remote branch just made belongs to no project now.
+      if (requested.remote) await context.remoteHosting?.admin?.removeShellFolder(input.path).catch(() => undefined);
+      throw error;
+    }
     // Initialize the project database (creates tables + default swimlanes)
     getProjectDb(project.id);
     // Clone settings from the last modified project (or global defaults if none).
@@ -1107,6 +1218,9 @@ export function registerProjectHandlers(context: IpcContext): void {
       await cleanupProject(context, id, project.path);
     }
     context.projectRepo.delete(id);
+    // A remote project's local folder is Kangentic's own shell folder, never the user's: it goes too.
+    // Nothing on the host is touched.
+    if (project?.remote) await context.remoteHosting?.admin?.removeShellFolder(project.path).catch(() => undefined);
   });
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {

@@ -91,6 +91,8 @@ export function screenshotToolResult(result: DriverResult<ScreenshotResponse>): 
     meta.filePath = data.filePath;
     meta.fileUri = data.fileUri;
     meta.reason = data.reason;
+    meta.location = data.location ?? 'local';
+    if (data.localFilePath) meta.localFilePath = data.localFilePath;
     const summary = `Screenshot persisted to ${data.filePath} (${formatBytes(data.byteLength)}, ${data.width}x${data.height}, ${data.format}). Use Read to view.`;
     const filename = data.filePath.split(/[\\/]/).pop() || 'screenshot';
     return {

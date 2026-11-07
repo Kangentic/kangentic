@@ -48,7 +48,9 @@ does, so its Pause leaves a paused pane and an exited row tells the pane to star
 agent-absence sweep judges and retires it like a task's agent, and its processes carry its
 workflow's id as their `KANGENTIC_TASK_ID`, which no task shares. While it runs it holds an agent
 slot under Max Concurrent Sessions, as a Command Terminal does, and its Pause frees it. It runs in
-the home project's checkout with an MCP URL whose caller segment is `workflow-<id>`, for which the
+the home project's checkout, which for a project on an SSH host is the folder on the host: it starts
+through `resolveSpawnCli` and the host file sync as a task's agent does, and reads another project
+only on the same host, by its path there. It has an MCP URL whose caller segment is `workflow-<id>`, for which the
 server registers only the read-only tools and the planning tools, bound to that workflow
 (`workflow-agent-scope.ts`). That scope is the guard for every agent. Any agent can be it whose
 adapter delivers Kangentic's MCP per session (`kangenticMcp: 'per-session'`) and whose

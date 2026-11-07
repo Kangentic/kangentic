@@ -31,7 +31,7 @@ import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
-import { linkEndState, readWorkflowTasks } from './workflow-tasks';
+import { hiddenBoardsOf, linkEndState, readWorkflowTasks } from './workflow-tasks';
 import { isNeverStarted } from './workflow-never-started';
 import { adoptLegacyPlanApproval, readPlannedTaskPlanApproval, readTaskPlanApproval } from '../plan-approval/workflow-plan-approval';
 import {
@@ -210,9 +210,10 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       boardTasks: {},
       agent: workflowAgentSummary(context, workflow.id),
       stalledTasks: [],
+      hiddenBoards: [],
     };
   }
-  const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflow.id);
+  const { tasks: created, unreadProjectIds, hiddenTasks } = readWorkflowTasks(context, homeProjectId, workflow.id);
   // Each board's columns, read once: every task on it asks for them, twice for one in To Do.
   const lanesByProject = new Map<string, Swimlane[]>();
   const lanesOf = (projectId: string): Swimlane[] => {
@@ -278,6 +279,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     boardTasks,
     agent: workflowAgentSummary(context, workflow.id),
     stalledTasks,
+    hiddenBoards: hiddenBoardsOf(hiddenTasks),
   };
 }
 

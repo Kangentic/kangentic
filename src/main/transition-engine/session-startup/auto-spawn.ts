@@ -489,6 +489,7 @@ export async function autoSpawnTasks(
           inputInAlternateScreen: input.inputInAlternateScreen,
           shell: input.shell,
           cliTarget: input.cliTarget,
+          ...(input.remote ? { remote: input.remote } : {}),
         });
 
         taskRepo.update({

@@ -1,0 +1,238 @@
+{
+  "info": {
+    "id": "ses_e52b59ffaffeB3C231sC6dAi9T",
+    "slug": "swift-cactus",
+    "projectID": "global",
+    "directory": "/home/dev/proj/oc-v1",
+    "path": "",
+    "title": "Stub reply from the probe model.",
+    "agent": "build",
+    "model": {
+      "id": "stub-model",
+      "providerID": "stub",
+      "variant": "default"
+    },
+    "version": "1.19.5",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 2468,
+      "output": 112,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "permission": [
+      {
+        "permission": "question",
+        "pattern": "*",
+        "action": "deny"
+      },
+      {
+        "permission": "plan_enter",
+        "pattern": "*",
+        "action": "deny"
+      },
+      {
+        "permission": "plan_exit",
+        "pattern": "*",
+        "action": "deny"
+      }
+    ],
+    "time": {
+      "created": 1793908695046,
+      "updated": 1793908696130
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1793908695068
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "stub",
+          "modelID": "stub-model"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_1ad4a601c001LtZLG6ugLPyyFZ",
+        "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "\"say hello\"",
+          "id": "prt_1ad4a602000161GtebcYY9qoXJ",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a601c001LtZLG6ugLPyyFZ"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1ad4a601c001LtZLG6ugLPyyFZ",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/home/dev/proj/oc-v1",
+          "root": "/home/dev/proj/oc-v1"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 1290,
+          "input": 1234,
+          "output": 56,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "stub-model",
+        "providerID": "stub",
+        "time": {
+          "created": 1793908695575,
+          "completed": 1793908696046
+        },
+        "finish": "tool-calls",
+        "id": "msg_1ad4a6217001cI1ebt3PLy4iig",
+        "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T"
+      },
+      "parts": [
+        {
+          "snapshot": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "type": "step-start",
+          "id": "prt_1ad4a63ab001mpzerjMOFpCY7m",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a6217001cI1ebt3PLy4iig"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_probe_1",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "echo probe-tool-output"
+            },
+            "output": "probe-tool-output\n",
+            "metadata": {
+              "output": "probe-tool-output\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "echo probe-tool-output",
+            "time": {
+              "start": 1793908695985,
+              "end": 1793908696025
+            }
+          },
+          "id": "prt_1ad4a63ad001mPM2FfRh1dkq89",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a6217001cI1ebt3PLy4iig"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "type": "step-finish",
+          "tokens": {
+            "total": 1290,
+            "input": 1234,
+            "output": 56,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0,
+          "id": "prt_1ad4a63e30013huByc48QadupQ",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a6217001cI1ebt3PLy4iig"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1ad4a601c001LtZLG6ugLPyyFZ",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "/home/dev/proj/oc-v1",
+          "root": "/home/dev/proj/oc-v1"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 1290,
+          "input": 1234,
+          "output": 56,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "stub-model",
+        "providerID": "stub",
+        "time": {
+          "created": 1793908696048,
+          "completed": 1793908696125
+        },
+        "finish": "stop",
+        "id": "msg_1ad4a63f0001N8j5I92iDuAG4y",
+        "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T"
+      },
+      "parts": [
+        {
+          "snapshot": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "type": "step-start",
+          "id": "prt_1ad4a6416001WRvjU8q39dtEm7",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a63f0001N8j5I92iDuAG4y"
+        },
+        {
+          "type": "text",
+          "text": "Stub reply from the probe model.",
+          "time": {
+            "start": 1793908696088,
+            "end": 1793908696090
+          },
+          "id": "prt_1ad4a6418001z3uMYPZl3i6tak",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a63f0001N8j5I92iDuAG4y"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+          "type": "step-finish",
+          "tokens": {
+            "total": 1290,
+            "input": 1234,
+            "output": 56,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0,
+          "id": "prt_1ad4a64330011k92pSIp1bV3TV",
+          "sessionID": "ses_e52b59ffaffeB3C231sC6dAi9T",
+          "messageID": "msg_1ad4a63f0001N8j5I92iDuAG4y"
+        }
+      ]
+    }
+  ]
+}

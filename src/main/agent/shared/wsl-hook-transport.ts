@@ -113,6 +113,8 @@ export const WSL_HOOK_SCRIPT = [
   '    publish inbox rec "$type" "$*"',
   '    ;;',
   '  reply)',
+  '    # A request can carry the MCP token on its third line, so on a shared host only its owner may read it.',
+  '    umask 077',
   '    publish requests req "$1" "$2" || exit 0',
   '    response="$dir/responses/$name.res"',
   '    tries=0',
@@ -135,6 +137,7 @@ export const WSL_HOOK_SCRIPT = [
   '    # The line goes in by a here-document, not a pipe: a pipe would run',
   '    # publish in a subshell and lose the $name it sets.',
   '    url=$1',
+  '    umask 077',
   '    while IFS= read -r line || [ -n "$line" ]; do',
   '      [ -n "$line" ] || continue',
   `      publish requests req ${WSL_MCP_REQUEST_HEAD} "\${${WSL_MCP_TOKEN_ENV}:-} $url" <<KANGENTIC_MCP_LINE || continue`,
@@ -269,6 +272,9 @@ export function wslHookReplyCommand(paths: WslHookPaths, place: CliPlace, kind: 
  * the stdio bridge (`wslMcpServerLaunch`) instead.
  */
 export function wslReachesLoopback(place: CliPlace): boolean {
+  // A host over SSH never reaches this computer's loopback: its CLI gets the stdio bridge, and the
+  // helper carries the bridge's files back (see `remote-session-relay.ts`).
+  if (place.kind === 'ssh') return false;
   return place.facts.networkingMode === 'mirrored';
 }
 

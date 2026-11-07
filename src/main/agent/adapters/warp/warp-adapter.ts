@@ -52,6 +52,12 @@ export class WarpAdapter implements AgentAdapter {
   // server reaches a distro on NAT networking through the hook transport's
   // bridge (`kangenticMcpServer`). Oz wires no hooks and reads no transcript.
   readonly supportsWslCli = true;
+  // On a remote host over SSH (#913) the program is `oz` from the host's login PATH, started in the
+  // project's folder on the host (`-C` gets the host path). `oz` has no `--version`, and a remote
+  // project never detects it on this computer. It edits no file of the user's, so nothing is declared in
+  // `remoteFiles`. The session's own `mcp.json` (`--mcp`) sits in the session folder, which the relay
+  // sends to the host with the token it holds, owner-only.
+  readonly remoteCliName = 'oz';
   /**
    * Each run gets its own `mcp.json` in its session directory, named by
    * `--mcp` (`writeWarpMcpConfig`). Built from Warp's docs, not yet run

@@ -24,6 +24,7 @@ import { agentRegistry } from './agent-registry';
 import { invalidateWslDistroFacts } from './shared/wsl-distro';
 import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
 import type { AgentAdapter } from './agent-adapter';
+import type { HostAgentProbe } from '../remote/host-agent-probe';
 import type { AgentDetectionInfo } from '../../shared/types';
 
 type CliPathOverrides = Record<string, string | null | undefined>;
@@ -109,35 +110,94 @@ async function buildAgentList(
           : Promise.resolve(undefined),
       ]);
       return {
-        name: agentName,
-        displayName: adapter.displayName,
+        ...adapterFacts(agentName, adapter),
         found: info.found,
         path: info.path,
         version: info.version,
         cliTarget: info.cliTarget,
         detectionError: info.detectionError,
         unsupportedTarget: info.unsupportedTarget,
-        supportsWslCli: adapter.supportsWslCli === true,
         authenticated,
-        permissions: adapter.permissions,
-        defaultPermission: adapter.defaultPermission,
-        liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
-        reportsRateLimits: adapter.reportsRateLimits,
-        pastedImageNativeExtensions: adapter.pastedImageNativeExtensions,
-        pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
-        supportsSummarize: typeof adapter.summarize === 'function',
-        reportsTurnEnd: adapter.runtime.reportsTurnEnd,
-        supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
-        answerCapabilities: adapter.answerCapabilities,
-        kangenticMcp: adapter.kangenticMcp,
-        supportsWorkflowAgent: canBeWorkflowAgent(adapter),
-        supportsPlanAutoApproval: adapter.supportsPlanAutoApproval === true,
         capabilities,
-        remoteExecution: adapter.remoteExecution?.info,
-        launchOptions: adapter.launchOptions,
       };
     }),
   );
+}
+
+/** What an adapter declares about itself, the same whichever machine its CLI is looked for on. */
+function adapterFacts(agentName: string, adapter: AgentAdapter): Omit<AgentDetectionInfo, 'found' | 'path' | 'version'> {
+  return {
+    name: agentName,
+    displayName: adapter.displayName,
+    supportsWslCli: adapter.supportsWslCli === true,
+    permissions: adapter.permissions,
+    defaultPermission: adapter.defaultPermission,
+    liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
+    reportsRateLimits: adapter.reportsRateLimits,
+    pastedImageNativeExtensions: adapter.pastedImageNativeExtensions,
+    pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
+    supportsSummarize: typeof adapter.summarize === 'function',
+    reportsTurnEnd: adapter.runtime.reportsTurnEnd,
+    supportsAnswerFromContext: typeof adapter.answerFromContext === 'function',
+    answerCapabilities: adapter.answerCapabilities,
+    kangenticMcp: adapter.kangenticMcp,
+    supportsWorkflowAgent: canBeWorkflowAgent(adapter),
+    supportsPlanAutoApproval: adapter.supportsPlanAutoApproval === true,
+    remoteExecution: adapter.remoteExecution?.info,
+    launchOptions: adapter.launchOptions,
+  };
+}
+
+/** One cached inventory per host, read off the host itself. */
+const hostAgentListCaches = new Map<string, CachedSingleton<AgentDetectionInfo[]>>();
+
+/**
+ * The inventory for a remote project: each agent's CLI looked for on the host, never on this computer.
+ * Capabilities (the model list, auth) come from running the CLI, so a host's agents carry none and the
+ * pickers fall back to free-form input. Only a whole answer is cached: an agent the host could not
+ * be asked about (the link is down) leaves the inventory uncached, so the next read asks again.
+ */
+export async function listAgentsOnHost(
+  hostId: string,
+  probe: (cliName: string) => Promise<HostAgentProbe>,
+  forceRefresh = false,
+): Promise<AgentDetectionInfo[]> {
+  let cache = hostAgentListCaches.get(hostId);
+  if (!cache) {
+    cache = createCachedSingleton<AgentDetectionInfo[]>();
+    hostAgentListCaches.set(hostId, cache);
+  }
+  const list = await cache.get(() => buildHostAgentList(hostId, probe), forceRefresh);
+  if (list.some((entry) => entry.hostStatus === 'unknown')) cache.invalidate();
+  return list;
+}
+
+async function buildHostAgentList(hostId: string, probe: (cliName: string) => Promise<HostAgentProbe>): Promise<AgentDetectionInfo[]> {
+  return Promise.all(
+    agentRegistry.list().map(async (agentName): Promise<AgentDetectionInfo> => {
+      const adapter = agentRegistry.getOrThrow(agentName);
+      const facts = { ...adapterFacts(agentName, adapter), hostId };
+      if (!adapter.remoteCliName) {
+        return { ...facts, found: false, path: null, version: null, unsupportedOnHost: true };
+      }
+      const answer = await probe(adapter.remoteCliName);
+      return {
+        ...facts,
+        found: answer.status === 'found',
+        // The CLI's name on the host, which its login shell resolves: the field shows it as the default.
+        path: adapter.remoteCliName,
+        version: answer.version,
+        hostStatus: answer.status,
+        ...(answer.detail ? { detectionError: answer.detail } : {}),
+      };
+    }),
+  );
+}
+
+/** A host's link came up, or its CLIs may have changed: the next read asks the host again. */
+export function invalidateHostAgentList(hostId: string): void {
+  hostAgentListCaches.get(hostId)?.invalidate();
+  hostAgentListCaches.delete(hostId);
 }
 
 /**
@@ -212,4 +272,5 @@ export function invalidateAgentListCache(): void {
 /** Test-only: clear the caches between cases. */
 export function resetAgentListForTests(): void {
   invalidateAllAgentListCaches();
+  for (const hostId of [...hostAgentListCaches.keys()]) invalidateHostAgentList(hostId);
 }

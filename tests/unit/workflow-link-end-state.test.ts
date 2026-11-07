@@ -51,6 +51,7 @@ const NO_PROJECT_IDS: ReadonlySet<string> = new Set();
 
 describe('linkEndState', () => {
   let registeredProjectIds: Set<string>;
+  let hiddenProjectIds: Set<string>;
   let context: IpcContext;
 
   function database(projectId: string): Database.Database {
@@ -84,9 +85,11 @@ describe('linkEndState', () => {
     harness.dbs.clear();
     harness.opened.length = 0;
     registeredProjectIds = new Set(['home', 'broken', 'locked']);
+    hiddenProjectIds = new Set();
     context = {
       projectRepo: {
         getById: (id: string) => (registeredProjectIds.has(id) ? { id, name: id, path: `/mock/${id}` } : undefined),
+        isHidden: (id: string) => hiddenProjectIds.has(id),
       },
     } as unknown as IpcContext;
     database('home');
@@ -119,6 +122,16 @@ describe('linkEndState', () => {
     const state = linkEndState(context, { projectId: 'home', taskId: 'task-1' }, WORKFLOW_ID, NO_TASK_IDS, NO_PROJECT_IDS);
 
     expect(state).toBe('gone');
+    expect(harness.opened).toEqual([]);
+  });
+
+  it('holds an end whose project is hidden because its host was removed, since hiding is not deleting', () => {
+    registeredProjectIds.delete('home');
+    hiddenProjectIds.add('home');
+
+    const state = linkEndState(context, { projectId: 'home', taskId: 'task-1' }, WORKFLOW_ID, NO_TASK_IDS, NO_PROJECT_IDS);
+
+    expect(state).toBe('held');
     expect(harness.opened).toEqual([]);
   });
 
@@ -172,7 +185,7 @@ describe('readWorkflowTasks', () => {
   let homeDatabase: Database.Database;
 
   const contextWith = (projectIds: string[]): IpcContext => ({
-    projectRepo: { list: () => projectIds.map((projectId) => ({ id: projectId, name: projectId, path: `/mock/${projectId}` })) },
+    projectRepo: { list: () => projectIds.map((projectId) => ({ id: projectId, name: projectId, path: `/mock/${projectId}` })), listHidden: () => [] },
   }) as unknown as IpcContext;
 
   beforeEach(() => {

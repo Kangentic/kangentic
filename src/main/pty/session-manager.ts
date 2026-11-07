@@ -44,6 +44,8 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
 import { AgentStartRefusedError } from './spawn/pty-spawn';
+import type { RemoteHostRequest, RemoteSessionRoute, SuspendPlan } from '../remote/protocol/messages';
+import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
@@ -83,7 +85,7 @@ import type {
   TurnStartCause,
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
-import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
+import { hostPathForTarget, isPlainIdName, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
@@ -155,9 +157,12 @@ const HIDDEN_SESSION_EXIT = 'hidden-session-exit';
 /** How often `awaitAltScreen` reads the alt-screen mirror while it waits. */
 const ALT_SCREEN_POLL_MS = 100;
 
-/** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
+/**
+ * A Command Terminal's per-session directory, created by `startCommandTerminal` under the folder its command was
+ * built for. A remote session's `cwd` is the host's folder, which names nothing on this computer.
+ */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
-  return path.join(session.cwd, '.kangentic', 'sessions', session.id);
+  return path.join(session.commandCwd ?? session.cwd, '.kangentic', 'sessions', session.id);
 }
 
 /** Best-effort: the directory only holds the bridges' status and event files. */
@@ -514,6 +519,10 @@ export class SessionManager extends EventEmitter {
   /** Set by `killAll()`: how long the pty host may wait for exits after
    *  `dispose()`, so it is gone inside the quit drain's deadline. */
   private hostExitWaitMs: number | undefined;
+  /** Keeps a remote session's folder in step with its host's (#913); null until startup sets it. */
+  private remoteSessionRelay: RemoteSessionRelay | null = null;
+  /** At a quit, how each session on a remote host ends, by host (#913). Sent to the host as it grows. */
+  private readonly remoteQuitPlans = new Map<string, SuspendPlan[]>();
   /** Main's mirror of each session's alternate-screen state, from the host. */
   private inAltScreen = new Map<string, boolean>();
   /** The column count each session's ring was last sized to, mirroring the
@@ -854,14 +863,24 @@ export class SessionManager extends EventEmitter {
         // agent wrote. A caller-owned id set at spawn never comes this way.
         session.agentIdReportedAt ??= Date.now();
         this.noteAgentRan(session);
-        // The host can stop scanning this session's output for an id.
-        this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
+        // On a host the id comes from the host, and the readers here build paths from it (#913). This is
+        // where every such id enters, so none that could climb out of a folder reaches a row or a reader.
+        // Below the lines above: the agent did run, and a launch read as never started gets a second turn.
+        if (session.hostId && !isPlainIdName(agentReportedId)) {
+          console.warn(`[SESSION] dropped an agent session id from a host for ${sessionId.slice(0, 8)}: it is no plain name`);
+          return;
+        }
+        // The host can stop scanning this session's output for an id, unless this one was only worked
+        // out, when the agent's own report is still wanted to confirm it.
+        if (!options?.inferred) this.host.post({ type: 'setAgentSessionIdKnown', sessionId });
         // Reflect the captured ID on the live Session so the renderer (and
         // tests) can observe it via sessions.list() without a DB round-trip.
         if (session.agentSessionId !== agentReportedId) {
           session.agentSessionId = agentReportedId;
           this.emit('session-changed', sessionId, toSession(session));
         }
+        // A session on a host starts copying the transcript this id names (#913).
+        this.remoteSessionRelay?.setAgentSessionId(sessionId, agentReportedId);
         this.emit('agent-session-id', sessionId, session.taskId, session.projectId, agentReportedId);
         // Hand off to the session-history reader if the adapter declares
         // a native history hook. Fire-and-forget - the reader logs any
@@ -962,7 +981,8 @@ export class SessionManager extends EventEmitter {
       isSessionRunning: (sessionId) => this.registry.get(sessionId)?.status === 'running',
       getSessionRootPid: (sessionId) => {
         const session = this.registry.get(sessionId);
-        return session?.pty?.pid;
+        // A PTY on a remote host has no pid here, so the watcher has no tree to list (#913).
+        return session?.pty?.pid ?? undefined;
       },
       resolveBackgroundShellOutputFile: (sessionId, shellId) => {
         const session = this.registry.get(sessionId);
@@ -1224,6 +1244,29 @@ export class SessionManager extends EventEmitter {
       case 'trace':
         recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts, 'pty-host');
         return;
+      case 'remoteLink':
+        // An SSH host's connection changed (#913). Its own event: a drop never ends a session, and the
+        // sessions on the host are neither marked exited nor respawned because of it.
+        this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
+        return;
+      case 'hookFile':
+        // A remote agent's hook file, sent across the link (#913). The relay that registered the
+        // session writes it into the hook folder the inbox reads (`remote-session-relay.ts`).
+        this.emit('remote-hook-file', event);
+        return;
+      case 'fileChunk':
+        // A piece of a remote agent's transcript (#913), written at its offset into the copy the
+        // viewer, the search index and the token ledger read.
+        this.emit('remote-file-chunk', event);
+        return;
+      case 'remoteSessions':
+        // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable ones
+        // are live agents on a host this app holds no row for. Nothing adopts them yet, so they are
+        // logged and left running; the next quit's `suspendAll` ends them on the helper's own clock.
+        if (event.adoptable.length > 0) {
+          console.warn(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app holds no row for`);
+        }
+        return;
       case 'exit':
       case 'rawData':
       case 'rawExit':
@@ -1269,6 +1312,37 @@ export class SessionManager extends EventEmitter {
    *  drain: the host flushes and exits after the PTYs die. */
   getPtyHostPid(): number | null {
     return this.host.hostPid;
+  }
+
+  /**
+   * Give the manager the relay that keeps a remote session's folder in step with its host's (#913). The
+   * host's hook files arrive as `remote-hook-file` events, which it writes into the hook folder the
+   * inbox reads. Set once at startup; without it a spawn onto a host fails with a sentence.
+   */
+  setRemoteSessionRelay(relay: RemoteSessionRelay): void {
+    this.remoteSessionRelay = relay;
+    this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
+    this.on('remote-file-chunk', (event: Extract<PtyHostEvent, { type: 'fileChunk' }>) => relay.deliverChunk(event));
+    // An id a CLI's index names comes back as `onAgentSessionId`, like any other, and stays open to the agent's own report.
+    relay.onSessionIdFound((sessionId, agentSessionId) => this.telemetry.notifyInferredAgentSessionId(sessionId, agentSessionId));
+  }
+
+  /**
+   * For a reader of an ending session's transcript: resolves once a session on a host has its last export
+   * here, bounded. Null when there is nothing to wait for, which is every session that is not exported.
+   */
+  remoteTranscriptSettled(sessionId: string): Promise<void> | null {
+    return this.remoteSessionRelay?.transcriptSettled(sessionId) ?? null;
+  }
+
+  /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
+  remoteHostRequest(request: RemoteHostRequest): Promise<unknown> {
+    return this.host.remote(request);
+  }
+
+  /** The live PTYs held on one SSH host, which its `addHost` carries after the pty host restarted. */
+  liveRemotePtys(hostId: string): RemoteSessionRoute[] {
+    return this.host.liveRemotePtys(hostId);
   }
 
   /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */
@@ -2736,6 +2810,7 @@ export class SessionManager extends EventEmitter {
         this.firstOutputTracker.disarmCeiling(sessionId);
         this.endCommandTerminalAfterPtyExit(sessionId);
       },
+      ...(this.remoteSessionRelay ? { remoteSessions: this.remoteSessionRelay } : {}),
     });
   }
 
@@ -4001,7 +4076,8 @@ export class SessionManager extends EventEmitter {
     if (session?.pty) {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
-      const childPid = ptyRef.pid;
+      // A PTY on a remote host has none: the quit drain probes local pids only.
+      const childPid = ptyRef.pid ?? undefined;
       // A renderer's keystrokes stop reaching it now, and anything still
       // queued for it is dropped, as when they crossed this process and found
       // the handle nulled. The exit sequence below is written past the seal.
@@ -5074,6 +5150,7 @@ export class SessionManager extends EventEmitter {
    * there would undo the deferral the drain is about to wait on.
    */
   killAll(options?: { allowGrace?: boolean }): PtyKillReport {
+    this.remoteQuitPlans.clear();
     const report = killAllSessions(this.shutdownContext(), {
       allowGrace: options?.allowGrace === true,
       deferredKills: this.deferredKills,
@@ -5093,6 +5170,9 @@ export class SessionManager extends EventEmitter {
     // spawn still in its round trip all have an exit to land and no session
     // row. An idle host exits at once, so the wait costs the drain's settle.
     const hostPid = this.host.hostPid;
+    // This covers a session on a remote host (#913) too: nothing local was killed for it, but the host
+    // process holds the link that sends the helper its one quit frame, and Electron tearing it down
+    // first would leave the agent running there until the next connect.
     if (hostPid === null) return report;
     return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };
   }
@@ -5104,6 +5184,27 @@ export class SessionManager extends EventEmitter {
       sessionFiles: this.sessionFiles,
       firstOutputTracker: this.firstOutputTracker,
       killPty: safeKillPty,
+      endRemoteSession: (session: ManagedSession) => this.handOverRemoteSession(session),
     };
+  }
+
+  /**
+   * The quit reaches a session whose PTY runs on a remote host. Nothing here can end it, because the
+   * adapter's exit keys and pauses have to run on the host's own clock, so the host's helper is told
+   * how this session ends, once, with the rest of that host's sessions. A command, not a request: the
+   * quit cannot wait for an answer. Each call re-sends the host's whole plan so far, and the link
+   * keeps the last one.
+   */
+  private handOverRemoteSession(session: ManagedSession): void {
+    const hostId = session.hostId;
+    if (!hostId) return;
+    const plan = this.remoteQuitPlans.get(hostId) ?? [];
+    plan.push({
+      sessionId: session.id,
+      exitSequence: session.exitSequence,
+      consoleCloseIsGraceful: session.consoleCloseIsGraceful === true,
+    });
+    this.remoteQuitPlans.set(hostId, plan);
+    this.host.post({ type: 'remoteQuitPlan', hostId, sessions: [...plan] });
   }
 }

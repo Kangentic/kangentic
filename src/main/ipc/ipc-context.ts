@@ -17,6 +17,7 @@ import type { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import type { DesktopNotifier } from '../notifications/desktop-notifier';
 import type { CommandTerminalHistory } from './helpers/command-terminal-history';
 import type { SpareWorktreePool } from '../git/spare-worktree';
+import type { RemoteHosting } from '../remote/remote-hosting';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -131,4 +132,9 @@ export interface IpcContext {
    * every creation exactly as before. See src/main/git/spare-worktree.ts.
    */
   spareWorktrees?: SpareWorktreePool;
+  /**
+   * SSH hosts (#913): the host table, the service that connects them and asks their helpers, and the
+   * relay behind a remote session. Optional so a context built for a test that sets none runs as before.
+   */
+  remoteHosting?: RemoteHosting;
 }

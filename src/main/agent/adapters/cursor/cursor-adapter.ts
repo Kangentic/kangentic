@@ -11,12 +11,14 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import type { RemoteFileDeclaration } from '../../shared/remote-files';
+import { execCliForTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { cachedCursorModelDisplayName, discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
 import {
   CURSOR_HOOK_EVENTS_ENV,
+  CURSOR_WSL_HOOK_COPY_NAME,
   CURSOR_WSL_HOOK_FLAG,
   cursorSessionIdFromHook,
   parseCursorHookEvent,
@@ -35,7 +37,7 @@ import {
   type CursorKangenticMcpEntry,
 } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import { locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
+import { cursorTranscriptFilePath, locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
 import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
@@ -46,6 +48,7 @@ import type {
   SessionUsage,
   SessionContext,
   SessionAttachment,
+  StoredCliTarget,
   SubmissionContextType,
   SubmissionVerifier,
 } from '../../../../shared/types';
@@ -238,6 +241,27 @@ export class CursorAdapter implements AgentAdapter {
   /** A Cursor installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
   /**
+   * On a remote host over SSH the CLI is `cursor-agent` from the host's own login PATH (#913). The
+   * installer's other name, `agent`, is shared with Grok's CLI, so the unambiguous one is declared.
+   * The conversation's JSONL is copied to this computer (`remoteTranscriptFiles`).
+   */
+  readonly remoteCliName = 'cursor-agent';
+
+  /**
+   * The conversation's transcript on a host over SSH (#913): the one file Cursor appends to under
+   * `~/.cursor/projects/<slug>/agent-transcripts/<id>/`, in this computer's mirror of the host's home,
+   * where every Cursor reader already looks for it. A remote task works in one folder for its whole
+   * life (its worktree on the host, or the project's folder when it has none), so the folder Cursor
+   * started in is the folder it resumes in, and the slug is the same file's. `create-chat` writes
+   * nothing until the first turn, so the copy is empty until then. Subagent transcripts are not carried.
+   */
+  remoteTranscriptFiles(options: { agentSessionId: string; cwd: string; cliTarget: StoredCliTarget }): readonly string[] {
+    const place = placeFromStored(options.cliTarget);
+    if (place?.kind !== 'ssh') return [];
+    return [cursorTranscriptFilePath(options.cwd, options.agentSessionId, place)];
+  }
+
+  /**
    * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
    * so the viewer shows no clock and orders the conversation by file order.
    */
@@ -295,6 +319,17 @@ export class CursorAdapter implements AgentAdapter {
     },
     supportsWslCli: true,
   });
+
+  /**
+   * What a Cursor on a remote host has edited on the host (#913): the project's `.cursor/mcp.json`,
+   * where Kangentic's static entry (`${env:...}` references only, so no secret on disk) is merged beside
+   * the user's servers, and `.cursor/hooks.json` with the folder's copy of the hook transport's script
+   * (`.kangentic/cursor-wsl-hook.sh`), which the hook commands run on the host. Trust is the `--trust`
+   * flag, not a file.
+   */
+  remoteFiles(): RemoteFileDeclaration {
+    return { home: [], project: ['.cursor/mcp.json', '.cursor/hooks.json', `.kangentic/${CURSOR_WSL_HOOK_COPY_NAME}`] };
+  }
 
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
@@ -456,10 +491,14 @@ export class CursorAdapter implements AgentAdapter {
    * with `--resume=<id>`. Run in the session's own folder, in case Cursor
    * files chats by workspace as the editor does.
    */
-  async createSessionId(cliPath: string, workingDirectory: string): Promise<string | null> {
+  async createSessionId(cliPath: string, workingDirectory: string, place?: CliPlace | null): Promise<string | null> {
     try {
-      // A Cursor in a WSL distro makes the chat there, so the session opens it.
-      const target = await resolveCliTarget(cliPath, true);
+      // A Cursor in a WSL distro makes the chat there, so the session opens it. One on a remote host
+      // (#913) makes it there too, run by the host's helper in the project's folder on the host: a chat
+      // made by a Cursor on this computer would be unknown to the host's, and `--resume=<id>` would fail.
+      const target: CliTarget | null = place?.kind === 'ssh'
+        ? { ...place, linuxCliPath: place.linuxCliPath ?? cliPath }
+        : await resolveCliTarget(cliPath, true);
       const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory, target });
       const match = stdout.match(CHAT_ID_LINE);
       if (match) return match[0].toLowerCase();

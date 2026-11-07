@@ -124,6 +124,13 @@ extraResources:
     to: icon.png
   - from: node_modules/@kangentic/branding/resources/desktop/icon.ico
     to: icon.ico
+  # The host program's manifest (a few hundred bytes of checksums), for SSH projects. The release
+  # workflow's build-host job writes dist/host-manifest and each leg downloads it before packaging;
+  # scripts/verify-host-manifest.js then fails the leg if resources/host/manifest.json is missing.
+  # A local `npm run package` has no such folder: electron-builder only warns, and Add host says
+  # the build has no host program (run `npm run build:host` for a development build instead).
+  - from: dist/host-manifest
+    to: host
 
 # Every native module ships Node-API prebuilds (better-sqlite3, node-pty, koffi,
 # sherpa-onnx-node, onnxruntime-node, sharp), so nothing is compiled at pack time.

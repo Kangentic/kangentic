@@ -108,4 +108,40 @@ export function runGlobalMigrations(db: Database.Database): void {
     db.exec('DROP INDEX idx_dev_ports_task');
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_dev_ports_task ON dev_ports(task_id)');
+
+  // Migration: SSH hosts and remote projects (#913).
+  //
+  // GLOBAL because a host serves every project and must be addable with no project open. A host row
+  // holds a destination and, at most, the path of a key file. Never a password and never key
+  // material: the key is a file under Kangentic's own folder, deleted with the host.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ssh_hosts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      destination TEXT NOT NULL,
+      key_path TEXT DEFAULT NULL,
+      key_created INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  // A removed host keeps its row, with the time it was removed (UTC ISO 8601). Its projects are hidden,
+  // not deleted, and adding the same address again restores this row, so they come back as they were.
+  const sshHostColumns = db.pragma('table_info(ssh_hosts)') as Array<{ name: string }>;
+  if (!sshHostColumns.some((col) => col.name === 'removed_at')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN removed_at TEXT DEFAULT NULL');
+  }
+  if (!sshHostColumns.some((col) => col.name === 'reveal_pending')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN reveal_pending INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // A project on a host names it and the repo's folder there. Both are NULL for every project that
+  // existed before this, which is every project on this computer: nothing is backfilled.
+  const remoteProjectColumns = db.pragma('table_info(projects)') as Array<{ name: string }>;
+  if (!remoteProjectColumns.some((col) => col.name === 'remote_host_id')) {
+    db.exec('ALTER TABLE projects ADD COLUMN remote_host_id TEXT DEFAULT NULL');
+  }
+  if (!remoteProjectColumns.some((col) => col.name === 'remote_path')) {
+    db.exec('ALTER TABLE projects ADD COLUMN remote_path TEXT DEFAULT NULL');
+  }
 }

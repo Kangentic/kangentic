@@ -21,6 +21,7 @@
  * - auto_command is trimmed and verified under the `submitted` mode
  */
 import { describe, it, expect, vi } from 'vitest';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
 import { buildCommandInjectionVerifier, prepareInjectionPlan, resolveReportedEffort, resolveRestartReason, resolveSourceEffort, resolveTargetSettings, restartPhaseFor } from '../../src/main/transition-engine/injection-plan';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
@@ -480,6 +481,32 @@ describe('prepareInjectionPlan', () => {
     );
     expect(await verifier!('review the diff', Date.now(), 'submitted')).toBe(false);
     expect(called).toBe(false);
+  });
+
+  it('settles a command by time, with no verifier, for a session on an SSH host', async () => {
+    // The agent's own files for the command are on the host, so nothing here can confirm it. A verifier
+    // that always answered "not confirmed" would press Enter again until the burst gave up and reported a
+    // failure for every command that worked.
+    let asked = false;
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      getSubmissionVerifier: () => async () => { asked = true; return true; },
+    });
+    const hostSession = JSON.stringify(toStoredCliTarget({
+      kind: 'ssh',
+      hostId: 'host-a',
+      home: '/home/dev',
+      shellName: 'bash',
+      localHome: '/mirror',
+      roots: [{ local: '/shell', host: '/home/dev/app' }],
+    }));
+    const verifier = buildCommandInjectionVerifier(
+      adapter,
+      sessionRepoWith({ id: 's1', agent_session_id: 'agent-1', cwd: '/shell', cli_target: hostSession }),
+      't1',
+    );
+    expect(verifier).toBeNull();
+    expect(asked).toBe(false);
   });
 
   it('verifier is null when adapter does not implement getSubmissionVerifier', () => {

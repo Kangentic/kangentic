@@ -25,6 +25,7 @@ import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
  * shadowed by a value captured at import.
  */
 export function geminiHomeDir(place: CliPlace | null = null): string {
+  if (place?.kind === 'ssh') return path.join(place.localHome, '.gemini');
   if (place) {
     const override = place.facts.env.GEMINI_CLI_HOME?.trim();
     return path.join(override?.startsWith('/') ? hostPathForTarget(override, place) : place.facts.homeUnc, '.gemini');

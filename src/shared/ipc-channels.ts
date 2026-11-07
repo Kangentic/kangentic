@@ -268,6 +268,7 @@ export const IPC = {
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',
+  DIALOG_SELECT_FILE: 'dialog:selectFile',
 
   // Window
   WINDOW_MINIMIZE: 'window:minimize',
@@ -328,6 +329,24 @@ export const IPC = {
   MOBILE_STATE_CHANGED: 'mobile:stateChanged',
   MOBILE_GET_TERMINAL_STREAMS: 'mobile:getTerminalStreams',
   MOBILE_TERMINAL_STREAMS_CHANGED: 'mobile:terminalStreamsChanged',
+
+  // SSH hosts (#913) - machine-global (like mobile), not project-scoped.
+  SSH_DETECT_CLIENT: 'ssh:detectClient',
+  SSH_LIST_HOSTS: 'ssh:listHosts',
+  SSH_PROBE_HOST_KEY: 'ssh:probeHostKey',
+  SSH_LIST_CONFIG_HOSTS: 'ssh:listConfigHosts',
+  SSH_ADD_HOST: 'ssh:addHost',
+  SSH_REMOVE_HOST: 'ssh:removeHost',
+  SSH_CLEAR_HOST_DATA: 'ssh:clearHostData',
+  SSH_UPDATE_HOST: 'ssh:updateHost',
+  SSH_RECONNECT_HOST: 'ssh:reconnectHost',
+  SSH_HOST_PROGRAM: 'ssh:hostProgram',
+  SSH_CHECK_KEY_FILE: 'ssh:checkKeyFile',
+  SSH_PROBE_CHANGED_KEY: 'ssh:probeChangedKey',
+  SSH_TRUST_NEW_KEY: 'ssh:trustNewKey',
+  SSH_PROBE_REMOTE_FOLDER: 'ssh:probeRemoteFolder',
+  SSH_LIST_DIRECTORIES: 'ssh:listDirectories',
+  SSH_HOSTS_CHANGED: 'ssh:hostsChanged',
 
   // Agent Monitor - machine-global (like mobile bridge), NOT project-scoped. The monitor
   // aggregates live sessions across EVERY registered project, so these channels deliberately

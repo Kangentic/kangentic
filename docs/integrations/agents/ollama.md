@@ -60,6 +60,12 @@ None. `ollama run` writes no status file, session file or structured stream; its
 
 An Ollama installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with Ollama's Linux path, and the model picker's `ollama list`, the `ollama run --help` effort read and a Knowledge Graph answer run through `wsl.exe` too, so all of them talk to the distro's own install and pulled models. Ollama wires no hooks, MCP server or transcript reader. Not yet run against an Ollama installed in a distro.
 
+## SSH
+
+An Ollama on a remote host over SSH (#913) runs as `ollama`, found by the host's login `PATH` (`remoteCliName`), and talks to the daemon on that host. The daemon must already be running there (`ollama serve`, or the service the installer sets up): Kangentic does not start it, and `ollama run` fails with Ollama's own message when none answers. The model has to be pulled on the host, or `ollama run` pulls it there. It is checked only against a fake host in `tests/unit/ollama-ssh-remote.test.ts`, never against a real Ollama or host. Ollama edits no file, so `remoteFiles()` declares none.
+
+`discoverOllama(cliPath, target)` lists the host's models by running `ollama list` on the host through the helper. A remote project's model picker is not yet wired to call it, so it shows the free-form model input instead of this computer's models. `tests/fixtures/mock-ollama.js` is a mock of `ollama list` and the `>>> ` REPL.
+
 ## Permission Modes
 
 Ollama has no autonomy / permission concept - it is a plain chat REPL. Per `cli-features-over-custom-layers.md`, the adapter exposes a single informational entry and injects no permission flags in `buildCommand()`.

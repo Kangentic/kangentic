@@ -105,7 +105,11 @@ export async function captureSessionIdFromFilesystem(options: {
   // Allow 30s of clock skew on the floor; the cwd-keyed directory
   // means we will not pick up sessions from other tasks anyway.
   const mtimeFloorMs = spawnedAtMs - 30_000;
-  const directory = droidSessionsDirForCwd(options.cwd, placeFromStored(options.cliTarget ?? null));
+  const place = placeFromStored(options.cliTarget ?? null);
+  // The session files of a Droid on a remote host are on the host, never in this computer's mirror,
+  // so there is nothing to wait for: no id is captured and a resume starts fresh (#913).
+  if (place?.kind === 'ssh') return null;
+  const directory = droidSessionsDirForCwd(options.cwd, place);
   const maxAttempts = options.maxAttempts ?? 20;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {

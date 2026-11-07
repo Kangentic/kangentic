@@ -3,6 +3,8 @@ import type { AutomationRunAgainResult, BoardProfile, GitTaskChangesResult, Sess
 import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 import type { TaskKnowledge } from '../../retrieval/task-knowledge';
 import type { TaskReportReadOptions } from '../../ipc/helpers/task-report';
+import type { AgentPaths } from '../../remote/host-paths';
+import type { HostAccess } from '../../remote/host-transfer';
 
 export interface CommandContext {
   /**
@@ -13,6 +15,15 @@ export interface CommandContext {
   projectId: string;
   getProjectDb: () => Database.Database;
   getProjectPath: () => string;
+  /**
+   * How this project's paths read to its agent (`remote/host-paths.ts`). For a remote project
+   * `getProjectPath`, `worktree_path` and `sessions.cwd` are an empty stand-in on this computer, so
+   * anything a tool answers with goes through this. Read it with `agentPathsOf`, which gives a context
+   * without one the identity.
+   */
+  agentPaths?: () => AgentPaths;
+  /** What a tool may ask of this project's host, or null for a project on this computer or a host with no service. */
+  hostAccess?: () => HostAccess | null;
   /**
    * The machine-wide dev-server port range. Global rather than per-project
    * because ports are a machine resource: two projects competing for one is the

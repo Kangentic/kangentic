@@ -159,20 +159,24 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "\"{taskTitle}\": \"{automationName}\" non è riuscita su {columnName}."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": {detail}"
-msgstr ""
+msgstr "\"{taskTitle}\": {detail}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": exited with code {exitCode}."
-msgstr ""
+msgstr "\"{taskTitle}\": terminato con codice {exitCode}."
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{minutes, plural, one {\"{taskTitle}\": timeout dopo # minuto.} many {\"{taskTitle}\": timeout dopo # di minuti.} other {\"{taskTitle}\": timeout dopo # minuti.}}"
 
 #: src/renderer/lib/stop-script-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
-msgstr ""
+msgstr "{seconds, plural, one {\"{taskTitle}\": timeout dopo # secondo.} many {\"{taskTitle}\": timeout dopo # di secondi.} other {\"{taskTitle}\": timeout dopo # secondi.}}"
 
 #: src/renderer/utils/worktree-placement.tsx
 #, fuzzy
@@ -1290,8 +1294,9 @@ msgid "Other work uses it too. Stopping it can break that work."
 msgstr "È usato anche da altro lavoro. Arrestarlo può comprometterlo."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Part of it runs outside this task's folders. Stopping it stops that too."
-msgstr ""
+msgstr "In parte è eseguito fuori dalle cartelle di questa attività. Arrestarlo arresta anche quella parte."
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1583,8 +1588,9 @@ msgid "Still running: {tasks}."
 msgstr "Ancora in esecuzione: {tasks}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Stop script failed"
-msgstr ""
+msgstr "Script di arresto non riuscito"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

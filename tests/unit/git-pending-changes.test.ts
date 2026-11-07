@@ -6,7 +6,8 @@
  * countLocalOnlyCommits (covered by local-only-commits.test.ts) and is mocked
  * here so the probe's policy is tested in isolation.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // The probe builds a simple-git instance and calls status() / getRemotes().
 const mockGit = {
@@ -48,6 +49,54 @@ vi.mock('../../src/main/git/diff-watcher', () => ({ DiffWatcher: class {} }));
 
 import { probePendingChanges } from '../../src/main/ipc/handlers/git-diff';
 import type { PrMergeContext } from '../../src/main/git/local-only-commits';
+import { setRemoteWorktreeResolver } from '../../src/main/git/remote-worktree';
+import type { RemoteWorktreeBackend } from '../../src/main/git/remote-worktree';
+
+describe('probePendingChanges for a worktree on an SSH host', () => {
+  const projectPath = process.platform === 'win32' ? 'C:\\Users\\dev\\remote-project' : '/home/dev/remote-project';
+  const hostWorktree = path.join(projectPath, '.kangentic', 'worktrees', '7');
+  const pendingChanges = vi.fn<RemoteWorktreeBackend['pendingChanges']>();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setRemoteWorktreeResolver((requestedPath) => (requestedPath === projectPath
+      ? ({ pendingChanges } as unknown as RemoteWorktreeBackend)
+      : null));
+  });
+
+  afterEach(() => {
+    setRemoteWorktreeResolver(null);
+  });
+
+  it('reports the host git count and branch, and runs no local git', async () => {
+    pendingChanges.mockResolvedValue({ uncommittedFileCount: 3, currentBranch: 'feat/on-host' });
+
+    const result = await probePendingChanges(hostWorktree);
+
+    expect(pendingChanges).toHaveBeenCalledWith(hostWorktree);
+    expect(result).toEqual({ hasPendingChanges: true, uncommittedFileCount: 3, unpushedCommitCount: 0, currentBranch: 'feat/on-host' });
+    expect(mockGit.status).not.toHaveBeenCalled();
+    expect(mockReadWorktreeHead).not.toHaveBeenCalled();
+  });
+
+  it('reports no pending changes when the host counts zero', async () => {
+    pendingChanges.mockResolvedValue({ uncommittedFileCount: 0, currentBranch: 'feat/on-host' });
+
+    const result = await probePendingChanges(hostWorktree);
+
+    expect(result.hasPendingChanges).toBe(false);
+    expect(result.uncommittedFileCount).toBe(0);
+  });
+
+  it('assumes there are changes when the host cannot answer, so a Done move never force-removes it', async () => {
+    pendingChanges.mockRejectedValue(new Error('host unreachable'));
+
+    const result = await probePendingChanges(hostWorktree);
+
+    expect(result).toEqual({ hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null });
+    expect(mockGit.status).not.toHaveBeenCalled();
+  });
+});
 
 describe('probePendingChanges', () => {
   beforeEach(() => {

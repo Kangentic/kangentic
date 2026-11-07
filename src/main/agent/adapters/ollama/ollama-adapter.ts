@@ -102,6 +102,12 @@ export class OllamaAdapter implements AgentAdapter {
   // daemon: the session, the answer run and `ollama list` all start inside it.
   // Ollama wires no hooks, MCP server or transcript reader.
   readonly supportsWslCli = true;
+  // On a remote host over SSH (#913) the CLI is `ollama` from the host's login PATH, talking to the
+  // daemon on that host (`ollama serve` must already be running there; Kangentic does not start it).
+  // Ollama edits no file, so nothing is declared in `remoteFiles`. `discoverCapabilities` takes no place,
+  // so the model picker lists what `ollama list` says on this computer, not the host's models; a model
+  // for a remote project is typed in the picker's free-form field.
+  readonly remoteCliName = 'ollama';
 
   // Shared AgentDetector via composition (like Aider). `ollama --version`
   // prints `ollama version is X.Y.Z`.

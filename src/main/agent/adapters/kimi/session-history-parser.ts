@@ -32,6 +32,9 @@ export class KimiSessionHistoryParser {
     cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const place = placeFromStored(options.cliTarget);
+    // The live reader stays off for a session on an SSH host: its wire arrives in the mirror as a copy, and a
+    // resume's backfill would read as fresh usage.
+    if (place?.kind === 'ssh') return null;
     const maxAttempts = 20;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const found = locateKimiWireFile(options.agentSessionId, place);
@@ -60,6 +63,7 @@ export class KimiSessionHistoryParser {
     maxAttempts?: number;
   }): Promise<string | null> {
     const place = placeFromStored(options.cliTarget);
+    if (place?.kind === 'ssh') return null;
     const floorMs = options.spawnedAt.getTime() - 5_000;
     const cliWorkDirs = place ? [cliPathForTarget(options.cwd, place)] : hostWorkDirSpellings(options.cwd);
     const maxAttempts = options.maxAttempts ?? 90;

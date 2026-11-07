@@ -645,6 +645,7 @@ export async function resumeSuspendedSessions(
           ...(restoredGrid ? { restoredGrid } : {}),
           shell: input.shell,
           cliTarget: input.cliTarget,
+          ...(input.remote ? { remote: input.remote } : {}),
         });
 
         retireRecord(sessionRepo, input.record.id);
@@ -725,9 +726,17 @@ export async function resumeSuspendedSessions(
         });
       }
       try {
-        retireRecord(sessionRepo, input.record.id);
+        if (input.remote && !isAbortError(result.reason)) {
+          // A spawn onto a host that threw is the host or its link, not the conversation: that lives on
+          // the host, and a retry after the link is back resumes it. Retiring would turn a paused card
+          // into an ended one for a fault that mends itself. (A PTY spawn that reaches the host and
+          // fails resolves as an exited session instead and does not come through here.)
+          await withTaskLock(input.task.id, async () => keepResumableIfUnchanged(input.record, input.task));
+        } else {
+          retireRecord(sessionRepo, input.record.id);
+        }
       } catch (updateErr) {
-        console.error(`[SESSION_RECOVERY] Failed to mark session ${input.record.id} as exited:`, updateErr);
+        console.error(`[SESSION_RECOVERY] Failed to settle session ${input.record.id} after its spawn failed:`, updateErr);
       }
     }
   }

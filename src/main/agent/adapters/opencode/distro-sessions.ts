@@ -43,9 +43,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A session id in the shape OpenCode gives one, the only text that goes on a command line. */
-function isSessionId(value: string): boolean {
-  return /^[\w-]+$/.test(value);
+/** A session id in the shape OpenCode gives one, the only text that goes on a command line. A leading dash would read as an option. */
+export function isSessionId(value: string): boolean {
+  return /^\w[\w-]*$/.test(value);
 }
 
 /** `session list --format json`'s records, or none for no output, other output, or a bad record. */
@@ -119,7 +119,9 @@ export function isDistroOpenCodeV2(
   target: CliTarget,
   exec: typeof execCliForTarget = execCliForTarget,
 ): Promise<boolean> {
-  const key = `${target.distro}\u0000${target.linuxCliPath}`;
+  // A WSL distro by name, or a host by id (an ssh place has no distro): one binary per place.
+  const place = target.kind === 'ssh' ? `ssh:${target.hostId}` : target.distro;
+  const key = `${place}\u0000${target.linuxCliPath}`;
   const cached = distroIsV2Cache.get(key);
   if (cached) return cached;
   const answer = exec(target, ['--version'], { timeout: VERSION_TIMEOUT_MS, maxBuffer: 64 * 1024 })

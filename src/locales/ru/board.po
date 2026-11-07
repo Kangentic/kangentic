@@ -57,6 +57,11 @@ msgstr "{count, plural, one {# активный субагент} few {# акт�
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# инструмент в работе} few {# инструмента в работе} many {# инструментов в работе} other {# инструмента в работе}}"
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr "Хост {hostName} недоступен. Его агенты продолжают работать."
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -390,6 +395,21 @@ msgstr "Приостановлен"
 #, fuzzy
 msgid "Queued..."
 msgstr "В очереди..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect"
+msgstr "Переподключить"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnect to {hostName}"
+msgstr "Переподключиться к {hostName}"
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+#, fuzzy
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr "Переподключение к {hostName}. Его агенты продолжают работать."
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy
