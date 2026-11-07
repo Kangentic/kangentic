@@ -952,6 +952,9 @@ export class PtyHostCore {
       case 'markResized':
         this.resizeManager.notifyResize(command.sessionId);
         return;
+      case 'resetTerminalModes':
+        this.bufferManager.resetTerminalModes(command.sessionId, command.keepInputModes);
+        return;
       case 'kill':
         if (this.killRaw(command.ptyId)) return;
         this.kill(command.ptyId);

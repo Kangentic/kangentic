@@ -235,6 +235,11 @@ msgstr "Čínština"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "Vymazat zaseknuté režimy v aktivním terminálu a znovu ho vykreslit. Spuštěný agent si ponechá svou obrazovku."
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "Zavřít"
@@ -1025,6 +1030,11 @@ msgstr "Znovu načíst stránku"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "Nejprve odeberte úlohu {label} z pracovního postupu {workflowTitle}."
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "Resetovat terminál"
 
 #: src/shared/keybindings.ts
 #, fuzzy

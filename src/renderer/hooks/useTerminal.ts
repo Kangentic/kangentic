@@ -26,6 +26,7 @@ import {
   traceTerminalRenderer,
 } from '../utils/terminal-grid-registry';
 import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, type RepaintNudgeController } from '../utils/repaint-nudge';
+import { useKeybinding } from './useKeybinding';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
 import type { PastedImageCapability, PtyResizeOrigin, SessionResizeResult, TerminalColorOverrides } from '../../shared/types';
@@ -2835,6 +2836,28 @@ export function useTerminal(options: UseTerminalOptions) {
       reloadScrollback({ skipResize: true, skipFocus: true });
     });
   }, [options.sessionId, reloadScrollback]);
+
+  // Reset terminal: main clears the modes first, so the replay reads the cleared
+  // frame, and that replay's xterm.reset() then clears what only this terminal
+  // holds. skipResize because main asks for the repaint, skipFocus because the
+  // terminal that took the key already has focus. Capture phase, so xterm never
+  // sees the key and nothing reaches the PTY. A rejection means the session went
+  // away, and the terminal keeps its last frame. A held key's repeats stop here and
+  // not in `when`: a `when` that refuses leaves the key to xterm, which would type
+  // it, and each repeat that ran would resize a live agent again.
+  useKeybinding('terminal.reset', (event) => {
+    if ('repeat' in event && event.repeat) return;
+    const sessionId = options.sessionId;
+    if (!sessionId) return;
+    window.electronAPI.sessions.resetTerminal(sessionId).then(
+      () => reloadScrollbackRef.current?.({ skipResize: true, skipFocus: true }),
+      () => undefined,
+    );
+  }, {
+    capture: true,
+    enabled: !!options.sessionId,
+    when: () => xtermRef.current?.element?.contains(document.activeElement) ?? false,
+  });
 
   const focus = useCallback(() => {
     // arrival-focus-ok: the imperative handle its callers use after a real gesture

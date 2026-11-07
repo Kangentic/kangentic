@@ -304,6 +304,7 @@ const api: ElectronAPI = {
       return Promise.resolve();
     },
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
+    resetTerminal: (id) => ipcRenderer.invoke(IPC.SESSION_RESET_TERMINAL, id),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
     getScrollback: (id) => ptyPortClient.getScrollback(id),
     getFirstOutput: () => ipcRenderer.invoke(IPC.SESSION_GET_FIRST_OUTPUT),

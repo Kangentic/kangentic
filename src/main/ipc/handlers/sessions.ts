@@ -94,6 +94,7 @@ export function registerSessionHandlers(context: IpcContext): void {
   // so typing never waits on this process's event loop. The host tags those
   // keystrokes 'user' for the prompt-draft ledger.
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
+  ipcMain.handle(IPC.SESSION_RESET_TERMINAL, (_, id: string) => context.sessionManager.resetTerminal(id));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
   // Targeted self-heal probe: returns the live registry session for a task
   // (or null) and clears any stale task.session_id pointer on the DB row.

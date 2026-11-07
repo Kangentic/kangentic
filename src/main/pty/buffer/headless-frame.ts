@@ -2,6 +2,7 @@ import { Terminal, type ITerminalAddon } from '@xterm/headless';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { activateUnicode11 } from '../../../shared/xterm-unicode11';
 import { SERIALIZED_SCROLLBACK_LINES } from '../host/protocol';
+import type { TerminalCursor } from './terminal-mode-reset';
 
 /**
  * `@xterm/headless` declares its OWN `ITerminalAddon` (structurally identical
@@ -187,6 +188,20 @@ export class HeadlessFrameBuffer {
   lineAt(row: number): string {
     const line = this.terminal.buffer.active.getLine(row);
     return line ? line.translateToString(true) : '';
+  }
+
+  /**
+   * Where the cursor rests once the Reset terminal action has run: the normal
+   * buffer's cursor when the reset leaves the alt screen, else the active one.
+   * Viewport-relative, which is the space CUP addresses. Unflushed like the peek
+   * reads above, because waiting on the parser would put the clear behind a
+   * scrollback read that follows it. So a reset during a burst misses what the
+   * parser still has queued, and the cursor sits there until the next absolute
+   * move or repaint.
+   */
+  resetCursor(leavingAltScreen: boolean): TerminalCursor {
+    const buffer = leavingAltScreen ? this.terminal.buffer.normal : this.terminal.buffer.active;
+    return { row: buffer.cursorY, col: buffer.cursorX };
   }
 
   /**

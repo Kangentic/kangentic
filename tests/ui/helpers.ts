@@ -300,6 +300,8 @@ export interface TransientTerminalSetup {
   contextOptions?: Parameters<Browser['newContext']>[0];
   /** Seeds the global `terminal.fontSize` before the app mounts, so a terminal is constructed at it. */
   terminalFontSize?: number;
+  /** Seeds the user's hotkey overrides before the app mounts, keyed by `KEYBINDINGS` id. */
+  hotkeyOverrides?: Record<string, string>;
 }
 
 /**
@@ -356,6 +358,11 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, ...setup.contextOptions });
   const page = await context.newPage();
+  if (setup.hotkeyOverrides) {
+    await page.addInitScript((hotkeyOverrides: Record<string, string>) => {
+      (window as unknown as { __mockConfigOverrides: Record<string, unknown> }).__mockConfigOverrides = { hotkeyOverrides };
+    }, setup.hotkeyOverrides);
+  }
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
   await gotoVite(page);
