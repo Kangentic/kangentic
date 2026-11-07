@@ -11,7 +11,7 @@
 import type { PtyHostCommand, PtyHostMethod } from '../pty/host/protocol';
 
 export type CommandRoute =
-  /** The router acts on it itself (a quit plan for one host's link). */
+  /** The router acts on it itself. */
   | 'router'
   /** The local core and every link hear it: what each renderer shows and what a phone streams. */
   | 'every-host'
@@ -32,6 +32,8 @@ export const COMMAND_ROUTES = {
   kill: 'by-pty',
   resizeBuffer: 'by-session',
   markResized: 'by-session',
+  // Resets the session's own terminal buffer, which for a session on a host is the host's.
+  resetTerminalModes: 'by-session',
   setActivity: 'by-session',
   setAgentSessionIdKnown: 'by-session',
   finalizeTranscript: 'by-session',
