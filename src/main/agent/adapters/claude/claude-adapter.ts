@@ -562,7 +562,7 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /**
-   * Ctrl+E. Measured on 2.1.319 with an Up arrow or a click before the erase: as
+   * Ctrl+E. Measured on 2.1.319 on Windows, with an Up arrow or a click before the erase: as
    * the head of one write with the DELs it reaches the end of a wrapped input,
    * and it leaves an empty prompt and its suggestion alone. End stops at the end
    * of the visual row, Ctrl+End does nothing, Down works for one row only, and

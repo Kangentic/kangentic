@@ -230,7 +230,10 @@ function waitForPasteSettle(
   });
 }
 
-type EvidenceResult = 'verifier' | 'activity' | 'data' | 'timeout';
+/** `first-window-data`: neither window saw a turn start or proof, but the first
+ *  window saw output past the floor, so the retry Enter was a no-op after a
+ *  submit whose hook never came. */
+type EvidenceResult = 'verifier' | 'activity' | 'data' | 'first-window-data' | 'timeout';
 
 /**
  * Cursor-blip floor for the post-`\r` data path. After the carriage return
@@ -270,6 +273,7 @@ function waitForSubmissionEvidence(
   verifier: SubmissionVerifier | undefined,
   tWriteEnter: number,
   allowAnyDataFallback: boolean,
+  postEnterOutput?: { bytes: number },
 ): Promise<EvidenceResult> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -304,6 +308,7 @@ function waitForSubmissionEvidence(
       const chunk = args[1];
       if (typeof chunk === 'string') {
         postWriteBytes += chunk.length;
+        if (postEnterOutput) postEnterOutput.bytes = postWriteBytes;
       }
       if (allowAnyDataFallback && postWriteBytes >= POST_ENTER_DATA_FLOOR_BYTES) {
         finish('data');
@@ -464,9 +469,10 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         const evidenceStart = Date.now();
         const firstWindowTakesData = allowAnyDataFallback
           && (isSlashCommand(safeText) || !sessionManager.expectsTurnAfterSubmit(sessionId));
+        const firstWindowOutput = { bytes: 0 };
         let evidenceResult = await waitForSubmissionEvidence(
           sessionManager, sessionId, EVIDENCE_FIRST_WAIT_MS, linkedSignal,
-          verifier, tWriteEnter, firstWindowTakesData,
+          verifier, tWriteEnter, firstWindowTakesData, firstWindowOutput,
         );
         let retried = false;
         if (evidenceResult === 'timeout') {
@@ -488,6 +494,18 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
             sessionManager, sessionId, EVIDENCE_RETRY_WAIT_MS, linkedSignal,
             verifier, tRetryEnter, allowAnyDataFallback,
           );
+          // The first window's output still counts once the retry has gone. A
+          // hooks session whose hooks never fire answers a submit with output
+          // and no turn, and a reply that ended inside the first window leaves
+          // the retry's no-op Enter nothing to show. A repaint still got its
+          // retry Enter, which is what the first window waited for.
+          if (
+            evidenceResult === 'timeout'
+            && allowAnyDataFallback
+            && firstWindowOutput.bytes >= POST_ENTER_DATA_FLOOR_BYTES
+          ) {
+            evidenceResult = 'first-window-data';
+          }
         }
         const evidenceMs = Date.now() - evidenceStart;
 
