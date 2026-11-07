@@ -41,6 +41,13 @@ import { forgetPlanApprovalSpawn, setPlanApprovalModeResolver, spawnedSessionFor
  * is removed when the new one does not, so a column switched to Manual does
  * not keep approving because its rewrite failed.
  *
+ * The session's folder belongs to the spawn, so a missing one is never created
+ * here, or a write would rebuild `.kangentic/sessions/<id>` inside a project
+ * that was removed. It is no failed save either (Sentry DESKTOP-2F): nothing the
+ * user changed is lost, and the hook leaves the plan to them. So it sends no
+ * report and no toast, logs one local line per outage, and the session stays
+ * tracked for a later pass to write once the folder is back.
+ *
  * `TrackedSession.decision` mirrors the file on disk: the gate (`approves`)
  * must hold an idle exactly when the hook will answer it.
  */
@@ -61,6 +68,10 @@ interface TrackedSession {
   projectId: string;
   taskId: string;
   decisionPath: string;
+  /** Where `decisionPath` came from: the spawn's record, or the project row. */
+  folderSource: 'record' | 'derived';
+  /** Whether the current outage of the session's folder has had its log line. */
+  folderMissingLogged: boolean;
   agentCanApprove: boolean;
   bypassAvailable: boolean;
   decision: PlanApprovalDecision | null;
@@ -157,7 +168,7 @@ export class PlanApprovalWriter {
   private noteSession(sessionId: string, session: Session): void {
     if (session.transient) return;
     // A suspended or exited row plans nothing, and its directory may be
-    // cleaned up under it: a rewrite would create the directory again.
+    // cleaned up under it, so the writer stops tracking it.
     if (!isLiveSessionStatus(session.status)) {
       this.sessions.delete(sessionId);
       return;
@@ -183,6 +194,8 @@ export class PlanApprovalWriter {
       projectId: session.projectId,
       taskId: session.taskId,
       decisionPath: planApprovalDecisionPath(sessionDir),
+      folderSource: spawned ? 'record' : 'derived',
+      folderMissingLogged: false,
       agentCanApprove: this.agentCanApprove(sessionId),
       bypassAvailable: spawned?.bypassAvailable === true,
       decision: null,
@@ -212,9 +225,27 @@ export class PlanApprovalWriter {
       console.warn(`[plan-approval] Could not read the decision for session ${sessionId.slice(0, 8)}:`, error);
       decision = NO_APPROVAL;
     }
+    // A live session's folder can vanish, and the status reader rebuilds it empty.
+    // The hook then finds no file, so an approval held only in memory is dropped.
+    if (tracked.decision?.approve && !fs.existsSync(tracked.decisionPath)) tracked.decision = null;
     if (tracked.decision && sameDecision(tracked.decision, decision)) return;
-    if (safeWriteJson(tracked.decisionPath, decision, 'plan_approval')) {
+    if (isFolderMissing(tracked.decisionPath)) {
+      // No folder means no file, so the hook will answer nothing and the gate
+      // must not hold an idle for it. Unset, the next pass differs and writes.
+      tracked.decision = null;
+      if (!tracked.folderMissingLogged) {
+        tracked.folderMissingLogged = true;
+        // The line names no path, because it rides on any later Sentry report.
+        console.warn(`[plan-approval] Session ${sessionId.slice(0, 8)} has no session folder (path from ${tracked.folderSource}), so no decision was written`);
+      }
+      this.scheduleRetry();
+      return;
+    }
+    // A folder that goes after the check fails here as a normal, reported write.
+    // `createFolder: false` keeps that write from rebuilding it.
+    if (safeWriteJson(tracked.decisionPath, decision, 'plan_approval', { createFolder: false })) {
       tracked.decision = decision;
+      tracked.folderMissingLogged = false;
       this.retriesLeft = WRITE_RETRY_LIMIT;
       return;
     }
@@ -239,6 +270,22 @@ export class PlanApprovalWriter {
 
 function sameDecision(left: PlanApprovalDecision, right: PlanApprovalDecision): boolean {
   return left.approve === right.approve && left.mode === right.mode && left.detail === right.detail;
+}
+
+/**
+ * Whether the folder `filePath` goes in is not there. A file in place of one of
+ * its parents counts, whether `statSync` answers no entry for it or throws
+ * ENOTDIR. Any other throw is a real failure, such as EACCES, which `existsSync`
+ * would hide. That one answers false, so `safeWriteJson` meets it and reports it.
+ * A file where the folder itself should be also answers false, since `statSync`
+ * succeeds on it, and that write fails and is reported too.
+ */
+function isFolderMissing(filePath: string): boolean {
+  try {
+    return fs.statSync(path.dirname(filePath), { throwIfNoEntry: false }) === undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOTDIR';
+  }
 }
 
 /** Whether the decision file is gone after trying to remove it. */

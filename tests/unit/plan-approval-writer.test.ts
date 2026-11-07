@@ -45,10 +45,8 @@ vi.mock('../../src/main/plan-approval/workflow-plan-approval', () => ({
 }));
 vi.mock('../../src/main/safe-write', async () => {
   const nodeFs = await import('node:fs');
-  const nodePath = await import('node:path');
   return {
     safeWriteJson: (filePath: string, value: unknown) => {
-      nodeFs.mkdirSync(nodePath.dirname(filePath), { recursive: true });
       nodeFs.writeFileSync(filePath, JSON.stringify(value));
       return true;
     },
@@ -103,6 +101,8 @@ beforeEach(() => {
   // The spawn registry is module state: a record from another test would point here.
   forgetPlanApprovalSpawn('session-1');
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-approval-writer-'));
+  // The spawn makes this folder. The writer never does.
+  fs.mkdirSync(path.join(projectRoot, '.kangentic', 'sessions', 'session-1'), { recursive: true });
   sessionManager = new FakeSessionManager();
   sessionManager.agentNames.set('session-1', 'claude');
   boardEvents = new FakeBoardEvents();
@@ -134,6 +134,7 @@ describe('PlanApprovalWriter', () => {
 
   it('writes into the directory the spawn recorded, and passes on whether bypass is available', () => {
     const spawnDir = path.join(projectRoot, 'elsewhere', 'session-1');
+    fs.mkdirSync(spawnDir, { recursive: true });
     notePlanApprovalSpawn('session-1', { sessionDir: spawnDir, bypassAvailable: true });
     sessionManager.emit('session-changed', 'session-1', session('session-1'));
     expect(JSON.parse(fs.readFileSync(path.join(spawnDir, 'plan-approval.json'), 'utf8'))).toMatchObject({ approve: true });
