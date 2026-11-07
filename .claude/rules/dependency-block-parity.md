@@ -10,7 +10,7 @@ node_modules. So a package in `dependencies` that nothing needs at runtime is no
 it and its whole transitive closure are copied into every installer.
 
 Everything under `src/` is bundled. Vite bundles the renderer, esbuild bundles main, preload, and
-the five utilityProcess workers, and the only packages left out of those bundles are the
+the six utilityProcess workers, and the only packages left out of those bundles are the
 `external` list in `scripts/build.js`. So the set that genuinely has to exist as real
 node_modules directories is small and derivable.
 

@@ -374,6 +374,14 @@ describe('retrieval worker gate', () => {
   });
 });
 
+describe('worktree copy worker', () => {
+  it('is unpacked, because utilityProcess.fork cannot start a script inside the asar', () => {
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    expect(asarUnpack).toContain('.vite/build/worktree-copy-worker.js');
+  });
+});
+
 describe('pty host gate', () => {
   it('runs the load probe under the given Electron binary as Node, and throws with its stderr on failure', () => {
     const spawn = vi.fn(() => {

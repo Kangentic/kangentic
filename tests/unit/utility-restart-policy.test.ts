@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 /**
  * UtilityRestartPolicy - the backoff / decay / reporting contract shared by the
  * utility processes Kangentic owns (kangentic-embeddings, kangentic-line-count,
- * kangentic-dictation, kangentic-retrieval, kangentic-pty-host).
+ * kangentic-worktree-copy, kangentic-dictation, kangentic-retrieval,
+ * kangentic-pty-host).
  *
  * The bug this exists to prevent: both clients used to re-fork immediately on
  * the next request, bounded only by a crash cap, so a worker that died on
