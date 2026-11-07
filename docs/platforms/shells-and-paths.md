@@ -134,8 +134,12 @@ characters ran, and 8,191 printed "The input line is too long." and ran nothing,
 it included (Sentry DESKTOP-2D). So cmd keeps typing up to `CMD_TYPED_LINE_BYTE_BUDGET` (7,000
 bytes), which leaves most launches unchanged and leaves room for a shim's own text, and past it the
 launch moves to `launch.cmd`. The limit counts UTF-16 characters and the budget UTF-8 bytes, which
-is never fewer, so it errs safe. `launch.cmd` is not the shape of the other launchers, because a
-batch file does not read a line the way a prompt does:
+is never fewer, so it errs safe. An agent's command reaches `launch.cmd` only between that budget and
+8,191 characters, because `performSpawn` refuses an agent's command past 8,191 through cmd
+(later in this section) and a long prompt is typed in after the agent starts. The
+launcher itself was measured to 30,000 characters, and a raw command (`SESSION_SPAWN`), which that
+refusal does not cover, gets all of it. `launch.cmd` is not the shape of the other launchers, because
+a batch file does not read a line the way a prompt does:
 
 - `adaptCommandForShell`'s output cannot go in as it is, for two reasons.
   - `quoteArg` writes each `%` as `"^%"`, which works only on a typed line. In a batch file percent
