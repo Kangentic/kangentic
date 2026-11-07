@@ -330,6 +330,7 @@ import {
   type LostCommandTerminal,
 } from '../../src/main/ipc/handlers/command-terminal-restore';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
+import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-project-delete';
 import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
 import { IPC, PROJECT_NOT_FOUND_PREFIX, PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../src/shared/ipc-channels';
@@ -2408,6 +2409,50 @@ describe('recovering a host\'s projects once its link connects', () => {
       endLeftovers.mockResolvedValueOnce(0);
       await recoverRemoteProjectsOnHost(asContext, 'host-lab');
       expect(resumeSuspendedSessions).toHaveBeenCalled();
+      warned.mockRestore();
+    });
+  });
+
+  describe('agents on the host that nothing owns (#913)', () => {
+    const onHost = [remoteOnLab, notYetOpened];
+
+    function contextConnected(endLeftovers: ReturnType<typeof vi.fn>) {
+      const context = contextWithOpened('project-lab');
+      (context.projectRepo as unknown as { listOnHost: () => Project[] }).listOnHost = () => onHost;
+      const asContext = asIpcContext(context);
+      (asContext as unknown as { remoteHosting: unknown }).remoteHosting = {
+        status: { get: () => ({ state: 'connected' }) },
+        hosts: { getById: () => undefined },
+        hostService: { endSessionsLeftRunning: endLeftovers },
+        expectFirstConnect: vi.fn(),
+      };
+      return asContext;
+    }
+
+    afterEach(() => {
+      delete (SessionRepository.prototype as unknown as { getRunningRemote?: unknown }).getRunningRemote;
+    });
+
+    it('is ended once recovery has run, keeping an agent a record still names as running', async () => {
+      const order: string[] = [];
+      vi.mocked(resumeSuspendedSessions).mockImplementation(async () => { order.push('resume'); });
+      const endLeftovers = vi.fn(async () => { order.push('sweep'); return 2; });
+      (SessionRepository.prototype as unknown as { getRunningRemote: () => Array<{ id: string }> }).getRunningRemote = () => [{ id: 'waiting-record' }];
+
+      await recoverRemoteProjectsOnHost(contextConnected(endLeftovers), 'host-lab');
+
+      expect(endLeftovers).toHaveBeenCalledWith('host-lab', new Set(['project-lab', 'project-late']), { keepSessionIds: new Set(['waiting-record']) });
+      expect(order).toEqual(['resume', 'sweep']);
+    });
+
+    it('is left alone, and recovery does not fail, when the host cannot say what it runs', async () => {
+      const endLeftovers = vi.fn(async (): Promise<number> => { throw new Error('the link dropped'); });
+      (SessionRepository.prototype as unknown as { getRunningRemote: () => never[] }).getRunningRemote = () => [];
+      const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await expect(recoverRemoteProjectsOnHost(contextConnected(endLeftovers), 'host-lab')).resolves.toBeUndefined();
+
+      expect(vi.mocked(resumeSuspendedSessions)).toHaveBeenCalled();
       warned.mockRestore();
     });
   });

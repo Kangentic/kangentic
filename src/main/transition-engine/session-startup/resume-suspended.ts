@@ -134,9 +134,18 @@ export async function resumeSuspendedSessions(
   if (!onlySessionIds && rejoinRemote) {
     const remoteRunning = sessionRepo.getRunningRemote();
     if (remoteRunning.length > 0) {
+      const adoptRecord = createRecordAdopter({ sessionManager, projectId, projectPath });
+      const lanesById = new Map(new SwimlaneRepository(db).list().map((lane) => [lane.id, lane]));
       const outcomes = await rejoinRunningRemoteSessions(remoteRunning, {
         snapshot: rejoinRemote.snapshot,
-        adopt: createRecordAdopter({ sessionManager, projectId, projectPath }),
+        // A task that was deleted, archived, or moved to To Do or Done while its host was out of reach no longer
+        // wants its agent: it is not taken back, and the sweep after recovery ends it on the host.
+        adopt: async (record) => {
+          const task = taskRepo.getById(record.task_id);
+          const role = task ? lanesById.get(task.swimlane_id)?.role : null;
+          if (!task || task.archived_at || (role != null && NEVER_AUTO_SPAWN_ROLES.has(role))) return null;
+          return adoptRecord(record);
+        },
         log: (line) => console.log(line),
       });
       for (const [recordId, outcome] of outcomes) {

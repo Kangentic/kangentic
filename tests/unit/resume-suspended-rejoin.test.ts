@@ -177,6 +177,55 @@ describe('a record that is running on a host at launch', () => {
   });
 });
 
+describe('a running record whose task no longer wants its agent', () => {
+  const alive = async () => ({ sessions: [{ sessionId: 'rec-1', alive: true }] });
+
+  it('is not taken back when the task was moved to Done while its host was out of reach', async () => {
+    insertRecord('rec-1', { cli_target: SSH_TARGET });
+    const doneLane = new SwimlaneRepository(database).list().find((lane) => lane.role === 'done')!;
+    new TaskRepository(database).update({ id: taskId, swimlane_id: doneLane.id });
+    const sessionManager = makeSessionManager();
+
+    await recover(sessionManager, alive);
+
+    expect(sessionManager.adoptRemoteSession).not.toHaveBeenCalled();
+    expect(statusOf('rec-1')).not.toBe('running');
+  });
+
+  it('is not taken back when the task was moved to To Do', async () => {
+    insertRecord('rec-1', { cli_target: SSH_TARGET });
+    const todoLane = new SwimlaneRepository(database).list().find((lane) => lane.role === 'todo')!;
+    new TaskRepository(database).update({ id: taskId, swimlane_id: todoLane.id });
+    const sessionManager = makeSessionManager();
+
+    await recover(sessionManager, alive);
+
+    expect(sessionManager.adoptRemoteSession).not.toHaveBeenCalled();
+    expect(statusOf('rec-1')).not.toBe('running');
+  });
+
+  it('is not taken back when the task was deleted', async () => {
+    insertRecord('rec-1', { cli_target: SSH_TARGET });
+    const sessionManager = makeSessionManager();
+    database.pragma('foreign_keys = OFF');
+    new TaskRepository(database).delete(taskId);
+
+    await recover(sessionManager, alive);
+
+    expect(sessionManager.adoptRemoteSession).not.toHaveBeenCalled();
+    expect(statusOf('rec-1')).not.toBe('running');
+  });
+
+  it('is taken back when the task is still in a column that runs agents', async () => {
+    insertRecord('rec-1', { cli_target: SSH_TARGET });
+    const sessionManager = makeSessionManager();
+
+    await recover(sessionManager, alive);
+
+    expect(sessionManager.adoptRemoteSession).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('a record that is running on this computer at launch', () => {
   it('is orphaned as before, and the host is never asked', async () => {
     insertRecord('rec-local', { cli_target: null });

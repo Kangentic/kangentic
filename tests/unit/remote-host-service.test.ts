@@ -402,6 +402,18 @@ describe('ending what a host still runs from before it was removed', () => {
     expect(commands).toEqual([]);
   });
 
+  it('leaves a session a record still names as running, whose agent is not taken back yet', async () => {
+    const { service, commands } = serviceWithSnapshots([
+      [session('waiting', 'project-a', 4100), session('unowned', 'project-a', 4200)],
+      [session('waiting', 'project-a', 4100), session('unowned', 'project-a', 4200, false)],
+    ]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']), { keepSessionIds: new Set(['waiting']) })).resolves.toBe(1);
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].args.slice(-1)).toEqual(['4200']);
+  });
+
   it('rejects when a session outlives the wait, so nothing starts a second agent on its conversation', async () => {
     const { service } = serviceWithSnapshots([[session('stuck', 'project-a', 4100)]]);
 

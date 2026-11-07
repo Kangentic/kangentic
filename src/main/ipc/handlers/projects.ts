@@ -592,6 +592,8 @@ async function runColdOpenPasses(
     runStartupCleanup(context, project, standing, repositories);
     if (recovers) {
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, boardProfiles(), recoveryOptions(context, project.path));
+      // Agents a quit left on this project's host that nothing owns (see `endUnownedHostSessions`).
+      if (project.remote) void endUnownedHostSessions(context, project.remote.hostId, { onlyIfConnected: true });
     }
   } catch (error) {
     if (stopOnFailure) throw error;
@@ -644,7 +646,42 @@ export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: s
       console.error(`[remote] Recovery for ${project.name} after its host connected failed:`, error);
     }
   }
+  await endUnownedHostSessions(context, hostId);
 }
+
+/**
+ * A quit leaves a remote agent running (#913), and an agent left that way can end up with no owner: its task was
+ * moved to Done or To Do or deleted while its host was out of reach, so nothing took it back or ended it, or it was a
+ * workflow's own agent, which has no record to be taken back by. Once recovery has run for a connected host, anything
+ * alive there for this app's projects that the app neither holds nor has a `running` record for is such an agent, and
+ * is hung up. A record still `running` is an agent waiting to be taken back, and is left. If the host cannot say,
+ * nothing is ended and the next connection tries again.
+ */
+async function endUnownedHostSessions(context: IpcContext, hostId: string, options: { onlyIfConnected?: boolean } = {}): Promise<void> {
+  const hosting = context.remoteHosting;
+  if (!hosting || hostsSweeping.has(hostId)) return;
+  // A cold open asks only a host that is up: a request to a link that is down would wait out its whole timeout.
+  if (options.onlyIfConnected && hosting.status.get(hostId)?.state !== 'connected') return;
+  hostsSweeping.add(hostId);
+  try {
+    const projects = context.projectRepo.listOnHost(hostId);
+    const waitingToBeTakenBack = new Set<string>();
+    for (const project of projects) {
+      const database = getExistingProjectDb(project.id);
+      if (!database) continue;
+      for (const record of new SessionRepository(database).getRunningRemote()) waitingToBeTakenBack.add(record.id);
+    }
+    const ended = await hosting.hostService.endSessionsLeftRunning(hostId, new Set(projects.map((project) => project.id)), { keepSessionIds: waitingToBeTakenBack });
+    if (ended > 0) console.log(`[remote] ended ${ended} agent(s) on host ${hostId.slice(0, 8)} that nothing owned`);
+  } catch (error) {
+    console.warn(`[remote] could not check host ${hostId.slice(0, 8)} for agents nothing owns:`, error);
+  } finally {
+    hostsSweeping.delete(hostId);
+  }
+}
+
+/** Hosts being checked for agents nothing owns now, so two projects opening together do it once. */
+const hostsSweeping = new Set<string>();
 
 /**
  * What a host's helper holds, asked only of a host that is connected. A host that is not rejects at once:

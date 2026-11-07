@@ -270,10 +270,16 @@ export class RemoteHostService {
    * The hangup is how a PTY ends on Linux (`pty-teardown-grace.md`). Resolves with how many it ended, once they are
    * gone. Rejects when the host cannot be asked or one outlives the wait: a failed ask is never "nothing running".
    */
-  async endSessionsLeftRunning(hostId: string, projectIds: ReadonlySet<string>, options: { timeoutMs?: number; pollMs?: number } = {}): Promise<number> {
+  async endSessionsLeftRunning(
+    hostId: string,
+    projectIds: ReadonlySet<string>,
+    options: { timeoutMs?: number; pollMs?: number; keepSessionIds?: ReadonlySet<string> } = {},
+  ): Promise<number> {
     const heldHere = new Set((this.deps.liveSessions?.(hostId) ?? []).map((route) => route.sessionId));
+    // `keepSessionIds`: sessions a record still names as running, whose agent is not taken back yet (#913).
+    const kept = options.keepSessionIds;
     const leftRunning = async (): Promise<HelperSessionRecord[]> => (await this.helper(hostId, 'snapshot', {})).sessions
-      .filter((record) => record.alive && projectIds.has(record.projectId) && !heldHere.has(record.sessionId));
+      .filter((record) => record.alive && projectIds.has(record.projectId) && !heldHere.has(record.sessionId) && !kept?.has(record.sessionId));
     const sessions = await leftRunning();
     if (sessions.length === 0) return 0;
     // `kill` reads 0 as the script's own process group and -1 as everything the user owns on the host.
