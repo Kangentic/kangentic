@@ -59,6 +59,7 @@ const ALLOWLIST_CHANNELS = new Set([
   // Session by-session-id / global / transient (separate ephemeral lifecycle)
   'SESSION_KILL',
   'SESSION_RESIZE',
+  'SESSION_RESET_TERMINAL',
   'SESSION_SET_FOCUSED',
   // By-session-id, per-renderer, no project semantics: the whole-set replace
   // of "which sessions have an xterm mounted" that the resting park's held

@@ -191,6 +191,11 @@ msgid "Chinese"
 msgstr "中文"
 
 #: src/shared/keybindings.ts
+#, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "清除目前終端機中卡住的模式並重新繪製。執行中的代理會保留其畫面。"
+
+#: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Close"
 msgstr "關閉"
@@ -840,6 +845,11 @@ msgstr "重新載入頁面"
 #: src/shared/workflow-refusals.ts
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "請先將 {label} 從 {workflowTitle} 移除。"
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "重設終端機"
 
 #: src/shared/keybindings.ts
 msgid "Reset zoom"

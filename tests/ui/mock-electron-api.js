@@ -2597,6 +2597,13 @@
         // to exercise the width-drift refusal hold) via window.__mockResizeResult.
         return window.__mockResizeResult || { colsChanged: false };
       },
+      // Call log for test assertions. Each entry is a session id, in call order.
+      __resetTerminalCalls: [],
+      resetTerminal: async function (sessionId) {
+        window.electronAPI.sessions.__resetTerminalCalls.push(sessionId);
+        // Off unless a spec sets it: main rejects when the session went away.
+        if (window.__mockResetTerminalReject) throw new Error('Session not found');
+      },
       list: async function () {
         return sessions;
       },

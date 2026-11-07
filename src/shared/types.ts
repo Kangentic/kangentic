@@ -8385,6 +8385,14 @@ export interface ElectronAPI {
      * for `refused` and `held`.
      */
     resize: (sessionId: string, cols: number, rows: number) => Promise<SessionResizeResult>;
+    /**
+     * Clear stuck terminal modes in main's parser and the session's stream. A
+     * session in the alt screen also repaints, by resizing, never by writing to
+     * its PTY. A live agent keeps its alt screen and input modes. Resolves once the
+     * clear is ordered ahead of any later scrollback read, so the caller replays
+     * after it.
+     */
+    resetTerminal: (sessionId: string) => Promise<void>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**

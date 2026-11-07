@@ -133,6 +133,8 @@ export const IPC = {
   SESSION_SPAWN: 'session:spawn',
   SESSION_KILL: 'session:kill',
   SESSION_RESIZE: 'session:resize',
+  /** The Reset terminal action: clear stuck terminal modes in place. */
+  SESSION_RESET_TERMINAL: 'session:resetTerminal',
   SESSION_LIST: 'session:list',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   /**

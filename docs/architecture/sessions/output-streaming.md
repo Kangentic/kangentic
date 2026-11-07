@@ -14,6 +14,7 @@ sources:
   - resource: src/main/pty/buffer/headless-frame.ts
   - resource: src/main/pty/buffer/transcript-writer.ts
   - resource: src/main/pty/buffer/output-peek.ts
+  - resource: src/main/pty/buffer/terminal-mode-reset.ts
   - resource: src/renderer/addons/fit-addon.ts
   - resource: src/renderer/hooks/useTerminal.ts
   - resource: src/renderer/utils/focused-terminals.ts
@@ -791,6 +792,34 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   every sample and force a synchronous read to become async. It reads the parsed grid row by row
   (`HeadlessFrameBuffer.cursorRow` / `lineAt`) rather than serializing a frame, and the line
   selection lives in `src/main/pty/buffer/output-peek.ts`.
+- **Reset terminal.** A hotkey (`terminal.reset`, unbound by default) that clears stuck modes without
+  restarting the session. Stuck state lives in the renderer's xterm, the headless parser, the mode
+  tracker, the ring and a phone's terminal, so `PtyBufferManager.resetTerminalModes` feeds the
+  clearing bytes (`terminal-mode-reset.ts`) through `onData`, as if the PTY had printed them. A byte
+  replay then re-parses the old mode sets and this after them, a respawn's parser does the same,
+  and a phone gets it on the flush. It skips the output detectors, so the activity engine and the
+  transcript never see it. A reset that leaves the alt screen also sets the replay gate, because
+  the byte replay's pre-TUI strip cuts the normal buffer it returned to. `useTerminal` then runs a
+  `skipResize` reload, whose `xterm.reset()` clears what only the renderer holds. A held key resets
+  once, and its repeats are consumed so they never reach the PTY.
+  `SessionManager.resetTerminal` decides how much clears. A session with an `agentParser` keeps its
+  alt screen and input modes while its PTY lives, a suspended session's exiting agent included,
+  because a repaint does not give them back. Claude Code's resize path re-sends mouse tracking
+  alone, it re-enters the alt screen only on SIGCONT, and it re-sends bracketed paste only on input
+  after a quiet gap. Clearing `?1049` would strand it in the normal buffer, so a child's stuck mouse
+  tracking under a live agent stays on. A bare shell or an exited session clears everything. The
+  repaint is two direct `pty.resize` legs on rows, `TERMINAL_REPAINT_LEG_GAP_MS` apart, never a
+  keystroke, so Reset types nothing into the agent. The constant holds the gap's measurements. Only
+  a running session in the alt screen repaints. A suspended one is mid-exit, and `resize` refuses to
+  reshape it too. A normal-buffer session's replay is already whole, and on a full PowerShell screen
+  the short leg made ConPTY scroll the top row out and redraw from home over the parser's copy, so
+  row 32 of 40 was gone for good. The closing cursor move reads the parser without waiting on it,
+  because waiting would put the clear behind the scrollback read that follows. A reset during a
+  burst can leave the cursor where the parser had got to, until the next absolute move or repaint.
+  On Windows ConPTY redraws its own screen on the resize, and ConPTY never
+  saw the reset, so text a stuck alt screen held can come back. Modes do not: the frame replayed
+  after that carried none. Unit coverage is
+  `tests/unit/terminal-mode-reset.test.ts` and `session-manager-reset-terminal.test.ts`.
 - **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
   every DEC private mode xterm is tracking, and the original mode-set bytes usually scroll out of
   the 512KB scrollback window on a long-running session. On the byte-replay path,

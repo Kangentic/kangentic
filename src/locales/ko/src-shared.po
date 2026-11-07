@@ -235,6 +235,11 @@ msgstr "중국어"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "포커스된 터미널에서 멈춘 모드를 지우고 다시 그립니다. 실행 중인 에이전트의 화면은 유지됩니다."
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "닫기"
@@ -1025,6 +1030,11 @@ msgstr "페이지 새로 고침"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "먼저 {workflowTitle}에서 {label}을(를) 제거하세요."
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "터미널 재설정"
 
 #: src/shared/keybindings.ts
 #, fuzzy

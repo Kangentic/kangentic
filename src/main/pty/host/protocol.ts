@@ -150,6 +150,10 @@ export type PtyHostCommand =
   /** A PTY resize was applied: start the redraw grace that keeps the repaint
    *  from reading as new activity. */
   | { type: 'markResized'; sessionId: string }
+  /** The Reset terminal action: feed the clearing sequence into the session's
+   *  stream. `keepInputModes` while a live agent owns the alt screen and input
+   *  modes. Reaches the parser and the renderers, never the PTY. */
+  | { type: 'resetTerminalModes'; sessionId: string; keepInputModes: boolean }
   | { type: 'kill'; ptyId: number }
   /** One renderer's visible sessions: their output goes to that renderer's
    *  port. The union of every renderer's set gates the flush. */
