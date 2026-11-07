@@ -62,7 +62,7 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
     }
   },
 }));
-vi.mock('../../src/main/git/git-checks', () => ({ isGitRepo: vi.fn(() => true) }));
+vi.mock('../../src/main/git/git-checks', () => ({ isGitRepo: vi.fn(() => true), isProjectGitRepo: vi.fn(() => true) }));
 vi.mock('../../src/main/git/git-fetch-scheduler', () => ({ gitFetchScheduler: { startForProject: vi.fn(), stop: vi.fn() } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/db/repositories/handoff-repository', () => ({

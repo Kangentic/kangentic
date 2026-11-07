@@ -1,6 +1,7 @@
 import type { AutomationTrigger, Task } from '../../../shared/types';
 import { sanitizeForPty } from '../../../shared/paths';
 import { TASK_TEMPLATE_VAR_NAMES, type TaskTemplateVarName } from '../../../shared/task-template-vars';
+import { agentPathsForProjectPath } from '../../remote/host-paths';
 import { buildTaskXml, buildWorkflowXml, type WorkflowXmlInput } from './prompt-xml';
 
 /**
@@ -163,11 +164,29 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   brief_xml: () => '',
 };
 
+/**
+ * The context as what reads these variables sees it. For a remote project that is the host: the agent a prompt goes
+ * to, and the `run_script` a row runs, both work there, so a path of this computer's stand-in would name nothing.
+ * The one place every prompt and automation passes through, so no call site maps a path of its own.
+ */
+function asSeenWhereTheAgentWorks(ctx: TaskTemplateContext): TaskTemplateContext {
+  if (!ctx.projectPath) return ctx;
+  const paths = agentPathsForProjectPath(ctx.projectPath);
+  if (paths.location === 'local') return ctx;
+  return {
+    ...ctx,
+    projectPath: paths.projectFolder,
+    attachmentPaths: ctx.attachmentPaths.map((attachmentPath) => paths.toAgent(attachmentPath)),
+    task: { ...ctx.task, worktree_path: paths.toAgent(ctx.task.worktree_path) },
+  };
+}
+
 /** Resolve every task template variable for the given context. */
 export function resolveTaskTemplateVars(ctx: TaskTemplateContext): Record<string, string> {
+  const seen = asSeenWhereTheAgentWorks(ctx);
   const vars: Record<string, string> = {};
   for (const name of TASK_TEMPLATE_VAR_NAMES) {
-    vars[name] = TASK_TEMPLATE_RESOLVERS[name](ctx);
+    vars[name] = TASK_TEMPLATE_RESOLVERS[name](seen);
   }
   return vars;
 }

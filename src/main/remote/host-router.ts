@@ -142,8 +142,8 @@ export class HostRouter {
         if (!link) throw new HostUnreachableError(request.hostId, `Kangentic has no connection set up for host ${request.hostId}`);
         const params = request.params as RemoteRequestParams<HelperMethod>;
         return request.raw
-          ? link.requestHelperRaw(request.method as HelperMethod, params, Buffer.from(request.raw))
-          : link.requestHelper(request.method as HelperMethod, params);
+          ? link.requestHelperRaw(request.method as HelperMethod, params, Buffer.from(request.raw), request.timeoutMs)
+          : link.requestHelper(request.method as HelperMethod, params, request.timeoutMs);
       }
       default: {
         const unknownOperation: never = request;

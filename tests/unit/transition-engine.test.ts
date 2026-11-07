@@ -38,6 +38,10 @@ import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/ag
 import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
 import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionStartReport, SessionUsage } from '../../src/shared/types';
 import { claudeSessionStartLine } from './helpers/claude-session-start';
+import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { setRemoteProjectLookup } from '../../src/main/remote/host-paths';
+import { setHostAccessLookup, type HostAccess } from '../../src/main/remote/host-transfer';
+import type { HostCommandRequest, HostCommandResult } from '../../src/main/remote/protocol/messages';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -331,6 +335,8 @@ function makeEngine(options: {
    * overrides this to a real mkdtemp dir so reconcileResumeAgentSessionId's
    * unmocked fs.readFileSync can read a real status.json. */
   projectPath?: string;
+  /** What the task's attachment repository holds (local paths). Defaults to none. */
+  attachmentPaths?: string[];
   /** The engine's injected services (the expired-conversation describe passes a notice sink). */
   services?: ConstructorParameters<typeof TransitionEngine>[8];
 }) {
@@ -339,6 +345,7 @@ function makeEngine(options: {
   const action = options.action ?? makeAction();
   const taskRepo = makeTaskRepo();
   const attachmentRepo = makeAttachmentRepo();
+  if (options.attachmentPaths) attachmentRepo.getPathsForTask.mockImplementation(() => options.attachmentPaths as never[]);
 
   const getConfig = vi.fn(() => ({
     permissionMode: 'default',
@@ -2422,5 +2429,127 @@ describe('TransitionEngine - the id of a fresh agent session', () => {
     expect(sessionRepo.insert).not.toHaveBeenCalled();
     // The per-session directory is created after the check, so it is never made.
     expect(fs.mkdirSync).not.toHaveBeenCalled();
+  });
+});
+
+// A remote task's attachments are copied to the host before its agent starts (spawnAgentWithPull's
+// `if (remoteLaunch) withAttachmentsOnHost`). tests/unit/remote-prompt-paths.test.ts runs the copy itself; only this
+// drives the engine, so deleting that call leaves every other test green.
+describe('TransitionEngine - a remote spawn copies the task\'s attachments to the host first', () => {
+  const HOST_PROJECT = '/home/dev/proj';
+  let scratch: string;
+  let shell: string;
+  let attachment: string;
+  let hostAttachment: string;
+  let hostHolds: Map<string, Buffer>;
+  let order: string[];
+  let linkDown: boolean;
+  let hostAsked: number;
+
+  function answer(stdout: string): HostCommandResult {
+    return { code: 0, stdout, stderr: '', timedOut: false };
+  }
+
+  async function fakeHost(request: HostCommandRequest): Promise<HostCommandResult> {
+    hostAsked += 1;
+    if (linkDown) throw new Error('the link is down');
+    const [, script, , ...args] = request.args;
+    if (script.includes('position=0')) {
+      return answer(args.map((hostPath, index) => `KG:size:${index + 1}:${hostHolds.get(hostPath)?.length ?? '-'}`).join('\n'));
+    }
+    const [hostPath, , step] = args;
+    if (step === 'first') {
+      hostHolds.set(hostPath, Buffer.from(request.stdin ?? '', 'base64'));
+      order.push('host-write');
+    }
+    return answer('KG:ok\n');
+  }
+
+  const hostAccess: HostAccess = { hostId: 'host-1', runCommand: fakeHost, pathPresence: vi.fn(), removeFiles: vi.fn(), listeningPorts: vi.fn() };
+
+  function recordSpawnOrder() {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockImplementation(async (options: { command: string }) => {
+      order.push('spawn');
+      sessionManager.spawnedSessions.push({ command: options.command });
+      return { id: 'pty-session-1', status: 'running' };
+    });
+    return sessionManager;
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-remote-attachments-'));
+    shell = path.join(scratch, 'shell');
+    const attachmentDirectory = path.join(shell, '.kangentic', 'tasks', 'task-abc-1', 'attachments');
+    // node:fs is mocked above (mkdirSync is a spy), so the real folder is made through the promise API.
+    await fs.promises.mkdir(attachmentDirectory, { recursive: true });
+    attachment = path.join(attachmentDirectory, 'shot.png');
+    fs.writeFileSync(attachment, Buffer.from([1, 2, 3, 0, 255]));
+    hostAttachment = `${HOST_PROJECT}/.kangentic/tasks/task-abc-1/attachments/shot.png`;
+    hostHolds = new Map();
+    order = [];
+    linkDown = false;
+    hostAsked = 0;
+    setRemoteProjectLookup((projectPath) => (projectPath === shell ? { hostId: 'host-1', path: HOST_PROJECT } : null));
+    setHostAccessLookup(() => hostAccess);
+    setRemoteLaunchResolver({
+      resolve: async ({ projectPath }) => (projectPath === shell
+        ? {
+            place: { kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'bash', localHome: path.join(scratch, 'mirror'), roots: [{ local: shell, host: HOST_PROJECT }], linuxCliPath: 'claude' },
+            remote: { hostId: 'host-1', cwd: HOST_PROJECT, shellName: 'bash' },
+          }
+        : null),
+    });
+  });
+
+  afterEach(() => {
+    setRemoteProjectLookup(null);
+    setHostAccessLookup(null);
+    setRemoteLaunchResolver(null);
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  // Without it an agent on the host is told a path that does not exist there and cannot read a screenshot the user attached.
+  it('puts the bytes on the host before the agent starts, and the prompt names the host path', async () => {
+    const sessionManager = recordSpawnOrder();
+    const { runSpawn } = makeEngine({ sessionManager, projectPath: shell, attachmentPaths: [attachment] });
+
+    await runSpawn(makeTask());
+
+    expect(hostHolds.get(hostAttachment)).toEqual(Buffer.from([1, 2, 3, 0, 255]));
+    expect(order).toEqual(['host-write', 'spawn']);
+    expect(sessionManager.spawnedSessions[0].command).toContain(hostAttachment);
+  });
+
+  // Without it the agent is handed a path that names nothing, or the task never starts over a screenshot.
+  it('starts the agent anyway when the copy fails, and the prompt says so instead of naming the path', async () => {
+    linkDown = true;
+    const sessionManager = recordSpawnOrder();
+    const { runSpawn } = makeEngine({ sessionManager, projectPath: shell, attachmentPaths: [attachment] });
+
+    await runSpawn(makeTask());
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    const prompt = sessionManager.spawnedSessions[0].command;
+    expect(prompt).toContain('(Not copied to this host, so not readable here: shot.png.');
+    expect(prompt).not.toContain(hostAttachment);
+  });
+
+  // Without it every local spawn would pay a round trip to a host it does not have, or throw for want of one.
+  it('asks no host for a project on this computer', async () => {
+    setHostAccessLookup(() => { throw new Error('a host was asked'); });
+    const local = path.join(scratch, 'local-project');
+    const localAttachment = path.join(local, 'shot.png');
+    await fs.promises.mkdir(local, { recursive: true });
+    fs.writeFileSync(localAttachment, 'x');
+    const sessionManager = recordSpawnOrder();
+    const { runSpawn } = makeEngine({ sessionManager, projectPath: local, attachmentPaths: [localAttachment] });
+
+    await runSpawn(makeTask());
+
+    expect(hostAsked).toBe(0);
+    expect(sessionManager.spawnedSessions[0].command).toContain(localAttachment);
   });
 });

@@ -47,9 +47,12 @@ import {
 } from '../../browser/cdp/screenshot';
 import {
   browserCaptureDirectory,
+  captureFileFields,
+  deliverLocally,
   evaluatedValueText,
   saveScreenshotToFile,
   writeBrowserCaptureFile,
+  type CaptureDelivery,
 } from './browser-capture-file';
 import {
   applyViewport,
@@ -148,6 +151,13 @@ export interface BrowserToolDependencies {
    * the family still has no path to another project.
    */
   captureDirectory?: () => string;
+  /**
+   * Puts a saved capture where the caller's agent reads it. Absent, it stays here. Bound to the URL's project, like
+   * `captureDirectory`, so the family still has no path to another project.
+   */
+  deliverCapture?: CaptureDelivery;
+  /** Brings files an agent names on its host to this computer, or null for a project here. */
+  fetchDroppedFiles?: (paths: readonly string[], directory: string) => Promise<{ localPaths: string[]; failures: string[] } | null>;
 }
 
 const SAVE_TO_FILE_DESC =
@@ -160,6 +170,14 @@ const SAVE_TO_FILE_DESC =
  */
 function captureBudget(saveToFile: boolean | undefined, maxBytes: number | undefined): { inlineCeiling: number } | { maxBytes: number | undefined } {
   return saveToFile === true ? { inlineCeiling: Number.MAX_SAFE_INTEGER } : { maxBytes };
+}
+
+/**
+ * A result that names the pane's URLs. The pane is on this computer wherever the agent runs, so on a remote project
+ * `localhost` in one of these is the user's computer, not the agent's host.
+ */
+function paneUrlResult<Data extends object>(result: DriverResult<Data>): McpToolResult {
+  return driverToolResult(result.ok ? { ok: true, data: { ...result.data, location: 'local' } } : result);
 }
 
 /** A saveToFile write that failed, as the tool's error result. */
@@ -231,6 +249,7 @@ export function registerBrowserTools(
   const captureDirectory = (): string =>
     dependencies.captureDirectory?.()
       ?? browserCaptureDirectory({ projectPath: null, callerSessionId: undefined, sessionCwd: null, projectId });
+  const deliver = dependencies.deliverCapture ?? deliverLocally;
 
   // Caller scope is stamped here, not taken from tool arguments, so no tool can
   // opt out of it. This is the single point that scopes the 20 tools driving
@@ -265,7 +284,7 @@ export function registerBrowserTools(
   ): Promise<McpToolResult> => {
     if (!save || shot.mode === 'file') return screenshotToolResult({ ok: true, data: shot });
     try {
-      return screenshotToolResult({ ok: true, data: await saveScreenshotToFile(captureDirectory(), prefix, shot) });
+      return screenshotToolResult({ ok: true, data: await saveScreenshotToFile(captureDirectory(), prefix, shot, deliver) });
     } catch (error) {
       return saveFailedResult('The screenshot', error);
     }
@@ -308,6 +327,7 @@ export function registerBrowserTools(
       const payload = {
         automationEnabled: config.enabled,
         projectId,
+        location: 'local',
         panes,
         otherProjectPaneCount: scoped.otherProjectPaneCount,
         unknownProjectPaneCount: scoped.unknownProjectPaneCount,
@@ -346,7 +366,7 @@ export function registerBrowserTools(
         capability: 'navigate',
         config: getAutomationConfig(),
       });
-      return driverToolResult(result);
+      return paneUrlResult(result);
     },
   );
 
@@ -412,7 +432,7 @@ export function registerBrowserTools(
         await navigateGuest(webContents, validated.url);
         return { ok: true, url: validated.url };
       }, config);
-      return driverToolResult(result);
+      return paneUrlResult(result);
     },
   );
 
@@ -536,8 +556,8 @@ export function registerBrowserTools(
       if (result.ok && saveToFile === true && !('error' in result.data)) {
         const { outerHTML, ...rest } = result.data;
         try {
-          const saved = await writeBrowserCaptureFile(captureDirectory(), 'dom', 'html', outerHTML);
-          return driverToolResult({ ok: true, data: { ...rest, filePath: saved.filePath, bytes: saved.bytes } });
+          const delivered = await deliver(await writeBrowserCaptureFile(captureDirectory(), 'dom', 'html', outerHTML));
+          return driverToolResult({ ok: true, data: { ...rest, ...captureFileFields(delivered) } });
         } catch (error) {
           return saveFailedResult('The HTML', error);
         }
@@ -945,18 +965,24 @@ export function registerBrowserTools(
     'kangentic_browser_drop_files',
     {
       description:
-        "Drop real files onto an element in the task's Browser pane, exactly as dragging them out of the file manager would. The paths are absolute paths on this machine, and the page receives genuine File objects through dataTransfer.files. This is the one thing page script cannot fake, so it is the only way to test a drop zone or a file input end to end.",
+        "Drop real files onto an element in the task's Browser pane, exactly as dragging them out of the file manager would. The paths are absolute paths where you run, and the page receives genuine File objects through dataTransfer.files. On a remote project they are paths on the host, under your home folder, and Kangentic carries them to the pane on the user's computer. This is the one thing page script cannot fake, so it is the only way to test a drop zone or a file input end to end.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         selector: z.string().describe('CSS selector of the drop target.'),
-        paths: z.array(z.string()).min(1).max(20).describe('Absolute file paths on this machine.'),
+        paths: z.array(z.string()).min(1).max(20).describe('Absolute file paths where you run.'),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ sessionId, taskId, selector, paths }) => {
+      // Before the drive: a host's files take a while, and the drive holds the guest.
+      const fetched = await dependencies.fetchDroppedFiles?.(paths, captureDirectory()) ?? null;
+      if (fetched && fetched.failures.length > 0) {
+        return errorToolResult({ kind: 'drop-files-unavailable', detail: `Nothing was dropped. ${fetched.failures.join('; ')}` });
+      }
+      const localPaths = fetched?.localPaths ?? paths;
       const result = await drive('interact', { sessionId, taskId }, async (webContents) => {
-        const ok = await dropFilesOnSelector(webContents, selector, paths);
-        return ok ? { ok: true, dropped: paths.length } : { error: 'selector-not-found' as const };
+        const ok = await dropFilesOnSelector(webContents, selector, localPaths);
+        return ok ? { ok: true, dropped: localPaths.length } : { error: 'selector-not-found' as const };
       });
       if (result.ok && 'error' in result.data) {
         return errorToolResult({ kind: 'selector-not-found', detail: `No element matched ${selector}.` });
@@ -999,7 +1025,7 @@ export function registerBrowserTools(
           detail: `There is nothing to go ${direction} to in this pane's history.`,
         });
       }
-      return driverToolResult(result);
+      return paneUrlResult(result);
     },
   );
 
@@ -1026,7 +1052,7 @@ export function registerBrowserTools(
         const tail = entries.slice(-(limit ?? 50));
         return { requests: tail, returned: tail.length, total: entries.length };
       });
-      return driverToolResult(result);
+      return paneUrlResult(result);
     },
   );
 
@@ -1236,8 +1262,8 @@ export function registerBrowserTools(
       if (result.ok && saveToFile === true) {
         const { text, extension } = evaluatedValueText(result.data.value);
         try {
-          const saved = await writeBrowserCaptureFile(captureDirectory(), 'eval', extension, text);
-          return driverToolResult({ ok: true, data: { filePath: saved.filePath, bytes: saved.bytes } });
+          const delivered = await deliver(await writeBrowserCaptureFile(captureDirectory(), 'eval', extension, text));
+          return driverToolResult({ ok: true, data: captureFileFields(delivered) });
         } catch (error) {
           return saveFailedResult('The value', error);
         }

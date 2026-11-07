@@ -78,6 +78,11 @@ export const TASK_TEMPLATE_VAR_NAMES = [
 
 export type TaskTemplateVarName = (typeof TASK_TEMPLATE_VAR_NAMES)[number];
 
+/** Whether a template names a variable. Typed by the catalog, so a renamed keyword fails to compile here. */
+export function templateUsesVar(template: string, name: TaskTemplateVarName): boolean {
+  return template.includes(`{{${name}}}`);
+}
+
 /**
  * Where a variable is available. A flat global list starts lying the moment one
  * entry cannot resolve everywhere: `{{fromColumn}}` has no meaning in a spawn

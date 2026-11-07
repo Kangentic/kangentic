@@ -12,14 +12,14 @@ import type { PtyHostLifecycleListener, PtyHostTransport } from '../../src/main/
 import type { PtyHostEvent } from '../../src/main/pty/host/protocol';
 import { spawnParams } from './helpers/remote-link-rig';
 
-function fakeTransport(spawnedPid: number) {
+function fakeTransport(spawnedPid: number, request?: PtyHostTransport['request']) {
   let lifecycle: PtyHostLifecycleListener | undefined;
   let eventListener: ((event: PtyHostEvent) => void) | undefined;
   const stopLostPtyTree = vi.fn();
   const transport: PtyHostTransport = {
     post: () => undefined,
     attachRendererPort: () => undefined,
-    request: (async () => ({ ok: true, pid: spawnedPid })) as unknown as PtyHostTransport['request'],
+    request: request ?? (async () => ({ ok: true, pid: spawnedPid })) as unknown as PtyHostTransport['request'],
     setEventListener: (listener) => { eventListener = listener; },
     setLifecycleListener: (listener) => { lifecycle = listener; },
     stopLostPtyTree,
@@ -40,6 +40,28 @@ describe('the pid of a PTY handle', () => {
     const { client } = fakeTransport(4321);
     const outcome = await client.spawn(spawnParams('remote-1', 'task-1', 'host-a'));
     expect(outcome.ok && outcome.pty.pid).toBeNull();
+  });
+});
+
+describe('a remote request', () => {
+  /** A `run_script` on a host runs for minutes, and the transport's own 15 s default would fail it while it still ran. */
+  it('waits as long as the link does when the request names a wait, and past it, so the link answers first', async () => {
+    const request = vi.fn(async () => ({ ok: true }));
+    const { client } = fakeTransport(4321, request as unknown as PtyHostTransport['request']);
+
+    await client.remote({ op: 'helper', hostId: 'host-a', method: 'runCommand', params: {}, timeoutMs: 600_000 });
+
+    const options = (request.mock.calls[0] as unknown[])[2] as { timeoutMs: number };
+    expect(options.timeoutMs).toBeGreaterThan(600_000);
+  });
+
+  it('keeps the transport default for a request that names none', async () => {
+    const request = vi.fn(async () => ({ ok: true }));
+    const { client } = fakeTransport(4321, request as unknown as PtyHostTransport['request']);
+
+    await client.remote({ op: 'helper', hostId: 'host-a', method: 'hostInfo', params: {} });
+
+    expect((request.mock.calls[0] as unknown[])[2]).toBeUndefined();
   });
 });
 

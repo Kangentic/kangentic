@@ -6,7 +6,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
-import { isGitRepo } from '../../git/git-checks';
+import { isProjectGitRepo } from '../../git/git-checks';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
@@ -678,7 +678,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     const projectPath = projectId && projectId !== context.currentProjectId
       ? context.projectRepo.getById(projectId)?.path ?? null
       : context.currentProjectPath;
-    if (!projectPath || !isGitRepo(projectPath)) return [];
+    if (!projectPath || !isProjectGitRepo(projectPath)) return [];
     try {
       const worktreeManager = new WorktreeManager(projectPath);
       return await worktreeManager.listRemoteBranches();

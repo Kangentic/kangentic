@@ -17,9 +17,10 @@
  * named like a UUID is still reachable via its real id.
  */
 import type { IpcContext } from '../../ipc/ipc-context';
-import type { Project, Task } from '../../../shared/types';
+import type { Project, Task, ValueLocation } from '../../../shared/types';
 import type { CommandContext } from '../commands';
 import { buildCommandContextForProject } from '../mcp-project-context';
+import { agentPathsForProject } from '../../remote/host-paths';
 import { retrievalService } from '../../retrieval/retrieval-service';
 import type { Embedder } from '../../retrieval/types';
 import { getProjectDb } from '../../db/database';
@@ -39,12 +40,18 @@ export interface ResolvedProject {
 export interface ProjectSummary {
   id: string;
   name: string;
+  /** The project's folder as `location` names it: on a remote project, the host's path. */
   path: string;
+  location: ValueLocation;
+  /** This computer's folder for a remote project, and its host. Only on a remote project. */
+  shellFolder?: string;
+  hostId?: string;
   lastOpened: string;
   isActive: boolean;
 }
 
 function findTaskByWorktreePath(tasks: readonly Task[], worktreePath: string): Task | undefined {
+  // host-value-ok: compares the row with a path enumerateWorktrees mapped to this computer's form
   return tasks.find((task) => task.worktree_path != null && isSamePath(task.worktree_path, worktreePath));
 }
 
@@ -143,13 +150,18 @@ export class RequestResolver {
 
   listProjects(): ProjectSummary[] {
     const projects = this.loadProjects();
-    return projects.map((project) => ({
-      id: project.id,
-      name: project.name,
-      path: project.path,
-      lastOpened: project.last_opened,
-      isActive: project.id === this.defaultProjectId,
-    }));
+    return projects.map((project) => {
+      const paths = agentPathsForProject(project);
+      return {
+        id: project.id,
+        name: project.name,
+        path: paths.projectFolder,
+        location: paths.location,
+        ...(paths.hostId ? { shellFolder: paths.shellFolder, hostId: paths.hostId } : {}),
+        lastOpened: project.last_opened,
+        isActive: project.id === this.defaultProjectId,
+      };
+    });
   }
 
   /**

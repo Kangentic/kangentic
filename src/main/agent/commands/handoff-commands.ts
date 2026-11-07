@@ -1,7 +1,15 @@
+import type Database from 'better-sqlite3';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
+import { agentPathsOf } from '../../remote/host-paths';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandResponse } from './types';
+
+/** The row of the session a handoff left, which records where its CLI ran. */
+function sessionOfHandoff(db: Database.Database, sessionId: string | null): { cli_target: string | null } | undefined {
+  if (!sessionId) return undefined;
+  return db.prepare('SELECT cli_target FROM sessions WHERE id = ?').get(sessionId) as { cli_target: string | null } | undefined;
+}
 
 /**
  * MCP command handler: get_handoff_context
@@ -40,8 +48,17 @@ export function handleGetHandoffContext(
     lines.push(`Handoff from ${latestHandoff.from_agent} to ${latestHandoff.to_agent} at ${latestHandoff.created_at}`);
     lines.push(`Task: ${task.title}`);
 
-    if (latestHandoff.session_history_path) {
-      lines.push(`Session history file: ${latestHandoff.session_history_path}`);
+    // The row holds what this computer can read, which for a host is its mirror of the file. The session that wrote
+    // it says where the original is, on a host where the receiving agent can open it.
+    const paths = agentPathsOf(context);
+    const onHost = paths.location === 'host';
+    const localHistoryPath = latestHandoff.session_history_path;
+    const historyPath = localHistoryPath && onHost
+      ? paths.sessionFileToAgent(localHistoryPath, sessionOfHandoff(db, latestHandoff.from_session_id))
+      : localHistoryPath;
+
+    if (historyPath) {
+      lines.push(`Session history file: ${historyPath}${onHost ? ' (on the host)' : ''}`);
     } else {
       lines.push('No session history file available for the prior session.');
     }
@@ -55,7 +72,9 @@ export function handleGetHandoffContext(
         toAgent: latestHandoff.to_agent,
         fromSessionId: latestHandoff.from_session_id,
         toSessionId: latestHandoff.to_session_id,
-        sessionHistoryPath: latestHandoff.session_history_path,
+        sessionHistoryPath: historyPath,
+        location: paths.location,
+        ...(onHost ? { localSessionHistoryPath: localHistoryPath } : {}),
         createdAt: latestHandoff.created_at,
       },
     };

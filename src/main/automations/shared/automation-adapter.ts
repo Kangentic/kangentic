@@ -25,6 +25,7 @@ import type {
   Task,
 } from '../../../shared/types';
 import type { AutomationManifestEntry } from '../../../shared/automation-manifest';
+import type { HostScriptRunner } from '../../remote/host-script';
 
 /**
  * The slice of SessionManager an adapter may touch. Narrow on purpose: it keeps
@@ -51,6 +52,11 @@ export interface AutomationContext {
   trigger: AutomationTrigger;
   /** `task.worktree_path ?? projectPath`, resolved once. A script always runs task-relative. */
   cwd: string;
+  /**
+   * How a script reaches a remote project's host, where the task's folder really is, or absent for a project on
+   * this computer. `cwd` here is an empty stand-in, so nothing that runs a program on a remote project uses it.
+   */
+  runOnHost?: HostScriptRunner | null;
   projectId: string;
   projectPath: string | null;
   projectName: string | null;

@@ -587,7 +587,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_get_current_task',
     {
-      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<folder> segment) and tasks.branch_name. Returns the same details as kangentic_find_task: the branch, worktree and PR, and what the Knowledge Graph knows about the task. It does not report dev-server ports - use kangentic_check_dev_ports for those, which probes each port besides. Nothing is reserved automatically - use kangentic_reserve_dev_ports when you are about to start a dev server and the project\'s configured port might already be taken by a sibling task running at the same time.',
+      description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name, or neither to get your own task. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<folder> segment) and tasks.branch_name, then falls back to your own task. On a remote project the worktree is the host\'s path. Returns the same details as kangentic_find_task: the branch, worktree and PR, and what the Knowledge Graph knows about the task. It does not report dev-server ports - use kangentic_check_dev_ports for those, which probes each port besides. Nothing is reserved automatically - use kangentic_reserve_dev_ports when you are about to start a dev server and the project\'s configured port might already be taken by a sibling task running at the same time.',
       inputSchema: z.object({
         cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree folder name from .kangentic/worktrees/<folder> and matches against tasks.worktree_path.'),
         branch: z.string().optional().describe('Current git branch name. Exact (case-insensitive) match against tasks.branch_name.'),
@@ -595,14 +595,9 @@ export function registerTaskTools(
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ cwd, branch }) => {
-      if (!cwd && !branch) {
-        return {
-          content: [{ type: 'text' as const, text: 'Provide at least one of: cwd, branch.' }],
-          isError: true,
-        };
-      }
+      // Both are optional: the handler answers for the caller's own task, and says so when there is none.
       const defaultContext = resolver.defaultContextResolved().context;
-      return callHandler('get_current_task', { cwd: cwd ?? null, branch: branch ?? null }, defaultContext, 'Failed to get current task');
+      return callHandler('get_current_task', { cwd: cwd ?? null, branch: branch ?? null }, { ...defaultContext, callerTaskId }, 'Failed to get current task');
     },
   );
 

@@ -119,6 +119,14 @@ export function buildServerInstructions(
     lines.push('', ...buildBrowserSection(active?.id ?? null));
   }
 
+  if (active?.location === 'host') {
+    lines.push(
+      '',
+      'REMOTE PROJECT:',
+      `This project runs on a host over SSH: you are on the host, in ${active.path}, and Kangentic, its board and its Browser pane are on the user's computer. Paths and git facts in tool results are the host's, and a path you pass is read from the host, beneath your home folder. Anything marked \`location: local\` (app logs, process metrics, Browser pane URLs) is the user's computer, not yours. localhost in the Browser pane is their computer too, so reserve your dev server's port with kangentic_reserve_dev_ports: only a reserved port reaches the pane.`,
+    );
+  }
+
   if (projects.length === 0) {
     lines.push('', 'Call kangentic_list_projects at any time to discover registered projects.');
     return lines.join('\n');

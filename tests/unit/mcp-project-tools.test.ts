@@ -89,6 +89,28 @@ describe('registerProjectTools - kangentic_list_projects', () => {
     expect(text).not.toContain('[active]');
   });
 
+  it('names a remote project\'s path on its host, and its host', async () => {
+    const project = makeProject({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Remote',
+      path: '/home/dev/proj',
+      location: 'host',
+      hostId: 'host-1',
+      shellFolder: '/mock/config/remote-projects/p1',
+      lastOpened: '2026-03-15T10:00:00Z',
+      isActive: false,
+    });
+    const server = makeFakeServer();
+    registerProjectTools(server as never, makeResolver([project]));
+
+    const result = await server.getHandler('kangentic_list_projects')({});
+
+    expect(result.content[0].text).toBe(
+      '- Remote (id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa, path: /home/dev/proj on host host-1, lastOpened: 2026-03-15T10:00:00Z)',
+    );
+    expect(result.content[0].text).not.toContain('remote-projects');
+  });
+
   it('appends [active] tag to the active project', async () => {
     const activeProject = makeProject({
       id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

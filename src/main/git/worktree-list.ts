@@ -3,7 +3,8 @@ import { gitAt, type GitClient } from './git-client';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { mapWithConcurrency } from '../shared/map-with-concurrency';
 import { isSamePath } from '../../shared/paths';
-import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
+import { agentPathsForProject, type AgentPaths } from '../remote/host-paths';
+import type { Project, ProjectWorktrees, WorktreeRecord } from '../../shared/types';
 
 /**
  * Enumerate worktrees across one project or every registered project.
@@ -33,6 +34,14 @@ import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
  * appears with an empty `worktrees` array. Individual worktrees that fail
  * to resolve (e.g. mid-rebase, broken HEAD) get a record with as much info
  * as we can salvage and `branch` / `dirty` set to `null` / `false`.
+ *
+ * A remote project's git runs on its host (`gitAt`), and prints the host's paths,
+ * while the project row holds this computer's stand-in. Each entry is mapped back
+ * before `gitAt`, which otherwise finds no such folder here, or on a computer laid
+ * out like the host, runs this computer's git in an unrelated checkout. A host that
+ * cannot answer is `error` on the project, never an empty list: it says nothing
+ * about what the host holds. A worktree outside the project's folder (one a person
+ * made by hand) has no stand-in, so only what git listed is known of it.
  */
 
 interface ParsedWorktree {
@@ -40,6 +49,14 @@ interface ParsedWorktree {
   head: string | null;
   branch: string | null;
   isMainCheckout: boolean;
+}
+
+/** One entry as this computer reads it, and as the agent is told it. */
+interface MappedWorktree extends ParsedWorktree {
+  /** The folder `gitAt` is given, or null when this computer has none for it. */
+  gitDirectory: string | null;
+  /** The stand-in, for a remote project. */
+  localPath?: string;
 }
 
 /** Worktrees of one project read at once, and so git runs in flight at most. */
@@ -81,37 +98,69 @@ export async function enumerateWorktrees(
   const results: ProjectWorktrees[] = [];
   for (const project of projects) {
     if (!project) continue;
+    const paths = agentPathsForProject(project);
+    const shape = {
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: paths.projectFolder,
+      location: paths.location,
+      ...(paths.location === 'host' ? { shellFolder: paths.shellFolder } : {}),
+    };
+    // host-value-ok: the shell folder, which exists while the project does
     if (!fs.existsSync(project.path)) {
-      results.push({
-        projectId: project.id,
-        projectName: project.name,
-        projectPath: project.path,
-        worktrees: [],
-      });
+      results.push({ ...shape, worktrees: [] });
       continue;
     }
 
-    const parsed = await parseWorktreeList(project.path);
+    let parsed: ParsedWorktree[];
+    try {
+      // host-value-ok: gitAt maps this folder to the host
+      parsed = await parseWorktreeList(project.path, paths);
+    } catch (error) {
+      results.push({ ...shape, worktrees: [], error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
     const records = await mapWithConcurrency(
-      parsed,
+      mapToThisComputer(parsed, project, paths),
       WORKTREE_READ_CONCURRENCY,
-      (entry) => buildRecord(entry, project.id, project.path, options.resolveBaseRef),
+      (entry) => buildRecord(entry, project.id, paths, options.resolveBaseRef),
     );
-    results.push({
-      projectId: project.id,
-      projectName: project.name,
-      projectPath: project.path,
-      worktrees: records,
-    });
+    results.push({ ...shape, worktrees: records });
   }
   return results;
 }
 
-async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]> {
+/**
+ * Where each entry is on this computer. Git prints real paths and a project's row keeps the path the user added, so
+ * a host whose home is a symlink spells the project's folder differently from `remote.path`. Git lists the main
+ * worktree first, so the entries are mapped from its spelling.
+ */
+function mapToThisComputer(parsed: readonly ParsedWorktree[], project: Project, paths: AgentPaths): MappedWorktree[] {
+  if (!project.remote) return parsed.map((entry) => ({ ...entry, gitDirectory: entry.path }));
+  const main = parsed.find((entry) => entry.isMainCheckout);
+  const onGitSpelling = main && project.remote.path !== main.path
+    // host-value-ok: this is the map, from the local side
+    ? agentPathsForProject({ path: project.path, remote: { hostId: project.remote.hostId, path: main.path } })
+    : paths;
+  return parsed.map((entry) => {
+    if (!onGitSpelling.isHostPath(entry.path)) return { ...entry, gitDirectory: null };
+    const localPath = onGitSpelling.fromAgent(entry.path);
+    return { ...entry, gitDirectory: localPath, localPath };
+  });
+}
+
+/** A remote project's main worktree, which git lists first: only the entry for its own folder when one matches exactly. */
+function isHostMainCheckout(entryPath: string, index: number, entries: readonly { path: string }[], paths: AgentPaths): boolean {
+  const named = entries.some((entry) => entry.path === paths.projectFolder);
+  return named ? entryPath === paths.projectFolder : index === 0;
+}
+
+async function parseWorktreeList(projectPath: string, paths: AgentPaths): Promise<ParsedWorktree[]> {
   let raw: string;
   try {
     raw = await gitAt(projectPath).raw(['worktree', 'list', '--porcelain']);
-  } catch {
+  } catch (error) {
+    if (paths.location === 'host') throw new Error(`The host could not list this project's worktrees: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     return [];
   }
   // Porcelain output is paragraphs separated by blank lines, each starting
@@ -146,6 +195,10 @@ async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]>
       });
     }
   }
+  // A host's path never matches the row's stand-in, and on Windows `isSamePath` resolves it onto a drive.
+  if (paths.location === 'host') {
+    return parsed.map((entry, index) => ({ ...entry, isMainCheckout: isHostMainCheckout(entry.path, index, parsed, paths) }));
+  }
   return parsed;
 }
 
@@ -178,13 +231,15 @@ function gitAtOrNull(directory: string): GitClient | null {
 }
 
 async function buildRecord(
-  entry: ParsedWorktree,
+  entry: MappedWorktree,
   projectId: string,
-  projectPath: string,
+  paths: AgentPaths,
   resolveBaseRef: EnumerateWorktreesOptions['resolveBaseRef'],
 ): Promise<WorktreeRecord> {
   const baseRecord: WorktreeRecord = {
     path: entry.path,
+    location: paths.location,
+    ...(entry.localPath ? { localPath: entry.localPath } : {}),
     branch: entry.branch,
     baseRef: null,
     dirty: false,
@@ -195,7 +250,8 @@ async function buildRecord(
   };
 
   // Worktree may have been removed externally between `worktree list` and now.
-  const worktreeGit = gitAtOrNull(entry.path);
+  if (entry.gitDirectory === null) return baseRecord;
+  const worktreeGit = gitAtOrNull(entry.gitDirectory);
   if (!worktreeGit) return baseRecord;
 
   // Dirty status. status() throws on a half-broken worktree (mid-rebase,
@@ -231,8 +287,9 @@ async function buildRecord(
   try {
     baseBranch = resolveBaseRef?.({
       projectId,
-      projectPath,
-      worktreePath: entry.path,
+      // Both in the form the task row holds, which is the stand-in for a remote project.
+      projectPath: paths.shellFolder,
+      worktreePath: entry.gitDirectory,
       branch: entry.branch,
       isMainCheckout: entry.isMainCheckout,
     }) ?? null;

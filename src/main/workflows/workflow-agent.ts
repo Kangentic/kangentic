@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { IpcContext } from '../ipc/ipc-context';
-import type { ActivityState, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
+import type { ActivityState, Project, Session, Workflow, WorkflowAgentStatus, WorkflowAgentSummary } from '../../shared/types';
 import { resolveProjectRoot } from '../../shared/git-utils';
 import { workflowAgentPromptTemplate } from '../../shared/workflow-agent-prompt';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../shared/workflow-agent-choice';
@@ -21,7 +21,10 @@ import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resumePromptRidesCommandLine } from '../transition-engine/resume-prompt-delivery';
 import { pasteAgentMessageInBackground } from '../automations/turn-end/agent-message-delivery';
-import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
+import { serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
+import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
+import { agentPathsForProject } from '../remote/host-paths';
+import { resolveSpawnCli, type SpawnCli } from '../remote/remote-launch';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../browser/browser-automation-config';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
@@ -123,7 +126,8 @@ export interface ReadableProject {
  * The other projects' checkouts a workflow's agent reads beyond its own: every
  * project one of its tasks is on (planned or created), and every one it asked
  * for (`agent_read_project_ids`). A checkout gone from disk is left out, since
- * the CLI refuses to start with a directory that does not exist.
+ * the CLI refuses to start with a directory that does not exist. So is one on
+ * another machine than the agent, which has no path to it (`readableCheckout`).
  */
 export function readableProjectsOf(context: IpcContext, homeProjectId: string, workflow: Workflow): ReadableProject[] {
   const projectIds = new Set<string>();
@@ -133,15 +137,31 @@ export function readableProjectsOf(context: IpcContext, homeProjectId: string, w
   for (const { projectId } of workflowTasks(context, homeProjectId, workflow.id)) projectIds.add(projectId);
   for (const projectId of workflow.agent_read_project_ids) projectIds.add(projectId);
   projectIds.delete(homeProjectId);
+  const home = context.projectRepo.getById(homeProjectId);
   const readable: ReadableProject[] = [];
   for (const projectId of projectIds) {
     const project = context.projectRepo.getById(projectId);
     if (!project) continue;
-    const projectRoot = resolveProjectRoot(project.path);
-    if (!fs.existsSync(projectRoot)) continue;
-    readable.push({ projectId, name: project.name, path: projectRoot });
+    const checkout = readableCheckout(home, project);
+    if (!checkout || (!project.remote && !fs.existsSync(checkout))) continue;
+    readable.push({ projectId, name: project.name, path: checkout });
   }
   return readable;
+}
+
+/**
+ * Where a workflow's agent reads another project's checkout, as the agent names it, or null when it has no way to.
+ * The agent runs where its home project does. On a host it reads a project on that host, by its path there, and
+ * neither of the two sides can reach a checkout on the other: a remote project's folder here is an empty stand-in.
+ */
+function readableCheckout(home: Pick<Project, 'remote'> | undefined, project: Pick<Project, 'path' | 'remote'>): string | null {
+  if (!home?.remote && !project.remote) return resolveProjectRoot(project.path);
+  return home?.remote && project.remote?.hostId === home.remote.hostId ? project.remote.path : null;
+}
+
+/** A project's folder as an agent on its own machine names it. */
+function agentFolderOf(project: Pick<Project, 'path' | 'remote'>): string {
+  return project.remote?.path ?? resolveProjectRoot(project.path);
 }
 
 /** What a request for another project's code came to. */
@@ -152,9 +172,10 @@ export interface ProjectAccessResult {
    * `home`: its own project. `already`: its running agent reads it. `now` and
    * `next-turn`: its agent restarts with it, at once (idle) or when its turn
    * ends. `next-start`: no agent runs; the next start reads it. `unsupported`:
-   * the agent's CLI cannot read another checkout.
+   * the agent's CLI cannot read another checkout. `elsewhere`: the checkout is on
+   * another machine than the agent, so no grant could reach it and none is kept.
    */
-  when: 'home' | 'already' | 'now' | 'next-turn' | 'next-start' | 'unsupported';
+  when: 'home' | 'already' | 'now' | 'next-turn' | 'next-start' | 'unsupported' | 'elsewhere';
 }
 
 /**
@@ -173,13 +194,14 @@ export function requestWorkflowAgentProjectAccess(
 ): ProjectAccessResult {
   const project = context.projectRepo.getById(projectId);
   if (!project) throw new Error('That project is no longer in Kangentic.');
-  const projectRoot = resolveProjectRoot(project.path);
-  if (projectId === homeProjectId) return { name: project.name, path: projectRoot, when: 'home' };
+  if (projectId === homeProjectId) return { name: project.name, path: agentFolderOf(project), when: 'home' };
   // The home is the id the agent's scope names, which can outlive its project.
   const homeDb = getExistingProjectDb(homeProjectId);
   if (!homeDb) throw new Error('This workflow no longer exists.');
+  const checkout = readableCheckout(context.projectRepo.getById(homeProjectId), project);
+  if (!checkout) return { name: project.name, path: agentFolderOf(project), when: 'elsewhere' };
   new WorkflowRepository(homeDb).addAgentReadProject(workflowId, projectId);
-  return { name: project.name, path: projectRoot, when: syncWorkflowAgentAccess(context, homeProjectId, workflowId) };
+  return { name: project.name, path: checkout, when: syncWorkflowAgentAccess(context, homeProjectId, workflowId) };
 }
 
 /**
@@ -491,7 +513,11 @@ export async function endWorkflowAgent(context: IpcContext, workflowId: string):
   await Promise.all(exits);
   for (const session of sessions) {
     try {
-      fs.rmSync(path.join(session.cwd, '.kangentic', 'sessions', workflowId), { recursive: true, force: true });
+      // A remote session's cwd is the host's folder, and this removes this computer's copy of the session
+      // folder. The relay's release removes the host's.
+      const project = context.projectRepo.getById(session.projectId);
+      const localFolder = project ? agentPathsForProject(project).fromAgent(session.cwd) : session.cwd;
+      fs.rmSync(path.join(localFolder, '.kangentic', 'sessions', workflowId), { recursive: true, force: true });
     } catch {
       // Best-effort cleanup.
     }
@@ -541,7 +567,18 @@ function startOnce(
  * Kangentic restarted it for a reason it should hear (new checkouts to read).
  * Only that restart passes one, so it also marks the start as Kangentic's own.
  */
-async function startWorkflowAgent(
+function startWorkflowAgent(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  grid: WorkflowAgentGrid,
+  continuation?: string,
+): Promise<WorkflowAgentStatus> {
+  return withHostFilePull((hostFilePull) => startWorkflowAgentWithPull(hostFilePull, context, homeProjectId, workflowId, grid, continuation));
+}
+
+async function startWorkflowAgentWithPull(
+  hostFilePull: HostFilePull,
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
@@ -591,17 +628,17 @@ async function startWorkflowAgent(
   if (!config.mcpServer.enabled || !context.mcpServerHandle) {
     return unavailable('The workflow agent works through Kangentic\'s MCP server, which is off. Turn it on in Settings, MCP Server.');
   }
-  const detection = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
-  if (!detection.found || !detection.path) return unavailable(`Kangentic cannot find ${adapter.displayName} on this machine.`);
-  // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved once
-  // for this start, as the task spawns do. A distro that cannot be read says so
-  // in the pane, in the distro's own words.
-  let cliTarget: CliTarget | null;
+  // The CLI and where it runs, decided as the task spawns decide it (`resolveSpawnCli`): on a remote project the
+  // host's own, in the host's project folder, so the plan is made against the real code and not an empty folder
+  // here. A distro or host that cannot be read says so in the pane, in its own words.
+  let spawnCli: SpawnCli | null;
   try {
-    cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+    spawnCli = await resolveSpawnCli({ projectPath: project.path, cwd: projectRoot, adapter, cliPathOverride: config.agent.cliPaths[agentName] ?? null });
   } catch (error) {
     return unavailable(error instanceof Error ? error.message : String(error));
   }
+  if (!spawnCli) return unavailable(`Kangentic cannot find ${adapter.displayName} on this machine.`);
+  const { cliPath, cliTarget, remoteLaunch } = spawnCli;
   // An agent whose CLI would start here without Kangentic's tools could not save
   // a plan; it says why, and the user's fix is retried on the next Settings close.
   const mcpBlocked = adapter.kangenticMcpBlockedReason?.(projectRoot, cliTarget) ?? null;
@@ -615,7 +652,7 @@ async function startWorkflowAgent(
   let agentSessionId: string | null = null;
   if (resume && workflow.agent_session_id) agentSessionId = workflow.agent_session_id;
   else if (adapter.supportsCallerSessionId) agentSessionId = uuidv4();
-  else if (adapter.createSessionId) agentSessionId = await adapter.createSessionId(detection.path, projectRoot);
+  else if (adapter.createSessionId) agentSessionId = await (cliTarget ? adapter.createSessionId(cliPath, projectRoot, cliTarget) : adapter.createSessionId(cliPath, projectRoot));
   // A new conversation for a workflow whose agent already ran (its id was never
   // captured, or its conversation could not be resumed) continues from the saved
   // plan, and the pane says it started over. `agent_name` outlives a lost id
@@ -654,8 +691,11 @@ async function startWorkflowAgent(
   // with the same limits: 32,767 characters for a process, 8,191 under a
   // cmd.exe shell (the shim resolver moves PowerShell and Git Bash off a
   // `.cmd` shim, which cmd.exe would otherwise run).
+  // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
+  // before it runs, pushed back after the command is built. Null for any other start.
+  hostFilePull.sync = await pullHostFilesFor(adapter, projectRoot, cliTarget);
   await adapter.ensureTrust(projectRoot, cliTarget);
-  const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
+  const launch = await resolveShimLaunch({ agentPath: cliPath, shell, prompt });
   // A resume's message rides its command line only where it arrives whole, as
   // the task spawns decide (resume-prompt-delivery.ts). Otherwise the resume
   // carries none, and the message is typed in once the agent is ready.
@@ -709,6 +749,7 @@ async function startWorkflowAgent(
     // Read again after the awaits above: the workflow may have finished, or been
     // deleted with its project, while the CLI was being found.
     if (!workflowStillOpen(context, homeProjectId, workflowId)) {
+      hostFilePull.sync?.abandon();
       releaseCommandHold(adapter, projectRoot, sessionId);
       return unavailable('This workflow no longer exists.');
     }
@@ -718,6 +759,7 @@ async function startWorkflowAgent(
     // and its next start reads the grant from the workflow row.
     const restartForAccess = continuation !== undefined;
     if (restartForAccess && userPaused.has(workflowId)) {
+      hostFilePull.sync?.abandon();
       releaseCommandHold(adapter, projectRoot, sessionId);
       return sessionStatus(findWorkflowAgentSession(context, workflowId));
     }
@@ -730,6 +772,8 @@ async function startWorkflowAgent(
     releaseCommandHold(adapter, projectRoot, sessionId);
     throw error;
   }
+  // A push that fails means this command is never spawned.
+  await pushHostFilesForSpawn(hostFilePull.sync, sessionId, () => releaseCommandHold(adapter, projectRoot, sessionId));
 
   const session = await context.sessionManager.spawn({
     id: sessionId,
@@ -737,8 +781,9 @@ async function startWorkflowAgent(
     projectId: homeProjectId,
     command,
     cwd: projectRoot,
+    ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     startPath: 'workflow',
-    agentCliVersion: detection.version,
+    agentCliVersion: spawnCli.version,
     env: extraEnv ?? undefined,
     statusOutputPath,
     eventsOutputPath,

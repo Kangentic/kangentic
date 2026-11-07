@@ -355,6 +355,34 @@ describe('the key Kangentic signs in with', () => {
     if (process.platform !== 'win32') expect(fs.statSync(copy).mode & 0o777).toBe(0o600);
   });
 
+  it('on Windows drops the folder\'s inherited ACL before the key goes in, since ssh refuses a key another account can read', async () => {
+    const source = path.join(scratch, 'Downloads-key');
+    fs.writeFileSync(source, '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----');
+    const seen: { args: string[]; contentThen: string }[] = [];
+    const run: RunProgram = async (_file, args) => {
+      seen.push({ args, contentThen: fs.readFileSync(args[0], 'utf8') });
+      return { code: 0, stdout: '', stderr: '' };
+    };
+
+    const copy = await importHostKey('3f2a9c1e-0d4b-4c7a-9a1e-5b6c7d8e9f01', source, { ...makeDeps(makeRun()), run, platform: 'win32' });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].args.slice(1, 3)).toEqual(['/inheritance:r', '/grant:r']);
+    expect(seen[0].contentThen).toBe('');
+    expect(fs.readFileSync(copy, 'utf8')).toContain('BEGIN OPENSSH PRIVATE KEY');
+  });
+
+  it('never writes the key when Windows would not restrict the file, and says why', async () => {
+    const source = path.join(scratch, 'Downloads-key');
+    fs.writeFileSync(source, '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----');
+    const hostId = '3f2a9c1e-0d4b-4c7a-9a1e-5b6c7d8e9f01';
+    const run: RunProgram = async () => ({ code: 5, stdout: 'Access is denied.', stderr: '' });
+    const deps = { ...makeDeps(makeRun()), run, platform: 'win32' as const };
+
+    await expect(importHostKey(hostId, source, deps)).rejects.toThrow('Access is denied.');
+    expect(fs.readFileSync(path.join(hostKeyDirectory(deps.configDirectory, hostId), 'id_imported'), 'utf8')).toBe('');
+  });
+
   it('refuses a file that is not a private key, and one with a passphrase, which Kangentic never asks for', async () => {
     const deps = makeDeps(makeRun());
     const hostId = '3f2a9c1e-0d4b-4c7a-9a1e-5b6c7d8e9f01';

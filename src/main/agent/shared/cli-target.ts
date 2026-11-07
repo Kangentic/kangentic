@@ -131,6 +131,11 @@ export function isUnderLocalRoot(localPath: string, roots: SshCliPlace['roots'])
   return longestRoot(roots, 'local', localPath) !== null;
 }
 
+/** Whether a host path is a root or inside one, so `hostPathToLocal` names it on this computer. */
+export function isUnderHostRoot(hostPath: string, roots: SshCliPlace['roots']): boolean {
+  return longestRoot(roots, 'host', hostPath) !== null;
+}
+
 /**
  * A path inside a root (the shell folder, a session folder or a worktree stand-in below it) as the host names
  * it, or null when it is in no root. A root itself is a folder, so it is no file to copy and answers null too.
@@ -471,8 +476,12 @@ function placeIdentity(place: CliPlace | StoredCliTarget | null): string | null 
  */
 export function cliPathForTarget(windowsPath: string, place: CliPlace | null): string {
   if (!place) return toForwardSlash(windowsPath);
-  // A host sees the same folder tree under its own roots (the shell folder is the project's folder there).
-  if (place.kind === 'ssh') return localPathToHost(windowsPath, place.roots);
+  if (place.kind === 'ssh') {
+    // A host sees the same folder tree under its own roots (the shell folder is the project's folder there).
+    if (isUnderLocalRoot(windowsPath, place.roots)) return localPathToHost(windowsPath, place.roots);
+    // A file in this computer's mirror of the host's home, such as a prior session's history in a handoff.
+    return mirrorPathToHost(windowsPath, place) ?? localPathToHost(windowsPath, place.roots);
+  }
   // A path into another distro has no path from inside this one, and its
   // Linux path could name a different file here, so it is left as it is.
   const intoDistro = parseWslUncPath(windowsPath);
