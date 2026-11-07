@@ -2014,8 +2014,8 @@ msgstr "Ścieżka na serwerze dla zadań tego projektu. Pozostaw puste, aby uży
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Wstrzymaj każdego agenta, który czeka na ciebie tyle minut, z wyjątkiem agenta w Terminalu poleceń."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Wstrzymaj agenta, który czeka na Ciebie tak długo, dopóki nie otworzysz jego zadania."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

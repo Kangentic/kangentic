@@ -1,7 +1,7 @@
 /**
  * Settings > Performance > Pausing agents.
  *
- * One switch, When idle (off by default). The idle timer's minutes are its own
+ * One switch, When idle (on by default). The idle timer's minutes are its own
  * value, so they sit on a second line of its tile, under a hairline, and show
  * only while it is on. A click on that line must never flip the switch above
  * it. Idle timeout left Behavior > Sessions for this card.
@@ -38,24 +38,28 @@ async function openPausingAgents(page: Page): Promise<void> {
 }
 
 test.describe('Settings > Performance > Pausing agents', () => {
-  test('starts with the idle timer off, its minutes hidden', async () => {
+  test('starts with the idle timer on at 30 minutes', async () => {
     const { browser, page } = await launchPage();
     try {
       await openPausingAgents(page);
 
-      await expect(page.getByTestId('setting-row-agent.idleTimeoutEnabled')).toHaveAttribute('aria-checked', 'false');
-      await expect(page.getByTestId('setting-row-agent.idleTimeoutMinutes')).toHaveCount(0);
+      await expect(page.getByTestId('setting-row-agent.idleTimeoutEnabled')).toHaveAttribute('aria-checked', 'true');
+      await expect(page.getByTestId('setting-row-agent.idleTimeoutMinutes')).toBeVisible();
+      await expect(page.getByTestId('idle-timeout-minutes-value')).toHaveValue('30');
     } finally {
       await browser.close();
     }
   });
 
-  test('turning When idle on shows Minutes idle at 30, and the stepper writes the minutes', async () => {
+  test('turning When idle off and on shows Minutes idle, and the stepper writes the minutes', async () => {
     const { browser, page } = await launchPage();
     try {
       await openPausingAgents(page);
 
-      await page.getByTestId('setting-row-agent.idleTimeoutEnabled').click();
+      const idleSwitch = page.getByTestId('setting-row-agent.idleTimeoutEnabled');
+      await idleSwitch.click();
+      await expect.poll(async () => (await readAgentConfig(page)).idleTimeoutEnabled, { timeout: 3000 }).toBe(false);
+      await idleSwitch.click();
       await expect.poll(async () => (await readAgentConfig(page)).idleTimeoutEnabled, { timeout: 3000 }).toBe(true);
 
       const minutesLine = page.getByTestId('setting-row-agent.idleTimeoutMinutes');
@@ -80,7 +84,6 @@ test.describe('Settings > Performance > Pausing agents', () => {
     const { browser, page } = await launchPage();
     try {
       await openPausingAgents(page);
-      await page.getByTestId('setting-row-agent.idleTimeoutEnabled').click();
       const minutesLine = page.getByTestId('setting-row-agent.idleTimeoutMinutes');
       await expect(minutesLine).toBeVisible();
 
@@ -100,7 +103,6 @@ test.describe('Settings > Performance > Pausing agents', () => {
     try {
       await openPausingAgents(page);
       const idleSwitch = page.getByTestId('setting-row-agent.idleTimeoutEnabled');
-      await idleSwitch.click();
       await page.getByTestId('idle-timeout-minutes-increment').click();
       await expect.poll(async () => (await readAgentConfig(page)).idleTimeoutMinutes, { timeout: 3000 }).toBe(31);
 

@@ -417,6 +417,60 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
     });
   });
 
+  // Opening an idle-paused task must not cost a turn, so a start that would go
+  // fresh with a prompt or a recap starts nothing and leaves the card paused.
+  describe('a resumeOnly spawn (resumeTaskOnOpen)', () => {
+    const DECLINED = { startOver: null, recapOnly: false, unsentPrompt: null, declined: true };
+
+    function resumeOnly(engine: TransitionEngine) {
+      return engine.resumeSuspendedSession(
+        makeTask() as unknown as SpawnTask, null, undefined, undefined, undefined, 'claude', undefined, { resumeOnly: true },
+      );
+    }
+
+    it('declines a conversation the agent deleted, spawning nothing and retiring no record', async () => {
+      const sessionRepo = resumableRepo();
+      const { engine, sessionManager } = makeEngine({ sessionRepo, projectPath });
+
+      await expect(resumeOnly(engine)).resolves.toEqual(DECLINED);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+      expect(sessionRepo.compareAndUpdateStatus).not.toHaveBeenCalled();
+    });
+
+    it('declines a conversation that never started', async () => {
+      const sessionRepo = resumableRepo();
+      sessionRepo.listForTaskNewestFirst.mockReturnValue([
+        { ...sessionRepo.getLatestForTaskByTypeAndIsolation(), launch_failed_at: LAST_ACTIVE_AT },
+      ] as never);
+      const { engine, sessionManager } = makeEngine({ sessionRepo, projectPath });
+
+      await expect(resumeOnly(engine)).resolves.toEqual(DECLINED);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+    });
+
+    it('declines a task with no conversation to resume, which would start fresh', async () => {
+      const { engine, sessionManager } = makeEngine({ projectPath });
+
+      await expect(resumeOnly(engine)).resolves.toEqual(DECLINED);
+
+      expect(sessionManager.spawn).not.toHaveBeenCalled();
+    });
+
+    it('resumes a conversation that is still there', async () => {
+      const elsewhere = path.join(projectsRoot, '-renamed-project', `${AGENT_SESSION_ID}.jsonl`);
+      await fs.promises.mkdir(path.dirname(elsewhere), { recursive: true });
+      fs.writeFileSync(elsewhere, '{"type":"user"}\n');
+      const { engine, sessionManager } = makeEngine({ sessionRepo: resumableRepo(), projectPath });
+
+      await expect(resumeOnly(engine)).resolves.toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
+
+      expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+      expect(capturedOptions?.resume).toBe(true);
+    });
+  });
+
   describe('the room the recap leaves for the caller\'s own text', () => {
     // About 2,000 characters, as a column's own prompt template is.
     const COLUMN_PROMPT = 'Review the changes on this branch and report each finding with its file. '.repeat(27).trim();

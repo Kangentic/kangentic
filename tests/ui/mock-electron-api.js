@@ -350,7 +350,7 @@
       permissionMode: 'acceptEdits',
       cliPaths: {},
       maxConcurrentSessions: 8,
-      idleTimeoutEnabled: false,
+      idleTimeoutEnabled: true,
       idleTimeoutMinutes: 30,
       autoResumeSessionsOnRestart: false,
       executionServers: {},
@@ -458,6 +458,7 @@
     // true, because the mock models an established install (like hasCompletedFirstRun
     // above) that has already crossed the single -> focused default flip.
     hasMigratedWindowLightDismissDefault: true,
+    hasMigratedIdleTimeoutDefault: true,
     // true for the same reason: an established install has already run the one-shot
     // purge of seeded entries out of discoveredModelsByAgent (ConfigManager.load).
     hasPurgedSeededDiscoveredModels: true,
@@ -2478,6 +2479,15 @@
       // does with __mockDemoteCalls), so a spec can assert that a surface
       // hosting another project's task sends that project. Reset and reconcile
       // record the same way, to __mockResetCalls / __mockReconcileCalls.
+      // resumeOnOpen records to __mockResumeOnOpenCalls and starts nothing: main
+      // decides from a session record the mock does not keep, and a resume that
+      // does start arrives by push.
+      resumeOnOpen: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockResumeOnOpenCalls) window.__mockResumeOnOpenCalls = [];
+          window.__mockResumeOnOpenCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+        }
+      },
       suspend: async function (taskId, projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockSuspendCalls) window.__mockSuspendCalls = [];

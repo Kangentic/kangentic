@@ -9,7 +9,8 @@
  * The suspend is recorded as the USER's by default (`suspended_by = 'user'`).
  * The idle timeout records `'auto'`. Both are held pauses (`isHeldPause`):
  * neither a restart nor an auto-spawn column starts the task again by itself
- * (`autoSpawnForTask`'s held-pause check). A pause never reaps the task's
+ * (`autoSpawnForTask`'s held-pause check). Only `'auto'` lifts when the user opens
+ * the task (`resumeTaskOnOpen`). A pause never reaps the task's
  * leftover processes: the task is parked, not finished (task-process-tag.md).
  * In a project with a Stop script, the idle pause starts that script once it
  * returns, outside this lock (`src/main/stop-script/`); this function never does.

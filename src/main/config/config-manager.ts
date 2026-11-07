@@ -357,6 +357,20 @@ export class ConfigManager {
       }
     }
 
+    // One-time migration: adopt the idle pause's `on` default, for the reason
+    // above: a saved `false` beats the new default on every install that ran
+    // under the old one, and it cannot be told from a deliberate off. The marker
+    // bounds this to one rewrite, so turning it off afterwards sticks. The saved
+    // minutes stay. Runs after the legacy idle-timeout read above, which writes
+    // the `false` this replaces.
+    if (!this.config.hasMigratedIdleTimeoutDefault) {
+      this.config.hasMigratedIdleTimeoutDefault = true;
+      this.config.agent.idleTimeoutEnabled = true;
+      if (!configFileUnreadable) {
+        this.save(this.config);
+      }
+    }
+
     // One-time purge: clear `discoveredModelsByAgent`. `loadAgentList` used to seed
     // that cache from each adapter's `capabilities.models` with a union that only
     // ever grew, so any model an adapter ever reported became permanent - including

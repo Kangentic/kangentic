@@ -2,6 +2,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { InjectionReport } from '../transition-engine/terminal-submit-scheduler';
 import type { CommandVerifier } from '../pty/terminal-submit';
 import type { Session } from '../../shared/types';
+import type { TurnEndedPayload } from '../pty/session-manager';
 import { MOVE_MESSAGE_MAX_CHARS } from '../agent/commands/move-message-limit';
 import { getProjectDb } from '../db/database';
 import { SentSessionMessageRepository } from '../db/repositories/sent-session-message-repository';
@@ -37,7 +38,9 @@ import { isExpiredRecapSession } from '../automations/turn-end/recap-turns';
  * (`composeOpeningMessage`). Every other start (startup recovery, the legacy
  * Start agent row, a queued session's promotion) and a message held while a
  * start was already under way go out through `flushHeldIfLive`, pasted once
- * the agent's first turn settles.
+ * the agent's first turn settles. The resume a task's opening makes claims none
+ * and waits for the agent to end a turn (`deferHeldUntilTurnEnd`), so opening a
+ * task never spends a turn on them.
  *
  * Clearing: a move to Done or To Do (`clearHeldMessages`, in the move's commit
  * block), and a delete, Backlog demote or move to another project, which take
@@ -186,6 +189,9 @@ const pendingRides = new Map<string, HeldClaim>();
 
 /** Rides on a running session whose agent has not shown it started, by session id. */
 const launchRides = new Map<string, HeldClaim>();
+
+/** Sessions holding their task's messages until the agent ends a turn. */
+const deferredToTurnEnd = new Set<string>();
 
 /** How long the flush waits after a session first runs, for a recap mark to land. */
 const HELD_FLUSH_SETTLE_MS = 1_000;
@@ -445,7 +451,8 @@ export function clearHeldMessages(projectId: string, taskId: string): void {
  * nothing for the task, so it never lands inside the opening message's own
  * keystrokes (a second keystroke burst for a fresh session would cancel the
  * first). Does nothing for a session that opened on an expired conversation's
- * recap: the messages wait for the next start, as the column's do.
+ * recap: the messages wait for the next start, as the column's do. Nor for one
+ * a task's opening resumed, until its agent ends a turn (`deferHeldUntilTurnEnd`).
  *
  * A release from this delivery never flushes again, so a paste that keeps
  * failing cannot loop. It never throws: its callers are a hold that already
@@ -458,6 +465,7 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
     const session = context.sessionManager.findLiveSessionByTaskId(taskId);
     if (!session || session.transient || !context.sessionManager.isWritable(session.id)) return;
     if (isExpiredRecapSession(session.id)) return;
+    if (deferredToTurnEnd.has(session.id)) return;
     const claim = claimHeldMessages(context, projectId, taskId);
     if (!claim) return;
     taken = claim;
@@ -473,6 +481,17 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
     taken?.release({ flush: false });
     console.error(`[held-messages] Flush failed for task ${taskId.slice(0, 8)}:`, error);
   }
+}
+
+/**
+ * Keep held messages off this session until its agent ends a turn. Opening a
+ * task resumes its agent with nothing to do, and `flushHeldIfLive` would spend a
+ * paid turn on messages the user never asked to send now. If no turn comes they
+ * stay held for the next start. In memory only: a restart loses the mark and
+ * nothing else, since the session is gone with it.
+ */
+export function deferHeldUntilTurnEnd(sessionId: string): void {
+  deferredToTurnEnd.add(sessionId);
 }
 
 /**
@@ -501,6 +520,7 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
   const onSessionChanged = (sessionId: string, session: Session): void => {
     if (session.status !== 'running') {
       if (session.status !== 'queued') {
+        deferredToTurnEnd.delete(sessionId);
         releaseRide(sessionId, true);
         settleLaunchRide(context, sessionId);
       }
@@ -519,6 +539,7 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
   };
   const onSessionGone = (sessionId: string): void => {
     seenRunning.delete(sessionId);
+    deferredToTurnEnd.delete(sessionId);
     releaseRide(sessionId, true);
     settleLaunchRide(context, sessionId);
   };
@@ -528,12 +549,21 @@ export function registerHeldMessageFlush(context: IpcContext): () => void {
     launchRides.delete(sessionId);
     ride.commit(sessionId);
   };
+  // The agent's own Stop, never an activity edge. A resumed agent can read as
+  // active with no turn: Claude reloads its context with no hook, which the
+  // status heartbeat takes for generation, and a watchdog then idles it. An agent
+  // that reports no Stop keeps the messages held for its next start.
+  const onTurnEnded = ({ sessionId, taskId, projectId }: TurnEndedPayload): void => {
+    if (deferredToTurnEnd.delete(sessionId)) flushHeldIfLive(context, projectId, taskId);
+  };
   context.sessionManager.on('agent-ran', onAgentRan);
+  context.sessionManager.on('turn-ended', onTurnEnded);
   context.sessionManager.on('session-changed', onSessionChanged);
   context.sessionManager.on('session-removed', onSessionGone);
   context.sessionManager.on('exit', onSessionGone);
   return () => {
     context.sessionManager.off('agent-ran', onAgentRan);
+    context.sessionManager.off('turn-ended', onTurnEnded);
     context.sessionManager.off('session-changed', onSessionChanged);
     context.sessionManager.off('session-removed', onSessionGone);
     context.sessionManager.off('exit', onSessionGone);
@@ -550,4 +580,5 @@ export function resetHeldMessagesForTests(): void {
   claimedRowIds.clear();
   pendingRides.clear();
   launchRides.clear();
+  deferredToTurnEnd.clear();
 }

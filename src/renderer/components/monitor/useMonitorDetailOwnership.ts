@@ -54,6 +54,9 @@ export function requestMonitorDetail(
   options?: { initialEdit?: boolean },
 ): void {
   if (options?.initialEdit) pendingInitialEdit.add(monitorDetailAnchor(projectId, taskId));
+  // The Monitor's own open, which never passes `setDetailTaskId`. Only a person
+  // reaches this function: an agent's open comes through the board's signal.
+  else useSessionStore.getState().resumeOnOpen(taskId, projectId);
   void window.electronAPI?.taskDetailOwnership
     ?.requestOpen(projectId, taskId, 'monitor')
     .catch((error) => {

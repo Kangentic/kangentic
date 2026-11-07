@@ -25,6 +25,10 @@
  * Messages held for the task while it was paused (src/main/held-messages) do
  * go out: in the resume's opening message, after any prompt the Resume
  * carries.
+ *
+ * `resumeTaskOnOpen` (`session-resume-on-open.ts`) comes through here too, with
+ * `plainResume`, when the user opens a task the idle timeout paused. That one
+ * sends nothing: it starts only by resuming the conversation as it stands.
  */
 import type Database from 'better-sqlite3';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -32,7 +36,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, spawnAgent } from '../helpers';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
-import { claimHeldMessages, composeOpeningMessage, deliverOpeningRemainder } from '../../held-messages/held-messages';
+import { claimHeldMessages, composeOpeningMessage, deferHeldUntilTurnEnd, deliverOpeningRemainder } from '../../held-messages/held-messages';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
@@ -58,7 +62,7 @@ import type { IpcContext } from '../ipc-context';
  * pause (a reorder within it records no move), or when the pause or the entry
  * has no recorded time.
  */
-function columnEnteredWhilePaused(
+export function columnEnteredWhilePaused(
   db: Database.Database,
   sessionRepo: SessionRepository,
   task: Task,
@@ -132,8 +136,20 @@ export interface ResumeTaskSessionOptions {
    * passes none: the renderer toasts the rejection itself.
    */
   onFailed?: (step: ResumeFailureStep, error: unknown, task: Task) => void;
-  /** What started this, when it is not the Resume button: a phone, or the automatic retry. */
+  /** What started this, when it is not the Resume button: a phone, the automatic retry, or an open. */
   startPath?: LaunchStartPath;
+  /**
+   * A resume Kangentic makes on the user's behalf (`resumeTaskOnOpen`), which
+   * must not send the agent anything: nobody typed a message, and a message is
+   * a paid turn. `stillEligible` is re-checked under the task lock in both
+   * locked phases, since the user may have paused, moved or resumed the task
+   * while this waited, and false resolves null with nothing started. It claims
+   * no held messages (they wait for the next turn end, `deferHeldUntilTurnEnd`)
+   * and starts only by resuming the conversation (`SpawnOverrides.resumeOnly`).
+   * `onDeclined` runs when the engine refuses that start, which it can only
+   * decide after the git phase.
+   */
+  plainResume?: { stillEligible: (task: Task) => boolean; onDeclined: () => void };
 }
 
 /**
@@ -219,9 +235,11 @@ export function resumeTaskSession(
           const lane = swimlanes.getById(task.swimlane_id);
           const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
           if (blocked) throw new Error(resumeBlockMessage(blocked));
+          if (options.plainResume && !options.plainResume.stillEligible(task)) return { kind: 'declined' as const };
           return { kind: 'spawn' as const, task };
         });
 
+        if (phase1Result.kind === 'declined') return null;
         if (phase1Result.kind === 'live') {
           console.log(
             `[SESSION_RESUME] Self-heal: returning live session for task ${taskId.slice(0, 8)}`
@@ -285,6 +303,7 @@ export function resumeTaskSession(
             const currentRow = swimlanes.getById(current.swimlane_id);
             const currentBlocked = resumeBlockReasonForTask({ task: current, laneRole: currentRow?.role });
             if (currentBlocked) throw new Error(resumeBlockMessage(currentBlocked));
+            if (options.plainResume && !options.plainResume.stillEligible(current)) return null;
 
             // Every throw from here on is a resume that failed after a phone was
             // told `starting`: the profile fold and the engine setup as much as
@@ -345,11 +364,13 @@ export function resumeTaskSession(
                   ...resolveSpawnOverrides(current, currentLane, project),
                   forceFresh: false,
                   startPath: options.startPath,
+                  resumeOnly: options.plainResume !== undefined,
                 };
                 // Messages held for the task go out with this resume, after the
                 // prompt it carries (a command from the task's Commands menu),
-                // or as the whole opening message of a plain Resume.
-                const held = claimHeldMessages(context, resolvedProjectId, taskId);
+                // or as the whole opening message of a plain Resume. A resume
+                // nobody asked to send anything leaves them held.
+                const held = options.plainResume ? null : claimHeldMessages(context, resolvedProjectId, taskId);
                 // A launch that never ran still owes its prompt, whatever filled it
                 // (the task, a column's message, messages held for it). The record
                 // has it word for word, so no template is built and no row runs again.
@@ -371,7 +392,12 @@ export function resumeTaskSession(
                 let heldHandedOff = false;
                 try {
                   const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, failedLaunch?.launch_failed_at ? true : undefined, opening.prompt, signal, undefined, undefined, overrides);
+                  if (outcome?.declined) {
+                    options.plainResume?.onDeclined();
+                    return null;
+                  }
                   const resumedSessionId = tasks.getById(taskId)?.session_id;
+                  if (resumedSessionId && options.plainResume) deferHeldUntilTurnEnd(resumedSessionId);
                   // A recap-only start withholds them, as it withholds a column's message.
                   if (resumedSessionId && !outcome?.recapOnly) {
                     // What did not ride the resume's command line is typed in.

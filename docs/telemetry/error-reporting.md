@@ -438,7 +438,7 @@ in one Sentry org, one triage surface.
   `retry: recovered`, so a recovered failure still shows.
 
   An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `start_path` (`board`,
-  `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`), `shell`, `attempt`,
+  `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`, `open`), `shell`, `attempt`,
   `launcher` (`none`, `present`, `missing`), `shell_printed` (`none`, `before_launch`,
   `after_launch`, around the spawn's clear), `first_output_s`, `session_age_s` (both buckets),
   `typed_line_bytes` and `overlay_ceiling`. A report on a session adds `output_class`

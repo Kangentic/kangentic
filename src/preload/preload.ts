@@ -294,6 +294,7 @@ const api: ElectronAPI = {
     kill: (id) => ipcRenderer.invoke(IPC.SESSION_KILL, id),
     suspend: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_SUSPEND, taskId, projectId),
     resume: (taskId, resumePrompt?, projectId?) => ipcRenderer.invoke(IPC.SESSION_RESUME, taskId, resumePrompt, projectId),
+    resumeOnOpen: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_RESUME_ON_OPEN, taskId, projectId),
     reconcile: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_RECONCILE, taskId, projectId),
     reset: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_RESET, taskId, projectId),
     // Keystrokes, output, acks and the replay's answer ride this renderer's

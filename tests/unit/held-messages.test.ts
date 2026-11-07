@@ -31,6 +31,7 @@ const {
   commitWhenSessionRuns,
   holdUndeliveredOpening,
   composeOpeningMessage,
+  deferHeldUntilTurnEnd,
   deliverOpeningRemainder,
   flushHeldIfLive,
   formatHeldMessages,
@@ -625,6 +626,101 @@ describe('the session listeners of registerHeldMessageFlush', () => {
     expect(sessionManager.findLiveSessionByTaskId).toHaveBeenCalledTimes(1);
     expect(mockPaste).toHaveBeenCalledTimes(1);
     unsubscribe();
+  });
+
+  // Opening a task resumes its agent, and opening must not spend a turn.
+  describe('a session a task\'s opening resumed (deferHeldUntilTurnEnd)', () => {
+    function resumedByOpening() {
+      const stub = makeContext({ id: 'session-next', status: 'running', writable: true });
+      stub.sessionManager.getSession.mockImplementation((sessionId: string) => (
+        { id: sessionId, status: 'running', taskId: TASK_ID, projectId: PROJECT_ID } as never
+      ));
+      deferHeldUntilTurnEnd('session-next');
+      const unsubscribe = registerHeldMessageFlush(stub.context);
+      stub.sessionManager.emit('session-changed', 'session-next', sessionChange());
+      vi.advanceTimersByTime(1_000);
+      return { ...stub, unsubscribe };
+    }
+
+    it('pastes nothing when it starts, so the message stays held', () => {
+      const { unsubscribe } = resumedByOpening();
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      expect(statuses()).toEqual(['held']);
+      unsubscribe();
+    });
+
+    it('pastes once the agent ends a turn', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('turn-ended', { sessionId: 'session-next', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).toHaveBeenCalledTimes(1);
+      unsubscribe();
+    });
+
+    // A resumed Claude reloads its context with no hook, the status heartbeat reads
+    // that as thinking, and a watchdog idles it: no turn ran, so nothing is owed.
+    it('pastes nothing when the session reads active and idle with no turn ended', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('activity', 'session-next', 'thinking');
+      sessionManager.emit('activity', 'session-next', 'idle');
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      expect(statuses()).toEqual(['held']);
+      unsubscribe();
+    });
+
+    it('pastes nothing for another session\'s turn end', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('turn-ended', { sessionId: 'session-other', taskId: TASK_ID, projectId: PROJECT_ID });
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+
+    it('keeps the message for the next start when the session ends with no turn', () => {
+      const { sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('exit', 'session-next');
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      expect(statuses()).toEqual(['held']);
+      unsubscribe();
+    });
+
+    // The mark belongs to the session. Once the session is gone, a flush that finds
+    // a live agent under the same id must treat it as unmarked, or the mark would
+    // outlive the session it was made for and hold a later flush off for good.
+    it.each([
+      ['it exits', 'exit', ['session-next']],
+      ['it is removed', 'session-removed', ['session-next']],
+      ['it is suspended', 'session-changed', ['session-next', sessionChange({ status: 'suspended' })]],
+    ])('forgets the mark when %s', (_label, eventName, eventArguments) => {
+      const { context, sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit(eventName, ...eventArguments);
+      flushHeldIfLive(context, PROJECT_ID, TASK_ID);
+
+      expect(mockPaste).toHaveBeenCalledTimes(1);
+      expect(mockPaste).toHaveBeenCalledWith(context, expect.objectContaining({ sessionId: 'session-next', message: 'first' }));
+      unsubscribe();
+    });
+
+    // A resume queued behind a full column is promoted later, and is still the
+    // session the task's opening resumed.
+    it('keeps the mark while the session is queued', () => {
+      const { context, sessionManager, unsubscribe } = resumedByOpening();
+
+      sessionManager.emit('session-changed', 'session-next', sessionChange({ status: 'queued' }));
+      flushHeldIfLive(context, PROJECT_ID, TASK_ID);
+
+      expect(mockPaste).not.toHaveBeenCalled();
+      expect(statuses()).toEqual(['held']);
+      unsubscribe();
+    });
   });
 
   it.each([
