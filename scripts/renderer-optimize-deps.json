@@ -2,7 +2,7 @@
   "react", "react-dom", "react-dom/client",
   "react/jsx-runtime", "react/jsx-dev-runtime",
   "@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities",
-  "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize", "@xterm/addon-unicode11",
+  "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize", "@xterm/addon-unicode11", "@xterm/addon-search",
   "lucide-react", "react-colorful",
   "zustand", "zustand/react/shallow",
   "monaco-editor", "monaco-editor/base/common/errors",

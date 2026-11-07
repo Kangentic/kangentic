@@ -716,6 +716,10 @@ msgstr "Zavřít dialog"
 msgid "Close dropdown"
 msgstr "Zavřít rozevírací seznam"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -1426,6 +1430,10 @@ msgstr "Změněné soubory"
 #, fuzzy
 msgid "Filter files..."
 msgstr "Filtrovat soubory..."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

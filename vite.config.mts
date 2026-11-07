@@ -234,7 +234,7 @@ export default defineConfig(({ mode }) => ({
           // joined the entry's closure). Here it costs a few KB the entry loads
           // with React anyway.
           if (/node_modules[\\/](react|react-dom|scheduler|use-sync-external-store)[\\/]/.test(id)) return 'react-vendor';
-          if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl')) return 'xterm';
+          if (id.includes('@xterm/xterm') || id.includes('@xterm/addon-webgl') || id.includes('@xterm/addon-search')) return 'xterm';
           // The d3 modules recharts and React Flow both use. Unclaimed, the
           // recharts group absorbed them and React Flow imported them from it, so
           // opening Workflows parsed the whole recharts chunk (403 KB). Pure ESM,

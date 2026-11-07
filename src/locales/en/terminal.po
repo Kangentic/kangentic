@@ -19,9 +19,29 @@ msgstr "{contextLabel} context window"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {Show # more} other {Show # more}}"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+"
+msgstr "{limit}+"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+ on screen"
+msgstr "{limit}+ on screen"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+msgstr "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{pct}% context"
 msgstr "{pct}% context"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total}"
+msgstr "{position} of {total}"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total} on screen"
+msgstr "{position} of {total} on screen"
 
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{remainingPercent}% remaining"
@@ -30,6 +50,10 @@ msgstr "{remainingPercent}% remaining"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "{toolName} interrupted"
 msgstr "{toolName} interrupted"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{total} on screen"
+msgstr "{total} on screen"
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 msgid "+{count}"
@@ -50,6 +74,10 @@ msgstr "All"
 #: src/renderer/components/terminal/ProfilePicker.tsx
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Board Profile - the per-column agent, model, and effort this task follows"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Close find"
+msgstr "Close find"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
@@ -97,6 +125,19 @@ msgstr "Elapsed session time"
 msgid "Expand terminal panel"
 msgstr "Expand terminal panel"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgctxt "terminal find field"
+msgid "Find"
+msgstr "Find"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find in terminal"
+msgstr "Find in terminal"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find on screen"
+msgstr "Find on screen"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Idle (no activity detected)"
 msgstr "Idle (no activity detected)"
@@ -118,6 +159,10 @@ msgstr "Model"
 msgid "Model done"
 msgstr "Model done"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Newer match"
+msgstr "Newer match"
+
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "No active sessions. Drag a task into a column that starts an agent."
 msgstr "No active sessions. Drag a task into a column that starts an agent."
@@ -126,6 +171,10 @@ msgstr "No active sessions. Drag a task into a column that starts an agent."
 msgid "No activity yet for {filteredLabel}..."
 msgstr "No activity yet for {filteredLabel}..."
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "No matches on screen"
+msgstr "No matches on screen"
+
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 msgid "No tool calls yet"
 msgstr "No tool calls yet"
@@ -133,6 +182,10 @@ msgstr "No tool calls yet"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Notice"
 msgstr "Notice"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Older match"
+msgstr "Older match"
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 msgid "Pause this task to change it"

@@ -22,10 +22,31 @@ msgstr "Okno kontekstu: {contextLabel}"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, one {Pokaż # więcej} few {Pokaż # więcej} many {Pokaż # więcej} other {Pokaż # więcej}}"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+ on screen"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+msgstr ""
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
 msgstr "Kontekst: {pct}%"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
+msgid "{position} of {total}"
+msgstr "{position} z {total}"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -36,6 +57,10 @@ msgstr "Pozostało {remainingPercent}%"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "Przerwano {toolName}"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -61,6 +86,10 @@ msgstr "Wszystkie"
 #, fuzzy
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Profil tablicy – agent, model i nakład pracy dla każdej kolumny, według których działa to zadanie"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Close find"
+msgstr ""
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -119,6 +148,19 @@ msgstr "Czas trwania sesji"
 msgid "Expand terminal panel"
 msgstr "Rozwiń panel terminala"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgctxt "terminal find field"
+msgid "Find"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find in terminal"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Idle (no activity detected)"
@@ -145,6 +187,10 @@ msgstr "Model"
 msgid "Model done"
 msgstr "Model zakończył"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Newer match"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "No active sessions. Drag a task into a column that starts an agent."
@@ -155,6 +201,10 @@ msgstr "Brak aktywnych sesji. Przeciągnij zadanie do kolumny, która uruchamia 
 msgid "No activity yet for {filteredLabel}..."
 msgstr "Brak aktywności dla {filteredLabel}..."
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "No matches on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
 msgid "No tool calls yet"
@@ -164,6 +214,10 @@ msgstr "Brak wywołań narzędzi"
 #, fuzzy
 msgid "Notice"
 msgstr "Powiadomienie"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Older match"
+msgstr ""
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

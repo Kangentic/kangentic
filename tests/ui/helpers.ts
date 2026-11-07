@@ -302,6 +302,8 @@ export interface TransientTerminalSetup {
   terminalFontSize?: number;
   /** Seeds the user's hotkey overrides before the app mounts, keyed by `KEYBINDINGS` id. */
   hotkeyOverrides?: Record<string, string>;
+  /** Chromium flags for this browser, such as `TERMINAL_TEXT_LAUNCH_ARGS`. */
+  launchArgs?: string[];
 }
 
 /**
@@ -355,7 +357,7 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
   `;
 
   await waitForViteReady();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: setup.launchArgs });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, ...setup.contextOptions });
   const page = await context.newPage();
   if (setup.hotkeyOverrides) {

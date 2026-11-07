@@ -861,6 +861,7 @@
    */
   function isEscapeTheAppOwns(event) {
     var activeElement = document.activeElement;
+    if (findBarOwnsEscape(activeElement)) return true;
     var isHelperTextarea = isTerminalTextarea(activeElement);
     if (!isHelperTextarea && activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) return true;
     if (isOverlayOpen()) return true;
@@ -888,6 +889,12 @@
   /** Whether an element is xterm's helper textarea, where every keystroke into a terminal lands. */
   function isTerminalTextarea(element) {
     return !!(element && element.classList && element.classList.contains('xterm-helper-textarea'));
+  }
+
+  /** An open terminal find bar closes on the first Escape from its own pane, as on the desktop. */
+  function findBarOwnsEscape(element) {
+    var pane = element && element.closest ? element.closest('[data-terminal-host]') : null;
+    return !!(pane && pane.querySelector('[data-testid="terminal-find-bar"]'));
   }
 
   /**
@@ -921,7 +928,7 @@
   function closeHoveredTerminalWindow(event) {
     var activeElement = document.activeElement;
     if (!isTerminalTextarea(activeElement)) return false;
-    if (isOverlayOpen()) return false;
+    if (isOverlayOpen() || findBarOwnsEscape(activeElement)) return false;
     var xtermElement = activeElement.closest('.xterm');
     var terminalHost = xtermElement && xtermElement.parentElement;
     if (!terminalHost || !terminalHost.matches(':hover')) return false;

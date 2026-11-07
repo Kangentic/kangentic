@@ -73,6 +73,12 @@ the same array.
     window. It yields through `escapeOwnedElsewhere` (`src/renderer/utils/escape-ownership.ts`,
     the guard `PopOutWindowFrame` uses too) to an open menu or popover, a focused text field, a
     terminal, and Monaco's find widget. `tests/ui/changes-commit-selection-bar.spec.ts` pins it.
+    An OPEN TERMINAL FIND BAR is the same shape: `TerminalFindBar` adds a capture-phase `document`
+    listener only while open, closes the bar and calls `stopImmediatePropagation`, so the key
+    reaches neither the agent nor the task window. It cannot yield through `escapeOwnedElsewhere`,
+    because a focused text field and a terminal are the two places it acts. It acts on a key from
+    its own `data-terminal-host` pane, and yields to IME composition and an open
+    `[data-dismissable-layer]`. `tests/ui/terminal-find-bar.spec.ts` pins it.
     Escape is registered display-only as
     `dialog.dismiss` and is not rebindable; none of the three shapes adds an entry, since a
     second entry for the same physical key would only invent a phantom conflict.

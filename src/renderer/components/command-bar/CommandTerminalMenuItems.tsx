@@ -7,7 +7,7 @@
  * branch picker or its Changes (`CommandTerminalRowMenu`).
  */
 
-import { CircleStop, FolderOpen, GitBranch, GitCompare, Globe, Pencil, SquareChevronRight } from 'lucide-react';
+import { CircleStop, FolderOpen, GitBranch, GitCompare, Globe, Pencil, Search, SquareChevronRight } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { ShortcutGlyph } from '../../utils/swimlane-icons';
@@ -31,6 +31,8 @@ export interface CommandTerminalMenuActions {
   browserAlive: boolean;
   /** The user's Close: discard the page and free its memory, never the hide. */
   onCloseBrowser: () => void;
+  /** Find in terminal, from the header's menu only: a Running row's terminal may be behind another. */
+  terminalFind?: { open: boolean; onToggle: () => void };
   /** The board's shortcuts the menu lists, in order. */
   shortcuts: ShortcutConfig[];
   onShortcut: (action: ShortcutConfig) => void;
@@ -60,6 +62,7 @@ export function CommandTerminalMenuItems({
   onToggleBrowser,
   browserAlive,
   onCloseBrowser,
+  terminalFind,
   shortcuts,
   onShortcut,
   stopping,
@@ -77,6 +80,14 @@ export function CommandTerminalMenuItems({
         disabledReason={renameDisabledReason}
         data-testid={`${testIdPrefix}-rename`}
       />
+      {terminalFind && (
+        <KebabMenuItem
+          icon={<Search size={14} />}
+          label={terminalFind.open ? t`Close find` : t`Find in terminal`}
+          onClick={() => { close(); terminalFind.onToggle(); }}
+          data-testid={`${testIdPrefix}-find`}
+        />
+      )}
       {projectPath && (
         <KebabMenuItem
           icon={<FolderOpen size={14} />}

@@ -33,6 +33,7 @@ import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
+import { TerminalFindBar } from '../terminal/TerminalFindBar';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -80,7 +81,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
     [sessionId],
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, paste, getDimensions, reloadScrollback, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, getDimensions, reloadScrollback, suppressDataRef, find } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -188,6 +189,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
         className="h-full"
         data-testid="command-bar-terminal"
       />
+      <TerminalFindBar find={find} sessionId={sessionId} terminalRef={terminalRef} />
       {!ready && <LaunchOverlay label={launchLabel} />}
     </div>
   );

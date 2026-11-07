@@ -59,6 +59,10 @@ msgstr "清除搜索"
 msgid "Close browser"
 msgstr "关闭浏览器"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
 msgstr "命令终端"
@@ -133,6 +137,11 @@ msgstr "展开终端"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Failed to load the Changes panel"
 msgstr "无法加载「更改」面板"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy

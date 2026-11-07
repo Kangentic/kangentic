@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { resolveTerminalBackground, useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
+import { TerminalFindBar } from './TerminalFindBar';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -116,7 +117,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     [sessionId],
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, paste, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, reloadScrollback, scrollbackPending, suppressDataRef, find } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -251,6 +252,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     <div ref={containerRef} data-testid="terminal-tab-container" data-terminal-host className="h-full w-full relative" style={{ backgroundColor: terminalBackground }}>
       <div ref={terminalRef} className="h-full w-full" />
       <FileDropOverlay {...fileDrop} />
+      <TerminalFindBar find={find} sessionId={sessionId} terminalRef={terminalRef} />
       {/* Replay veil: covers the mount-time replay window (first fit, chunked
           scrollback write, afterWrite refit, held-byte flush, DOM-to-WebGL
           promotion) so a warm session's terminal appears once, settled, with

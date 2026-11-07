@@ -311,6 +311,10 @@ msgstr "모든 경로는 {name}에서 시작됨"
 msgid "Failed to load the workflows"
 msgstr "워크플로를 불러오지 못했습니다."
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 #, fuzzy
 msgid "Fit every card in view"

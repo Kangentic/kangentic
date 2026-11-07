@@ -17,6 +17,7 @@ sources:
   - resource: src/main/pty/buffer/terminal-mode-reset.ts
   - resource: src/renderer/addons/fit-addon.ts
   - resource: src/renderer/hooks/useTerminal.ts
+  - resource: src/renderer/utils/terminal-find.ts
   - resource: src/renderer/utils/focused-terminals.ts
   - resource: src/renderer/components/ErrorBoundary.tsx
   - resource: src/renderer/utils/repaint-nudge.ts
@@ -911,6 +912,18 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   replay lifecycle is traced (`replay-start` / `-write` / `-abort` / `-done` / `-error` /
   `-watchdog`, each with its generation) and surfaces in `kangentic_devtools_terminal_state`, so an
   abandoned replay is readable directly instead of inferred from a missing later event.
+
+What a terminal find can reach follows from the replay. A search covers what this xterm holds, so it
+tops out at `TERMINAL_SCROLLBACK_LINES` (5,000) only in a terminal that has been mounted since the
+output arrived. A replay resets that. Measured on a preview with a stand-in agent that printed 20,000
+lines before its terminal first mounted: the mount's first fit moved the PTY off its 120x30 spawn
+grid, so `geometryChangedAtRingIndex` sent the replay down the parsed-grid route, and the terminal
+held 470 lines of the 20,000. That is the common case for a window opened after the work ran. The
+byte ring's route comes back only once the geometry change has aged out of the ring, and an
+alternate-screen session has no history to reach at all. So the find bar never promises a reach: its
+no-matches line reads the lines the buffer holds (`TerminalFind.readReach`), and on the alternate
+screen it says "on screen" instead. A search starts at the newest match and "older" walks up, because
+the addon counts from the top of the buffer and the newest output is what a user is after.
 
 ### Focus catch-up, input pacing and repaint
 

@@ -311,6 +311,10 @@ msgstr "すべてのルートは {name} から始まります"
 msgid "Failed to load the workflows"
 msgstr "ワークフローを読み込めませんでした"
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 #, fuzzy
 msgid "Fit every card in view"
