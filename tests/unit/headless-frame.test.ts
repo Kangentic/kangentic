@@ -78,7 +78,7 @@ describe('HeadlessFrameBuffer', () => {
     });
 
     // serialize()'s barrier is an empty write, and a resize flushes the write queue synchronously.
-    // xterm before 6.1.0-beta.336 read an empty chunk as the end of the queue and dropped the rest:
+    // @xterm/headless 6.1.0-beta.304 read an empty chunk as the end of the queue and dropped the rest:
     // the barrier's callback, so this promise never settled, and every byte behind it. Everything
     // that trusts a frame's cutoff rests on this: getReplaySnapshot's exactly-once accounting, and
     // getSeedFrame's barrierOffset, which has no deadline of its own but main's 15 s host timeout.
