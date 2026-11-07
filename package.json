@@ -1,6 +1,7 @@
 {
   "name": "kangentic",
   "productName": "Kangentic",
+  "desktopName": "kangentic.desktop",
   "version": "0.55.0",
   "description": "An agentic development environment for AI coding agents",
   "main": ".vite/build/index.js",

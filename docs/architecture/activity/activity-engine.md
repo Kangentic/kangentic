@@ -16,6 +16,8 @@ sources:
   - resource: src/main/activity-engine/usage-accumulator.ts
   - resource: src/main/activity-engine/rate-limit-ledger.ts
   - resource: src/main/agent/event-bridge.js
+  - resource: src/main/notifications/desktop-notifier.ts
+  - resource: src/main/notifications/app-badge.ts
   - resource: src/shared/activity-state.ts
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx
   - resource: src/renderer/components/board/activity-reason-text.ts
@@ -132,7 +134,13 @@ Three top-level states:
   (`src/renderer/utils/idle-toast.ts`) and fires on the opposite condition: the user is on this
   project but is not already looking at that session's terminal. It is edge-triggered off the
   previous state, because `session:activity` also carries reason-only refreshes that must not
-  retrigger it.
+  retrigger it. The app icon badge is the third reader: `src/main/notifications/app-badge.ts`
+  counts the running sessions whose state is `idle` or `permission` across every open project,
+  and recounts on `activity`, `exit`, `session-changed`, `session-removed`, `pty-host-lost` and on
+  an `activity-reason` of a waiting session. It leaves out what the notifier leaves out (a
+  workflow's own agent, the idle that ends a turn which moved its own task, a running workflow
+  step between turns), except a step the board has stopped, which only a person can move. It
+  touches the OS only when the number changes.
 - **`permission`** - agent paused waiting on the user: a question it asked or an approval it wants. Distinct from `idle` so the UI can render a different affordance (the speech bubble or the quartered shield against the envelope). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs. What the wait is for rides on its reason, not on a fourth state (see [The kind of a wait](#the-kind-of-a-wait)).
 
 ## ActivityReason (discriminated union)

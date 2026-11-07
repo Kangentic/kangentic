@@ -77,6 +77,18 @@ msgstr "{displayName}, {percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -166,6 +178,10 @@ msgstr "Egy kis modell ugyanolyan jól és gyorsabban válaszol, de több részl
 #, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "Egy válasz elolvasásához és igen/nem válaszhoz általában elég egy kis, gyors modell."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr ""
 
 #: src/renderer/components/settings/settings-card.tsx
 #, fuzzy
@@ -345,6 +361,10 @@ msgstr "API-kulcs (nem kötelező)"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "Alkalmazásösszeomlások és hibák (veremkivonatok, az alkalmazáskódból eltávolított gépspecifikus útvonalakkal)"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "App launches, platform, and architecture"
@@ -489,12 +509,6 @@ msgstr "Tábla"
 msgid "Board layout"
 msgstr "Tábla elrendezése"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgctxt "notification channel"
-msgid "Both"
-msgstr "Mindkettő"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgctxt "shortcut display"
@@ -582,6 +596,11 @@ msgstr "Módosítások"
 #, fuzzy
 msgid "Checking..."
 msgstr "Ellenőrzés..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 #, fuzzy
@@ -945,6 +964,10 @@ msgstr "A feladat részletei párbeszédablakból elérhető egyéni parancsok"
 msgid "Custom commands in the task window's header and menu."
 msgstr "Egyéni parancsok a feladatablak fejlécében és menüjében."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Custom relay address"
@@ -1021,7 +1044,7 @@ msgstr "Leírás"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "Asztali"
 
@@ -1150,6 +1173,11 @@ msgstr "Elérési út megadása kézzel"
 msgid "Environment variables that turn telemetry off."
 msgstr "Környezeti változók a telemetria kikapcsolásához."
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
@@ -1192,6 +1220,11 @@ msgstr "Sikertelen"
 #, fuzzy
 msgid "Fair accuracy"
 msgstr "Elfogadható pontosság"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1402,19 +1435,18 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "Mennyi ideig várhat Önre egy ágens, mielőtt a tétlenségi időzítő szünetelteti."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "How long toasts remain visible"
-msgstr "Az értesítések láthatóságának időtartama"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "How long toasts stay up and how many stack at once."
-msgstr "Felugró értesítések időtartama és egyszerre látható száma."
+msgid "How long toasts appear, in seconds"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
 msgid "How many agents run at once and what happens when idle."
 msgstr "Hány ágens fut egyszerre, és mi történik tétlen állapotban."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -1460,6 +1492,10 @@ msgstr "Így állítja le a projekt, amit egy feladat futva hagy."
 #, fuzzy
 msgid "How to install and pair"
 msgstr "Telepítés és párosítás"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -1712,14 +1748,9 @@ msgid "Max concurrent sessions"
 msgstr "Egyidejű munkamenetek max. száma"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Max visible toasts"
-msgstr "Látható értesítések max. száma"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Maximum simultaneous toasts on screen"
-msgstr "Egyszerre a képernyőn látható értesítések maximális száma"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1791,6 +1822,10 @@ msgstr "Áthelyezés..."
 #, fuzzy
 msgid "Moving between task windows and arranging them."
 msgstr "Váltás a feladatablakok között és elrendezésük."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1913,9 +1948,9 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "Ki"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification sound"
 msgid "Off"
 msgstr "Ki"
 
@@ -2008,6 +2043,10 @@ msgid "Password"
 msgstr "Jelszó"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "A projekt feladatainak elérési útja a kiszolgálón. Hagyja üresen a kiszolgáló saját alapértelmezett könyvtárához"
@@ -2075,6 +2114,10 @@ msgstr "A terv elkészült"
 #, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "Minden munkafolyamatot megtervez. Választásig semmi sem indul."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2419,6 +2462,11 @@ msgstr "Visszavonja a(z) „{revokeTargetName}” ({revokeTargetFingerprint}) es
 msgid "Revoke device"
 msgstr "Eszköz visszavonása"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2593,10 +2641,18 @@ msgstr "Terminálpanel megjelenítése a tábla alatt"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "A PR-t késznek jelzi, ha megkerülheted a kötelező felülvizsgálatot, sikertelen ellenőrzéssel soha."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
 msgstr "Egymás mellett"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2619,6 +2675,11 @@ msgstr "Méret"
 #, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "A hosszú sorok tördelése a következő sorba a diff vízszintes görgetése helyett."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2692,6 +2753,11 @@ msgstr "Összefoglalók megírva"
 #, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "A gyökér node_modules szimbolikus linkelése minden worktree-be az új telepítés elkerülésére; workspace tárolókban kapcsolja ki."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
@@ -2907,6 +2973,11 @@ msgstr "Ez minden gyorsbillentyűt visszaállít az alapértelmezettre. Az egyé
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "Ez törli a sütiket, a localStorage-ot, az IndexedDB-t, a service workereket és a HTTP-/hitelesítési gyorsítótárakat a beágyazott böngészőpanelben az összes feladatra és projektre kiterjedően. Minden webhelyről ki lesz jelentkeztetve."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Ticket numbers"
@@ -2919,14 +2990,9 @@ msgstr "Futó munkamenet-időtartam"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "Felugró"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Toast auto-dismiss"
-msgstr "Értesítések automatikus elrejtése"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -2959,6 +3025,10 @@ msgstr "Átmeneti és mozgási effektusok."
 #, fuzzy
 msgid "Try a different search term"
 msgstr "Próbáljon másik keresőkifejezést"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -3105,11 +3175,6 @@ msgstr "Tétlenség esetén"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Mikor szüneteltesse a Kangentic az Önre váró ügynököket."
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "Where each kind of alert shows up."
-msgstr "Hol jelenjenek meg az egyes értesítéstípusok."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy

@@ -301,6 +301,9 @@ export const IPC = {
   // Notifications
   NOTIFICATION_SHOW: 'notification:show',
   NOTIFICATION_CLICKED: 'notification:clicked',
+  NOTIFICATION_PICK_SOUND: 'notification:pickSound',
+  NOTIFICATION_READ_SOUND: 'notification:readSound',
+  NOTIFICATION_PLAY_SOUND: 'notification:playSound',
 
   // Board Config
   BOARD_CONFIG_EXISTS: 'boardConfig:exists',

@@ -6,6 +6,7 @@ tags: [config, appconfig, defaults, keys]
 sources:
   - resource: src/shared/types.ts
     title: AppConfig, DEFAULT_CONFIG
+  - resource: src/shared/notification-settings.ts
   - resource: src/shared/terminal-native-defaults.ts
   - resource: src/main/config/legacy-git-keys.ts
   - resource: src/main/dev-ports/dev-port-allocator.ts
@@ -202,6 +203,10 @@ something is listening on.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `notifications.muted` | boolean | `false` | Silences every notification on this machine until turned off: toasts, desktop notifications, sounds, the taskbar flash, the app icon badge, the Agent paused toast and the desktop half of a Notify me row. A paired phone keeps its notifications, and a toast answering something you just did still shows |
+| `notifications.appBadge` | boolean | `true` | Show how many agents are waiting on you on the app icon, across every open project: a taskbar overlay on Windows (1 to 9, then 9+), the Dock badge on macOS and the launcher badge on Linux. Counts task agents and Command Terminals, and leaves out a workflow's own agent, paused and queued sessions, the end of a turn that moved its own task, and a running workflow's step between turns. A permission prompt still counts, and so does a step its check found waiting on you or that stalled, since only you can move it |
+| `notifications.sounds.<event>` | `off` \| `chime` \| `rise` \| `fall` \| `tick` \| `system` \| `custom` | `off` | Each of `onAgentIdle`, `onAgentCrash`, `onPlanComplete`, `onWorkflowComplete`, `onWorkflowStalled` and `onSpawnStalled` has its own sound, played once with whichever of its toast or desktop notification fires. `off` also silences the OS's own sound. `system` is the OS's sound, so it plays only with a desktop notification |
+| `notifications.customSounds.<event>` | string | none | For each of those six events, the name of the file its `custom` sound was picked from. The copy that plays is `<configDir>/notification-sounds/<event>.<ext>`: wav, mp3, ogg or m4a, up to 2 MB, cut off at 10 seconds |
 | `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn, has a question, or needs your approval, titled by which ("Agent went idle", "Agent has a question", "Agent needs your approval", or "Agent needs your input" when the agent did not report the kind) over "<task title> - <place>". Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project. A running workflow task's plain idle raises none: its step check notifies instead, with why, when its agent waits on the user. Nor does the idle that ends a turn in which the agent moved its own task or paused its own workflow, since that call ends the session next (a permission prompt in that turn still notifies) |
 | `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
@@ -214,7 +219,7 @@ something is listening on.
 | `notifications.toasts.onWorkflowComplete` | boolean | `true` | In-app toast when every task in a workflow reaches Done, on the workflow's project, titled "Workflow complete" over "All 9 tasks of "Usage budgets" are in Done." It opens nothing on a click, since a finished workflow leaves the Workflows view |
 | `notifications.toasts.onWorkflowStalled` | boolean | `true` | In-app toast when a running workflow stalls on a task, on that task's project, titled "Workflow stalled" over the task and why. A click on it opens the task |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast when a task spawn stalls past the threshold while preparing. It stays until the spawn resolves, and a click on it opens the task |
-| `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
+| `notifications.toasts.durationSeconds` | number | `5` | How long a timed toast appears, in seconds (1-30). The default was 4, and a one-time migration moved a saved 4 to 5 |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
 | `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications of the same kind for one session. Idle and crash have separate buckets, so a crash is never suppressed by a recent idle alert |
 
@@ -373,6 +378,6 @@ Not every id in `settings-registry.ts` is a key in this file. These four rows wr
 
 The other ids that are not keys fall into three groups:
 
-- **A row that writes other keys.** Each `notifications.on*` row is one dropdown that writes the event's key under both `notifications.desktop` and `notifications.toasts`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `hotkeyOverrides`.
+- **A row that writes other keys.** Each `notifications.on*` row is one table row that writes the event's key under `notifications.desktop`, `notifications.toasts` and `notifications.sounds`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `hotkeyOverrides`.
 - **A row stored outside this file.** `project.defaultAgent`, `project.defaultModel` and `project.defaultEffort` are columns on the project's row in the global database.
 - **An action, a notice or a card.** `browser.clearStorage`, `mobileBridge.pairing`, `mobileBridge.devices`, `mobileBridge.getApp`, `developer.crashReports` and `developer.devTriggers` store nothing in `AppConfig`. `workflows.agentCard` and `automation.agentCard` name a card, and its rows write `workflows.*` and `automation.*`.

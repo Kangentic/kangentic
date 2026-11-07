@@ -63,6 +63,18 @@ msgstr "{displayName}, {percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr "{eventName} desktop notification"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr "{eventName} sound: {valueName}"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr "{eventName} toast"
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
 msgstr "{hours, plural, one {# hr left} other {# hr left}}"
@@ -134,6 +146,10 @@ msgstr "A small model answers as well and faster, but invents more details in ta
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "A small, fast model is usually enough to read one reply and answer yes or no."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr "A toast with a button stays until you close it."
 
 #: src/renderer/components/settings/settings-card.tsx
 msgid "About {label}"
@@ -279,6 +295,10 @@ msgstr "API key (optional)"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr "App icon badge"
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "App launches, platform, and architecture"
 msgstr "App launches, platform, and architecture"
@@ -395,11 +415,6 @@ msgstr "Board"
 msgid "Board layout"
 msgstr "Board layout"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
-msgid "Both"
-msgstr "Both"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgctxt "shortcut display"
 msgid "Both"
@@ -470,6 +485,11 @@ msgstr "Changes"
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "Checking..."
 msgstr "Checking..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr "Chime"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 msgid "Choose a model"
@@ -763,6 +783,10 @@ msgstr "Custom commands accessible from the task detail dialog"
 msgid "Custom commands in the task window's header and menu."
 msgstr "Custom commands in the task window's header and menu."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr "Custom file..."
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Custom relay address"
 msgstr "Custom relay address"
@@ -824,7 +848,7 @@ msgid "Description"
 msgstr "Description"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "Desktop"
 
@@ -929,6 +953,11 @@ msgstr "Enter path manually"
 msgid "Environment variables that turn telemetry off."
 msgstr "Environment variables that turn telemetry off."
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr "Event"
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "Events"
@@ -963,6 +992,11 @@ msgstr "Failed"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Fair accuracy"
 msgstr "Fair accuracy"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr "Fall"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "File list"
@@ -1135,16 +1169,17 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "How long an agent waits on you before the idle timer pauses it."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "How long toasts remain visible"
-msgstr "How long toasts remain visible"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgid "How long toasts stay up and how many stack at once."
-msgstr "How long toasts stay up and how many stack at once."
+msgid "How long toasts appear, in seconds"
+msgstr "How long toasts appear, in seconds"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "How many agents run at once and what happens when idle."
 msgstr "How many agents run at once and what happens when idle."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr "How many show at once, and for how long."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "How much each task card shows on the board."
@@ -1181,6 +1216,10 @@ msgstr "How this project stops what a task leaves running."
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
 msgstr "How to install and pair"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr "How you hear about each event."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Icon"
@@ -1386,12 +1425,9 @@ msgid "Max concurrent sessions"
 msgstr "Max concurrent sessions"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Max visible toasts"
-msgstr "Max visible toasts"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Maximum simultaneous toasts on screen"
-msgstr "Maximum simultaneous toasts on screen"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr "Maximum toasts on screen"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "MCP connection"
@@ -1449,6 +1485,10 @@ msgstr "Move..."
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Moving between task windows and arranging them."
 msgstr "Moving between task windows and arranging them."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr "Mute notifications"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -1548,8 +1588,8 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "Off"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
 msgid "Off"
 msgstr "Off"
 
@@ -1625,6 +1665,10 @@ msgid "Password"
 msgstr "Password"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr "Past this, the oldest timed toast makes way for a new one."
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 
@@ -1679,6 +1723,10 @@ msgstr "Plan complete"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "Plans each workflow. Nothing starts until one is chosen."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr "Play {name}"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Post-worktree script"
@@ -1957,6 +2005,11 @@ msgstr "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses acce
 msgid "Revoke device"
 msgstr "Revoke device"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr "Rise"
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
 msgstr "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2097,9 +2150,17 @@ msgstr "Show the terminal panel below the board"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "Shows a PR as ready when you can bypass its required review, never past a failing check."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr "Shows how many agents need you, on the taskbar or dock."
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
 msgstr "Side by side"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr "Silences all notifications on this machine until turned off."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "since {sinceTime}"
@@ -2118,6 +2179,11 @@ msgstr "Size"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr "Sound"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Source code"
@@ -2177,6 +2243,11 @@ msgstr "Summaries written"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr "System"
 
 #: src/renderer/components/settings/shared.tsx
 msgctxt "settings tab group"
@@ -2351,6 +2422,11 @@ msgstr "This restores every hotkey to its default. Your custom bindings will be 
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr "Tick"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Ticket numbers"
 msgstr "Ticket numbers"
@@ -2360,13 +2436,9 @@ msgid "Ticking session duration"
 msgstr "Ticking session duration"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "Toast"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Toast auto-dismiss"
-msgstr "Toast auto-dismiss"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -2393,6 +2465,10 @@ msgstr "Transition and motion effects."
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"
 msgstr "Try a different search term"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr "Turn on Toast or Desktop to hear a sound"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"
@@ -2510,10 +2586,6 @@ msgstr "When idle"
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "When Kangentic pauses agents that are waiting on you."
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgid "Where each kind of alert shows up."
-msgstr "Where each kind of alert shows up."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."

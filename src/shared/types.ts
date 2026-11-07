@@ -3684,7 +3684,27 @@ export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends (infer U)[] ? U[] : T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
+/** One notification event: a key shared by `desktop`, `toasts` and `sounds`. */
+export type NotificationEventKey =
+  | 'onAgentIdle'
+  | 'onAgentCrash'
+  | 'onPlanComplete'
+  | 'onWorkflowComplete'
+  | 'onWorkflowStalled'
+  | 'onSpawnStalled';
+
+/** What an event sounds like: `off`, a sound we ship, the OS's own, or the user's file. */
+export type NotificationSound = 'off' | 'chime' | 'rise' | 'fall' | 'tick' | 'system' | 'custom';
+
 export interface NotificationConfig {
+  /** Silences every notification on this machine until turned off. */
+  muted: boolean;
+  /** Show how many agents are waiting on the app icon. */
+  appBadge: boolean;
+  /** Each event's sound, heard when its toast or desktop notification fires. */
+  sounds: Record<NotificationEventKey, NotificationSound>;
+  /** The original name of each event's custom file. The copy we play is in `<configDir>/notification-sounds/`. */
+  customSounds: Partial<Record<NotificationEventKey, string>>;
   desktop: {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
@@ -5241,6 +5261,17 @@ export const DEFAULT_CONFIG: AppConfig = {
     showRateLimits: true,
   },
   notifications: {
+    muted: false,
+    appBadge: true,
+    sounds: {
+      onAgentIdle: 'off',
+      onAgentCrash: 'off',
+      onPlanComplete: 'off',
+      onWorkflowComplete: 'off',
+      onWorkflowStalled: 'off',
+      onSpawnStalled: 'off',
+    },
+    customSounds: {},
     desktop: {
       onAgentIdle: true,
       onAgentCrash: true,
@@ -5256,7 +5287,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       onWorkflowComplete: true,
       onWorkflowStalled: true,
       onSpawnStalled: true,
-      durationSeconds: 4,
+      durationSeconds: 5,
       maxCount: 5,
     },
     cooldownSeconds: 10,
@@ -7663,7 +7694,15 @@ export interface NotificationInput {
   body: string;
   projectId: string;
   taskId: string;
+  /** The event this notice reports, which picks its sound. A Notify me row has none. */
+  event?: NotificationEventKey;
 }
+
+/** The answer to a Custom file choice in the sound picker. */
+export type CustomSoundPick =
+  | { status: 'picked'; fileName: string }
+  | { status: 'cancelled' }
+  | { status: 'refused'; reason: string };
 
 // === Board Configuration (kangentic.json) ===
 
@@ -8794,6 +8833,12 @@ export interface ElectronAPI {
   notifications: {
     show: (input: NotificationInput) => void;
     onClicked: (callback: (projectId: string, taskId: string) => void) => () => void;
+    /** Choose a custom sound for an event. Main checks it and keeps its own copy. */
+    pickSound: (eventKey: NotificationEventKey) => Promise<CustomSoundPick>;
+    /** The bytes of an event's custom sound, or null when it has none. */
+    readSound: (eventKey: NotificationEventKey) => Promise<ArrayBuffer | null>;
+    /** Main asks the main window to play an event's sound beside a desktop notification. */
+    onPlaySound: (callback: (eventKey: NotificationEventKey) => void) => () => void;
   };
 
   // Window controls

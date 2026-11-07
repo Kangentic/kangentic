@@ -2530,6 +2530,7 @@ function getShutdownDependencies() {
       // It holds no timers, so this is a pure listener-leak guard, not a
       // functional requirement of shutdown.
       getOptionalIpcContext()?.desktopNotifier.dispose();
+      getOptionalIpcContext()?.appBadge.dispose();
     },
     isEphemeral,
     isRestartRequested,

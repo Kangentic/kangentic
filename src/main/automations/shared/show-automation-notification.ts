@@ -6,8 +6,9 @@ import { showDesktopNotification } from '../../ipc/handlers/system';
  * What `AutomationContext.showNotification` does, for every place that builds
  * one: the desktop notification, then the same Title and Body pushed to every
  * paired phone. A Notify me row is the user's own choice to be told, so
- * neither goes through the notification settings. The phone push is skipped
- * while the mobile bridge is off.
+ * neither goes through the notification settings. Mute alone reaches the
+ * desktop half, inside `showDesktopNotification`; the phone keeps its push. The
+ * phone push is skipped while the mobile bridge is off.
  *
  * The DesktopNotifier's own alerts (idle, crash) call `showDesktopNotification`
  * directly and do not come through here: they reach the phone through the

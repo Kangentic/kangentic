@@ -77,6 +77,18 @@ msgstr "{displayName}, {percent} %"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
@@ -166,6 +178,10 @@ msgstr "Malý model odpovídá stejně dobře a rychleji, ale v souhrnech úloh 
 #, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "K přečtení jedné odpovědi a odpovědi ano, nebo ne obvykle stačí malý, rychlý model."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr ""
 
 #: src/renderer/components/settings/settings-card.tsx
 #, fuzzy
@@ -345,6 +361,10 @@ msgstr "Klíč API (volitelné)"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "Pády a chyby aplikace (trasování zásobníku bez cest specifických pro počítač v kódu aplikace)"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "App launches, platform, and architecture"
@@ -489,12 +509,6 @@ msgstr "Tabule"
 msgid "Board layout"
 msgstr "Rozložení nástěnky"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgctxt "notification channel"
-msgid "Both"
-msgstr "Obojí"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgctxt "shortcut display"
@@ -582,6 +596,11 @@ msgstr "Změny"
 #, fuzzy
 msgid "Checking..."
 msgstr "Probíhá kontrola..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 #, fuzzy
@@ -945,6 +964,10 @@ msgstr "Vlastní příkazy dostupné z dialogu podrobností úlohy"
 msgid "Custom commands in the task window's header and menu."
 msgstr "Vlastní příkazy v záhlaví a nabídce okna úlohy."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Custom relay address"
@@ -1021,7 +1044,7 @@ msgstr "Popis"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "Plocha"
 
@@ -1150,6 +1173,11 @@ msgstr "Zadat cestu ručně"
 msgid "Environment variables that turn telemetry off."
 msgstr "Proměnné prostředí, které vypínají telemetrii."
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
@@ -1192,6 +1220,11 @@ msgstr "Selhalo"
 #, fuzzy
 msgid "Fair accuracy"
 msgstr "Průměrná přesnost"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1402,19 +1435,18 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "Jak dlouho na vás agent čeká, než ho časovač nečinnosti pozastaví."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "How long toasts remain visible"
-msgstr "Jak dlouho zůstávají oznámení viditelná"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "How long toasts stay up and how many stack at once."
-msgstr "Jak dlouho se oznámení zobrazují a kolik jich může být najednou."
+msgid "How long toasts appear, in seconds"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
 msgid "How many agents run at once and what happens when idle."
 msgstr "Kolik agentů běží současně a co se stane při nečinnosti."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -1460,6 +1492,10 @@ msgstr "Jak tento projekt zastavuje to, co úloha nechá spuštěné."
 #, fuzzy
 msgid "How to install and pair"
 msgstr "Jak nainstalovat a spárovat"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -1712,14 +1748,9 @@ msgid "Max concurrent sessions"
 msgstr "Max. souběžných relací"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Max visible toasts"
-msgstr "Max. viditelných oznámení"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Maximum simultaneous toasts on screen"
-msgstr "Maximální počet oznámení současně na obrazovce"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1791,6 +1822,10 @@ msgstr "Přesunout..."
 #, fuzzy
 msgid "Moving between task windows and arranging them."
 msgstr "Přepínání mezi okny úloh a jejich uspořádání."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1913,9 +1948,9 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "Vypnuto"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification sound"
 msgid "Off"
 msgstr "Vypnuto"
 
@@ -2008,6 +2043,10 @@ msgid "Password"
 msgstr "Heslo"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Cesta na serveru pro úkoly tohoto projektu. Ponechte prázdné pro použití výchozího adresáře serveru"
@@ -2075,6 +2114,10 @@ msgstr "Plán dokončen"
 #, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "Plánuje každý pracovní postup. Nic nezačne, dokud nebude vybrán."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2419,6 +2462,11 @@ msgstr "Odvolat „{revokeTargetName}“ ({revokeTargetFingerprint})? Zařízen�
 msgid "Revoke device"
 msgstr "Odvolat zařízení"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2593,10 +2641,18 @@ msgstr "Zobrazit panel terminálu pod nástěnkou"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "Zobrazí PR jako připravený, když můžete obejít jeho požadovanou kontrolu, nikdy však přes neúspěšnou kontrolu."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
 msgstr "Vedle sebe"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -2619,6 +2675,11 @@ msgstr "Velikost"
 #, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "Zalamovat dlouhé řádky na další řádek místo vodorovného posouvání rozdílu."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2692,6 +2753,11 @@ msgstr "Souhrny vytvořeny"
 #, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "Propojit kořenový node_modules symbolickým odkazem do každého pracovního stromu a přeskočit novou instalaci; úložiště typu workspace by to měla vypnout."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
@@ -2907,6 +2973,11 @@ msgstr "Všechny klávesové zkratky se obnoví na výchozí hodnoty. Vaše vlas
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "Tímto se vymažou soubory cookie, localStorage, IndexedDB, service workery a mezipaměti HTTP/ověřování vestavěného panelu prohlížeče ve všech úlohách a projektech. Budete odhlášeni ze všech webů."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Ticket numbers"
@@ -2919,14 +2990,9 @@ msgstr "Průběžná doba trvání relace"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "Oznámení v aplikaci"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Toast auto-dismiss"
-msgstr "Automatické zavření oznámení"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -2959,6 +3025,10 @@ msgstr "Efekty přechodů a pohybu."
 #, fuzzy
 msgid "Try a different search term"
 msgstr "Zkuste jiný hledaný výraz"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -3105,11 +3175,6 @@ msgstr "Při nečinnosti"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kdy Kangentic pozastaví agenty, kteří čekají na vás."
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "Where each kind of alert shows up."
-msgstr "Kde se jednotlivé druhy upozornění zobrazují."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy

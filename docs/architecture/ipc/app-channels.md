@@ -73,11 +73,14 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
-## Notifications (2 channels)
+## Notifications (5 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `notification:show` | send | Show native OS notification (task name + project name) |
 | `notification:clicked` | on | User clicked a notification (includes projectId, taskId) |
+| `notification:pickSound` | invoke | Choose a custom sound for an event: main shows the file dialog, checks the file and keeps its own copy, and answers picked, cancelled or refused with the reason |
+| `notification:readSound` | invoke | The bytes of an event's custom sound, by event key and never by path, or null |
+| `notification:playSound` | on | Event, to the main window only: a desktop notification went out and left its sound to this window (includes the event key) |
 
 ## Shell (2 channels)
 | Channel | Pattern | Purpose |

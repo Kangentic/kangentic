@@ -207,22 +207,23 @@ test.describe('Settings Panel', () => {
   test('shows Notifications tab with event grid and delivery settings', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Notifications' }).click();
-    // Event rows with Desktop/Toast inline labels
+    // Event rows under Toast, Desktop and Sound headings
     await expect(page.getByText('Agent Idle')).toBeVisible();
     await expect(page.getByText('Agent Crash')).toBeVisible();
     await expect(page.getByText('Plan Complete')).toBeVisible();
     // Workflow complete defaults to both channels, as the app's own defaults
     // do. The mock's config once lacked the key, so the row read Off here.
-    await expect(page.getByTestId('notify-channel-onWorkflowComplete-both')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('notify-channel-onWorkflowComplete-toast')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('notify-channel-onWorkflowComplete-desktop')).toHaveAttribute('aria-checked', 'true');
     // Delivery settings
-    await expect(page.getByText('Toast Auto-Dismiss')).toBeVisible();
-    await expect(page.getByText('Max Visible Toasts')).toBeVisible();
+    await expect(page.getByText('Maximum toasts on screen')).toBeVisible();
+    await expect(page.getByText('How long toasts appear, in seconds')).toBeVisible();
     await closeSettings();
   });
 
-  test('Agent Crash notification choice writes to notifications.desktop/toasts.onAgentCrash in global config, not the project override', async () => {
+  test('Agent Crash notification switches write to notifications.desktop/toasts.onAgentCrash in global config, not the project override', async () => {
     // NotifyChannelRow (NotificationsTab.tsx) is the write path shared by all
-    // four Events rows; Agent Crash is the row this change added, so it is
+    // six Events rows; Agent Crash is the row this change added, so it is
     // the natural row to pin the shared behavior against. The structural
     // parity checks in settings-tab-scope-parity.test.ts (e/f/g) are pure
     // regex scans over NotificationsTab.tsx - they never execute the
@@ -236,8 +237,8 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Notifications' }).click();
 
-    // A four-option segmented control (Off / Desktop / Toast / Both).
-    const option = (value: string) => page.getByTestId(`notify-channel-onAgentCrash-${value}`);
+    // One switch per channel.
+    const channel = (name: 'toast' | 'desktop') => page.getByTestId(`notify-channel-onAgentCrash-${name}`);
 
     type NotificationsConfig = {
       notifications: {
@@ -250,25 +251,27 @@ test.describe('Settings Panel', () => {
       return (globalConfig as NotificationsConfig).notifications;
     };
 
-    // mock-electron-api.js seeds onAgentCrash true on both channels, so the
-    // choice starts on "Both". Capture the full baseline (including the
+    // mock-electron-api.js seeds onAgentCrash true on both channels, so both
+    // switches start on. Capture the full baseline (including the
     // three sibling event rows and the Delivery numbers) before mutating,
     // so a shallow-merge bug that wipes siblings has something to be caught
     // against.
     const baseline = await readGlobalNotifications();
     expect(baseline.desktop.onAgentCrash).toBe(true);
     expect(baseline.toasts.onAgentCrash).toBe(true);
-    await expect(option('both')).toHaveAttribute('aria-checked', 'true');
+    await expect(channel('toast')).toHaveAttribute('aria-checked', 'true');
+    await expect(channel('desktop')).toHaveAttribute('aria-checked', 'true');
 
-    // "Desktop": desktop stays true, toasts flips to false. Asserting both
+    // Toast off: desktop stays true, toasts flips to false. Asserting both
     // channels (not just one) rules out a handler that sets both from a
     // single-channel selection.
-    await option('desktop').click();
-    await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
+    await channel('toast').click();
     await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(false);
+    expect((await readGlobalNotifications()).desktop.onAgentCrash).toBe(true);
     // Read direction: the control must reflect the new committed value, not
     // just the write succeeding underneath it.
-    await expect(option('desktop')).toHaveAttribute('aria-checked', 'true');
+    await expect(channel('toast')).toHaveAttribute('aria-checked', 'false');
+    await expect(channel('desktop')).toHaveAttribute('aria-checked', 'true');
 
     const afterWrite = await readGlobalNotifications();
     expect(afterWrite.desktop.onAgentIdle).toBe(baseline.desktop.onAgentIdle);
@@ -286,8 +289,7 @@ test.describe('Settings Panel', () => {
     expect((projectOverrides as { notifications?: { desktop?: { onAgentCrash?: boolean } } } | null)?.notifications?.desktop?.onAgentCrash).toBeUndefined();
 
     // Restore so later tests in this shared-page file are unaffected.
-    await option('both').click();
-    await expect.poll(async () => (await readGlobalNotifications()).desktop.onAgentCrash, { timeout: 3000 }).toBe(true);
+    await channel('toast').click();
     await expect.poll(async () => (await readGlobalNotifications()).toasts.onAgentCrash, { timeout: 3000 }).toBe(true);
 
     await closeSettings();
