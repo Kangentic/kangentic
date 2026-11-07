@@ -6,6 +6,7 @@ import {
   isShellLike,
   walkDescendantsFromIndex,
   type ProcessIndexByParent,
+  type ProcessInfo,
   type ProcessTreeProbe,
 } from './process-tree';
 
@@ -267,6 +268,13 @@ interface SessionWatchState {
    */
   helperPids: Set<number>;
   /**
+   * PIDs a surplus folded into the count while a shell was still waiting for
+   * its PID, so they could not be told from that shell. Filed in `helperPids`
+   * once no shell waits. The count lands at once, so no later surplus would
+   * ever file them.
+   */
+  heldBackHelperPids: Set<number>;
+  /**
    * Named bg shells (from `noteBackgroundShellStarted`) awaiting OS-PID
    * capture, mapped to remaining retry cycles. Resolved by tree-diff: when
    * exactly one topmost shell-like descendant is neither a helper nor
@@ -338,6 +346,42 @@ const PID_CAPTURE_RETRY_CYCLES = 3;
  */
 function reportedProcessIdOf(shellId: string): number | null {
   return /^[1-9]\d{0,9}$/.test(shellId) ? Number(shellId) : null;
+}
+
+/**
+ * The topmost shell-like PIDs nothing accounts for yet: neither a helper nor a
+ * tracked shell, and not nested under another of them or under a tracked shell.
+ *
+ * `filterTopmostShellLikeDescendants` keeps a `cmd.exe` whose parent is `node` or
+ * `dotnet`, so a build's own children look like shells of their own. Left in,
+ * they keep the diff ambiguous, and worse, one can be the only candidate left
+ * and get adopted as the shell that started it. Then its exit reads as the
+ * shell's, seconds into a run that lasts minutes.
+ *
+ * Helpers are deliberately not containers here. The agent CLI's own `cmd.exe`
+ * shim is a helper and sits above every shell the agent starts, the reason
+ * `filterTopmostShellLikeDescendants` reads only the immediate parent.
+ *
+ * Every descendant is reachable from the session's root, so a parent chain ends
+ * at the root and cannot loop.
+ */
+function unaccountedShellPids(
+  state: SessionWatchState,
+  topmostShellLike: readonly ProcessInfo[],
+  descendants: readonly ProcessInfo[],
+): number[] {
+  const trackedPids = new Set(state.trackedShellPids.values());
+  const unaccounted = topmostShellLike
+    .map((descendant) => descendant.pid)
+    .filter((pid) => !state.helperPids.has(pid) && !trackedPids.has(pid));
+  const containers = new Set([...unaccounted, ...trackedPids]);
+  const parentOf = new Map(descendants.map((descendant) => [descendant.pid, descendant.ppid]));
+  return unaccounted.filter((pid) => {
+    for (let ancestor = parentOf.get(pid); ancestor !== undefined; ancestor = parentOf.get(ancestor)) {
+      if (containers.has(ancestor)) return false;
+    }
+    return true;
+  });
 }
 
 /**
@@ -479,6 +523,7 @@ export class BgShellWatcher {
       preExistingHelpers: null,
       trackedShellPids: new Map(),
       helperPids: new Set(),
+      heldBackHelperPids: new Set(),
       pendingCaptures: new Map(),
       candidateForegroundShellPid: null,
       consecutiveDeficitCycles: 0,
@@ -537,14 +582,16 @@ export class BgShellWatcher {
    * A `background_shell_start` hook with a shell_id arrived (wired from
    * `SessionTelemetry.ingestEvents`). Attempt to capture the shell's OS PID
    * for Tier A liveness:
-   *   - If a foreground-tool shell PID was memoized this cycle window and is
-   *     still alive, that IS this shell (the auto-background path) - adopt it.
+   *   - If this shell is a foreground call the CLI moved to the background
+   *     (`movedFromForeground`) and a foreground-tool shell PID was memoized
+   *     this cycle window and is still alive, that IS this shell (the
+   *     auto-background path) - adopt it.
    *   - Otherwise queue a tree-diff capture over the next few cycles.
    * Either way Tier A liveness (`onShellsObservedAlive` even when the count
    * heuristic is out of sync) only kicks in once the PID is captured; until
    * then the count heuristic and the 5-min named cap govern.
    */
-  noteBackgroundShellStarted(sessionId: string, shellId: string): void {
+  noteBackgroundShellStarted(sessionId: string, shellId: string, options: { movedFromForeground?: boolean } = {}): void {
     if (this.disposed) return;
     const state = this.states.get(sessionId);
     if (!state) return;
@@ -562,7 +609,10 @@ export class BgShellWatcher {
       state.pendingCaptures.set(shellId, PID_CAPTURE_RETRY_CYCLES);
       return;
     }
-    const memoPid = state.candidateForegroundShellPid;
+    // The memo is the shell of a call running in the foreground. Only that
+    // call's own move makes it this shell: a launch beside it would otherwise
+    // adopt it, and read its exit as the launch's.
+    const memoPid = options.movedFromForeground === true ? state.candidateForegroundShellPid : null;
     if (memoPid !== null && this.probe.isAlive(memoPid)) {
       state.trackedShellPids.set(shellId, memoPid);
       state.candidateForegroundShellPid = null;
@@ -1011,16 +1061,15 @@ export class BgShellWatcher {
 
     // Tier A PID capture: resolve queued `noteBackgroundShellStarted` ids by
     // tree-diff. A candidate is a topmost shell-like descendant that is
-    // neither a known helper nor already tracked. Only auto-assign when the
+    // neither a known helper nor already tracked, nor nested under either kind
+    // of shell (`unaccountedShellPids`). Only auto-assign when the
     // diff is unambiguous (exactly one pending id AND exactly one candidate);
     // otherwise decrement the retry budget and fall back to the count
     // heuristic + 5-min named cap. The foreground-tool memo (consumed in
     // `noteBackgroundShellStarted`) covers the ambiguous auto-background case.
     if (state.pendingCaptures.size > 0) {
       const trackedPids = new Set(state.trackedShellPids.values());
-      const candidatePids = topmostShellLike
-        .map((descendant) => descendant.pid)
-        .filter((pid) => !state.helperPids.has(pid) && !trackedPids.has(pid));
+      const candidatePids = unaccountedShellPids(state, topmostShellLike, descendants);
       for (const [shellId, retriesLeft] of [...state.pendingCaptures.entries()]) {
         if (state.trackedShellPids.has(shellId)) {
           state.pendingCaptures.delete(shellId);
@@ -1049,6 +1098,17 @@ export class BgShellWatcher {
           state.pendingCaptures.set(shellId, retriesLeft - 1);
         }
       }
+    }
+
+    // No shell waits for its PID any more, so what the surplus fold held back
+    // can be filed. A shell whose capture gave up is filed with them, which is
+    // what stops it being adopted for the next one.
+    if (state.heldBackHelperPids.size > 0 && state.pendingCaptures.size === 0 && anonCount === 0) {
+      const trackedPids = new Set(state.trackedShellPids.values());
+      for (const pid of state.heldBackHelperPids) {
+        if (liveDescendantPids.has(pid) && !trackedPids.has(pid)) state.helperPids.add(pid);
+      }
+      state.heldBackHelperPids.clear();
     }
 
     // Tier A liveness: when every tracked NAMED shell has a captured PID still
@@ -1112,10 +1172,7 @@ export class BgShellWatcher {
       // adopted these as anonymous bg shells and pinned the session in
       // `thinking` indefinitely (the empirical "phantom counter" bug).
       const surplus = shellLikeCount - expected;
-      const trackedPids = new Set(state.trackedShellPids.values());
-      const newPids = topmostShellLike
-        .map((descendant) => descendant.pid)
-        .filter((pid) => !state.helperPids.has(pid) && !trackedPids.has(pid));
+      const newPids = unaccountedShellPids(state, topmostShellLike, descendants);
       if (pendingToolsThisCycle > 0) {
         // Foreground tool's transient bash. Don't rebase yet - it
         // will exit and rebalance against expected on its own. Crucially:
@@ -1134,8 +1191,17 @@ export class BgShellWatcher {
       // pendingTools === 0: a persistent helper materialized post-anchor.
       // Fold it into the baseline AND remember its PID so it is excluded from
       // future Tier A capture diffs.
+      //
+      // The count always folds, but the PIDs wait while a shell has no PID of
+      // its own: only `surplus` of `newPids` are extra, and the shell itself can
+      // be among them. Filing it as a helper removes it from the capture diff,
+      // and the next short-lived shell is then the only candidate. Seven holds
+      // on one run ended on that shell's exit, 4 to 8 s into commands that ran
+      // for minutes. An anonymous slot counts too: the shell has started and
+      // its id has not arrived.
       state.preExistingHelpers += surplus;
-      for (const pid of newPids) state.helperPids.add(pid);
+      const shellAwaitsItsPid = state.pendingCaptures.size > 0 || anonCount > 0;
+      for (const pid of newPids) (shellAwaitsItsPid ? state.heldBackHelperPids : state.helperPids).add(pid);
       state.consecutiveDeficitCycles = 0;
       return;
     }

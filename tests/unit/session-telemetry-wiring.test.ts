@@ -381,6 +381,41 @@ describe('SessionTelemetry: ingestEvents - named vs anonymous BackgroundShellSta
     expect(namedIds?.has(NAMED_SHELL_ID)).toBe(true);
   });
 
+  it('a foreground call the CLI moved to the background keeps the shell it was running: the id on the start names the pending call', async () => {
+    // The memo is for this path only, and the pending stack is what says it is
+    // this path. It has to be read BEFORE the engine pops the call, which is why
+    // the telemetry asks and not the watcher. The diff is ambiguous here, so only
+    // the memo can name the shell, and only a named PID sees it exit.
+    const rootPid = 9992;
+    const SHELL_ID = 'bmoved001';
+    const movedShell = { pid: 31001, ppid: rootPid, comm: 'bash' };
+    const churn = { pid: 31002, ppid: rootPid, comm: 'bash' };
+    rootPids.set('s-moved', rootPid);
+    probe.alive.add(rootPid);
+    probe.alive.add(movedShell.pid);
+    probe.trees.set(rootPid, []);
+    telemetry.initSession('s-moved');
+    await telemetry.bgShellWatcher!.pollNow(); // anchor
+
+    telemetry.ingestEvents('s-moved', [
+      { ts: Date.now(), type: EventType.Prompt },
+      { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash', toolId: 'toolu_moved', detail: 'npm run build' },
+    ]);
+    probe.trees.set(rootPid, [movedShell]);
+    await telemetry.bgShellWatcher!.pollNow(); // the running call's shell is memoized
+
+    telemetry.ingestEvents('s-moved', [
+      { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'Bash', toolId: 'toolu_moved', detail: SHELL_ID },
+    ]);
+    probe.trees.set(rootPid, [movedShell, churn]);
+    await telemetry.bgShellWatcher!.pollNow();
+    expect(telemetry.activityEngine.getState('s-moved')?.activeBackgroundShellIds.has(SHELL_ID)).toBe(true);
+
+    probe.trees.set(rootPid, [churn]);
+    await telemetry.bgShellWatcher!.pollNow();
+    expect(telemetry.activityEngine.getState('s-moved')?.activeBackgroundShellIds.has(SHELL_ID)).toBe(false);
+  });
+
   it('a BackgroundShellStart with a long command-string detail does NOT trigger noteBackgroundShellStarted', async () => {
     // A non-id detail (a command string, or undefined) must NOT call
     // noteBackgroundShellStarted. The engine still counts the anonymous shell,
