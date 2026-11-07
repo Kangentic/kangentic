@@ -274,8 +274,7 @@ hardcodes the names it downloads, so a default change would have silently 404'd 
 that platform.
 
 Windows ships x64 only; Windows on ARM runs it under emulation. A native arm64 build would lose
-dictation (sherpa-onnx ships no win-arm64 package) and vector search (sqlite-vec ships
-windows-x64 only).
+vector search (sqlite-vec ships windows-x64 only).
 
 ### Local Testing
 

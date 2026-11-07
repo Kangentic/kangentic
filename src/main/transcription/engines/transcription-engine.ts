@@ -16,6 +16,23 @@ export interface ResolvedModel {
 }
 
 /**
+ * sherpa-onnx refused a model's files at load. Since 2.0 a corrupt model rejects
+ * here instead of aborting the process, and the files will fail the same way
+ * every time, since `isModelInstalled` checks only that they exist. So it names
+ * the model: `HybridEngine` reports it and main replaces the files. Thrown around
+ * the addon's load call and nowhere else, so a timeout, a worker exit or a missing
+ * slot can never read as a bad model and delete one.
+ */
+export class ModelLoadError extends Error {
+  readonly modelId: string;
+
+  constructor(modelId: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'The model failed to load', { cause });
+    this.modelId = modelId;
+  }
+}
+
+/**
  * Per-dictation-session creation options. `onPartial` is called repeatedly
  * by streaming engines with the latest (possibly revising) hypothesis; it is
  * safe to revise because the live transcript renders in the popup, not the

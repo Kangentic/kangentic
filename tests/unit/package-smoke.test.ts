@@ -12,12 +12,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { __testing } from '../../scripts/package-smoke.mjs';
+import { selectEngine } from '../../src/main/transcription/engines/engine-selection';
+import type { DictationConfig, DictationHardwareProfile } from '../../src/shared/types';
 
 const {
   SMOKE_MARKER,
   SMOKE_COMMAND,
   LEFTOVER_SCRIPT,
   LEFTOVER_COMMAND,
+  DICTATION_SMOKE_OPTIONS,
   FAILURE_MARKERS,
   resolveAppExecutable,
   quitRouteFor,
@@ -40,6 +43,19 @@ function sourceFiles(directory: string): string[] {
   }
   return files;
 }
+
+describe('package smoke: the dictation worker step', () => {
+  // The step exists to load the addon in the finished app with nothing to download. A selection
+  // that picked up a model here would spend a CI leg on a 600 MB fetch, or fail it on a slow one.
+  it.each([
+    ['a capable machine', { cpuModel: 'x', cpuCores: 16, totalRamGb: 32, hasAvx2: true, gpu: 'none', platform: 'win32', arch: 'x64' }],
+    ['a low-end machine', { cpuModel: 'x', cpuCores: 2, totalRamGb: 4, hasAvx2: false, gpu: 'none', platform: 'linux', arch: 'arm64' }],
+  ] as Array<[string, DictationHardwareProfile]>)('selects no model on %s', (_label, profile) => {
+    const selection = selectEngine(profile, { enabled: true, ...DICTATION_SMOKE_OPTIONS } as DictationConfig);
+    expect(selection.models).toEqual([]);
+    expect(selection.isRemote).toBe(true);
+  });
+});
 
 describe('package smoke: the leftover the reap step stops', () => {
   it('starts a detached process that outlives its launcher, works in the project, and names its pid', async () => {
@@ -171,6 +187,7 @@ describe('package smoke: the log check', () => {
       '{"level":"error","args":["[pty-host] gave up restarting after repeated crashes; running terminals in the main process for the rest of this run"]}',
       '{"level":"warn","args":["[retrieval] retrieval worker fork failed:","Error"]}',
       '{"level":"warn","args":["[retrieval-worker] sqlite-vec unavailable, semantic search disabled:","Error"]}',
+      '{"level":"warn","args":["[transcription] dictation worker fork failed:","Error"]}',
       '{"level":"error","args":["[SHUTDOWN] hard-failsafe:fired"]}',
       '[SHUTDOWN] pty-drain:timeout 1500ms lingering=4242 blind=0',
       '{"level":"warn","args":["[TASK-REAP] reap failed (non-fatal): Cannot find module koffi"]}',

@@ -18,13 +18,20 @@
  *      from its scrollback (the PTY lives in the pty host);
  *   3. reads the Knowledge Graph snapshot, which only the retrieval worker can
  *      answer (the call rejects, with no fallback to main, when it cannot);
- *   4. creates a To Do task, runs a terminal for it that leaves a detached node
+ *   4. starts a dictation session on the empty selection in
+ *      `DICTATION_SMOKE_OPTIONS`, and requires its id. The worker requires
+ *      sherpa-onnx-node when its bundle loads, so a reply proves the addon loaded in
+ *      the packaged utility process, under the finished app's fuses and, on macOS,
+ *      its hardened runtime. The afterPack probe loads it under plain Node before
+ *      the fuses flip. No model is selected, so this downloads and decodes nothing;
+ *      scripts/smoke-dictation.mjs is what decodes real audio;
+ *   5. creates a To Do task, runs a terminal for it that leaves a detached node
  *      process in the project (as an agent's dev server would), deletes the
  *      task, and requires that process to be stopped: the pty host's task reap
  *      (src/main/pty/process-tag/), which loads koffi on Windows and macOS. The
  *      afterPack probe loads koffi the same way and calls into it once; this
  *      step proves the readers built on it find and stop a real process;
- *   5. quits with the first terminal still running, and requires exit code 0 inside
+ *   6. quits with the first terminal still running, and requires exit code 0 inside
  *      the bound. On Windows and Linux that is a user's quit (the window
  *      closes); on macOS it is SIGTERM (see `quitRouteFor`). Both run the PTY
  *      exit drain, which prints how long the quit waited for the pty host.
@@ -76,6 +83,15 @@ export const LEFTOVER_SCRIPT = [
 export const LEFTOVER_COMMAND = `node ${LEFTOVER_SCRIPT_NAME}`;
 
 /**
+ * A dictation session with both model slots empty and the final going to a cloud
+ * endpoint: the one selection that holds no model, so the smoke test starts the
+ * worker with nothing to download. `tests/unit/package-smoke.test.ts` runs this
+ * through the real `selectEngine`, so a change there cannot turn this step into a
+ * 600 MB download.
+ */
+export const DICTATION_SMOKE_OPTIONS = { engineMode: 'remote', mode: 'custom', liveModelId: 'none', modelId: 'none', language: 'en' };
+
+/**
  * Log lines that mean a forked process failed. Each names the source text it
  * matches, and `tests/unit/package-smoke.test.ts` fails when that text leaves
  * `src/main`, so a reworded log line cannot quietly switch a check off.
@@ -96,6 +112,7 @@ export const FAILURE_MARKERS = [
   },
   { pattern: /retrieval worker fork failed/, sourceText: 'retrieval worker fork failed', reason: 'the retrieval worker did not fork' },
   { pattern: /sqlite-vec unavailable/, sourceText: 'sqlite-vec unavailable', reason: 'the retrieval worker could not load sqlite-vec' },
+  { pattern: /dictation worker fork failed/, sourceText: 'dictation worker fork failed', reason: 'the dictation worker did not fork' },
   { pattern: /\[SHUTDOWN\] hard-failsafe:fired/, sourceText: '[SHUTDOWN] hard-failsafe:fired', reason: 'the quit hung until the hard failsafe killed it' },
   {
     // The host's own wait ends before this deadline, so main never gives up first unless the host would not exit.
@@ -121,6 +138,7 @@ const PHASE_TIMEOUTS_MS = {
   project: 30_000,
   terminal: 45_000,
   graph: 60_000,
+  dictation: 60_000,
   reap: 45_000,
   quit: 30_000,
 };
@@ -467,6 +485,19 @@ async function main() {
     });
     say(`retrieval worker answered the snapshot for ${snapshot.projectId}`);
 
+    // One call, not a poll: a retry after a worker crash would pass on its restart.
+    const dictationSessionId = await Promise.race([
+      page.evaluate(`window.electronAPI.dictation.start(${JSON.stringify(DICTATION_SMOKE_OPTIONS)}).then((started) => started.dictationSessionId)`),
+      sleep(PHASE_TIMEOUTS_MS.dictation).then(() => {
+        throw new Error(`The dictation worker did not answer within ${PHASE_TIMEOUTS_MS.dictation / 1000} s`);
+      }),
+    ]);
+    if (typeof dictationSessionId !== 'string' || dictationSessionId.length === 0) {
+      throw new Error(`Starting a dictation session returned ${JSON.stringify(dictationSessionId)}, not an id`);
+    }
+    await page.evaluate(`window.electronAPI.dictation.cancel(${JSON.stringify(dictationSessionId)})`);
+    say('dictation worker loaded sherpa-onnx-node and answered');
+
     const todoLaneId = await page.evaluate("window.electronAPI.swimlanes.list().then((lanes) => lanes.find((lane) => lane.role === 'todo')?.id ?? null)");
     if (!todoLaneId) throw new Error('the board has no To Do column to create the reap task in');
     const task = await page.evaluate(`window.electronAPI.tasks.create(${JSON.stringify({
@@ -552,6 +583,7 @@ export const __testing = {
   SMOKE_COMMAND,
   LEFTOVER_SCRIPT,
   LEFTOVER_COMMAND,
+  DICTATION_SMOKE_OPTIONS,
   FAILURE_MARKERS,
   resolveAppExecutable,
   quitRouteFor,

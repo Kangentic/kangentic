@@ -49,6 +49,17 @@ The status chip shows at idle only while a model downloads. A failed download sh
 model's line in the Dictation tab. A background warm that fails to load the engine is only logged,
 and the next warm or press retries it. A press that fails says so on the chip.
 
+A model whose files the addon refuses replaces itself. Since sherpa-onnx 2.0 a corrupt file rejects
+at load rather than aborting the worker (measured with truncated and garbage files through both
+load paths), and installed means only that the files exist, so the same file would fail every press.
+The worker names the model in a `model-load-failed` message, separate from any reply because a
+refinement model fails behind the live fallback where no request sees it. Main deletes the model,
+downloads it again with the usual progress, and re-warms. The press that hit it shows its error
+once, or commits its live text if only the refinement model was bad. Models carry no checksum, so a
+load failure cannot be told from corruption, and an out-of-memory failure reads the same. Each model
+is replaced at most once per run, which caps that at one download per launch. A file that parses but
+is the wrong kind of model still exits the worker, and this does not reach it.
+
 The Mode choice is a preset for each language. Main resolves it to models each session
 (`resolveDictationSlots` in `src/shared/dictation-presets.ts`), so a preset follows the lineup
 when it changes, and a model it no longer runs is replaced by a download, as on a first install.
@@ -66,7 +77,10 @@ and Ukrainian. A capable machine (the `accurate-base` tier) defaults to Best, a 
 (`streaming-tiny`) to Light. Custom offers every model, among them Parakeet unified, Parakeet v2
 and Cohere Transcribe (2,754 MB, refinement only). The lineup was chosen by measurement
 (`node scripts/measure-dictation-models.mjs`), and the table of results is in the docblock of
-`src/main/transcription/models/model-registry.ts`. Under the Mode choice, the tab lists the two
+`src/main/transcription/models/model-registry.ts`. That table predates sherpa-onnx 2.0, which
+changed the offline NeMo features. Parakeet v3 on 20 synthesized prompts and 2 read clips (290
+words) went from 3.45% to 3.79% word error at normal level, one word, and from 78.62% to 4.14% at
+-50 dB, so a quiet microphone now works. Under the Mode choice, the tab lists the two
 models that run, one line each (Live model, Refinement model) with its size, its download share
 or None, and a License line links each running model's license. Parakeet unified and Nemotron
 streaming are licensed by NVIDIA Corporation under the NVIDIA Open Model License.

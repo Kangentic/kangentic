@@ -361,8 +361,10 @@ async function smokeRefreshedModels(root, wavPath) {
   ]);
   const nemotron = onlineTransducer(nemotronDir);
   process.stdout.write(`nemotron streaming en (${nemotronMb.toFixed(0)} MiB) loaded\n`);
-  for (const clip of [wavPath, path.join(nemotronDir, '1.wav')]) {
-    const reference = await decode(v3, clip);
+  // Each clip's last spoken word, from its known text. Not another model's transcript: Parakeet v3
+  // on sherpa-onnx 2.0.1 hears the first clip's last word as "brothers", and a check against it
+  // failed Nemotron for hearing it right.
+  for (const [clip, spokenLastWord] of [[wavPath, 'brothels'], [path.join(nemotronDir, '1.wav'), 'heaven']]) {
     const streamed = streamTranscribe(nemotron, sherpa.readWave(clip), 'en');
     process.stdout.write(`nemotron ${path.basename(clip)}: "${streamed.text}" (${streamed.partials} partials, RTF ${streamed.realTimeFactor.toFixed(3)})\n`);
     requireCased(`nemotron ${path.basename(clip)}`, streamed.text);
@@ -370,8 +372,8 @@ async function smokeRefreshedModels(root, wavPath) {
       process.stderr.write('FAIL: nemotron emitted no live partials\n');
       process.exit(1);
     }
-    if (lastWord(streamed.text) !== lastWord(reference)) {
-      process.stderr.write(`FAIL: nemotron lost the last word ("${lastWord(reference)}")\n`);
+    if (lastWord(streamed.text) !== spokenLastWord) {
+      process.stderr.write(`FAIL: nemotron lost the last word ("${spokenLastWord}")\n`);
       process.exit(1);
     }
   }

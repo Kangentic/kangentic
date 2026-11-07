@@ -9,8 +9,8 @@ import type {
 } from '../../shared/types';
 import { detectHardware, selectTier } from './hardware/detect-hardware';
 import { computeEngineKey, finalNeedsSentenceCase, selectEngine, type EngineSelection } from './engines/engine-selection';
-import { ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
-import type { ModelDef } from './models/model-registry';
+import { deleteModel, ensureModel, isModelInstalled, listInstalledModels } from './models/model-manager';
+import { getModel, type ModelDef } from './models/model-registry';
 import { buildDictationInfo, primaryModel } from './dictation-info';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { ResolvedModel } from './engines/transcription-engine';
@@ -103,6 +103,13 @@ export class TranscriptionService extends EventEmitter {
   // its own once it moved out of the single main-side buildAndLoad it used
   // to share with the load.
   private readonly warming = new Map<string, Promise<PreparedModels>>();
+  /** Models this run has already replaced. Files carry no checksum, so a load
+   *  failure cannot be told from corruption: an out-of-memory failure reads the
+   *  same. This caps the cost of that at one download per model per run. */
+  private readonly replacedModels = new Set<string>();
+  /** Replacements in flight, by model id. `prepareModels` waits on these so a
+   *  press never starts a second download into the same `.part` file. */
+  private readonly replacing = new Map<string, Promise<boolean>>();
   private counter = 0;
 
   constructor(private readonly client: DictationClient = dictationClient) {
@@ -119,6 +126,51 @@ export class TranscriptionService extends EventEmitter {
     this.client.on('recycled', () => {
       if (this.warmConfig) void this.prewarm(this.warmConfig, { silent: true });
     });
+    this.client.on('model-load-failed', (modelId: string) => {
+      void this.replaceModel(modelId);
+    });
+  }
+
+  /**
+   * Delete a model the addon refused and download it again, so a corrupt file
+   * fixes itself rather than failing every press from now on. The press that hit
+   * it has already failed, or committed its live text if only the refinement
+   * model was bad; the next one finds the new files. Never rejects: a delete that
+   * fails leaves the file for the next run, and a failed download reports on the
+   * model-progress stream like any other.
+   */
+  private async replaceModel(modelId: string): Promise<void> {
+    if (this.replacedModels.has(modelId)) return;
+    const model = getModel(modelId);
+    if (!model) return;
+    this.replacedModels.add(modelId);
+    console.warn(`[transcription] ${modelId} failed to load; downloading it again`);
+    const replacement = this.downloadReplacement(model);
+    this.replacing.set(modelId, replacement);
+    const replaced = await replacement;
+    this.replacing.delete(modelId);
+    if (replaced && this.warmConfig) void this.prewarm(this.warmConfig, { silent: true });
+  }
+
+  private async downloadReplacement(model: ModelDef): Promise<boolean> {
+    try {
+      deleteModel(model.id);
+    } catch (error) {
+      // On Windows a file still open elsewhere refuses the delete. The next run tries again.
+      console.warn(`[transcription] could not delete ${model.id}:`, error instanceof Error ? error.message : error);
+      return false;
+    }
+    try {
+      // The engine id goes unused: nothing reads what this resolves, only the files it leaves.
+      await this.ensureModels([model], model.id);
+      const totalBytes = totalModelBytes([model]);
+      this.emitModelProgress({ modelId: model.id, status: 'done', downloadedBytes: totalBytes, totalBytes });
+      return true;
+    } catch (error) {
+      console.warn(`[transcription] could not download ${model.id} again:`, error instanceof Error ? error.message : error);
+      this.reportPrepareFailure(error);
+      return false;
+    }
   }
 
   /**
@@ -226,6 +278,9 @@ export class TranscriptionService extends EventEmitter {
    * caller sends the result on to createSession/ensureWarm for that half.
    */
   private async prepareModels(selected: EngineSelection, engineKey: string): Promise<PreparedModels> {
+    const replacements = selected.models.flatMap((model) => this.replacing.get(model.id) ?? []);
+    if (replacements.length > 0) await Promise.all(replacements);
+
     const pending = this.warming.get(engineKey);
     if (pending) return pending;
 

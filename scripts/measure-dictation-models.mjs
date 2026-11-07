@@ -23,7 +23,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
-import { createKokoroTts, ensureKokoro, fetchTo } from './lib/dictation-tts.mjs';
+import { assertGeneratedAudio, assertLexiconCovers, createKokoroTts, ensureKokoro, fetchTo } from './lib/dictation-tts.mjs';
 import {
   CACHE_FOLDERS,
   COHERE_TRANSCRIBE_FILES,
@@ -131,6 +131,7 @@ async function modelDir(name, spec) {
 
 async function dictatedClips() {
   const kokoro = await ensureKokoro();
+  assertLexiconCovers(kokoro.lexicons, PROMPTS);
   const clipDir = path.join(root, 'measure-clips');
   fs.mkdirSync(clipDir, { recursive: true });
   let tts = null;
@@ -141,6 +142,7 @@ async function dictatedClips() {
       if (!fs.existsSync(file)) {
         tts ??= createKokoroTts(sherpa, kokoro);
         const audio = tts.generate({ text, generationConfig: new sherpa.GenerationConfig({ sid: voice, speed: 1.0 }) });
+        assertGeneratedAudio(audio, text);
         // A quarter second of silence either side, as a push-to-talk capture has.
         const pad = Math.round(audio.sampleRate * 0.25);
         const samples = new Float32Array(pad * 2 + audio.samples.length);

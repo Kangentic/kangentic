@@ -167,7 +167,7 @@
     "font-list": "^2.1.0",
     "koffi": "3.3.7",
     "node-pty": "1.2.0-beta.15",
-    "sherpa-onnx-node": "^1.13.8",
+    "sherpa-onnx-node": "^2.0.1",
     "sqlite-vec": "^0.1.9"
   },
   "allowScripts": {

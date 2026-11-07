@@ -32,8 +32,14 @@ function liveEngineFactory(kind: ModelEngineKind, language: string): () => Trans
  * pre-split `engine-registry.ts`'s `build` closure did, translated from a
  * `DictationConfig` closure into the serializable `EngineSelection` +
  * `DictationRemoteEndpoint` this worker receives over IPC from main.
+ * `onModelLoadFailed` names a model whose files the addon refused, so main can
+ * replace them (see `HybridEngine`).
  */
-export function buildEngine(selection: EngineSelection, remote: DictationRemoteEndpoint | undefined): TranscriptionEngine {
+export function buildEngine(
+  selection: EngineSelection,
+  remote: DictationRemoteEndpoint | undefined,
+  onModelLoadFailed?: (modelId: string) => void,
+): TranscriptionEngine {
   const liveSlot: HybridSlotSpec | null =
     selection.liveModelId && selection.liveModelKind
       ? { factory: liveEngineFactory(selection.liveModelKind, selection.language), modelId: selection.liveModelId }
@@ -45,5 +51,5 @@ export function buildEngine(selection: EngineSelection, remote: DictationRemoteE
       ? { factory: () => new SherpaWhisperEngine(selection.language), modelId: selection.finalModelId }
       : null;
 
-  return new HybridEngine({ live: liveSlot, final: finalSlot });
+  return new HybridEngine({ live: liveSlot, final: finalSlot }, onModelLoadFailed);
 }

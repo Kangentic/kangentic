@@ -1,8 +1,9 @@
-import type {
-  CreateSessionOptions,
-  ResolvedModel,
-  TranscriptionEngine,
-  TranscriptionEngineSession,
+import {
+  ModelLoadError,
+  type CreateSessionOptions,
+  type ResolvedModel,
+  type TranscriptionEngine,
+  type TranscriptionEngineSession,
 } from './transcription-engine';
 import { SHERPA_HYBRID_INFO } from './engine-infos';
 
@@ -89,19 +90,38 @@ export class HybridEngine implements TranscriptionEngine {
   /** Why the last final-slot load failed, for a release that finds no load
    *  to wait on. Cleared when a new load starts. */
   private finalLoadError: unknown = null;
+  private readonly onModelLoadFailed?: (modelId: string) => void;
 
-  constructor(slots: { live: HybridSlotSpec | null; final: HybridSlotSpec | null }) {
+  /** `onModelLoadFailed` names a model whose files the addon refused, from either
+   *  slot. It has to be a callback for the final slot's sake: that load fails
+   *  behind the live fallback, so no request ever rejects with it, and a corrupt
+   *  refinement model would otherwise lose its accuracy silently on every press. */
+  constructor(
+    slots: { live: HybridSlotSpec | null; final: HybridSlotSpec | null },
+    onModelLoadFailed?: (modelId: string) => void,
+  ) {
     this.live = slots.live ? { engine: slots.live.factory(), modelId: slots.live.modelId } : null;
     this.final = slots.final ? { engine: slots.final.factory(), modelId: slots.final.modelId } : null;
     if (!this.live && !this.final) {
       throw new Error('Hybrid engine requires at least a live or a final engine');
     }
+    this.onModelLoadFailed = onModelLoadFailed;
+  }
+
+  private reportLoadFailure(error: unknown): void {
+    if (error instanceof ModelLoadError) this.onModelLoadFailed?.(error.modelId);
   }
 
   /** Load the live slot now; the final slot waits for the first session. */
   async load(models: ResolvedModel[]): Promise<void> {
     this.models = models;
-    if (this.live) await this.live.engine.load(forSlot(models, this.live.modelId));
+    if (!this.live) return;
+    try {
+      await this.live.engine.load(forSlot(models, this.live.modelId));
+    } catch (error) {
+      this.reportLoadFailure(error);
+      throw error;
+    }
   }
 
   /** Start (or join) the final slot's load. Resolves once it is usable. */
@@ -122,6 +142,7 @@ export class HybridEngine implements TranscriptionEngine {
       // memo.
       this.finalLoad = null;
       this.finalLoadError = error;
+      this.reportLoadFailure(error);
       throw error;
     });
     return this.finalLoad;
