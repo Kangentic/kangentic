@@ -94,8 +94,8 @@ of steps 1 to 5 is for a major, a pin, a runtime dependency, or anything the not
      comments like "until X ships".
    - Deprecated APIs to replace, even ones that still work.
    - New APIs that replace code we wrote, and performance or security gains we get by adopting them.
-   - New features worth using. Mark `userVisible: true` on anything that changes what a person sees,
-     because that work starts from a mockup. List it anyway.
+   - New features worth using. Mark `userVisible: true` on anything that changes what a person sees.
+     An upgrade does not build it: the report names it in one line and a person decides. List it anyway.
    Anything you looked at and rejected goes in `declined` with the reason, so the next run does not
    reopen it. "It does not apply to how we use the package" is a fine reason.
 6. **Answer any `signals` in your prompt.** A signal is a reason to look, not a verdict. For a new
@@ -134,8 +134,11 @@ of steps 1 to 5 is for a major, a pin, a runtime dependency, or anything the not
 - **`verdict` is `blocked` only for a real blocker:** a peer range nothing satisfies, a pin whose
   reason still holds and which the target would break, a regression with no fix, or a broken target.
   A hard migration is `ready` with `risk: high`. Effort is never a blocker.
-- **Name what would clear a blocker.** `blockedOn` maps each package you are waiting on to its
-  `latest` version today, so the next run can skip research until one of them moves.
+- **Name what would clear a blocker.** `blockedOn` maps each package you are waiting on to its newest
+  version today on the line we run, so the next run can skip research until one of them moves. For a
+  package we run on a beta, that is the beta. `latest` sits behind it and would never move.
+- **`gates` names scoped checks.** CI runs the demo tier and the full tiers, so never list them, and
+  leave probe scripts on their default attempts.
 - **Read a package. Never run one.** A hook enforces this: Bash takes one read-only command per call
   (`npm view`, `gh api` as a read, `gh search`, `gh release|issue|pr view|list`, `git log|show|grep|diff`,
   `ls`), and refuses `node`, `npm pack`, `npm install`, downloads and redirects. To read a package's

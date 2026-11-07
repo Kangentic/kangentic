@@ -1,11 +1,15 @@
 # Applying a dependency upgrade
 
-You are working a task `/upgrade-deps` filed. Its description is the plan: the exact versions and the
-order of the phases. Each group's brief is attached as `<group>.json`, and that is the detail: the
-migration steps, what to adopt and remove, the `find` regexes, the gates, and what the research could
+You are working a task `/upgrade-deps` filed, or one it is running in. The plan is the exact versions
+and the order of the phases: the task's description, or on a task run, what Step 5 of the skill just
+set. Each group's brief is the detail, attached as `<group>.json` or at `<cacheDir>/briefs/<group>.json`:
+the migration steps, what to adopt and remove, the `find` regexes, the gates, and what the research could
 not verify. Read a group's brief before you start its phase. This file is how to carry it out safely
 in this repo. Do the whole plan, adoption and cleanup included. A version bump with the benefits left
 on the table is half the task.
+
+A brief reflects `main` when it was researched, and something may have merged since. Where a brief
+disagrees with the code or a rule, the repo wins. Say so in your report.
 
 ## Get a real install first
 
@@ -31,14 +35,24 @@ hit it. If so, say so in your final report.
 
 For each phase:
 
-1. **Install exact versions.** An exact pin stays exact, and a caret range stays a caret:
+1. **Install exact versions.** Always name the version. `<package>@^<version>` can resolve past what
+   was researched. npm still writes the caret into `package.json` for a caret range:
    - exact pin: `npm install --prefix . --allow-remote=all --save-exact <package>@<version>`
-   - range: `npm install --prefix . --allow-remote=all <package>@^<version>`
+   - range: `npm install --prefix . --allow-remote=all <package>@<version>`
    - workspace: add `-w packages/protocol` or `-w packages/launcher`
    - a lockstep group goes in one command
    npm keeps a package in the block it is already in. Do not pass `--save-prod` or `--save-dev`:
    `.claude/rules/dependency-block-parity.md` fails CI on a package in the wrong block.
-2. **Read the lockfile diff.** Only this phase's packages and their dependencies should change.
+   If you batch commands, stop at the first failure. A failed install with the gates still running
+   proves nothing about the new version.
+
+   **If npm refuses with `ERESOLVE`, find out why before you force anything.** `--force` is allowed
+   only when every peer in the refused chain is absent from the tree, the lockfile changes only this
+   phase's packages, and `npm ci --dry-run` passes on each npm version CI and the release use. Put the
+   reason in the commit body. Otherwise the phase is blocked. Never use `--legacy-peer-deps`.
+2. **Read the lockfile diff** with `node scripts/upgrade-deps.mjs lockdiff <package>@<version> ...`,
+   naming what this phase installs. Only this phase's packages and their dependencies should change.
+   It exits 1 on a version that did not resolve, a lost install script flag or a drifted workspace.
    - Never drop `"hasInstallScript": true` from better-sqlite3. It belongs there.
    - A workspace `version` line that drifted is not yours: revert that line. `/release` and
      `/release-protocol` own those.
@@ -55,7 +69,8 @@ For each phase:
    names exercises the changed path, and write one if it says "needs a new test". Never edit an
    existing test's assertions to make a bump pass, unless the release documents that change.
 6. **Run the phase's gates:** `npm run typecheck`, `npm run lint`, and every test the phase names.
-   Scoped test runs only. The PR checks are the full gate.
+   Scoped test runs only. The PR checks are the full gate. That includes `npm run test:demo` and the
+   demo tier: skip them even when a brief lists them, because CI runs them on every PR.
 7. **Commit the phase**, one commit per phase, through `/commit`:
    `chore(deps): upgrade <group> to <version>`, or `feat`/`refactor` when it adopts something real.
 
@@ -65,6 +80,11 @@ on. One red group must never cost the whole batch.
 
 A phase that turns out bigger than planned stays in this task. Never file a follow-up: one agent does
 all of this work. Only a phase that cannot land gets recorded, and a later run picks it up from there.
+
+**A message that arrives mid-run does not end the run.** The Executing column's Apply findings row can
+fire while you wait on a background command, and it asks you to end on `Findings: applied`. If phases
+remain, say so in one line and keep working. That line moves the card to Code Review, so write it
+only when the whole plan is done.
 
 ## Last phase: lockfile refresh
 
@@ -106,6 +126,11 @@ script would run there once this branch is pushed.
   instance after it merges, so say so in your final report.
 - **electron-builder:** re-trace the deprecation table in
   `.claude/rules/dependency-block-parity.md` with `npm ls <package>` and update any row that moved.
+- **`node-pty`:** run each mode of `scripts/probe-conpty-exit-race.js` once, whatever `--attempts` a
+  brief names. Repeats of kill and natural took 30 of the 76 minutes on the first run and found nothing
+  the first attempt did not.
+- **Playwright:** run `npx playwright install chromium` after the bump, or specs fail on a missing
+  browser.
 - **monaco-editor:** `tests/unit/dompurify-override.test.ts` fails when the override must go. Remove
   the override rather than editing the test.
 - **`@xterm/*`:** every package in the set moves together, and every xterm `Terminal` still activates
@@ -121,13 +146,11 @@ A guard test failing means the pin's reason is in play. Read the test's header b
 Update a guard test only to name the new version, and only when the fix it guards is still in the
 target. Never weaken one to get a bump through. That is a blocker. Record it.
 
-## User-visible features
+## User-visible ideas
 
-A task's User-visible section comes after every upgrade phase, because it starts from a mockup a person
-reviews. Publish a mockup of each item as an Artifact and link it in your final report. Build nothing
-until the user approves it, and treat a message to apply what is left as no approval. Once an item is
-approved, build it here with its own commit. An item in a brief that the task does not list is out of
-scope, so leave it out and name it in your report.
+An `adopt` item with `userVisible: true` is not part of this task. Do not mock it up or build it, even
+if a later message tells you to apply what is left. Name it in one line in your report, and a person
+decides whether it is worth doing.
 
 ## See it run
 
@@ -143,20 +166,27 @@ If a phase could not land, record it. This is what stops the next run from resea
 the same dead end:
 
 ```
-node scripts/upgrade-deps.mjs record-blocker <group> --reason "<why>" --recheck "<what would clear it>" --blocked-on <package>=<its latest today>
+node scripts/upgrade-deps.mjs record-blocker <group> --reason "<why>" --recheck "<what would clear it>" --blocked-on <package>=<its newest today on the line we run>
 ```
 
 Repeat `--blocked-on` for each package you are waiting on, and leave it out if you are waiting on
-none. Use the script, not a file edit: the brief is in the main checkout, outside your worktree.
+none. For a package we run on a beta line, name the beta, because the check follows the line you
+record and `latest` sits behind it. Use the script, not a file edit: the brief is in the main checkout, outside your worktree.
 Avoid backticks and `$` in the text. If it says there is no brief, put the blocker in your final
 report instead.
 
 ## Finish
 
-End with the phases that landed, what was adopted and removed, anything you dropped and why, and
-what the user must do by hand (the dev instance restart). Make the last line of that report exactly
-`Findings: applied`, which moves the card on to Code Review, and the board's Code Review, Testing and
-Merge columns do the rest. If the task's automations are paused, the card stays in Executing for the
+Keep the report short, because the commits hold the evidence. In this order:
+
+1. One line on what landed and anything you dropped.
+2. **You need to do:** a short list of what only a person can do, such as the dev instance restart, a
+   non-required CI check to read, or a decision. Write "Nothing" if there is nothing.
+3. Up to five findings someone must know, one line each.
+4. User-visible ideas, one line each.
+
+Make the last line of that report exactly `Findings: applied`, which moves the card on to Code Review,
+and the board's Code Review, Testing and Merge columns do the rest. If the task's automations are paused, the card stays in Executing for the
 user to take from there. Either way, do not open a PR.
 
 A phase you recorded as blocked is finished work, not a finding. If a message asks you to apply what
