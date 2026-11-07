@@ -191,6 +191,19 @@ test('removing the host in Settings takes its projects out of the sidebar', asyn
   await page.locator('[data-testid="ssh-host-remove"]').click();
   const confirmDialog = page.locator('h3:has-text("Remove host")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
   await expect(confirmDialog).toContainText('hides its projects and suspends their agents until it is added again, and nothing is deleted.');
+  // The project list reload lands before the current-project one, as it can against the real main
+  // process. The panel must not re-aim at the project it has just dropped while the stale current
+  // project is still in the store.
+  await page.evaluate(() => {
+    const projects = window.electronAPI.projects;
+    const getCurrent = projects.getCurrent.bind(projects);
+    projects.getCurrent = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const current = await getCurrent();
+      (window as unknown as Record<string, unknown>).__currentReloadLanded = true;
+      return current;
+    };
+  });
   await confirmDialog.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
 
@@ -198,6 +211,10 @@ test('removing the host in Settings takes its projects out of the sidebar', asyn
   // panel lists only the system tabs, as it does for a window with none open, rather than keeping
   // the project tabs over a removed project's overrides while the app paints the global config.
   await expect(page.locator('[data-testid="settings-tab-ssh"]')).toBeVisible();
+  await expect(page.locator('[data-testid="settings-tab-theme"]')).toHaveCount(0);
+  // Held past the delayed reload, so a tab that returns when it lands is caught.
+  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__currentReloadLanded === true);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator('[data-testid="settings-tab-theme"]')).toHaveCount(0);
 
   await page.evaluate(() => {

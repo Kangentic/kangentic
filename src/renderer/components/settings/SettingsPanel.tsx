@@ -112,11 +112,17 @@ export function SettingsPanel() {
   // during a close would reopen the panel, and StrictMode's double mount would
   // seed twice. Seeded here, not in setSettingsOpen, because that needs
   // config-store to import project-store, which closes an import cycle.
+  //
+  // A current project the list no longer holds is on its way out (removing its SSH host hides it,
+  // and the list reload can land before the current-project reload). Seeding from it would point
+  // the panel back at the project just dropped above, and the project tabs would stay over a
+  // project that is gone.
   useEffect(() => {
     const state = useConfigStore.getState();
     if (!state.settingsOpen || state.projectSettingsPath || !currentProject) return;
+    if (projectsHydrated && !projects.some((project) => project.id === currentProject.id)) return;
     openProjectSettings(currentProject.path, currentProject.name);
-  }, [projectSettingsPath, currentProject, openProjectSettings]);
+  }, [projectSettingsPath, currentProject, projects, projectsHydrated, openProjectSettings]);
 
   // Remember the active tab (including clamps to a valid tab) so the next open
   // resumes here. Reads back via the initializer above.
