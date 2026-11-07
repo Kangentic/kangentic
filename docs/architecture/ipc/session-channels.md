@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (55 channels)
+## Sessions (57 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
