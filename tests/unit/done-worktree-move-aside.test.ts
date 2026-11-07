@@ -33,7 +33,7 @@ import {
   _setRemovedWorktreeBatchHookForTests,
   _whenRemovedWorktreeDeletionIdleForTests,
 } from '../../src/main/git/removed-worktrees';
-import { removeNodeModulesLinkOnly } from '../../src/main/git/node-modules-link';
+import { removeLinkOnly } from '../../src/main/git/node-modules-link';
 import { ensureTaskWorktree } from '../../src/main/ipc/helpers/task-git';
 import { deleteTaskWorktree } from '../../src/main/ipc/helpers/task-cleanup';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -436,7 +436,7 @@ describe('a Done move in the default setup, where node_modules links to the proj
   });
 });
 
-describe('removeNodeModulesLinkOnly', () => {
+describe('removeLinkOnly', () => {
   let scratch: string;
 
   afterEach(async () => {
@@ -452,16 +452,16 @@ describe('removeNodeModulesLinkOnly', () => {
     fs.mkdirSync(path.dirname(link));
     fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
 
-    expect(removeNodeModulesLinkOnly(link)).toBe(true);
+    expect(removeLinkOnly(link)).toBe(true);
     expect(() => fs.lstatSync(link)).toThrow();
     expect(fs.readFileSync(path.join(target, 'keep.txt'), 'utf8')).toBe('keep\n');
 
     const realDirectory = path.join(scratch, 'installed', 'node_modules');
     fs.mkdirSync(path.join(realDirectory, 'pkg'), { recursive: true });
-    expect(removeNodeModulesLinkOnly(realDirectory)).toBe(false);
+    expect(removeLinkOnly(realDirectory)).toBe(false);
     expect(fs.existsSync(path.join(realDirectory, 'pkg'))).toBe(true);
 
-    expect(removeNodeModulesLinkOnly(path.join(scratch, 'missing', 'node_modules'))).toBe(false);
+    expect(removeLinkOnly(path.join(scratch, 'missing', 'node_modules'))).toBe(false);
   });
 });
 

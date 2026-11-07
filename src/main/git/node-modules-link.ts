@@ -101,13 +101,13 @@ export async function removeNodeModulesPath(
 }
 
 /**
- * Remove `<worktree>/node_modules` only when it is a link (the junction or
- * symlink `linkNodeModules` makes), and leave a real directory alone. A Done
- * move calls it on the copy it just renamed aside, so the copy holds no link to
- * the project root's node_modules while it waits for the deleter. Returns
- * whether a link was removed. Never throws.
+ * Remove a worktree path only when it is a link (the junction or symlink of
+ * `linkNodeModules` or `git.linkFolders`), and leave a real directory alone. A
+ * Done move calls it on the copy it just renamed aside, so the copy holds no
+ * link to the project root while it waits for the deleter. Returns whether a
+ * link was removed. Never throws.
  */
-export function removeNodeModulesLinkOnly(targetPath: string): boolean {
+export function removeLinkOnly(targetPath: string): boolean {
   try {
     const stat = fs.lstatSync(targetPath);
     // The junction check first, for the reason removeNodeModulesPath gives.

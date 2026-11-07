@@ -636,6 +636,11 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
       region,
       'the line-count worker has the identical exposure and must be disposed alongside it',
     ).toContain('lineCountClient.dispose();');
+    expect(
+      region,
+      'the worktree copy worker must be killed on quit; a copy left running on main would write ' +
+        'into a worktree the next launch believes was never set up',
+    ).toContain('worktreeCopyClient.dispose();');
 
     // The closure above is reachable only if performShutdown actually spreads
     // it into the synchronous cleanup it runs; otherwise the two dispose
