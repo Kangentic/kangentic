@@ -95,7 +95,7 @@
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.2.1",
     "@xterm/addon-serialize": "0.15.0-beta.301",
     "@xterm/addon-unicode11": "0.10.0-beta.301",
     "@xterm/addon-webgl": "0.20.0-beta.300",
