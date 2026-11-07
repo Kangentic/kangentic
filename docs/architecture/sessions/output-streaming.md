@@ -834,16 +834,16 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   The parser can also hold cells the grid no longer has. xterm trims lines on a column shrink only
   inside its reflow branch, and the alt buffer has no scrollback, so it never reflows. A shrink
   while the alt screen is up left every alt line at the old width for the rest of the session. The
-  addon walks `line.length`, not `terminal.cols`, so it serialized those off-grid cells, and where
-  a row ended in null cells above a wrapped row it added its `-` wrap separator. Every reopen
-  replayed text rows interleaved with dashed rows. `HeadlessFrameBuffer.resize` therefore cuts each
-  alt line back to the new width and blanks a wide glyph the cut left half on the last column,
-  which the replay would otherwise autowrap. The same trim keeps off-grid text out of the Agent
-  Monitor peek (`lineAt`). A shrink before entering the alt screen was never affected, since xterm
-  builds the alt lines at the current width. A renderer xterm keeps the same long alt lines, which
-  are harmless on screen because it draws only `cols` cells, so its text readers go through
-  `readViewportLines` (`terminal-capture-registry.ts`), which cuts each row to `cols`. That keeps
-  stale off-grid text out of the conversation viewer's TUI anchor match and the devtools grid dump.
+  addon now clamps its rows to `terminal.cols`, so a frame no longer carries those off-grid cells,
+  and xterm blanks a wide glyph the cut leaves half on the last column inside `line.resize`.
+  `HeadlessFrameBuffer.resize` still cuts each alt line back to the new width, for two readers the
+  clamp does not reach: the Agent Monitor peek (`lineAt`), and a regrow, which would bring the stale
+  cells back onto the grid (xtermjs/xterm.js#6228, still open). A shrink before entering the alt
+  screen was never affected, since xterm builds the alt lines at the current width. A renderer
+  xterm keeps the same long alt lines, harmless on screen because it draws only `cols` cells. Its
+  text readers go through `readViewportLines` (`terminal-capture-registry.ts`), which cuts each
+  row to `cols`. That keeps stale off-grid text out of the conversation viewer's TUI anchor match
+  and the devtools grid dump.
   `getScrollback` itself retains the `\x1b[?1049h` prefix gate, reachable now only via direct
   byte-path reads and `getReplaySnapshot`'s serialize-deadline fallback.
 - **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in

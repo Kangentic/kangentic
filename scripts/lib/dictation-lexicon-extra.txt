@@ -1,0 +1,6 @@
+# Words the Kokoro release lexicon (lexicon-en-us.txt) lacks that the dictation scripts' prompts say.
+# Same format as that file: word || space-separated phones. Each is composed from the release
+# lexicon's own entries for its parts, so the stress marks and phones match what it uses.
+backoff || bˈ æ k ɔ f
+config || kˈ ɑː n f ɪ ɡ
+dropdown || d ɹˈ ɑː p d a ʊ n

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, CircleAlert, Copy, RefreshCw, SquareTerminal } from 'lucide-react';
+import { Bot, Check, CircleExclamationPoint, Copy, RefreshCw, SquareTerminal } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
@@ -218,12 +218,12 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 // the field. An empty list holds the tip shut.
                 <Tooltip label={wslCapableAgentNames.length > 0 ? t`Kangentic runs ${wslAgentList} from WSL.` : ''}>
                   <span className="text-xs flex items-center gap-1 text-attention" data-testid={`agent-cli-status-${agent.name}`}>
-                    <CircleAlert size={13} /><Trans>No WSL support</Trans>
+                    <CircleExclamationPoint size={13} /><Trans>No WSL support</Trans>
                   </span>
                 </Tooltip>
               ) : unauthenticated ? (
                 <span className="text-xs flex items-center gap-1 text-amber-400">
-                  <CircleAlert size={13} /><Trans>Not signed in</Trans>
+                  <CircleExclamationPoint size={13} /><Trans>Not signed in</Trans>
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5" data-testid={`agent-cli-status-${agent.name}`}>
@@ -244,7 +244,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                     ) : agent.hostStatus === 'unknown' ? (
                       <><CircleAlert size={13} /><Trans>Not checked</Trans></>
                     ) : (
-                      <><CircleAlert size={13} /><Trans>Not found</Trans></>
+                      <><CircleExclamationPoint size={13} /><Trans>Not found</Trans></>
                     )}
                   </span>
                 </span>

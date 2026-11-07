@@ -20,7 +20,7 @@
  * ring. Unarmed, a write costs one comparison.
  */
 
-import { monitorEventLoopDelay, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, type ELDHistogram } from 'node:perf_hooks';
 import { isSingleKeystroke, isSingleMouseReport } from '../../shared/round-trip-input';
 
 /** `write`: bytes main sent to a session's PTY. `data`: a chunk the PTY
@@ -85,7 +85,7 @@ let armedUntil = 0;
 let events: HostRoundTripEvent[] = [];
 let flushTimers: FlushTimerSample[] = [];
 let droppedEvents = 0;
-let delayHistogram: IntervalHistogram | null = null;
+let delayHistogram: ELDHistogram | null = null;
 let disarmTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** True while a probe window is open. */

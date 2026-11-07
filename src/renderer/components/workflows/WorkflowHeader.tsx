@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
-import { AlertTriangle, CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { TriangleExclamationPoint, CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDetail, WorkflowSummary } from '../../../shared/types';
 import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
 import { translateText } from '../../i18n/translate';
@@ -250,7 +250,7 @@ export function WorkflowHeader({
                       aria-label={stalledLine(selected.stalledTasks)}
                       data-testid="workflow-stalled"
                     >
-                      <AlertTriangle size={12} className="shrink-0" />
+                      <TriangleExclamationPoint size={12} className="shrink-0" />
                       <span className={LADDER.stalledLabel}>{stalledLine(selected.stalledTasks)}</span>
                     </span>
                   </Tooltip>

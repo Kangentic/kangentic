@@ -137,6 +137,20 @@ describe('dictation-worker', () => {
     expect(port.postMessage).toHaveBeenCalledWith({ type: 'result', id: 1 });
   });
 
+  it('tells main which model the addon refused, on its own message with no request id', async () => {
+    const port = makeFakeParentPort();
+    installParentPort(port);
+    mockBuildEngine.mockReturnValue(makeFakeEngine());
+    await importWorker();
+
+    port.emit('message', { data: { type: 'prewarm', id: 1, ...ensureEngineFields('key-a') } });
+    await flush();
+
+    const onModelLoadFailed = mockBuildEngine.mock.calls[0][2] as (modelId: string) => void;
+    onModelLoadFailed('parakeet-tdt-0.6b-v3');
+    expect(port.postMessage).toHaveBeenCalledWith({ type: 'model-load-failed', modelId: 'parakeet-tdt-0.6b-v3' });
+  });
+
   it('forwards partials from an active session, and drops one that arrives after finalize/cancel already removed it', async () => {
     const port = makeFakeParentPort();
     installParentPort(port);

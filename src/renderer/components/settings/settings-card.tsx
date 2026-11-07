@@ -1,6 +1,6 @@
 import type React from 'react';
 import { Children, Fragment, useId } from 'react';
-import { Check, ChevronDown, ExternalLink, Info, TriangleAlert } from 'lucide-react';
+import { Check, ChevronDown, ExternalLink, Info, TriangleExclamationPoint } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
@@ -420,7 +420,7 @@ export function CardStatusRow({ label, value, tone = 'neutral', percent = null, 
       <div className="flex items-center justify-between gap-3">
         <span className="flex flex-shrink-0 items-center gap-1.5">
           {tone === 'caution' || tone === 'failure' ? (
-            <TriangleAlert size={14} className={labelTone} aria-hidden="true" />
+            <TriangleExclamationPoint size={14} className={labelTone} aria-hidden="true" />
           ) : null}
           <span className={`text-sm font-medium ${labelTone}`} data-testid={testId ? `${testId}-label` : undefined}>{label}</span>
         </span>
@@ -573,7 +573,7 @@ function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {tone === 'caution' && !unavailable ? (
-            <TriangleAlert size={14} className="flex-shrink-0 text-warning" aria-hidden="true" />
+            <TriangleExclamationPoint size={14} className="flex-shrink-0 text-warning" aria-hidden="true" />
           ) : null}
           <span className={`${SETTING_LABEL_CLASS} ${dimmed}`}>{label}</span>
           {info ? <InfoTip label={label} text={info} /> : null}

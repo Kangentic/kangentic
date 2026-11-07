@@ -77,6 +77,34 @@ describe('HeadlessFrameBuffer', () => {
       buffer.dispose();
     });
 
+    // serialize()'s barrier is an empty write, and a resize flushes the write queue synchronously.
+    // @xterm/headless 6.1.0-beta.304 read an empty chunk as the end of the queue and dropped the rest:
+    // the barrier's callback, so this promise never settled, and every byte behind it. Everything
+    // that trusts a frame's cutoff rests on this: getReplaySnapshot's exactly-once accounting, and
+    // getSeedFrame's barrierOffset, which has no deadline of its own but main's 15 s host timeout.
+    it('keeps its barrier, and the bytes behind it, through a resize during output', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      const timedOut = Symbol('timed out');
+      buffer.write('before the barrier\r\n');
+      const frame = buffer.serialize();
+      buffer.write('after the barrier\r\n');
+      buffer.resize(100, 24);
+
+      const settled = await Promise.race([
+        frame,
+        new Promise<symbol>((resolve) => { setTimeout(() => resolve(timedOut), 1000); }),
+      ]);
+
+      expect(settled).not.toBe(timedOut);
+      expect(settled).toContain('before the barrier');
+      expect(settled).not.toContain('after the barrier');
+      const later = await buffer.serialize();
+      expect(later.match(/before the barrier/g)).toHaveLength(1);
+      expect(later.match(/after the barrier/g)).toHaveLength(1);
+
+      buffer.dispose();
+    });
+
     describe('history depth', () => {
       // 100 numbered rows on a 24-row grid: rows 1 to 76 scroll into history,
       // rows 77 to 100 are the grid.

@@ -5,7 +5,7 @@
  * still answers it.
  *
  * Why a script: `npm install <package>@latest` is a downgrade for anything on a prerelease line.
- * npm's `latest` for node-pty is 1.1.0 and we run 1.2.0-beta.15 for the ConPTY lock, and the same
+ * npm's `latest` for node-pty is 1.1.0 and we run 1.2.0-beta.18 for the ConPTY lock, and the same
  * holds for every @xterm package, so following `npm outdated` brings back a crash. Whether a move is
  * a downgrade, a major or a peer conflict is a function of version numbers and is never left to a
  * reading of the output.
@@ -16,6 +16,7 @@
  * Usage: node scripts/upgrade-deps.mjs inventory [--refresh]
  *        node scripts/upgrade-deps.mjs record-blocker <group> --reason <text> --recheck <text>
  *                                                [--blocked-on <package>=<version>]...
+ *        node scripts/upgrade-deps.mjs lockdiff [<package>@<version>]...
  *        node scripts/upgrade-deps.mjs cache-dir
  *   inventory       prints JSON: the groups that can move and audit counts. The registry is read
  *                   on every run. Only research is cached.
@@ -23,6 +24,10 @@
  *   record-blocker  marks a group's brief blocked, so the next run does not file it again. A task
  *                   agent runs this from its worktree, which cannot write the root checkout's
  *                   cache unattended with a file tool but can run this.
+ *   lockdiff        prints what the working package-lock.json changed against HEAD, the checks
+ *                   apply.md asks of every phase, and whether each named package resolved to the
+ *                   version given. Exit 1 when one did not, when a package lost its install script
+ *                   flag, or when a workspace version drifted.
  *   cache-dir       prints the folder that holds the research.
  *
  * The cache is one JSON brief per group at <root checkout>/.upgrade-deps/briefs/<group>.json. It is
@@ -255,13 +260,23 @@ function isBrief(candidate) {
  *   blocked   same versions, same blocker: no research, reported as blocked.
  *   filed     a board task already carries this brief: confirm it is open.
  */
-export function researchState({ brief, targets, latestVersions, refresh }) {
+export function researchState({ brief, targets, watchedVersions, refresh }) {
   if (!isBrief(brief) || refresh) return 'research';
   if (!sameVersions(brief.targets, targets)) return 'delta';
   if (brief.task) return 'filed';
   if (brief.verdict !== 'blocked') return 'reuse';
   const watched = Object.entries(brief.blocker?.blockedOn ?? {});
-  return watched.every(([name, version]) => latestVersions[name] === version) ? 'blocked' : 'recheck';
+  return watched.every(([name, version]) => watchedVersions[name] === version) ? 'blocked' : 'recheck';
+}
+
+/**
+ * What a blocker compares against: the newest release on the line it recorded. Reading `latest` alone
+ * misses a fix on a prerelease line, because `latest` for @xterm/addon-webgl sits behind the beta we
+ * run, so a recorded beta stays on its beta line.
+ */
+export function watchedVersion(recorded, { distTags, versions }) {
+  if (!semver.valid(recorded)) return distTags.latest;
+  return chooseTarget({ installed: recorded, distTags, versions }) ?? recorded;
 }
 
 /** A brief marked blocked by a task agent that could not land the group. */
@@ -291,7 +306,7 @@ function widestKind(members) {
  * clear.
  *
  * `packuments` may also hold packages nothing declares, read because a brief's blocker waits on
- * them. Those only supply `latest` for the blocker check.
+ * them. Those only supply the blocker check.
  *
  * A group moves whole. Publishing a set takes minutes, and a `@types` package can lag its library,
  * so a run can catch members on different numbers. `targetsDisagree` flags that, and research picks
@@ -307,8 +322,10 @@ export function buildInventory({
 }) {
   const installedVersions = Object.fromEntries(declared.map(({ name, installed }) => [name, installed]));
   const peersOf = (name, version) => packuments[name]?.versions[version]?.peerDependencies ?? {};
-  const latestVersions = Object.fromEntries(
-    Object.entries(packuments).map(([name, { distTags }]) => [name, distTags.latest]),
+  const watchedVersions = (brief) => Object.fromEntries(
+    Object.entries(brief?.blocker?.blockedOn ?? {}).flatMap(([name, recorded]) => (
+      packuments[name] ? [[name, watchedVersion(recorded, packuments[name])]] : []
+    )),
   );
   const movable = new Map();
   let currentCount = 0;
@@ -353,7 +370,7 @@ export function buildInventory({
       advisory: members.some(({ advisory }) => advisory !== null),
       signals: members.some(({ signals }) => signals.length > 0),
       targetsDisagree: !targetsAgree(group, members),
-      research: researchState({ brief, targets, latestVersions, refresh }),
+      research: researchState({ brief, targets, watchedVersions: watchedVersions(brief), refresh }),
       hasBrief: brief !== undefined,
       peerConflicts: newPeerConflicts(installedVersions, targets, peersOf),
       blocker: brief?.blocker ?? null,
@@ -367,6 +384,37 @@ export function buildInventory({
     groups: groups.sort((left, right) => left.group.localeCompare(right.group)),
     currentCount,
   };
+}
+
+/**
+ * What moved between two lockfiles' `packages` maps. With 29 phases nobody reads 29 lockfile diffs, so
+ * this reports the things `apply.md` asks of each one: an unplanned package, a lost install script
+ * flag, and a workspace version that drifted.
+ */
+export function diffLockfile(before, after) {
+  const shortName = (key) => key.replace(/^node_modules\//, '');
+  const changed = [];
+  const added = [];
+  const installScriptFlips = [];
+  for (const [key, entry] of Object.entries(after)) {
+    const previous = before[key];
+    if (!previous) {
+      added.push({ name: shortName(key), version: entry.version, hasInstallScript: Boolean(entry.hasInstallScript) });
+      continue;
+    }
+    if (previous.version !== entry.version) {
+      changed.push({ name: shortName(key), from: previous.version, to: entry.version });
+    }
+    if (Boolean(previous.hasInstallScript) !== Boolean(entry.hasInstallScript)) {
+      installScriptFlips.push({ name: shortName(key), had: Boolean(previous.hasInstallScript) });
+    }
+  }
+  const removed = Object.entries(before)
+    .filter(([key]) => !after[key])
+    .map(([key, entry]) => ({ name: shortName(key), version: entry.version }));
+  const workspaceDrift = Object.keys(after)
+    .filter((key) => key.startsWith('packages/') && before[key]?.version !== after[key]?.version);
+  return { changed, added, removed, installScriptFlips, workspaceDrift };
 }
 
 async function readPackument(name) {
@@ -534,16 +582,50 @@ async function runRecordBlocker([group, ...args]) {
   console.log(`Recorded ${group} as blocked.`);
 }
 
+async function runLockdiff(expected) {
+  const { stdout } = await execFileAsync('git', ['show', 'HEAD:package-lock.json'], {
+    cwd: REPOSITORY_ROOT,
+    maxBuffer: COMMAND_OUTPUT_LIMIT_BYTES,
+  });
+  const before = JSON.parse(stdout).packages;
+  const after = readJson(path.join(REPOSITORY_ROOT, 'package-lock.json')).packages;
+  const diff = diffLockfile(before, after);
+  const print = (label, lines) => {
+    console.log(`${label} (${lines.length})`);
+    for (const line of lines) console.log(`  ${line}`);
+  };
+  print('changed', diff.changed.map(({ name, from, to }) => `${name} ${from} -> ${to}`));
+  print('added', diff.added.map(({ name, version, hasInstallScript }) => (
+    `${name}@${version}${hasInstallScript ? ' HAS INSTALL SCRIPT' : ''}`
+  )));
+  print('removed', diff.removed.map(({ name, version }) => `${name}@${version}`));
+  print('install script flag changed', diff.installScriptFlips.map(({ name, had }) => (
+    `${name}: ${had ? 'lost it' : 'gained it'}`
+  )));
+  print('workspace version drift', diff.workspaceDrift);
+  const mismatches = expected.filter((pair) => {
+    const separator = pair.lastIndexOf('@');
+    const resolved = after[`node_modules/${pair.slice(0, separator)}`]?.version;
+    const wanted = pair.slice(separator + 1);
+    console.log(`${resolved === wanted ? 'OK ' : 'BAD'} ${pair.slice(0, separator)}: wanted ${wanted}, resolved ${resolved}`);
+    return resolved !== wanted;
+  });
+  const lostFlag = diff.installScriptFlips.some(({ had }) => had);
+  if (mismatches.length > 0 || lostFlag || diff.workspaceDrift.length > 0) process.exitCode = 1;
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'inventory') {
     await runInventory(args);
   } else if (command === 'record-blocker') {
     await runRecordBlocker(args);
+  } else if (command === 'lockdiff') {
+    await runLockdiff(args);
   } else if (command === 'cache-dir') {
     console.log(await cacheDirectory());
   } else {
-    console.error('usage: node scripts/upgrade-deps.mjs inventory|record-blocker|cache-dir');
+    console.error('usage: node scripts/upgrade-deps.mjs inventory|record-blocker|lockdiff|cache-dir');
     process.exit(2);
   }
 }

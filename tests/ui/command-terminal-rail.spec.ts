@@ -213,15 +213,14 @@ test.describe('Command Terminal rail', () => {
       const railEdge = 'command-terminal-rail-edge';
       expect((await lineOf(railEdge)).color).toBe('rgba(0, 0, 0, 0)');
 
-      // Hovered, each line fades in (`transition-colors`), so the color is read once it has settled.
+      // Hovered, each line fades in (`transition-colors`), so the color is read once the fade has
+      // ended. Two equal reads prove nothing: a stalled runner reads alpha 0 twice before the first
+      // frame of the fade. Any color at alpha 0 means the fade has not run.
       const settledLine = async (testId: string) => {
-        let previous = '';
-        await expect.poll(async () => {
-          const current = JSON.stringify(await lineOf(testId));
-          const settled = current === previous && !current.includes('rgba(0, 0, 0, 0)');
-          previous = current;
-          return settled;
-        }, { timeout: 3000, intervals: [100] }).toBe(true);
+        await expect.poll(() => page.getByTestId(testId).evaluate((element) => {
+          const line = element.firstElementChild as HTMLElement;
+          return line.getAnimations().length === 0 && !/, 0\)$/.test(getComputedStyle(line).backgroundColor);
+        }), { timeout: 5000, intervals: [50] }).toBe(true);
         return lineOf(testId);
       };
       const edge = await boxOf(page, railEdge);

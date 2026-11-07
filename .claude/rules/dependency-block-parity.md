@@ -67,21 +67,21 @@ was live in a shipped binary while `--omit=dev` said nothing.
 
 ### Deprecation warnings on install
 
-A clean `npm i` prints six `npm warn deprecated` lines. Every one was traced on 2026-09-17,
+A clean `npm i` prints eight `npm warn deprecated` lines. Every one was re-traced on 2026-11-06,
 none is a direct dependency, and none clears by bumping the direct dependency that pulls it in,
 so there are no `overrides` for them: an override would swap a package that is never executed
-for a warning that is cosmetic. A seventh, `prebuild-install@7.1.3`, cleared on 2026-10-04 when
+for a warning that is cosmetic. Another, `prebuild-install@7.1.3`, cleared on 2026-10-04 when
 better-sqlite3 moved to 13 (a Node-API rewrite that ships its own prebuilds) alongside Electron 44.
 
 | Warning | Owner chain | Why it stays |
 |---|---|---|
-| `glob@7.2.3` (twice), `inflight@1.0.6` | `@electron/asar@3.4.1`, pinned exactly by `app-builder-lib`, and `rimraf@2.6.3`'s nested copy | `app-builder-lib` 26.16.1 still pins `@electron/asar 3.4.1`. |
-| `rimraf@2.6.3` | `temp@0.9.4` under `electron-winstaller@5.4.0`, a peer of `app-builder-lib` via `electron-builder-squirrel-windows` | squirrel 26.16.1 still pins winstaller 5.4.0, though 5.4.4 exists. |
-| `boolean@3.2.0` | `global-agent@3.0.0`, optional under `@electron/get@3.1.0`, under `app-builder-lib` | 26.16.1 still has `@electron/get ^3.0.0`. |
-| `lodash.isequal@4.5.0` | `electron-updater@6.8.9`, the latest release | Bundled into main by esbuild; no fixed release. |
+| `glob@7.2.3` (four times), `inflight@1.0.6` | The nested `@electron/asar@3.4.1` under `app-builder-lib` (an exact pin), `@electron/universal` and `electron-winstaller`, and `rimraf@2.6.3`'s nested copy | `app-builder-lib` 26.18.1 still pins `@electron/asar 3.4.1`. Our own direct `@electron/asar` is 4.x and brings none of these. |
+| `rimraf@2.6.3` | `temp@0.9.4` under `electron-winstaller@5.4.0`, a peer of `app-builder-lib` via `electron-builder-squirrel-windows` | squirrel 26.18.1 still pins winstaller 5.4.0, though 5.4.4 exists. |
+| `boolean@3.2.0` | `global-agent@3.0.0`, optional under `@electron/get@3.1.0`, under `app-builder-lib` | 26.18.1 still has `@electron/get ^3.0.0`. |
+| `lodash.isequal@4.5.0` | `electron-updater@6.8.12`, the newest release | Bundled into main by esbuild; no fixed release. |
 
-`electron-builder` 26.15.3 to 26.16.1 clears none of these, which is why it was not bumped
-alongside. Re-trace with `npm ls <package>` before assuming any row above still holds.
+`electron-builder` 26.15.3 to 26.18.1 cleared none of these. Re-trace with `npm ls <package>`
+before assuming any row above still holds.
 
 ### The one override, and why it is allowed
 

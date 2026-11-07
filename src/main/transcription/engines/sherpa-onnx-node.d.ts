@@ -1,5 +1,5 @@
 /**
- * Ambient type declarations for sherpa-onnx-node (1.13.8), which ships no
+ * Ambient type declarations for sherpa-onnx-node (2.0.1), which ships no
  * TypeScript types. Covers only the surface the dictation engines use:
  * streaming (OnlineRecognizer), offline whisper (OfflineRecognizer), and
  * punctuation. Recognizer config objects are passed straight through to the

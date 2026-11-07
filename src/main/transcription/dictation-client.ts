@@ -12,6 +12,7 @@ import type {
   EnsureEngineRequest,
   ErrorMessage,
   FinalizeMessage,
+  ModelLoadFailedMessage,
   PartialMessage,
   PrewarmMessage,
   PushMessage,
@@ -314,9 +315,13 @@ export class DictationClient extends EventEmitter {
     // Fields from every WorkerReply variant, each optional: a rename or drop
     // of any of these in dictation-worker.ts fails this cast to compile,
     // rather than the field silently reading as undefined at runtime.
-    const record = message as Partial<ResultMessage> & Partial<ErrorMessage> & Partial<PartialMessage>;
+    const record = message as Partial<ResultMessage> & Partial<ErrorMessage> & Partial<PartialMessage> & Partial<ModelLoadFailedMessage>;
     if (record.type === 'partial' && typeof record.dictationSessionId === 'string') {
       this.emit('partial', record.dictationSessionId, record.text ?? '');
+      return;
+    }
+    if (record.type === 'model-load-failed' && typeof record.modelId === 'string') {
+      this.emit('model-load-failed', record.modelId);
       return;
     }
     if ((record.type === 'result' || record.type === 'error') && typeof record.id === 'number') {

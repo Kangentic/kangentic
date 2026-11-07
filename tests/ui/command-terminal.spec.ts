@@ -5082,9 +5082,7 @@ test.describe('Command Terminal', () => {
     }
 
     test('a resume main refuses starts a fresh terminal in the same slot and says why', async () => {
-      // A cold terminal, a refused resume and the fresh start behind it: 10 s locally, so the 15 s
-      // default has no room on a loaded CI runner, where it ran out on both attempts of two runs
-      // with every wait met. It gets the room its neighbours have.
+      // Three starts and a toast, which the 15 s default leaves no room for on a CI runner.
       test.setTimeout(45000);
       // Main refuses a conversation another terminal holds only after the slot's unused terminal
       // has ended, so the window used to close with nothing in it. A fresh terminal takes its place.
@@ -5144,6 +5142,8 @@ test.describe('Command Terminal', () => {
     });
 
     test('at the cap the rows are off and say why', async () => {
+      // Opening terminals up to the cap, which the 15 s default leaves no room for on a CI runner.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
       try {
         await openWithOneTerminal(page);

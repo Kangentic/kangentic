@@ -67,6 +67,47 @@ export const CORE_ICONS: ReadonlyMap<string, IconComponent> = new Map<string, Ic
   }).map(([key, component]) => [toKebabCase(key), component as IconComponent]),
 );
 
+/**
+ * Names lucide has renamed, old to new, in the kebab form `toKebabCase` writes. A column or a shortcut
+ * saved one of these, and lucide drops an old name from its `icons` map even while the old React
+ * export lives on as an alias, so without this a saved icon falls back to its role default, a dot or
+ * Zap. A stored name is never rewritten: this is read at lookup time, so a name stays as saved and
+ * an older build sharing a `kangentic.json` still reads it.
+ *
+ * Eight of these point at a redrawn glyph rather than the same drawing: `bold`, `heading`, `copyright`,
+ * `square-m`, and the four parking icons became letter icons. Lucide's own aliases do the same, and a
+ * slightly different glyph beats a dot.
+ */
+export const LEGACY_ICON_NAMES: ReadonlyMap<string, string> = new Map<string, string>([
+  ['archive-restore', 'archive-arrow-up'],
+  ['badge-alert', 'badge-exclamation-point'],
+  ['battery-warning', 'battery-exclamation-point'],
+  ['bold', 'letter-b'],
+  ['book-alert', 'book-exclamation-point'],
+  ['circle-alert', 'circle-exclamation-point'],
+  ['circle-parking', 'circle-letter-p'],
+  ['circle-parking-off', 'circle-letter-poff'],
+  ['clock-alert', 'clock-exclamation-point'],
+  ['cloud-alert', 'cloud-exclamation-point'],
+  ['copyright', 'circle-letter-c'],
+  ['heading', 'letter-h'],
+  ['mail-warning', 'mail-exclamation-point'],
+  ['message-circle-warning', 'message-circle-exclamation-point'],
+  ['message-square-warning', 'message-square-exclamation-point'],
+  ['octagon-alert', 'octagon-exclamation-point'],
+  ['search-alert', 'search-exclamation-point'],
+  ['shield-alert', 'shield-exclamation-point'],
+  ['square-m', 'square-letter-m'],
+  ['square-parking', 'square-letter-p'],
+  ['square-parking-off', 'square-letter-poff'],
+  ['triangle-alert', 'triangle-exclamation-point'],
+]);
+
+/** The name a persisted icon goes by now. Every lookup and comparison against the catalog uses this. */
+export function canonicalIconName(name: string): string {
+  return LEGACY_ICON_NAMES.get(name) ?? name;
+}
+
 type IconCatalogModule = typeof import('./icon-catalog');
 
 // The loaded map outlives a Fast Refresh of this module (Pattern A), so an edit here does not drop
@@ -92,7 +133,8 @@ if (import.meta.hot) {
 /** The component for a name, or undefined when the name is pending or unknown. */
 export function resolveIcon(name: string | null | undefined): IconComponent | undefined {
   if (!name) return undefined;
-  return CORE_ICONS.get(name) ?? catalogModule?.CATALOG.get(name);
+  const canonicalName = canonicalIconName(name);
+  return CORE_ICONS.get(canonicalName) ?? catalogModule?.CATALOG.get(canonicalName);
 }
 
 /** The full map when it has already loaded, so a picker reopened later paints its grid at once. */
@@ -102,7 +144,7 @@ export function getLoadedIconCatalog(): IconCatalogModule | null {
 
 /** True while a name cannot be answered without the full map. */
 export function isIconPending(name: string | null | undefined): boolean {
-  return Boolean(name) && catalogModule === null && !CORE_ICONS.has(name as string);
+  return Boolean(name) && catalogModule === null && !CORE_ICONS.has(canonicalIconName(name as string));
 }
 
 /**

@@ -3,7 +3,7 @@ import { Search, Smile } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 import { Tooltip } from '../Tooltip';
-import { getLoadedIconCatalog, loadIconCatalog, type IconEntry } from '../../utils/icon-registry';
+import { canonicalIconName, getLoadedIconCatalog, loadIconCatalog, type IconEntry } from '../../utils/icon-registry';
 import { tipLabel } from '../../utils/tooltip';
 
 
@@ -58,6 +58,8 @@ export function IconPickerDialog({
   const [query, setQuery] = useState('');
   const { icons: allIcons, failed } = useAllIcons();
   const loading = allIcons.length === 0 && !failed;
+  // An icon saved under a name lucide has since renamed still marks its tile.
+  const selectedEntryName = selectedIcon === null ? null : canonicalIconName(selectedIcon);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return allIcons;
@@ -122,7 +124,7 @@ export function IconPickerDialog({
           {/* Icon buttons */}
           {filtered.map((entry) => {
             const isUsed = usedIcons.has(entry.name);
-            const isSelected = selectedIcon === entry.name;
+            const isSelected = selectedEntryName === entry.name;
             return (
               <Tooltip
                 key={entry.name}
@@ -132,6 +134,7 @@ export function IconPickerDialog({
                   type="button"
                   onClick={() => onSelect(entry.name)}
                   disabled={isUsed}
+                  aria-pressed={isSelected}
                   className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
                     isUsed
                       ? 'opacity-30 cursor-not-allowed border-transparent'

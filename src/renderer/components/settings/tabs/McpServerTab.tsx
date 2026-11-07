@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, CircleAlert, Loader2, Plug, Signal } from 'lucide-react';
+import { Check, CircleExclamationPoint, Loader2, Plug, Signal } from 'lucide-react';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig, McpConnectionCheck } from '../../../../shared/types';
@@ -83,7 +83,7 @@ function McpConnectionRow() {
               </span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-attention" data-testid="mcp-connection-status">
-                <CircleAlert size={13} aria-hidden="true" /><Trans context="connection state">Failed</Trans>
+                <CircleExclamationPoint size={13} aria-hidden="true" /><Trans context="connection state">Failed</Trans>
               </span>
             )
           ) : null}

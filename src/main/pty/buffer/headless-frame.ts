@@ -41,8 +41,6 @@ interface TerminalWithScrollRegion {
 interface InternalBufferLine {
   readonly length: number;
   resize(cols: number, fillCell: unknown): boolean;
-  getWidth(column: number): number;
-  setCell(column: number, cell: unknown): void;
 }
 
 /**
@@ -115,11 +113,10 @@ export class HeadlessFrameBuffer {
    * scrollback, so a shrink while the alt screen is up leaves its lines at the
    * old width for the rest of the session. The agent's frames and EL touch only the first
    * `cols` cells, so the cells past them keep whatever the wider frame drew. The
-   * serialize addon walks `line.length`, not `terminal.cols`, so it emits those
-   * off-grid cells. Where a row ends in null cells above a wrapped row it also
-   * emits its `-` wrap separator, and every replay showed text rows interleaved
-   * with dashed rows until the session ended. `lineAt` read the same stale cells
-   * into the Agent Monitor peek.
+   * serialize addon clamps its rows to `terminal.cols`, so it no longer emits those
+   * off-grid cells, but `lineAt` would read them into the Agent Monitor peek, and
+   * a regrow would bring them back onto the grid (xtermjs/xterm.js#6228, still
+   * open). A wide glyph cut in half needs nothing here: `line.resize` blanks it.
    *
    * The normal buffer needs none of this. It reflows, because this parser sets
    * no `windowsPty`, and xterm trims it after the reflow. While the normal
@@ -143,11 +140,6 @@ export class HeadlessFrameBuffer {
       const line = lines.get(index);
       if (!line || line.length <= cols) continue;
       line.resize(cols, nullCell);
-      // A wide glyph that straddled the new edge keeps only its left half on the
-      // last column. Serialized there, it cannot fit, so the replay autowraps it
-      // and every row below shifts down. Reflow moves such a glyph to the next
-      // row; with no reflow, blank it and let the agent's repaint redraw it.
-      if (line.getWidth(cols - 1) > 1) line.setCell(cols - 1, nullCell);
     }
   }
 

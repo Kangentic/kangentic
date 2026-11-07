@@ -15,12 +15,14 @@ import {
   changeKind,
   chooseTarget,
   collectDeclared,
+  diffLockfile,
   groupOf,
   newPeerConflicts,
   researchState,
   splitAudit,
   supplyChainSignals,
   targetsAgree,
+  watchedVersion,
   withBlocker,
 } from '../../scripts/upgrade-deps.mjs';
 
@@ -296,7 +298,7 @@ describe('researchState', () => {
     verdict: 'ready',
     evaluatedAt: OLD,
   };
-  const base = { targets, latestVersions: {}, refresh: false };
+  const base = { targets, watchedVersions: {}, refresh: false };
 
   it('researches a group with no usable brief', () => {
     expect(researchState({ ...base, brief: undefined })).toBe('research');
@@ -317,8 +319,8 @@ describe('researchState', () => {
       verdict: 'blocked',
       blocker: { reason: 'peer range', blockedOn: { 'typescript-eslint': '8.72.1' } },
     };
-    expect(researchState({ ...base, brief: blocked, latestVersions: { 'typescript-eslint': '8.72.1' } })).toBe('blocked');
-    expect(researchState({ ...base, brief: blocked, latestVersions: { 'typescript-eslint': '9.0.0' } })).toBe('recheck');
+    expect(researchState({ ...base, brief: blocked, watchedVersions: { 'typescript-eslint': '8.72.1' } })).toBe('blocked');
+    expect(researchState({ ...base, brief: blocked, watchedVersions: { 'typescript-eslint': '9.0.0' } })).toBe('recheck');
   });
 
   it('keeps a blocker with nothing to watch until a new version moves the target', () => {
@@ -343,7 +345,63 @@ describe('researchState', () => {
       NOW,
     );
     expect(blocked.task).toBeNull();
-    expect(researchState({ ...base, brief: blocked, latestVersions: { 'app-builder-lib': '26.18.0' } })).toBe('blocked');
+    expect(researchState({ ...base, brief: blocked, watchedVersions: { 'app-builder-lib': '26.18.0' } })).toBe('blocked');
+  });
+});
+
+describe('watchedVersion', () => {
+  const addon = {
+    distTags: { latest: '0.19.0' },
+    versions: versionsOf('0.19.0', '0.20.0-beta.329', '0.20.0-beta.336'),
+  };
+
+  it('follows a recorded beta along its own line, where latest would never move', () => {
+    expect(watchedVersion('0.20.0-beta.329', addon)).toBe('0.20.0-beta.336');
+    expect(watchedVersion('0.20.0-beta.336', addon)).toBe('0.20.0-beta.336');
+  });
+
+  it('never moves a recorded stable version onto a beta', () => {
+    expect(watchedVersion('0.19.0', addon)).toBe('0.19.0');
+  });
+
+  it('follows latest for an ordinary package', () => {
+    const eslintPlugin = { distTags: { latest: '9.0.0' }, versions: versionsOf('8.72.1', '9.0.0') };
+    expect(watchedVersion('8.72.1', eslintPlugin)).toBe('9.0.0');
+  });
+});
+
+describe('diffLockfile', () => {
+  const before = {
+    '': { name: 'kangentic' },
+    'packages/protocol': { version: '1.0.0' },
+    'node_modules/better-sqlite3': { version: '13.0.0', hasInstallScript: true },
+    'node_modules/ws': { version: '8.22.0' },
+    'node_modules/gone': { version: '1.0.0' },
+  };
+
+  it('reports what a phase moved, added and removed', () => {
+    const diff = diffLockfile(before, {
+      '': { name: 'kangentic' },
+      'packages/protocol': { version: '1.0.0' },
+      'node_modules/better-sqlite3': { version: '13.0.0', hasInstallScript: true },
+      'node_modules/ws': { version: '8.22.1' },
+      'node_modules/fresh': { version: '2.0.0', hasInstallScript: true },
+    });
+    expect(diff.changed).toEqual([{ name: 'ws', from: '8.22.0', to: '8.22.1' }]);
+    expect(diff.added).toEqual([{ name: 'fresh', version: '2.0.0', hasInstallScript: true }]);
+    expect(diff.removed).toEqual([{ name: 'gone', version: '1.0.0' }]);
+    expect(diff.installScriptFlips).toEqual([]);
+    expect(diff.workspaceDrift).toEqual([]);
+  });
+
+  it('catches better-sqlite3 losing its install script flag, which npm update does silently', () => {
+    const diff = diffLockfile(before, { ...before, 'node_modules/better-sqlite3': { version: '13.0.0' } });
+    expect(diff.installScriptFlips).toEqual([{ name: 'better-sqlite3', had: true }]);
+  });
+
+  it('catches a workspace version that drifted, which only the release skills may change', () => {
+    const diff = diffLockfile(before, { ...before, 'packages/protocol': { version: '1.0.1' } });
+    expect(diff.workspaceDrift).toEqual(['packages/protocol']);
   });
 });
 
@@ -379,6 +437,24 @@ describe('buildInventory', () => {
     expect(inventory.groups).toHaveLength(1);
     expect(inventory.groups[0]).toMatchObject({ group: 'lingui', kind: 'minor', research: 'research' });
     expect(inventory.groups[0].members.map(({ name }) => name)).toEqual(['@lingui/core', '@lingui/cli']);
+  });
+
+  it('rechecks a blocker when the beta it waits on moves, though latest never did', () => {
+    const blockedBrief = {
+      targets: { electron: '45.2.3' },
+      verdict: 'blocked',
+      evaluatedAt: OLD,
+      blocker: { reason: 'font', blockedOn: { '@xterm/addon-webgl': '0.20.0-beta.329' } },
+    };
+    const electron = packument('45.2.3', ['45.1.0', '45.2.3']);
+    const inventoryWith = (betas: string[]) => buildInventory({
+      ...base,
+      briefs: { electron: blockedBrief },
+      declared: [record('electron', '45.1.0')],
+      packuments: { electron, '@xterm/addon-webgl': packument('0.19.0', ['0.19.0', ...betas]) },
+    });
+    expect(inventoryWith(['0.20.0-beta.329']).groups[0].research).toBe('blocked');
+    expect(inventoryWith(['0.20.0-beta.329', '0.20.0-beta.340']).groups[0].research).toBe('recheck');
   });
 
   it('never lists a beta pin whose latest is older as something to move', () => {

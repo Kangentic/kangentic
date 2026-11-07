@@ -1,4 +1,4 @@
-import { AlertTriangle, Lock, RotateCcw } from 'lucide-react';
+import { TriangleExclamationPoint, Lock, RotateCcw } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { KeybindingDefinition } from '../../../../shared/keybindings';
 import { Pill } from '../../Pill';
@@ -61,12 +61,12 @@ export function HotkeyRow({
           </span>
           {conflict && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-conflict-${definition.id}`}>
-              <AlertTriangle size={11} /> <Trans context="hotkey state">Conflict</Trans>
+              <TriangleExclamationPoint size={11} /> <Trans context="hotkey state">Conflict</Trans>
             </Pill>
           )}
           {!conflict && taken && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-taken-${definition.id}`}>
-              <AlertTriangle size={11} /> <Trans>In use by another app</Trans>
+              <TriangleExclamationPoint size={11} /> <Trans>In use by another app</Trans>
             </Pill>
           )}
           {!conflict && !taken && terminalWarn && (

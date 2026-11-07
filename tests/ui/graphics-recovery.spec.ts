@@ -510,9 +510,10 @@ test.describe('Settings > Performance', () => {
   });
 
   test('the restart dialog shows the restart icon, not the warning triangle', async () => {
-    // ConfirmDialog falls back to the warning triangle (AlertTriangle, an
-    // alias of lucide's triangle-alert) unless the caller supplies its own
-    // icon. PerformanceTab passes RotateCw for this dialog because a restart
+    // ConfirmDialog falls back to the warning triangle
+    // (TriangleExclamationPoint, which still also carries the older
+    // triangle-alert classes) unless the caller supplies its own icon.
+    // PerformanceTab passes RotateCw for this dialog because a restart
     // is not a warning; this pins that the icon prop is actually rendered
     // instead of ignored.
     const { browser, page } = await launchWithState({ omitProject: true });
@@ -525,7 +526,7 @@ test.describe('Settings > Performance', () => {
 
       await expect(dialog.locator('svg.lucide-rotate-cw')).toHaveCount(1);
       await expect(
-        dialog.locator('svg.lucide-triangle-alert, svg.lucide-alert-triangle'),
+        dialog.locator('svg.lucide-triangle-exclamation-point, svg.lucide-triangle-alert, svg.lucide-alert-triangle'),
       ).toHaveCount(0);
     } finally {
       await browser.close();
