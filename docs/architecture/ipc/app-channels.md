@@ -240,7 +240,7 @@ Detach a registered UI surface (`stats` for usage stats, `changes` for git chang
 | `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, falling back to `<configDir>/logs/` while no project is open (the same fallback crash capture uses). |
 | `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
-## Dictation (14 channels)
+## Dictation (16 channels)
 By-session-id, not task-scoped (no `projectId`), in the same category as `session:resize`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -248,7 +248,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:stop` | invoke | Finalize and return the committed text. Passes the renderer's sent-frame count so the decode drains all in-flight audio first (the tail is never clipped) |
 | `transcribe:cancel` | invoke | Abort a session without committing |
 | `transcribe:commit` | invoke | Inject finalized text into the focused terminal WITHOUT submitting (no Enter) |
-| `transcribe:submit` | invoke | Auto-submit: erase the live preview, then paste + submit the refined text via the paste engine (settle -> separate Enter -> submission evidence with retry) |
+| `transcribe:submit` | invoke | Auto-submit: erase the live preview (the agent's `promptEndKeys` lead the DEL run in one write, even with nothing to erase), then paste + submit the refined text via the paste engine (settle -> separate Enter -> submission evidence with retry) |
 | `transcribe:getInfo` | invoke | Hardware profile + engines + installed models + per-slot model lists (settings panel) |
 | `transcribe:partial` | on | Push: live revising hypothesis to the renderer |
 | `transcribe:final` | on | Push: finalized text to the renderer |
@@ -256,5 +256,7 @@ By-session-id, not task-scoped (no `projectId`), in the same category as `sessio
 | `transcribe:requestMic` | invoke | Ensure microphone access (macOS TCC prompt on first use) |
 | `transcribe:modelProgress` | on | Push: first-use model download progress, as aggregate bytes across the set plus the downloading model's own pair (`modelDownloadedBytes`, `modelTotalBytes`) for its line in the Dictation tab. An `error` carries the id of the model whose download failed |
 | `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
-| `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
+| `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks, behind the agent's `promptEndKeys` (fire-and-forget) |
+| `transcribe:holdTrace` | on | Log a push-to-talk press, a refused press, or how a hold ended, as a `[dictation-hold]` line with no spoken text (fire-and-forget) |
+| `transcribe:windowBlur` | push | The main window lost OS focus, so `useDictation` ends a hold no release can reach. Main window only |
 | `transcribe:prewarm` | on | Pre-load the selected engine's live (streaming) model so the next press streams partials at once; the refinement model loads on the first press itself, overlapped with the utterance. `null` (dictation disabled) releases the worker outright (fire-and-forget) |

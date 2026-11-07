@@ -11,6 +11,26 @@ export interface DrawPoint {
 
 export type Stroke = DrawPoint[];
 
+/** `PointerEvent.button` and its `buttons` flag for the left button. */
+const LEFT_BUTTON = 0;
+const LEFT_BUTTON_FLAG = 1;
+
+/**
+ * What a `pointermove` does to a stroke when other buttons are in play. A chorded
+ * press has `button` 0 with its flag set. A release of the left button under
+ * another one leaves the flag off, and with nothing left to fire `pointerup`, that
+ * move is the stroke's only end.
+ */
+export function chordedStrokeChange(
+  drawing: boolean,
+  event: { button: number; buttons: number },
+): 'start' | 'end' | null {
+  const leftHeld = (event.buttons & LEFT_BUTTON_FLAG) !== 0;
+  if (!drawing && event.button === LEFT_BUTTON && leftHeld) return 'start';
+  if (drawing && event.button === LEFT_BUTTON && !leftHeld) return 'end';
+  return null;
+}
+
 interface UseDrawingOverlayOptions {
   enabled: boolean;
   color?: string;
@@ -81,8 +101,33 @@ export function useDrawingOverlay({
     setStrokes((previous) => [...previous, [point]]);
   }, [enabled, pointFromEvent]);
 
+  const onPointerUp = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    try {
+      canvasRef.current?.releasePointerCapture(event.pointerId);
+    } catch {
+      // No-op if capture was already released by the browser (fast drags
+      // can fire pointerLeave + pointerUp in close succession; the second
+      // release throws InvalidPointerId on some browser builds).
+    }
+    currentStrokeRef.current = [];
+  }, []);
+
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!enabled || !drawingRef.current) return;
+    if (!enabled) return;
+    // The left button going down or up with another one held, push-to-talk above
+    // all, reports as a move and fires neither `pointerdown` nor `pointerup`.
+    const change = chordedStrokeChange(drawingRef.current, event);
+    if (change === 'start') {
+      onPointerDown(event);
+      return;
+    }
+    if (change === 'end') {
+      onPointerUp(event);
+      return;
+    }
+    if (!drawingRef.current) return;
     const point = pointFromEvent(event);
     if (!point) return;
     // Capture the new array at schedule time. Without this, fast drags
@@ -97,20 +142,7 @@ export function useDrawingOverlay({
       next[next.length - 1] = nextStroke;
       return next;
     });
-  }, [enabled, pointFromEvent]);
-
-  const onPointerUp = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawingRef.current) return;
-    drawingRef.current = false;
-    try {
-      canvasRef.current?.releasePointerCapture(event.pointerId);
-    } catch {
-      // No-op if capture was already released by the browser (fast drags
-      // can fire pointerLeave + pointerUp in close succession; the second
-      // release throws InvalidPointerId on some browser builds).
-    }
-    currentStrokeRef.current = [];
-  }, []);
+  }, [enabled, onPointerDown, onPointerUp, pointFromEvent]);
 
   const clear = useCallback(() => {
     setStrokes([]);

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { effectiveCombo, getKeybinding, isMouseCombo } from '../../shared/keybindings';
-import { matchesCombo, formatCombo } from '../utils/keybindings';
+import { matchesCombo, matchesMouseChordPress, formatCombo } from '../utils/keybindings';
 import { isRebindCaptureActive } from '../utils/rebind-state';
 
 /**
@@ -41,6 +41,12 @@ interface UseKeybindingOptions {
   preventDefault?: boolean;
   /** Call event.stopPropagation() on a match. Default true. */
   stopPropagation?: boolean;
+  /** Also fire on a mouse press that lands with another button already down,
+   *  which Chromium reports as a `pointermove`. For a hold that has to start
+   *  mid-stroke. That move is passed on untouched, whatever the two options above
+   *  say, because the stroke needs it. Default false: a one-shot action should not
+   *  fire in the middle of a drag. */
+  chordedPress?: boolean;
   /** Extra predicate run before matching (e.g. skip when typing in an input, or
    *  gate on a pane being hovered/focused). Return false to ignore the event.
    *  Receives a `PointerEvent` when the action is bound to a mouse button. */
@@ -74,6 +80,7 @@ export function useKeybinding(
     target = 'window',
     preventDefault = true,
     stopPropagation = true,
+    chordedPress = false,
     when,
   } = options;
 
@@ -97,6 +104,13 @@ export function useKeybinding(
       // reaches the capture widget instead of firing its current binding.
       if (isRebindCaptureActive()) return;
       const inputEvent = event as KeyboardEvent | PointerEvent;
+      if (inputEvent.type === 'pointermove') {
+        const pointerEvent = inputEvent as PointerEvent;
+        const pressed = matchesMouseChordPress(pointerEvent, combo)
+          || (!!altCombo && matchesMouseChordPress(pointerEvent, altCombo));
+        if (pressed && (!whenRef.current || whenRef.current(pointerEvent))) handlerRef.current(pointerEvent);
+        return;
+      }
       if (whenRef.current && !whenRef.current(inputEvent)) return;
       const hit = matchesCombo(inputEvent, combo) || (!!altCombo && matchesCombo(inputEvent, altCombo));
       if (!hit) return;
@@ -107,12 +121,13 @@ export function useKeybinding(
     // A keyboard combo is delivered by `keydown`, a mouse combo by `pointerdown`.
     // The combo and its alt can be different input kinds, so listen for each kind
     // either actually uses.
-    const eventTypes = new Set<'keydown' | 'pointerdown'>();
+    const eventTypes = new Set<'keydown' | 'pointerdown' | 'pointermove'>();
     eventTypes.add(isMouseCombo(combo) ? 'pointerdown' : 'keydown');
     if (altCombo) eventTypes.add(isMouseCombo(altCombo) ? 'pointerdown' : 'keydown');
+    if (chordedPress && eventTypes.has('pointerdown')) eventTypes.add('pointermove');
     for (const eventType of eventTypes) element.addEventListener(eventType, onEvent, capture);
     return () => {
       for (const eventType of eventTypes) element.removeEventListener(eventType, onEvent, capture);
     };
-  }, [combo, altCombo, enabled, capture, target, preventDefault, stopPropagation]);
+  }, [combo, altCombo, enabled, capture, target, preventDefault, stopPropagation, chordedPress]);
 }

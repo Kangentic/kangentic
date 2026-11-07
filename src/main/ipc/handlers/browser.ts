@@ -210,13 +210,20 @@ export function registerBrowserHandlers(context: IpcContext): void {
     // worktree-cwd tasks this starts with `..` (the captures dir lives
     // under the project root, not the worktree); buildPromptPayload
     // POSIX-ifies the separators before emitting the @-mention.
-    let relativePngPath = path.relative(input.cwd, absolutePngPath);
+    //
+    // The cwd is main's own record of where the agent works. The pane's value is
+    // only the fallback for a session main does not know, because a pane computes
+    // it from the board's task row, which can be stale: a row with no
+    // `worktree_path` yet gave a path from the project root, the agent running in
+    // the worktree found no file, and the drawing never reached it.
+    const agentCwd = context.sessionManager.getSessionCommandCwd(input.sessionId) ?? input.cwd;
+    let relativePngPath = path.relative(agentCwd, absolutePngPath);
     // Windows cross-drive guard: when projectRoot and cwd live on different
     // drives, path.relative returns the absolute target instead of a
     // walked-up path. Falling back to the absolute path keeps the file
     // reachable; the agent's @-mention parser handles either form.
     if (isCrossDrivePath(relativePngPath)) {
-      console.warn(`[browser] capture path crosses drives (cwd=${input.cwd}); using absolute path`);
+      console.warn(`[browser] capture path crosses drives (cwd=${agentCwd}); using absolute path`);
       relativePngPath = absolutePngPath;
     }
     const payload = buildPromptPayload(input, relativePngPath);
