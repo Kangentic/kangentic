@@ -14,11 +14,11 @@
  * mock TUI whose only job is to exist in the registry.
  *
  *   node rig.mjs            run every scenario
- *   node rig.mjs --keep     leave the task, session and lanes in place
+ *   node rig.mjs --keep     leave the task, session and surface in place
  *
  * Requires a running /preview of this worktree.
  */
-import { evalInPreview, runCommand, McpClient, startPageServer, ok, fail, info, WORKTREE } from './lib.mjs';
+import { evalInPreview, runCommand, McpClient, startPageServer, openTaskWindow, dropTaskWindow, ok, fail, info, WORKTREE } from './lib.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,21 +88,15 @@ async function setup() {
   return { projectId, projectPath, drivers, pageUrl: `http://127.0.0.1:${state.port}/` };
 }
 
-// ── scenario A: N concurrent drivers, ONE shared guest ────────────────────
+// ── scenario A: N concurrent drivers, ONE guest, in each form it takes ────
 
 /**
  * The contention itself, asserted on the guest rather than on the surface.
  *
- * `withGuest` acquires the per-guest FIFO keyed by webContentsId, so a lane and
- * a user-visible pane queue through the identical chokepoint - which is the
- * whole reason lanes register into the same registry. Driving a SHARED LANE
- * therefore exercises the same lock the reported bug needed, and does it
- * without depending on the preview window being on screen.
- *
- * A2 below runs the same assertion against a real task-detail pane, and skips
- * with a reason when the window is occluded (rAF stalls, the webview never
- * constructs, and open_pane times out - an environment limit, not a product
- * one).
+ * `withGuest` acquires the per-guest FIFO keyed by webContentsId, so a parked
+ * pane, a pane on screen and a lane all queue through the identical chokepoint.
+ * A task has one surface, so the three scenarios below are that one surface in
+ * each form it can take, none of which needs the preview window on screen.
  */
 async function typeConcurrently(drivers, sessionId, label, pageUrl) {
   // Each driver types a long run of ONE distinct character into the same
@@ -171,100 +165,29 @@ async function typeConcurrently(drivers, sessionId, label, pageUrl) {
   }
 }
 
-async function scenarioSharedGuest(drivers, pageUrl) {
-  console.log('\n=== A1. three concurrent callers, ONE shared guest (lane) ===');
-  const opened = await drivers[0].call('kangentic_browser_open_pane', { isolated: true, url: pageUrl });
-  const handle = (/"?(?:laneSessionId|sessionId)"?\s*[:=]\s*"([^"]+)"/.exec(opened.text) || [])[1];
-  if (!handle) return fail('open a shared guest', opened.text.slice(0, 300));
-  info(`all three callers driving guest ${handle.slice(0, 8)}`);
-  await typeConcurrently(drivers, handle, 'shared guest', pageUrl);
-  return handle;
-}
-
-async function scenarioSharedPane(drivers, pageUrl) {
-  console.log('\n=== A2. the same, on a real task-detail pane ===');
-  const visibility = await evalInPreview('document.visibilityState');
-  if (visibility !== 'visible') {
-    info(`SKIPPED: preview window is "${visibility}". An occluded window stalls`);
-    info('requestAnimationFrame, so the pane webview never constructs and');
-    info('open_pane times out. Bring the preview window to the front and re-run');
-    info('for this one. A1 covers the same FIFO on the same chokepoint.');
-    return;
-  }
+async function scenarioParkedPane(drivers, pageUrl) {
+  console.log('\n=== A1. three concurrent callers, a parked pane (no window open) ===');
   const opened = await drivers[0].call('kangentic_browser_open_pane', { url: pageUrl });
-  if (opened.isError) return fail('open the shared pane', opened.text.slice(0, 300));
-  ok('shared pane opened');
-  await typeConcurrently(drivers, undefined, 'shared pane', pageUrl);
+  if (opened.isError) return fail('open the pane', opened.text.slice(0, 300));
+  const handle = (/"?sessionId"?\s*[:=]\s*"(pane_[^"]+)"/.exec(opened.text) || [])[1];
+  if (!handle) return fail('read the pane handle', opened.text.slice(0, 300));
+  info(`all three callers driving guest ${handle}`);
+  await typeConcurrently(drivers, handle, 'parked pane', pageUrl);
 }
 
-// ── scenario B: each caller gets its own isolated lane ────────────────────
-
-async function scenarioIsolatedLanes(drivers, pageUrl) {
-  console.log('\n=== B. three concurrent callers, one isolated lane each ===');
-
-  const opens = await Promise.allSettled(
-    drivers.map((driver) => driver.call('kangentic_browser_open_pane', { isolated: true, url: pageUrl })),
-  );
-
-  const handles = [];
-  for (const [index, entry] of opens.entries()) {
-    if (entry.status !== 'fulfilled' || entry.value.isError) {
-      const detail = entry.status === 'rejected' ? entry.reason?.message : entry.value.text;
-      fail(`driver ${drivers[index].label} opened a lane`, String(detail).slice(0, 300));
-      continue;
-    }
-    const handle = /"?(?:laneSessionId|sessionId)"?\s*[:=]\s*"([^"]+)"/.exec(entry.value.text);
-    handles.push(handle ? handle[1] : null);
-  }
-
-  if (handles.filter(Boolean).length !== DRIVERS) {
-    return info(`only ${handles.filter(Boolean).length}/${DRIVERS} lane handles parsed; raw: ${opens[0].value?.text?.slice(0, 300)}`);
-  }
-  const distinct = new Set(handles).size;
-  if (distinct === DRIVERS) ok(`each caller got a DISTINCT lane (${distinct} handles)`);
-  else fail('each caller got a distinct lane', `${distinct} distinct handles for ${DRIVERS} callers`);
-
-  // Each lane navigates to a URL carrying its own id, then reads it back. If
-  // lanes were shared, every driver would read the last navigation's id.
-  await Promise.allSettled(
-    drivers.map((driver, index) =>
-      driver.call('kangentic_browser_navigate', {
-        sessionId: handles[index],
-        url: `${pageUrl}?lane=${driver.label}`,
-      })),
-  );
-  const reads = await Promise.allSettled(
-    drivers.map((driver, index) =>
-      driver.call('kangentic_browser_query_dom', { sessionId: handles[index], selector: '#lane' })),
-  );
-
-  let isolated = 0;
-  for (const [index, entry] of reads.entries()) {
-    const label = drivers[index].label;
-    const text = entry.status === 'fulfilled' ? entry.value.text : '';
-    if (text.includes(`>${label}<`) || text.includes(label)) isolated += 1;
-  }
-  if (isolated === DRIVERS) ok(`each lane reported ITS OWN page (${isolated}/${DRIVERS})`);
-  else fail('each lane reported its own page', `${isolated}/${DRIVERS} matched; a shared guest would collapse to one`);
-
-  return handles;
+async function scenarioOpenPane(drivers, pageUrl) {
+  console.log('\n=== A2. the same, with the task window open ===');
+  await openTaskWindow(state.taskId);
+  await typeConcurrently(drivers, undefined, 'open pane', pageUrl);
 }
 
-// ── scenario C: the lane cap refuses actionably ───────────────────────────
-
-async function scenarioLaneCap(drivers, pageUrl) {
-  console.log('\n=== C. lane cap refuses the N+1th, and says what to do ===');
-  const driver = drivers[0];
-  let refusal = null;
-  for (let attempt = 0; attempt < 8 && !refusal; attempt += 1) {
-    const result = await driver.call('kangentic_browser_open_pane', { isolated: true, url: pageUrl });
-    if (result.isError) refusal = result.text;
-  }
-  if (!refusal) return fail('the cap refused an extra lane', 'no refusal after 8 opens');
-  info(refusal.split('\n')[0].slice(0, 200));
-  const actionable = /reuse|already hold|pass its sessionId|existing lane/i.test(refusal);
-  if (actionable) ok('the refusal names lane REUSE, so a retrying caller can self-correct');
-  else fail('the refusal names lane reuse', `got: ${refusal.slice(0, 200)}`);
+async function scenarioLane(drivers, pageUrl) {
+  console.log('\n=== A3. the same, on the offscreen lane a dead guest leaves ===');
+  await dropTaskWindow(state.taskId);
+  const listed = JSON.parse((await drivers[0].call('kangentic_browser_list_panes', {})).text);
+  const lane = listed.panes.find((pane) => pane.taskId === state.taskId && pane.kind === 'lane' && pane.alive);
+  if (!lane) return fail('a lane took over', JSON.stringify(listed.panes).slice(0, 300));
+  await typeConcurrently(drivers, lane.sessionId, 'lane', pageUrl);
 }
 
 // ── scenario D: contention is no longer silent ────────────────────────────
@@ -296,7 +219,7 @@ async function scenarioTelemetry(projectPath) {
 // ── teardown ──────────────────────────────────────────────────────────────
 
 async function teardown() {
-  if (KEEP) return void console.log('\n(--keep: leaving task, session and lanes in place)');
+  if (KEEP) return void console.log('\n(--keep: leaving task, session and surface in place)');
   console.log('\n=== teardown ===');
   try {
     if (state.sessionId) {
@@ -324,10 +247,9 @@ async function teardown() {
 
 try {
   const { drivers, pageUrl, projectPath } = await setup();
-  await scenarioSharedGuest(drivers, pageUrl);
-  await scenarioSharedPane(drivers, pageUrl);
-  await scenarioIsolatedLanes(drivers, pageUrl);
-  await scenarioLaneCap(drivers, pageUrl);
+  await scenarioParkedPane(drivers, pageUrl);
+  await scenarioOpenPane(drivers, pageUrl);
+  await scenarioLane(drivers, pageUrl);
   await scenarioTelemetry(projectPath);
 } catch (error) {
   fail('rig', error.stack || error.message);

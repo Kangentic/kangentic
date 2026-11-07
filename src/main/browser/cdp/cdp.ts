@@ -2,6 +2,7 @@ import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
 import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
 import { MODIFIER_FLAGS, chordKeyIdentity, parseKeyCombo } from './key-combo';
+import { holdGuestRendering } from './guest-capture-hold';
 
 /**
  * Wraps `webContents.debugger.attach('1.3')` and exposes typed helpers
@@ -598,6 +599,12 @@ export interface ScreenshotOptions {
  * (`disable-backgrounding-occluded-windows` and the `CalculateNativeWinOcclusion`
  * feature) let a covered host capture, in 22 ms, at the cost of a covered
  * window painting on; a minimized host still hung with it.
+ *
+ * `holdGuestRendering` closed that gap with no switch: it keeps the guest drawing
+ * and the host's compositor running behind a covered or minimized app, with
+ * nothing on screen. This bound now
+ * answers a host hidden outright, and whatever the hold does not reach. macOS
+ * and Linux have not been measured.
  */
 export const SCREENSHOT_TIMEOUT_MS = 5000;
 
@@ -606,7 +613,7 @@ export class ScreenshotNotComposited extends Error {
     // The bound is interpolated, never restated: the agent-facing message, the
     // race below, and the test all have to move together when it changes.
     super(
-      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited (minimized, fully covered by another window, or the screen is locked). Retrying will not help until the window is on screen again. Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.`,
+      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited. Retrying will not help until Kangentic is showing again. Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.`,
     );
     this.name = 'ScreenshotNotComposited';
   }
@@ -617,21 +624,23 @@ export async function captureScreenshot(
   options: ScreenshotOptions = {},
 ): Promise<string | null> {
   let timer: NodeJS.Timeout | undefined;
-  const capture = webContents.debugger.sendCommand('Page.captureScreenshot', {
-    format: options.format ?? 'png',
-    quality: options.quality,
-    clip: options.clip
-      ? { ...options.clip, scale: options.clip.scale ?? 1 }
-      : undefined,
-    captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
-  }) as Promise<{ data: string }>;
-  const bounded = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);
-  });
+  const endHold = holdGuestRendering(webContents);
   try {
+    const capture = webContents.debugger.sendCommand('Page.captureScreenshot', {
+      format: options.format ?? 'png',
+      quality: options.quality,
+      clip: options.clip
+        ? { ...options.clip, scale: options.clip.scale ?? 1 }
+        : undefined,
+      captureBeyondViewport: options.captureBeyondViewport ?? options.fullPage ?? false,
+    }) as Promise<{ data: string }>;
+    const bounded = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new ScreenshotNotComposited()), SCREENSHOT_TIMEOUT_MS);
+    });
     const result = await Promise.race([capture, bounded]);
     return result.data ?? null;
   } finally {
+    endHold();
     if (timer) clearTimeout(timer);
   }
 }

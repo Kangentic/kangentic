@@ -150,13 +150,11 @@ export function useAgentInputFocusGuard({
     let restoreTarget: HTMLElement | null = null;
     // The session behind `restoreTarget`, snapshotted at ARM time.
     //
-    // Captured rather than resolved at delivery, because by delivery time the
-    // ambient answer is WRONG in exactly the case this feature creates: an
-    // agent's `open_pane` makes its window `focusedWindowId` WITHOUT taking DOM
-    // focus (that is what the `openedByAgent` stamp is for), so a focused-window
-    // lookup names the agent's session while the user is still typing in theirs.
-    // Routing there would put the user's characters, and an Enter, into another
-    // agent's live shell. See `.claude/rules/agent-driven-focus.md`.
+    // Captured rather than resolved at delivery, because the keystroke belongs to
+    // the terminal the user was typing in when the drive started. An ambient
+    // lookup at delivery could name another session and put the user's
+    // characters, and an Enter, into a different agent's live shell. See
+    // `.claude/rules/agent-driven-focus.md`.
     let armedSessionId: string | null = null;
     let pendingChecks: ReturnType<typeof setTimeout>[] = [];
 

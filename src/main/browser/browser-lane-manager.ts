@@ -10,11 +10,11 @@ import { markBrowserGuestWebContents } from '../analytics/renderer-classificatio
 /**
  * Browser LANES: the OFFSCREEN form of a task's one browser surface.
  *
- * A task has exactly one browser surface. It is normally the visible `<webview>`
- * pane; a lane is what that surface falls back to when no pane can be mounted -
- * the user closed the task window, or the project is backgrounded and the board
- * layer renders only the open project's tasks. The agent never chooses a lane
- * and cannot ask for one.
+ * A task has exactly one browser surface. It is normally the `<webview>` pane,
+ * shown or parked; a lane is what that surface falls back to when no pane can be
+ * mounted: a guest that genuinely died, or a backgrounded project, whose tasks
+ * the board layer does not render. The agent never chooses a lane and cannot ask
+ * for one.
  *
  * ## Why an agent cannot ask for one
  *
@@ -38,8 +38,8 @@ import { markBrowserGuestWebContents } from '../analytics/renderer-classificatio
  * ## Why offscreen, and why that is safe here
  *
  * Chromium stops compositing a window that is minimized or fully occluded, and
- * `Page.captureScreenshot` then never resolves - which is why a hidden
- * `<webview>` is NOT a viable lane, and why `.claude/rules/retained-pane-never-
+ * `Page.captureScreenshot` then never resolves without the hold in
+ * `cdp/guest-capture-hold.ts`. That is why `.claude/rules/retained-pane-never-
  * remounts.md` insists a background pane hide with `opacity: 0` only.
  *
  * Offscreen rendering is exempt by construction rather than by luck:

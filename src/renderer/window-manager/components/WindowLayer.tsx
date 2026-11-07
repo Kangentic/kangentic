@@ -98,6 +98,10 @@ interface WindowManagerLayerProps {
   overlayTestId: string;
   /** Full overlay className (positioning, z-index, `pointer-events-none`). */
   overlayClassName: string;
+  /** The layer's whole surface is out of view, so nothing in it takes the pointer
+   *  or focus. Pairs with `opacity-0` on the class, never `invisible`: a Browser
+   *  pane's guest must keep compositing for an agent's screenshot. */
+  overlayInert?: boolean;
   /** Layer-specific bridges (open/close, session, persistence), mounted inside
    *  the provider so their context reads target this instance. */
   bridges?: ReactNode;
@@ -113,9 +117,10 @@ function WindowManagerSurface({
   portalHost: hostElement,
   overlayTestId,
   overlayClassName,
+  overlayInert,
   bridges,
   backdrop,
-}: Pick<WindowManagerLayerProps, 'portalHostId' | 'portalHost' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
+}: Pick<WindowManagerLayerProps, 'portalHostId' | 'portalHost' | 'overlayTestId' | 'overlayClassName' | 'overlayInert' | 'bridges' | 'backdrop'>) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // The portal host, resolved once per mount by a lazy initializer. State, not
   // a lazily filled ref: render reads it (for `createPortal`), which React's
@@ -205,6 +210,7 @@ function WindowManagerSurface({
         ref={overlayRef}
         data-testid={overlayTestId}
         className={overlayClassName}
+        inert={overlayInert || undefined}
         data-terminal-layout-scope={layer.hostArranged ? undefined : ''}
       >
         {backdrop}
@@ -260,6 +266,7 @@ export function WindowManagerLayer(props: WindowManagerLayerProps) {
         portalHost={props.portalHost}
         overlayTestId={props.overlayTestId}
         overlayClassName={props.overlayClassName}
+        overlayInert={props.overlayInert}
         bridges={props.bridges}
         backdrop={props.backdrop}
       />
@@ -342,17 +349,19 @@ const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 poin
  * in `AppLayout`.
  *
  * Stays mounted even when the Backlog view is active (so live agent sessions and
- * the board bridges never tear down) but the overlay goes `invisible` on the
- * backlog, so windows don't bleed over it. `visibility:hidden` (not
- * `display:none`) keeps the overlay's measured size and each frame's layout
- * intact, so returning to the board needs no re-fit and replays no entrance
- * animation. The Workflows view shows them: its cards are the board's tasks,
- * and opening one opens its window there.
+ * the board bridges never tear down) but the overlay goes `opacity-0` and inert on
+ * the backlog, so windows don't bleed over it. Not `display:none`, which would
+ * lose the overlay's measured size and each frame's layout, so returning to the
+ * board needs no re-fit and replays no entrance animation. Not `invisible` either:
+ * it stops a Browser pane's guest compositing, and an agent's screenshot then
+ * fails. Inert stands in for what `visibility: hidden` also did, taking the
+ * windows out of the pointer and the focus order. The Workflows view shows them:
+ * its cards are the board's tasks, and opening one opens its window there.
  */
 export function WindowLayer() {
   const activeView = useBoardStore((state) => state.activeView);
-  const overlayClassName =
-    activeView === 'backlog' ? `${BOARD_OVERLAY_BASE_CLASS} invisible` : BOARD_OVERLAY_BASE_CLASS;
+  const hiddenByView = activeView === 'backlog';
+  const overlayClassName = hiddenByView ? `${BOARD_OVERLAY_BASE_CLASS} opacity-0` : BOARD_OVERLAY_BASE_CLASS;
   return (
     // The task-detail surface reads every project-scoped value from this host
     // rather than from ambient `currentProject` / board state, so a second layer
@@ -367,6 +376,7 @@ export function WindowLayer() {
         portalHostId="window-layer-root"
         overlayTestId="window-overlay"
         overlayClassName={overlayClassName}
+        overlayInert={hiddenByView}
         bridges={<BoardBridges />}
       />
     </BoardTaskDetailHost>

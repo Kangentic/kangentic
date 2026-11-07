@@ -308,6 +308,12 @@ function BrowserPaneActive({
         /* not attached */
       }
       void window.electronAPI.browser.registerPane({ ...registrationIdentityRef.current, webContentsId, url });
+      // Sent here too, not only from the observer below: an agent's next call can
+      // be a screenshot, and a hidden page takes up to a second to run that effect.
+      const paneRect = overlayContainerRef.current?.getBoundingClientRect();
+      if (paneRect && paneRect.width > 0 && paneRect.height > 0) {
+        void window.electronAPI.browser.setPaneWidgetSize?.(webContentsId, paneRect.width, paneRect.height);
+      }
       // The renderer-side "a browser is alive for this task" fact: the pill's
       // alive dot, the card's globe, and the kebab's Close read it, and Close
       // needs this id to retire the handle in main.

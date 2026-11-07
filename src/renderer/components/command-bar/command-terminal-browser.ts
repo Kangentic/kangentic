@@ -15,7 +15,6 @@
 
 import { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
-import { useProjectStore } from '../../stores/project-store';
 import { usePopOutStore } from '../../stores/pop-out-store';
 import { popOutInstanceKey } from '../../../shared/pop-out';
 import {
@@ -26,7 +25,6 @@ import {
 import { findLiveCommandTerminalSession } from '../../../shared/session-owner';
 import { DEFAULT_SPLIT_RATIO, clampSplitRatio } from '../../hooks/task-split-ratio';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
-import { commandWindowManager } from '../../window-manager';
 
 /** The event `announceCommandTerminalBrowserSlot` fires on `window`. */
 export const COMMAND_TERMINAL_BROWSER_SLOT_EVENT = 'kangentic:command-terminal-browser-slot';
@@ -160,67 +158,6 @@ export function useCommandTerminalBrowserAlive(projectId: string | null, slot: s
   return inStore || poppedOut;
 }
 
-/** How long an agent-opened panel waits to show before the stamp gives up. */
-const AGENT_OPEN_STAMP_WINDOW_MS = 15_000;
-
-/** How long after the panel shows its windows keep being stamped: past the
- *  window the open creates and its terminal's arrival. */
-const AGENT_OPEN_SETTLE_MS = 2_000;
-
-/**
- * Stamp every Command Terminal window as opened by an AGENT, so no arriving
- * terminal takes the user's keyboard off the back of a panel the user did not
- * open (`resolveArrivalFocus`'s agent-window tier, which reads the focused
- * command window's stamp). The user's first press on a frame clears it
- * (`focusWindow`). Stamped again the moment the panel shows, since the open
- * may create the window it lands in.
- */
-function stampCommandWindowsAgentOpened(): void {
-  const store = commandWindowManager.store.getState();
-  for (const windowId of Object.keys(store.windows)) store.markAgentOpened(windowId);
-}
-
-/**
- * Open the panel for an agent's open_pane: the same open the shortcut runs (it
- * waits on a restart's restore and reconciles the windows first), stamped so
- * nothing in it takes focus. A panel already showing is left as it is: no
- * window moves, nothing expands, and no terminal arrives.
- */
-function openPanelForAgent(projectId: string): void {
-  const state = useSessionStore.getState();
-  if (state.commandBarVisible) return;
-  if (useProjectStore.getState().currentProject?.id !== projectId) return;
-  stampCommandWindowsAgentOpened();
-  // The open can CREATE the window it lands in (`useEnsureCommandWindow`, after
-  // the panel shows), and a window's own open focuses it, which clears a stamp.
-  // So every window change re-stamps until the panel has shown and settled, or
-  // the user presses anywhere: from that press on, focus is the user's to give.
-  let settled = false;
-  let settleTimer: ReturnType<typeof setTimeout> | null = null;
-  const finish = (): void => {
-    if (settled) return;
-    settled = true;
-    unsubscribeWindows();
-    unsubscribeVisible();
-    document.removeEventListener('pointerdown', finish, true);
-    if (settleTimer) clearTimeout(settleTimer);
-  };
-  const unsubscribeWindows = commandWindowManager.store.subscribe((next, previous) => {
-    if (next.windows === previous.windows && next.focusedWindowId === previous.focusedWindowId) return;
-    stampCommandWindowsAgentOpened();
-  });
-  const unsubscribeVisible = useSessionStore.subscribe((next, previous) => {
-    if (!next.commandBarVisible || previous.commandBarVisible) return;
-    stampCommandWindowsAgentOpened();
-    // Shown: its windows and terminals arrive within a few frames.
-    if (settleTimer) clearTimeout(settleTimer);
-    settleTimer = setTimeout(finish, AGENT_OPEN_SETTLE_MS);
-  });
-  document.addEventListener('pointerdown', finish, true);
-  settleTimer = setTimeout(finish, AGENT_OPEN_STAMP_WINDOW_MS);
-  state.setPendingOpenCommandTerminal(true);
-}
-
 /**
  * Main's open and close requests for Command Terminal panes, the offscreen set,
  * and the saved layout, for one renderer. Mounted once in the main window
@@ -236,18 +173,16 @@ export function useCommandTerminalBrowserBridge(scopeProjectId?: string): void {
   useEffect(() => {
     const browser = window.electronAPI?.browser;
     if (!browser?.onPaneOpenRequest) return;
-    // agent-focus-ok: this push opens the Command Terminal panel only through
-    // `openPanelForAgent`, which stamps every command window agent-opened first,
-    // so no terminal in it takes the keyboard.
+    // An agent's open_pane never shows the panel. A hidden panel's pane is already
+    // mounted and composited at `opacity: 0` by `CommandTerminalBrowserHost`, so
+    // the open flag is all it needs, and the user opening the panel shows it.
     const unsubscribeOpen = browser.onPaneOpenRequest((projectId, ownerKey) => {
       if (!isCommandTerminalBrowserOwner(ownerKey)) return;
       if (scopeProjectId !== undefined && projectId !== scopeProjectId) return;
       if (scopeProjectId === undefined && isCommandTerminalPanelDetached(projectId)) return;
       const session = useSessionStore.getState();
-      // Open before the panel shows, so the window mounts with its slot drawn.
       session.setBrowserOpen(ownerKey, true);
       session.refreshBrowserUrl(ownerKey);
-      if (scopeProjectId === undefined) openPanelForAgent(projectId);
     });
     const unsubscribeClose = browser.onPaneCloseRequest?.((projectId, ownerKeys) => {
       if (scopeProjectId !== undefined && projectId !== scopeProjectId) return;

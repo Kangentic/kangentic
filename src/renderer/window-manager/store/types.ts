@@ -79,20 +79,6 @@ export interface ManagedWindow {
    *  restore (project switch) so they paint flat with NO entrance animation,
    *  unlike a fresh user-opened window. Re-derived on every restore. */
   skipEnterAnimation?: boolean;
-  /** Transient, never persisted: this window was opened or raised by an AGENT
-   *  (`kangentic_browser_open_pane`), not by the user.
-   *
-   *  Window-layer focus is how the arrival-focus arbiter decides which terminal
-   *  may take the KEYBOARD on mount, so an agent-opened window would otherwise
-   *  hand its own terminal the user's keystrokes mid-sentence. While this is set
-   *  and the window holds focus, `resolveArrivalFocus` denies EVERY terminal,
-   *  including this window's own. Cleared by `focusWindow`, i.e. by the user's
-   *  first pointer-down on the frame.
-   *
-   *  Set only when true, so default-by-omission is "the user did this" and a
-   *  forgotten flag on a user path is impossible.
-   *  See `.claude/rules/agent-driven-focus.md`. */
-  openedByAgent?: true;
   /** Set to the OWNING project's id while that project is backgrounded.
    *
    *  A retained window stays in `windows` and keeps rendering at its existing
@@ -108,11 +94,13 @@ export interface ManagedWindow {
    *  Content-agnostic by design (a project id, not a task), so the generic engine
    *  gains no board dependency; the board layer owns the frozen task snapshot. */
   retainedProjectId?: string;
-  /** Set while the user has CLOSED this window but its content must survive:
-   *  the board parks a task-detail window whose Browser pane is open while the
-   *  task's agent session is live, so reopening the task re-attaches the SAME
-   *  `<webview>` guest (its `sessionStorage`, in-memory state, and the agent's
-   *  CDP session intact) instead of building a new one.
+  /** Set while this window is closed as far as the user can tell but its content
+   *  must survive. The board parks a task-detail window whose Browser pane is open
+   *  while the task's agent session is live, so reopening the task re-attaches the
+   *  SAME `<webview>` guest (its `sessionStorage`, in-memory state, and the agent's
+   *  CDP session intact) instead of building a new one. An agent's
+   *  `kangentic_browser_open_pane` on a task with no window opens one parked from
+   *  birth, so the pane mounts and nothing appears.
    *
    *  A parked window stays in `windows` at its DOM position, hidden exactly like
    *  a retained one, and is OUT of `order`, focus, the tile tree, the ownership
@@ -120,11 +108,14 @@ export interface ManagedWindow {
    *  stacking and dismissal are concerned it is closed. `unparkWindow` reverses
    *  it; `closeWindow` drops it for real.
    *
-   *  Transient, never persisted. Set only when true (same shape as
-   *  `openedByAgent`), so default-by-omission is "not parked". The engine knows
-   *  only the mechanism; WHEN to park is the layer's policy
-   *  (`WindowManagerLayerOptions.shouldParkOnClose`). */
+   *  Transient, never persisted. Set only when true, so default-by-omission is
+   *  "not parked". The engine knows only the mechanism; WHEN to park is the
+   *  layer's policy (`WindowManagerLayerOptions.shouldParkOnClose`). */
   parked?: true;
+  /** Transient, never persisted: a window born parked has no guest until the
+   *  page's `dom-ready`, and the reaper drops a parked window with none. It leaves
+   *  this one alone until this time, which covers the wait main has on the pane. */
+  guestPendingUntil?: number;
   /** Transient, never persisted: the turn a `conversation` window should open
    *  at, consumed once it has scrolled there. Per WINDOW, for a layer that opens
    *  conversations itself (the Knowledge Graph's source rows). The board's own

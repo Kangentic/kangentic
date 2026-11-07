@@ -69,6 +69,7 @@ const webContentsFromId = vi.fn((_id: number): unknown => null);
 
 /** The display's scale factor, which bounds a pane's screenshots. */
 let displayScaleFactor = 1;
+let minimizedHost = false;
 
 vi.mock('electron', () => ({
   screen: {
@@ -89,8 +90,10 @@ vi.mock('electron', () => ({
       // what main sees and what reading it instead of the renderer's report
       // would give. A fit computed against this is 1, so every fit assertion
       // below fails if the wrong source is used.
-      getContentSize: () => [2545, 1272],
+      getContentSize: () => (minimizedHost ? [1, 1] : [2545, 1272]),
       getBounds: () => ({ x: 0, y: 0, width: 2545, height: 1272 }),
+      getNormalBounds: () => ({ x: 0, y: 0, width: 2560, height: 1392 }),
+      isMinimized: () => minimizedHost,
       isDestroyed: () => false,
       isMaximized: (...args: unknown[]) => isMaximized(...(args as [])),
       isFullScreen: (...args: unknown[]) => isFullScreen(...(args as [])),
@@ -299,6 +302,7 @@ beforeEach(() => {
   webContentsFromId.mockReturnValue(null);
   setViewportOverrideSender(null);
   displayScaleFactor = 1;
+  minimizedHost = false;
 });
 
 afterEach(() => {
@@ -1344,5 +1348,15 @@ describe('the pane a screenshot is bounded by', () => {
     const surface = guestCaptureSurface(guestOf(), entryOf({ widgetSize: null }));
 
     expect(surface?.widget).toEqual({ width: 2545, height: 1272 });
+  });
+
+  it('falls back to the restored size on a minimized host, whose content size is meaningless', () => {
+    // Measured 1x1 on Windows: a capture planned for one pixel, then refused as
+    // tiled when the real 740x749 image came back.
+    minimizedHost = true;
+
+    const surface = guestCaptureSurface(guestOf(), entryOf({ widgetSize: null }));
+
+    expect(surface?.widget).toEqual({ width: 2560, height: 1392 });
   });
 });

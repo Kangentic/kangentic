@@ -6,9 +6,14 @@
  * terminal) stayed painted over the Backlog view because `<WindowLayer />` is
  * mounted unconditionally in AppLayout, outside the `activeView === 'board'`
  * gate. The fix keeps the layer (and its session bridges / PTY) mounted at all
- * times, but makes the overlay `invisible` off the board - so this test asserts
- * the window is hidden AND still attached (never unmounted) while on Backlog,
- * then visible again after switching back.
+ * times, but hides the overlay off the board - so this test asserts the window is
+ * hidden AND still attached (never unmounted) while on Backlog, then visible again
+ * after switching back.
+ *
+ * It hides by `opacity: 0` and `inert`, never `visibility: hidden`, which stops a
+ * Browser pane's guest compositing and fails an agent's screenshot. Playwright
+ * counts an `opacity: 0` element as visible, so this reads the styles and takes a
+ * real hit test rather than `toBeVisible`.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -116,17 +121,25 @@ test.describe('Window layer: hidden over Backlog, restored on Board', () => {
 
       // Switch to Backlog: the backlog list renders and the board columns hide,
       // but the task-detail window must stay ATTACHED (session/PTY alive) while
-      // becoming invisible (no layering over the backlog).
+      // leaving the screen (no layering over the backlog).
       await page.locator('[data-testid="view-toggle-backlog"]').click();
       await expect(page.locator('[data-testid="backlog-view"]')).toBeVisible();
       await expect(page.locator('[data-swimlane-name="Code Review"]')).not.toBeVisible();
 
-      await expect(dialog).not.toBeVisible();
       await expect(dialog).toBeAttached();
 
-      // The overlay itself carries the hidden state (visibility:hidden via `invisible`).
+      // The overlay carries the hidden state: nothing painted, and nothing in it
+      // takes the pointer, which `inert` and not the opacity is what guarantees.
       const overlay = page.locator('[data-testid="window-overlay"]');
-      await expect(overlay).toHaveClass(/invisible/);
+      await expect(overlay).toHaveCSS('opacity', '0');
+      await expect(overlay).toHaveAttribute('inert', '');
+      await expect(overlay).toHaveCSS('visibility', 'visible');
+      const pointerReachesWindow = await dialog.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return hit !== null && element.contains(hit);
+      });
+      expect(pointerReachesWindow).toBe(false);
 
       // The underlying session is untouched by the view switch - it is still
       // tracked as running, proving the agent kept working in the background.
@@ -142,7 +155,8 @@ test.describe('Window layer: hidden over Backlog, restored on Board', () => {
       // Switch back to Board: the SAME window frame reappears (never remounted).
       await page.locator('[data-testid="view-toggle-board"]').click();
       await expect(page.locator('[data-swimlane-name="Code Review"]')).toBeVisible();
-      await expect(overlay).not.toHaveClass(/invisible/);
+      await expect(overlay).toHaveCSS('opacity', '1');
+      await expect(overlay).not.toHaveAttribute('inert', '');
       await expect(dialog).toBeVisible();
     } finally {
       await browser.close();

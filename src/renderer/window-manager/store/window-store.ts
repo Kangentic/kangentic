@@ -209,11 +209,15 @@ interface OpenWindowInput {
    *  workspace-restored one. A plain user open leaves it unset so the entrance
    *  plays. Transient, never persisted (mirrors `deserializeWorkspace`). */
   skipEnterAnimation?: boolean;
-  /** This open was requested by an AGENT (`kangentic_browser_open_pane`), not by
-   *  a user gesture. Stamps `ManagedWindow.openedByAgent`, which makes the
-   *  arrival-focus arbiter refuse to hand ANY terminal the keyboard off the back
-   *  of this window's focus. See `.claude/rules/agent-driven-focus.md`. */
-  openedByAgent?: boolean;
+  /** Mount the window PARKED from birth, so its content runs and nothing moves:
+   *  it joins neither `order` nor focus, takes no z position, and an existing
+   *  window for the anchor is left exactly as it is. The carrier of an agent's
+   *  Browser pane (`kangentic_browser_open_pane`), which must never show a window.
+   *  See `.claude/rules/agent-driven-focus.md`. */
+  parked?: true;
+  /** With `parked`: the time until which the reaper leaves the window alone while
+   *  its guest comes up. See `ManagedWindow.guestPendingUntil`. */
+  guestPendingUntil?: number;
   /** Open a `conversation` window at this turn (see `ManagedWindow.scrollToTurnUuid`).
    *  An already-open window for the anchor is re-aimed at it. */
   scrollToTurnUuid?: string;
@@ -263,24 +267,16 @@ export interface WindowStoreState {
    *  `<webview>` guest inside it) survives. Untiles it, takes it out of `order`,
    *  gives up its focus. Idempotent. See `ManagedWindow.parked`. */
   parkWindow: (id: string) => void;
-  /** Reverse of `parkWindow`: back into `order`, raised, focused. Clears the
-   *  agent stamp exactly as `focusWindow` does, so an agent path re-stamps
-   *  after. No-op for a window that is not parked. */
+  /** Reverse of `parkWindow`: back into `order`, raised, focused. No-op for a
+   *  window that is not parked. */
   unparkWindow: (id: string) => void;
   /** Clear `retainedProjectId` from every window retained for `projectId`,
    *  and nothing else. Called when that project comes back, after
    *  `applyWorkspace` has adopted what its blob names; what is left is a parked
    *  window (never in the blob) or a window whose task left the board. */
   releaseRetainedWindows: (projectId: string) => void;
-  /** Raise + focus a window. Raising is a no-op when it is already focused, but
-   *  the agent-open stamp is cleared either way: this is only ever called for a
-   *  real user gesture or by an open path that re-stamps immediately after. */
+  /** Raise + focus a window. A no-op when it is already focused. */
   focusWindow: (id: string) => void;
-  /** Mark an ALREADY-OPEN window as agent-opened. Used by the open paths that
-   *  reach an existing window through `focusWindow` (which clears the stamp), so
-   *  the stamp has to be re-applied after the raise rather than before it.
-   *  See `.claude/rules/agent-driven-focus.md`. */
-  markAgentOpened: (id: string) => void;
   /** Commit a window's geometry (used by drag/resize/edge-snap on drop). */
   setGeometry: (id: string, geometry: FractionalRect) => void;
   maximizeWindow: (id: string) => void;
@@ -415,11 +411,9 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         (candidate) => candidate.kind === kind && candidate.anchor === input.anchor,
       );
       if (existing) {
+        // A parked open moves nothing, so it does not raise what is already there.
+        if (input.parked) return existing.id;
         get().focusWindow(existing.id);
-        // AFTER the raise, never before: `focusWindow` clears the stamp (it is
-        // the user's pointer-down that normally calls it), so stamping first
-        // would be undone by the very next line.
-        if (input.openedByAgent) get().markAgentOpened(existing.id);
         // Re-aim an open conversation at the passage, or the tab, now asked for.
         const turnUuid = input.scrollToTurnUuid;
         const conversationTab = input.conversationTab;
@@ -443,7 +437,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       }
 
       const id = nextWindowId();
-      const zCounter = get().zCounter + 1;
+      const zCounter = get().zCounter + (input.parked ? 0 : 1);
       const openIndex = get().order.length;
       const newWindow: ManagedWindow = {
         id,
@@ -462,13 +456,20 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // Only set when true so a plain open leaves the property absent (a
         // freshly opened window keeps its entrance animation).
         ...(input.skipEnterAnimation ? { skipEnterAnimation: true } : {}),
-        // Same shape, same reason: absent means "the user opened this", so a
-        // user path can never inherit an agent stamp by forgetting to clear it.
-        ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
+        ...(input.parked ? { parked: true as const } : {}),
+        ...(input.guestPendingUntil !== undefined ? { guestPendingUntil: input.guestPendingUntil } : {}),
         ...(input.scrollToTurnUuid ? { scrollToTurnUuid: input.scrollToTurnUuid } : {}),
         ...(input.conversationTab ? { conversationTab: input.conversationTab } : {}),
         ...(input.projectId ? { projectId: input.projectId } : {}),
       };
+
+      // One `set`, never `openWindow` then `parkWindow`: subscribers run between
+      // two writes, and the ownership report would see a window a moment before
+      // it parked and take the detail from whichever surface holds it.
+      if (input.parked) {
+        set((current) => ({ windows: { ...current.windows, [id]: newWindow } }));
+        return id;
+      }
 
       set((current) => ({
         windows: { ...current.windows, [id]: newWindow },
@@ -525,37 +526,16 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       // `enabled: isFocused` keybinding and the window's Escape listener inert
       // while it is hidden, without a second gate in each of them.
       if (target.parked) return;
-      // Clearing the agent stamp happens BEFORE the already-focused early
-      // return. Every caller is either a real user gesture (WindowFrame's
-      // pointer-down) or an open path that re-stamps right after, and an
-      // agent-opened window is by definition already focused - so returning
-      // early without clearing would leave the user's own click on the frame
-      // unable to release the arrival-focus hold.
-      // See `.claude/rules/agent-driven-focus.md`.
-      if (current.focusedWindowId === id) {
-        if (!target.openedByAgent) return;
-        const { openedByAgent: _cleared, ...withoutAgentStamp } = target;
-        set({ windows: { ...current.windows, [id]: withoutAgentStamp } });
-        return;
-      }
+      if (current.focusedWindowId === id) return;
       const zCounter = current.zCounter + 1;
-      const { openedByAgent: _raised, ...raisedWindow } = target;
       set({
         windows: {
           ...current.windows,
-          [id]: { ...raisedWindow, zIndex: zCounter },
+          [id]: { ...target, zIndex: zCounter },
         },
         order: [...current.order.filter((candidate) => candidate !== id), id],
         focusedWindowId: id,
         zCounter,
-      });
-    },
-
-    markAgentOpened: (id) => {
-      set((current) => {
-        const target = current.windows[id];
-        if (!target || target.openedByAgent) return current;
-        return { windows: { ...current.windows, [id]: { ...target, openedByAgent: true as const } } };
       });
     },
 
@@ -587,9 +567,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         const target = current.windows[id];
         if (!target?.parked) return current;
         const zCounter = current.zCounter + 1;
-        // Mirrors `focusWindow`'s raise: the agent stamp is cleared here for the
-        // same reason, so an agent-driven un-park must re-stamp afterwards.
-        const { parked: _unparked, openedByAgent: _raised, ...revived } = target;
+        const { parked: _unparked, guestPendingUntil: _pending, ...revived } = target;
         return {
           windows: { ...current.windows, [id]: { ...revived, zIndex: zCounter } },
           order: [...current.order.filter((candidate) => candidate !== id), id],

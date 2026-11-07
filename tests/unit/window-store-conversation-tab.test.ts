@@ -187,7 +187,7 @@ describe('clearConversationTab', () => {
 });
 
 describe('conversationTab never reaches the persisted workspace', () => {
-  // Transient by contract, like `openedByAgent` and `skipEnterAnimation`. A tab
+  // Transient by contract, like `parked` and `skipEnterAnimation`. A tab
   // that survived a restore would reopen a conversation on a column the user
   // chose in an earlier run, with no pill on screen to explain why.
   it('is not serialized', () => {

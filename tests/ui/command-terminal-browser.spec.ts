@@ -130,19 +130,6 @@ async function emitAgentOpen(page: Page): Promise<void> {
   }, { projectId: PROJECT_ID, ownerKey: OWNER_KEY });
 }
 
-/** The panel and the pane are both up, and the keyboard never entered the panel. */
-async function expectAgentOpenKeptFocusOut(page: Page): Promise<void> {
-  await expect(page.getByTestId('command-terminal-window')).toBeVisible({ timeout: 10000 });
-  await expect(page.getByTestId('command-bar-browser-slot')).toBeVisible({ timeout: 10000 });
-  await expect(hostedPane(page)).toHaveAttribute('data-visibility', 'showing', { timeout: 5000 });
-  const state = await page.evaluate(() => ({
-    isXtermInput: document.activeElement?.classList.contains('xterm-helper-textarea') ?? false,
-    insideWindow: document.activeElement?.closest('[data-testid="command-terminal-window"]') != null,
-  }));
-  expect(state.isXtermInput).toBe(false);
-  expect(state.insideWindow).toBe(false);
-}
-
 test.describe('Command Terminal Browser pane', () => {
   test('the Globe pill opens a half-width slot with the hosted pane over it, exclusive with Changes', async () => {
     const page = await openFreshPage();
@@ -232,32 +219,23 @@ test.describe('Command Terminal Browser pane', () => {
     await expect(page.locator('[data-testid="browser-webview"]')).toHaveCount(1);
   });
 
-  test('an agent open_pane for a hidden panel opens it and the pane without moving keyboard focus', async () => {
+  test('an agent open_pane leaves a hidden panel hidden, and the user opening it shows the pane', async () => {
     const page = await openFreshPage();
     await seedUrl(page);
-    // Converse: the user's own open DOES let the terminal take the keyboard, so the
-    // assertion below is not vacuous (a terminal that never focuses would pass it).
+    // A live terminal behind a hidden panel: what an agent's open_pane has to be
+    // running from, since a terminal that is not running is refused in main.
     await openPanel(page);
-    await expect.poll(() => page.evaluate(() =>
-      document.activeElement?.classList.contains('xterm-helper-textarea') ?? false), { timeout: 10000 }).toBe(true);
     await page.keyboard.press('Control+Shift+P');
     await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 
     await emitAgentOpen(page);
-    await expectAgentOpenKeptFocusOut(page);
-  });
 
-  // With NO command window yet (the first open in a session), the open itself
-  // creates the window (useEnsureCommandWindow) after the panel shows, and the
-  // window's own open focuses it, which clears a stamp. The bridge re-stamps
-  // every window change until the panel settles; without that, this terminal
-  // took the keyboard.
-  test('an agent open_pane that has to create the first window also keeps focus out', async () => {
-    const page = await openFreshPage();
-    await seedUrl(page);
-    await emitAgentOpen(page);
-    await expectAgentOpenKeptFocusOut(page);
+    // The pane mounts, composited and out of sight, and the panel stays away.
+    await expect(hostedPane(page)).toHaveAttribute('data-visibility', 'hidden', { timeout: 5000 });
+    await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+
+    await openPanel(page);
+    await expect(hostedPane(page)).toHaveAttribute('data-visibility', 'showing', { timeout: 5000 });
   });
 
   test('the Running row globe follows a registered guest and goes away on Close browser', async () => {

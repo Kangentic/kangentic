@@ -64,7 +64,6 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 
 vi.mock('../../src/main/browser/browser-pane-opener', () => ({
   openPaneForCallerTask: (...args: unknown[]) => openPaneForCallerTask(...(args as [])),
-  PANE_OPEN_TIMEOUT_MS: 10_000,
 }));
 
 vi.mock('../../src/main/browser/browser-pane-driver', () => ({
@@ -337,7 +336,7 @@ describe('pop_out that cannot finish', () => {
     waitForLivePane.mockResolvedValueOnce({ sessionId: 'pane_new', kind: 'pane', taskId: TASK, projectId: PROJECT, webContentsId: 9 });
     seedReturningPane('pane_back', 13);
     withGuest
-      .mockResolvedValueOnce({ ok: false, error: { kind: 'pane-not-rendering', detail: 'The window is minimized.' } })
+      .mockResolvedValueOnce({ ok: false, error: { kind: 'driver-error', detail: 'The viewport would not settle.' } })
       .mockImplementation(runBody);
 
     const result = await popOutPaneForCallerTask(base());
@@ -350,7 +349,7 @@ describe('pop_out that cannot finish', () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.kind).toBe('pane-not-rendering');
+    expect(result.error.kind).toBe('driver-error');
     expect(result.error.detail).toContain('pane_back');
   });
 
@@ -470,7 +469,7 @@ describe('pop_out that cannot finish', () => {
 
   it.each([
     { visibility: 'hidden', wording: 'back in the task window as pane_back, hidden behind the terminal' },
-    { visibility: 'parked', wording: 'back in the task window as pane_back, in a window the user closed' },
+    { visibility: 'parked', wording: 'back in the task window as pane_back, which is closed' },
     { visibility: 'offscreen', wording: 'offscreen as pane_back, which the user cannot see' },
     // No qualifier: the sentence ends at the handle.
     { visibility: 'showing', wording: 'back in the task window as pane_back. The page reloaded' },

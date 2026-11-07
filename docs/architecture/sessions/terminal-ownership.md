@@ -37,11 +37,9 @@ sources:
   First, a terminal the user cannot see is denied outright (`hidden`): the hook passes its xterm
   element, and `isArrivingTerminalVisible` hit-tests a few points of it against the host pane
   (`data-terminal-host`), so a Delete confirm or the Agent Monitor overlay over the bottom panel
-  keeps an arriving panel terminal from taking the keyboard. Then four tiers:
+  keeps an arriving panel terminal from taking the keyboard. Then three tiers:
   a claim recorded by a gesture that named a terminal before it existed (a panel tab click, a panel
-  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else a
-  window an AGENT opened or raised, which denies EVERYONE including its own terminal while it
-  holds focus (`openedByAgent`, see `.claude/rules/agent-driven-focus.md`); else the
+  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else the
   terminal-hosting window holding window-layer focus, resolved by ANCHOR across all three layers
   via `resolveFocusedWindowTerminal` in `dictation-target.ts`; else, when nothing owns the user's
   attention, allow unless focus is in a typing surface. A claim is NOT consumed on grant, because

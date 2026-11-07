@@ -1003,11 +1003,11 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,
   `repaint-nudge.ts`, the latter meaning the frame was already correct and the nudge cost one
   render). `arrival-focus` (renderer, `terminal-arrival-focus.ts`) joins them, carrying the
-  allow/deny plus the tier that decided it (`hidden` / `claim` / `claim-mismatch` / `agent-window` /
+  allow/deny plus the tier that decided it (`hidden` / `claim` / `claim-mismatch` /
   `window` / `window-mismatch` / `occupied` / `burst-taken` / `unclaimed`), the `site` that asked
   (one arrival decides more than once, and they were otherwise indistinguishable), and the
   arbiter's own INPUTS: whether the terminal was visible to the user, the claimed session, both
-  fingerprints, the claim's age, and the focused window's session and `openedByAgent` stamp. The reason alone was not enough to diagnose with - it
+  fingerprints, the claim's age, and the focused window's session. The reason alone was not enough to diagnose with - it
   could not separate "no claim was live" from "a claim was live and its fingerprint had moved". `claimArrivalFocus` emits
   `arrival-claim` / `arrival-claim-clear` beside it, so a claim that was never made reads as a
   positive fact rather than as a missing entry. Together they are the only record of WHY a terminal

@@ -90,15 +90,6 @@ export function isRunningSession(sessionId: string | null): sessionId is string 
  *  "no window is focused" - the window still owns the user's attention. */
 export interface FocusedWindowTerminal {
   sessionId: string | null;
-  /** That window was opened or raised by an AGENT, so its focus carries no user
-   *  intent (see `.claude/rules/agent-driven-focus.md`).
-   *
-   *  DICTATION DELIBERATELY IGNORES THIS. It is the same resolver but a different
-   *  POLICY: dictation is a later, separate user action and must resolve a target
-   *  wherever the window came from, while arrival focus must abstain because
-   *  nothing about that window says the user asked to type in it. Consuming this
-   *  field in the dictation chain would silently drop the user's speech. */
-  openedByAgent: boolean;
 }
 
 /** Layers in paint order, front-most first: the Command Terminal layer renders
@@ -162,14 +153,13 @@ export function resolveFocusedWindowTerminal(): FocusedWindowTerminal | null {
           currentProjectId: useProjectStore.getState().currentProject?.id ?? null,
           transientSessions: sessionState.transientSessions,
         }),
-        openedByAgent: focusedWindow.openedByAgent === true,
       };
     }
 
     const toTaskId = manager.options.anchorToTaskId;
     const taskId = toTaskId ? toTaskId(focusedWindow.anchor) : focusedWindow.anchor;
     const session = findSessionForTask(useSessionStore.getState().sessions, taskId);
-    return { sessionId: session?.id ?? null, openedByAgent: focusedWindow.openedByAgent === true };
+    return { sessionId: session?.id ?? null };
   }
   return null;
 }
