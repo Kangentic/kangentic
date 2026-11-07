@@ -48,7 +48,7 @@ import { automatedKeysRefusal, waitForAutomatedKeysClearance, waitUntilAutomated
 export interface PasteOptions {
   /** Wrap content in `\e[200~ ... \e[201~`. Default true. */
   bracketed?: boolean;
-  /** Hard timeout for the entire pasteAndSubmit operation. Default 15000ms. */
+  /** Hard timeout for the entire pasteAndSubmit operation. Default 15000ms, longer for a large packet. */
   timeoutMs?: number;
   /** Caller-driven cancellation. */
   signal?: AbortSignal;
@@ -134,8 +134,16 @@ export const EVIDENCE_FIRST_WAIT_MS = 3000;
 export const EVIDENCE_RETRY_WAIT_MS = 2000;
 /* Worst-case end-to-end budget = MIN_GAP_MS + capMs + EVIDENCE_FIRST_WAIT_MS
  * + EVIDENCE_RETRY_WAIT_MS ~= 7s for a small payload, more for large pastes
- * (capMs scales with packet length). Keep `timeoutMs` (default 15000ms in
- * `pasteAndSubmit`) comfortably above this sum. */
+ * (capMs scales with packet length). `timeoutMs` defaults to the larger of
+ * DEFAULT_PASTE_TIMEOUT_MS and capMs + PASTE_TIMEOUT_MARGIN_MS, which keeps it
+ * comfortably above this sum. */
+const DEFAULT_PASTE_TIMEOUT_MS = 15000;
+const PASTE_TIMEOUT_MARGIN_MS = 8000;
+
+/** The longest the settle waits for a packet's output, which scales with its length. */
+function settleCapMs(packetLength: number): number {
+  return Math.max(SETTLE_CAP_MIN_MS, Math.round(packetLength * SETTLE_CAP_PER_BYTE_MS) + SETTLE_CAP_MIN_MS);
+}
 
 /** Strip CR and other C0 controls that would corrupt paste; keep \t and \n. */
 export function sanitizeForPaste(text: string): string {
@@ -204,11 +212,10 @@ function waitForPasteSettle(
   packetLength: number,
   signal: AbortSignal,
 ): Promise<SettleResult> {
-  const capMs = Math.max(SETTLE_CAP_MIN_MS, Math.round(packetLength * SETTLE_CAP_PER_BYTE_MS) + SETTLE_CAP_MIN_MS);
   return waitForOutputSettle(sessionManager, sessionId, {
     event: 'data-tap',
     idleMs: OUTPUT_SETTLE_IDLE_MS,
-    capMs,
+    capMs: settleCapMs(packetLength),
     floorMs: MIN_GAP_MS,
     signal,
     abortError: (stage) => {
@@ -344,7 +351,12 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
     async pasteAndSubmit(sessionId, text, options = {}) {
       const start = Date.now();
       const bracketed = options.bracketed ?? true;
-      const totalTimeoutMs = options.timeoutMs ?? 15000;
+      const safeText = sanitizeForPaste(text);
+      const packet = bracketed
+        ? `${BRACKETED_PASTE_START}${safeText}${BRACKETED_PASTE_END}`
+        : safeText;
+      // Past about 20 KB the settle cap alone reaches the 15 s default.
+      const totalTimeoutMs = options.timeoutMs ?? Math.max(DEFAULT_PASTE_TIMEOUT_MS, settleCapMs(packet.length) + PASTE_TIMEOUT_MARGIN_MS);
       const source = options.source ?? 'unknown';
       const verifier = options.verifier;
       const allowAnyDataFallback = options.allowAnyDataFallback ?? true;
@@ -377,11 +389,6 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
       const { signal: linkedSignal, dispose: disposeLink } = linkSignals(
         options.signal, timeoutController.signal,
       );
-
-      const safeText = sanitizeForPaste(text);
-      const packet = bracketed
-        ? `${BRACKETED_PASTE_START}${safeText}${BRACKETED_PASTE_END}`
-        : safeText;
 
       // Track bracketed-paste-mode toggles in the output stream. If the TUI
       // disables mode mid-call, a modal/permission prompt has taken focus

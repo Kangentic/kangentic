@@ -123,6 +123,14 @@ contract was kept in sync across three files by prose comments alone.
   (`resolveBrowserAutomationConfig(config.browserAutomation).enabled`). While the Agent Browser is
   on it is the only browser an agent drives, and the Claude adapter turns that into
   `--append-system-prompt` text and `--no-chrome` (task #977). A site that leaves it out spawns with no policy and no sign.
+- **A command that cannot start is refused at the one place every spawn passes.** `performSpawn`
+  checks `commandFitsShell` and throws `AgentCommandTooLongError` before it has a PTY, ahead of the
+  sibling drain, so no path needs a check of its own. An opening prompt that does not fit is typed
+  in only on an adapter whose `firstPromptMayBeTyped` says so. Do not widen that to an agent whose
+  input box cannot be told from a boot screen: the paste's Enter would answer the screen. An
+  opening that waits for a person to answer one waits in the background, and every later message
+  waits behind it. `tests/unit/task-description-limit.test.ts` holds
+  `TASK_DESCRIPTION_MAX_LENGTH` to this limit, and `spawn-agent-typed-opening.test.ts` pins the wait.
 - **Held messages are claimed only where an opening message is built.** A message held for a task
   with no running agent (`src/main/held-messages/`) goes into the next agent's opening message,
   after the column's own. `spawnAgent` and `resumeTaskSession` call `claimHeldMessages` and fold

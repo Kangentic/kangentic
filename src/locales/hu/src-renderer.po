@@ -1652,6 +1652,10 @@ msgstr "Az ügynök távoli szerveren fut"
 msgid "The automation did not start."
 msgstr "Az automatizálás nem indult el."
 
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "The list has been refreshed."

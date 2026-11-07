@@ -1071,7 +1071,7 @@ describe('connectionQueryOf', () => {
 describe('planReapDetailed: a .NET Aspire stack only this task uses', () => {
   // A real stack, measured with the real reader and planner. Its paths are
   // placeholders. That run recorded no parents, so the links follow what a
-  // runner measured on a smaller stack (tests/unit/aspire-host-death.test.ts):
+  // runner measured on a smaller stack ("A .NET Aspire stack" in process-reaping.md):
   // the CLI above the AppHost; the DCP root, whose parent is the launcher that
   // exited after `--detach`; the controller under the root; and under it each
   // resource and its `dcp monitor-process`, with `docker events` watchers.

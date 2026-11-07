@@ -39,8 +39,8 @@ function renameRetryingWhileHeldSync(fromPath: string, toPath: string): void {
  * Asana token). None of those callers has anywhere to send a rejection when the
  * target volume goes away mid-session (a timer has no caller at all; `config:setSync`
  * is an `ipcMain.on`, where a throw is an uncaught exception, not a rejection) - see
- * DESKTOP-14/DESKTOP-13. This is the shared guard: mkdir + write-to-temp + rename,
- * all inside one try, reporting through the source-keyed latch in
+ * DESKTOP-14/DESKTOP-13. This is the shared guard: mkdir (unless told not to, below)
+ * + write-to-temp + rename, all inside one try, reporting through the source-keyed latch in
  * `./config/write-failure-notice.ts` on failure instead of throwing.
  *
  * The mkdir is inside the try deliberately - on the failing volume it is the mkdir
@@ -73,16 +73,20 @@ function renameRetryingWhileHeldSync(fromPath: string, toPath: string): void {
  * hold an in-memory copy of what they meant to persist (ConfigManager) keep serving
  * it regardless of the return value, exactly as they did before this guard existed -
  * a failed disk write must not roll back a value already accepted into memory.
+ *
+ * `createFolder: false` is for a caller that does not own the target's folder
+ * (`plan-approval-writer.ts`). A missing folder then fails like any other write
+ * instead of being rebuilt.
  */
 export function safeWriteJson(
   filePath: string,
   value: unknown,
   source: string,
-  options?: { mode?: number },
+  options?: { mode?: number; createFolder?: boolean },
 ): boolean {
   const tmpPath = `${filePath}.tmp.${process.pid}`;
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (options?.createFolder !== false) fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const content = `${JSON.stringify(value, null, 2)}\n`;
     fs.writeFileSync(tmpPath, content, options?.mode !== undefined ? { mode: options.mode } : undefined);
     renameRetryingWhileHeldSync(tmpPath, filePath);

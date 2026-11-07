@@ -26,7 +26,7 @@ vi.mock('../../src/main/agent/commands', () => ({
 }));
 
 vi.mock('../../src/main/agent/commands/task-commands', () => ({
-  TASK_DESCRIPTION_MAX_LENGTH: 50_000,
+  TASK_DESCRIPTION_MAX_LENGTH: 27_500,
   handleMoveTaskToProject: vi.fn(),
 }));
 

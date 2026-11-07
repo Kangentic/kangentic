@@ -1632,7 +1632,7 @@ export type SuspendedBy = 'user' | 'system' | 'auto' | 'low_memory';
  *   - `worktree-missing`: the task's worktree is gone. Resume recreates it.
  *   - `spawn-failed`: the terminal itself could not start.
  */
-export type StartBlockedReason = 'never-started' | 'folder-missing' | 'worktree-missing' | 'spawn-failed';
+export type StartBlockedReason = 'never-started' | 'folder-missing' | 'worktree-missing' | 'spawn-failed' | 'prompt-too-long';
 
 export interface SessionRecord {
   id: string;

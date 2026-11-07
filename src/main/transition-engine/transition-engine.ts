@@ -51,7 +51,7 @@ import { retireRecord } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
-import { resumePromptRidesCommandLine } from './resume-prompt-delivery';
+import { freshPromptTypedForLength, resumePromptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
@@ -169,7 +169,8 @@ interface ResolvedLaunch {
    * The prompt kept off the command line, to be typed in: a resume's that
    * cannot ride it (`resumePromptRidesCommandLine`), handed back as
    * `unsentPrompt`, or a fresh spawn's on an adapter whose CLI takes no starting
-   * prompt (`freshPromptDelivery: 'typed'`), handed back as `typedOpening`.
+   * prompt (`freshPromptDelivery: 'typed'`) or too long for the line
+   * (`freshPromptTypedForLength`), handed back as `typedOpening`.
    */
   promptKeptOff: boolean;
   /** `launchKeyOf` for this launch, which an adoption compares. */
@@ -245,12 +246,13 @@ export interface SpawnOutcome {
   /**
    * The opening prompt a fresh session's command line could not carry. Set when
    * the spawn adopted an agent launched while the task's worktree ran its setup
-   * script (`SpawnOverrides.earlyAgent`), before the prompt was ready, and on a
+   * script (`SpawnOverrides.earlyAgent`), before the prompt was ready, on a
    * fresh spawn of an adapter whose CLI takes no starting prompt
-   * (`freshPromptDelivery: 'typed'`). The caller types it in, and waits for it
-   * to land, before it sends the agent anything else. It is the spawn's whole
-   * command-line prompt, so the caller treats it exactly as a prompt that rode
-   * the command line. Null or absent otherwise.
+   * (`freshPromptDelivery: 'typed'`), and on one too long for the line it would
+   * have ridden (`freshPromptTypedForLength`). The caller types it in, and waits
+   * for it to land, before it sends the agent anything else. It is the spawn's
+   * whole command-line prompt, so the caller treats it exactly as a prompt that
+   * rode the command line. Null or absent otherwise.
    */
   typedOpening?: string | null;
 }
@@ -695,16 +697,7 @@ export class TransitionEngine {
     // ensureTrust and before buildCommand (spawn-entry-point-parity). The
     // session row persists the ORIGINAL prompt: flattening is a delivery
     // detail, not what the user wrote.
-    let launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
-    // A resume's prompt rides its command line only where it arrives whole
-    // (resume-prompt-delivery.ts), and a fresh spawn's only where the CLI takes
-    // a starting prompt (`freshPromptDelivery`). Otherwise it is kept off the
-    // command line and handed back, and the caller types it in.
-    const promptText = input.prompt?.trim() ? input.prompt : null;
-    const promptKeptOff = promptText !== null && (input.canResume
-      ? !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: promptText, launchStrategy: launch.strategy, shell })
-      : adapter.freshPromptDelivery === 'typed');
-    if (promptKeptOff) launch = { ...launch, prompt: undefined };
+    const launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
     const executionTarget = resolveExecutionTarget(input.agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     const commandOptions: SpawnCommandOptions = {
@@ -736,6 +729,19 @@ export class TransitionEngine {
       bypassAvailable,
       cliTarget,
     };
+    const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
+    // A resume's prompt rides its command line only where it arrives whole
+    // (resume-prompt-delivery.ts), and a fresh spawn's only where the CLI takes
+    // a starting prompt (`freshPromptDelivery`) and the line can hold it
+    // (`freshPromptTypedForLength`). Print mode has no input box to type into.
+    // Kept off, the prompt is handed back, and the caller types it in.
+    const promptText = input.prompt?.trim() ? input.prompt : null;
+    const typedForLength = promptText !== null && !input.nonInteractive
+      && freshPromptTypedForLength({ prompt: promptText, mayBeTyped: inputInAlternateScreen, agentPath: launch.agentPath, shell });
+    const promptKeptOff = promptText !== null && (input.canResume
+      ? !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: promptText, launchStrategy: launch.strategy, shell })
+      : adapter.freshPromptDelivery === 'typed' || typedForLength);
+    if (promptKeptOff) commandOptions.prompt = undefined;
     return {
       sessionDir,
       statusOutputPath,
@@ -745,7 +751,7 @@ export class TransitionEngine {
       commandOptions,
       promptKeptOff,
       launchKey: launchKeyOf(input.agentName, commandOptions),
-      inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
+      inputInAlternateScreen,
     };
   }
 

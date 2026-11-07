@@ -1,12 +1,13 @@
 ---
 type: Reference
 title: Packaging and security
-description: How native modules (better-sqlite3, node-pty, koffi, sqlite-vec, onnxruntime) are packaged and unpacked from the asar, the afterPack worker checks, Electron fuses, the NSIS ACL grant, the auto-update platform guard per OS, and the Linux deb and rpm dependencies.
+description: How native modules (better-sqlite3, node-pty, koffi, sqlite-vec, onnxruntime) are packaged and unpacked from the asar, the afterPack worker and source map checks, Electron fuses, the NSIS ACL grant, the auto-update platform guard per OS, and the Linux deb and rpm dependencies.
 tags: [packaging, asar, fuses, linux, auto-update]
 sources:
   - resource: electron-builder.yml
   - resource: build/afterPack.js
   - resource: build/verify-unpacked-worker.js
+  - resource: build/verify-no-source-maps.js
   - resource: build/installer.nsh
   - resource: src/main/updater.ts
   - resource: src/main/agent/shared/bridge-utils.ts
@@ -89,6 +90,17 @@ Linux is included because `electron-updater` ships `DebUpdater` / `RpmUpdater` a
 Three platform-specific FAILURES have no branch in that guard, because each is recognized by the error it produces rather than by `process.platform`. On Linux a denied elevation prompt is counted and never filed. A `.deb` install with no `dpkg` or `apt` never updates, and on macOS neither does an app running from a read-only volume. Those two are the updater failures the app tells the user about. See [macOS read-only volumes](../releases/deployment.md#macos-read-only-volumes), [Linux auto-update](../releases/deployment.md#linux-auto-update) and the "counted, not reported" entries in [Error reporting (Sentry)](../telemetry/error-reporting.md#counted-not-reported).
 
 Release notes are not gated by that guard either. The post-update "What's New" dialog reads notes inlined into the renderer bundle at build time, so it works for every install route: an `npx kangentic` upgrade and a manual installer run both surface it on the next launch. See [Auto-Update Behavior](../releases/deployment.md#auto-update-behavior).
+
+## No source maps in the package
+
+Source maps go to Sentry and never ship. The Sentry upload deletes the maps it generated, and
+`!**/*.map` in `electron-builder.yml`'s `files` keeps out the ones `node_modules` carries.
+`build/verify-no-source-maps.js` checks the result, as the first step of `build/afterPack.js`. It
+reads the `app.asar` header, which lists unpacked files too, and fails the package on any `.map`
+file. It also fails when the asar is missing or does not list `.vite/build/index.js`, so a wrong
+path cannot read as a clean package. Running in `afterPack` stops a release leg before it signs or
+uploads anything to the draft. `package-smoke.yml` runs `npm run package` on a pull request that
+touches packaging, and that runs this check too.
 
 ## Security Fuses
 

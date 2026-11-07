@@ -151,5 +151,18 @@
       "color": "#10b981"
     }
   ],
-  "_modifiedBy": "7ef4fd0cb484"
+  "_modifiedBy": "7ef4fd0cb484",
+  "profiles": [
+    {
+      "id": "d8761252-7e15-4777-ba74-0c300650dc91",
+      "name": "Upgrade",
+      "description": "Dependency upgrade tasks from /upgrade-deps. Runs Testing on Opus, because /pull-request fixes code there when CI fails and an upgrade's fixes are app changes.",
+      "columns": {
+        "1da886f1-804b-42ea-960e-2109f776d451": {
+          "modelOverride": "opus",
+          "effortOverride": "high"
+        }
+      }
+    }
+  ]
 }

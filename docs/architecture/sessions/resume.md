@@ -460,7 +460,9 @@ to `typed` (Kimi Code), the engine keeps the whole prompt off the command line a
 `SpawnOutcome.typedOpening`, the field an adopted early agent uses, and the caller types it in
 before it sends the agent anything else. That spawn opens idle (`markIdleAuthoritative`), since no
 turn runs until the prompt lands. Startup recovery types nothing, so it opens such an agent with
-no recap. A workflow's agent cannot be one (`canBeWorkflowAgent`).
+no recap. A workflow's agent cannot be one (`canBeWorkflowAgent`). A fresh prompt too long for its
+command line goes the same way on an agent that may take it typed, and is refused on any other
+([A prompt too long for its command line](spawn-flow.md#a-prompt-too-long-for-its-command-line)).
 
 The engine decides per spawn with `resumePromptRidesCommandLine`
 (`src/main/transition-engine/resume-prompt-delivery.ts`). The prompt rides only when all four hold:

@@ -1652,6 +1652,10 @@ msgstr "에이전트가 원격 서버에서 실행됨"
 msgid "The automation did not start."
 msgstr "자동화가 시작되지 않았습니다."
 
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "The description is too long to start an agent with."
+msgstr ""
+
 #: src/renderer/stores/project-store.ts
 #, fuzzy
 msgid "The list has been refreshed."

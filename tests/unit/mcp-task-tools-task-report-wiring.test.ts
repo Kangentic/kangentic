@@ -35,7 +35,7 @@ vi.mock('../../src/main/agent/commands', () => ({
 // task-tools.ts imports handleMoveTaskToProject directly from task-commands;
 // stubbed so this suite stays DB-free. Unused by the tests below.
 vi.mock('../../src/main/agent/commands/task-commands', () => ({
-  TASK_DESCRIPTION_MAX_LENGTH: 50_000,
+  TASK_DESCRIPTION_MAX_LENGTH: 27_500,
   handleMoveTaskToProject: vi.fn(),
 }));
 

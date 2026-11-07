@@ -25,6 +25,7 @@ const ROWS = [
   { taskId: 'task-folder', status: 'suspended', reason: 'folder-missing', exitCode: null },
   { taskId: 'task-never', status: 'suspended', reason: 'never-started', exitCode: null },
   { taskId: 'task-spawn', status: 'exited', reason: 'spawn-failed', exitCode: -1 },
+  { taskId: 'task-prompt', status: 'suspended', reason: 'prompt-too-long', exitCode: null },
   { taskId: 'task-paused', status: 'suspended', reason: undefined, exitCode: null },
 ];
 
@@ -83,6 +84,7 @@ test.describe('A start that never reached an agent', () => {
         ['task-folder', 'Folder missing', 'The folder this agent starts in is gone.'],
         ['task-never', 'Didn\'t start', 'The agent never reported that it started.'],
         ['task-spawn', 'Didn\'t start', 'The terminal could not start. Its window shows why.'],
+        ['task-prompt', 'Didn\'t start', 'Its prompt is too long for this agent to start with.'],
       ]) {
         const footer = footerOf(page, taskId);
         await expect(footer).toHaveText(label);

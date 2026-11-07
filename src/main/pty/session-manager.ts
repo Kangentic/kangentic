@@ -43,7 +43,7 @@ import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
-import { AgentCwdMissingError, startBlockedReasonForCwd } from './spawn/pty-spawn';
+import { AgentStartRefusedError } from './spawn/pty-spawn';
 import type { RemoteHostRequest, RemoteSessionRoute, SuspendPlan } from '../remote/protocol/messages';
 import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
@@ -679,9 +679,10 @@ export class SessionManager extends EventEmitter {
         } catch (error) {
           // A teardown took the session over while it spawned: not a failure.
           if (isAbortError(error)) return;
-          // Its folder went while it waited. The queue moves on either way, so
-          // the row is settled here, or the card would read Queued for good.
-          if (error instanceof AgentCwdMissingError && input.id) {
+          // Its folder went while it waited, or its command cannot start. The
+          // queue moves on either way, so the row is settled here, or the card
+          // would read Queued for good.
+          if (error instanceof AgentStartRefusedError && input.id) {
             this.refuseQueuedStart(input.id, error);
             return;
           }
@@ -2568,7 +2569,11 @@ export class SessionManager extends EventEmitter {
     try {
       return await this.doSpawn(input);
     } catch (error) {
-      if (error instanceof AgentCwdMissingError) this.showRefusedStart(input);
+      if (error instanceof AgentStartRefusedError) {
+        // No row keeps this id, so the row's removal never clears it.
+        if (input.id) this.inputInAlternateScreen.delete(input.id);
+        this.showRefusedStart(input, error.reason);
+      }
       throw error;
     } finally {
       this.spawningCount--;
@@ -2580,15 +2585,14 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * A direct start refused because its folder is gone. The caller raises the
-   * notice, but a toast closes, so the card holds the reason too: a suspended
-   * row, which is also what gives the task its Resume. A row the task already
-   * has takes the reason instead, and a live one is left as it is, since the old
-   * agent kept running through the refusal.
+   * A direct start refused before it had a PTY. The caller raises the notice,
+   * but a toast closes, so the card holds the reason too: a suspended row, which
+   * is also what gives the task its Resume. A row the task already has takes the
+   * reason instead, and a live one is left as it is, since the old agent kept
+   * running through the refusal.
    */
-  private showRefusedStart(input: SpawnSessionInput): void {
+  private showRefusedStart(input: SpawnSessionInput, reason: StartBlockedReason): void {
     if (input.transient) return;
-    const reason = startBlockedReasonForCwd(input.cwd);
     const placeholder = this.registerSuspendedPlaceholder({
       taskId: input.taskId,
       projectId: input.projectId,
@@ -2601,11 +2605,11 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * A queued start refused because its folder is gone. A task's listener pauses
-   * it and says why (`ipc/handlers/sessions.ts`). `emit` is false with no
-   * listener, and a transient session has no task to pause.
+   * A queued start refused before it had a PTY. A task's listener pauses it and
+   * says why (`ipc/handlers/sessions.ts`). `emit` is false with no listener, and
+   * a transient session has no task to pause.
    */
-  private refuseQueuedStart(sessionId: string, error: AgentCwdMissingError): void {
+  private refuseQueuedStart(sessionId: string, error: AgentStartRefusedError): void {
     const session = this.registry.get(sessionId);
     if (!session) return;
     console.warn(`[SessionManager] Refused to start queued session ${sessionId.slice(0, 8)}: ${error.message}`);
@@ -2910,7 +2914,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * A promotion refused for a missing folder, when no task can hold the failure:
+   * A refused promotion, when no task can hold the failure:
    * nothing paused the row, so it is taken off `queued` here or it stays there.
    * A Command Terminal ends, and anything else exits as a failed spawn does.
    */

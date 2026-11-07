@@ -5,6 +5,8 @@ import { Field, FIELD_CONTROL_CLASS } from '../../Field';
 import { TaskBranchRow } from '../TaskBranchRow';
 import { PriorityLabelsRow } from '../PriorityLabelsRow';
 import { DescriptionEditor } from '../../DescriptionEditor';
+import { DescriptionLimitNote } from '../DescriptionLimitNote';
+import { taskDescriptionOverage } from '../../../../shared/task-description-limit';
 import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
@@ -117,6 +119,7 @@ export function TaskDetailEditForm({
         mentionSearchCwd={task.worktree_path ?? projectPath ?? null}
         className="flex-1"
       />
+      <DescriptionLimitNote overage={taskDescriptionOverage(description, task.description)} />
       {/* Proactive recall belongs here as much as in the view mode: a task with
           no session yet opens straight into this form, which is exactly the
           "about to start" moment when "have I already worked this out?" is

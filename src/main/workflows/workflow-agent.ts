@@ -19,7 +19,7 @@ import { canBeWorkflowAgent } from '../agent/shared/workflow-agent-capability';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
-import { resumePromptRidesCommandLine } from '../transition-engine/resume-prompt-delivery';
+import { freshPromptTypedForLength, resumePromptRidesCommandLine } from '../transition-engine/resume-prompt-delivery';
 import { pasteAgentMessageInBackground } from '../automations/turn-end/agent-message-delivery';
 import { serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
@@ -696,13 +696,6 @@ async function startWorkflowAgentWithPull(
   hostFilePull.sync = await pullHostFilesFor(adapter, projectRoot, cliTarget);
   await adapter.ensureTrust(projectRoot, cliTarget);
   const launch = await resolveShimLaunch({ agentPath: cliPath, shell, prompt });
-  // A resume's message rides its command line only where it arrives whole, as
-  // the task spawns decide (resume-prompt-delivery.ts). Otherwise the resume
-  // carries none, and the message is typed in once the agent is ready.
-  const typedContinuation = resume && prompt !== undefined
-    && !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt, launchStrategy: launch.strategy, shell })
-    ? prompt
-    : undefined;
   // The chosen model and effort belong to the chosen agent (a model id means
   // nothing to another CLI), so a conversation kept on another agent runs at its
   // CLI's own defaults. Read on every start, so a Resume takes a changed setting.
@@ -711,7 +704,7 @@ async function startWorkflowAgentWithPull(
   const commandOptions = {
     agentPath: launch.agentPath,
     taskId: workflow.id,
-    prompt: typedContinuation === undefined ? launch.prompt : undefined,
+    prompt: launch.prompt,
     cwd: projectRoot,
     permissionMode: 'default' as const,
     projectRoot,
@@ -737,6 +730,16 @@ async function startWorkflowAgentWithPull(
     ptySessionId: sessionId,
     cliTarget,
   };
+  // A message rides its command line only where it arrives whole, as the task
+  // spawns decide (resume-prompt-delivery.ts). Otherwise the start carries none,
+  // and the message is typed in once the agent is ready. A first message holds
+  // the task the workflow was made from, so a long brief can pass the limit.
+  const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
+  const ridesCommandLine = prompt === undefined || (resume
+    ? resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt, launchStrategy: launch.strategy, shell })
+    : !freshPromptTypedForLength({ prompt, mayBeTyped: inputInAlternateScreen, agentPath: launch.agentPath, shell }));
+  const typedContinuation = ridesCommandLine ? undefined : prompt;
+  if (typedContinuation !== undefined) commandOptions.prompt = undefined;
   const command = adapter.buildCommand(commandOptions);
   // From here until spawn() takes the command, a return or a throw releases
   // the hold it took. From the spawn() call on, spawn() releases a spawn that
@@ -794,6 +797,8 @@ async function startWorkflowAgentWithPull(
     agentParser: adapter,
     agentName: adapter.name,
     exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
+    // So a message typed in waits for the input box, past any screen before it.
+    inputInAlternateScreen,
     cols: grid.cols,
     rows: grid.rows,
     // The shell the command was built for, and where its CLI runs.
@@ -819,9 +824,9 @@ async function startWorkflowAgentWithPull(
   // "Workflow agent is working", with every plan edit held, until the
   // stale-thinking watchdog cleared it. Assert the idle, as the settings-change
   // restart does (`session-reconcile.ts`). Not sticky: a real turn clears it.
-  if (resume && (!prompt || typedContinuation !== undefined)) context.sessionManager.markIdleAuthoritative(session.id);
-  // The restart's reason, when the resume could not carry it, is pasted once
-  // the agent's turn has settled.
+  if ((resume && !prompt) || typedContinuation !== undefined) context.sessionManager.markIdleAuthoritative(session.id);
+  // The restart's reason, or a first message, that the start could not carry is
+  // pasted once the agent's turn has settled.
   if (typedContinuation !== undefined) {
     pasteAgentMessageInBackground(context, {
       taskId: workflow.id,
@@ -829,7 +834,7 @@ async function startWorkflowAgentWithPull(
       message: typedContinuation,
       onOutcome: (report) => {
         if (report.outcome !== 'confirmed' && report.outcome !== 'unconfirmed') {
-          console.warn(`[workflow-agent] The restart message for workflow ${workflow.id.slice(0, 8)} was not typed in: ${report.reason ?? report.outcome}`);
+          console.warn(`[workflow-agent] The message for workflow ${workflow.id.slice(0, 8)} was not typed in: ${report.reason ?? report.outcome}`);
         }
       },
     });

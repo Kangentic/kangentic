@@ -391,11 +391,6 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   exited is reported stopped and a Stop of an exited process answers ended.
   `leftover-worktree-retry.test.ts` pins the Done move's one delayed removal retry, and
   `session-leftover-reap-wiring.test.ts` that the Done move schedules it only when its removal failed.
-- **Test (Aspire, by hand):** `tests/unit/aspire-host-death.test.ts` runs a real `aspire run` through
-  the real reap, with the dashboard idle and open in a browser, and follows the stack by identity.
-  It needs `CI` and `KANGENTIC_ASPIRE_PROBE=1`, because DCP's tree stop can reach a stranger's
-  processes, and only a dispatch of `aspire-host-death.yml` runs it. Rerun it when the Aspire version
-  moves.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, a server another task holds a TCP

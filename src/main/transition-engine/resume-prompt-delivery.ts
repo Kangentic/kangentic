@@ -2,6 +2,8 @@ import type { AgentAdapter } from '../agent/agent-adapter';
 import type { ShimLaunchStrategy } from '../agent/shared/shim-launch';
 import { commandLineLength } from '../agent/shared/prompt-budget';
 import { quoteArgKeepsNewlines } from '../../shared/paths';
+import { isSlashCommand } from '../automations/turn-end/agent-message-delivery';
+import { commandLineLimit, launchRunsOnLinux, LINUX_ARGUMENT_BYTE_LIMIT } from '../pty/spawn/typed-launch';
 
 /**
  * The longest resume prompt that rides the CLI's command line, by
@@ -15,6 +17,14 @@ import { quoteArgKeepsNewlines } from '../../shared/paths';
  * length whole.
  */
 export const RESUME_PROMPT_COMMAND_LINE_CAP = 6_000;
+
+/**
+ * What a fresh launch's command takes up besides its prompt: the CLI's path, its
+ * settings, hook and MCP flags. Claude's is the longest, measured at 1,524
+ * characters on Windows-length paths with an MCP server and the Agent Browser on.
+ * `task-description-limit.test.ts` builds every adapter's command against this.
+ */
+export const COMMAND_LINE_RESERVE = 2_500;
 
 /**
  * Everything a spawn left for its caller to type in, for a caller that sends it
@@ -51,4 +61,52 @@ export function resumePromptRidesCommandLine(input: {
     && (input.launchStrategy === 'flattened-prompt' || !quoteArgKeepsNewlines(input.shell))) return false;
   if (input.prompt.startsWith('-')) return false;
   return commandLineLength(input.prompt) <= RESUME_PROMPT_COMMAND_LINE_CAP;
+}
+
+/**
+ * What a prompt takes up in a command quoted for a Linux shell, in bytes: bash
+ * writes `'` as `'\''`, and fish and nushell escape `"`, `\` and a line break.
+ */
+function quotedPromptBytes(prompt: string): number {
+  const apostrophes = prompt.match(/'/g)?.length ?? 0;
+  const escaped = prompt.match(/["\\\n]/g)?.length ?? 0;
+  return Buffer.byteLength(prompt, 'utf8') + apostrophes * 3 + escaped;
+}
+
+/**
+ * Whether a fresh launch's prompt fits its command line, by the limit the spawn
+ * refuses at (`commandFitsShell`), less the rest of the command. `commandLineLength`
+ * counts what the prompt grows to under cmd.exe, and a `"` counts for two, which
+ * covers a Git Bash launch of a Windows program.
+ */
+export function freshPromptRidesCommandLine(input: {
+  prompt: string;
+  agentPath: string;
+  shell: string;
+  platform: NodeJS.Platform;
+}): boolean {
+  if (launchRunsOnLinux(input)) return quotedPromptBytes(input.prompt) <= LINUX_ARGUMENT_BYTE_LIMIT - COMMAND_LINE_RESERVE;
+  const limit = commandLineLimit({ program: input.agentPath, shell: input.shell, platform: input.platform });
+  if (limit === null) return true;
+  const quotes = input.prompt.match(/"/g)?.length ?? 0;
+  return commandLineLength(input.prompt) + quotes <= limit - COMMAND_LINE_RESERVE;
+}
+
+/**
+ * Whether a fresh start's prompt is kept off its command for its length, to be
+ * typed in. A prompt too long for the line is typed only into an agent whose input
+ * box can be told from a boot screen (`firstPromptMayBeTyped`), whose Enter it
+ * would otherwise answer. A slash command runs only as keystrokes, too slow for a
+ * prompt this long. Anything else stays on the command, and the spawn refuses it
+ * (`AgentCommandTooLongError`).
+ */
+export function freshPromptTypedForLength(input: {
+  prompt: string;
+  /** `firstPromptMayBeTyped`'s answer for this launch. */
+  mayBeTyped: boolean;
+  agentPath: string;
+  shell: string;
+}): boolean {
+  return input.mayBeTyped && !isSlashCommand(input.prompt)
+    && !freshPromptRidesCommandLine({ prompt: input.prompt, agentPath: input.agentPath, shell: input.shell, platform: process.platform });
 }

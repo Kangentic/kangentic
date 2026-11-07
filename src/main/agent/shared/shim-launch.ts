@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import { execFileAsync } from '../../utility-process/off-main-exec';
 import { isPowerShellShell, isUnixLikeShell, sanitizeForPty } from '../../../shared/paths';
+import { isWindowsBatchShim } from './npm-shim-target';
 
+// For the Claude model picker probe, which reads `shimSibling` from here too.
+export { isWindowsBatchShim };
 
 /**
  * Pick the launcher for an agent CLI that resolved to a Windows `.cmd` /
@@ -90,11 +93,6 @@ const executionPolicyProbes = new Map<string, Promise<string | null>>();
 
 /** One warning per shell and agent path, so a busy board does not repeat it per spawn. */
 const warnedLaunches = new Set<string>();
-
-/** `.cmd` / `.bat` by extension, case-insensitive (`which` returns `.CMD`). */
-export function isWindowsBatchShim(agentPath: string): boolean {
-  return /\.(cmd|bat)$/i.test(agentPath);
-}
 
 /**
  * The sibling shim path: same directory and base name, the given extension.

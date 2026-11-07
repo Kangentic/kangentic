@@ -45,6 +45,8 @@ vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => 
 });
 
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
+import { hasPendingMessageDelivery, supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
+import { OPENING_BOOT_SCREEN_WAIT_MS, OPENING_INPUT_WAIT_MS } from '../../src/main/automations/turn-end/agent-message-delivery';
 import { claimHeldMessages } from '../../src/main/held-messages/held-messages';
 import type { HeldClaim } from '../../src/main/held-messages/held-messages';
 
@@ -134,9 +136,9 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
       return { startOver: null, recapOnly: false, unsentPrompt: null, typedOpening: args.typedOpening };
     }),
   };
-  const scheduleKeystrokes = vi.fn((_taskId: string, _sessionId: string, commands: Array<{ text: string }>, options: { onOutcome?: (report: { outcome: string }) => void }) => {
+  const scheduleKeystrokes = vi.fn((_taskId: string, _sessionId: string, commands: Array<{ text: string }>, options: { onOutcome?: (report: { outcome: string; commands: string[]; unconfirmedCommands: string[] }) => void }) => {
     events.push(`keystrokes:${commands.map((command) => command.text).join('|')}`);
-    options.onOutcome?.({ outcome: 'unconfirmed' });
+    options.onOutcome?.({ outcome: 'unconfirmed', commands: commands.map((command) => command.text), unconfirmedCommands: [] });
   });
   const submitContent = vi.fn(async (_sessionId: string, text: string) => { events.push(`paste:${text}`); });
   const sendToRenderer = vi.fn();
@@ -150,6 +152,7 @@ function makeDeps(args: { columnMessage: string | null; typedOpening: string | n
       on: sessionEvents.on.bind(sessionEvents),
       off: sessionEvents.off.bind(sessionEvents),
       awaitAgentReady: vi.fn(async () => true),
+      awaitInputReady: vi.fn(async (): Promise<boolean> => true),
       getSession: vi.fn(() => ({ id: ADOPTED_SESSION_ID, status: 'running' })),
       agentStartPending: vi.fn(() => false),
     },
@@ -393,6 +396,416 @@ describe('spawnAgent when the concurrency cap queued the session', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(deps.submitContent).not.toHaveBeenCalled();
     expect(deps.autoCommandNotices()).toEqual([]);
+  });
+});
+
+describe('spawnAgent when the agent opens on a boot screen', () => {
+  // Measured on real Claude: its approval of external imports held a 28,000
+  // character opening past a minute. A paste's Enter would have answered it, and
+  // the spawn holds the task lock, so the opening waits for a person in the
+  // background and goes in once they have answered.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+  });
+
+  /** The input box comes up only when a test says so. */
+  function onABootScreen(deps: ReturnType<typeof makeDeps>): { reachInputBox: (atInput: boolean) => void } {
+    let reachInputBox: (atInput: boolean) => void = () => undefined;
+    deps.context.sessionManager.awaitInputReady
+      .mockResolvedValueOnce(false)
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => { reachInputBox = resolve; }));
+    return { reachInputBox: (atInput) => reachInputBox(atInput) };
+  }
+
+  it('resolves with nothing typed, then types once a person has answered the screen', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+
+    screen.reachInputBox(true);
+
+    await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything()));
+    expect(deps.autoCommandNotices()).toEqual([]);
+  });
+
+  it('says so when the agent exits on that screen', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'exited' });
+    deps.context.sessionManager.awaitInputReady.mockResolvedValue(false);
+    screen.reachInputBox(false);
+
+    await vi.waitFor(() => expect(deps.autoCommandNotices()).toEqual([
+      expect.objectContaining({ state: 'failed', reason: 'The agent exited before its first prompt was sent.' }),
+    ]));
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('says so when nobody answers the screen', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+    deps.context.sessionManager.awaitInputReady.mockResolvedValue(false);
+    screen.reachInputBox(false);
+
+    await vi.waitFor(() => expect(deps.autoCommandNotices()).toEqual([
+      expect.objectContaining({ state: 'failed', reason: 'The agent did not reach its input box in time for its first prompt.' }),
+    ]));
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  // A row's keystrokes carry an Enter too, and that screen would take it.
+  it('holds the column\'s message behind the opening, so nothing reaches the screen', async () => {
+    const deps = makeDeps({ columnMessage: 'Run the tests before you finish.', typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+
+    expect(deps.events).toEqual([]);
+    screen.reachInputBox(true);
+
+    await vi.waitFor(() => expect(deps.events).toEqual([
+      `paste:${TEMPLATE_PROMPT}`,
+      'keystrokes:Run the tests before you finish.',
+    ]));
+  });
+
+  it('sends a column\'s multi-line message after the opening too, never over it', async () => {
+    const message = 'The reviewer says:\n- fix the null check';
+    const deps = makeDeps({ columnMessage: message, typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+
+    expect(deps.events).toEqual([]);
+    screen.reachInputBox(true);
+
+    await vi.waitFor(() => expect(deps.events).toEqual([`paste:${TEMPLATE_PROMPT}`, `paste:${message}`]));
+  });
+
+  it('reports a move while it waits as a cancel, not as an agent that exited', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+    // A create has no signal of its own, so the move reaches it this way. The
+    // move ended the session, as it does.
+    supersedeMessageDeliveries(TASK_ID);
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'exited' });
+    deps.context.sessionManager.awaitInputReady.mockResolvedValue(false);
+    screen.reachInputBox(false);
+
+    await vi.waitFor(() => expect(deps.tasks.recordAutoCommandOutcome).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ state: 'cancelled', command: OPENING_PROMPT_LABEL }),
+    ));
+    expect(deps.autoCommandNotices()).toEqual([]);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('settles held messages from the typed opening, not from the spawn', async () => {
+    const claim = makeHeldClaim('1. Check the migration.');
+    vi.mocked(claimHeldMessages).mockReturnValue(claim);
+    const deps = makeDeps({ columnMessage: null, typedOpening: claim.text });
+    const screen = onABootScreen(deps);
+
+    await runSpawn(deps, makeHandle(), true, { projectId: PROJECT_ID, settingsSourceLane: makeLane() });
+
+    expect(claim.commit).not.toHaveBeenCalled();
+    screen.reachInputBox(true);
+
+    await vi.waitFor(() => expect(claim.commit).toHaveBeenCalledWith(ADOPTED_SESSION_ID));
+  });
+
+  it('types at once when the wait was cancelled, so the cancel is recorded', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const moveOn = new AbortController();
+    deps.context.sessionManager.awaitInputReady.mockImplementation(async () => {
+      moveOn.abort();
+      return false;
+    });
+
+    await runSpawn(deps, makeHandle(), false, { signal: moveOn.signal });
+
+    expect(deps.submitContent).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+    expect(deps.tasks.recordAutoCommandOutcome).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ state: 'cancelled', command: OPENING_PROMPT_LABEL }),
+    );
+  });
+});
+
+describe('spawnAgent while a deferred opening waits out a boot screen or a queue', () => {
+  const COLUMN_MESSAGE = 'Run the tests before you finish.';
+  const NEWER_SESSION_ID = 'newer-session';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(claimHeldMessages).mockReturnValue(null);
+    // A wait an earlier test left tracked must not read as this test's.
+    supersedeMessageDeliveries(TASK_ID);
+  });
+
+  /**
+   * An awaitInputReady that behaves like the real one about its signal. The first
+   * call (under the task lock) says the agent is on a boot screen. The second is
+   * the background wait: it stays pending until `reachInputBox`, or resolves
+   * false when its signal aborts. Later calls (the typing path's own) answer
+   * `afterWait`, and false once their signal is aborted.
+   */
+  function scriptedInputReady(deps: ReturnType<typeof makeDeps>, afterWait = true) {
+    let callCount = 0;
+    let answerBackgroundWait: (atInput: boolean) => void = () => undefined;
+    const awaitInputReady = vi.fn(async (_sessionId: string, _waitMs: number, waitSignal?: AbortSignal): Promise<boolean> => {
+      callCount += 1;
+      if (callCount === 1) return false;
+      if (callCount === 2) {
+        return new Promise<boolean>((resolve) => {
+          answerBackgroundWait = resolve;
+          waitSignal?.addEventListener('abort', () => resolve(false), { once: true });
+        });
+      }
+      return waitSignal?.aborted !== true && afterWait;
+    });
+    deps.context.sessionManager.awaitInputReady = awaitInputReady as unknown as typeof deps.context.sessionManager.awaitInputReady;
+    return {
+      reachInputBox: (atInput: boolean) => answerBackgroundWait(atInput),
+      waitCall: (index: number) => {
+        const call = awaitInputReady.mock.calls[index];
+        if (!call) throw new Error(`awaitInputReady call ${index} never happened`);
+        return { waitMs: call[1], signal: call[2] };
+      },
+    };
+  }
+
+  async function nextMacrotask(): Promise<void> {
+    // Negative assertions: one macrotask lets every pending microtask chain run first.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('forwards the caller\'s abort to the boot-screen wait, records a cancel, and sends nothing', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = scriptedInputReady(deps, false);
+    const moveOn = new AbortController();
+
+    await runSpawn(deps, makeHandle(), false, { signal: moveOn.signal });
+
+    const backgroundWait = screen.waitCall(1);
+    expect(backgroundWait.waitMs).toBe(OPENING_BOOT_SCREEN_WAIT_MS);
+    expect(backgroundWait.signal?.aborted).toBe(false);
+    moveOn.abort();
+
+    await vi.waitFor(() => expect(deps.tasks.recordAutoCommandOutcome).toHaveBeenCalledWith(
+      TASK_ID,
+      expect.objectContaining({ state: 'cancelled', command: OPENING_PROMPT_LABEL }),
+    ));
+    // The wait runs on its own controller, which the caller's abort reached.
+    expect(backgroundWait.signal).not.toBe(moveOn.signal);
+    expect(backgroundWait.signal?.aborted).toBe(true);
+    expect(deps.autoCommandNotices()).toEqual([]);
+    expect(deps.submitContent).not.toHaveBeenCalled();
+  });
+
+  it('tracks the wait as a pending delivery, and stops tracking once the opening landed', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = scriptedInputReady(deps);
+
+    await runSpawn(deps, makeHandle(), false);
+    expect(hasPendingMessageDelivery(TASK_ID)).toBe(true);
+
+    screen.reachInputBox(true);
+
+    await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(hasPendingMessageDelivery(TASK_ID)).toBe(false));
+  });
+
+  it('stops tracking the wait when the agent exited on the screen too', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = scriptedInputReady(deps, false);
+
+    await runSpawn(deps, makeHandle(), false);
+    expect(hasPendingMessageDelivery(TASK_ID)).toBe(true);
+
+    deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'exited' });
+    screen.reachInputBox(false);
+
+    await vi.waitFor(() => expect(deps.autoCommandNotices()).toHaveLength(1));
+    await vi.waitFor(() => expect(hasPendingMessageDelivery(TASK_ID)).toBe(false));
+  });
+
+  it('takes its abort listener off the caller\'s signal once the wait settles', async () => {
+    const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+    const screen = scriptedInputReady(deps);
+    const moveOn = new AbortController();
+    const addListener = vi.spyOn(moveOn.signal, 'addEventListener');
+    const removeListener = vi.spyOn(moveOn.signal, 'removeEventListener');
+
+    await runSpawn(deps, makeHandle(), false, { signal: moveOn.signal });
+    screen.reachInputBox(true);
+    await vi.waitFor(() => expect(hasPendingMessageDelivery(TASK_ID)).toBe(false));
+    await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledTimes(1));
+
+    const addedAbortListeners = addListener.mock.calls.filter(([type]) => type === 'abort').map(([, listener]) => listener);
+    expect(addedAbortListeners.length).toBeGreaterThan(0);
+    for (const listener of addedAbortListeners) {
+      expect(removeListener).toHaveBeenCalledWith('abort', listener);
+    }
+
+    // And aborting later changes nothing: the opening landed, so no cancel is recorded.
+    moveOn.abort();
+    await nextMacrotask();
+    expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+    expect(deps.autoCommandNotices()).toEqual([]);
+  });
+
+  describe('for a session the concurrency cap queued', () => {
+    function queueSession(deps: ReturnType<typeof makeDeps>): { promote: () => void } {
+      deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'queued' });
+      return {
+        promote: () => {
+          deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'running' });
+          deps.sessionEvents.emit('session-changed', ADOPTED_SESSION_ID, { status: 'running' });
+        },
+      };
+    }
+
+    it('waits out the boot screen of the promoted agent instead of failing at the 20 second wait', async () => {
+      const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+      const screen = scriptedInputReady(deps);
+      const queue = queueSession(deps);
+
+      await runSpawn(deps, makeHandle(), false);
+      expect(deps.context.sessionManager.awaitInputReady).not.toHaveBeenCalled();
+
+      queue.promote();
+
+      await vi.waitFor(() => expect(deps.context.sessionManager.awaitInputReady).toHaveBeenCalledTimes(2));
+      expect(screen.waitCall(0).waitMs).toBe(OPENING_INPUT_WAIT_MS);
+      expect(screen.waitCall(1).waitMs).toBe(OPENING_BOOT_SCREEN_WAIT_MS);
+      expect(deps.submitContent).not.toHaveBeenCalled();
+      expect(deps.autoCommandNotices()).toEqual([]);
+
+      screen.reachInputBox(true);
+
+      await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything()));
+      expect(deps.autoCommandNotices()).toEqual([]);
+    });
+
+    it('keeps a create\'s opening when a move supersedes deliveries during the queue wait', async () => {
+      const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+      const queue = queueSession(deps);
+
+      await runSpawn(deps, makeHandle(), false);
+      // The queue wait is not a tracked delivery: a move leaves a queued row queued.
+      expect(hasPendingMessageDelivery(TASK_ID)).toBe(false);
+      supersedeMessageDeliveries(TASK_ID);
+      await nextMacrotask();
+      expect(deps.submitContent).not.toHaveBeenCalled();
+
+      queue.promote();
+
+      await vi.waitFor(() => expect(deps.submitContent).toHaveBeenCalledWith(ADOPTED_SESSION_ID, TEMPLATE_PROMPT, expect.anything()));
+      expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when the wait ends without the input box', () => {
+    function heldOpening() {
+      const claim = makeHeldClaim('1. Check the migration.');
+      vi.mocked(claimHeldMessages).mockReturnValue(claim);
+      const deps = makeDeps({ columnMessage: null, typedOpening: claim.text });
+      return { claim, deps };
+    }
+    const heldSpawnOptions = { projectId: PROJECT_ID, settingsSourceLane: makeLane() };
+
+    it('raises no notice for a pause, and puts the held messages back on hold', async () => {
+      const { claim, deps } = heldOpening();
+      const screen = scriptedInputReady(deps, false);
+
+      await runSpawn(deps, makeHandle(), true, heldSpawnOptions);
+      deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'suspended' });
+      screen.reachInputBox(false);
+
+      await vi.waitFor(() => expect(claim.release).toHaveBeenCalledWith({ flush: true }));
+      await vi.waitFor(() => expect(hasPendingMessageDelivery(TASK_ID)).toBe(false));
+      await nextMacrotask();
+      expect(claim.commit).not.toHaveBeenCalled();
+      expect(deps.autoCommandNotices()).toEqual([]);
+      expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+      expect(deps.submitContent).not.toHaveBeenCalled();
+    });
+
+    it('raises no notice when a newer session took the task over', async () => {
+      const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+      const screen = scriptedInputReady(deps, false);
+
+      await runSpawn(deps, makeHandle(), false);
+      deps.tasks.getById.mockImplementation(() => makeTask({ session_id: NEWER_SESSION_ID }));
+      screen.reachInputBox(false);
+
+      await vi.waitFor(() => expect(hasPendingMessageDelivery(TASK_ID)).toBe(false));
+      await nextMacrotask();
+      expect(deps.autoCommandNotices()).toEqual([]);
+      expect(deps.tasks.recordAutoCommandOutcome).not.toHaveBeenCalled();
+      expect(deps.submitContent).not.toHaveBeenCalled();
+    });
+
+    it('still reports an agent that exited on the screen as a failure', async () => {
+      const deps = makeDeps({ columnMessage: null, typedOpening: TEMPLATE_PROMPT });
+      const screen = scriptedInputReady(deps, false);
+
+      await runSpawn(deps, makeHandle(), false);
+      deps.context.sessionManager.getSession.mockReturnValue({ id: ADOPTED_SESSION_ID, status: 'exited' });
+      screen.reachInputBox(false);
+
+      await vi.waitFor(() => expect(deps.tasks.recordAutoCommandOutcome).toHaveBeenCalledWith(
+        TASK_ID,
+        expect.objectContaining({ state: 'failed', command: OPENING_PROMPT_LABEL }),
+      ));
+      expect(deps.autoCommandNotices()).toEqual([
+        expect.objectContaining({ state: 'failed', reason: 'The agent exited before its first prompt was sent.' }),
+      ]);
+    });
+
+    it('puts held messages back on hold, never commits them, when the opening does not land', async () => {
+      const { claim, deps } = heldOpening();
+      const screen = scriptedInputReady(deps, false);
+
+      await runSpawn(deps, makeHandle(), true, heldSpawnOptions);
+      expect(claim.release).not.toHaveBeenCalled();
+      screen.reachInputBox(false);
+
+      await vi.waitFor(() => expect(claim.release).toHaveBeenCalledWith({ flush: true }));
+      expect(claim.commit).not.toHaveBeenCalled();
+    });
+
+    it('drops a later column message with the reason about the opening, not the recap one', async () => {
+      const deps = makeDeps({ columnMessage: COLUMN_MESSAGE, typedOpening: TEMPLATE_PROMPT });
+      const screen = scriptedInputReady(deps, false);
+
+      await runSpawn(deps, makeHandle(), false);
+      expect(deps.events).toEqual([]);
+      screen.reachInputBox(false);
+
+      await vi.waitFor(() => expect(deps.tasks.recordAutoCommandOutcome).toHaveBeenCalledWith(
+        TASK_ID,
+        expect.objectContaining({
+          state: 'cancelled',
+          command: COLUMN_MESSAGE,
+          error: 'The task moved on, or its opening prompt did not land, so the message was not sent.',
+        }),
+      ));
+      expect(deps.events).toEqual([]);
+    });
   });
 });
 

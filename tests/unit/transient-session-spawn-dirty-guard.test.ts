@@ -142,7 +142,7 @@ import {
   registerTransientSessionHandlers,
   startCommandTerminal,
 } from '../../src/main/ipc/handlers/transient-sessions';
-import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
+import { AgentCommandTooLongError, AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { SpawnTransientSessionInput } from '../../src/shared/types';
 
@@ -687,6 +687,20 @@ describe('startCommandTerminal: main owns the cap and the slots', () => {
     mockReportPreflightFailure.mockClear();
     const context = createMockContext();
     const refusal = new AgentCwdMissingError('C:/Users/dev/gone');
+    context.sessionManager.spawn.mockRejectedValueOnce(refusal);
+
+    await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(refusal);
+
+    expect(mockReportPreflightFailure).not.toHaveBeenCalled();
+  });
+
+  it('rethrows a command too long for its shell as the refusal it is, and reports nothing', async () => {
+    // Every AgentStartRefusedError is an answer, not only the missing folder:
+    // the catch exempts the base class. A prompt that cannot start is the user's
+    // to shorten, so it must not reach Sentry as a fault.
+    mockReportPreflightFailure.mockClear();
+    const context = createMockContext();
+    const refusal = new AgentCommandTooLongError();
     context.sessionManager.spawn.mockRejectedValueOnce(refusal);
 
     await expect(startCommandTerminal(context as never, { projectId: 'proj-1' })).rejects.toBe(refusal);

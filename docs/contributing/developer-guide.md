@@ -8,6 +8,7 @@ sources:
   - resource: scripts/ensure-node-modules.js
   - resource: scripts/verify-node-modules.js
   - resource: scripts/build.js
+  - resource: scripts/sentry-upload-gate.js
   - resource: scripts/worktree-preview.js
   - resource: scripts/worktree-vite-config.js
   - resource: scripts/vite-refresh-hook-signatures.mjs
@@ -277,7 +278,9 @@ It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to s
    absent is how two releases shipped with unreadable stacks.
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
-3. esbuild bundles main + preload + the five utility-process workers (embed, line-count, dictation, retrieval, pty-host), minified
+3. esbuild bundles main + preload + the five utility-process workers (embed, line-count, dictation, retrieval, pty-host), minified.
+   A build that uploads fails on any bundle whose sourcemap did not reach the upload
+   (`scripts/sentry-upload-gate.js`, see [Error reporting](../telemetry/error-reporting.md#sourcemaps-and-debug-files)), in step 2 as well as here.
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`) to `.vite/build/`
 5. Uploads node-pty's shipped Windows PDBs to Sentry as debug files (`uploadNativeDebugFiles`):
    Windows leg only, gated on a `KANGENTIC_SENTRY_TOKEN` / `SENTRY_AUTH_TOKEN` upload token and on
@@ -289,8 +292,8 @@ It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to s
 
 The renderer built for a plain browser, so the site and the docs can embed the actual app. A
 second Vite invocation, never a second entry in the shared config: it reuses `vite.config.mts` as
-a factory, forces production semantics (`__KANGENTIC_DEV__` false, the Sentry plugins dropped by
-name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside every packaging
+a factory, forces production semantics (`__KANGENTIC_DEV__` false, every plugin named `sentry-*`,
+the upload gate included, dropped by name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside every packaging
 glob. One plugin injects five classic scripts ahead of the module bundle: the scene registry, the
 boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the

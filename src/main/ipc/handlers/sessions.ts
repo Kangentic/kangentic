@@ -35,7 +35,7 @@ import { pauseTaskSession } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
 import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, StartBlockedReason, TaskResolvePrResult } from '../../../shared/types';
-import { startBlockedReasonForCwd, type AgentCwdMissingError } from '../../pty/spawn/pty-spawn';
+import type { AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -858,12 +858,13 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     });
   });
 
-  // A queued session reached the front and its folder had gone while it waited
-  // (#1003 waited 17 minutes for the Merge slot). It pauses, so its card shows
-  // Resume, and Resume recreates a worktree. The queue is not the place to run git
-  // and a post-worktree script. A fresh launch is marked failed, so that Resume
-  // starts it with its own prompt: the id minted for it names no conversation.
-  context.sessionManager.on('agent-start-refused', (sessionId: string, session: Session, error: AgentCwdMissingError) => {
+  // A queued session reached the front and could not start. Its folder had gone
+  // while it waited (#1003 waited 17 minutes for the Merge slot), or its command
+  // is too long for its shell. It pauses, so its card shows Resume, and Resume
+  // recreates a worktree. The queue is not the place to run git and a
+  // post-worktree script. A fresh launch is marked failed, so that Resume starts
+  // it with its own prompt: the id minted for it names no conversation.
+  context.sessionManager.on('agent-start-refused', (sessionId: string, session: Session, error: AgentStartRefusedError) => {
     const retire = (): void => context.sessionManager.retireRefusedStart(sessionId);
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!projectId) {
@@ -882,7 +883,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         retire();
         return;
       }
-      recordStartBlocked(sessionId, projectId, startBlockedReasonForCwd(error.cwd));
+      recordStartBlocked(sessionId, projectId, error.reason);
       const task = new TaskRepository(getProjectDb(projectId)).getById(session.taskId);
       if (task) notifySpawnBlocked(context, task, 'agent', error, projectId);
     }).catch((pauseError: unknown) => {

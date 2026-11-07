@@ -11,6 +11,11 @@ sources:
   - resource: src/main/pty/session-manager.ts
   - resource: src/main/pty/session-queue.ts
   - resource: src/main/transition-engine/session-isolation.ts
+  - resource: src/shared/task-description-limit.ts
+  - resource: src/main/pty/spawn/typed-launch.ts
+  - resource: src/main/pty/spawn/pty-spawn.ts
+  - resource: src/main/pty/lifecycle/session-spawn-flow.ts
+  - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/shared/session-track.ts
   - resource: src/shared/abort-utils.ts
   - resource: src/main/ipc/handlers/session-resume-controllers.ts
@@ -132,12 +137,13 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
    a new session (`session_id`, the session record with the prompt), then `adoptSession` restarts
    its idle clock and announces it with one `session-changed`. The outcome's `typedOpening` is the
    prompt the command line would have carried.
-4. **Type the opening.** `deliverOpeningPromptAndWait` waits for the agent to be on screen and
-   its screen to be quiet, then sends the prompt the way every delivery decides (`shouldPaste`): a
-   bracketed paste for the task template, keystrokes for one line or a slash command. It is
-   awaited, so the column's later messages and held messages go after it. A CLI whose interactive
-   session takes no starting prompt (`freshPromptDelivery: 'typed'`) takes this step on every fresh
-   spawn, with no early agent: the engine hands its prompt back as `typedOpening` too.
+4. **Type the opening.** `deliverOpeningPromptAndWait` waits for the agent to be on screen, at its
+   input box (`awaitInputReady`) and its screen to be quiet, then sends the prompt the way every
+   delivery decides (`shouldPaste`): a bracketed paste for the task template, keystrokes for one
+   line or a slash command. It is awaited, so the column's later messages and held messages go
+   after it. A CLI whose interactive session takes no starting prompt (`freshPromptDelivery:
+   'typed'`) takes this step on every fresh spawn, with no early agent: the engine hands its prompt
+   back as `typedOpening` too. So does a [prompt too long for its command line](#a-prompt-too-long-for-its-command-line).
 5. **Discard.** Every path that does not adopt it discards it: a spawn whose launch changed, an
    agent that exited, a Phase 3 re-check that skips the spawn, `spawnAgent`'s own `finally`, the
    move's catch, and a failed or cancelled script inside the creation's hold. A discard is a kill,
@@ -146,6 +152,56 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
    task lock before the move does (an MCP or phone start, once the script ends) spawns normally,
    and `SessionManager.spawn` ends the task's hidden agent the same way before it starts its own.
 
+## A prompt too long for its command line
+
+A fresh start puts its prompt on the command line, and Windows limits that line: 32,766 characters
+for a process, and 8,191 through cmd.exe, whether cmd.exe is the shell or a `.cmd` or `.bat` shim
+runs the agent. `commandLineLimit` (`src/main/pty/spawn/typed-launch.ts`) is the one answer. Linux
+limits one argument to 131,072 bytes, on its own and in a WSL distro (`launchRunsOnLinux`), which a
+description under the limit cannot reach and an imported one can. macOS has no limit per argument.
+`TASK_DESCRIPTION_MAX_LENGTH` (`src/shared/task-description-limit.ts`, 27,500) is set so a task at
+the limit fits a native program or an npm `.ps1` or sh sibling. It covers MCP, the New Task dialog
+and the task window. `task-crud.ts` refuses a save that goes past it or grows a description already
+over it, so a longer older task keeps its other edits. A board import has no limit, and takes the
+paths below. `task-description-limit.test.ts` builds every adapter's command at the limit.
+
+The limit does not fit a `.cmd` shim, which an npm install keeps when PowerShell's execution policy
+blocks its `.ps1` or the sibling is missing. So:
+
+1. **It fits.** The prompt rides the command line. `freshPromptRidesCommandLine` reads the same
+   limit less `COMMAND_LINE_RESERVE`, what the rest of a command takes.
+2. **It does not fit, and the agent can take it typed.** `resolveLaunch` keeps it off the command
+   and hands it back as `typedOpening`, the path an adopted early agent uses. That needs
+   `firstPromptMayBeTyped`, because a paste's Enter would answer a boot screen on an agent whose
+   input box cannot be told from one ([First prompt typed](../../integrations/agents/adapter-interface.md#first-prompt-typed-firstpromptmaybetyped)).
+   Print mode has no input box, and a slash command runs only as keystrokes, too slow at this length,
+   so neither is typed. `spawnAgent` waits `OPENING_INPUT_WAIT_MS` for the input box under the task
+   lock. Past that a screen needs a person, so the opening waits in the background
+   (`deferredOpening`, as a queued session's does) and goes in once they answer. A queued session
+   makes the same two waits once it is promoted. Every later message waits behind it
+   (`afterRecapTurn`), since a row's Enter would answer the same screen. If the opening does not
+   land, those messages are not sent, because that screen may still be up, and held messages go
+   back on hold. A move during
+   the wait is a cancel (`trackMessageDelivery`), and so is a pause, with no notice. A move while
+   the session is still queued is not: the row stays queued, and its agent needs the prompt when
+   its turn comes. Measured on Claude 2.1.319 through a
+   `.cmd` shim: its approval of external imports held a 28,000 character opening until Enter answered
+   it, then the paste landed whole and the agent quoted the prompt's last line.
+   A workflow's own agent decides the same way: its first message holds the task it was made from,
+   so a long brief passes the limit by itself, and it goes in by `pasteAgentMessageInBackground`.
+3. **Neither.** The prompt stays on the command, and `performSpawn` refuses it with
+   `AgentCommandTooLongError` before it has a PTY and ahead of the sibling drain. `commandFitsShell`
+   measures what the process would receive, so PowerShell's backtick escapes count for nothing. The
+   check covers every path into a spawn, startup recovery and a queued promotion included. The task
+   pauses with `startBlockedReason: 'prompt-too-long'`, and a person reads that on the card and in a
+   toast. For a startup replay of a failed launch, Resume then types what startup could not.
+
+Measured on Windows 11 with a mock CLI and a 40,000 character task, before the refusal: PowerShell
+printed "The filename or extension is too long" through a `.cmd` shim and an npm `.ps1` alike, and a
+40,000 character line reached the shell whole, so the limit is process creation's. The card showed a
+working agent with a spinner for about four minutes, through the absence sweep and a retry of the same
+command, and then "Didn't start" with the tip "The agent never reported that it started."
+
 ## Queue
 
 - Configurable max concurrent sessions (`config.agent.maxConcurrentSessions`, config default: 8). `SessionManager` builds its `SessionQueue` with that same default, and the configured value is applied through `setMaxConcurrent()` when config loads at startup.
@@ -153,7 +209,7 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
 - When a running session exits or is suspended, `notifySlotFreed()` promotes the next queued entry.
 - Reentrancy-safe: a `_processing` flag prevents concurrent promotion, and a `_dirty` flag ensures re-iteration if the queue changed during a spawn await.
 - A queued session's model or effort change rebuilds its waiting command through `SessionManager.rebuildQueuedCommand` and `SessionQueue.replaceCommand`, and the entry keeps its place in line. The rebuild is `SpawnSessionInput.rebuildCommand`, which `TransitionEngine.prepareLaunch` sets. An entry with no rebuild (a startup spawn), a rebuild that throws, or a promotion already spawning keeps its command, and the settings apply from its next spawn.
-- A promotion looks at its folder again. An agent session's `cwd` can go while it waits, and `performSpawn` refuses an agent whose folder is gone with `AgentCwdMissingError`, ahead of the sibling drain. A plain shell keeps its fallback to the home directory, but an agent there is a run nobody asked for, in a folder its trust was never granted for. At a promotion the refusal becomes `agent-start-refused`: the listener in `ipc/handlers/sessions.ts` pauses the task (`suspended_by='system'`), marks a fresh launch failed so Resume starts it with its prompt, puts the reason on the row, and raises the Agent didn't start notice. Resume recreates a worktree. The queue itself runs no git, so a post-worktree script never holds a slot. A row no task can hold (a Command Terminal, a workflow's agent, or a pause that did not land) is retired by `retireRefusedStart`, so nothing stays `queued`. A direct start that is refused still rejects for its caller, which raises the same notice, and `showRefusedStart` leaves a suspended row with the reason, or puts the reason on the paused row the task already has, so the card keeps saying why after the toast closes. A running agent is left alone: it kept running through the refusal.
+- A promotion looks at its folder again. An agent session's `cwd` can go while it waits, and `performSpawn` refuses an agent whose folder is gone with `AgentCwdMissingError`, ahead of the sibling drain. A plain shell keeps its fallback to the home directory, but an agent there is a run nobody asked for, in a folder its trust was never granted for. At a promotion the refusal becomes `agent-start-refused`: the listener in `ipc/handlers/sessions.ts` pauses the task (`suspended_by='system'`), marks a fresh launch failed so Resume starts it with its prompt, puts the reason on the row, and raises the Agent didn't start notice. Resume recreates a worktree. The queue itself runs no git, so a post-worktree script never holds a slot. A row no task can hold (a Command Terminal, a workflow's agent, or a pause that did not land) is retired by `retireRefusedStart`, so nothing stays `queued`. A direct start that is refused still rejects for its caller, which raises the same notice, and `showRefusedStart` leaves a suspended row with the reason, or puts the reason on the paused row the task already has, so the card keeps saying why after the toast closes. A running agent is left alone: it kept running through the refusal. A command too long for its shell takes the same path with `AgentCommandTooLongError`: both extend `AgentStartRefusedError`, whose `reason` is what the card shows.
 
 ### A column's agent limit
 

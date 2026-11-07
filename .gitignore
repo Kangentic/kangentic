@@ -3,6 +3,9 @@
 # Per-project data (runtime databases, sessions, worktrees)
 .kangentic/
 
+# /upgrade-deps research cache
+.upgrade-deps/
+
 # Agent runtime config directories (injected hooks, settings)
 .codex/
 .gemini/

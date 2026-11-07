@@ -103,7 +103,7 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
 // logic against actual per-project SQLite DBs is covered by
 // mcp-move-task-to-project.test.ts.
 vi.mock('../../src/main/agent/commands/task-commands', () => ({
-  TASK_DESCRIPTION_MAX_LENGTH: 50_000,
+  TASK_DESCRIPTION_MAX_LENGTH: 27_500,
   handleMoveTaskToProject: mockHandleMoveTaskToProject,
 }));
 

@@ -7,7 +7,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { buildTypedLaunch, TYPED_LINE_BYTE_BUDGET } from '../../src/main/pty/spawn/typed-launch';
+import {
+  buildTypedLaunch,
+  CMD_COMMAND_LINE_LIMIT,
+  commandFitsShell,
+  commandLineLimit,
+  LINUX_ARGUMENT_BYTE_LIMIT,
+  TYPED_LINE_BYTE_BUDGET,
+  WINDOWS_COMMAND_LINE_LIMIT,
+} from '../../src/main/pty/spawn/typed-launch';
 
 const SESSION_DIRECTORY = path.join(path.sep, 'projects', 'demo', '.kangentic', 'sessions', 'session-1');
 
@@ -15,6 +23,90 @@ const SESSION_DIRECTORY = path.join(path.sep, 'projects', 'demo', '.kangentic', 
 function commandOfBytes(bytes: number): string {
   return `agent ${'x'.repeat(bytes - 'agent '.length)}`;
 }
+
+describe('commandLineLimit', () => {
+  const nativeProgram = 'C:\\Users\\dev\\.local\\bin\\claude.exe';
+  const shim = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.CMD';
+
+  it('reads the process limit for a native program, and for an npm `.ps1` or sh sibling', () => {
+    expect(commandLineLimit({ program: nativeProgram, shell: 'powershell', platform: 'win32' })).toBe(WINDOWS_COMMAND_LINE_LIMIT);
+    expect(commandLineLimit({ program: 'C:\\npm\\claude.ps1', shell: 'pwsh', platform: 'win32' })).toBe(WINDOWS_COMMAND_LINE_LIMIT);
+    expect(commandLineLimit({ program: 'C:\\npm\\claude', shell: 'C:\\Program Files\\Git\\bin\\bash.exe', platform: 'win32' })).toBe(WINDOWS_COMMAND_LINE_LIMIT);
+  });
+
+  it('reads cmd.exe\'s limit for a batch shim under any shell, and for any program under cmd.exe', () => {
+    expect(commandLineLimit({ program: shim, shell: 'powershell', platform: 'win32' })).toBe(CMD_COMMAND_LINE_LIMIT);
+    expect(commandLineLimit({ program: shim, shell: 'C:\\Program Files\\Git\\bin\\bash.exe', platform: 'win32' })).toBe(CMD_COMMAND_LINE_LIMIT);
+    expect(commandLineLimit({ program: nativeProgram, shell: 'cmd.exe', platform: 'win32' })).toBe(CMD_COMMAND_LINE_LIMIT);
+  });
+
+  it('reads none on POSIX or in a WSL distro, which have no limit in characters', () => {
+    expect(commandLineLimit({ program: '/usr/local/bin/claude', shell: '/bin/bash', platform: 'linux' })).toBeNull();
+    expect(commandLineLimit({ program: '/usr/local/bin/claude', shell: '/bin/zsh', platform: 'darwin' })).toBeNull();
+    expect(commandLineLimit({ program: '/usr/local/bin/claude', shell: 'wsl -d Ubuntu', platform: 'win32' })).toBeNull();
+  });
+});
+
+describe('commandFitsShell', () => {
+  const head = '"C:\\Users\\dev\\.local\\bin\\claude.exe"';
+  const commandOf = (length: number): string => `${head} ${'x'.repeat(length - head.length - 1)}`;
+
+  it('fits at the limit, and refuses one past it', () => {
+    expect(commandFitsShell({ command: commandOf(WINDOWS_COMMAND_LINE_LIMIT), shell: 'powershell', platform: 'win32' })).toBe(true);
+    expect(commandFitsShell({ command: commandOf(WINDOWS_COMMAND_LINE_LIMIT + 1), shell: 'powershell', platform: 'win32' })).toBe(false);
+  });
+
+  it('reads the head through its quotes, and past spaces in its path', () => {
+    const shimCommand = (length: number, quote: string): string => {
+      const quotedHead = `${quote}C:\\Program Files\\npm\\claude.cmd${quote}`;
+      return `${quotedHead} ${'x'.repeat(length - quotedHead.length - 1)}`;
+    };
+    for (const quote of ['"', '\'']) {
+      expect(commandFitsShell({ command: shimCommand(CMD_COMMAND_LINE_LIMIT, quote), shell: 'powershell', platform: 'win32' })).toBe(true);
+      expect(commandFitsShell({ command: shimCommand(CMD_COMMAND_LINE_LIMIT + 1, quote), shell: 'powershell', platform: 'win32' })).toBe(false);
+    }
+  });
+
+  it('counts a PowerShell escape once: it is spent before the process starts', () => {
+    const escapedNewlines = '`n'.repeat(WINDOWS_COMMAND_LINE_LIMIT / 2);
+    const command = `${head} ${escapedNewlines}`;
+    expect(command.length).toBeGreaterThan(WINDOWS_COMMAND_LINE_LIMIT);
+    expect(commandFitsShell({ command, shell: 'pwsh', platform: 'win32' })).toBe(true);
+  });
+
+  it('counts a double quote twice under Git Bash, where it reaches the program as \\"', () => {
+    const quotes = '"'.repeat(WINDOWS_COMMAND_LINE_LIMIT / 2 + 1);
+    expect(commandFitsShell({ command: `claude ${quotes}`, shell: 'C:\\Program Files\\Git\\bin\\bash.exe', platform: 'win32' })).toBe(false);
+  });
+
+  it('counts a cmd.exe command as written, its `%` escapes included', () => {
+    const command = `claude ${'"^%"'.repeat(CMD_COMMAND_LINE_LIMIT / 4 + 1)}`;
+    expect(commandFitsShell({ command, shell: 'cmd.exe', platform: 'win32' })).toBe(false);
+  });
+
+  it('leaves the terminating NUL out of what a process can take', () => {
+    expect(WINDOWS_COMMAND_LINE_LIMIT).toBe(32_766);
+  });
+
+  it('reads a batch shim past an apostrophe a POSIX shell quoted', () => {
+    const quotedHead = "'C:\\Users\\O'\\''Brien\\npm\\claude.cmd'";
+    const command = `${quotedHead} ${'x'.repeat(CMD_COMMAND_LINE_LIMIT)}`;
+    expect(commandFitsShell({ command, shell: 'C:\\Program Files\\Git\\bin\\bash.exe', platform: 'win32' })).toBe(false);
+  });
+
+  it('holds a Linux launch and a WSL distro to one argument\'s bytes, in multi-byte text', () => {
+    const fits = `claude ${'x'.repeat(LINUX_ARGUMENT_BYTE_LIMIT - 'claude '.length)}`;
+    const threeByteText = `claude ${'界'.repeat(LINUX_ARGUMENT_BYTE_LIMIT / 3)}`;
+    expect(commandFitsShell({ command: fits, shell: '/bin/bash', platform: 'linux' })).toBe(true);
+    expect(commandFitsShell({ command: `${fits}x`, shell: '/bin/bash', platform: 'linux' })).toBe(false);
+    expect(commandFitsShell({ command: threeByteText, shell: '/bin/bash', platform: 'linux' })).toBe(false);
+    expect(commandFitsShell({ command: threeByteText, shell: 'wsl -d Ubuntu', platform: 'win32' })).toBe(false);
+  });
+
+  it('never refuses on macOS, which has no limit per argument', () => {
+    expect(commandFitsShell({ command: commandOf(LINUX_ARGUMENT_BYTE_LIMIT * 2), shell: '/bin/zsh', platform: 'darwin' })).toBe(true);
+  });
+});
 
 describe('buildTypedLaunch', () => {
   it('types a command within the budget as it is, with no launcher', () => {

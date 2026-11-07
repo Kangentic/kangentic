@@ -135,7 +135,7 @@ interface CapturedSentryEsbuildPluginOptions {
   telemetry: boolean;
   release: { name: string };
   errorHandler: (error: Error) => void;
-  sourcemaps: { filesToDeleteAfterUpload: string[] };
+  sourcemaps: { filesToDeleteAfterUpload: string[]; resolveSourceMap: (bundlePath: string) => string | undefined };
 }
 
 /**
@@ -427,7 +427,12 @@ describe('resolveSentryEsbuildPlugins', () => {
       fakeSentryEsbuildPlugin.calls.length = 0;
       const plugins = buildModule.resolveSentryEsbuildPlugins();
 
-      expect(plugins).toHaveLength(1);
+      // The Sentry plugin, then the upload gate, in that order: esbuild runs onEnd
+      // callbacks in sequence, so the gate has to read the ledger after the upload.
+      expect(plugins.map((plugin: { name: string }) => plugin.name)).toEqual([
+        'fake-sentry-esbuild-plugin',
+        'sentry-upload-gate',
+      ]);
       expect(fakeSentryEsbuildPlugin.calls).toHaveLength(1);
       const [capturedOptions] = fakeSentryEsbuildPlugin.calls;
 

@@ -468,6 +468,38 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await expect(promise).rejects.toMatchObject({ code: 'timeout' });
   });
 
+  // Past about 20 KB the settle cap alone reaches 15 s, so a task's whole opening
+  // prompt read as a failed paste while it was still being taken in.
+  it('gives a large paste longer than the default timeout', async () => {
+    const stop = new AbortController();
+    const promise = engine.pasteAndSubmit('s1', 'x'.repeat(28_000), { signal: stop.signal });
+    promise.catch(() => undefined);
+
+    await tick();
+    vi.advanceTimersByTime(16_000);
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+
+    expect(mockSessionManager.writeRawCalls.length).toBeGreaterThan(0);
+    stop.abort();
+    await flushSetImmediate();
+    await expect(promise).rejects.toMatchObject({ code: 'aborted' });
+  });
+
+  it('keeps the default timeout for a small paste', async () => {
+    const promise = engine.pasteAndSubmit('s1', 'hello');
+    promise.catch(() => undefined);
+
+    await tick();
+    vi.advanceTimersByTime(15_000);
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+
+    await expect(promise).rejects.toMatchObject({ code: 'timeout' });
+  });
+
   it('retries \\r once when first evidence wait times out', async () => {
     const promise = engine.pasteAndSubmit('s1', 'hello', { timeoutMs: 30000 });
 

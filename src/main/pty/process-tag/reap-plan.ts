@@ -32,7 +32,7 @@
  * which makes it `shared`. Measured on a runner: with a dashboard page open,
  * the dashboard dials the AppHost's port, and counting that as evidence spared
  * the AppHost, its CLI and all 14 processes. Killing the AppHost is what makes
- * DCP stop the rest (`tests/unit/aspire-host-death.test.ts`).
+ * DCP stop the rest (see "A .NET Aspire stack" in process-reaping.md).
  *
  * A process is spared the same way, with everything under it, when other
  * Kangentic work holds a loopback TCP connection to a port it listens on

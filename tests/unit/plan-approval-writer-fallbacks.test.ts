@@ -68,12 +68,10 @@ vi.mock('../../src/main/plan-approval/workflow-plan-approval', () => ({
 }));
 vi.mock('../../src/main/safe-write', async () => {
   const nodeFs = await import('node:fs');
-  const nodePath = await import('node:path');
   return {
     safeWriteJson: (filePath: string, value: unknown, label?: string) => {
       hoisted.writeAttempts.push({ filePath, value, label });
       if (!hoisted.writeSucceeds) return false;
-      nodeFs.mkdirSync(nodePath.dirname(filePath), { recursive: true });
       nodeFs.writeFileSync(filePath, JSON.stringify(value));
       return true;
     },
@@ -164,6 +162,9 @@ beforeEach(() => {
   forgetPlanApprovalSpawn('session-1');
   forgetPlanApprovalSpawn('session-2');
   projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-approval-fallbacks-'));
+  // The spawn makes these folders. The writer never does.
+  fs.mkdirSync(path.dirname(decisionFilePath('session-1')), { recursive: true });
+  fs.mkdirSync(path.dirname(decisionFilePath('session-2')), { recursive: true });
   sessionManager = new FakeSessionManager();
   sessionManager.agentNames.set('session-1', 'claude');
   boardEvents = new FakeBoardEvents();

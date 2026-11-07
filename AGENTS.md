@@ -322,6 +322,9 @@ agent's own uncommitted instructions file, never in a committed one.
   messages.
 - `/sync-docs` keeps `docs/` aligned with source; the doc-anchor check runs inside `/pull-request`
   (commit time) and `/merge-pull-request` (merge time), and `/merge-back` for direct pushes.
+- `/upgrade-deps` researches every npm dependency that can move and files one board task, never a
+  follow-up. It changes no code. Never take a version from `npm outdated` by hand: `latest` for `node-pty` and
+  `@xterm/*` is a downgrade. See [docs/contributing/dependency-upgrades.md](docs/contributing/dependency-upgrades.md).
 
 ### Authoring a rule
 

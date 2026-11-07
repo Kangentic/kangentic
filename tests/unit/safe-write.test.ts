@@ -77,6 +77,24 @@ describe('safeWriteJson', () => {
     expect(JSON.parse(fs.readFileSync(filePath, 'utf-8'))).toEqual({ hello: 'world' });
   });
 
+  it('with createFolder false, fails on a missing folder, creates none, and reports the failure', () => {
+    const folderPath = path.join(tmpDir, 'missing');
+    const filePath = path.join(folderPath, 'value.json');
+    const notifier: string[] = [];
+    setSyncWriteFailureNotifier((message) => notifier.push(message));
+
+    const result = safeWriteJson(filePath, { a: 1 }, 'test_source', { createFolder: false });
+
+    expect(result).toBe(false);
+    expect(fs.existsSync(folderPath)).toBe(false);
+    expect(fs.readdirSync(tmpDir)).toEqual([]);
+    expect(notifier).toHaveLength(1);
+    expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
+    expect(mocks.reportHandledErrorSpy.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ source: 'test_source', errno: 'ENOENT' }),
+    );
+  });
+
   it('leaves no `.tmp.<pid>` file behind on success', () => {
     const filePath = path.join(tmpDir, 'value.json');
 

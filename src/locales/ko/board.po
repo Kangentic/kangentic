@@ -312,6 +312,10 @@ msgid "If this task is resumed, the worktree will be recreated from the branch's
 msgstr "이 작업을 다시 시작하면 분기의 마지막 커밋에서 작업 트리가 다시 생성됩니다."
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Its prompt is too long for this agent to start with."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "Its worktree folder is gone. Resume makes it again from the branch."
 msgstr ""
 

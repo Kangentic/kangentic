@@ -2,6 +2,8 @@
 paths:
   - ".github/workflows/**"
   - "scripts/build.js"
+  - "scripts/sentry-upload-gate.js"
+  - "build/verify-no-source-maps.js"
   - "vite.config.mts"
 ---
 # Rule: a release gate fails, it never skips quietly
@@ -108,6 +110,26 @@ Any step in the release path that exists to guarantee something must fail when i
   `KANGENTIC_SENTRY_UPLOAD=1` reaches both. A table of `CI` and `KANGENTIC_SENTRY_UPLOAD` values
   runs through both halves' checks and fails on any row where they disagree, since a value one
   half accepted and the other refused would upload half a release's symbols with both builds green.
+- **Test (mechanical, CI):** `tests/unit/sentry-upload-gate.test.ts` pins that an upload took in
+  every bundle (`scripts/sentry-upload-gate.js`), because the plugins only warn when one matches
+  nothing and `errorHandler` never sees that. It counts the positive case rather than reading their
+  log lines, so a reworded warning cannot blind it and a partial upload cannot pass it. The test
+  runs the real plugins with the repo's own option objects through real esbuild and a real Vite
+  build, and proves no-map builds fail, that the gate reads the ledger after the upload, and that a
+  rejected upload still reports its own error. That last one is why the Vite half asserts in a
+  sequential `writeBundle`: `closeBundle` runs after a failed write with no error passed in, and a
+  throw there replaces the real one. Never sandbox these plugins with an unreachable `url`. A known
+  org routes by a region cached from the machine's `sentry` login, so the test replaces the `sentry`
+  package in the require cache and asserts no connection was attempted. A rehearsal of a whole
+  release build has to replace `@sentry/cli` as well. The gate's plugin name must keep its `sentry-`
+  prefix, which is how `demo/vite.config.mts` drops it.
+- **Test (mechanical, CI):** `tests/unit/verify-no-source-maps.test.ts` pins the packaged half in
+  `build/verify-no-source-maps.js` (run from `build/afterPack.js`) against real asars: a `.map`
+  packed or unpacked fails, and so does a missing asar or one that does not list the main bundle,
+  since a listing that read nothing would otherwise pass. It also pins `!**/*.map` after every
+  positive pattern in `electron-builder.yml`'s `files`, and `afterPack: build/afterPack.js`, the
+  line that runs the gate. It runs in `afterPack` rather than as a workflow step so it stops a leg
+  before that leg uploads to the draft.
 - **Test (mechanical, CI):** `tests/unit/verify-unpacked-worker.test.ts` pins the packaged
   embed-worker gate in `build/verify-unpacked-worker.js` (run from `build/afterPack.js`): it
   throws with the child's stderr when the worker's externals do not load from the

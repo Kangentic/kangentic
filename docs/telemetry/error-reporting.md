@@ -23,6 +23,7 @@ sources:
   - resource: src/main/diagnostics/gpu-health.ts
   - resource: src/main/updater.ts
   - resource: src/main/pty/agent-launch-report.ts
+  - resource: scripts/sentry-upload-gate.js
 ---
 # Error reporting (Sentry)
 
@@ -882,8 +883,21 @@ in one Sentry org, one triage surface.
     and `/release` checks the same secret before it creates the tag.
   - Both plugins skip the upload when `NODE_ENV === 'development'`, logging only at debug level
     and deleting the sourcemaps anyway. `scripts/build.js` sets `NODE_ENV=production` at module
-    load, and both it and `vite.config.mts` refuse to build if a token is present while
-    `NODE_ENV` is anything other than production, which also catches it being unset.
+    load, and both it and `vite.config.mts` refuse to build when an upload is authorized (a token in
+    CI, or a token with `KANGENTIC_SENTRY_UPLOAD=1`) and `NODE_ENV` is anything other than
+    production, which also catches it being unset.
 
   On top of that, every build now prints which way the gate went, and with a token present any
   upload failure fails the build rather than warning past it.
+
+  An upload that matches nothing is not a failure to the plugins. They only call `logger.warn`,
+  which `errorHandler` never sees, and one bundle with no debug id or no map drops out at debug
+  level while the build still logs "Successfully uploaded". So `scripts/sentry-upload-gate.js`
+  counts the positive case. Each plugin gets a `sourcemaps.resolveSourceMap` hook that records a
+  bundle when the upload reaches it with a map beside it, and a gate plugin after Sentry's fails
+  the build on any bundle it did not record, whatever the reason the plugin skipped it. esbuild
+  holds every `.js` in each build's metafile to that. Vite holds every entry chunk and every chunk
+  the bundler wrote a map for. Worker bundles are assets the plugin skips by design, and rolldown
+  writes no map for chunks of only its own generated code (`rolldown-runtime`, `preload-helper`).
+  The gate plugin's name starts `sentry-` because `demo/vite.config.mts` drops plugins by that
+  prefix, and the web demo has no upload to check.

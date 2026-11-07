@@ -1766,6 +1766,98 @@ describe('TransitionEngine - a resume prompt that does not ride the command line
       expect(outcome.unsentPrompt).toBe('Review the diff');
       expect(outcome.typedOpening ?? null).toBeNull();
     });
+
+    describe('a fresh prompt too long for its command line on Windows', () => {
+      const TOO_LONG = 'x'.repeat(40_000);
+      const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+      beforeEach(() => {
+        Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', hostPlatform);
+        delete (mockAdapter as { firstPromptMayBeTyped?: unknown }).firstPromptMayBeTyped;
+        mockAdapter.detect.mockResolvedValue({ found: true, path: '/usr/bin/claude', version: '1.0.0' });
+      });
+
+      const typesItsFirstPrompt = (): void => {
+        (mockAdapter as { firstPromptMayBeTyped?: () => boolean }).firstPromptMayBeTyped = () => true;
+      };
+
+      it('is typed in by an agent whose input box can be told from a boot screen', async () => {
+        typesItsFirstPrompt();
+
+        const outcome = await freshSpawnWith(TOO_LONG);
+
+        expect(capturedOptions?.prompt).toBeUndefined();
+        expect(outcome.typedOpening).toBe(TOO_LONG);
+        expect(sessionManager.markIdleAuthoritative).toHaveBeenCalledWith('pty-session-1');
+      });
+
+      it('rides the command line while it fits', async () => {
+        typesItsFirstPrompt();
+
+        const outcome = await freshSpawnWith('x'.repeat(20_000));
+
+        expect(capturedOptions?.prompt).toHaveLength(20_000);
+        expect(outcome.typedOpening ?? null).toBeNull();
+      });
+
+      // Left on the command, so the spawn refuses it: a paste's Enter could
+      // answer this agent's boot screen.
+      it('stays on the command for any other agent', async () => {
+        const outcome = await freshSpawnWith(TOO_LONG);
+
+        expect(capturedOptions?.prompt).toBe(TOO_LONG);
+        expect(outcome.typedOpening ?? null).toBeNull();
+      });
+
+      // A slash command runs only as keystrokes, far too slow at this length.
+      it('stays on the command for a slash command', async () => {
+        typesItsFirstPrompt();
+        const slashCommand = `/upgrade-deps ${TOO_LONG}`;
+
+        const outcome = await freshSpawnWith(slashCommand);
+
+        expect(capturedOptions?.prompt).toBe(slashCommand);
+        expect(outcome.typedOpening ?? null).toBeNull();
+      });
+
+      // Print mode has no input box to type into, so a long prompt stays on the
+      // command for the spawn to refuse, even for an agent that could type it.
+      it('stays on the command in print mode, with nothing handed back to type', async () => {
+        typesItsFirstPrompt();
+        const printTask = makeTask({ worktree_path: null, description: TOO_LONG });
+        const action = makeAction({ config_json: JSON.stringify({ promptTemplate: '{{task_xml}}', nonInteractive: true }) });
+        sessionManager = makeSessionManager();
+        const { runSpawn } = makeEngine({ sessionManager, sessionRepo: makeSessionRepo(), projectPath, action });
+
+        const outcome = await runSpawn(printTask);
+
+        expect(String(capturedOptions?.prompt).length).toBeGreaterThan(TOO_LONG.length);
+        expect(capturedOptions?.prompt).toContain(TOO_LONG);
+        expect(outcome.typedOpening ?? null).toBeNull();
+        expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+      });
+
+      // A `.cmd` shim crosses at 8,191 characters, not 32,766, so a prompt that
+      // rides a native program is typed in through a shim.
+      it('is typed in at 9,000 characters through a `.cmd` shim, which a native program would carry whole', async () => {
+        typesItsFirstPrompt();
+        const NINE_THOUSAND = 'x'.repeat(9_000);
+
+        mockAdapter.detect.mockResolvedValue({ found: true, path: 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.cmd', version: '1.0.0' });
+        const throughShim = await freshSpawnWith(NINE_THOUSAND);
+        expect(capturedOptions?.prompt).toBeUndefined();
+        expect(throughShim.typedOpening).toBe(NINE_THOUSAND);
+
+        mockAdapter.detect.mockResolvedValue({ found: true, path: 'C:\\Users\\dev\\AppData\\Local\\Programs\\claude.exe', version: '1.0.0' });
+        const throughNative = await freshSpawnWith(NINE_THOUSAND);
+        expect(capturedOptions?.prompt).toBe(NINE_THOUSAND);
+        expect(throughNative.typedOpening ?? null).toBeNull();
+      });
+    });
   });
 });
 
