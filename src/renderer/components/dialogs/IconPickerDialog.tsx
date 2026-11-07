@@ -134,6 +134,7 @@ export function IconPickerDialog({
                   type="button"
                   onClick={() => onSelect(entry.name)}
                   disabled={isUsed}
+                  aria-pressed={isSelected}
                   className={`w-8 h-8 rounded flex items-center justify-center border transition-all ${
                     isUsed
                       ? 'opacity-30 cursor-not-allowed border-transparent'

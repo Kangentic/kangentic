@@ -126,11 +126,11 @@ const DEFAULT_RETRY_DELAYS_MS = [2_000, 10_000, 30_000, 30_000, 60_000, 120_000]
 /**
  * Max simultaneous live WebGL attachments on this page. Chromium's own cap is
  * ~16 per page. 8 covers every realistic fully-visible layout (task-detail
- * windows + max 4 command terminals + the bottom panel's single collapsed xterm)
- * and a suspended terminal's context frees at once on dispose instead of at
- * garbage collection, so the count of live contexts stays at this number through a
- * suspend and resume, and Chromium's silent oldest-context eviction never engages.
- * The changes panel is Monaco and takes none.
+ * windows + max 4 command terminals + the bottom panel's single collapsed xterm).
+ * A suspended terminal's context frees at once on dispose instead of at garbage
+ * collection, so the live count stays at or under 8 through a suspend and resume,
+ * and Chromium's silent oldest-context eviction never engages. The changes panel
+ * is Monaco and takes none.
  *
  * Terminals are not the page's only consumer: the Knowledge Graph's three.js canvas
  * takes one via `reserveWebglContext`, and reservations count against this same
