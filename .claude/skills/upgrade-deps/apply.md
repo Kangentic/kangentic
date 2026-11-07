@@ -106,7 +106,10 @@ Then:
    `npm install --prefix . --allow-remote=all -D @types/node@<newest of that major>`, restore
    `package.json`, run `npm install --prefix . --allow-remote=all` again, and confirm the hoisted
    copy stayed on that major. The same update can drop better-sqlite3's `hasInstallScript`, so
-   read it again here, last, because any later install drops it again.
+   read it again here, last, because any later install drops it again. Then run
+   `npx vitest run tests/unit/lockfile-integrity.test.ts`. An install can strip `resolved` and
+   `integrity` from a bundled package with no other sign, and only the full tier reads them. If it
+   fails, run `node scripts/repair-lockfile-integrity.js`, which keeps every version.
 3. Run `npm audit --package-lock-only` and report the before and after counts in your final report.
    **Never run `npm audit fix --force`.** Its suggested fixes here are downgrades: `@sentry/electron`
    to 7, `electron-builder` to 25, `eslint` to 9.
