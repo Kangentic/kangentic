@@ -239,6 +239,11 @@ msgstr "Chino"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "Borrar los modos de terminal bloqueados en el terminal enfocado y volver a dibujarlo. Un agente en ejecución conserva su pantalla."
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "Cerrar"
@@ -1043,6 +1048,11 @@ msgstr "Recargar página"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "Primero quita {label} de {workflowTitle}."
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "Restablecer terminal"
 
 #: src/shared/keybindings.ts
 #, fuzzy

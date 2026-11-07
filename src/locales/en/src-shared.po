@@ -195,6 +195,10 @@ msgid "Chinese"
 msgstr "Chinese"
 
 #: src/shared/keybindings.ts
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+
+#: src/shared/keybindings.ts
 msgctxt "hotkey"
 msgid "Close"
 msgstr "Close"
@@ -844,6 +848,10 @@ msgstr "Reload page"
 #: src/shared/workflow-refusals.ts
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "Remove {label} from {workflowTitle} first."
+
+#: src/shared/keybindings.ts
+msgid "Reset terminal"
+msgstr "Reset terminal"
 
 #: src/shared/keybindings.ts
 msgid "Reset zoom"

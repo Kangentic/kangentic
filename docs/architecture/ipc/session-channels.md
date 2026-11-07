@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (54 channels)
+## Sessions (55 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -21,6 +21,7 @@ sources:
 | `pty:portRequest` | send | The preload asks, once per page load, for its own port to the pty host. Keystrokes, the output of the sessions this renderer shows, and its acks all ride that port, so typing never waits on main's event loop |
 | `pty:port` | on | Main's answer: one end of a `MessageChannelMain` whose other end went to the pty host (`attachRendererPort`). Sent again with a new port after a pty host restart |
 | `session:resize` | invoke | Resize PTY (cols/rows) |
+| `session:resetTerminal` | invoke | Clear stuck terminal modes in the session's stream and repaint by resizing, never by writing to the PTY |
 | `session:list` | invoke | Fetch all sessions |
 | `session:getScrollback` | invoke | Get terminal scrollback buffer. Goes through main so it stays behind this renderer's resizes; the pty host answers on the renderer's port, after the output it flushed before the sample, and the invoke itself returns the data only when the host held no port for that renderer |
 | `session:getFirstOutput` | invoke | Fetch the agent-on-screen cache (sessionId -> true, `SessionManager.markAgentReady`) so `syncSessions` can rebuild `sessionFirstOutput` after an HMR reload |

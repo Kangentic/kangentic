@@ -1,6 +1,7 @@
 import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
 import { collectPeekLines, PEEK_LINE_COUNT } from './output-peek';
+import { buildTerminalModeReset } from './terminal-mode-reset';
 import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
 import { isRoundTripProbeArmed, noteFlushTimer } from '../../diagnostics/pty-round-trip-probe';
 import type { SeedFrameResult } from '../host/protocol';
@@ -468,7 +469,10 @@ interface BufferState {
    *  remaining ring is then single-geometry and the session self-heals back
    *  to the raw byte replay. Carried across respawn via initSession's
    *  previousGeometry. Unlike the pendingRepaint* trio this is ring-content
-   *  state, not an in-flight wait, so nothing else clears it. */
+   *  state, not an in-flight wait, so nothing else clears it. A Reset terminal
+   *  that leaves the alt screen sets it too, with the grid unchanged: the bytes
+   *  before the index cannot rebuild the buffer the reset returned to (see
+   *  resetTerminalModes), which is the same "replay the frame" answer. */
   geometryChangedAtRingIndex: number | null;
   /** True when the pending geometry change landed while a PREVIOUS repaint was
    *  still unconsumed (rapid resize ping-pong). Disables the marker-only
@@ -787,6 +791,27 @@ export class PtyBufferManager {
     }
     this.callbacks.onPendingChange?.(sessionId, state.buffer.length);
     this.scheduleFlush(sessionId, state);
+  }
+
+  /**
+   * The Reset terminal action's half in the host: feed the clearing sequence into
+   * the stream as if the PTY had printed it (see terminal-mode-reset.ts), so every
+   * consumer takes it at one point. `keepInputModes` is true while a live agent
+   * owns the alt screen and input modes.
+   */
+  resetTerminalModes(sessionId: string, keepInputModes: boolean): void {
+    const state = this.buffers.get(sessionId);
+    if (!state) return;
+    const leaveAltScreen = !keepInputModes && state.inAltScreen;
+    this.onData(sessionId, buildTerminalModeReset({
+      keepInputModes,
+      leaveAltScreen,
+      cursor: state.headless.resetCursor(leaveAltScreen),
+    }));
+    // The ring's byte replay starts at the TUI's first full-screen clear, which
+    // cuts the normal buffer this just returned to. Only the parsed grid still
+    // holds it, so the replay takes the frame until those bytes age out.
+    if (leaveAltScreen) state.geometryChangedAtRingIndex = state.scrollback.length;
   }
 
   /**

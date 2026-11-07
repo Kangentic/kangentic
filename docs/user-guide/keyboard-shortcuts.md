@@ -65,4 +65,5 @@ Terminal:
 
 - **Mod+C** / **Mod+Shift+C** - Copy selected text, stripping quote-bar decoration from any decorated lines (with no selection, Ctrl+C cancels the running command)
 - **Mod+V** / **Mod+Shift+V** - Paste text or an image into the terminal
+- **Reset terminal** - Clears modes a crashed program left on (mouse tracking, the alternate screen, a scroll region) in the focused terminal and repaints it, while a running agent keeps its screen and input modes. Listed in Hotkeys as "Not set" for you to bind
 - Standard OS shortcuts for the rest of terminal editing

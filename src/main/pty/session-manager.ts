@@ -157,6 +157,17 @@ const EVENTS_A_HIDDEN_SESSION_EMITS: ReadonlySet<string | symbol> = new Set(['ou
 const HIDDEN_SESSION_EXIT = 'hidden-session-exit';
 /** How often `awaitAltScreen` reads the alt-screen mirror while it waits. */
 const ALT_SCREEN_POLL_MS = 100;
+/**
+ * How long a Reset terminal repaint holds its first resize leg before putting the
+ * grid back (`resetTerminal`), which is how long the child's frame sits a row short.
+ * Claude Code 2.1.319 on Windows answered each leg in 17 to 38 ms and repainted
+ * even with no gap at all. Linux needs the gap. A Node 24 child on a Linux pty saw
+ * no resize in any of 30 rounds at 0 ms, because it read the winsize after both
+ * legs, and saw the short leg in all 30 at 60 ms, with its event loop busy 40 ms in
+ * every 45 too (17 of 30 at 20 ms). macOS was not measured. A child that misses the
+ * short leg still gets the parser's frame.
+ */
+export const TERMINAL_REPAINT_LEG_GAP_MS = 60;
 
 /**
  * A Command Terminal's per-session directory, created by `startCommandTerminal` under the folder its command was
@@ -598,6 +609,13 @@ export class SessionManager extends EventEmitter {
    * grid is never stashed.
    */
   private pendingResizes = new Map<string, { cols: number; rows: number }>();
+  /**
+   * The restore leg of a Reset terminal repaint still waiting on its gap, by
+   * session id (see `resetTerminal`), with the rows it puts back. A real resize
+   * drops the entry, since from there the grid is that resize's and the restore
+   * has nothing to put back.
+   */
+  private terminalRepaintRestores = new Map<string, { timer: NodeJS.Timeout; rows: number }>();
   /**
    * The last grid a DESKTOP-origin resize set per session - the restore
    * target when a paired phone that resized the PTY (fit-to-phone mode)
@@ -1800,6 +1818,80 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * The Reset terminal action. Clears stuck modes in the host, where the bytes
+   * reach the parser, the ring and every terminal showing the session (see
+   * `terminal-mode-reset.ts`), then asks the session for a repaint.
+   *
+   * A live agent keeps its alt screen and input modes, because nothing the
+   * action can do gives them back. A suspended session's agent still holds them
+   * until its PTY is gone, since it is exiting on that PTY. Nothing else owns
+   * them, so a bare shell or an exited session clears everything. This reads
+   * `agentParser`, the same "was an agent meant to run here" test the absence
+   * sweep uses, never an agent's name.
+   *
+   * The repaint is a resize, never a keystroke, because Reset must not type into
+   * the agent and a redraw key is specific to one agent. It shares the shape of
+   * `reassertGeometryForBootingChild` (direct `pty.resize` legs, so no pty-resize
+   * broadcast and no repaint settle) with two differences. The legs change rows,
+   * since a rows-only repaint carries a full erase and a shell's lines do not
+   * reflow through ConPTY. And they sit a gap apart, because the child already
+   * holds the final grid here, and two legs it reads as one are no change at all.
+   *
+   * Only a running session in the alt screen repaints. A suspended one is mid-exit,
+   * and `resize` refuses to reshape it for the same reason. A normal-buffer session's
+   * replay is already whole, and a short leg costs it a line of history through
+   * ConPTY (docs/architecture/sessions/output-streaming.md).
+   *
+   * On Windows ConPTY redraws its own screen on the resize, and it never saw the
+   * reset. So a shell leaving a stuck alt screen gets back the text ConPTY still
+   * holds there, which is what its next output addresses, but no modes.
+   */
+  resetTerminal(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    const agentOwnsModes = session.pty !== null && session.status !== 'exited' && !!session.agentParser;
+    const inAltScreen = this.inAltScreen.get(sessionId) === true;
+    this.host.post({ type: 'resetTerminalModes', sessionId, keepInputModes: agentOwnsModes });
+    if (session.status !== 'running' || session.pty === null || !inAltScreen) return;
+    if (this.terminalRepaintRestores.has(sessionId)) return;
+
+    const pty = session.pty;
+    const { rows } = pty;
+    const jiggleRows = Math.max(2, rows - 1);
+    if (jiggleRows === rows) return;
+    try {
+      this.host.post({ type: 'markResized', sessionId });
+      pty.resize(pty.cols, jiggleRows);
+    } catch (error) {
+      // node-pty can throw on a just-died ConPTY; the exit path owns cleanup.
+      traceTerminal(sessionId, 'terminal-repaint-failed', { leg: 'jiggle', message: String(error) });
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.terminalRepaintRestores.delete(sessionId);
+      const current = this.registry.get(sessionId);
+      if (current?.pty !== pty || current.status !== 'running') return;
+      try {
+        this.host.post({ type: 'markResized', sessionId });
+        pty.resize(pty.cols, rows);
+        traceTerminal(sessionId, 'terminal-repaint', { cols: pty.cols, rows, jiggleRows });
+      } catch (error) {
+        traceTerminal(sessionId, 'terminal-repaint-failed', { leg: 'restore', message: String(error) });
+      }
+    }, TERMINAL_REPAINT_LEG_GAP_MS);
+    // Never hold the process open for a repaint.
+    if (typeof timer.unref === 'function') timer.unref();
+    this.terminalRepaintRestores.set(sessionId, { timer, rows });
+  }
+
+  private cancelTerminalRepaintRestore(sessionId: string): void {
+    const restore = this.terminalRepaintRestores.get(sessionId);
+    if (restore === undefined) return;
+    clearTimeout(restore.timer);
+    this.terminalRepaintRestores.delete(sessionId);
+  }
+
   setMaxConcurrent(max: number): void {
     this.sessionQueue.setMaxConcurrent(max);
   }
@@ -1853,6 +1945,7 @@ export class SessionManager extends EventEmitter {
       this.host.shutdown(this.hostExitWaitMs);
     }
     for (const sessionId of [...this.restingGridTimers.keys()]) this.cancelRestingGridRestore(sessionId);
+    for (const sessionId of [...this.terminalRepaintRestores.keys()]) this.cancelTerminalRepaintRestore(sessionId);
     for (const sessionId of [...this.agentEndSettleTimers.keys()]) this.cancelAgentEndSettle(sessionId);
   }
 
@@ -3235,6 +3328,10 @@ export class SessionManager extends EventEmitter {
     const previousBufferCols = this.bufferCols.get(sessionId);
     const colsChanged = previousBufferCols !== undefined && clampedCols !== previousBufferCols;
     if (previousBufferCols !== undefined) this.bufferCols.set(sessionId, clampedCols);
+    // This resize names the grid now, so a Reset repaint's restore has nothing to
+    // put back. Below the refusals, because a refused resize leaves the short leg
+    // for the restore to undo.
+    this.cancelTerminalRepaintRestore(sessionId);
     this.host.post({ type: 'resizeBuffer', sessionId, cols: clampedCols, rows: clampedRows });
     if (clampedCols === session.pty.cols && clampedRows === session.pty.rows) {
       // The grid is not changing, so reshaping the PTY, suppressing activity
@@ -3328,7 +3425,12 @@ export class SessionManager extends EventEmitter {
   getDimensions(sessionId: string): { cols: number; rows: number } | null {
     const session = this.registry.get(sessionId);
     if (!session) return null;
-    if (session.pty) return { cols: session.pty.cols, rows: session.pty.rows };
+    if (session.pty) {
+      // A Reset repaint's short leg is not the session's grid. A phone seeded from
+      // this during the gap would keep it, since the restore leg broadcasts nothing.
+      const rows = this.terminalRepaintRestores.get(sessionId)?.rows ?? session.pty.rows;
+      return { cols: session.pty.cols, rows };
+    }
     const pending = this.pendingResizes.get(sessionId);
     if (pending) return { ...pending };
     return { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
@@ -4150,6 +4252,7 @@ export class SessionManager extends EventEmitter {
     this.pendingResizes.delete(sessionId);
     this.lastDesktopDimensions.delete(sessionId);
     this.cancelRestingGridRestore(sessionId);
+    this.cancelTerminalRepaintRestore(sessionId);
     this.forgetTranscriptAnchors(sessionId);
     // Release backpressure BEFORE the kill so a paused session is resumed
     // (lets any buffered output flush) and its accounting entry is dropped

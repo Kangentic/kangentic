@@ -1844,7 +1844,7 @@ describe('BgShellWatcher', () => {
       pendingTools.set('s1', 0);
       shellCounts.set('s1', 1);
       namedShells.set('s1', ['bgA']);
-      watcher.noteBackgroundShellStarted('s1', 'bgA'); // adopts memo 6000
+      watcher.noteBackgroundShellStarted('s1', 'bgA', { movedFromForeground: true }); // adopts memo 6000
 
       // App churn surplus, but Tier A confirms liveness via the captured PID.
       probe.trees.set(1234, [
@@ -1854,6 +1854,41 @@ describe('BgShellWatcher', () => {
       await watcher.pollNow();
       expect(log.observedAlive).toContain('s1');
       expect(log.naturalExits).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('never adopts the memo for a launch that did not move: the memo is a different call\'s shell', async () => {
+      // A background launch beside a running foreground call. The memo names that
+      // foreground call's shell, and its exit would read as the launch's own.
+      const { watcher, probe, rootPids, shellCounts, namedShells, pendingTools, log } = makeWatcher();
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, []);
+      watcher.registerSession('s1');
+      await watcher.pollNow(); // anchor
+
+      const foregroundShell = { pid: 6000, ppid: 1234, comm: 'bash' };
+      const launchedShell = { pid: 7000, ppid: 1234, comm: 'bash' };
+      pendingTools.set('s1', 1);
+      probe.alive.add(6000);
+      probe.trees.set(1234, [foregroundShell]);
+      await watcher.pollNow(); // surplus-while-pending: memoize 6000
+
+      shellCounts.set('s1', 1);
+      namedShells.set('s1', ['bgA']);
+      watcher.noteBackgroundShellStarted('s1', 'bgA');
+      probe.trees.set(1234, [foregroundShell, launchedShell]);
+      await watcher.pollNow();
+
+      // The foreground call ends. The launch runs on, and is adopted now.
+      pendingTools.set('s1', 0);
+      probe.trees.set(1234, [launchedShell]);
+      await watcher.pollNow();
+      expect(log.shellPidExited).toEqual([]);
+
+      probe.trees.set(1234, []);
+      await watcher.pollNow();
+      expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
       watcher.dispose();
     });
 
@@ -1907,6 +1942,223 @@ describe('BgShellWatcher', () => {
       }
       expect(log.naturalExits).toHaveLength(0);
       watcher.dispose();
+    });
+
+    describe('a build\'s own shells never stand in for the shell that started them', () => {
+      // Seven holds on one overnight run ended 4 to 8 s after the launch, on a
+      // watcher tick, while the command ran on for minutes: the card went idle
+      // and the open-work ledger closed the shell. Every one of those commands
+      // starts `cmd.exe` children (`dotnet test`, `pnpm build`), and a cmd under
+      // a non-shell counts as topmost, so a build looks like several shells. The
+      // surplus fold filed the real shell as a helper, the next short-lived
+      // shell became the only candidate, and its exit read as the shell's.
+      const ROOT = 1234;
+      const AGENT = { pid: 2000, ppid: ROOT, comm: 'claude' };
+      const REAL_SHELL = { pid: 6000, ppid: AGENT.pid, comm: 'bash' };
+      const BUILD = { pid: 6100, ppid: REAL_SHELL.pid, comm: 'dotnet' };
+      const buildChild = (pid: number) => ({ pid, ppid: BUILD.pid, comm: 'cmd' });
+      /** A hook or status line: a shell the agent starts and loses within a cycle. */
+      const hookShell = (pid: number) => ({ pid, ppid: AGENT.pid, comm: 'bash' });
+
+      async function anchoredWatcher() {
+        const context = makeWatcher();
+        context.rootPids.set('s1', ROOT);
+        context.probe.alive.add(ROOT);
+        context.probe.trees.set(ROOT, [AGENT]);
+        context.watcher.registerSession('s1');
+        await context.watcher.pollNow(); // anchor: no helpers
+        return context;
+      }
+
+      it('keeps the hold through a build child that exits: the id arrived before the fold', async () => {
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6200)]);
+        await watcher.pollNow();
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6300)]);
+        await watcher.pollNow();
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([]);
+
+        // The real shell was the one adopted: its own exit is what ends the hold.
+        probe.trees.set(ROOT, [AGENT]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
+
+      it('keeps the hold through a build child that exits: the fold came while the shell was anonymous', async () => {
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6200)]);
+        await watcher.pollNow();
+
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6300)]);
+        await watcher.pollNow();
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([]);
+
+        probe.trees.set(ROOT, [AGENT]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
+
+      it('keeps the hold through a hook\'s shell, and adopts the real shell once the tree is clear', async () => {
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, hookShell(7000)]);
+        await watcher.pollNow();
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, hookShell(7001)]);
+        await watcher.pollNow();
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([]);
+
+        probe.trees.set(ROOT, [AGENT]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
+
+      it('files a helper that started beside a launch once the launch settles, so the next shell is still adopted', async () => {
+        // The fold holds PIDs back while a shell waits for its own. Its count
+        // lands at once, so no later surplus would ever file them: left alone,
+        // an MCP server started in that window stays a candidate for good.
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        const persistentHelper = hookShell(7500);
+        const nextShell = { pid: 8000, ppid: AGENT.pid, comm: 'bash' };
+
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, persistentHelper]);
+        await watcher.pollNow();
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        for (let cycle = 0; cycle < 4; cycle++) await watcher.pollNow(); // two candidates: gives up
+
+        shellCounts.set('s1', 0);
+        namedShells.set('s1', []);
+        probe.trees.set(ROOT, [AGENT, persistentHelper]);
+        await watcher.pollNow();
+
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['bgB']);
+        watcher.noteBackgroundShellStarted('s1', 'bgB');
+        probe.trees.set(ROOT, [AGENT, persistentHelper, nextShell]);
+        await watcher.pollNow();
+
+        probe.trees.set(ROOT, [AGENT, persistentHelper]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgB' }]);
+        watcher.dispose();
+      });
+
+      it('keeps what the fold held back while an anonymous slot is still open, even with no capture pending', async () => {
+        // The hold ends when no shell waits for its PID. An anonymous shell (counted,
+        // id not here yet) still waits, so filing the held PIDs now would make the
+        // real shell a helper and the id's capture would find no candidate.
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        const beside = hookShell(7000);
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, beside]);
+        await watcher.pollNow(); // surplus fold: both held back
+
+        await watcher.pollNow(); // nothing pending, but the slot is still anonymous
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]); // the shell beside it is gone
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        await watcher.pollNow(); // the one candidate left is the real shell
+
+        probe.trees.set(ROOT, [AGENT]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
+
+      it('does not file a held PID that exited before the release: a later shell reusing it is still a candidate', async () => {
+        // Windows reuses PIDs eagerly. A dead PID filed as a helper survives the next
+        // cycle's prune when a new shell takes its number, and that shell is then
+        // never a candidate.
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        const beside = hookShell(7000);
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, beside]);
+        await watcher.pollNow(); // surplus fold: both held back
+
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]); // the shell beside it exits
+        await watcher.pollNow(); // bgA adopts the real shell; the release runs with 7000 dead
+
+        // A new launch whose shell took the dead PID's number.
+        const reusedPidShell = hookShell(7000);
+        shellCounts.set('s1', 2);
+        namedShells.set('s1', ['bgA', 'bgB']);
+        watcher.noteBackgroundShellStarted('s1', 'bgB');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, reusedPidShell]);
+        await watcher.pollNow(); // bgB adopts the reused PID
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgB' }]);
+        watcher.dispose();
+      });
+
+      it('adopts a second shell past the first one\'s children', async () => {
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]);
+        await watcher.pollNow(); // bgA adopted
+
+        const secondShell = { pid: 8000, ppid: AGENT.pid, comm: 'bash' };
+        shellCounts.set('s1', 2);
+        namedShells.set('s1', ['bgA', 'bgB']);
+        watcher.noteBackgroundShellStarted('s1', 'bgB');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6200), secondShell]);
+        await watcher.pollNow();
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, BUILD, buildChild(6200)]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgB' }]);
+        watcher.dispose();
+      });
+
+      it('still adopts a shell when the agent runs through a cmd shim, which sits above every shell it starts', async () => {
+        // The shim is a helper, not a candidate. If a helper counted as an
+        // ancestor here, every shell under the agent would read as nested.
+        const shim = { pid: 1500, ppid: ROOT, comm: 'cmd' };
+        const shimmedAgent = { pid: 2000, ppid: shim.pid, comm: 'node' };
+        const { watcher, probe, rootPids, shellCounts, namedShells, log } = makeWatcher();
+        rootPids.set('s1', ROOT);
+        probe.alive.add(ROOT);
+        probe.trees.set(ROOT, [shim, shimmedAgent]);
+        watcher.registerSession('s1');
+        await watcher.pollNow(); // anchor: the shim is the one helper
+
+        shellCounts.set('s1', 1);
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        probe.trees.set(ROOT, [shim, shimmedAgent, REAL_SHELL]);
+        await watcher.pollNow();
+
+        probe.trees.set(ROOT, [shim, shimmedAgent]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
     });
 
     describe('an id that is the reported PID (task #859)', () => {

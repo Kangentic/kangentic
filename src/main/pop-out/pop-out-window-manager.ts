@@ -1,6 +1,6 @@
 import { BrowserWindow, nativeImage, screen } from 'electron';
 import type { ConfigManager } from '../config/config-manager';
-import { resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, resolvePopOutBounds, savePopOutBounds } from '../window-utils';
+import { applyDevTaskbarIdentity, resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, resolvePopOutBounds, savePopOutBounds } from '../window-utils';
 import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey, resolveSurfaceTitle } from '../../shared/pop-out';
 import { translateText } from '../i18n/main-i18n';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutProjectParams, PopOutTaskParams } from '../../shared/pop-out';
@@ -169,6 +169,7 @@ export class PopOutWindowManager {
     // sufficient (createWindow() in index.ts sets it explicitly for the same reason).
     // macOS uses the app bundle / dock icon, so it is skipped there.
     if (process.platform !== 'darwin') win.setIcon(iconImage);
+    applyDevTaskbarIdentity(win);
 
     // Adoption signal on genuine creation only (the focus/cap early returns
     // above never reach here); trackFeatureUsed dedups to once per day.

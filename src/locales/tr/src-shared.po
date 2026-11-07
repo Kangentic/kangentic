@@ -239,6 +239,11 @@ msgstr "Çince"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "Odaklanılan terminalde takılı kalan modları temizler ve terminali yeniden çizer. Çalışan ajan ekranını korur."
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "Kapat"
@@ -1043,6 +1048,11 @@ msgstr "Sayfayı yeniden yükle"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "Önce {label} görevini {workflowTitle} iş akışından kaldırın."
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "Terminali sıfırla"
 
 #: src/shared/keybindings.ts
 #, fuzzy

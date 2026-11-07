@@ -239,6 +239,11 @@ msgstr "kínai"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "A beragadt terminálmódok törlése a fókuszban lévő terminálban, és annak újrarajzolása. A futó ágens megtartja a képernyőjét."
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "Bezárás"
@@ -1043,6 +1048,11 @@ msgstr "Oldal újratöltése"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "Előbb távolítsa el a(z) {label} feladatot a(z) {workflowTitle} munkafolyamatból."
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "Terminál visszaállítása"
 
 #: src/shared/keybindings.ts
 #, fuzzy

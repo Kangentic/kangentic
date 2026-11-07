@@ -99,8 +99,9 @@ pop-outs, and do not conflate the two layers.
 
 - **Test:** `tests/unit/pop-out-surface-registry.test.ts` scans `src/main` for `new BrowserWindow(`
   outside the two sanctioned files, asserts the shared-meta `PopOutKind` set matches the renderer
-  registry's registered set, and asserts every declared `channels` entry is a member of
-  `Object.values(IPC)`. Runs in CI via `npm run test:unit`.
+  registry's registered set, asserts every declared `channels` entry is a member of
+  `Object.values(IPC)`, and asserts every creation site but the offscreen lane calls
+  `applyDevTaskbarIdentity` before its first show. Runs in CI via `npm run test:unit`.
 - **Test:** `tests/unit/hmr-resync.test.ts` covers the renderer half of Pattern B/E for
   `pop-out-store.ts` (the store mirroring which windows are open).
 - **Test:** `tests/unit/pop-out-changed.test.ts` pins the push-vs-`setOpen` split above: it

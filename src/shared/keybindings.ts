@@ -714,6 +714,19 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     terminalUnsafe: true,
     hidden: true,
   },
+  // Bound in useTerminal, capture phase, for the focused terminal only, so no
+  // keystroke reaches the PTY. Scope 'global' rather than 'terminal', which is the
+  // display-only scope: a rebind should be checked against the global combos that
+  // also fire while a terminal has focus.
+  {
+    id: 'terminal.reset',
+    label: msg`Reset terminal`,
+    description: msg`Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen.`,
+    group: 'Terminal',
+    scope: 'global',
+    defaultCombo: '',
+    rebindable: true,
+  },
 
   // ── Developer ──
   {

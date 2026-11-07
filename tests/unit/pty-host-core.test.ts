@@ -180,6 +180,58 @@ describe('PtyHostCore', () => {
     expect(events).not.toContainEqual({ type: 'data', sessionId: 'session-1', data: 'tapped' });
   });
 
+  describe('the resetTerminalModes command (Reset terminal)', () => {
+    const ENTER_STUCK_MODES = '\x1b[?1049h\x1b[?2004h';
+    const LEAVE_ALT_SCREEN = '\x1b[?1049l';
+    // Bracketed paste off, as the last parameter of the input-modes reset.
+    const BRACKETED_PASTE_OFF = /\x1b\[\?[\d;]*2004l/;
+
+    function shownOutput(events: HostOutput[]): string {
+      return events.map((event) => (event.type === 'data' ? event.data : '')).join('');
+    }
+
+    it('feeds the clearing sequence to a watching renderer and never writes to the PTY', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed(ENTER_STUCK_MODES);
+      await flush();
+      expect(shownOutput(events)).not.toContain(LEAVE_ALT_SCREEN);
+
+      core.handleCommand({ type: 'resetTerminalModes', sessionId: 'session-1', keepInputModes: false });
+      await flush();
+
+      const shown = shownOutput(events);
+      expect(shown).toContain(LEAVE_ALT_SCREEN);
+      expect(shown).toMatch(BRACKETED_PASTE_OFF);
+      expect(fake.write).not.toHaveBeenCalled();
+    });
+
+    it('leaves the alt screen and the input modes alone when a live agent owns them', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed(ENTER_STUCK_MODES);
+      await flush();
+
+      core.handleCommand({ type: 'resetTerminalModes', sessionId: 'session-1', keepInputModes: true });
+      await flush();
+
+      const shown = shownOutput(events);
+      expect(shown).not.toContain(LEAVE_ALT_SCREEN);
+      expect(shown).not.toMatch(BRACKETED_PASTE_OFF);
+      // The display-state half still ran: autowrap back on.
+      expect(shown).toContain('\x1b[?7h');
+      expect(fake.write).not.toHaveBeenCalled();
+    });
+
+    it('ignores a session the host does not know', () => {
+      const { core, fake } = makeCore();
+      expect(() => core.handleCommand({ type: 'resetTerminalModes', sessionId: 'no-such-session', keepInputModes: false })).not.toThrow();
+      expect(fake.write).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a pending buffer that piles up (the flood that once grew to the string limit)', () => {
     // A PTY delivers 64 KB reads; a megabyte a tick is four times what one
     // flush slice drains.

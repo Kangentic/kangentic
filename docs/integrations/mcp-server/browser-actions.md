@@ -48,6 +48,8 @@ Point the pane at an http(s) URL. This navigates the in-app pane the user has op
 
 Returns `{ ok: true, url }` with the validated URL. The URL is checked before the pane is resolved, so a malformed URL or a non-http(s) scheme (`invalid-url`), or a non-local host while `restrictNavigationToLocalhost` is on (`navigation-host-blocked`), is refused without touching the pane.
 
+`navigation-refused-by-page` means the page has a `beforeunload` handler and the default dismiss kept it open, so the URL did not load and the page is unchanged. Chromium raises that dialog only once the page has had a user activation, which a CDP click is. Call [kangentic_browser_handle_dialog](#kangentic_browser_handle_dialog) with `accept: true`, then navigate again. `kangentic_browser_open_pane` reports the same kind when it navigates a live pane.
+
 ## kangentic_browser_screenshot
 
 Capture the pane's loaded page and return an inline image plus viewport and scale metadata for mapping image coordinates back to the page. Capability tier: `observe`.
@@ -334,7 +336,7 @@ Returns `{ armed, seen }` - what the next dialog will get, and every dialog this
 
 **Every dialog is answered whether you call this or not**, and that is what stops a pane wedging. Kangentic enables the CDP `Page` domain, which moves dialogs off Chromium's own UI and onto the debugger; a dialog nobody answers would then block the page with nothing on screen for the user to dismiss, and every later call would queue behind it until the drive lock timed out. The default is DISMISS, which is the safe direction for all four types: cancel a `confirm`, decline a `prompt`, stay on the page for a `beforeunload`.
 
-Enabling `Page` is only half of it. Measured on Electron 41, Electron's own dialog delegate still fires alongside the CDP route, so both ran: the page took the CDP answer and carried on while a native box stayed on screen whose buttons then did nothing, because the answer had already been given. The guest is therefore created with `disableDialogs: true`, which is what actually removes the duplicate. `prompt()` is a separate case: Electron does not implement it, so it throws in the page instead of opening a dialog, and `promptText` is unreachable for a `<webview>` guest. It stays in the API because the CDP path handles it correctly if a future runtime delivers one.
+Enabling `Page` is only half of it. Measured on Electron 41, Electron's own dialog delegate still fires alongside the CDP route, so both ran: the page took the CDP answer and carried on while a native box stayed on screen whose buttons then did nothing, because the answer had already been given. The guest is therefore created with `disableDialogs: true`, which is what actually removes the duplicate. A `beforeunload` is answered on both routes too: with accept armed through CDP alone, measured on a live guest, the page left and `loadURL` still rejected with `ERR_ABORTED (-3)`, so `navigateGuest` also gives an armed accept to Electron's `will-prevent-unload`. `prompt()` is a separate case: Electron does not implement it, so it throws in the page instead of opening a dialog, and `promptText` is unreachable for a `<webview>` guest. It stays in the API because the CDP path handles it correctly if a future runtime delivers one.
 
 ## kangentic_browser_eval
 
@@ -347,4 +349,4 @@ Evaluate a JavaScript expression in the loaded page's origin and return its valu
 | `expression` | string | Yes | JavaScript expression to evaluate. The resolved value is returned. |
 | `saveToFile` | boolean | No | Write the value to a file in the caller's capture folder (see [kangentic_browser_screenshot](#kangentic_browser_screenshot)) and return `{ filePath, bytes, location }` instead of the value, with `localFilePath` on a project on an SSH host. |
 
-Returns `{ value }` with the serialized result, or `{ filePath, bytes, location }` with `saveToFile`: a string value (page HTML, CSS, a URL list) is written as it is to a `.txt` file, anything else as indented JSON to a `.json` file. Error modes: `evaluate-failed`, carrying the page-side error text, and `save-failed` when the file cannot be written.
+Returns `{ value }` with the serialized result, or `{ filePath, bytes, location }` with `saveToFile`: a string value (page HTML, CSS, a URL list) is written as it is to a `.txt` file, anything else as indented JSON to a `.json` file. Error modes: `evaluate-failed`, carrying what the page threw (the exception's description, with its stack), and `save-failed` when the file cannot be written.

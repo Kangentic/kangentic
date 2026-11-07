@@ -1,38 +1,39 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { locateClaudeSubagentDir } from './subagent-usage-parser';
 import { peekClaudeTranscriptFile } from './transcript-locator';
 import type { StoredCliTarget } from '../../../../shared/types';
 import { placeFromStored } from '../../shared/cli-target';
 
 /**
- * Definitive detection of a manually REJECTED permission prompt from Claude's
- * durable session transcript - a signal no hook can ever deliver.
+ * Definitive detection of a permission prompt that ended without running its
+ * tool, from Claude's durable session transcript - a signal no hook can ever
+ * deliver.
  *
- * When a user denies a tool-use permission prompt at the TUI (or from a
- * paired phone via `answer-permission-prompt`), Claude Code does NOT
- * re-invoke the model: the turn aborts rather than ending, so `Stop` never
- * fires. `PostToolUse` fires only "after a tool call succeeds" (the denied
- * tool never ran), and `PermissionDenied` exists only for AUTO-MODE denials.
- * A manual deny therefore leaves NO hook event of any kind - the whole
- * reason `permissionPending` sticks forever without this drain (see
+ * When a user denies a prompt at the TUI (or from a paired phone via
+ * `answer-permission-prompt`), Claude Code does NOT re-invoke the model: the
+ * turn aborts rather than ending, so `Stop` never fires. A prompt that times
+ * out on Claude's built-in safety check goes the other way: the model gets the
+ * denial and carries on, under later tool ids the engine reads as siblings.
+ * Either way `PostToolUse` fires only "after a tool call succeeds" (the denied
+ * tool never ran), and `PermissionDenied` exists only for AUTO-MODE denials. A
+ * denial therefore leaves NO hook event of any kind - the whole reason
+ * `permissionPending` sticks without this drain (see
  * docs/architecture/activity/predicate.md, "Permission flag").
  *
- * The rejection IS always appended to Claude's durable session JSONL, as a
- * synthetic `tool_result` user turn:
+ * The denial IS always appended to Claude's durable session JSONL, as a
+ * synthetic `tool_result` user turn for the awaited call:
  *
  *   { "type": "tool_result", "is_error": true, "tool_use_id": "toolu_...",
- *     "content": "The user doesn't want to proceed with this tool use. ..." }
+ *     "content": "..." }
  *
- * Verified against real captured sessions to land AT DENY TIME (not batched
- * into the next user turn, which is 11+ seconds later in the captured
- * case) - the one fact this whole drain rests on.
+ * The content is deliberately not read. Claude has more than one denial wording,
+ * and matching one left a safety-check denial reading as "needs you" for 7m42s
+ * with nothing waiting. An error result for the awaited id proves the prompt is
+ * over, whatever it says. Verified against real captured sessions to land AT
+ * DENY TIME (not batched into the next user turn, which is 11+ seconds later in
+ * the captured case) - the one fact this whole drain rests on.
  */
-
-/**
- * Stable prefix of Claude's rejection message. Both observed content
- * variants (a plain deny, and a deny carrying the user's typed feedback)
- * share it verbatim; only the text after it differs.
- */
-const REJECTION_PREFIX = "The user doesn't want to proceed with this tool use";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,24 +47,15 @@ function parseTimestamp(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** True when a `tool_result` block's `content` carries the rejection prefix,
- *  whether the SDK wrote it as a plain string (the observed shape) or as an
- *  array of content blocks. */
-function contentStartsWithRejectionPrefix(content: unknown): boolean {
-  if (typeof content === 'string') return content.startsWith(REJECTION_PREFIX);
-  if (Array.isArray(content)) {
-    // Check EVERY text block, not just the first: an SDK that splits the
-    // result into a preamble block plus the rejection text would otherwise
-    // be judged on the preamble alone and read as "not a rejection".
-    for (const block of content) {
-      if (isRecord(block) && block.type === 'text' && typeof block.text === 'string'
-        && block.text.startsWith(REJECTION_PREFIX)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+/**
+ * How old an error result must be before it counts. An approved call keeps its
+ * prompt open until its own end, and when it fails, the result reaches the
+ * transcript just before `PostToolUseFailure` is read. Taken for a denial there,
+ * the card would drop to idle and the hook's `tool_end` would count twice. Longer
+ * than one poll, so the hook wins whenever the tool really ran, and a denial
+ * clears a poll later.
+ */
+const HOOK_SETTLE_MS = 2_500;
 
 /**
  * Bytes read from the end of the transcript. A denial's `tool_result` line
@@ -82,7 +74,9 @@ const TAIL_BYTES = 256 * 1024;
  * Deliberately UNCACHED. This is polled once per ~2s per session that is
  * actually awaiting a permission decision - typically zero or one at a
  * time - so a bounded 256 KB read is negligible against that cadence, and
- * skipping a mtime/size cache avoids a needless correctness hazard: two
+ * each subagent still writing while the prompt is open adds one more. A cap
+ * on those reads could leave out the file that holds the denial. Skipping a
+ * mtime/size cache avoids a needless correctness hazard: two
  * back-to-back rewrites of the same size landing within one filesystem's
  * mtime resolution window could otherwise serve a stale tail. This is
  * unlike `background-shell-transcript.ts`'s forward-only byte CURSOR, which
@@ -125,11 +119,37 @@ function readTailLinesSync(filePath: string): string[] | null {
 }
 
 /**
+ * The session's subagent transcripts written to since `sinceMs`. A prompt a
+ * subagent raised ends in that subagent's own file, which the main transcript
+ * does not mention. A file nothing wrote to since the prompt opened cannot hold
+ * its answer, so a review with dozens of subagents reads only the live ones.
+ */
+function subagentTranscriptsWrittenSince(directory: string, sinceMs: number): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const transcripts: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const transcript = path.join(directory, name);
+    try {
+      if (fs.statSync(transcript).mtimeMs >= sinceMs) transcripts.push(transcript);
+    } catch {
+      // Gone between the listing and the stat: it holds no answer now.
+    }
+  }
+  return transcripts;
+}
+
+/**
  * `AdapterRuntimeStrategy.permissionPrompts.reportRejectedPromptTools`
- * implementation for Claude. Scans the tail of the live session transcript
- * for a REJECTED `tool_result` (is_error + the stable rejection prefix)
- * matching one of the caller's `toolIds`, at or after `sinceMs`. Returns the
- * matched subset. Never throws.
+ * implementation for Claude. Scans the tail of the live session transcript and
+ * of the subagent transcripts written to since `sinceMs`, for an error
+ * `tool_result` matching one of the caller's `toolIds`, at or after `sinceMs`.
+ * Returns the matched subset. Never throws.
  *
  * A bounded TAIL re-scan (not a forward-only byte cursor like the bg-shell
  * transcript drain in `background-shell-transcript.ts`) is deliberate: that
@@ -159,17 +179,16 @@ export function reportRejectedPromptTools(options: {
 
   // Wherever Claude wrote it (a resumed conversation stays in the folder it
   // started in); synchronous, so the locator's peek, which never scans.
-  const filePath = peekClaudeTranscriptFile({
-    agentSessionId,
-    cwd,
-    place: placeFromStored(options.cliTarget),
-    reportedPath: options.transcriptPath,
-  });
-  const lines = readTailLinesSync(filePath);
-  if (!lines || lines.length === 0) return [];
+  const place = placeFromStored(options.cliTarget);
+  const filePath = peekClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath: options.transcriptPath });
+  const subagentDirectory = locateClaudeSubagentDir(agentSessionId, cwd, place, options.transcriptPath);
+  const lines = [filePath, ...subagentTranscriptsWrittenSince(subagentDirectory, sinceMs)]
+    .flatMap((transcript) => readTailLinesSync(transcript) ?? []);
+  if (lines.length === 0) return [];
 
   const tracked = new Set(toolIds);
   const rejected = new Set<string>();
+  const settledBy = Date.now() - HOOK_SETTLE_MS;
 
   for (const line of lines) {
     if (line.length === 0) continue;
@@ -192,7 +211,8 @@ export function reportRejectedPromptTools(options: {
     }
     if (!isRecord(raw)) continue;
     if (raw.type !== 'user') continue;
-    if (parseTimestamp(raw.timestamp) < sinceMs) continue;
+    const stampedAt = parseTimestamp(raw.timestamp);
+    if (stampedAt < sinceMs || stampedAt > settledBy) continue;
 
     const message = raw.message;
     if (!isRecord(message)) continue;
@@ -205,7 +225,6 @@ export function reportRejectedPromptTools(options: {
       const toolUseId = block.tool_use_id;
       if (typeof toolUseId !== 'string' || !tracked.has(toolUseId)) continue;
       if (block.is_error !== true) continue;
-      if (!contentStartsWithRejectionPrefix(block.content)) continue;
       rejected.add(toolUseId);
     }
   }

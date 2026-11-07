@@ -39,6 +39,11 @@ const ALLOWED_BROWSER_WINDOW_FILES = new Set([
   'src/main/browser/browser-lane-manager.ts',
 ]);
 
+/** Drop whole-line `//` comments, so a commented-out call cannot satisfy a text check. */
+function stripLineComments(source: string): string {
+  return source.replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
 function collectSourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -196,5 +201,37 @@ describe('pop-out surface registry', () => {
     // destroyAllLanes() moves there, the <webview> guests it tears down are
     // still alive at that point and the hand-off would resurrect a lane.
     expect(closeHandlerMatch?.[1] ?? '').not.toContain('destroyAllLanes()');
+  });
+
+  /**
+   * On Windows a dev window shown before `applyDevTaskbarIdentity` runs gets a
+   * separate Electron-logo taskbar button. So every window that is shown to the
+   * user must take the identity before its first show. src/main/index.ts cannot
+   * be imported, so this is a source-text check keyed on the allowed set: a new
+   * BrowserWindow site must call it or be listed here as exempt.
+   */
+  it('every user-visible BrowserWindow site applies the dev taskbar identity before its first show', () => {
+    // A browser lane is `show: false` and offscreen: it never appears in the taskbar.
+    const EXEMPT_FROM_TASKBAR_IDENTITY = new Set(['src/main/browser/browser-lane-manager.ts']);
+
+    for (const relPath of ALLOWED_BROWSER_WINDOW_FILES) {
+      if (EXEMPT_FROM_TASKBAR_IDENTITY.has(relPath)) continue;
+      const source = stripLineComments(fs.readFileSync(path.join(REPO_ROOT, relPath), 'utf-8'));
+      const constructionIndex = source.search(/\bnew BrowserWindow\s*\(/);
+      expect(constructionIndex, `${relPath} must construct a BrowserWindow`).toBeGreaterThan(-1);
+      const callIndex = source.indexOf('applyDevTaskbarIdentity(', constructionIndex);
+      expect(
+        callIndex,
+        `${relPath} must call applyDevTaskbarIdentity( after its new BrowserWindow(, or be listed as exempt`,
+      ).toBeGreaterThan(constructionIndex);
+    }
+
+    const indexSource = stripLineComments(fs.readFileSync(path.join(REPO_ROOT, 'src/main/index.ts'), 'utf-8'));
+    const mainConstruction = indexSource.indexOf('mainWindow = new BrowserWindow(');
+    const identityCall = indexSource.indexOf('applyDevTaskbarIdentity(mainWindow)');
+    const firstShowHook = indexSource.indexOf("mainWindow.once('ready-to-show'");
+    expect(mainConstruction, 'main window construction').toBeGreaterThan(-1);
+    expect(identityCall, 'main window must take the dev taskbar identity').toBeGreaterThan(mainConstruction);
+    expect(firstShowHook, 'main window ready-to-show hook').toBeGreaterThan(identityCall);
   });
 });

@@ -16,7 +16,7 @@
  * fs.readFileSync, PATHS.configFile, and electron's screen/app APIs are all mocked so the
  * suite is pure Node -- no real file writes, no real Electron, no OS-specific paths.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'node:path';
 import type { AppConfig } from '../../src/shared/types';
 import type { ConfigManager } from '../../src/main/config/config-manager';
@@ -38,9 +38,9 @@ vi.mock('electron', () => ({
 }));
 
 import fs from 'node:fs';
-import { nativeTheme, screen } from 'electron';
+import { app, nativeTheme, screen } from 'electron';
 import { THEME_BACKGROUNDS } from '../../src/shared/types';
-import { computeWindowTitle, resolveBackgroundColor, resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
+import { DEV_PROCESS_AUMID, applyDevTaskbarIdentity, computeWindowTitle, resolveBackgroundColor, resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
 
 interface FakeDisplay {
   id: number;
@@ -339,6 +339,53 @@ describe('resolveBackgroundColor', () => {
   it('falls back to the dark default when the file is unreadable', () => {
     vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
     expect(resolveBackgroundColor()).toBe(THEME_BACKGROUNDS.dark);
+  });
+});
+
+describe('applyDevTaskbarIdentity', () => {
+  const realPlatform = process.platform;
+  const mutableApp = app as unknown as { isPackaged: boolean };
+
+  function setPlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  }
+
+  function applyToFakeWindow(): ReturnType<typeof vi.fn> {
+    const setAppDetails = vi.fn();
+    applyDevTaskbarIdentity({ setAppDetails } as unknown as BrowserWindow);
+    return setAppDetails;
+  }
+
+  afterEach(() => {
+    setPlatform(realPlatform);
+    mutableApp.isPackaged = false;
+  });
+
+  it('gives a Windows dev window a bare appId other than the process AUMID', () => {
+    setPlatform('win32');
+
+    const setAppDetails = applyToFakeWindow();
+
+    // Sharing the process AUMID is the bug, because that AUMID has an unbranded shortcut.
+    // The probes also measured that an icon or relaunch field does not beat a match.
+    expect(setAppDetails).toHaveBeenCalledTimes(1);
+    const details = setAppDetails.mock.calls[0][0] as Electron.AppDetailsOptions;
+    expect(Object.keys(details)).toEqual(['appId']);
+    expect(details.appId).toBeTruthy();
+    expect(details.appId).not.toBe(DEV_PROCESS_AUMID);
+  });
+
+  it('leaves a packaged Windows window on the AUMID the installer shortcut carries', () => {
+    setPlatform('win32');
+    mutableApp.isPackaged = true;
+
+    expect(applyToFakeWindow()).not.toHaveBeenCalled();
+  });
+
+  it.each(['darwin', 'linux'] as const)('never calls the Windows-only setAppDetails on %s', (platform) => {
+    setPlatform(platform);
+
+    expect(applyToFakeWindow()).not.toHaveBeenCalled();
   });
 });
 

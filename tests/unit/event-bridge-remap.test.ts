@@ -29,7 +29,7 @@ import os from 'node:os';
 import { AgentTool, EventType } from '../../src/shared/types';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
 import { buildHooks as buildGeminiHooks } from '../../src/main/agent/adapters/gemini';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, markSubagentLaunch, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { appendBackgroundStop, extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, markSubagentLaunch, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -101,6 +101,7 @@ const POSTTOOLUSE_DIRECTIVES = [
   // A Monitor's own limit, so an end notice the CLI rewords cannot hold it open.
   extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
   setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
+  appendBackgroundStop({ toolField: 'tool_name', tools: ['TaskStop'], when: [], unless: [], idSources: [{ path: ['tool_input', 'task_id'] }] }),
 ];
 
 /**

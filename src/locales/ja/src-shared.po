@@ -239,6 +239,11 @@ msgstr "中国語"
 
 #: src/shared/keybindings.ts
 #, fuzzy
+msgid "Clear stuck modes in the focused terminal and repaint it, keeping a running agent's screen."
+msgstr "フォーカス中のターミナルで固まったモードを解除して再描画します。実行中のエージェントの画面は維持されます。"
+
+#: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "閉じる"
@@ -1043,6 +1048,11 @@ msgstr "ページを再読み込み"
 #, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "先に {label} を {workflowTitle} から削除してください。"
+
+#: src/shared/keybindings.ts
+#, fuzzy
+msgid "Reset terminal"
+msgstr "ターミナルをリセット"
 
 #: src/shared/keybindings.ts
 #, fuzzy

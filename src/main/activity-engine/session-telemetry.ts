@@ -28,8 +28,8 @@ import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 const MAX_EVENTS_PER_SESSION = 500;
 
 /**
- * Poll cadence for the manually-rejected-permission-prompt check (task
- * #640), matching the bg-shell watcher's 2s cycle.
+ * Poll cadence for the denied-permission-prompt check (task #640), matching
+ * the bg-shell watcher's 2s cycle.
  */
 const PERMISSION_REJECTION_POLL_MS = 2_000;
 
@@ -164,9 +164,9 @@ interface SessionTelemetryCallbacks {
    */
   reportTerminatedBackgroundShells?(sessionId: string, shellIds: string[]): string[];
   /**
-   * Report which of `toolIds` were manually REJECTED, per a terminal
-   * marker in the agent's durable session transcript at or after
-   * `sinceMs`. An approval is out of scope here: it already clears
+   * Report which of `toolIds` ended without running, a user's denial or the
+   * CLI's own, per a terminal marker in the agent's durable session transcript
+   * at or after `sinceMs`. An approval is out of scope here: it already clears
    * through the normal ToolEnd hook. Called every poll tick for each
    * session awaiting a permission decision (task #640) - a denial fires
    * no hook of any kind, so this transcript check is the only way the
@@ -326,7 +326,7 @@ export class SessionTelemetry {
    * (session-telemetry-wiring.test.ts).
    */
   private readonly permissionPendingSessions = new Set<string>();
-  /** Poll for a manually-rejected permission prompt - see
+  /** Poll for a denied permission prompt - see
    *  `pollRejectedPermissionPrompts`. Null while no session is pending. */
   private permissionRejectionPollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -658,8 +658,9 @@ export class SessionTelemetry {
   }
 
   /**
-   * Check every session currently `permissionPending` for a manual denial
-   * recorded in its durable transcript, and clear the flag on a match.
+   * Check every session currently `permissionPending` for a denial of the
+   * awaited call recorded in its durable transcript, whoever denied it, and
+   * clear the flag on a match.
    *
    * A denial fires NO hook event of any kind (see
    * `permission-rejection-transcript.ts` and
@@ -1341,6 +1342,12 @@ export class SessionTelemetry {
         this.callbacks.onBranchPushed?.(sessionId, pushResult.pushedBranch);
       }
 
+      // Read before the engine closes the call: a start naming a call still
+      // pending is that call moving to the background, not a launch of its own.
+      const movedFromForeground = event.type === EventType.BackgroundShellStart
+        && event.toolId !== undefined
+        && (this.activityEngine.getState(sessionId)?.pendingToolStack.some((pending) => pending.id === event.toolId) ?? false);
+
       this.activityEngine.processEvent(sessionId, event);
       this.noteOpenWork(sessionId, event);
 
@@ -1352,7 +1359,7 @@ export class SessionTelemetry {
         event.type === EventType.BackgroundShellStart
         && looksLikeShellId(event.detail)
       ) {
-        this.bgShellWatcher?.noteBackgroundShellStarted(sessionId, event.detail);
+        this.bgShellWatcher?.noteBackgroundShellStarted(sessionId, event.detail, { movedFromForeground });
       }
     }
     if (cached.length > MAX_EVENTS_PER_SESSION) {

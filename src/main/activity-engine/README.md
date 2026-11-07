@@ -41,7 +41,7 @@ Because a separate set is invisible to the sum, exempting a shell also RE-ARMS t
 
 For background shells (the highest-stakes case), the engine has THREE mechanisms in priority order:
 
-1. **Tier A: PID-aware exit (seconds)** - `BgShellWatcher` captures each named shell's real OS PID, either by adopting a PID memoized while its foreground tool ran (the auto-background path) or by an unambiguous 1:1 process-tree diff over the next few cycles. Once a shell has a PID, its disappearance from the tree is an attributable exit, and the watcher fires `background_shell_end` for that specific id.
+1. **Tier A: PID-aware exit (seconds)** - `BgShellWatcher` captures each named shell's real OS PID, either by adopting a PID memoized while its foreground tool ran (the auto-background path) or by an unambiguous 1:1 process-tree diff over the next few cycles, which ignores a shell's own children and never files a shell awaiting its PID as a helper. Once a shell has a PID, its disappearance from the tree is an attributable exit, and the watcher fires `background_shell_end` for that specific id.
 2. **Tier B: process-tree count (seconds)** - `BgShellWatcher` polls every 2s. When the count of "shell-like" descendants drops below the snapshot taken at last `background_shell_start`, the watcher synthesizes a `background_shell_end`.
 3. **Tier C: escape hatch** - final fallback. If the watcher couldn't run (probe failure) or the heuristic missed (e.g. a non-shell-like process spawned by the bg shell), the engine force-clears the counters: 5 minutes once any shell is named, 30 seconds while all are anonymous. Anchored to `bgShellHoldSince` and refreshed only by watcher-CONFIRMED liveness, so a signal-only keep-alive cannot defer it forever.
 

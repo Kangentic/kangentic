@@ -974,11 +974,14 @@ export class ActivityEngine {
 
   /**
    * Subsystem H entry point (task #640): the transcript poller
-   * (`SessionTelemetry`) reports that a permission prompt was manually
-   * REJECTED - a signal Claude's hook protocol can never deliver, since a
-   * denied tool never runs (no `PostToolUse`) and the turn ABORTS rather
-   * than ending (no `Stop`). Without this, `permissionPending` sticks until
-   * a human types into the session again.
+   * (`SessionTelemetry`) reports that a permission prompt was REJECTED, by a
+   * user or by the CLI's own check - a signal Claude's hook protocol can never
+   * deliver, since a denied tool never runs (no `PostToolUse`), and a user's
+   * denial ABORTS the turn rather than ending it (no `Stop`). Without this,
+   * `permissionPending` sticks until a human types into the session again, or
+   * the turn ends. An agent that carries on from the CLI's denial reads idle
+   * until its next tool call, which restarts the work; no turn end fires,
+   * because no Stop set `turnEndSource`.
    *
    * No-op unless `toolId` matches the CURRENTLY awaited tool: a stale or
    * mismatched report (a later prompt already replaced it, or the flag

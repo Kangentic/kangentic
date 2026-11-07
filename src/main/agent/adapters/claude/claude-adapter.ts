@@ -518,7 +518,7 @@ export class ClaudeAdapter implements AgentAdapter {
       // background-shell-transcript.ts for the full rationale.
       reportTerminatedShells: (options) => reportTerminatedBackgroundShells(options),
     },
-    // A manual TUI deny aborts the turn with no hook of any kind - see
+    // A denied prompt fires no hook of any kind, whoever denied it - see
     // permission-rejection-transcript.ts for the full rationale. This is
     // the only signal that can clear a denied `permissionPending`.
     permissionPrompts: {

@@ -7276,19 +7276,21 @@ export interface AdapterRuntimeStrategy {
   /**
    * How the agent exposes a permission prompt's RESOLUTION from its durable
    * session transcript, when the agent's hook protocol cannot report it
-   * itself. A manual DENY at Claude's TUI aborts the turn rather than
-   * ending it, so no hook fires at all - `Stop` never comes (the model is
-   * never re-invoked), `PostToolUse` fires only on success, and
-   * `PermissionDenied` exists only for auto-mode denials. Without an
-   * out-of-band signal, `permissionPending` sticks until a human types
-   * into the session again.
+   * itself. A denial fires no hook at all, whoever made it. A user's DENY
+   * at Claude's TUI aborts the turn rather than ending it, so `Stop` never
+   * comes (the model is never re-invoked), `PostToolUse` fires only on
+   * success, and `PermissionDenied` exists only for auto-mode denials.
+   * Without an out-of-band signal, `permissionPending` sticks until a human
+   * types into the session again.
    */
   readonly permissionPrompts?: {
     /**
-     * Report which of `toolIds` were REJECTED, per a terminal marker in
-     * the agent's durable session transcript at or after `sinceMs`. An
-     * approval is out of scope here: it already clears through the normal
-     * ToolEnd hook. Returns the matched subset. Must not throw: return
+     * Report which of `toolIds` ended without running, a user's denial or
+     * the CLI's own, per an error result for that id in the agent's durable
+     * session transcript, or in one of its subagent transcripts, at or after
+     * `sinceMs`. An approval is out of scope here:
+     * it already clears through the normal ToolEnd hook. Returns the
+     * matched subset. Must not throw: return
      * [] when the transcript is missing, unreadable, or nothing terminal
      * appeared. Omit entirely for agents whose transcript carries no such
      * signal, or whose hook protocol already reports denials directly.
@@ -8693,6 +8695,14 @@ export interface ElectronAPI {
      * for `refused` and `held`.
      */
     resize: (sessionId: string, cols: number, rows: number) => Promise<SessionResizeResult>;
+    /**
+     * Clear stuck terminal modes in main's parser and the session's stream. A
+     * session in the alt screen also repaints, by resizing, never by writing to
+     * its PTY. A live agent keeps its alt screen and input modes. Resolves once the
+     * clear is ordered ahead of any later scrollback read, so the caller replays
+     * after it.
+     */
+    resetTerminal: (sessionId: string) => Promise<void>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
