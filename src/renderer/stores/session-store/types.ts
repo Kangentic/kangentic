@@ -46,13 +46,6 @@ export interface CoreSessionSlice {
    *  in edit mode. Set alongside `detailTaskId` by `setDetailTaskId`; read once
    *  by the window-manager bridge when it opens the window. */
   detailTaskInitialEdit: boolean;
-  /** Whether the pending `detailTaskId` was requested by an AGENT
-   *  (`kangentic_browser_open_pane`) rather than by a user gesture. Set alongside
-   *  `detailTaskId` by `setDetailTaskId` and read once by the window-manager
-   *  bridge, which stamps the opened window `openedByAgent` so its arriving
-   *  terminal cannot take the user's keyboard.
-   *  See `.claude/rules/agent-driven-focus.md`. */
-  detailTaskAgentInitiated: boolean;
   /** Sessions currently owned by an open task-detail window. Each window claims
    *  its own session; the bottom panel renders no terminal while this is
    *  non-empty (the panel and the windows are mutually exclusive terminal
@@ -187,7 +180,7 @@ export interface CoreSessionSlice {
   setPendingOpenTaskId: (id: string | null) => void;
   setDetailTaskId: (
     id: string | null,
-    options?: { initialEdit?: boolean; agentInitiated?: boolean },
+    options?: { initialEdit?: boolean },
   ) => void;
   spawnSession: (input: Omit<SpawnSessionInput, 'startPath'>) => Promise<Session>;
   killSession: (id: string) => Promise<void>;

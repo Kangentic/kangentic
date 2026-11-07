@@ -31,9 +31,9 @@ own page on it, and cleans all of it up on exit.
 
 ## Four entry points
 
-`rig.mjs` covers concurrent contention. `handoff.mjs` covers #542 - the user
-closing a task-detail window while an agent is driving its pane - and is
-SEPARATE on purpose: it asserts on the implicit-target path an agent actually
+`rig.mjs` covers concurrent contention. `handoff.mjs` covers #542 and the parking
+that followed it - the user closing a task-detail window while an agent is
+driving its pane, then the guest really dying - and is SEPARATE on purpose: it asserts on the implicit-target path an agent actually
 uses, and that path refuses with `multiple-panes` when several panes match the
 task, so leftover lanes from the contention scenarios would make its result
 unreadable. Run it against a preview that has none.
@@ -42,33 +42,41 @@ unreadable. Run it against a preview that has none.
 node scripts/rigs/browser-contention/handoff.mjs
 ```
 
-It opens a real pane, confirms the agent can drive it, clicks the task-detail
-close control, and then requires all four of: the user's pane is gone, a
-hand-off lane took over, **the same caller can still drive**, and the hand-off
-is logged.
+It opens a pane and requires that no window appeared, opens the window as a user
+does and confirms the agent can drive it, clicks the task-detail close control,
+and then requires that the window parked with the same pane and handle and **the
+same caller can still drive**. It then destroys the guest and requires that a
+hand-off lane took over, the caller can still drive, and the hand-off is logged.
 
-`lifecycle.mjs` covers the lane-cleanup guarantee (#F): do lanes die with the
-session that owns them? Also SEPARATE, and for a sharper reason - it is the one
+`lifecycle.mjs` covers the lane-cleanup guarantee (#F): does a lane die with the
+session that owns it? Also SEPARATE, and for a sharper reason - it is the one
 probe that must spawn through the BOARD rather than `sessions.spawn`.
 
 ```
 node scripts/rigs/browser-contention/lifecycle.mjs
 ```
 
+A lane cannot be asked for: `open_pane` mounts a pane whenever the project is open,
+parked if no window is. So these rigs get one the way the product does, by
+destroying a live guest (`dropTaskWindow` in `lib.mjs`).
+
+Keep at most 8 mock agents alive, the project's default session cap. With a ninth
+alive, its pane never mounted and `open_pane` answered `pane-open-timeout`, and the
+same loop passed once each round killed its agent. A pane mounts only on a terminal
+surface, which fits a queued session, though nobody read the session's status.
+
 `idle-reclaim.mjs` covers the other half of that guarantee: the 30-minute idle
 sweep must reap a lane nobody is using WITHOUT reaping one that is. It is
-separate because it is the only probe that has to control the clock - `IDLE_MS`
-overrides the reclaim window so the run takes seconds rather than half an hour.
+separate because it is the only probe that has to control the clock, and because
+a sweep only ever finds another task's lane, so it runs three agents: one lane
+left idle, one kept warm, and one more that opens last and runs the sweep.
+
+Edit `LANE_IDLE_RECLAIM_MS` in `browser-lane-manager.ts` to match the window and
+restart the preview, then set the window with the `IDLE_MS` environment variable.
+It defaults to 15000. In PowerShell that is two statements, so set it first:
 
 ```
-node scripts/rigs/browser-contention/idle-reclaim.mjs
-```
-
-Set the window with the `IDLE_MS` environment variable. In PowerShell that is
-two statements, so set it first:
-
-```
-$env:IDLE_MS = 6000
+$env:IDLE_MS = 15000
 ```
 
 ```
@@ -89,8 +97,8 @@ says exactly this: the raw passthrough is allowlisted as NOT a task-agent spawn.
 A real agent always has a record. So `lifecycle.mjs` points the claude CLI at
 `tests/fixtures/mock-claude.cmd` (zero quota) and moves a task into a spawning
 column - the production entry point, which does create one. Verified red-green
-by removing the `destroyLanesForSession` call: 3 lanes survive without it, 0
-with it.
+by removing the `destroyLanesForSession` call: the lanes survive without it, and
+none does with it.
 
 The lesson generalises: a rig that takes a shortcut around the production entry
 point can report a failure the product does not have, and that is just as
@@ -100,13 +108,13 @@ expensive as missing one it does.
 
 | | |
 |---|---|
-| **A1** | Three concurrent callers on ONE shared guest (a lane) |
-| **A2** | The same, on a real task-detail pane |
-| **B** | Three concurrent callers, one isolated lane each |
-| **C** | The lane cap refuses the N+1th with an actionable error |
+| **A1** | Three concurrent callers on a parked pane, with no window open |
+| **A2** | The same, with the task window open |
+| **A3** | The same, on the offscreen lane a dead guest leaves |
 | **D** | Contention is visible: per-drive telemetry and a CONTENTION warning |
 
-A1 and A2 make **two** assertions, and the completeness one is not optional.
+A task has one surface, so these are that surface in each form it takes. Each A
+scenario makes **two** assertions, and the completeness one is not optional.
 Each caller types a long run of one distinct character; the rig then reads an
 append-only keystroke log from the page (not the input's value - see below) and
 requires that *every* caller's characters arrived AND that each caller's run is
@@ -137,7 +145,7 @@ stay off for this to mean anything.
 
 Measured by disabling `withGuestDriveLock` and restarting the preview:
 
-| | shared lane | real pane |
+| | lane | pane |
 |---|---|---|
 | FIFO disabled | **40/120 chars, 1 of 3 callers** | **40/120 chars, 1 of 3 callers** |
 | FIFO restored | 120/120, 3 contiguous runs | 120/120, 3 contiguous runs |
@@ -151,22 +159,12 @@ It needs a live `/preview` and a real MCP server over HTTP, so it cannot ride
 unit, UI, or E2E. It is a manual rig, run when the browser-automation or
 dev-port subsystems change.
 
-## Two traps in `handoff.mjs` too
+## A trap in `handoff.mjs` too
 
 The task-detail close control is found by `data-testid="task-detail-close"`,
 never by title: the OS window's close button is ALSO titled "Close", and
 clicking that one quits the app - which is what happened on the first attempt.
 
-And the first `open_pane` on a cold preview can exceed the tool's own 10s bound
-while the window and its webview mount, so it retries once. A cold-start
-timeout there is not a failure of the pane path.
-
-## Known environment limit
-
-A2 skips when the preview window is occluded. An occluded window reports
-`document.visibilityState === 'hidden'`, which stalls `requestAnimationFrame`
-completely, so the pane's `<webview>` never constructs and `open_pane` times
-out. Bring the preview window to the front for A2. A1 covers the same FIFO on
-the same chokepoint (`withGuest` keys the lock on `webContentsId`, and a lane
-and a pane queue through it identically), so a skipped A2 is a coverage
-reduction, not a gap.
+The first `open_pane` on a cold preview can exceed the tool's own 10s bound while
+the webview mounts, so it retries once. A cold-start timeout there is not a
+failure of the pane path.

@@ -30,6 +30,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useWindowStore } from '../store/window-store';
+import { taskDetailWindowInput } from './window-parking';
 
 export function useTaskDetailWindowBridge(): void {
   const detailTaskId = useSessionStore((state) => state.detailTaskId);
@@ -64,12 +65,9 @@ export function useTaskDetailWindowBridge(): void {
 
     const windowStore = useWindowStore.getState();
 
-    // agent-focus-ok: this push serves BOTH the user's card click and an agent's
-    // kangentic_browser_open_pane, and nothing on the push distinguishes them.
-    // The origin is declared by whoever set `detailTaskId` (the request bridge
-    // passes `agentInitiated`), so it is read from the store here rather than
-    // inferred. See `.claude/rules/agent-driven-focus.md`.
-    const agentInitiated = useSessionStore.getState().detailTaskAgentInitiated;
+    // agent-focus-ok: this push is only ever a user's request, so this raise and
+    // this focus are theirs. An agent's kangentic_browser_open_pane never asks
+    // main to open a detail; its pane mounts through useBrowserPaneRequestBridge.
 
     // Focus an existing window for this task instead of opening a duplicate.
     // Scope to task-detail windows: a conversation window's anchor is a session
@@ -78,17 +76,11 @@ export function useTaskDetailWindowBridge(): void {
       (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
     );
     if (existing) {
-      // A PARKED window (the user closed it while its agent was live, so its
-      // Browser pane's guest was kept) is un-parked in place rather than
-      // rebuilt: same DOM node, same guest, same surface handle. Both raises
-      // clear the agent stamp, so the re-stamp below must follow either.
+      // A PARKED window (the user closed it while its agent was live, or an
+      // agent's pane opened it hidden) is un-parked in place rather than rebuilt:
+      // same DOM node, same guest, same surface handle.
       if (existing.parked) windowStore.unparkWindow(existing.id);
       else windowStore.focusWindow(existing.id);
-      // AFTER the raise: the raise clears the stamp, so stamping first would be
-      // undone immediately. A user's card click un-parks unstamped, so the
-      // remounting terminal may take the keyboard; an agent's open_pane
-      // re-stamps, so `resolveArrivalFocus` denies it.
-      if (agentInitiated) windowStore.markAgentOpened(existing.id);
       detailWindowIdRef.current = existing.id;
       return;
     }
@@ -101,36 +93,9 @@ export function useTaskDetailWindowBridge(): void {
     // task that no longer exists.
     if (!task) return;
 
-    const session = useSessionStore.getState();
-    // Baseline for auto-close: a task opened while already Done/archived (e.g. from
-    // the Completed Tasks list) must NOT auto-close - only a later transition into
-    // Done does. Captured here so it survives the content remount the Done fly causes.
-    const openedDone =
-      task.archived_at !== null
-      || board.swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'done';
     const windowId = windowStore.openWindow({
-      kind: 'task-detail',
-      anchor: taskId,
-      sessionId: session._sessionByTaskId.get(taskId)?.id ?? null,
-      title: task.title,
-      initialEdit: session.detailTaskInitialEdit,
-      openedDone,
-      // Terminal-hosting windows open FLAT, deliberately.
-      //
-      // The entrance is a `scale()` transform, and a transform does not change an
-      // element's border box - so it never triggers ResizeObserver - while it DOES
-      // change `getBoundingClientRect()`, which is what xterm's FitAddon measures.
-      // Any terminal that fits mid-animation computes `cols` from a shrunken box
-      // and is never corrected, because the real box never moved. That reads as a
-      // frozen, horizontally-overflowing terminal until the user resizes by hand.
-      //
-      // Correctness over motion: a surface that spawns a terminal is worth more
-      // fast and accurate than animated.
-      skipEnterAnimation: true,
-      // An agent-requested open raises and shows the window (the agent needs a
-      // rendering pane to drive) but must not let its arriving terminal take the
-      // user's keyboard. See `.claude/rules/agent-driven-focus.md`.
-      openedByAgent: agentInitiated,
+      ...taskDetailWindowInput(task),
+      initialEdit: useSessionStore.getState().detailTaskInitialEdit,
     });
     detailWindowIdRef.current = windowId;
     // No claim call: opening the window changed the store, and the derived reporter

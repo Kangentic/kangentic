@@ -7,8 +7,9 @@
  * this bridge acts on it. Three behaviors are load-bearing and none of them is
  * visible to the main-process unit tests:
  *
- * 1. A push with no task-detail window open must OPEN one, or the agent is left
- *    exactly where the `no-pane-open` dead end left it.
+ * 1. A push with no task-detail window open must give the pane a host, or the
+ *    agent is left exactly where the `no-pane-open` dead end left it, and it must
+ *    do that without showing anything: the host is a window born parked.
  * 2. A push at a pane already mounted on its EMPTY STATE must make it pick up
  *    the URL main just seeded. The pane's URL fetch keys on taskId + projectId,
  *    neither of which changed, so without the refresh nudge the pane would sit
@@ -136,7 +137,7 @@ test.beforeEach(async () => {
 });
 
 test.describe('browser pane request bridge', () => {
-  test('an open push with no window open opens the window with the pane showing', async () => {
+  test('an open push with no window open mounts the pane in a parked window', async () => {
     // Main seeds the task URL before pushing, so the pane can resolve one and
     // mount its active subtree instead of the empty state.
     await sharedPage.evaluate((url) => {
@@ -149,10 +150,45 @@ test.describe('browser pane request bridge', () => {
 
     await emitOpenRequest(sharedPage);
 
-    await sharedPage
-      .locator('[data-testid="task-detail-dialog"]')
-      .waitFor({ state: 'visible', timeout: 10000 });
-    await sharedPage.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 10000 });
+    const pane = sharedPage.locator('[data-testid="browser-pane"]');
+    await pane.waitFor({ state: 'attached', timeout: 10000 });
+    const frame = sharedPage.locator('[data-testid^="window-frame-"]').filter({ has: pane });
+    expect(await frame.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+    expect(await frame.evaluate((element) => getComputedStyle(element).visibility)).toBe('visible');
+    expect(await frame.getAttribute('inert')).not.toBeNull();
+  });
+
+  test('an open push that beats the task to the board mounts the pane once the task lands', async () => {
+    // Nothing else asks again, so a new task reaching the board 1.3 s after the
+    // push left the agent waiting out the whole open timeout. Measured with the
+    // window hidden, where it took that long.
+    await sharedPage.evaluate((url) => {
+      window.__mockBrowser?.reset();
+      window.__mockBrowser?.seedTaskUrl('task-pane-bridge', url);
+      const stores = (window as unknown as {
+        __zustandStores: { board: { getState: () => { tasks: unknown[] }; setState: (state: { tasks: unknown[] }) => void } };
+      }).__zustandStores;
+      const board = stores.board;
+      (window as unknown as { __heldTasks: unknown[] }).__heldTasks = board.getState().tasks;
+      board.setState({ tasks: [] });
+    }, SEEDED_URL);
+
+    await emitOpenRequest(sharedPage);
+    const pane = sharedPage.locator('[data-testid="browser-pane"]');
+    await expect(pane).toHaveCount(0);
+
+    await sharedPage.evaluate(() => {
+      const held = window as unknown as {
+        __heldTasks: unknown[];
+        __zustandStores: { board: { setState: (state: { tasks: unknown[] }) => void } };
+      };
+      held.__zustandStores.board.setState({ tasks: held.__heldTasks });
+    });
+
+    await pane.waitFor({ state: 'attached', timeout: 10000 });
+    const frame = sharedPage.locator('[data-testid^="window-frame-"]').filter({ has: pane });
+    expect(await frame.getAttribute('inert')).not.toBeNull();
+    expect(await frame.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
   });
 
   test('an open push makes a pane sitting on the empty state pick up the seeded URL', async () => {

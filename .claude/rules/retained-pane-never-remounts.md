@@ -22,7 +22,11 @@ removed, in two cases that share one mechanism and one predicate (`isWindowDorma
   agent out twice per close.
 
 In both cases the window stays in the `windows` map and keeps rendering at its existing position,
-invisible and inert.
+invisible and inert. A window can also be BORN parked: an agent's `kangentic_browser_open_pane` on
+a task with no window mounts one that way, so the pane has a host and nothing appears
+(`openWindow({ parked: true })`, [[agent-driven-focus]]). It has no guest until the page's
+`dom-ready`, so `guestPendingUntil` holds the reaper off past main's own wait on the pane, and the
+reaper arms a timer for that, since nothing writes to a store when the time passes.
 
 A third case hides the PANE inside a visible window: HELD (`browserHeldTasks` in the session
 store) when the user puts the pane away with the Browser pill, its shortcut, or by opening Changes /
@@ -78,7 +82,9 @@ Two more causes were found by live testing, neither visible to any DOM-presence 
 - **A parked window is closed as far as everything but the guest is concerned.** It leaves
   `order`, cannot be focused (`focusWindow` refuses), holds no terminal claim, registers no
   closer, does not own its detail, and the board's `detailTaskId` mirror treats it as gone (so a
-  second click on the same card un-parks it instead of being swallowed as "no change").
+  second click on the same card un-parks it instead of being swallowed as "no change"). Not owning
+  its detail means main never tells it to let go, so the reaper drops it when the mounted Agent
+  Monitor takes the task: the Monitor's pane would otherwise be a second guest beside it.
   `applyWorkspace` never adopts it: a restored copy of a parked anchor is dropped, and
   `releaseRetainedWindows` on return clears the retention a parked window picked up on the way
   out.
@@ -92,7 +98,9 @@ Two more causes were found by live testing, neither visible to any DOM-presence 
   never offscreen positioning. Both stop the guest compositing, which makes
   `Page.captureScreenshot` hang until its timeout (measured on Electron 41 and 45; an `opacity: 0`
   subtree composites normally). On Electron 41 the hung capture also wedged the guest's CDP queue;
-  on 45 the next command still answers. See [[browser-automation-driver]].
+  on 45 the next command still answers. See [[browser-automation-driver]]. The Backlog view hides
+  the board's overlay the same way, `opacity-0` and `inert` (`WindowLayer`), never `invisible`: a
+  live agent's screenshot of a pane under it failed until it did.
 - **Dormant windows stay out of shared state that belongs to the open project:** the serialized
   workspace (or they persist into another project's layout blob, or a parked window restores
   visible), the tile tree (or a leaf outlives the tree `applyWorkspace` replaces), the reported
@@ -113,7 +121,8 @@ Two more causes were found by live testing, neither visible to any DOM-presence 
   registered `webContentsId` is unchanged and that no unregister carries it (across a zoom
   broadcast and a session rotation), and `tests/ui/browser-pane-park-on-close.spec.ts` asserts
   the same across a close and reopen: the parked window keeps its id, its webview element, and
-  its guest, and un-parks in place. `tests/ui/browser-pane-hold-on-hide.spec.ts` asserts it
+  its guest, and un-parks in place. It also pins that a guest computes `visible` under the Backlog
+  view, parked or in a window left open. `tests/ui/browser-pane-hold-on-hide.spec.ts` asserts it
   across a pill hide and show, across Changes opening over the pane, and that the hold parks on
   close, ends when the session stops, and yields to an agent's `close_pane`. These are the only
   assertions that separate "survived" from "silently replaced"; a DOM-presence check passes

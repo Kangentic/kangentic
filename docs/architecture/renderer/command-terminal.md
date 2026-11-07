@@ -1027,12 +1027,13 @@ the pane keeps its last session and re-registers in place. The alternatives (a l
 every hide, or keeping the whole panel mounted) are in the embedded browser decision log,
 decision 43.
 
-**An agent opens it without taking the keyboard.** `useCommandTerminalBrowserBridge` handles
-main's open and close requests for terminal keys (the board's request bridge skips them). With the
-panel hidden it opens the panel through the pending-open flag, stamping every command window
-`openedByAgent` first and again as the panel shows, so the arrival-focus agent-window tier denies
-every terminal. A panel already showing is left as it is. The detached window runs the same bridge
-for its own project, and the main window leaves that project's panes to it.
+**An agent opens it without showing anything.** `useCommandTerminalBrowserBridge` handles main's
+open and close requests for terminal keys (the board's request bridge skips them). It sets the open
+flag and stops there. A hidden panel stays hidden: the host already keeps the pane mounted at
+`opacity: 0`, so the agent can drive it, and the user opening the panel shows it. It used to open the
+panel, which put a window over what the user was doing for the same reason a task window was
+(`decision-log.md`, decision 44). The detached window runs the same bridge for its own project, and
+the main window leaves that project's panes to it.
 
 **It ends with the terminal, and its layout survives a restart.** Main's
 `ipc/helpers/command-terminal-browser.ts` listens on `session-removed` and, for a Command Terminal,

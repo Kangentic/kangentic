@@ -270,7 +270,6 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   activeSessionId: null,
   detailTaskId: null,
   detailTaskInitialEdit: false,
-  detailTaskAgentInitiated: false,
   dialogSessionIds: [],
   remoteDetailTaskIds: [],
   mobileTerminalStreamedSessionIds: [],
@@ -688,22 +687,20 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     window.electronAPI.config.set({ lastActiveTaskByProject: updated });
   },
 
-  // Both companion flags reset when their option is absent, so a later USER open
-  // can never inherit a stale agent stamp (or a stale edit intent) from the open
-  // before it. See `.claude/rules/agent-driven-focus.md`.
+  // The edit flag resets when its option is absent, so a later open can never
+  // inherit a stale edit intent from the open before it.
   //
   // Every open a person makes passes through here, and nothing else does: a
-  // project switch writes `detailTaskId` with `setState`, and a restored window
-  // is rebuilt without it. So this is where an open resumes a task the idle
-  // timeout paused. An agent's open is not the user coming back, and an edit
-  // open is the form, not the agent.
+  // project switch writes `detailTaskId` with `setState`, a restored window is
+  // rebuilt without it, and an agent's `open_pane` never reaches it (see
+  // `.claude/rules/agent-driven-focus.md`). So this is where an open resumes a
+  // task the idle timeout paused. An edit open is the form, not the agent.
   setDetailTaskId: (id, options) => {
     set({
       detailTaskId: id,
       detailTaskInitialEdit: id ? !!options?.initialEdit : false,
-      detailTaskAgentInitiated: id ? !!options?.agentInitiated : false,
     });
-    if (id && !options?.initialEdit && !options?.agentInitiated) get().resumeOnOpen(id);
+    if (id && !options?.initialEdit) get().resumeOnOpen(id);
   },
   claimDialogSession: (sessionId) =>
     set((state) =>

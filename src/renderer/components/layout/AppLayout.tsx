@@ -37,7 +37,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { ToastContainer } from './ToastContainer';
-import { WindowLayer, useWindowStore } from '../../window-manager';
+import { WindowLayer, isWindowDormant, useWindowStore } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { resolveTerminalForceCollapse } from '../../utils/terminal-force-collapse';
@@ -117,7 +117,8 @@ export function AppLayout() {
   // means the user has opened a task. Stamped here, in the one place that already owns the
   // onboarding effects, rather than inside useOnboardingProgress - a read hook that writes
   // would fire from each of its several consumers.
-  const taskDetailWindowOpen = useWindowStore((s) => Object.keys(s.windows).length > 0);
+  // Dormant windows do not count: an agent's Browser pane opens one the user never saw.
+  const taskDetailWindowOpen = useWindowStore((state) => Object.values(state.windows).some((managedWindow) => !isWindowDormant(managedWindow)));
   const onboardingProgress = useOnboardingProgress();
   const { startStep } = useWalkthroughActivation();
   // The New Task dialog's open state lives in KanbanBoard, so the only signal available

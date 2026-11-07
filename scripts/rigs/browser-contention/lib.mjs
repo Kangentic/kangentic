@@ -38,6 +38,30 @@ export async function evalInPreview(expression) {
   return result?.value !== undefined ? result.value : result;
 }
 
+/** Show a task's window, as the user's click on its card does. */
+export async function openTaskWindow(taskId) {
+  await evalInPreview(`window.__zustandStores.session.getState().setDetailTaskId(${JSON.stringify(taskId)})`);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+/**
+ * Destroy a task's Browser guest while its agent is live, which is what stands an
+ * offscreen lane up. An agent cannot ask for a lane, and a user's close parks the
+ * window and keeps the guest, so a direct drop of the window is the one way left
+ * to make a guest die in a running app: the same store call a displacement makes.
+ */
+export async function dropTaskWindow(taskId) {
+  await evalInPreview(
+    '(() => {'
+    + '  const store = window.__zustandStores.window.getState();'
+    + `  const found = Object.values(store.windows).find((candidate) => candidate.anchor === ${JSON.stringify(taskId)});`
+    + '  if (found) store.closeWindow(found.id);'
+    + '  return Boolean(found);'
+    + '})()',
+  );
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+}
+
 /** Run a product MCP command handler inside the preview. */
 export async function runCommand(command, params, projectId) {
   const result = await bridge('/command', { command, params, projectId });
@@ -108,7 +132,7 @@ const PAGE = `<!doctype html>
 <html><head><meta charset="utf-8"><title>contention rig</title></head>
 <body style="font-family:system-ui;background:#111;color:#eee;padding:24px">
   <h1 id="who">lane: <span id="lane">unset</span></h1>
-  <!-- Scenario A writes here. Concurrent drivers each type a distinct run of
+  <!-- Every scenario writes here. Concurrent drivers each type a distinct run of
        one repeated character; the assertion is that each run stays CONTIGUOUS.
        Interleaving shreds them, which is exactly what the per-guest FIFO
        prevents and what nothing prevented before it. -->

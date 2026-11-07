@@ -1,5 +1,5 @@
 /**
- * Scenario F: do lanes actually die with the session that owns them?
+ * Scenario F: does a lane actually die with the session that owns it?
  *
  * `markRecordExited` calls `destroyLanesForSession(recordId)` and the comment
  * above it calls that "the GUARANTEE that lanes cannot leak". Each lane is an
@@ -24,13 +24,15 @@
  * the production entry point and does create one. Testing cleanup against a
  * session shape no agent ever has would prove nothing either way.
  *
+ * The lane comes from a real hand-off, since an agent cannot ask for one and a
+ * task has one surface.
+ *
  * Run on a CLEAN preview - leftover lanes make the counts unreadable.
  */
-import { evalInPreview, runCommand, McpClient, startPageServer, ok, fail, info, WORKTREE } from './lib.mjs';
+import { evalInPreview, runCommand, McpClient, startPageServer, dropTaskWindow, ok, fail, info, WORKTREE } from './lib.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const LANES = 3;
 const SPAWN_COLUMN = 'Executing';
 const MOCK_CLI = `${WORKTREE}/tests/fixtures/mock-claude.cmd`;
 
@@ -65,7 +67,7 @@ async function waitForSession(timeoutMs = 30000) {
 
 let session = null;
 try {
-  console.log('\n=== F. lanes die with the session that owns them ===');
+  console.log('\n=== F. a lane dies with the session that owns it ===');
 
   await runCommand('move_task', { taskId, column: SPAWN_COLUMN });
   session = await waitForSession();
@@ -83,13 +85,12 @@ try {
   const starting = await allPanes();
   if (starting.length > 0) info(`WARNING: ${starting.length} pane(s) already registered - use a clean preview`);
 
-  for (let index = 0; index < LANES; index += 1) {
-    const opened = await client.call('kangentic_browser_open_pane', { isolated: true, url: pageUrl });
-    if (opened.isError) throw new Error(`open lane ${index}: ${opened.text.slice(0, 200)}`);
-  }
+  const opened = await client.call('kangentic_browser_open_pane', { url: pageUrl });
+  if (opened.isError) throw new Error(`open pane: ${opened.text.slice(0, 200)}`);
+  await dropTaskWindow(taskId);
   const live = (await allPanes()).filter((pane) => pane.kind === 'lane' && pane.alive);
-  if (live.length === LANES) ok(`${LANES} lanes are open and alive`);
-  else fail(`${LANES} lanes are open`, `saw ${live.length}`);
+  if (live.length === 1) ok('the lane is open and alive');
+  else fail('the lane is open', `saw ${live.length}`);
 
   info('killing the session...');
   await evalInPreview(`window.electronAPI.sessions.kill(${JSON.stringify(session)})`);
@@ -102,10 +103,10 @@ try {
 
   const survivors = (await allPanes()).filter((pane) => pane.kind === 'lane');
   if (survivors.length === 0) {
-    ok('EVERY lane was destroyed when its session exited');
+    ok('the lane was destroyed when its session exited');
   } else {
     fail(
-      'every lane was destroyed when its session exited',
+      'the lane was destroyed when its session exited',
       `${survivors.length} survived: ${survivors.map((p) => `${p.sessionId}(alive=${p.alive})`).join(', ')}`,
     );
   }

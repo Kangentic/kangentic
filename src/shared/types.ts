@@ -9448,14 +9448,23 @@ export interface BrowserCaptureInput {
  *   - `showing`: the pane is visible in an open task window.
  *   - `hidden`: the user hid it with the Browser pill; the guest is kept
  *     mounted behind the terminal and stays driveable.
- *   - `parked`: the user closed the task window; the guest is kept mounted in
- *     the hidden window and stays driveable.
+ *   - `parked`: the task's window is closed, because the user closed it or
+ *     nobody has opened it; the guest is kept mounted in a hidden window and
+ *     stays driveable.
  *   - `offscreen`: a lane, which never has a window.
  * A surface the user CLOSED is not a visibility: its handle is retired with
  * reason `user-closed` and answers `surface-gone`.
  */
 export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
 export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
+/**
+ * How long `kangentic_browser_open_pane` waits for a pushed pane to register a
+ * live guest, covering the window mount, the `<webview>` attach and the guest's
+ * `dom-ready`. In shared code because the renderer's parked-window reaper must
+ * keep a window born parked for at least this long.
+ */
+export const BROWSER_PANE_OPEN_TIMEOUT_MS = 10_000;
 
 /**
  * A Command Terminal slot's Browser layout, saved per project and slot so the
