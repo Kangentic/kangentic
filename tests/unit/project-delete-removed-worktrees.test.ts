@@ -41,6 +41,8 @@ const { callOrder, state } = vi.hoisted(() => ({
     existingPaths: new Set<string>(),
     /** The project's board tasks, as the repository lists them. */
     tasks: [] as Array<{ id: string; worktree_path: string | null; session_id: string | null }>,
+    /** Folders under `.kangentic/worktrees` that no board task names. */
+    unlistedWorktrees: [] as string[],
   },
 }));
 
@@ -65,7 +67,8 @@ vi.mock('../../src/main/git/original-fs', () => ({
       throw error;
     }),
     // No `.claude/` directory: step 4 skips its removal.
-    readdirSync: vi.fn(() => {
+    readdirSync: vi.fn((target: string) => {
+      if (target.endsWith('worktrees')) return state.unlistedWorktrees;
       const error = new Error('ENOENT') as NodeJS.ErrnoException;
       error.code = 'ENOENT';
       throw error;
@@ -89,6 +92,16 @@ vi.mock('../../src/main/git/removed-worktrees', async (importOriginal) => ({
 vi.mock('../../src/main/ipc/helpers/spare-worktrees', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/ipc/helpers/spare-worktrees')>()),
   discardProjectSpares: discardProjectSparesMock,
+}));
+
+// Only a folder no task names is recorded, so the per-task removals' own calls
+// stay out of callOrder.
+vi.mock('../../src/main/git/worktree-links', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-links')>()),
+  clearWorktreeLinks: vi.fn(async (target: string) => {
+    if (state.unlistedWorktrees.some((folder) => target.endsWith(folder))) callOrder.push(`clearWorktreeLinks:${target}`);
+    return true;
+  }),
 }));
 
 vi.mock('../../src/main/ipc/handlers/project-relocate', () => ({
@@ -219,6 +232,7 @@ vi.mock('../../src/main/workflows/workflow-agent', async (importOriginal) => ({
 }));
 
 import { cleanupProject } from '../../src/main/ipc/handlers/projects';
+import { clearWorktreeLinks } from '../../src/main/git/worktree-links';
 import { isGitRepo, isInsideWorktree } from '../../src/main/git/git-checks';
 import { prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -259,6 +273,7 @@ beforeEach(() => {
   callOrder.length = 0;
   state.existingPaths.clear();
   state.tasks = [];
+  state.unlistedWorktrees = [];
   // The project folder and its `.kangentic/` both exist, so step 7 reaches the removal.
   state.existingPaths.add(PROJECT_PATH);
   state.existingPaths.add(KANGENTIC_DIR);
@@ -320,6 +335,31 @@ describe('cleanupProject deletes the removed worktrees before it removes .kangen
     expect(deleteRemovedWorktreesNowMock).not.toHaveBeenCalled();
     // The same fixture removes `.kangentic` in the test above, so this is the
     // worktree guard at work and not a missing directory.
+    expect(callOrder).not.toContain(KANGENTIC_REMOVAL);
+  });
+});
+
+describe('cleanupProject clears the links of a worktree no board task names', () => {
+  it('before the .kangentic rmSync, which follows a junction into the main checkout', async () => {
+    const worktreesDir = path.join(KANGENTIC_DIR, 'worktrees');
+    state.existingPaths.add(worktreesDir);
+    state.unlistedWorktrees = ['archived-task'];
+
+    await cleanupProject(makeContext(), PROJECT_ID, PROJECT_PATH);
+
+    expect(callOrder).toEqual([
+      `clearWorktreeLinks:${path.join(worktreesDir, 'archived-task')}`,
+      KANGENTIC_REMOVAL,
+    ]);
+  });
+
+  it('leaves .kangentic in place when a link will not come out', async () => {
+    state.existingPaths.add(path.join(KANGENTIC_DIR, 'worktrees'));
+    state.unlistedWorktrees = ['archived-task'];
+    vi.mocked(clearWorktreeLinks).mockResolvedValueOnce(false);
+
+    await cleanupProject(makeContext(), PROJECT_ID, PROJECT_PATH);
+
     expect(callOrder).not.toContain(KANGENTIC_REMOVAL);
   });
 });

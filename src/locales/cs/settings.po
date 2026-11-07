@@ -1213,15 +1213,14 @@ msgstr "Řazení souborů"
 msgid "Files & Terminal"
 msgstr "Soubory a terminál"
 
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Files copied into each new worktree, such as .env."
-msgstr "Soubory kopírované do každého nového pracovního stromu, např. .env."
-
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Files to copy into a worktree"
 msgstr "Soubory ke zkopírování do pracovního stromu"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1248,6 +1247,10 @@ msgstr "Sbalí velké nezměněné úseky, takže velký soubor ukáže jen změ
 #, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
 msgstr "Složka na disku, na kterou projekt odkazuje. Přesuňte ji jinam; všechny úlohy, historie a pracovní stromy se přesunou s ní."
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Folders to link into a worktree"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1290,6 +1293,10 @@ msgstr "Git"
 #, fuzzy
 msgid "Git changes"
 msgstr "Změny v Gitu"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1657,6 +1664,10 @@ msgstr "Světlý, když je systém ve světlém režimu"
 #, fuzzy
 msgid "Limit how many agents can run at the same time"
 msgstr "Omezit, kolik agentů může běžet současně"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link folders"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

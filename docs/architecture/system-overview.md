@@ -74,6 +74,8 @@ with a crash policy and stderr capture:
   driven only by `embed-engine.ts` on main (`.claude/rules/central-embedding-engine.md`).
 - **`kangentic-dictation`** and **`kangentic-line-count`** run the dictation engine and the diff
   line counts.
+- **`kangentic-worktree-copy`** copies a folder or glob into a new worktree, one process per copy
+  ([Worktree creation](worktrees/worktree-creation.md#copy-files-and-linked-folders)).
 
 Main still writes project data (tasks, sessions, the app tables) inside `writeTransaction`, an
 immediate transaction that waits for a worker's write instead of failing with `SQLITE_BUSY`. The

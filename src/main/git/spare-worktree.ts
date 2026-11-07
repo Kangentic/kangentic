@@ -61,6 +61,7 @@ export interface SpareInputs {
   initScript: string;
   linkNodeModules: boolean;
   copyFiles: string[];
+  linkFolders: string[];
 }
 
 /** A spare's ready record: the inputs it was built from, and when and how long its install took. */
@@ -148,6 +149,9 @@ export async function readSpareRecord(projectPath: string, folder: string): Prom
     if (record.folder !== folder) return null;
     if (typeof record.baseBranch !== 'string' || typeof record.initScript !== 'string') return null;
     if (typeof record.linkNodeModules !== 'boolean' || !isStringArray(record.copyFiles)) return null;
+    // A record from before the field is a spare built with no linked folders.
+    const linkFolders = record.linkFolders === undefined ? [] : record.linkFolders;
+    if (!isStringArray(linkFolders)) return null;
     if (typeof record.builtAt !== 'string') return null;
     return {
       folder,
@@ -155,6 +159,7 @@ export async function readSpareRecord(projectPath: string, folder: string): Prom
       initScript: record.initScript,
       linkNodeModules: record.linkNodeModules,
       copyFiles: record.copyFiles,
+      linkFolders,
       builtAt: record.builtAt,
       installMs: typeof record.installMs === 'number' ? record.installMs : null,
     };
@@ -207,13 +212,17 @@ export async function readNoSavingVerdict(projectPath: string): Promise<NoSaving
   }
 }
 
+function sameList(first: string[], second: string[]): boolean {
+  return first.length === second.length && first.every((entry, index) => entry === second[index]);
+}
+
 /** True when a spare built from `record` is still what the project would build now. */
 export function spareInputsMatch(record: SpareInputs, inputs: SpareInputs): boolean {
   return record.baseBranch === inputs.baseBranch
     && record.initScript === inputs.initScript
     && record.linkNodeModules === inputs.linkNodeModules
-    && record.copyFiles.length === inputs.copyFiles.length
-    && record.copyFiles.every((file, index) => file === inputs.copyFiles[index]);
+    && sameList(record.copyFiles, inputs.copyFiles)
+    && sameList(record.linkFolders, inputs.linkFolders);
 }
 
 async function listSpareFolders(projectPath: string): Promise<string[]> {

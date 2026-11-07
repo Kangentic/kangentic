@@ -634,6 +634,13 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
     },
+    // The worktree copy worker runs a large folder or glob copy in an Electron
+    // utilityProcess (see src/main/git/worktree-copy/worktree-copy-client.ts).
+    {
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/git/worktree-copy/worktree-copy-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/worktree-copy-worker.js'),
+    },
     // The dictation (sherpa-onnx) engine also runs in an Electron
     // utilityProcess (see src/main/transcription/dictation-client.ts /
     // DESKTOP-X), so it is bundled as its own entry next to the main
@@ -672,7 +679,7 @@ async function build() {
     },
   ];
   await runEsbuildBundles(bundleOptions, (options) => esbuild.build(options), { sequential: uploadSourcemaps });
-  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers, the pty host and its spawn worker built');
+  console.log('[build] Main + preload + embed, line-count, worktree-copy, dictation and retrieval workers, the pty host and its spawn worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

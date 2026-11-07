@@ -135,6 +135,7 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
     copyFiles: source.git?.copyFiles,
     initScript: source.git?.initScript,
     linkNodeModules: source.git?.linkNodeModules,
+    linkFolders: source.git?.linkFolders,
     holdPromptForInitScript: source.git?.holdPromptForInitScript,
     prAutoRefresh: source.git?.prAutoRefresh,
     autoFetch: source.git?.autoFetch,

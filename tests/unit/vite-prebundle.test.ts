@@ -231,6 +231,7 @@ describe('scripts/dev.js starts the esbuild builds ahead of Vite', () => {
       ['src/preload/preload.ts', '.vite/build/preload.js'],
       ['src/main/retrieval/embedder/embed-worker.ts', '.vite/build/embed-worker.js'],
       ['src/main/git/line-count/line-count-worker.ts', '.vite/build/line-count-worker.js'],
+      ['src/main/git/worktree-copy/worktree-copy-worker.ts', '.vite/build/worktree-copy-worker.js'],
     ];
 
     for (const [entryPoint, outputFile] of entries) {

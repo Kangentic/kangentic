@@ -20,6 +20,17 @@ export class GitUserStateError extends UserConfigurationError {
 }
 
 /**
+ * An entry of the copy list is over the fixed limit. The folder is the user's
+ * and so is the setting, so it fails the start and stays out of Sentry.
+ */
+export class WorktreeCopyLimitError extends UserConfigurationError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorktreeCopyLimitError';
+  }
+}
+
+/**
  * A worktree's folder could not be cleared. Usually something outside Kangentic
  * holds it, but it can be a process of ours, so this one is reported.
  */

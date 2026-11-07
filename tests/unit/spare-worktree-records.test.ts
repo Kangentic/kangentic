@@ -71,6 +71,7 @@ function sampleInputs(): SpareInputs {
     initScript: 'pnpm install --frozen-lockfile',
     linkNodeModules: false,
     copyFiles: ['.env', '.npmrc'],
+    linkFolders: ['.cache'],
   };
 }
 
@@ -152,6 +153,8 @@ describe('spareInputsMatch', () => {
     ['copyFiles with an entry more', { copyFiles: ['.env', '.npmrc', '.tool-versions'] }],
     ['copyFiles in another order', { copyFiles: ['.npmrc', '.env'] }],
     ['copyFiles with another entry', { copyFiles: ['.env', '.yarnrc'] }],
+    ['linkFolders with an entry fewer', { linkFolders: [] }],
+    ['linkFolders with another entry', { linkFolders: ['data'] }],
   ])('is false when only %s differs', (_label, difference) => {
     expect(spareInputsMatch(sampleInputs(), { ...sampleInputs(), ...difference })).toBe(false);
   });
@@ -163,6 +166,15 @@ describe('spareInputsMatch', () => {
 });
 
 describe('writeSpareRecord and readSpareRecord', () => {
+  it('reads a record from before linkFolders as a spare built with none, so an upgrade keeps it', async () => {
+    const fields: Record<string, unknown> = { ...sampleRecord('spare_0a1b2c3d') };
+    delete fields.linkFolders;
+    plantRecordsFile('spare_0a1b2c3d.json', JSON.stringify(fields));
+    const record = await readSpareRecord(projectPath, 'spare_0a1b2c3d');
+    expect(record?.linkFolders).toEqual([]);
+    expect(record && spareInputsMatch(record, { ...sampleInputs(), linkFolders: [] })).toBe(true);
+  });
+
   it('reads back the record that was written', async () => {
     const record = sampleRecord('spare_0a1b2c3d');
     await writeSpareRecord(projectPath, record);
@@ -249,6 +261,8 @@ describe('writeSpareRecord and readSpareRecord', () => {
       mistyped('copyFiles', '.env'),
       mistyped('copyFiles', ['.env', 7]),
       mistyped('copyFiles', { 0: '.env' }),
+      mistyped('linkFolders', '.cache'),
+      mistyped('linkFolders', ['.cache', 7]),
       missing('builtAt'),
       mistyped('builtAt', 1_761_912_000_000),
     ])('when $label', async ({ mutate }) => {

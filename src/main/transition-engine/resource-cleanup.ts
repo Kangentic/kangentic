@@ -9,7 +9,7 @@ import { SessionManager } from '../pty/session-manager';
 import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-worktree-folder';
 import { isWorktreeCreationInFlight } from '../git/worktree-creation-registry';
-import { removeNodeModulesPath } from '../git/node-modules-link';
+import { clearWorktreeLinks } from '../git/worktree-links';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
 import { scheduleRemovedWorktreeDeletion } from '../git/removed-worktrees';
@@ -382,12 +382,14 @@ async function cleanBacklogTaskResources(
       // too, branches and row included, as the check above does.
       for (const worktreePath of candidateWorktreePaths) {
         if (!fs.existsSync(worktreePath)) continue;
-        await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
+        const linksCleared = await clearWorktreeLinks(worktreePath);
         if (isWorktreeCreationInFlight(worktreePath)) {
           console.log(`[RESOURCE_CLEANUP] Stopped cleaning task "${task.title}" (${shortId}): a creation started setting up ${worktreePath}`);
           return 'skipped';
         }
-        await removeWorktreeDirectory(worktreePath, projectPath);
+        // A link left in place would take the removal into what it points at.
+        if (linksCleared) await removeWorktreeDirectory(worktreePath, projectPath);
+        else console.warn(`[RESOURCE_CLEANUP] Left ${worktreePath}: a linked folder would not come out`);
       }
 
       // Collect branches to delete. They go after the loop, outside the lock.
@@ -738,7 +740,12 @@ async function pruneDirectory(
     console.log(`[RESOURCE_CLEANUP] Removing orphaned ${label} directory: ${entry.name}`);
 
     if (options.hasJunctions) {
-      await removeNodeModulesPath(path.join(dirPath, 'node_modules'));
+      // A folder set aside is deleted by a project delete's rmSync at the latest,
+      // which follows a link, so one that keeps a link stays where it is.
+      if (!(await clearWorktreeLinks(dirPath))) {
+        console.warn(`[RESOURCE_CLEANUP] Kept ${label} directory ${entry.name}: a linked folder would not come out`);
+        continue;
+      }
     }
     // Asked again after the awaits above: a worktree creation can claim the
     // path while they run.
@@ -780,7 +787,8 @@ async function branchExists(branchName: string, cwd: string): Promise<boolean> {
  * Remove a worktree directory. Tries `git worktree remove --force` first,
  * then falls back to `fs.promises.rm`.
  *
- * Callers must remove node_modules junctions before calling this.
+ * Callers must run `clearWorktreeLinks` before calling this: `git worktree
+ * remove` deletes what a junction points at.
  */
 async function removeWorktreeDirectory(worktreePath: string, projectPath: string): Promise<boolean> {
   try {
