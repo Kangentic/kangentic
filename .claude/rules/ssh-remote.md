@@ -103,6 +103,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
 - **A reconnect never prompts.** `ssh` runs with `BatchMode=yes`, so a host that needs a password or a
   passphrase fails with its own words, shown as given. Kangentic never asks for a passphrase. A
   destination that `ssh` would read as an option (a leading `-`) is refused before it reaches `ssh`.
+  The one exception reads ssh's prompt and answers nothing: a refused config sign-in is repeated once
+  with `SSH_ASKPASS` forced to a helper that records the prompt and exits 1
+  (`remote/ssh-key-prompt.ts`), so a passphrase key shows ssh's own `Enter passphrase for key`. What is
+  shown is that line as ssh wrote it, never wording of ours, and the helper is generated at run time,
+  never a file the user must install.
 - **The helper writes and reads only beneath the user's home on the host,** and refuses any other
   path, a relative one and one that climbs out, before it touches anything. That covers removing a
   file and the folder a program is run in.
@@ -244,6 +249,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   prove on a real sshd: a Remove's leftover agents hung up by a new link, only those of the hidden projects, with
   the hangup reaching the process under the shell, and a sign-in change refused with the only key left in place, or
   accepted with the old key really off `authorized_keys`. Needs Docker, so no CI job runs it.
+- **Rig (passphrase, by hand):** `node scripts/ssh-passphrase-rig.mjs --work <dir>` runs the real
+  `captureKeyPrompt` and the real `ssh` against a real `sshd`: a passphrase key prints ssh's own prompt, a key
+  the server does not know prints nothing, a key with no passphrase connects. Needs Docker. Unit tests:
+  `tests/unit/ssh-key-prompt.test.ts` (the helper run by a real shell, an `&` in a Windows key path) and the
+  refusal cases in `tests/unit/remote-host-service.test.ts`.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only

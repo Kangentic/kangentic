@@ -106,6 +106,58 @@ describe('connect', () => {
     expect(service.isConnected('host-a')).toBe(false);
   });
 
+  describe('a refused sign-in through the user\'s own ssh config', () => {
+    const refusal = 'dev@lab.example.test: Permission denied (publickey).';
+    const prompt = 'Enter passphrase for key \'/home/dev/.ssh/id_ed25519\':';
+
+    it('shows ssh\'s own passphrase prompt under its refusal, which BatchMode reports as it does a wrong key', async () => {
+      const captureKeyPrompt = vi.fn(async (_args: string[]) => prompt);
+      const { service } = makeService({ install: async () => { throw new Error(refusal); }, captureKeyPrompt });
+
+      await expect(service.connect('host-a')).rejects.toThrow(`${refusal}\n${prompt}`);
+      // Asked with the arguments of the attempt that failed.
+      expect(captureKeyPrompt.mock.calls[0][0]).toEqual(sshArgsFor(host()));
+    });
+
+    it('leaves the refusal as ssh said it when ssh asked for no passphrase', async () => {
+      const { service } = makeService({ install: async () => { throw new Error(refusal); }, captureKeyPrompt: async () => null });
+
+      await expect(service.connect('host-a')).rejects.toThrow(new RegExp(`^${refusal.replace(/[().]/g, '\\$&')}$`));
+    });
+
+    it('leaves the refusal as it was when the repeated attempt itself fails', async () => {
+      const { service } = makeService({
+        install: async () => { throw new Error(refusal); },
+        captureKeyPrompt: async () => { throw new Error('spawn ssh ENOENT'); },
+      });
+
+      await expect(service.connect('host-a')).rejects.toThrow(refusal);
+    });
+
+    it('asks nothing of a host that signs in with a key file Kangentic holds, which is never encrypted', async () => {
+      const captureKeyPrompt = vi.fn(async () => prompt);
+      const { service } = makeService({
+        hosts: { getById: () => host({ key_path: '/home/dev/.config/kangentic/ssh/host-a/id' }), list: () => [] },
+        install: async () => { throw new Error(refusal); },
+        captureKeyPrompt,
+      });
+
+      await expect(service.connect('host-a')).rejects.toThrow(refusal);
+      expect(captureKeyPrompt).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing when the failure was not a refusal', async () => {
+      const captureKeyPrompt = vi.fn(async () => prompt);
+      const { service } = makeService({
+        install: async () => { throw new Error('ssh: connect to host lab port 22: Connection timed out'); },
+        captureKeyPrompt,
+      });
+
+      await expect(service.connect('host-a')).rejects.toThrow('Connection timed out');
+      expect(captureKeyPrompt).not.toHaveBeenCalled();
+    });
+  });
+
   it('says so when this build has no program to install, and sends nothing', async () => {
     const { service, sent } = makeService({ asset: () => null });
 

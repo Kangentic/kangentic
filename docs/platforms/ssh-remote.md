@@ -33,6 +33,8 @@ sources:
   - resource: src/main/git/remote-worktree.ts
   - resource: src/main/git/remote-git.ts
   - resource: src/main/git/remote-git-probe.ts
+  - resource: src/main/remote/ssh-key-prompt.ts
+  - resource: src/main/remote/connect-retry.ts
   - resource: src/main/remote/host-git.ts
   - resource: src/main/git/diff-watcher.ts
   - resource: src/main/agent/shared/remote-files.ts
@@ -79,6 +81,8 @@ Settings > SSH > Add host runs in the card, with no terminal.
    - *Password* is used once, to add a key Kangentic creates for the host (ed25519, no passphrase, in Kangentic's folder). The password is never stored. Removing the host deletes the key and, when the host can be reached, its line in `authorized_keys`.
 
 Kangentic never asks for a passphrase. A key with a passphrase must be in the user's SSH agent, or the host takes the password step. A reconnect never prompts: `ssh` runs with `BatchMode=yes`, so a host that needs input fails with ssh's own words, shown as given.
+
+Under BatchMode a passphrase-protected key and a wrong key both end as `Permission denied (publickey)`. So a sign-in through the user's ssh config that is refused is attempted once more, only to read what ssh asks (`remote/ssh-key-prompt.ts`): the same options without BatchMode, one try, only the key sign-in, against the pinned host key, with `SSH_ASKPASS` set to a few lines Kangentic writes to its temporary folder and `SSH_ASKPASS_REQUIRE=force`. The helper records the prompt ssh hands it and exits 1, so nothing is ever answered and nothing waits. A key that needs a passphrase then shows ssh's own `Enter passphrase for key '...'` under its refusal, and a wrong key shows nothing more. Nothing is installed for this: the helper is generated at run time, as the password step's is. A client older than OpenSSH 8.4 ignores `SSH_ASKPASS_REQUIRE`, runs no helper, and the plain refusal stands. ssh cuts a key path in its prompt at 100 characters. Measured with Windows `ssh.exe` 10.0 against a real `sshd`: a passphrase key printed the prompt, a key the server did not know printed nothing, and a key with no passphrase connected.
 
 A step that fails undoes the steps before it. When the password step fails, Kangentic also tries to take the key it made off the host before deleting its own copy, because the key may have reached the host before the failure. A host whose only problem is that it cannot be connected stays in the list with the reason, so it can be fixed and retried.
 

@@ -18,6 +18,8 @@ import type { HostAsset } from './link/host-installer';
 import { readInstallId } from './install-identity';
 import { HostStatusBook } from './host-status';
 import { connectRetryDelayMs, isTransientConnectFailure } from './connect-retry';
+import { createSshRunner } from './link/ssh-run';
+import { captureKeyPrompt } from './ssh-key-prompt';
 import { defaultSshClientPaths } from './ssh-client';
 import type { SshHostAdmin } from './ssh-host-admin';
 import { PortForwardPlan, setPortForwardPlan } from './port-forward-plan';
@@ -108,6 +110,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     asset: deps.hostAsset ?? (() => null),
     identity: { installId: readInstallId(PATHS.configDir), label: os.hostname() },
     liveSessions: (hostId) => deps.sessionManager.liveRemotePtys(hostId),
+    // A sign-in through the user's ssh config that is refused is asked once more, so ssh can say it wants a passphrase.
+    captureKeyPrompt: (args) => captureKeyPrompt(args, { sshPath: deps.sshPath ?? defaultSshClientPaths().ssh, createRunner: createSshRunner }),
   });
   const relay = new RemoteSessionRelay({ files: hostService, log });
   deps.sessionManager.setRemoteSessionRelay(relay);

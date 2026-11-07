@@ -51,6 +51,12 @@ export interface RemoteHostServiceDeps {
   /** The PTYs main already holds on a host, sent with its `addHost` so a restarted pty host routes them again. */
   liveSessions?: (hostId: string) => RemoteSessionRoute[];
   createRunner?: (config: { sshPath: string; args: string[] }) => SshRunner;
+  /**
+   * What `ssh` itself asks for when a sign-in with the user's own ssh config is refused (a key's
+   * passphrase), by repeating the failed attempt once so it can ask. Null for nothing. Optional: without it
+   * a refusal is ssh's plain words.
+   */
+  captureKeyPrompt?: (args: string[]) => Promise<string | null>;
 }
 
 /** How long past a run's own bound the link waits, so the host's answer to a timeout gets back here. */
@@ -107,7 +113,12 @@ export class RemoteHostService {
     if (!asset || (Array.isArray(asset) && asset.length === 0)) throw new HostProgramMissingError();
     const createRunner = this.deps.createRunner ?? createSshRunner;
     const install = this.deps.install ?? installHost;
-    const installed = await install(createRunner({ sshPath: this.deps.sshPath, args }), asset);
+    let installed: InstalledHost;
+    try {
+      installed = await install(createRunner({ sshPath: this.deps.sshPath, args }), asset);
+    } catch (error) {
+      throw await this.withKeyPrompt(host, args, error);
+    }
     if (this.droppedWhileConnecting.has(hostId)) return;
     const connection: RemoteHostConnection = {
       sshPath: this.deps.sshPath,
@@ -119,6 +130,20 @@ export class RemoteHostService {
     const sessions = this.deps.liveSessions?.(hostId) ?? [];
     await this.deps.send({ op: 'addHost', hostId, connection, ...(sessions.length > 0 ? { sessions } : {}) });
     if (!this.droppedWhileConnecting.has(hostId)) this.connected.add(hostId);
+  }
+
+  /**
+   * A refused sign-in through the user's own ssh config may be a key that needs a passphrase, which BatchMode
+   * reports as the same `Permission denied` as a wrong key. `ssh`'s own prompt, when the repeated attempt gets
+   * one, goes under its words. A key file Kangentic holds is never encrypted (it refuses one at the picker), so
+   * only the config sign-in is asked. Whatever fails here leaves the original error as it was.
+   */
+  private async withKeyPrompt(host: SshHost, args: string[], error: unknown): Promise<unknown> {
+    if (host.key_path || !this.deps.captureKeyPrompt) return error;
+    if (!(error instanceof Error) || !/permission denied/i.test(error.message)) return error;
+    const prompt = await this.deps.captureKeyPrompt(args).catch(() => null);
+    if (prompt && !error.message.includes(prompt)) error.message = `${error.message}\n${prompt}`;
+    return error;
   }
 
   /** Every host this service has added, for re-adding them all after the process holding the links restarts. */
