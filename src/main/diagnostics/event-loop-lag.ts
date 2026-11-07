@@ -55,7 +55,7 @@ import {
   constants as perfConstants,
   monitorEventLoopDelay,
   PerformanceObserver,
-  type IntervalHistogram,
+  type ELDHistogram,
 } from 'node:perf_hooks';
 
 export interface EventLoopLagSpike {
@@ -207,7 +207,7 @@ let spanLabelSink: ((label: string | null) => void) | null = null;
 /** The innermost `timeSyncWork` label running now, kept only while a sink is set. */
 let currentSpanLabel: string | null = null;
 const lagAtLeastMs = emptyEdgeCounts();
-let delayHistogram: IntervalHistogram | null = null;
+let delayHistogram: ELDHistogram | null = null;
 let delayWindowTimer: ReturnType<typeof setInterval> | null = null;
 let gcObserver: PerformanceObserver | null = null;
 const recentDelayWindows: DelayWindow[] = [];
