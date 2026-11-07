@@ -14,6 +14,7 @@ import os from 'node:os';
 import {
   ensureLocalGitExcludes,
   resolveGitCommonDir,
+  resolveGitDir,
   settingsBaseDirectory,
 } from '../../src/main/agent/shared/git-exclude';
 
@@ -32,6 +33,36 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
+});
+
+// The worktree's own git folder is where the link record lives (`worktree-links.ts`), so a wrong
+// answer here reads or writes another worktree's record, or none.
+describe('resolveGitDir', () => {
+  it('is .git itself for a checkout, and the folder a worktree .git file names, not the common one', () => {
+    fs.mkdirSync(path.join(workspace, '.git'), { recursive: true });
+    expect(resolveGitDir(workspace)).toBe(path.join(workspace, '.git'));
+
+    const worktreeGitDir = path.join(tmpRoot, 'repo', '.git', 'worktrees', 'task-1');
+    const worktreeCheckout = path.join(tmpRoot, 'checkout');
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.mkdirSync(worktreeCheckout, { recursive: true });
+    fs.writeFileSync(path.join(worktreeCheckout, '.git'), `gitdir: ${worktreeGitDir}\n`);
+    fs.writeFileSync(path.join(worktreeGitDir, 'commondir'), '../..\n');
+    expect(resolveGitDir(worktreeCheckout)).toBe(worktreeGitDir);
+  });
+
+  it('resolves a relative gitdir against the checkout', () => {
+    const worktreeCheckout = path.join(tmpRoot, 'checkout');
+    fs.mkdirSync(worktreeCheckout, { recursive: true });
+    fs.writeFileSync(path.join(worktreeCheckout, '.git'), 'gitdir: ../repo/.git/worktrees/task-1\n');
+    expect(resolveGitDir(worktreeCheckout)).toBe(path.join(tmpRoot, 'repo', '.git', 'worktrees', 'task-1'));
+  });
+
+  it('is null for a .git file that is not a pointer, and outside a checkout', () => {
+    expect(resolveGitDir(workspace)).toBeNull();
+    fs.writeFileSync(path.join(workspace, '.git'), 'not a gitdir pointer\n');
+    expect(resolveGitDir(workspace)).toBeNull();
+  });
 });
 
 describe('resolveGitCommonDir', () => {

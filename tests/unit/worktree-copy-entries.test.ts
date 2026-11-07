@@ -356,6 +356,29 @@ describe('copyEntries', () => {
     expect(fs.readFileSync(path.join(worktreePath, 'mounted', 'current', 'value.txt'), 'utf8')).toBe('value');
   });
 
+  it('leaves out a relative link this machine refuses to make, counts it, and still copies the files', async () => {
+    writeProjectFile('tool/lib/cli.js');
+    fs.mkdirSync(path.join(projectPath, 'tool', 'bin'));
+    try {
+      fs.symlinkSync('../lib/cli.js', path.join(projectPath, 'tool', 'bin', 'cli'));
+    } catch {
+      return; // A symlink needs Developer Mode on Windows.
+    }
+    // What Windows answers a relative symlink without Developer Mode.
+    const refused = Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' });
+    const symlink = vi.spyOn(fs.promises, 'symlink').mockRejectedValue(refused);
+    try {
+      const result = await copy(['tool']);
+
+      expect(symlink).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ copied: 1, skippedLinks: 1 });
+      expect(copied('tool/lib/cli.js')).toBe(true);
+      expect(() => fs.lstatSync(path.join(worktreePath, 'tool', 'bin', 'cli'))).toThrow();
+    } finally {
+      symlink.mockRestore();
+    }
+  });
+
   describe('a second run', () => {
     it('replaces a read-only copy whose source changed, which a plain copyFile fails on with EPERM', async () => {
       const source = writeProjectFile('config.json', 'one');
