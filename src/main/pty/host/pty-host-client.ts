@@ -478,6 +478,40 @@ export class PtyHostClient {
       .map((handle) => ({ sessionId: handle.sessionId, ptyId: handle.ptyId }));
   }
 
+  /**
+   * Take on sessions a host kept running while this app was closed (#913). Each gets a handle under a
+   * fresh PTY id, the helper rebinds the session to it, and the ones the host no longer holds alive are
+   * returned as `null`: their handles are dropped, and their exit is the caller's to settle.
+   */
+  async adoptRemoteSessions(
+    hostId: string,
+    sessions: ReadonlyArray<{ sessionId: string; cols: number; rows: number }>,
+  ): Promise<Map<string, RemotePty | null>> {
+    const made = sessions.map((session) => {
+      const ptyId = this.nextPtyId;
+      this.nextPtyId += 1;
+      const handle = new RemotePty(ptyId, null, session.cols, session.rows, this.transport, session.sessionId, hostId);
+      this.handles.set(ptyId, handle);
+      return handle;
+    });
+    const result = new Map<string, RemotePty | null>(made.map((handle) => [handle.sessionId, null]));
+    try {
+      const outcomes = await this.transport.request('remote', {
+        op: 'adopt',
+        hostId,
+        sessions: made.map((handle) => ({ sessionId: handle.sessionId, ptyId: handle.ptyId })),
+      }) as Array<{ sessionId: string; rejoined: boolean }>;
+      for (const handle of made) {
+        if (outcomes.find((outcome) => outcome.sessionId === handle.sessionId)?.rejoined) result.set(handle.sessionId, handle);
+      }
+    } finally {
+      for (const handle of made) {
+        if (result.get(handle.sessionId) !== handle) this.handles.delete(handle.ptyId);
+      }
+    }
+    return result;
+  }
+
   async spawn(params: Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'>): Promise<PtyHostSpawnOutcome> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;

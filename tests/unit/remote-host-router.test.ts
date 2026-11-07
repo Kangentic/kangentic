@@ -283,6 +283,67 @@ describe('a link coming back', () => {
   });
 });
 
+describe('a new app process rejoining what the host kept running', () => {
+  async function leaveRunning(sessionIds: string[]): Promise<{ first: Rig; second: Rig }> {
+    const first = makeRig(makeHelperRig(sessionIds.length, { homeDirectory: process.cwd() }));
+    await addHost(first);
+    for (const [index, sessionId] of sessionIds.entries()) {
+      const spawning = first.router.handleRequest('spawn', fullSpawn(sessionId, 11 + index, 'host-a'));
+      await settle();
+      await spawning;
+    }
+    // The app quit and left them: its link stopped, the daemon and its PTYs stayed. A new process has a new boot.
+    await first.router.handleRequest('remote', { op: 'removeHost', hostId: 'host-a' });
+    const second = makeRig(first.helperRig);
+    await addHost(second);
+    return { first, second };
+  }
+
+  it('rebinds a live session to the PTY id the new process made, and delivers its exit under it', async () => {
+    const { second, first } = await leaveRunning(['remote-1']);
+
+    const adopting = second.router.handleRequest('remote', { op: 'adopt', hostId: 'host-a', sessions: [{ sessionId: 'remote-1', ptyId: 1 }] });
+    await settle();
+    expect(await adopting).toEqual([{ sessionId: 'remote-1', rejoined: true }]);
+
+    // Its commands follow the new id to the host, not to the local core.
+    second.router.handleCommand({ type: 'write', ptyId: 1, data: 'still here' });
+    await settle();
+    expect(first.helperRig.fakes[0].write).toHaveBeenCalledWith('still here');
+    expect(second.core.handleCommand).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'write' }));
+
+    first.helperRig.fakes[0].exit(3);
+    await settle();
+    expect(second.events).toContainEqual(expect.objectContaining({ type: 'exit', ptyId: 1, sessionId: 'remote-1', exitCode: 3 }));
+  });
+
+  it('does not rejoin a session that exited while the app was away, and leaves no route for it', async () => {
+    const { second, first } = await leaveRunning(['remote-1', 'remote-2']);
+    first.helperRig.fakes[0].exit(0);
+    await settle();
+
+    const adopting = second.router.handleRequest('remote', {
+      op: 'adopt',
+      hostId: 'host-a',
+      sessions: [{ sessionId: 'remote-1', ptyId: 1 }, { sessionId: 'remote-2', ptyId: 2 }],
+    });
+    await settle();
+    expect(await adopting).toEqual([
+      { sessionId: 'remote-1', rejoined: false },
+      { sessionId: 'remote-2', rejoined: true },
+    ]);
+
+    // The exited session's id goes to the local core now, which knows nothing of it.
+    second.router.handleCommand({ type: 'write', ptyId: 1, data: 'late' });
+    expect(second.core.handleCommand).toHaveBeenCalledWith({ type: 'write', ptyId: 1, data: 'late' });
+  });
+
+  it('refuses a host it has no connection for, with a sentence', async () => {
+    const rig = makeRig();
+    await expect(rig.router.handleRequest('remote', { op: 'adopt', hostId: 'host-missing', sessions: [] })).rejects.toThrow('no connection set up for host host-missing');
+  });
+});
+
 describe('quitting', () => {
   it('sends each host its one plan and keeps the host process up until the link let go', async () => {
     const rig = makeRig();

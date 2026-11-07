@@ -185,6 +185,36 @@ export class RemoteLink implements PtyHostTransport {
     for (const route of routes) this.sessions.set(route.sessionId, { ptyId: route.ptyId, alive: true });
   }
 
+  /**
+   * Take on sessions the host kept running while this app was closed, as the reconcile does for the
+   * ones it already knew. Each is read from a fresh snapshot, so a session that exited since is never
+   * routed: it comes back `false`, and its exit is the caller's to settle from the snapshot. The ones
+   * that are still alive are rebound to the PTY id the caller made, and only then routed, so no output
+   * is delivered to a handle that has not been told it exists.
+   */
+  async rejoinSessions(routes: readonly { sessionId: string; ptyId: number }[]): Promise<Array<{ sessionId: string; rejoined: boolean }>> {
+    const snapshot = await this.requestHelper('snapshot', {});
+    this.ownerEpoch = snapshot.ownerEpoch;
+    const held = new Map(snapshot.sessions.map((record) => [record.sessionId, record]));
+    const outcomes: Array<{ sessionId: string; rejoined: boolean }> = [];
+    for (const route of routes) {
+      const record = held.get(route.sessionId);
+      if (!record || !record.alive) {
+        outcomes.push({ sessionId: route.sessionId, rejoined: false });
+        continue;
+      }
+      try {
+        const answer = await this.requestHelper('rebind', { sessionId: route.sessionId, ptyId: route.ptyId });
+        if (answer.ok) this.sessions.set(route.sessionId, { ptyId: route.ptyId, alive: true });
+        outcomes.push({ sessionId: route.sessionId, rejoined: answer.ok });
+      } catch (error) {
+        this.log(`rejoin of ${route.sessionId.slice(0, 8)} failed: ${error instanceof Error ? error.message : String(error)}`);
+        outcomes.push({ sessionId: route.sessionId, rejoined: false });
+      }
+    }
+    return outcomes;
+  }
+
   private endRetryWait(): void {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;

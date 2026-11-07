@@ -106,6 +106,27 @@ export class LinkHub implements PtyHostTransport {
     return link;
   }
 
+  /**
+   * Take on sessions a host kept running while this app was closed. Routed before the helper is asked, as a
+   * spawn is, so a command that follows finds its host; a session the host no longer holds is un-routed again.
+   */
+  async adopt(hostId: string, routes: readonly RemoteSessionRoute[]): Promise<Array<{ sessionId: string; rejoined: boolean }>> {
+    const link = this.links.get(hostId);
+    if (!link) throw new HostUnreachableError(hostId, `Kangentic has no connection set up for host ${hostId}`);
+    for (const route of routes) this.route(hostId, route.ptyId, route.sessionId);
+    let outcomes: Array<{ sessionId: string; rejoined: boolean }>;
+    try {
+      outcomes = await link.rejoinSessions(routes);
+    } catch (error) {
+      for (const route of routes) this.forgetPty(route.ptyId, route.sessionId);
+      throw error;
+    }
+    for (const route of routes) {
+      if (!outcomes.find((outcome) => outcome.sessionId === route.sessionId)?.rejoined) this.forgetPty(route.ptyId, route.sessionId);
+    }
+    return outcomes;
+  }
+
   /** Stop dialing a host and forget its routes. Its agents keep running there. */
   removeHost(hostId: string): void {
     const link = this.links.get(hostId);

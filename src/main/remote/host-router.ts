@@ -132,6 +132,8 @@ export class HostRouter {
         this.forwarder.removeHost(request.hostId);
         this.hub.removeHost(request.hostId);
         return { ok: true };
+      case 'adopt':
+        return this.hub.adopt(request.hostId, request.sessions);
       case 'setForwards':
         this.forwarder.setPorts(request.hostId, request.ports);
         return { ok: true };

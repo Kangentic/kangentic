@@ -278,12 +278,15 @@ export class HelperServer {
     this.ownerEpoch += 1;
     this.port = new FramedPort((message) => this.sendPort(message));
     this.core.attachRendererPort(LINK_RENDERER_ID, this.port);
+    this.hookWatcher.setHeld(false);
     this.log(`link attached, owner epoch ${this.ownerEpoch}`);
   }
 
   private onDetached(reason: string, wasActive: boolean): void {
     this.log(`connection ended: ${reason}`);
     if (!wasActive) return;
+    // The agent's hook files wait on disk until a link is attached again (see HookWatcher.setHeld).
+    this.hookWatcher.setHeld(true);
     // A drop keeps every agent running. What the link had on screen is gone with it: stop sending
     // to a port nobody reads and let the PTYs run free instead of pausing on output no one acks.
     this.core.handleCommand({ type: 'forgetRenderer', rendererId: LINK_RENDERER_ID });

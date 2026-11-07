@@ -341,6 +341,32 @@ describe('HookWatcher', () => {
     watcher.dispose();
   });
 
+  it('sends nothing while held, keeps the files in order on disk, and sends them all once released', async () => {
+    const hooks = makeSession();
+    const events: HookFileEvent[] = [];
+    const watcher = makeWatcher(events);
+    watcher.setHeld(true);
+    watcher.watch('s1', hooks);
+    fs.writeFileSync(path.join(hooks, 'inbox', '2000000000000000000-20.rec'), 'K1\nb\n\n{}');
+    fs.writeFileSync(path.join(hooks, 'inbox', '1000000000000000000-10.rec'), 'K1\na\n\n{}');
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(events).toEqual([]);
+    expect(fs.readdirSync(path.join(hooks, 'inbox')).sort()).toEqual(['1000000000000000000-10.rec', '2000000000000000000-20.rec']);
+
+    // A record written while held joins the queue, and the order is still the order the hooks ran.
+    fs.writeFileSync(path.join(hooks, 'inbox', '3000000000000000000-30.rec'), 'K1\nc\n\n{}');
+    watcher.setHeld(false);
+    await waitFor(() => events.length === 3);
+
+    expect(events.map((event) => event.name)).toEqual([
+      '1000000000000000000-10.rec',
+      '2000000000000000000-20.rec',
+      '3000000000000000000-30.rec',
+    ]);
+    watcher.dispose();
+  });
+
   it('keeps a request on the host until it is claimed, sends it once, and marks it as one to claim', async () => {
     const hooks = makeSession();
     const events: HookFileEvent[] = [];

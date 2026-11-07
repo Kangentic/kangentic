@@ -118,8 +118,19 @@ function trimStrings(value: unknown, limit: number): unknown {
 export class HookWatcher {
   private readonly watched = new Map<string, Watched>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private held = false;
 
   constructor(private readonly options: HookWatcherOptions) {}
+
+  /**
+   * Stop sending while no link is attached. The files stay where they are, in order, and a poll after
+   * `setHeld(false)` sends them. Sending into a detached link would hand them to a connection nobody
+   * reads, and a link process that comes back (a new boot) discards what the old one retained, so a
+   * record sent in the gap would be lost. A quit leaves the agent running (#913), so the gap can be a night.
+   */
+  setHeld(held: boolean): void {
+    this.held = held;
+  }
 
   /** Start watching a session's hook folder (the one holding `inbox/` and `requests/`), and its status file. */
   watch(sessionId: string, directory: string, statusFile: string | null = null): void {
@@ -173,6 +184,7 @@ export class HookWatcher {
   }
 
   private async runScan(sessionId: string, entry: Watched): Promise<void> {
+    if (this.held) return;
     try {
       for (const folder of ['inbox', 'requests'] as const) {
         await this.scanFolder(sessionId, entry, folder);

@@ -290,6 +290,13 @@ export type RemoteHostRequest =
   | { op: 'addHost'; hostId: string; connection: RemoteHostConnection; sessions?: RemoteSessionRoute[] }
   | { op: 'removeHost'; hostId: string }
   /**
+   * Take on sessions the host kept running while this app was closed (#913). Each is routed under the
+   * PTY id main just made for it and the helper is asked to rebind it, so its output and exit reach that
+   * PTY. The answer lists the sessions the host still holds alive; one it no longer has, or that has
+   * exited, comes back `false` and is not routed.
+   */
+  | { op: 'adopt'; hostId: string; sessions: RemoteSessionRoute[] }
+  /**
    * The dev-server ports of a host's projects that should reach this computer. The full set each time:
    * a port left out stops being forwarded. Each is forwarded to the same number here once a server
    * listens on it there.
