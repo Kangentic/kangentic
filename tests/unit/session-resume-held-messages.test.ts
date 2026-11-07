@@ -23,7 +23,9 @@ const HELD_TEXT = 'Lower the cap to 3 and rethrow the last error.';
 let storedTask: Task;
 let outcome: SpawnOutcome;
 /** What the paused record holds beyond its pause. */
-let latestRecordFields: { launch_failed_at?: string; prompt?: string | null } = {};
+let latestRecordFields: { launch_failed_at?: string; prompt?: string | null; agent_session_id?: string | null } = {};
+/** Records older than the paused one, newest first. */
+let olderRecords: Array<{ id: string; agent_session_id: string | null; prompt: string | null }> = [];
 
 const engine = {
   resumeSuspendedSession: vi.fn(async (): Promise<SpawnOutcome> => {
@@ -40,11 +42,16 @@ const repos = {
   attachments: {},
 };
 
+function latestRecord() {
+  return { id: 'record-latest', agent_session_id: 'agent-1', status: 'suspended', suspended_at: '2026-10-28T13:00:00.000Z', ...latestRecordFields };
+}
+
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   // Paused before the task's last entry into its column, so the Resume continues the conversation.
   SessionRepository: class {
-    getLatestForTask() { return { status: 'suspended', suspended_at: '2026-10-28T13:00:00.000Z', ...latestRecordFields }; }
+    getLatestForTask() { return latestRecord(); }
+    listForTaskNewestFirst() { return [latestRecord(), ...olderRecords]; }
   },
 }));
 vi.mock('../../src/main/db/repositories/task-move-repository', () => ({
@@ -128,6 +135,32 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
     storedTask = { id: TASK_ID, title: 'Retry the sync', swimlane_id: LANE.id, session_id: null, archived_at: null } as Task;
     outcome = { startOver: null, recapOnly: false, unsentPrompt: null };
     latestRecordFields = {};
+    olderRecords = [];
+  });
+
+  it('replays the fresh launch\'s prompt for a resume marked as finding no conversation', async () => {
+    // Red with the newest record's prompt: a resume carries none, so the retry
+    // started fresh with nothing to do, and the task's prompt was never delivered.
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: null };
+    olderRecords = [
+      { id: 'record-resume', agent_session_id: 'agent-1', prompt: null },
+      { id: 'record-fresh', agent_session_id: 'agent-1', prompt: 'Fix the login redirect' },
+    ];
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, startPath: 'retry' });
+
+    const call = engine.resumeSuspendedSession.mock.calls[0] as unknown[];
+    expect(call[2]).toBe(true);
+    expect(call[3]).toBe('Fix the login redirect');
+  });
+
+  it('reads no prompt from a record of another conversation', async () => {
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: 'This launch' };
+    olderRecords = [{ id: 'record-other', agent_session_id: 'agent-other', prompt: 'Another conversation' }];
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+    expect(resumedWith()).toBe('This launch');
   });
 
   it('replays the prompt of a launch that never ran, with no template over it', async () => {
@@ -158,6 +191,32 @@ describe('resumeTaskSession: what the resume could not carry, and held messages'
     await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
 
     expect(resumedWith()).toBe(`Fix the login redirect\n\n${HELD_TEXT}`);
+  });
+
+  it('replays the prompt of a failed record that never got an agent session id', async () => {
+    // The lineage is keyed by the record's own id when it has no agent session id,
+    // so an older record that never got one either is not part of it.
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: 'X', agent_session_id: null };
+    olderRecords = [{ id: 'record-unrelated', agent_session_id: null, prompt: 'Another launch' }];
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, startPath: 'retry' });
+
+    expect(resumedWith()).toBe('X');
+  });
+
+  it('opens with the held text once when the prompt the lineage owes already holds it', async () => {
+    const owedPrompt = `Fix the login redirect\n\n${HELD_TEXT}`;
+    latestRecordFields = { launch_failed_at: '2026-11-05T12:00:00.000Z', prompt: owedPrompt };
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+    expect(resumedWith()).toBe(owedPrompt);
+    expect(mockDeliverOpeningRemainder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      held: claim,
+      heldInPrompt: true,
+    }));
   });
 
   it('lets a command the person chose win over the prompt it would replay', async () => {

@@ -12,7 +12,7 @@
  * file Kangentic writes: a CLI refusing one of those is ours.
  */
 
-import { stripAnsiEscapes } from '../../../shared/ansi-strip';
+import { readableTerminalText } from '../../../shared/ansi-strip';
 import type { UserSetupMatch } from '../../../shared/user-configuration-error';
 
 /** How much of the ring's tail to read: the failure is the CLI's last word. */
@@ -22,7 +22,7 @@ const FINAL_LINES = 12;
 
 /** The last lines of the output, newest first, with escapes and blank lines gone. */
 export function finalLinesOf(finalOutput: string): string[] {
-  return stripAnsiEscapes(finalOutput.slice(-TAIL_CHARACTERS))
+  return readableTerminalText(finalOutput.slice(-TAIL_CHARACTERS))
     .split(/\r?\n|\r/)
     .map((line) => line.trim())
     .filter((line) => line !== '')

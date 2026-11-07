@@ -22,6 +22,7 @@ import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hoo
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
+import { directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, commandFitsShell, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
@@ -215,6 +216,7 @@ function typedLaunchInput(input: SpawnSessionInput, command: string, shell: stri
     shell,
     platform: process.platform,
     sessionDirectory: outputPath ? path.dirname(outputPath) : null,
+    batchShimLaunch: directLaunchOfBatchShim,
   };
 }
 

@@ -10,14 +10,20 @@ import path from 'node:path';
 import {
   buildTypedLaunch,
   CMD_COMMAND_LINE_LIMIT,
+  CMD_TYPED_LINE_BYTE_BUDGET,
   commandFitsShell,
   commandLineLimit,
   LINUX_ARGUMENT_BYTE_LIMIT,
   TYPED_LINE_BYTE_BUDGET,
   WINDOWS_COMMAND_LINE_LIMIT,
+  type TypedLaunchInput,
 } from '../../src/main/pty/spawn/typed-launch';
+import { classifyLaunchOutput } from '../../src/main/pty/agent-launch-report';
+import { buildSpawnClearPrelude, quoteArg } from '../../src/shared/paths';
 
 const SESSION_DIRECTORY = path.join(path.sep, 'projects', 'demo', '.kangentic', 'sessions', 'session-1');
+const CMD_SHELL = 'C:\\Windows\\System32\\cmd.exe';
+const NO_SHIM = (): null => null;
 
 /** A command of `bytes` bytes, in single-byte text. */
 function commandOfBytes(bytes: number): string {
@@ -115,6 +121,7 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.typedLine).toBe('clear; claude --resume abc');
     expect(launch.launcher).toBeNull();
@@ -128,6 +135,7 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(atBudget.typedLineBytes).toBe(TYPED_LINE_BYTE_BUDGET);
     expect(atBudget.launcher).toBeNull();
@@ -137,6 +145,7 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(overBudget.launcher).not.toBeNull();
     expect(overBudget.typedLineBytes).toBeLessThan(TYPED_LINE_BYTE_BUDGET);
@@ -151,6 +160,7 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher?.contents).toBe(`${command}\n`);
   });
@@ -168,6 +178,7 @@ describe('buildTypedLaunch', () => {
       shell,
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'linux',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher?.filePath).toBe(path.join(SESSION_DIRECTORY, fileName));
     expect(launch.typedLine.startsWith(`${statement} `)).toBe(true);
@@ -182,6 +193,7 @@ describe('buildTypedLaunch', () => {
       shell: '/opt/homebrew/bin/nu',
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher?.contents).toBe(`^${command}\n`);
   });
@@ -193,6 +205,7 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: directory,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.typedLine).toContain('two  spaces');
   });
@@ -205,6 +218,7 @@ describe('buildTypedLaunch', () => {
         shell,
         sessionDirectory: longDirectory,
         platform: 'linux',
+        batchShimLaunch: NO_SHIM,
       });
       expect(launch.typedLineBytes, shell).toBeLessThan(TYPED_LINE_BYTE_BUDGET);
     }
@@ -217,6 +231,7 @@ describe('buildTypedLaunch', () => {
       shell: 'wsl -d Ubuntu',
       sessionDirectory: windowsDirectory,
       platform: 'win32',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher?.filePath.startsWith('C:')).toBe(true);
     expect(launch.typedLine).toBe('clear; eval "$(cat /mnt/c/Users/dev/project/.kangentic/sessions/session-1/launch.sh)"');
@@ -233,6 +248,7 @@ describe('buildTypedLaunch', () => {
         shell,
         sessionDirectory,
         platform: 'win32',
+        batchShimLaunch: NO_SHIM,
       });
     }
 
@@ -273,12 +289,13 @@ describe('buildTypedLaunch', () => {
     { label: 'PowerShell', shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
     { label: 'cmd', shell: 'C:\\Windows\\System32\\cmd.exe' },
     { label: 'Git Bash', shell: 'C:\\Program Files\\Git\\bin\\bash.exe' },
-  ])('types a long command whole under a native Windows shell: $label', ({ shell }) => {
+  ])('types a command past the POSIX budget whole under a native Windows shell: $label', ({ shell }) => {
     const launch = buildTypedLaunch({
       command: commandOfBytes(5000),
       shell,
       sessionDirectory: SESSION_DIRECTORY,
       platform: 'win32',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher).toBeNull();
     expect(launch.typedLine).toContain(commandOfBytes(5000));
@@ -290,8 +307,247 @@ describe('buildTypedLaunch', () => {
       shell: '/bin/zsh',
       sessionDirectory: null,
       platform: 'darwin',
+      batchShimLaunch: NO_SHIM,
     });
     expect(launch.launcher).toBeNull();
     expect(launch.typedLine).toBe(`clear; ${commandOfBytes(5000)}`);
+  });
+
+  describe('cmd, which refuses a line past 8190 characters', () => {
+    function cmdLaunch(command: string, overrides: Partial<TypedLaunchInput> = {}) {
+      return buildTypedLaunch({
+        command,
+        shell: CMD_SHELL,
+        sessionDirectory: SESSION_DIRECTORY,
+        platform: 'win32',
+        batchShimLaunch: NO_SHIM,
+        ...overrides,
+      });
+    }
+    /** The lines of a launcher, split as cmd reads them. */
+    function launcherLines(launch: ReturnType<typeof cmdLaunch>): string[] {
+      return (launch.launcher?.contents ?? '').split('\r\n');
+    }
+
+    it('types a line under its budget, so most launches do not change', () => {
+      const launch = cmdLaunch(commandOfBytes(CMD_TYPED_LINE_BYTE_BUDGET - 'cls & \r'.length));
+      expect(launch.typedLineBytes).toBe(CMD_TYPED_LINE_BYTE_BUDGET);
+      expect(launch.launcher).toBeNull();
+    });
+
+    it('counts UTF-8 bytes, so multi-byte text well under 8190 characters still moves to launch.cmd', () => {
+      // 3600 characters, 7200 bytes: far under cmd's 8190-character limit, past the byte budget.
+      const command = `agent ${'é'.repeat(3600)}`;
+      expect(`cls & ${command}\r`.length).toBeLessThan(CMD_TYPED_LINE_BYTE_BUDGET);
+      expect(Buffer.byteLength(`cls & ${command}\r`, 'utf8')).toBeGreaterThan(CMD_TYPED_LINE_BYTE_BUDGET);
+      const launch = cmdLaunch(command);
+      expect(launch.launcher?.filePath).toBe(path.join(SESSION_DIRECTORY, 'launch.cmd'));
+      expect(launch.typedLine.startsWith('cls & call "')).toBe(true);
+    });
+
+    it('moves a line past the budget to launch.cmd and calls it, with the clear first', () => {
+      const launch = cmdLaunch(commandOfBytes(CMD_TYPED_LINE_BYTE_BUDGET + 1));
+      expect(launch.launcher?.filePath).toBe(path.join(SESSION_DIRECTORY, 'launch.cmd'));
+      expect(launch.typedLine.startsWith('cls & call "')).toBe(true);
+      expect(launch.typedLineBytes).toBeLessThan(TYPED_LINE_BYTE_BUDGET);
+    });
+
+    it('sets the code page first, then runs the command with its echo off', () => {
+      const command = commandOfBytes(9000);
+      const [program, argument] = command.split(' ');
+      expect(launcherLines(cmdLaunch(command))).toEqual(['@chcp 65001 >nul', `@"${program}" ${argument}`, '']);
+    });
+
+    it('turns quoteArg\'s typed percent escape into what a batch file reads', () => {
+      const prompt = quoteArg(`100% of %PATH% in C:\\dir\\%HOME% ${'x'.repeat(8000)}`, 'cmd.exe');
+      expect(prompt).toContain('"^%"');
+      const [, line] = launcherLines(cmdLaunch(`agent.exe ${prompt}`));
+      expect(line.startsWith('@"agent.exe" ^"100%% of %%PATH%% in C:\\dir\\%%HOME%% ')).toBe(true);
+      expect(line).not.toContain('"^%"');
+    });
+
+    // Past 8191 characters cmd's parser forgets it is inside a quote, and a `&` runs
+    // the rest of the prompt as a command. So nothing here is ever inside one.
+    it('never puts cmd inside a quote, whatever the argument holds', () => {
+      const prompt = quoteArg(`a&b|c<d>e(f)g^h "i" ${'x'.repeat(8000)} & del /q *`, 'cmd.exe');
+      const [, line] = launcherLines(cmdLaunch(`"C:\\tools\\agent.exe" ${prompt}`));
+      const argumentsText = line.slice('@"C:\\tools\\agent.exe"'.length);
+      expect(argumentsText).toContain('a^&b^|c^<d^>e^(f^)g^^h');
+      expect(argumentsText.endsWith(`^& del /q *^"`)).toBe(true);
+      // Every quote and metacharacter sits behind a caret: read left to right, an
+      // escape takes the character after it, and nothing live is left.
+      expect(argumentsText.replace(/\^./g, '')).not.toMatch(/["&|<>()^]/);
+    });
+
+    it('doubles a percent the quoting left bare, such as one in a bare word', () => {
+      const [, line] = launcherLines(cmdLaunch(`agent.exe 50% ${'x'.repeat(8000)}`));
+      expect(line.startsWith('@"agent.exe" 50%% ')).toBe(true);
+    });
+
+    it('escapes a content caret, which cmd then removes one of', () => {
+      const [, line] = launcherLines(cmdLaunch(`agent.exe "a^b ${'x'.repeat(8000)}"`));
+      expect(line).toContain('a^^b');
+    });
+
+    it('calls a percent in the folder through the escape a prompt needs', () => {
+      const launch = cmdLaunch(commandOfBytes(9000), { sessionDirectory: 'C:\\Users\\dev\\%X%dir' });
+      expect(launch.typedLine.startsWith('cls & call "')).toBe(true);
+      expect(launch.typedLine).toContain('"^%"');
+    });
+
+    it('drops call for a folder holding a caret, whose path call cannot find', () => {
+      const launch = cmdLaunch(commandOfBytes(9000), { sessionDirectory: 'C:\\Users\\dev\\a^b' });
+      expect(launch.typedLine.startsWith('cls & "')).toBe(true);
+    });
+
+    it('keeps a run of spaces in the path it calls', () => {
+      const launch = cmdLaunch(commandOfBytes(9000), { sessionDirectory: 'C:\\Users\\dev\\two  spaces' });
+      expect(launch.typedLine).toContain('two  spaces');
+    });
+
+    it('types the whole line with no folder for a launcher, and cmd names the refusal', () => {
+      const command = commandOfBytes(9000);
+      const launch = cmdLaunch(command, { sessionDirectory: null });
+      expect(launch.launcher).toBeNull();
+      expect(launch.typedLine).toBe(`cls & ${command}`);
+    });
+
+    describe('with a .cmd shim at the head', () => {
+      const shim = 'C:\\tools\\npm\\claude.cmd';
+      const tail = `--session-id abc "${'x'.repeat(8000)}"`;
+      const escapedTail = `--session-id abc ^"${'x'.repeat(8000)}^"`;
+      const command = `"${shim}" ${tail}`;
+
+      it('runs what the shim would start, never the shim', () => {
+        const launch = cmdLaunch(command, {
+          batchShimLaunch: () => ({ program: 'C:\\tools\\npm\\node.exe', script: 'C:\\tools\\npm\\cli.js' }),
+        });
+        expect(launcherLines(launch)[1]).toBe(`@"C:\\tools\\npm\\node.exe" "C:\\tools\\npm\\cli.js" ${escapedTail}`);
+        expect(launch.launcher?.contents).not.toContain('claude.cmd');
+      });
+
+      it('runs a binary target alone', () => {
+        const launch = cmdLaunch(command, {
+          batchShimLaunch: () => ({ program: 'C:\\tools\\claude.exe', script: null }),
+        });
+        expect(launcherLines(launch)[1]).toBe(`@"C:\\tools\\claude.exe" ${escapedTail}`);
+      });
+
+      it('takes .JS off PATHEXT for a bare node, as the shim does', () => {
+        const launch = cmdLaunch(command, {
+          batchShimLaunch: () => ({ program: 'node', script: 'C:\\tools\\npm\\cli.js' }),
+        });
+        expect(launcherLines(launch)[1]).toBe('@set "PATHEXT=%PATHEXT:;.JS;=;%"');
+        expect(launcherLines(launch)[2].startsWith('@"node" ')).toBe(true);
+      });
+
+      it('finds a shim whose folder holds a percent, and doubles it in what it starts', () => {
+        const percentHead = `"C:\\tools\\"^%"X"^%"\\claude.cmd"`;
+        const seen: string[] = [];
+        const launch = cmdLaunch(`${percentHead} ${tail}`, {
+          batchShimLaunch: (shimPath) => {
+            seen.push(shimPath);
+            return { program: 'C:\\tools\\%X%\\claude.exe', script: null };
+          },
+        });
+        expect(seen).toEqual(['C:\\tools\\%X%\\claude.cmd']);
+        expect(launcherLines(launch)[1].startsWith('@"C:\\tools\\%%X%%\\claude.exe" ')).toBe(true);
+      });
+
+      it('names a shim it cannot get past, and writes nothing', () => {
+        const launch = cmdLaunch(command);
+        expect(launch.launcher).toBeNull();
+        expect(launch.typedLine).toBe('cls & echo The command line is too long.');
+      });
+
+      it('types a line under the budget through the shim as before', () => {
+        const short = `"${shim}" --resume abc`;
+        const launch = cmdLaunch(short);
+        expect(launch.typedLine).toBe(`cls & ${short}`);
+      });
+
+      it('echoes a sentence the launch report classifies as a line too long', () => {
+        const launch = cmdLaunch(command);
+        const sentence = launch.typedLine.slice(`${buildSpawnClearPrelude(CMD_SHELL.toLowerCase())}echo `.length);
+        expect(classifyLaunchOutput(`${sentence}\r\n`)).toBe('line_too_long');
+      });
+    });
+
+    describe('a shim that stayed under PowerShell or Git Bash, whose %* line has cmd\'s limit', () => {
+      const POWERSHELL = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+      const GIT_BASH = 'C:\\Program Files\\Git\\bin\\bash.exe';
+      const shim = 'C:\\tools\\npm\\claude.cmd';
+      const direct = () => ({ program: 'C:\\tools\\npm\\node.exe', script: 'C:\\tools\\npm\\cli.js' });
+      const longArguments = `--session-id abc -- ${'x'.repeat(CMD_TYPED_LINE_BYTE_BUDGET)}`;
+
+      it('starts what the shim would have under PowerShell, with no launcher', () => {
+        const launch = cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL, batchShimLaunch: direct });
+        expect(launch.launcher).toBeNull();
+        expect(launch.typedLine).toBe(`Clear-Host; & "C:\\tools\\npm\\node.exe" "C:\\tools\\npm\\cli.js" ${longArguments}`);
+      });
+
+      it('starts it under Git Bash, with the program as bash reads it and the script as node does', () => {
+        const launch = cmdLaunch(`'${shim}' ${longArguments}`, { shell: GIT_BASH, batchShimLaunch: direct });
+        expect(launch.typedLine).toBe(`clear; '/c/tools/npm/node.exe' 'C:\\tools\\npm\\cli.js' ${longArguments}`);
+      });
+
+      it('starts a bare node and a binary target', () => {
+        const bareNode = cmdLaunch(`"${shim}" ${longArguments}`, {
+          shell: POWERSHELL,
+          batchShimLaunch: () => ({ program: 'node', script: 'C:\\tools\\npm\\cli.js' }),
+        });
+        expect(bareNode.typedLine.startsWith('Clear-Host; & node "C:\\tools\\npm\\cli.js" ')).toBe(true);
+        const binary = cmdLaunch(`"${shim}" ${longArguments}`, {
+          shell: POWERSHELL,
+          batchShimLaunch: () => ({ program: 'C:\\tools\\claude.exe', script: null }),
+        });
+        expect(binary.typedLine.startsWith('Clear-Host; & "C:\\tools\\claude.exe" --session-id ')).toBe(true);
+      });
+
+      it('names a shim it cannot get past, as a line each shell prints as one sentence', () => {
+        expect(cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL }).typedLine)
+          .toBe('Clear-Host; echo "The command line is too long."');
+        expect(cmdLaunch(`'${shim}' ${longArguments}`, { shell: GIT_BASH }).typedLine)
+          .toBe("clear; echo 'The command line is too long.'");
+      });
+
+      it('echoes a sentence the launch report classifies as a line too long, once the shell\'s quotes are off', () => {
+        const launch = cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL });
+        const prelude = buildSpawnClearPrelude(POWERSHELL.toLowerCase());
+        expect(launch.typedLine.startsWith(`${prelude}echo `)).toBe(true);
+        const sentence = launch.typedLine.slice(`${prelude}echo `.length).replace(/^"|"$/g, '');
+        expect(classifyLaunchOutput(`${sentence}\r\n`)).toBe('line_too_long');
+      });
+
+      it('starts what the shim would have with no folder for a launcher, since PowerShell needs none', () => {
+        const launch = cmdLaunch(`"${shim}" ${longArguments}`, { shell: POWERSHELL, batchShimLaunch: direct, sessionDirectory: null });
+        expect(launch.launcher).toBeNull();
+        expect(launch.typedLine).toBe(`Clear-Host; & "C:\\tools\\npm\\node.exe" "C:\\tools\\npm\\cli.js" ${longArguments}`);
+      });
+
+      it('does the same under Git Bash with no folder for a launcher', () => {
+        const launch = cmdLaunch(`'${shim}' ${longArguments}`, { shell: GIT_BASH, batchShimLaunch: direct, sessionDirectory: null });
+        expect(launch.launcher).toBeNull();
+        expect(launch.typedLine).toBe(`clear; '/c/tools/npm/node.exe' 'C:\\tools\\npm\\cli.js' ${longArguments}`);
+      });
+
+      it('types a line under the budget through the shim as before', () => {
+        const short = `"${shim}" --resume abc`;
+        expect(cmdLaunch(short, { shell: POWERSHELL, batchShimLaunch: direct }).typedLine).toBe(`Clear-Host; & ${short}`);
+      });
+
+      it('leaves a WSL shell alone, which cannot start a .cmd at all', () => {
+        const launch = cmdLaunch(`'${shim}' ${longArguments}`, { shell: 'wsl -d Ubuntu', batchShimLaunch: direct });
+        expect(launch.launcher?.filePath.endsWith('launch.sh')).toBe(true);
+      });
+    });
+
+    it('leaves PowerShell and Git Bash on Windows typed at any length', () => {
+      for (const shell of ['C:\\Program Files\\PowerShell\\7\\pwsh.exe', 'C:\\Program Files\\Git\\bin\\bash.exe']) {
+        const launch = cmdLaunch(commandOfBytes(15_000), { shell });
+        expect(launch.launcher, shell).toBeNull();
+        expect(launch.typedLine, shell).toContain(commandOfBytes(15_000));
+      }
+    });
   });
 });

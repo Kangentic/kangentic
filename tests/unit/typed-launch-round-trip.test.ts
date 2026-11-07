@@ -13,7 +13,8 @@
  * Where it runs: bash in CI's unit tier on Linux, zsh in macos-spawn-helper.yml
  * (with a pinned powerlevel10k), and every shell in shell-quoting-posix.yml. Those
  * workflows set KANGENTIC_TYPED_LAUNCH_REQUIRE_SHELLS, so a shell they need fails
- * rather than skips. Nothing here runs on Windows, whose shells have no such limit.
+ * rather than skips. Nothing here runs on Windows, which has no canonical mode. cmd
+ * has a line limit of its own, and cmd-launcher-round-trip.test.ts covers that.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn as ptySpawn, type IPty } from 'node-pty';
@@ -271,6 +272,7 @@ function launchLine(shell: ProbeShell, rig: Rig, command: string): string {
     shell: shell.program,
     sessionDirectory: rig.sessionDirectory,
     platform: process.platform,
+    batchShimLaunch: () => null,
   });
   expect(launch.launcher, 'an oversized command takes the launcher').not.toBeNull();
   expect(launch.typedLineBytes).toBeLessThan(TYPED_LINE_BYTE_BUDGET);

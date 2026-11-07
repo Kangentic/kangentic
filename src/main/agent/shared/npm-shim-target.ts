@@ -131,6 +131,45 @@ export function missingNpmShimTarget(
   }
 }
 
+/** The program a batch shim would start, and the script it would hand that program. */
+export interface BatchShimLaunch {
+  /** An absolute path, or the bare name `node` when no `node.exe` sits beside the shim. */
+  program: string;
+  /** The script the program runs, or null when the target is itself a program. */
+  script: string | null;
+}
+
+/**
+ * What a `.cmd` shim runs, so a launch too long for one can start it directly.
+ *
+ * A shim's `%*` line has its own cmd line limit and fails past it with no error
+ * at all: through an npm-style shim, 8000 characters ran and 8388 never did. The
+ * rules are the shim's own: `node.exe` beside the shim if there is one, else
+ * `node`, and a binary target runs as it is.
+ *
+ * Null when this cannot be sure it would start what the shim starts: an
+ * unreadable file, a target that is not there or not a program or a Node
+ * script, or a shim that sets `NODE_PATH` (pnpm's), whose target expects it.
+ */
+export function directLaunchOfBatchShim(
+  shimPath: string,
+  dependencies: NpmShimTargetDependencies = {},
+): BatchShimLaunch | null {
+  const fileExists = dependencies.fileExists ?? fs.existsSync;
+  const readFile = dependencies.readFile ?? readShimFromDisk;
+  try {
+    if (readFile(shimPath).toUpperCase().includes('NODE_PATH')) return null;
+    const target = npmShimTargetPath(shimPath, { readFile });
+    if (target === null || !fileExists(target)) return null;
+    if (/\.exe$/i.test(target)) return { program: target, script: null };
+    if (!/\.[cm]?js$/i.test(target)) return null;
+    const siblingNode = path.join(path.dirname(shimPath), 'node.exe');
+    return { program: fileExists(siblingNode) ? siblingNode : 'node', script: target };
+  } catch {
+    return null;
+  }
+}
+
 function readShimFromDisk(candidatePath: string): string {
   const { size } = fs.statSync(candidatePath);
   if (size > MAX_SHIM_FILE_BYTES) {

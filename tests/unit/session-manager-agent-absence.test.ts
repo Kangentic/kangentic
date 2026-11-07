@@ -338,6 +338,20 @@ describe('SessionManager agent-absence wiring', () => {
       expect(await manager.mayRetryLaunch('session-1')).toBe(false);
     });
 
+    it('spends no retry on a line the shell refused as too long: the same line gets the same answer', async () => {
+      const session = seedSession({ reportsAgentStart: true, startPath: 'board' });
+      session.launchOutputRead = Promise.resolve('line_too_long');
+
+      expect(await manager.mayRetryLaunch('session-1')).toBe(false);
+    });
+
+    it('keeps the retry for a conversation the CLI could not find, which starts fresh once marked', async () => {
+      const session = seedSession({ reportsAgentStart: true, startPath: 'resume' });
+      session.launchOutputRead = Promise.resolve('conversation_missing');
+
+      expect(await manager.mayRetryLaunch('session-1')).toBe(true);
+    });
+
     it('stamps the first alt-screen entry and says the agent ran once', () => {
       const session = seedSession({ reportsAgentStart: true });
       const agentRan = vi.fn();

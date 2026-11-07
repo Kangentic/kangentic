@@ -442,8 +442,8 @@ in one Sentry org, one triage surface.
   `launcher` (`none`, `present`, `missing`), `shell_printed` (`none`, `before_launch`,
   `after_launch`, around the spawn's clear), `first_output_s`, `session_age_s` (both buckets),
   `typed_line_bytes` and `overlay_ceiling`. A report on a session adds `output_class`
-  (`command_not_found`, `permission_denied`, `no_such_file`, `unknown_option`, `login_required`,
-  `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
+  (`command_not_found`, `permission_denied`, `no_such_file`, `unknown_option`, `line_too_long`,
+  `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`). `never_started` adds `judge` (`sweep`, `timer`). A preflight report
   adds `error_type` and `errno` when the error has them.
 
