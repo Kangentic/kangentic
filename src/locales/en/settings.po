@@ -11,6 +11,10 @@ msgstr ""
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Opens the docs page."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "{comboName} is already in use by your OS or another app. Pick another."
 msgstr "{comboName} is already in use by your OS or another app. Pick another."
@@ -110,10 +114,6 @@ msgstr "{projectCount, plural, one {# project} other {# projects}}"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs} ms"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
-msgstr "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
@@ -549,6 +549,7 @@ msgid "Clear browser data?"
 msgstr "Clear browser data?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Clear data"
 msgstr "Clear data"
 
@@ -968,6 +969,11 @@ msgstr "Downloading"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr "Edit"
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Editors"
 msgstr "Editors"
@@ -1163,10 +1169,6 @@ msgstr "Hold push-to-talk to speak into a terminal or text field."
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Host name"
-msgstr "Host name"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hosts"
 msgstr "Hosts"
@@ -1338,6 +1340,10 @@ msgstr "Kangentic uses your SSH config, agent and keys, the way a terminal does.
 msgid "Kangentic-operated relay"
 msgstr "Kangentic-operated relay"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr "Keep"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Keep capturing briefly after release so the last word is not clipped."
 msgstr "Keep capturing briefly after release so the last word is not clipped."
@@ -1345,6 +1351,10 @@ msgstr "Keep capturing briefly after release so the last word is not clipped."
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Keep editing"
 msgstr "Keep editing"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr "Keep signing in the way the host does now"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Key file"
@@ -2028,10 +2038,6 @@ msgstr "Remote"
 msgid "Remove"
 msgstr "Remove"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
-msgstr "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remove a task's worktree when the task completes."
 msgstr "Remove a task's worktree when the task completes."
@@ -2040,8 +2046,15 @@ msgstr "Remove a task's worktree when the task completes."
 msgid "Remove host"
 msgstr "Remove host"
 
-#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Rename"
 msgstr "Rename"
 
@@ -2128,12 +2141,12 @@ msgstr "Runs after a worktree is created. Runs through cmd.exe on Windows, so PO
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "Runs on this machine unless you choose a cloud refinement."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Save"
 msgstr "Save"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
-#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Save name"
 msgstr "Save name"
 
@@ -2461,6 +2474,10 @@ msgstr "The first message it gets for a new workflow."
 msgid "The Kangentic relay"
 msgstr "The Kangentic relay"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."
 msgstr "The language of menus, settings and dialogs."
@@ -2519,6 +2536,7 @@ msgstr "Theme"
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "This hotkey is fixed and cannot be rebound"
 
+#. placeholder {0}: editProbe.hostname
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "This is the key {0} presents."
@@ -2590,6 +2608,10 @@ msgstr "Trust new key"
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Trust this key"
 msgstr "Trust this key"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr "Trust this key and save"
 
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"

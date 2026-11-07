@@ -334,7 +334,9 @@ The SSH tab (Beta) lists the Linux machines Kangentic runs agents on over SSH, a
 
 **Add host** runs in the card. Enter a name and an address, then Kangentic shows the key fingerprint the host presents. Trust it only if it matches the host: Kangentic records it once, and refuses the host if the key ever changes (the host's row then shows a key icon, **Trust new key**, which shows the old and the new fingerprint and, if you confirm, records the new key and connects). Last, choose how to sign in: **My SSH config** (your own config, agent and keys, which is also how a jump host or a port is set), **Key file** (Kangentic keeps a copy of the file in its own folder), or **Password**, which is used once to add a key Kangentic makes for the host and is never stored. Kangentic never asks for a passphrase, and a reconnect never prompts.
 
-Removing a host asks first. Its projects leave Kangentic and their agents are suspended, and nothing on the host is deleted. Once a host exists, **Add project** asks whether the project is on This computer or on a host. See [SSH remote hosts](../platforms/ssh-remote.md) for the trust model, what is installed on the host, and the known limits.
+Each row has an edit button for the name, address and how to sign in. A new address shows its key to trust before it is saved, and it is refused while terminals run on the host. In **Add host** the address field suggests the names in your `~/.ssh/config`.
+
+Removing a host asks first. Its projects are hidden and their agents suspended until the same address is added again, and nothing is deleted. Adding it back brings the projects back with their directories. **Clear data** on a host's row stops its projects' running agents and deletes Kangentic's boards, tasks and history for them. Their files on the host stay. Once a host exists, **Add project** asks whether the project is on This computer or on a host. See [SSH remote hosts](../platforms/ssh-remote.md) for the trust model, what is installed on the host, and the known limits.
 
 ## Privacy
 

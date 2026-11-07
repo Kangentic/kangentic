@@ -11,10 +11,17 @@
 import type { SpawnRemote, SshHost } from '../../shared/types';
 import { installHost, type HostAsset, type InstalledHost } from './link/host-installer';
 import { createSshRunner, type SshRunner } from './link/ssh-run';
-import type { HelperMethod, HelperRequestMap, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
+import type { HelperMethod, HelperRequestMap, HelperSessionRecord, HostFileSearch, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
 import { assertSafeDestination } from './ssh-client';
 
 export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
+
+/** Each argument is one pid. A pid that has gone already is not a failure of the ask. */
+const HANG_UP_SCRIPT = 'kill -HUP "$@" 2>/dev/null; exit 0';
+const HANG_UP_TIMEOUT_MS = 10_000;
+/** Past Claude's SessionEnd budget, as the host's own agent-exit wait is. */
+const LEFT_RUNNING_WAIT_MS = 10_000;
+const LEFT_RUNNING_POLL_MS = 250;
 
 /**
  * The `ssh` options every Kangentic connection starts with. BatchMode so nothing waits on a prompt
@@ -57,6 +64,8 @@ export class RemoteHostService {
   private readonly infoByHost = new Map<string, HostInfo>();
   private readonly connected = new Set<string>();
   private readonly connecting = new Map<string, Promise<void>>();
+  /** Hosts disconnected while a connect was on its way, which must not add the host afterwards. */
+  private readonly droppedWhileConnecting = new Set<string>();
 
   constructor(private readonly deps: RemoteHostServiceDeps) {}
 
@@ -71,23 +80,32 @@ export class RemoteHostService {
    */
   connect(hostId: string): Promise<void> {
     // A Reconnect during a first connect joins it: two installs of one version on one host share their
-    // upload paths on the host, and each would clear the other's.
+    // upload paths on the host, and each would clear the other's. A connect asked for after a disconnect is newer
+    // than it, so it waits for the dropped one and connects for itself. One asked for before it ends with it: left
+    // to redial, it would bring back a host that is being removed.
     const running = this.connecting.get(hostId);
-    if (running) return running;
-    const connecting = this.install(hostId).finally(() => this.connecting.delete(hostId));
+    if (running) {
+      if (!this.droppedWhileConnecting.has(hostId)) return running;
+      return running.catch(() => undefined).then(() => this.connect(hostId));
+    }
+    const connecting = this.install(hostId).finally(() => {
+      this.connecting.delete(hostId);
+      this.droppedWhileConnecting.delete(hostId);
+    });
     this.connecting.set(hostId, connecting);
     return connecting;
   }
 
   private async install(hostId: string): Promise<void> {
     const host = this.deps.hosts.getById(hostId);
-    if (!host) throw new Error('That host is not set up in Kangentic.');
+    if (!host || host.removed_at) throw new Error('That host is not set up in Kangentic.');
     const args = sshArgsFor(host);
     const asset = this.deps.asset();
     if (!asset || (Array.isArray(asset) && asset.length === 0)) throw new HostProgramMissingError();
     const createRunner = this.deps.createRunner ?? createSshRunner;
     const install = this.deps.install ?? installHost;
     const installed = await install(createRunner({ sshPath: this.deps.sshPath, args }), asset);
+    if (this.droppedWhileConnecting.has(hostId)) return;
     const connection: RemoteHostConnection = {
       sshPath: this.deps.sshPath,
       args,
@@ -97,7 +115,7 @@ export class RemoteHostService {
     };
     const sessions = this.deps.liveSessions?.(hostId) ?? [];
     await this.deps.send({ op: 'addHost', hostId, connection, ...(sessions.length > 0 ? { sessions } : {}) });
-    this.connected.add(hostId);
+    if (!this.droppedWhileConnecting.has(hostId)) this.connected.add(hostId);
   }
 
   /** Every host this service has added, for re-adding them all after the process holding the links restarts. */
@@ -107,6 +125,7 @@ export class RemoteHostService {
 
   /** Stop dialing a host. Its agents keep running there. */
   async disconnect(hostId: string): Promise<void> {
+    if (this.connecting.has(hostId)) this.droppedWhileConnecting.add(hostId);
     this.connected.delete(hostId);
     this.infoByHost.delete(hostId);
     await this.deps.send({ op: 'removeHost', hostId });
@@ -192,6 +211,36 @@ export class RemoteHostService {
   /** Which program version the host runs, for how long, with how many terminals, and which versions it holds. */
   programInfo(hostId: string): Promise<HelperRequestMap['programInfo']['result']> {
     return this.helper(hostId, 'programInfo', {});
+  }
+
+  /**
+   * End the sessions the host's program still runs for these projects and this app holds no PTY for. A Remove with
+   * the link down leaves them: its kill went with the link, and the task's record says suspended. A resume would
+   * then run a second agent on the same conversation, and nothing adopts the first.
+   *
+   * Read from the snapshot the link itself reads, and hung up by pid, with each pid an argument of one fixed
+   * script. Never `suspendAll`, which ends every session on the host, another computer's on this account included.
+   * The hangup is how a PTY ends on Linux (`pty-teardown-grace.md`). Resolves with how many it ended, once they are
+   * gone. Rejects when the host cannot be asked or one outlives the wait: a failed ask is never "nothing running".
+   */
+  async endSessionsLeftRunning(hostId: string, projectIds: ReadonlySet<string>, options: { timeoutMs?: number; pollMs?: number } = {}): Promise<number> {
+    const heldHere = new Set((this.deps.liveSessions?.(hostId) ?? []).map((route) => route.sessionId));
+    const leftRunning = async (): Promise<HelperSessionRecord[]> => (await this.helper(hostId, 'snapshot', {})).sessions
+      .filter((record) => record.alive && projectIds.has(record.projectId) && !heldHere.has(record.sessionId));
+    const sessions = await leftRunning();
+    if (sessions.length === 0) return 0;
+    // `kill` reads 0 as the script's own process group and -1 as everything the user owns on the host.
+    const unsafe = sessions.find((record) => !Number.isSafeInteger(record.pid) || record.pid <= 1);
+    if (unsafe) throw new Error(`The host reported pid ${unsafe.pid} for a running terminal, which cannot be ended.`);
+    await this.runCommand(hostId, { file: 'sh', args: ['-c', HANG_UP_SCRIPT, 'kangentic-end', ...sessions.map((record) => String(record.pid))], timeoutMs: HANG_UP_TIMEOUT_MS });
+    const deadline = Date.now() + (options.timeoutMs ?? LEFT_RUNNING_WAIT_MS);
+    let remaining = await leftRunning();
+    while (remaining.length > 0) {
+      if (Date.now() >= deadline) throw new Error(`${remaining.length} of this host's terminals are still running.`);
+      await new Promise((resolve) => { setTimeout(resolve, options.pollMs ?? LEFT_RUNNING_POLL_MS); });
+      remaining = await leftRunning();
+    }
+    return sessions.length;
   }
 
   /** Remove old program versions from the host. Never the running one, and never one in `keep`. */

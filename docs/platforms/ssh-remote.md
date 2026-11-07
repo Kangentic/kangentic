@@ -6,6 +6,9 @@ tags: [ssh, remote, hosts, helper, beta]
 sources:
   - resource: src/main/remote/remote-host-service.ts
   - resource: src/main/remote/ssh-host-admin.ts
+  - resource: src/main/remote/ssh-config-hosts.ts
+  - resource: src/main/ipc/helpers/hide-project.ts
+  - resource: src/main/workflows/workflow-hidden-project.ts
   - resource: src/main/remote/ssh-setup.ts
   - resource: src/main/remote/host-status.ts
   - resource: src/main/remote/host-assets.ts
@@ -36,6 +39,9 @@ sources:
   - resource: scripts/verify-host-manifest.js
   - resource: src/renderer/components/settings/tabs/SshTab.tsx
   - resource: src/renderer/components/dialogs/AddProjectDialogs.tsx
+  - resource: src/renderer/components/dialogs/remote-directory.ts
+  - resource: src/renderer/components/HostAddressInput.tsx
+  - resource: src/renderer/components/host-address.ts
   - resource: .claude/rules/ssh-remote.md
 ---
 # SSH remote hosts
@@ -103,7 +109,15 @@ Add project asks where first once a host exists: This computer, or a host. A hos
 - The board, tasks, history and settings are the local database as ever.
 - **A task gets its own git worktree on the host** when the project's folder there is the top of a git repository with a commit, and worktrees are on for the project and the task (the same switches as a local project). See [Worktrees on a host](#worktrees-on-a-host). Any other folder is shared by every task, so run one agent in it at a time. PR linking and the branch switcher are still off for a remote project. The Changes panel and the branch header read the host, as [Git reads on a host](#git-reads-on-a-host) says.
 - Kangentic adds `.kangentic/` to the host repository's `.git/info/exclude`, so its runtime folder stays out of `git status` there.
-- Removing a host removes its projects from Kangentic, suspends their agents and leaves the folders on the host.
+- **Remove hides, and deletes nothing.** Removing a host suspends its projects' agents, takes the key Kangentic made off the host and deletes it here, and hides the projects everywhere (sidebar, search, the MCP tools). The host row stays in the database, marked `removed_at`, with its projects' boards, tasks, shell folders and the copy of the host's transcripts. Nothing on the host is touched except that key.
+- **Adding the same address again brings them back.** The address is matched case-insensitively on the host part. That restores the removed row under its old id, so each project's host still points at it and each keeps its directory. The projects are activated once the host connects, and what they had running resumes. A different address is a new host, and a different directory on a host is a new project. If the add fails after the row was restored, the row is marked removed again, so the projects stay hidden.
+- **Hidden is not deleted, so a sweep reads every row.** `list`, `getById` and `getLastOpened` leave a hidden project out. Anything that reads "not in the list" as "gone" uses `listIncludingHidden`, `listHidden`, `isHidden` or `listOnHost`: the browser jar sweep, a project delete's count of a workflow's survivors, and the lookups that decide whether a folder is a remote project's. A hidden project still resolves as remote, so a start already on its way is refused with a sentence and never runs in its empty folder here.
+- **A workflow with tasks on a hidden project pauses, and stays paused.** Remove pauses it before the host goes. The picker says which project holds it, an agent reading it is told, and Resume is refused until the host is added again. Then Resume is the user's: it does not resume by itself. It cannot complete while those tasks are hidden, and a link to one is held, not dropped.
+- **Adding it back ends what the host still runs first.** A Remove with the link down cannot stop its agents, so before any project starts, the sessions the host's program still holds for these projects are hung up and waited for. Otherwise a resume would run a second agent on the same conversation. If the host cannot say, nothing starts, and the next connection tries again. The row keeps this (`reveal_pending`), so a restart before that connection waits for it too.
+- **Clear data is the only local delete.** It is a button on a host's row in any connection state, shown only while the host has projects. It stops their running agents and deletes the boards, tasks, history, shell folders and transcript copy of that host's projects, and leaves the host in the list with none. It works with the host down. Their files on the host stay. One project that cannot be deleted stops none of the others: it is named in the error, and the transcript copy stays while it is left to read it.
+- **Edit a host in place.** The pencil on a row edits its name, address and sign-in. A name saves at once. A new address first shows the key it presents and is saved only after the user trusts it. An address already used by another host, or by a removed one (whose projects it would shadow), is refused. A key Kangentic made belongs to the old machine, so a new address needs a new sign-in. Before anything is taken away, a real `ssh` in BatchMode signs in to the new address with the new sign-in. If that fails, the error is ssh's own words and the address, keys and row stay as they were. Only then does a key Kangentic made come off the old address, because on a host with passwords off it may be the only way in. A key file the user chose is never touched on the host. An address or sign-in change is refused while terminals run on the host, because the link restarts.
+- **The Directory field suggests and browses.** In Add project on a host, typing lists the folders of the directory typed so far (`~/` is the host's home) and narrows them by the rest. Browse shows the same listing as a navigable list with a breadcrumb and a git tag. The listing is one fixed `sh` script through the helper's command runner, with the path as an argument, so no protocol change is needed. A directory that is not there reads as not existing, a path outside home is not listed, and a host that cannot be asked is an error shown in place, never an empty list.
+- **Add host suggests names from `~/.ssh/config`.** The address field offers the `Host` names of this computer's SSH config, skipping wildcard patterns and negations and following `Include`.
 
 ## What an agent's tools report
 
@@ -242,7 +256,7 @@ An export is one document, so half of one is no conversation at all. It collects
 - **A file the agent replaces or shortens is copied again from the start.** The copy is emptied first. That covers a file that got shorter between two sessions too: a session's first chunk empties a copy longer than the host's file, since nothing else would remove the bytes past its end.
 - **An offset tail is only right for a file that is appended to.** A rewrite in place on the same inode, at the same size or larger, would corrupt the copy, and the tail cannot see one. `tests/unit/remote-transcript-real-cli.test.ts` holds Codex, Gemini, Aider and Droid to it across one resume, byte for byte. Copilot's log is held to it by its docs alone. Gemini's `$rewindTo` and `$patch` are lines of their own at v0.66.0, its one rewrite swaps the file through a rename, and its legacy `.json` is never matched.
 - **A conversation that forks is followed.** Claude's `/clear` starts a new conversation id in a new file. The new id reaches the relay as any id does, and the new file replaces the old one. The copy of the old conversation stays as it was.
-- **Removing a host deletes its copy.**
+- **Clear data deletes the copy.** Remove keeps it, so a host added back finds its transcripts where they were.
 
 An agent that cannot run on a host fails the spawn with a sentence saying so.
 

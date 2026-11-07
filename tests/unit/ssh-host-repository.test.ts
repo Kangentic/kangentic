@@ -48,7 +48,7 @@ describe('the migration', () => {
 
   it('gives a host row a destination and a key file path, and no column for a secret', () => {
     const columns = (db.pragma('table_info(ssh_hosts)') as Array<{ name: string }>).map((column) => column.name);
-    expect(columns).toEqual(['id', 'name', 'destination', 'key_path', 'key_created', 'created_at']);
+    expect(columns).toEqual(['id', 'name', 'destination', 'key_path', 'key_created', 'created_at', 'removed_at', 'reveal_pending']);
   });
 });
 

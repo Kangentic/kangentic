@@ -110,6 +110,17 @@ export async function resolveSpawnCli(input: {
   return { cliPath: detection.path, cliTarget, remoteLaunch: null, version: detection.version };
 }
 
+/**
+ * The project's host was removed, so the project is hidden. Something that was already on its way to start reaches
+ * here: it must stop, because read as a project on this computer it would run in the empty stand-in folder.
+ */
+export class RemoteHostRemovedError extends UserConfigurationError {
+  constructor(hostName: string) {
+    super(`${hostName} was removed from Kangentic, so nothing can start in this project. Add the host again to bring it back.`);
+    this.name = 'RemoteHostRemovedError';
+  }
+}
+
 export interface RemoteLaunchResolverDeps {
   /** The project whose shell folder is `projectPath`, with its remote half, or null for a local one. */
   remoteOfProjectPath(projectPath: string): ProjectRemote | null;
@@ -126,6 +137,8 @@ export interface RemoteLaunchResolverDeps {
   probeAgent?(hostId: string, cliName: string): Promise<HostAgentProbe>;
   /** The host's name as the user gave it, for the refusal's sentence. */
   hostName?(hostId: string): string | null;
+  /** Whether the host was removed. Its projects are hidden and still remote: nothing may start for one. */
+  isHostRemoved?(hostId: string): boolean;
 }
 
 export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): RemoteLaunchResolver {
@@ -133,6 +146,7 @@ export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): Remo
     async resolve({ projectPath, cwd, adapter }) {
       const remote = projectPath ? deps.remoteOfProjectPath(projectPath) : null;
       if (!projectPath || !remote) return null;
+      if (deps.isHostRemoved?.(remote.hostId)) throw new RemoteHostRemovedError(deps.hostName?.(remote.hostId) ?? 'The host');
       if (!adapter.remoteCliName) throw new RemoteAgentUnsupportedError(adapter.name, adapter.displayName);
 
       const probe = await deps.probeAgent?.(remote.hostId, adapter.remoteCliName);

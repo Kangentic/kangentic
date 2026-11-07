@@ -612,6 +612,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Větev"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -686,6 +690,10 @@ msgstr "Změny – #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "Změny jsou otevřené ve vlastním okně"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -1238,6 +1246,10 @@ msgstr "Rozdíl"
 msgid "Diff scope"
 msgstr "Rozsah rozdílů"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
@@ -1464,11 +1476,6 @@ msgstr "Filtrovat soubory..."
 #, fuzzy
 msgid "Flat list"
 msgstr "Plochý seznam"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Folder on the host"
-msgstr "Složka na hostiteli"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
@@ -1953,6 +1960,10 @@ msgstr "Bez popisu"
 msgid "No files changed"
 msgstr "Žádné změněné soubory"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
+
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
 msgid "No fonts match \"{typedFilter}\""
@@ -2132,6 +2143,10 @@ msgstr "Po jednom"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Zjištěno jen jedno CLI agenta – pro výběr nainstalujte další"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2263,6 +2278,10 @@ msgstr "Přehled"
 #, fuzzy
 msgid "Page kept"
 msgstr "Stránka zachována"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -3115,6 +3134,10 @@ msgstr "Tento commit nezměnil žádné soubory"
 #, fuzzy
 msgid "This computer"
 msgstr "Tento počítač"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

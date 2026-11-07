@@ -100,6 +100,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})."
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+
+#: src/shared/workflow-refusals.ts
 msgid "A task cannot wait for itself."
 msgstr "A task cannot wait for itself."
 

@@ -5134,10 +5134,16 @@
     //   - window.__mockFireSshHostsChanged(): fires the push the main process sends on a state change
     ssh: (function () {
       var hosts = [];
+      // A removed host keeps its id and address, and its projects are hidden, not deleted (main's tombstone):
+      // adding the same address again brings them back.
+      var removedHosts = [];
+      var hiddenProjects = [];
       var listeners = [];
       var counter = 0;
       function fire() { listeners.slice().forEach(function (listener) { listener(); }); }
       if (typeof window !== 'undefined') window.__mockFireSshHostsChanged = fire;
+      // Forget the removed hosts and their hidden projects, so a spec that adds an address again starts clean.
+      if (typeof window !== 'undefined') window.__mockSshForgetRemoved = function () { removedHosts = []; hiddenProjects = []; };
       function win() { return typeof window !== 'undefined' ? window : {}; }
       return {
         detectClient: async function () {
@@ -5152,6 +5158,14 @@
             return Object.assign({}, status, { projectCount: count });
           });
         },
+        // window.__mockSshConfigHosts: the named hosts in the user's ~/.ssh/config, [{ alias, hostName, user }].
+        listConfigHosts: async function () {
+          return win().__mockSshConfigHosts || [
+            { alias: 'build-box', hostName: 'build.example.test', user: 'dev' },
+            { alias: 'gpu-rig', hostName: null, user: null },
+            { alias: 'staging', hostName: 'stage.example.test', user: 'deploy' },
+          ];
+        },
         probeHostKey: async function (destination) {
           // A promise a spec holds open, so it can act while the probe is still in flight.
           if (win().__mockSshProbeGate) await win().__mockSshProbeGate;
@@ -5161,15 +5175,29 @@
         },
         addHost: async function (input) {
           if (win().__mockSshAddError) throw new Error(win().__mockSshAddError);
-          counter += 1;
+          // The same address as a removed host: that host comes back under its old id, with its projects.
+          var removed = removedHosts.filter(function (candidate) { return candidate.destination === input.destination; })[0];
+          var hostId;
+          if (removed) {
+            hostId = removed.id;
+            removedHosts = removedHosts.filter(function (candidate) { return candidate.id !== hostId; });
+            var returning = hiddenProjects.filter(function (project) { return project.remote && project.remote.hostId === hostId; });
+            hiddenProjects = hiddenProjects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
+            projects = projects.concat(returning);
+          } else {
+            counter += 1;
+            hostId = 'mock-ssh-host-' + counter;
+          }
           var status = {
             host: {
-              id: 'mock-ssh-host-' + counter,
+              id: hostId,
               name: input.name,
               destination: input.destination,
               key_path: input.signIn.method === 'config' ? null : '/mock/ssh/key',
               key_created: input.signIn.method === 'create-key',
               created_at: new Date().toISOString(),
+              removed_at: null,
+              reveal_pending: false,
             },
             state: 'connected',
             detail: null,
@@ -5181,16 +5209,38 @@
           return status;
         },
         removeHost: async function (hostId) {
+          var gone = hosts.filter(function (status) { return status.host.id === hostId; })[0];
           hosts = hosts.filter(function (status) { return status.host.id !== hostId; });
-          // Main takes the host's projects out of Kangentic with it (they stay on the host).
+          if (gone) removedHosts = removedHosts.concat([{ id: hostId, destination: gone.host.destination }]);
+          // Main hides the host's projects and deletes nothing: they come back with the host.
+          hiddenProjects = hiddenProjects.concat(projects.filter(function (project) { return project.remote && project.remote.hostId === hostId; }));
           projects = projects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
           fire();
         },
-        renameHost: async function (hostId, name) {
+        // Clear data: Kangentic's own data for the host's projects is deleted, the host stays.
+        clearHostData: async function (hostId) {
+          projects = projects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
+          fire();
+        },
+        // window.__mockSshUpdateError: a string that makes updateHost() reject with it (a refused address, a failed sign-in).
+        updateHost: async function (hostId, input) {
+          if (win().__mockSshUpdateError) throw new Error(win().__mockSshUpdateError);
+          var moved = hosts.filter(function (status) { return status.host.id === hostId; })[0];
+          if (moved && input.destination !== moved.host.destination && !input.expectedFingerprint) {
+            throw new Error('Show the new address\'s key before saving it.');
+          }
           hosts = hosts.map(function (status) {
-            return status.host.id === hostId ? Object.assign({}, status, { host: Object.assign({}, status.host, { name: name }) }) : status;
+            if (status.host.id !== hostId) return status;
+            var signIn = input.signIn;
+            var changed = { name: input.name, destination: input.destination };
+            if (signIn) {
+              changed.key_path = signIn.method === 'config' ? null : '/mock/ssh/key';
+              changed.key_created = signIn.method === 'create-key';
+            }
+            return Object.assign({}, status, { host: Object.assign({}, status.host, changed) });
           });
           fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
         },
         reconnectHost: async function (hostId) {
           hosts = hosts.map(function (status) {
@@ -5239,6 +5289,26 @@
           if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
           var known = (win().__mockSshFolders || {})[folderPath];
           return { exists: known ? known.exists : true, path: folderPath, isGitRepo: known ? !!known.isGitRepo : true };
+        },
+        // window.__mockSshDirectories: { [absolute path]: [{ name, isGitRepo }] } the host holds; the default is a
+        // small home with a code folder of two repositories. window.__mockSshFolderError makes the call reject.
+        listDirectories: async function (hostId, directoryPath) {
+          if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
+          var home = '/home/dev';
+          var tree = win().__mockSshDirectories || {
+            '/home/dev': [{ name: 'code', isGitRepo: false }, { name: 'notes', isGitRepo: false }],
+            '/home/dev/code': [{ name: 'api', isGitRepo: true }, { name: 'web', isGitRepo: true }],
+          };
+          var typed = String(directoryPath).trim();
+          var resolved = typed === '~' ? home : typed.indexOf('~/') === 0 ? home + typed.slice(1) : typed;
+          if (resolved.length > 1) resolved = resolved.replace(/\/+$/, '');
+          var insideHome = resolved === home || resolved.indexOf(home + '/') === 0;
+          if (!insideHome) return { path: resolved, insideHome: false, exists: false, entries: [], truncated: false };
+          var entries = tree[resolved];
+          // A folder its parent lists is there, with nothing in it, even when the tree gives it no entry of its own.
+          var parentEntries = tree[resolved.slice(0, resolved.lastIndexOf('/')) || '/'] || [];
+          var listedByParent = parentEntries.some(function (entry) { return entry.name === resolved.slice(resolved.lastIndexOf('/') + 1); });
+          return { path: resolved, insideHome: true, exists: !!entries || listedByParent, entries: entries || [], truncated: false };
         },
         onHostsChanged: function (callback) {
           listeners.push(callback);
@@ -6196,7 +6266,7 @@
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, neverStartedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [] };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, neverStartedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [], hiddenBoards: [] };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
@@ -6238,6 +6308,7 @@
           neverStartedCount: created.filter(neverStarted).length, boardTasks: boardTasks,
           agent: agentSummary(workflow.id),
           stalledTasks: stalledTasks,
+          hiddenBoards: [],
         };
       }
 

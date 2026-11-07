@@ -26,18 +26,27 @@ vi.mock('../../src/main/remote/link/host-installer', () => ({
   installHost: async () => ({ directory: '/home/dev/.kangentic/host/1.0.0', relayCommand: 'node relay.js', installed: true }),
 }));
 vi.mock('../../src/main/remote/install-identity', () => ({ readInstallId: () => 'install-id-for-tests' }));
+const removedHosts = vi.hoisted(() => new Set<string>());
 vi.mock('../../src/main/db/repositories/ssh-host-repository', () => ({
   SshHostRepository: class {
-    list() { return [{ id: 'host-1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' }]; }
-    getById(id: string) { return this.list().find((host) => host.id === id); }
+    list() { return [{ id: 'host-1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '' }].filter((host) => !removedHosts.has(host.id)); }
+    getById(id: string) {
+      return [{ id: 'host-1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '', removed_at: removedHosts.has(id) ? '2026-11-06T00:00:00.000Z' : null }].find((host) => host.id === id);
+    }
   },
 }));
 
 import { createRemoteHosting } from '../../src/main/remote/remote-hosting';
 import { RemoteHostService } from '../../src/main/remote/remote-host-service';
-import { RemoteAgentUnsupportedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { RemoteAgentUnsupportedError, RemoteHostRemovedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
 import { remoteGitRunnerFor, setRemoteGitResolver } from '../../src/main/git/remote-git';
+import { listAgentsOnHost, resetAgentListForTests } from '../../src/main/agent/agent-list';
 import * as path from 'node:path';
+
+/** The project table: what a person picks from, and the rows that also include a removed host's. */
+function projectsOf(visible: unknown[], hidden: unknown[] = []) {
+  return { list: () => visible as never, listIncludingHidden: () => [...visible, ...hidden] as never };
+}
 
 function makeSessionManager() {
   const emitter = new EventEmitter();
@@ -52,6 +61,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   devPorts.leases.length = 0;
   devPorts.listeners.clear();
+  removedHosts.clear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -65,7 +75,7 @@ describe('a link reporting its state', () => {
     const changed: string[] = [];
     const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       onHostsChanged: (hostId) => changed.push(hostId),
       log: () => undefined,
     });
@@ -84,7 +94,7 @@ describe('a link reporting its state', () => {
     const sessionManager = makeSessionManager();
     const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       log: () => undefined,
     });
 
@@ -110,12 +120,10 @@ describe('resolving a project path to its remote', () => {
   function hostingWithProjects() {
     return createRemoteHosting({
       sessionManager: makeSessionManager() as never,
-      projects: () => ({
-        list: () => [
-          { id: 'project-remote', path: remoteProjectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } },
-          { id: 'project-local', path: localProjectPath, remote: null },
-        ] as never,
-      }),
+      projects: () => projectsOf([
+        { id: 'project-remote', path: remoteProjectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } },
+        { id: 'project-local', path: localProjectPath, remote: null },
+      ]),
       log: () => undefined,
     });
   }
@@ -166,6 +174,34 @@ describe('resolving a project path to its remote', () => {
     vi.restoreAllMocks();
   });
 
+  describe('a project hidden because its host was removed', () => {
+    const adapterWithRemoteCli = { name: 'claude', displayName: 'Claude Code', remoteCliName: 'claude' };
+
+    function hostingWithHiddenProject() {
+      removedHosts.add('host-1');
+      return createRemoteHosting({
+        sessionManager: makeSessionManager() as never,
+        projects: () => projectsOf([], [{ id: 'project-remote', path: remoteProjectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } }]),
+        log: () => undefined,
+      });
+    }
+
+    it('still reads as remote, and refuses a start in a sentence, so nothing runs in its empty folder on this computer', async () => {
+      hostingWithHiddenProject();
+
+      const start = resolveRemoteLaunch({ projectPath: remoteProjectPath, cwd: remoteProjectPath, adapter: adapterWithRemoteCli });
+
+      await expect(start).rejects.toBeInstanceOf(RemoteHostRemovedError);
+      await expect(start).rejects.toThrow('Lab');
+    });
+
+    it('asks its host for git, and never this computer, whose folder is only a stand-in', () => {
+      hostingWithHiddenProject();
+
+      expect(remoteGitRunnerFor(path.join(remoteProjectPath, '.kangentic', 'worktrees', '7'))).not.toBeNull();
+    });
+  });
+
   it.runIf(process.platform === 'win32')('matches a remote project path regardless of letter case on Windows', async () => {
     hostingWithProjects();
 
@@ -186,7 +222,7 @@ describe('connecting a host', () => {
     const sessionManager = makeSessionManager();
     const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       // No host program in this build: the connect fails before any ssh.
       hostAsset: () => null,
       log: () => undefined,
@@ -199,6 +235,91 @@ describe('connecting a host', () => {
   });
 });
 
+describe('refusing starts while a host is being removed', () => {
+  const projectPath = path.resolve(path.join('mock', 'shells', 'Held-Project'));
+  // No remote CLI name: a start that gets past the removal check stops at this next refusal instead.
+  const adapterWithoutRemoteCli = { name: 'claude', displayName: 'Claude Code', remoteCliName: undefined };
+
+  function hostingWithProject() {
+    return createRemoteHosting({
+      sessionManager: makeSessionManager() as never,
+      projects: () => projectsOf([{ id: 'project-remote', path: projectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } }]),
+      log: () => undefined,
+    });
+  }
+
+  it('rejects a start for the host\'s project with the removal sentence while the hold is on, and goes on after the release', async () => {
+    const hosting = hostingWithProject();
+    const release = hosting.holdStarts('host-1');
+
+    const held = resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter: adapterWithoutRemoteCli });
+    await expect(held).rejects.toBeInstanceOf(RemoteHostRemovedError);
+    await expect(held).rejects.toThrow('Lab');
+
+    release();
+    await expect(resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter: adapterWithoutRemoteCli }))
+      .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
+  });
+
+  it('holds only the host named', async () => {
+    const hosting = hostingWithProject();
+    hosting.holdStarts('another-host');
+
+    await expect(resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter: adapterWithoutRemoteCli }))
+      .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
+  });
+});
+
+describe('a host\'s link coming back', () => {
+  const projectPath = path.resolve(path.join('mock', 'shells', 'Probe-Project'));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetAgentListForTests();
+  });
+
+  function hostingWithProject() {
+    const sessionManager = makeSessionManager();
+    createRemoteHosting({
+      sessionManager: sessionManager as never,
+      projects: () => projectsOf([{ id: 'project-remote', path: projectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } }]),
+      log: () => undefined,
+    });
+    return sessionManager;
+  }
+
+  it('drops the host\'s agent list, so the next listing asks the host again', async () => {
+    const sessionManager = hostingWithProject();
+    const probe = vi.fn(async () => ({ status: 'missing' as const, version: null, detail: null }));
+    await listAgentsOnHost('host-1', probe);
+    const asked = probe.mock.calls.length;
+    await listAgentsOnHost('host-1', probe);
+    expect(probe).toHaveBeenCalledTimes(asked);
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await listAgentsOnHost('host-1', probe);
+
+    expect(probe).toHaveBeenCalledTimes(asked * 2);
+  });
+
+  it('drops a found spawn probe, so the next start asks the host whether the CLI is still there', async () => {
+    const sessionManager = hostingWithProject();
+    vi.spyOn(RemoteHostService.prototype, 'hostInfo').mockResolvedValue({ home: '/home/dev', shellName: 'bash' } as never);
+    const runCommand = vi.spyOn(RemoteHostService.prototype, 'runCommand').mockResolvedValue({ code: 0, stdout: 'claude 2.1.0', stderr: '', timedOut: false });
+    const versionAsks = (): number => runCommand.mock.calls.filter((call) => call[1].args.includes('--version')).length;
+    const adapter = { name: 'claude', displayName: 'Claude Code', remoteCliName: 'claude' };
+
+    await resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter });
+    await resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter });
+    expect(versionAsks()).toBe(1);
+
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    await resolveRemoteLaunch({ projectPath, cwd: projectPath, adapter });
+
+    expect(versionAsks()).toBe(2);
+  });
+});
+
 describe('the links living in the pty host', () => {
   const asset = { version: '1.0.0', sha256: 'a'.repeat(64), arch: 'x64' as const, filePath: '/asset.tar.gz' };
   const remoteProject = { id: 'project-remote', path: 'mock-shell', remote: { hostId: 'host-1', path: '/home/dev/app' } };
@@ -207,7 +328,7 @@ describe('the links living in the pty host', () => {
     const sessionManager = makeSessionManager();
     const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [remoteProject] as never }),
+      projects: () => projectsOf([remoteProject]),
       hostAsset: () => asset,
       log: () => undefined,
     });
@@ -229,6 +350,23 @@ describe('the links living in the pty host', () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(requests().filter((request) => request.op === 'addHost' && request.hostId === 'host-1')).toHaveLength(2);
+    expect(requests().filter((request) => request.op === 'setForwards')).toEqual([
+      { op: 'setForwards', hostId: 'host-1', ports: [7300] },
+      { op: 'setForwards', hostId: 'host-1', ports: [7300] },
+    ]);
+  });
+
+  it('sends the wanted ports again when a host\'s link is made again, since dropping the link forgot them', async () => {
+    const { hosting, requests } = hostingWithRemoteProject();
+    devPorts.leases.push({ port: 7300, projectId: 'project-remote' });
+    await hosting.connectHost('host-1');
+    devPorts.notifyChanged();
+    await vi.advanceTimersByTimeAsync(150);
+
+    await hosting.hostService.disconnect('host-1');
+    await hosting.connectHost('host-1');
+    await vi.advanceTimersByTimeAsync(150);
+
     expect(requests().filter((request) => request.op === 'setForwards')).toEqual([
       { op: 'setForwards', hostId: 'host-1', ports: [7300] },
       { op: 'setForwards', hostId: 'host-1', ports: [7300] },
@@ -260,14 +398,28 @@ describe('telling the app a host connected for the first time', () => {
   function hostingTellingUs() {
     const sessionManager = makeSessionManager();
     const connected: string[] = [];
-    createRemoteHosting({
+    const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       onHostFirstConnected: (hostId) => connected.push(hostId),
       log: () => undefined,
     });
-    return { sessionManager, connected };
+    return { sessionManager, connected, hosting };
   }
+
+  it('says so again for a host that left and came back, whichever connection that turns out to be', () => {
+    const { sessionManager, connected, hosting } = hostingTellingUs();
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+    expect(connected).toEqual(['host-1']);
+
+    hosting.expectFirstConnect('host-1');
+    // The first dial after the re-add failed: a later Reconnect is what brings it up.
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connecting', detail: null });
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'reconnecting', detail: 'Connection refused' });
+    sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
+
+    expect(connected).toEqual(['host-1', 'host-1']);
+  });
 
   it('says so once per host per run, so a paused remote task resumes without a manual Resume', () => {
     const { sessionManager, connected } = hostingTellingUs();
@@ -294,7 +446,7 @@ describe('tidying old program versions on a host', () => {
     const sessionManager = makeSessionManager();
     createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       ...(hostAsset ? { hostAsset } : {}),
       log: () => undefined,
     });
@@ -335,7 +487,7 @@ describe('tidying old program versions on a host', () => {
     const lines: string[] = [];
     const hosting = createRemoteHosting({
       sessionManager: sessionManager as never,
-      projects: () => ({ list: () => [] }),
+      projects: () => projectsOf([]),
       hostAsset: () => asset,
       log: (line) => lines.push(line),
     });

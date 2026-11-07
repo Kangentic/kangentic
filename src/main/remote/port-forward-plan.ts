@@ -48,6 +48,12 @@ export class PortForwardPlan {
     this.schedule();
   }
 
+  /** A host's link was made again, which may follow one dropped with its forwards, so its set goes out again. */
+  resendHost(hostId: string): void {
+    this.sent.delete(hostId);
+    this.schedule();
+  }
+
   /** The wanted ports of every host, from the ledger, and whether each changed since it was sent. */
   syncNow(): Promise<void> {
     // One at a time, so two overlapping syncs cannot send an older set after a newer one.

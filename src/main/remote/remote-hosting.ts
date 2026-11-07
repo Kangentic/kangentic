@@ -26,7 +26,7 @@ import { createRemoteWorktreeResolver } from './remote-worktrees';
 import { setRemoteGitResolver } from '../git/remote-git';
 import { createRemoteGitResolver } from './host-git';
 import { RemoteHostService } from './remote-host-service';
-import { probeAgentOnHost, type HostAgentProbe } from './host-agent-probe';
+import { createSpawnAgentProbe, probeAgentOnHost, type HostAgentProbe } from './host-agent-probe';
 import { invalidateHostAgentList } from '../agent/agent-list';
 import type { ProjectRemote } from '../../shared/types';
 import { RemoteSessionRelay } from './remote-session-relay';
@@ -41,6 +41,10 @@ export interface RemoteHosting {
   admin: SshHostAdmin | null;
   /** Connect one host, recording the outcome. A setup failure becomes `unreachable` with its words and does not throw. */
   connectHost(hostId: string): Promise<void>;
+  /** Count this host's next connection as its first of the run: it left and came back, so its projects start with it. */
+  expectFirstConnect(hostId: string): void;
+  /** Refuse every start on a host while it is being removed. Call the answer once the host is marked removed or the removal failed. */
+  holdStarts(hostId: string): () => void;
   /** Connect every stored host at once, recording what could not be reached. A host that is off delays no other. */
   connectAll(): Promise<void>;
   /** The host and folder a project's shell folder stands for, or null for a project on this computer. */
@@ -51,7 +55,7 @@ export interface RemoteHosting {
 
 export interface RemoteHostingDeps {
   sessionManager: SessionManager;
-  projects: () => Pick<ProjectRepository, 'list'>;
+  projects: () => Pick<ProjectRepository, 'list' | 'listIncludingHidden'>;
   /** The program installed on a host: this build's, with its checksum, or null when the build carries none. */
   hostAsset?: () => HostAsset | readonly HostAsset[] | null;
   /** The `ssh` program; `defaultSshClientPaths().ssh` by default (Windows' own OpenSSH where it exists). */
@@ -105,22 +109,29 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const relay = new RemoteSessionRelay({ files: hostService, log });
   deps.sessionManager.setRemoteSessionRelay(relay);
   const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
-  const pruned = new Set<string>();
+  const firstConnected = new Set<string>();
+  const startsHeld = new Set<string>();
+  const spawnAgentProbe = createSpawnAgentProbe((hostId, request) => hostService.runCommand(hostId, request));
   // A link reports its own state; a drop is a state here, never the end of a session.
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
     status.noteLink(event.hostId, event.state, event.detail);
     // What is installed there may have changed while the link was away, and a list read with it down is unknown.
-    if (event.state === 'connected') invalidateHostAgentList(event.hostId);
+    if (event.state === 'connected') {
+      invalidateHostAgentList(event.hostId);
+      spawnAgentProbe.forgetHost(event.hostId);
+    }
     // Once per host per run, when its link first comes up: tidy the versions of the program a host kept.
-    if (event.state === 'connected' && !pruned.has(event.hostId)) {
-      pruned.add(event.hostId);
+    if (event.state === 'connected' && !firstConnected.has(event.hostId)) {
+      firstConnected.add(event.hostId);
       void pruneOldProgramVersions(event.hostId);
       deps.onHostFirstConnected?.(event.hostId);
     }
   });
 
+  // Every row: a project hidden because its host was removed is still a remote one, and its folder here is only a
+  // stand-in. Read as local, a start already on its way would run in that empty folder on this computer.
   const remoteOfProjectPath = (projectPath: string): { hostId: string; path: string } | null =>
-    deps.projects().list().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null;
+    deps.projects().listIncludingHidden().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null;
   // A remote project's worktrees are made and removed on its host, by the git there.
   setRemoteWorktreeResolver(createRemoteWorktreeResolver({
     remoteOfProjectPath,
@@ -130,7 +141,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   }));
   // Every read of git for a remote project's folder runs on its host (`git/remote-git.ts` lists who asks this first).
   setRemoteGitResolver(createRemoteGitResolver({
-    remoteProjects: () => deps.projects().list().flatMap((project) => (project.remote ? [{ path: project.path, remote: project.remote }] : [])),
+    remoteProjects: () => deps.projects().listIncludingHidden().flatMap((project) => (project.remote ? [{ path: project.path, remote: project.remote }] : [])),
     runCommand: (hostId, request) => hostService.runCommand(hostId, request),
   }));
   setRemoteLaunchResolver(createRemoteLaunchResolver({
@@ -143,8 +154,9 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
     runCommand: (hostId, request) => hostService.runCommand(hostId, request),
     homeMirror: (hostId) => PATHS.remoteHomeMirror(hostId),
-    probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
+    probeAgent: (hostId, cliName) => spawnAgentProbe.probe(hostId, cliName),
     hostName: (hostId) => hosts.getById(hostId)?.name ?? null,
+    isHostRemoved: (hostId) => startsHeld.has(hostId) || Boolean(hosts.getById(hostId)?.removed_at),
   }));
 
   // The reserved dev-server ports of remote projects reach this computer once a server listens on them
@@ -162,6 +174,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     status.set(hostId, 'connecting');
     try {
       await hostService.connect(hostId);
+      // Dropping a link forgets its wanted ports, and the plan would not send a set it thinks is unchanged.
+      forwardPlan.resendHost(hostId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`[remote] host ${hostId.slice(0, 8)} was not connected: ${message}`);
@@ -185,6 +199,11 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     status,
     admin: null,
     connectHost,
+    expectFirstConnect: (hostId) => { firstConnected.delete(hostId); },
+    holdStarts: (hostId) => {
+      startsHeld.add(hostId);
+      return () => { startsHeld.delete(hostId); };
+    },
     remoteOfProjectPath,
     probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
     async connectAll() {

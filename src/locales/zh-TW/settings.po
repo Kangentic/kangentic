@@ -11,6 +11,10 @@ msgstr ""
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}。開啟文件頁面。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "{comboName} is already in use by your OS or another app. Pick another."
 msgstr "{comboName} 已被你的作業系統或其他應用程式佔用，請另選一組。"
@@ -111,11 +115,6 @@ msgstr "{projectCount, plural, other {# 個專案}}"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs} 毫秒"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
-msgstr "{removeProjectCount, plural, other {要移除「{removeName}」嗎？其 # 個專案會從 Kangentic 移除，代理程式也會暫停。主機上的任何內容都不會遭到刪除。}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
@@ -558,6 +557,7 @@ msgid "Clear browser data?"
 msgstr "要清除瀏覽器資料嗎？"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Clear data"
 msgstr "清除資料"
 
@@ -979,6 +979,11 @@ msgstr "正在下載"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "每個代理工作階段都會取得一個本機 MCP 伺服器，並自行探索這些工具。代理建立的任務會出現在看板上，並顯示提示。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Editors"
 msgstr "編輯器"
@@ -1176,11 +1181,6 @@ msgstr "按住快速鍵說話，即可將語音輸入到終端機或文字欄位
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "按住錄音，放開後插入轉錄文字。可在快速鍵中重新綁定。"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Host name"
-msgstr "主機名稱"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hosts"
@@ -1356,6 +1356,10 @@ msgstr "Kangentic 會使用您的 SSH 設定、代理程式和金鑰，與終端
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 營運的中繼"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Keep capturing briefly after release so the last word is not clipped."
 msgstr "放開後再擷取一下，避免最後一個字被截斷。"
@@ -1363,6 +1367,10 @@ msgstr "放開後再擷取一下，避免最後一個字被截斷。"
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Keep editing"
 msgstr "繼續編輯"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2057,11 +2065,6 @@ msgstr "遠端"
 msgid "Remove"
 msgstr "移除"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
-msgstr "要移除「{removeName}」嗎？Kangentic 將停止連線至該主機。主機上的任何內容都不會遭到刪除。"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remove a task's worktree when the task completes."
 msgstr "任務完成時移除其工作樹。"
@@ -2071,8 +2074,15 @@ msgstr "任務完成時移除其工作樹。"
 msgid "Remove host"
 msgstr "移除主機"
 
-#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Rename"
 msgstr "重新命名"
 
@@ -2159,12 +2169,12 @@ msgstr "建立工作樹後執行。Windows 上經由 cmd.exe 執行，僅限 POS
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "除非選擇雲端精修，否則在本機執行。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Save"
 msgstr "儲存"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
-#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Save name"
 msgstr "儲存名稱"
 
@@ -2502,6 +2512,10 @@ msgstr "每個新工作流程開始時它收到的第一則訊息。"
 msgid "The Kangentic relay"
 msgstr "Kangentic 中繼伺服器"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."
 msgstr "選單、設定與對話方塊的語言。"
@@ -2561,6 +2575,7 @@ msgstr "佈景主題"
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "此快速鍵固定，無法重新綁定"
 
+#. placeholder {0}: editProbe.hostname
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "This is the key {0} presents."
@@ -2633,6 +2648,10 @@ msgstr ""
 #, fuzzy
 msgid "Trust this key"
 msgstr "信任此金鑰"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"

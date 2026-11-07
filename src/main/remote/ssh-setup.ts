@@ -326,6 +326,9 @@ export function isValidPublicKey(line: string): boolean {
   return PUBLIC_KEY_PATTERN.test(line.trim());
 }
 
+/** Beside a host's key folder: the old keys, while an edit of its sign-in is unproved. */
+export const KEYS_ASIDE_SUFFIX = '.previous';
+
 export function hostKeyDirectory(configDirectory: string, hostId: string): string {
   if (!/^[0-9a-f-]{8,64}$/i.test(hostId)) throw new Error('That is not a valid host id.');
   return path.join(configDirectory, 'ssh', hostId);
@@ -399,7 +402,10 @@ export function isEncryptedOpenSshKey(content: string): boolean {
 
 /** Remove the keys Kangentic holds for a host. */
 export async function deleteHostKeys(hostId: string, deps: SshSetupDeps): Promise<void> {
-  await fs.rm(hostKeyDirectory(deps.configDirectory, hostId), { recursive: true, force: true });
+  const directory = hostKeyDirectory(deps.configDirectory, hostId);
+  await fs.rm(directory, { recursive: true, force: true });
+  // Left by an edit of the host that ended midway. It holds a private key.
+  await fs.rm(`${directory}${KEYS_ASIDE_SUFFIX}`, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------------------------

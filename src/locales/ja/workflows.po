@@ -498,6 +498,10 @@ msgstr "一時停止中"
 msgid "Paused {pausedTime}"
 msgstr "一時停止 {pausedTime}"
 
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Paused: {boards} is on a removed host"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 #, fuzzy
 msgid "Plan approval"

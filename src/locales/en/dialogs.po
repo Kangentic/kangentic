@@ -497,6 +497,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Branch"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr "Browse"
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Cache read"
@@ -558,6 +562,10 @@ msgstr "Changes - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "Changes are open in their own window"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr "Choose"
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose a folder on this machine"
@@ -1007,6 +1015,10 @@ msgstr "Diff"
 msgid "Diff scope"
 msgstr "Diff scope"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr "Directory"
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Discard"
@@ -1192,10 +1204,6 @@ msgstr "Filter files..."
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Flat list"
 msgstr "Flat list"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-msgid "Folder on the host"
-msgstr "Folder on the host"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Frequency"
@@ -1589,6 +1597,10 @@ msgstr "No description"
 msgid "No files changed"
 msgstr "No files changed"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr "No folders here."
+
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
 msgstr "No fonts match \"{typedFilter}\""
@@ -1733,6 +1745,10 @@ msgstr "One at a time"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Only one agent CLI detected - install another to choose"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr "Only the first folders are shown. Type the rest in the Directory field."
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
 msgstr "Only the label changes. Tasks already using this profile stay on it."
@@ -1839,6 +1855,10 @@ msgstr "Overview"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Page kept"
 msgstr "Page kept"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr "Path"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -2529,6 +2549,10 @@ msgstr "This commit changed no files"
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "This computer"
 msgstr "This computer"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr "This directory is not on the host."
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."

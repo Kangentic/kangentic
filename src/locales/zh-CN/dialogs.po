@@ -501,6 +501,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "分支"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Cache read"
@@ -562,6 +566,10 @@ msgstr "更改 - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "更改已在单独的窗口中打开"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -1016,6 +1024,10 @@ msgstr "差异"
 msgid "Diff scope"
 msgstr "差异范围"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Discard"
@@ -1201,11 +1213,6 @@ msgstr "筛选文件…"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Flat list"
 msgstr "平铺列表"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Folder on the host"
-msgstr "主机上的文件夹"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Frequency"
@@ -1601,6 +1608,10 @@ msgstr "无描述"
 msgid "No files changed"
 msgstr "无文件更改"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
+
 #: src/renderer/components/dialogs/FontCombobox.tsx
 msgid "No fonts match \"{typedFilter}\""
 msgstr "没有与「{typedFilter}」匹配的字体"
@@ -1746,6 +1757,10 @@ msgstr "逐个执行"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "仅检测到一个智能体 CLI，请安装其他 CLI 以供选择"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 msgid "Only the label changes. Tasks already using this profile stay on it."
 msgstr "仅更改名称。已使用此配置方案的任务将继续使用它。"
@@ -1854,6 +1869,10 @@ msgstr "概览"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Page kept"
 msgstr "页面已保留"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Path copied"
@@ -2550,6 +2569,10 @@ msgstr "此提交未更改任何文件"
 #, fuzzy
 msgid "This computer"
 msgstr "此计算机"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."

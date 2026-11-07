@@ -125,6 +125,16 @@ export function runGlobalMigrations(db: Database.Database): void {
     );
   `);
 
+  // A removed host keeps its row, with the time it was removed (UTC ISO 8601). Its projects are hidden,
+  // not deleted, and adding the same address again restores this row, so they come back as they were.
+  const sshHostColumns = db.pragma('table_info(ssh_hosts)') as Array<{ name: string }>;
+  if (!sshHostColumns.some((col) => col.name === 'removed_at')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN removed_at TEXT DEFAULT NULL');
+  }
+  if (!sshHostColumns.some((col) => col.name === 'reveal_pending')) {
+    db.exec('ALTER TABLE ssh_hosts ADD COLUMN reveal_pending INTEGER NOT NULL DEFAULT 0');
+  }
+
   // A project on a host names it and the repo's folder there. Both are NULL for every project that
   // existed before this, which is every project on this computer: nothing is backfilled.
   const remoteProjectColumns = db.pragma('table_info(projects)') as Array<{ name: string }>;

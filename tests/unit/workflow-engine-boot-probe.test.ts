@@ -242,6 +242,7 @@ describe('the workflow engine at boot', () => {
     register(PROJECT_IDS);
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => registered,
         getById: (id: string) => registered.find((project) => project.id === id),
       },
@@ -726,7 +727,7 @@ describe('the Workflows view across boards', () => {
     const running = workflowIn('home');
     const homeTask = workflowTask('home', 'To Do', running, 'home');
     const projects = ['home', 'missing'].map((id) => ({ id, name: id, path: `/mock/${id}` }));
-    const context = { projectRepo: { list: () => projects } } as unknown as IpcContext;
+    const context = { projectRepo: { listHidden: () => [], list: () => projects } } as unknown as IpcContext;
 
     expect(workflowTasks(context, 'home', running).map(({ task }) => task.id)).toEqual([homeTask]);
     expect(listWorkflowSummaries(context, 'missing')).toEqual([]);

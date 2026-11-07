@@ -12,6 +12,10 @@ msgstr ""
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. Abre la página de documentación."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -134,11 +138,6 @@ msgstr "{projectCount, plural, one {# proyecto} many {# de proyectos} other {# p
 #, fuzzy
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs} ms"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
-msgstr "{removeProjectCount, plural, one {¿Quitar \"{removeName}\"? Su # proyecto sale de Kangentic y sus agentes se suspenden. No se elimina nada en el host.} many {¿Quitar \"{removeName}\"? Sus # de proyectos salen de Kangentic y sus agentes se suspenden. No se elimina nada en el host.} other {¿Quitar \"{removeName}\"? Sus # proyectos salen de Kangentic y sus agentes se suspenden. No se elimina nada en el host.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -675,6 +674,7 @@ msgid "Clear browser data?"
 msgstr "¿Borrar los datos del navegador?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "Borrar datos"
@@ -1193,6 +1193,11 @@ msgstr "Descargando"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "Cada sesión de agente obtiene un servidor MCP local y descubre estas herramientas por sí sola. Las tareas que crea un agente aparecen en el tablero con una notificación."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1435,11 +1440,6 @@ msgstr "Mantén pulsado para hablar en un terminal o campo de texto."
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "Mantén pulsado para grabar; suelta para insertar la transcripción. Reasígnalo en Teclas de acceso rápido."
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Host name"
-msgstr "Nombre del host"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hosts"
@@ -1653,6 +1653,10 @@ msgstr "Kangentic usa su configuración, agente y claves de SSH, como lo hace un
 msgid "Kangentic-operated relay"
 msgstr "Relay operado por Kangentic"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
@@ -1662,6 +1666,10 @@ msgstr "Sigue capturando un momento tras soltar para que no se corte la última 
 #, fuzzy
 msgid "Keep editing"
 msgstr "Seguir editando"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2498,11 +2506,6 @@ msgstr "Remota"
 msgid "Remove"
 msgstr "Quitar"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
-msgstr "¿Quitar \"{removeName}\"? Kangentic dejará de conectarse a él. No se elimina nada en el host."
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Remove a task's worktree when the task completes."
@@ -2513,8 +2516,15 @@ msgstr "Eliminar el árbol de trabajo de una tarea cuando esta se complete."
 msgid "Remove host"
 msgstr "Quitar host"
 
-#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "Cambiar nombre"
@@ -2622,13 +2632,13 @@ msgstr "Se ejecuta tras crear un árbol de trabajo. En Windows se ejecuta median
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "Se ejecuta en este equipo salvo que elijas refinar en la nube."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
 msgstr "Guardar"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
-#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Save name"
 msgstr "Guardar nombre"
@@ -3034,6 +3044,10 @@ msgstr "El primer mensaje que recibe para un nuevo flujo de trabajo."
 msgid "The Kangentic relay"
 msgstr "El relay de Kangentic"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -3106,6 +3120,7 @@ msgstr "Tema"
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "Este atajo de teclado es fijo y no se puede reasignar"
 
+#. placeholder {0}: editProbe.hostname
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "This is the key {0} presents."
@@ -3190,6 +3205,10 @@ msgstr ""
 #, fuzzy
 msgid "Trust this key"
 msgstr "Confiar en esta clave"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy

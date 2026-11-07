@@ -173,10 +173,211 @@ describe('connect', () => {
     expect(withoutSessions).not.toHaveProperty('sessions');
   });
 
+  it('refuses a host that was removed, and installs nothing there', async () => {
+    const removedHost = host({ removed_at: '2026-11-06T00:00:00.000Z' });
+    const { service, order } = makeService({ hosts: { getById: () => removedHost, list: () => [] } });
+
+    await expect(service.connect('host-a')).rejects.toThrow('not set up');
+    expect(order).toEqual([]);
+  });
+
+  describe('a disconnect while the install is still running', () => {
+    /** An install that waits for `release`, the first time only. */
+    function gatedInstall() {
+      let release = (): void => undefined;
+      const open = new Promise<void>((resolve) => { release = resolve; });
+      let installs = 0;
+      const harness = makeService({
+        install: async () => {
+          installs += 1;
+          if (installs === 1) await open;
+          return { directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true };
+        },
+      });
+      return { ...harness, release, installCount: () => installs };
+    }
+
+    it('adds no link and leaves the host disconnected', async () => {
+      const { service, sent, release } = gatedInstall();
+
+      const connecting = service.connect('host-a');
+      await service.disconnect('host-a');
+      release();
+      await connecting;
+
+      expect(sent.filter((request) => request.op === 'addHost')).toEqual([]);
+      expect(service.isConnected('host-a')).toBe(false);
+      expect(service.connectedHosts()).toEqual([]);
+    });
+
+    it('ends a connect that joined before the disconnect with it, so a Reconnect cannot bring back a removed host', async () => {
+      const { service, sent, release, installCount } = gatedInstall();
+
+      const first = service.connect('host-a');
+      const joined = service.connect('host-a');
+      await service.disconnect('host-a');
+      release();
+      await Promise.all([first, joined]);
+
+      expect(installCount()).toBe(1);
+      expect(sent.filter((request) => request.op === 'addHost')).toEqual([]);
+      expect(service.isConnected('host-a')).toBe(false);
+    });
+
+    it('connects for a connect asked for after the disconnect, with a second install', async () => {
+      const { service, sent, release, installCount } = gatedInstall();
+
+      const first = service.connect('host-a');
+      await service.disconnect('host-a');
+      const afterwards = service.connect('host-a');
+      release();
+      await Promise.all([first, afterwards]);
+
+      expect(installCount()).toBe(2);
+      expect(sent.filter((request) => request.op === 'addHost')).toHaveLength(1);
+      expect(service.isConnected('host-a')).toBe(true);
+    });
+
+    it('still connects a later connect when the dropped install fails', async () => {
+      let installs = 0;
+      let failFirst = (): void => undefined;
+      const firstFails = new Promise<void>((_resolve, reject) => { failFirst = () => reject(new Error('the host went away')); });
+      const { service } = makeService({
+        install: async () => {
+          installs += 1;
+          if (installs === 1) await firstFails;
+          return { directory: '/home/dev/.kangentic/host/1.2.3', relayCommand: 'node relay.js', installed: true };
+        },
+      });
+
+      const first = service.connect('host-a');
+      await service.disconnect('host-a');
+      const afterwards = service.connect('host-a');
+      failFirst();
+
+      await expect(first).rejects.toThrow('the host went away');
+      await afterwards;
+      expect(service.isConnected('host-a')).toBe(true);
+    });
+
+    it('does not count the host connected when the disconnect lands while addHost is on its way', async () => {
+      let answerAddHost = (): void => undefined;
+      const addHostAnswered = new Promise<void>((resolve) => { answerAddHost = resolve; });
+      let addHostSent = (): void => undefined;
+      const addHostReached = new Promise<void>((resolve) => { addHostSent = resolve; });
+      const { service } = makeService({
+        send: async (request) => {
+          if (request.op !== 'addHost') return { ok: true };
+          addHostSent();
+          await addHostAnswered;
+          return { ok: true };
+        },
+      });
+
+      const connecting = service.connect('host-a');
+      await addHostReached;
+      await service.disconnect('host-a');
+      answerAddHost();
+      await connecting;
+
+      // Read after a restart of the process holding the links: it would add the host back.
+      expect(service.connectedHosts()).toEqual([]);
+    });
+  });
+
   it('gives every connection a connect timeout, so a host that is off fails in seconds', () => {
     const args = sshArgsFor(host());
     expect(args).toContain('ConnectTimeout=15');
     expect(args.at(-1)).toBe(host().destination);
+  });
+});
+
+describe('ending what a host still runs from before it was removed', () => {
+  const session = (sessionId: string, projectId: string, pid: number, alive = true) => ({ sessionId, taskId: 'task', projectId, pid, alive, exitCode: alive ? null : 0, wirePtyId: null, inAltScreen: false });
+
+  /** A helper whose snapshots answer in turn, the last one for good. */
+  function serviceWithSnapshots(snapshots: Array<ReturnType<typeof session>[]>, overrides: Partial<RemoteHostServiceDeps> = {}) {
+    const commands: Array<{ file: string; args: string[] }> = [];
+    let asked = 0;
+    const { service } = makeService({
+      send: async (request) => {
+        if (request.op === 'helper' && request.method === 'snapshot') {
+          const answer = snapshots[Math.min(asked, snapshots.length - 1)];
+          asked += 1;
+          return { ownerEpoch: 3, daemonPid: 1, daemonStartedAt: '', sessions: answer };
+        }
+        if (request.op === 'helper' && request.method === 'runCommand') {
+          commands.push(request.params as { file: string; args: string[] });
+          return { code: 0, stdout: '', stderr: '', timedOut: false };
+        }
+        return { ok: true };
+      },
+      ...overrides,
+    });
+    return { service, commands };
+  }
+
+  it('hangs up only the live sessions of these projects, passing each pid as an argument, and waits until they are gone', async () => {
+    const { service, commands } = serviceWithSnapshots([
+      [session('left', 'project-a', 4100), session('elsewhere', 'project-other', 4200), session('finished', 'project-a', 4300, false)],
+      [session('left', 'project-a', 4100, false), session('elsewhere', 'project-other', 4200)],
+    ]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).resolves.toBe(1);
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].file).toBe('sh');
+    expect(commands[0].args.slice(-1)).toEqual(['4100']);
+    expect(commands[0].args[1]).not.toContain('4100');
+  });
+
+  it('asks nothing further of a host holding none of them', async () => {
+    const { service, commands } = serviceWithSnapshots([[session('elsewhere', 'project-other', 4200)]]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).resolves.toBe(0);
+
+    expect(commands).toEqual([]);
+  });
+
+  it('leaves a session this app holds a PTY for', async () => {
+    const { service, commands } = serviceWithSnapshots(
+      [[session('ours', 'project-a', 4100)]],
+      { liveSessions: () => [{ sessionId: 'ours', ptyId: 7 }] },
+    );
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).resolves.toBe(0);
+
+    expect(commands).toEqual([]);
+  });
+
+  it('rejects when a session outlives the wait, so nothing starts a second agent on its conversation', async () => {
+    const { service } = serviceWithSnapshots([[session('stuck', 'project-a', 4100)]]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']), { timeoutMs: 20, pollMs: 5 })).rejects.toThrow('still running');
+  });
+
+  it.each([0, -1, 1])('rejects a record with pid %i and runs no command, since kill reads 0 and -1 as whole groups', async (pid) => {
+    const { service, commands } = serviceWithSnapshots([[session('odd', 'project-a', pid)]]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).rejects.toThrow(`pid ${pid}`);
+
+    expect(commands).toEqual([]);
+  });
+
+  it('rejects a pid that is not a whole number, and ends none of the others', async () => {
+    const { service, commands } = serviceWithSnapshots([[session('fine', 'project-a', 4100), session('odd', 'project-a', Number.NaN)]]);
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).rejects.toThrow('cannot be ended');
+
+    expect(commands).toEqual([]);
+  });
+
+  it('rejects when the host cannot be asked, and never reads that as nothing running', async () => {
+    const { service } = serviceWithSnapshots([], {
+      send: async () => { throw new Error('the link is down'); },
+    });
+
+    await expect(service.endSessionsLeftRunning('host-a', new Set(['project-a']))).rejects.toThrow('the link is down');
   });
 });
 

@@ -285,7 +285,8 @@ export class WorkflowEngineHost {
       const unreadProjectIds = await this.lookAtUnopenedProjects(projectIds);
       if (this.disposed) return;
       const startedAt = performance.now();
-      const { intents, titles, taskCounts } = this.evaluate(projectIds, unreadProjectIds);
+      const hiddenProjectIds = this.context.projectRepo.listHidden().map((project) => project.id);
+      const { intents, titles, taskCounts } = this.evaluate(projectIds, unreadProjectIds, hiddenProjectIds);
       this.recordDuration(performance.now() - startedAt);
       for (const intent of intents) this.carryOut(intent, titles, taskCounts);
       this.retryUnreadLater(unreadProjectIds.size > 0);
@@ -387,6 +388,7 @@ export class WorkflowEngineHost {
   private evaluate(
     projectIds: string[],
     unreadProjectIds: Set<string>,
+    hiddenProjectIds: string[],
   ): { intents: CoreIntent[]; titles: Map<string, string>; taskCounts: Map<string, number> } {
     const registered = new Set(projectIds);
     // A looked-at project that was opened since, by anything, is read like any
@@ -461,12 +463,36 @@ export class WorkflowEngineHost {
       if (now < failure.retryAt) blocked.add(key);
     }
     const freeSlots = this.context.sessionManager.getFreeAgentSlots() - this.inFlightSlots.size;
-    const intents = planPass(snapshots, freeSlots, blocked, this.columnRoomReader());
+    const planned = planPass(snapshots, freeSlots, blocked, this.columnRoomReader());
+    const held = hiddenProjectIds.length > 0 ? this.workflowsOnHiddenBoards(hiddenProjectIds) : EMPTY_ID_SET;
+    // A workflow with tasks on a hidden board is paused at the removal. This holds one that was not, and
+    // a paused one, which can otherwise complete: the snapshot never saw those tasks, so all it read may be done.
+    const intents = planned.filter((intent) => intent.kind === 'drop-links' || !held.has(intent.workflowId));
     return {
       intents: unreadProjectIds.size > 0 ? withoutUnreadOutcomes(intents, snapshots, unreadProjectIds) : intents,
       titles,
       taskCounts,
     };
+  }
+
+  /**
+   * The workflows holding a task on a board hidden because its SSH host was removed. A board that cannot be
+   * read here is skipped: its workflows' snapshots are no less complete than the next pass's, and nothing about
+   * a hidden board changes between passes, since nothing can move its tasks.
+   */
+  private workflowsOnHiddenBoards(hiddenProjectIds: string[]): Set<string> {
+    const held = new Set<string>();
+    for (const projectId of hiddenProjectIds) {
+      try {
+        const db = getOpenProjectDb(projectId);
+        const memberOf = db ? new TaskRepository(db).workflowIdsOnBoard() : probeWorkflowProject(projectId).memberOf;
+        for (const workflowId of memberOf) held.add(workflowId);
+      } catch (error) {
+        if (!isSqliteError(error)) throw error;
+        console.warn(`[WORKFLOW] Could not read hidden project ${projectId.slice(0, 8)}:`, error);
+      }
+    }
+    return held;
   }
 
   /**
@@ -662,6 +688,8 @@ function withoutUnreadOutcomes(intents: CoreIntent[], snapshots: CoreWorkflow[],
     ));
   });
 }
+
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
 
 function sharesAny(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   for (const value of left) {

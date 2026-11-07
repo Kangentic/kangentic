@@ -27,6 +27,7 @@ const {
   mockStat,
   mockRemoveWithRetry,
   mockProjectList,
+  mockHiddenProjects,
   mockTaskRows,
   mockDbThrows,
 } = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ const {
   mockStat: vi.fn((): Promise<{ mtimeMs: number }> => Promise.resolve({ mtimeMs: 0 })),
   mockRemoveWithRetry: vi.fn((): Promise<void> => Promise.resolve()),
   mockProjectList: vi.fn((): { id: string; path: string }[] => []),
+  mockHiddenProjects: vi.fn((): { id: string; path: string }[] => []),
   mockTaskRows: vi.fn((): { id: string }[] => []),
   mockDbThrows: vi.fn((): boolean => false),
 }));
@@ -68,6 +70,7 @@ vi.mock('../../src/main/git/rm-with-retry', () => ({
 vi.mock('../../src/main/db/repositories/project-repository', () => ({
   ProjectRepository: class {
     list = () => mockProjectList();
+    listIncludingHidden = () => [...mockProjectList(), ...mockHiddenProjects()];
   },
 }));
 
@@ -105,6 +108,7 @@ beforeEach(() => {
   mockStat.mockResolvedValue({ mtimeMs: 0 }); // epoch: older than the grace period
   mockRemoveWithRetry.mockResolvedValue(undefined);
   mockProjectList.mockReturnValue([{ id: PROJECT, path: '/dev/project' }]);
+  mockHiddenProjects.mockReturnValue([]);
   mockTaskRows.mockReturnValue([{ id: TASK_LIVE }]);
   mockDbThrows.mockReturnValue(false);
 });
@@ -201,6 +205,18 @@ describe('sweepOrphanedBrowserPartitions', () => {
     ]);
     const summary = await sweepOrphanedBrowserPartitions(USER_DATA);
     expect(summary.removed).toEqual([taskDir(PROJECT_GONE, TASK_LIVE), identityDir(PROJECT_GONE)]);
+  });
+
+  // Removing an SSH host hides its projects and deletes nothing, so its browser logins stay for when it comes back.
+  it('keeps every jar of a project hidden because its host was removed', async () => {
+    silenceConsole();
+    mockHiddenProjects.mockReturnValue([{ id: PROJECT_GONE, path: '/dev/hidden' }]);
+    mockReaddir.mockResolvedValue([
+      dirent(taskDir(PROJECT_GONE, TASK_LIVE)),
+      dirent(identityDir(PROJECT_GONE)),
+    ]);
+    const summary = await sweepOrphanedBrowserPartitions(USER_DATA);
+    expect(summary.removed).toEqual([]);
   });
 
   it('reclaims an abandoned pre-task-keying jar', async () => {

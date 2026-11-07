@@ -122,6 +122,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {자동} other {수동}}, 이 작업에 설정됨({boardName}의 {columnName} 열은 {columnValue, select, automatic {자동} other {수동}})."
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "작업은 자기 자신을 기다릴 수 없습니다."

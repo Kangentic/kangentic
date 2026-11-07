@@ -86,6 +86,7 @@ describe('reads of a project id that workflow data stores, after that project is
     ];
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },

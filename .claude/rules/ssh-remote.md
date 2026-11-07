@@ -6,6 +6,7 @@ paths:
   - "src/main/pty/host/pty-host-client.ts"
   - "src/main/pty/shutdown/session-shutdown.ts"
   - "src/main/db/repositories/ssh-host-repository.ts"
+  - "src/main/db/repositories/project-repository.ts"
   - "tests/unit/remote-*.test.ts"
 ---
 # Rule: a session on a remote host is never treated as a process on this machine
@@ -125,6 +126,27 @@ process, a path tested against the wrong disk, an environment that overwrites th
   which finds this computer's CLI. The answer has three states: only the host's own "not found" is
   `missing`, and a failed ask is `unknown` with its reason, which is never cached and never shown as
   "Not found". A spawn refuses `missing` with `RemoteAgentMissingError` and goes on for `unknown`.
+- **Removing a host hides its projects and deletes nothing, and a hidden project is never swept.** Remove
+  refuses every start on the host from its first step (`holdStarts`), since the board stays usable while the key
+  comes off, then marks the host row `removed_at` and `ProjectRepository.list/getById/getLastOpened` leave its
+  projects out (`listOnHost` still finds them). It stops their agents as the system's (not a held pause), takes the key
+  Kangentic made off the host and deletes it here. The same address added again restores that row, so each
+  project keeps its host and directory, and activates them once the host connects, after ending what the
+  host still runs for them (a Remove with the link down could not), so one conversation never has two
+  agents. Clear data is the only local delete of a host's projects, shell folders and transcript copy.
+  **A sweep, a prune, a deletion or a count of survivors reads every row, hidden ones included**
+  (`listIncludingHidden`, `listHidden`, `isHidden`, `listOnHost`), because "not in the list" is not
+  "gone": a jar sweep on `list()` deleted a hidden project's browser logins. Only what a person or an agent
+  picks from reads `list()`. A workflow with a task on a hidden board is paused at the Remove, never
+  completes, and refuses Resume until the board is back.
+- **A hidden project is still remote.** `remoteOfProjectPath` and the git resolver read every row, and a start
+  for a removed host is refused (`RemoteHostRemovedError`). Read as local, it would run in the empty stand-in.
+- **An edit proves the new sign-in before it takes the old one away.** `updateHost` signs in with a real `ssh`
+  in BatchMode first. A key file is only copied, My SSH config runs nothing, and `connectHost` never throws,
+  so without the proof a key Kangentic made comes off a host it was the only way into.
+- **A directory listing on a host is an answer or an error, never an empty list for a failed ask.** The
+  Directory field's listing runs one fixed `sh` script through `runCommand` with the path as an argument,
+  after the inside-home check, and a host that cannot answer rejects with its words.
 - **A tool the agent calls answers from the layer its fact belongs to.** The MCP server runs here
   and the agent runs on the host, so a path read from `task.worktree_path`, `sessions.cwd` or
   `project.path` is this computer's empty stand-in, not where the agent works. A fact about where
@@ -192,6 +214,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `tests/unit/remote-transcript-real-cli.test.ts` runs real CLIs end to end, only in the rig
   (`scripts/probe-ssh-rig/transcript-clis.sh`), because it needs them installed. `scripts/ssh-link-rig.mjs`,
   which `ssh-rig.yml` runs, takes an export past a frame's cap across a real `ssh` killed partway.
+- **Rig (removal, by hand):** `node scripts/ssh-link-rig.mjs --client removal --work <dir>` runs what only a host can
+  prove on a real sshd: a Remove's leftover agents hung up by a new link, only those of the hidden projects, with
+  the hangup reaching the process under the shell, and a sign-in change refused with the only key left in place, or
+  accepted with the old key really off `authorized_keys`. Needs Docker, so no CI job runs it.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only

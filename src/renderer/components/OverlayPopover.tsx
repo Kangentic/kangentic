@@ -47,6 +47,7 @@ interface OverlayPopoverProps {
   onMouseUp?: React.MouseEventHandler<HTMLDivElement>;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
   role?: string;
+  id?: string;
   'data-testid'?: string;
   children: React.ReactNode;
 }

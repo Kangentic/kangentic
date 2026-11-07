@@ -145,7 +145,8 @@ export async function sweepOrphanedBrowserPartitions(
 
   let projects: Project[];
   try {
-    projects = new ProjectRepository().list();
+    // Every row: a project hidden because its host was removed keeps its logins for when the host comes back.
+    projects = new ProjectRepository().listIncludingHidden();
   } catch (error) {
     console.warn('[browser-partition] sweep abstaining: could not list projects:', error);
     return { removed: [], abstained: true, skippedRecent: 0 };

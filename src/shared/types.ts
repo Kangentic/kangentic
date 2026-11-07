@@ -88,6 +88,10 @@ export interface SshHost {
   /** Kangentic made the key at `key_path` and deletes it, and its line on the host, when the host is removed. */
   key_created: boolean;
   created_at: string;
+  /** Set when the host was removed: its row is kept so adding the same address again brings its projects back. Null for a host in use. */
+  removed_at: string | null;
+  /** Added back after a removal, with its projects not started yet: they start with its first connection, a restart between included. */
+  reveal_pending: boolean;
 }
 
 /**
@@ -153,6 +157,47 @@ export interface SshHostAddInput {
   signIn: SshSignIn;
   /** The fingerprint the user saw and agreed to. The host must still present it. */
   expectedFingerprint: string;
+}
+
+/** What the host row's edit form saves. The name alone saves at once; a new address or a new sign-in is a change of how the host is reached. */
+export interface SshHostUpdateInput {
+  name: string;
+  destination: string;
+  /** Required with a new address: the fingerprint the user saw and agreed to for it. */
+  expectedFingerprint?: string;
+  /** Set to change how Kangentic signs in. Left out, the current sign-in stays. */
+  signIn?: SshSignIn;
+}
+
+/** A named host in the user's `~/.ssh/config`, offered as an address in Add host. */
+export interface SshConfigHost {
+  /** What the `Host` line names: the address to type, which `ssh` resolves. */
+  alias: string;
+  /** Its `HostName`, when the block has one. */
+  hostName: string | null;
+  /** Its `User`, when the block has one. */
+  user: string | null;
+}
+
+/** One folder inside a listed directory on a host. */
+export interface SshDirectoryEntry {
+  name: string;
+  /** Whether it is a git repository, so the picker can tag it. */
+  isGitRepo: boolean;
+}
+
+/** The folders directly inside one directory on a host, for the Directory field's suggestions and its Browse list. */
+export interface SshDirectoryListing {
+  /** The directory as the host resolved it. */
+  path: string;
+  /** False for a directory outside the user's home, which Kangentic does not work in and does not list. */
+  insideHome: boolean;
+  /** False when the directory is not there, as a half-typed path is not. */
+  exists: boolean;
+  /** Visible folders only, sorted by name. */
+  entries: SshDirectoryEntry[];
+  /** True when the directory holds more folders than `entries` shows. */
+  truncated: boolean;
 }
 
 export interface SshRemoteFolderProbe {
@@ -6376,6 +6421,8 @@ export interface WorkflowSummary {
   agent: WorkflowAgentSummary | null;
   /** The tasks a running workflow is stalled on, and why, for the header. Empty otherwise. */
   stalledTasks: WorkflowStalledTask[];
+  /** Projects holding its tasks that are hidden because their SSH host was removed: why it is paused and cannot resume. */
+  hiddenBoards: string[];
 }
 
 /** A task a running workflow is stalled on. */
@@ -9293,15 +9340,24 @@ export interface ElectronAPI {
      * Rejects with ssh's own words when the host cannot be reached.
      */
     probeHostKey: (destination: string) => Promise<SshHostKeyProbe>;
+    /** The named hosts in this computer's `~/.ssh/config`, for the address field's suggestions. No file reads as none. */
+    listConfigHosts: () => Promise<SshConfigHost[]>;
     /**
      * Add a host: trust the key the user was shown (refused if it changed), set up the way Kangentic
      * signs in, install Kangentic's small program on the host, and start its connection. Rejects with
      * the failing step's own words, having changed nothing that step cannot undo.
      */
     addHost: (input: SshHostAddInput) => Promise<SshHostStatus>;
-    /** Remove a host and take its projects out of Kangentic. They stay on the host. Running agents are suspended first. */
+    /** Remove a host: its projects are hidden and their agents suspended, and nothing is deleted. Adding the same address again brings them back. */
     removeHost: (hostId: string) => Promise<void>;
-    renameHost: (hostId: string, name: string) => Promise<void>;
+    /** Delete Kangentic's boards, tasks and history for a host's projects. Local only, so it works with the host down. The host stays, and nothing on it is touched. */
+    clearHostData: (hostId: string) => Promise<void>;
+    /**
+     * Change a host's name, address or sign-in in place. Its projects keep their directories. A new address needs the
+     * key the user was shown for it, and an address or sign-in change is refused while terminals run on the host.
+     * Rejects with the failing step's words, having kept the old address and sign-in.
+     */
+    updateHost: (hostId: string, input: SshHostUpdateInput) => Promise<SshHostStatus>;
     /** Try the connection again now, installing Kangentic's program on the host first if it is not there. */
     reconnectHost: (hostId: string) => Promise<SshHostStatus>;
     /** What the host's program reports. Rejects while the host is not connected, with the reason. */
@@ -9314,6 +9370,12 @@ export interface ElectronAPI {
     trustNewKey: (hostId: string, shownFingerprint: string) => Promise<SshHostStatus>;
     /** Whether a folder exists on a host, for the Add project dialog. Rejects with the reason when it cannot say. */
     probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
+    /**
+     * The folders directly inside a directory on a host (`~/` is its home). A directory that is not there reads
+     * as `exists: false`, not an error, since a half-typed path is not there; a host that cannot be asked rejects
+     * with the reason.
+     */
+    listDirectories: (hostId: string, directoryPath: string) => Promise<SshDirectoryListing>;
     onHostsChanged: (callback: () => void) => () => void;
   };
 

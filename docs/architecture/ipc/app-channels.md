@@ -73,7 +73,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
-## SSH hosts (13 channels)
+## SSH hosts (17 channels)
 Machine-global like the mobile bridge, so none takes a trailing `projectId`: a host serves every project and must be addable with no project open. Backs the SSH settings tab and the Add project chooser. See [SSH remote hosts](../../platforms/ssh-remote.md).
 
 | Channel | Pattern | Purpose |
@@ -82,8 +82,11 @@ Machine-global like the mobile bridge, so none takes a trailing `projectId`: a h
 | `ssh:listHosts` | invoke | Every host with its connection state, the link's own words about it, when the state last changed, and how many projects live on it |
 | `ssh:probeHostKey` | invoke | Learn the key a host presents (type and fingerprint) without trusting it. Rejects with ssh's words when the host cannot be reached |
 | `ssh:addHost` | invoke | Add a host: re-verify the fingerprint the user saw, set up how Kangentic signs in (SSH config, key file copy, or a created key installed with a password used once), install the host program, connect. Undoes its steps on a failure |
-| `ssh:removeHost` | invoke | Remove a host with its projects (they stay on the host), end their agents, delete the key Kangentic made and take it off the host when reachable |
-| `ssh:renameHost` | invoke | Rename a host |
+| `ssh:removeHost` | invoke | Remove a host: hide its projects and suspend their agents, delete the key Kangentic made and take it off the host when reachable. Deletes no project data, and the same address added again restores them |
+| `ssh:clearHostData` | invoke | Delete Kangentic's boards, tasks, history, shell folders and transcript copy for a host's projects. Local only, the host stays |
+| `ssh:updateHost` | invoke | Change a host's name, address or sign-in in place. A new address needs the fingerprint the user was shown. Refused while terminals run on the host, and a failed sign-in leaves the old keys and row |
+| `ssh:listConfigHosts` | invoke | The `Host` names in this computer's `~/.ssh/config` (wildcards skipped, `Include` followed), for the address field's suggestions |
+| `ssh:listDirectories` | invoke | The folders directly inside a directory on a host, with a git flag, for the Directory field's suggestions and Browse list. A missing directory reads as not existing, a host that cannot answer rejects |
 | `ssh:reconnectHost` | invoke | Connect again now, installing the host program first if it is missing |
 | `ssh:hostProgram` | invoke | What the Kangentic program on a connected host reports: its version, this app's version, when it started, how many terminals it holds and which versions are installed. Rejects with the reason when the host cannot answer |
 | `ssh:checkKeyFile` | invoke | Whether a key file the user chose can be used. Rejects with the reason (not a private key, or a passphrase Kangentic never asks for), so the Add host form refuses it when it is chosen. Copies nothing |

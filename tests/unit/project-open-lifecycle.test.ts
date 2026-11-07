@@ -316,6 +316,7 @@ import {
   cleanupProject,
   recoverSessionsAfterPtyHostLoss,
   recoverRemoteProjectsOnHost,
+  revealHostProjects,
 } from '../../src/main/ipc/handlers/projects';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
 import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
@@ -362,6 +363,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 interface MockContext {
   projectRepo: {
     list: ReturnType<typeof vi.fn>;
+    listHidden: ReturnType<typeof vi.fn>;
     getById: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     updateLastOpened: ReturnType<typeof vi.fn>;
@@ -389,6 +391,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
   return {
     projectRepo: {
       list: vi.fn(() => []),
+      listHidden: vi.fn(() => []),
       getById: vi.fn(),
       create: vi.fn(),
       updateLastOpened: vi.fn(),
@@ -1119,6 +1122,25 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
 // ---------------------------------------------------------------------------
 // openProjectByPath on a folder that refuses .kangentic (Sentry DESKTOP-28)
 // ---------------------------------------------------------------------------
+
+describe('openProjectByPath on a hidden project\'s stand-in folder', () => {
+  it('rejects naming the removed host and registers and opens nothing', async () => {
+    const context = createMockContext();
+    const hidden = makeProject({ id: 'hidden-remote', path: PROJECT_PATH });
+    context.projectRepo.list.mockReturnValue([]);
+    context.projectRepo.listHidden.mockReturnValue([hidden]);
+    context.projectRepo.create.mockReturnValue(makeProject());
+    state.existingPaths.add(PROJECT_PATH);
+
+    await expect(openProjectByPath(asIpcContext(context), PROJECT_PATH, { defaultAgent: 'claude' }))
+      .rejects.toThrow('SSH host was removed');
+
+    expect(context.projectRepo.create).not.toHaveBeenCalled();
+    expect(vi.mocked(getProjectDb)).not.toHaveBeenCalled();
+    expect(context.boardConfigManager.attach).not.toHaveBeenCalled();
+    expect(context.currentProjectId).toBeNull();
+  });
+});
 
 describe('openProjectByPath on a folder that refuses .kangentic', () => {
   function permissionDeniedError(): NodeJS.ErrnoException {
@@ -2290,6 +2312,104 @@ describe('recovering a host\'s projects once its link connects', () => {
     await recoverRemoteProjectsOnHost(asIpcContext(contextWithOpened('project-lab')), 'host-lab');
 
     expect(state.callOrder).toEqual([]);
+  });
+
+  describe('a removed host added back', () => {
+    const onHost = [remoteOnLab, notYetOpened];
+
+    function contextAddedBack(linkState: 'connecting' | 'connected', endLeftovers = vi.fn(async () => 0)) {
+      const context = createMockContext();
+      context.projectRepo.list.mockReturnValue(onHost);
+      (context.projectRepo as unknown as { listOnHost: () => Project[] }).listOnHost = () => onHost;
+      for (const project of onHost) state.existingPaths.add(project.path);
+      const asContext = asIpcContext(context);
+      const hostRow = { id: 'host-lab', reveal_pending: true };
+      (asContext as unknown as { remoteHosting: unknown }).remoteHosting = {
+        status: { get: () => ({ state: linkState }) },
+        hosts: {
+          getById: (id: string) => (id === hostRow.id ? hostRow : undefined),
+          clearRevealPending: () => { hostRow.reveal_pending = false; },
+        },
+        hostService: { endSessionsLeftRunning: endLeftovers },
+        expectFirstConnect: vi.fn(),
+      };
+      return { context, asContext, endLeftovers, hostRow };
+    }
+
+    it('survives a restart: startup leaves those projects for the first connection, so nothing resumes beside a leftover agent', async () => {
+      const endLeftovers = vi.fn(async () => 1);
+      const { asContext, hostRow } = contextAddedBack('connecting', endLeftovers);
+
+      // A new run: nothing in memory says this host came back, only its row does.
+      await activateAllProjects(asContext);
+      expect(resumeSuspendedSessions).not.toHaveBeenCalled();
+
+      await recoverRemoteProjectsOnHost(asContext, 'host-lab');
+
+      expect(endLeftovers).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0]).sort()).toEqual(['project-lab', 'project-late']);
+      expect(hostRow.reveal_pending).toBe(false);
+    });
+
+    it('starts a project on another host as usual while one host waits', async () => {
+      const { context, asContext } = contextAddedBack('connecting');
+      context.projectRepo.list.mockReturnValue([...onHost, remoteOnOtherHost]);
+      state.existingPaths.add(remoteOnOtherHost.path);
+
+      await activateAllProjects(asContext);
+
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-other']);
+    });
+
+    it('waits for the link when it is not up yet, and starts every project on its first connection', async () => {
+      const { asContext, endLeftovers } = contextAddedBack('connecting');
+
+      await revealHostProjects(asContext, 'host-lab');
+      expect(endLeftovers).not.toHaveBeenCalled();
+      expect(state.callOrder).toEqual([]);
+
+      await recoverRemoteProjectsOnHost(asContext, 'host-lab');
+
+      expect(endLeftovers).toHaveBeenCalledWith('host-lab', new Set(['project-lab', 'project-late']));
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0]).sort()).toEqual(['project-lab', 'project-late']);
+    });
+
+    it('starts once when the first-connect hook and the add both get there', async () => {
+      const { asContext } = contextAddedBack('connected');
+
+      await recoverRemoteProjectsOnHost(asContext, 'host-lab');
+      await revealHostProjects(asContext, 'host-lab');
+
+      expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0]).sort()).toEqual(['project-lab', 'project-late']);
+    });
+
+    it('ends what the host still runs before any agent resumes, so one conversation never has two', async () => {
+      const order: string[] = [];
+      const endLeftovers = vi.fn(async () => { order.push('leftovers'); return 1; });
+      vi.mocked(resumeSuspendedSessions).mockImplementation(async () => { order.push('resume'); });
+      const { asContext } = contextAddedBack('connected', endLeftovers);
+
+      await revealHostProjects(asContext, 'host-lab');
+
+      expect(order[0]).toBe('leftovers');
+      expect(order).toContain('resume');
+    });
+
+    it('resumes nothing when that cannot be proved, and tries again on the next connection', async () => {
+      const endLeftovers = vi.fn(async (): Promise<number> => { throw new Error('the link dropped'); });
+      const { asContext } = contextAddedBack('connected', endLeftovers);
+      const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      await revealHostProjects(asContext, 'host-lab');
+
+      expect(resumeSuspendedSessions).not.toHaveBeenCalled();
+      expect((asContext as unknown as { remoteHosting: { expectFirstConnect: unknown } }).remoteHosting.expectFirstConnect).toHaveBeenCalledWith('host-lab');
+
+      endLeftovers.mockResolvedValueOnce(0);
+      await recoverRemoteProjectsOnHost(asContext, 'host-lab');
+      expect(resumeSuspendedSessions).toHaveBeenCalled();
+      warned.mockRestore();
+    });
   });
 
   it('goes on to the next project when one project\'s recovery throws', async () => {

@@ -56,7 +56,7 @@ import { notifyWorkflowChanged } from './workflow-changed';
 import { cancelWorkflowRecovery, forgetWorkflowRecovery } from './workflow-recovery-state';
 import { announceBoardChange } from './workflow-board-announce';
 import { endWorkflowAgent } from './workflow-agent';
-import { linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
+import { hiddenBoardsOf, linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
 import { isInWorkflow } from './workflow-home';
 import { safeLanes } from './workflow-lanes';
 import { isNeverStarted } from './workflow-never-started';
@@ -160,6 +160,8 @@ export interface WorkflowView {
   workflow: Workflow;
   homeProjectId: string;
   tasks: WorkflowTaskView[];
+  /** Projects holding its tasks that are hidden because their SSH host was removed. Those tasks are not in `tasks`. */
+  hiddenBoards: string[];
 }
 
 /**
@@ -217,10 +219,10 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         ownPlanApproval: planned.plan_approval ?? workflow.plan_approval,
       };
     });
-    return { workflow, homeProjectId, tasks };
+    return { workflow, homeProjectId, tasks, hiddenBoards: [] };
   }
 
-  const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflowId);
+  const { tasks: created, unreadProjectIds, hiddenTasks } = readWorkflowTasks(context, homeProjectId, workflowId);
   const present = new Set(created.map(({ task }) => task.id));
   const links = new TaskLinkRepository(getProjectDb(homeProjectId)).listForWorkflow(workflowId);
   // A blocker on another board is named with its board, since its number alone
@@ -235,7 +237,8 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     }
     const blocker = { projectId: link.blocker_project_id, taskId: link.blocker_task_id };
     if (linkEndState(context, blocker, workflowId, present, unreadProjectIds) === 'gone') return [];
-    return [`a task on "${boardOf(link.blocker_project_id) ?? 'this board'}" that could not be read`];
+    const hiddenBoard = hiddenTasks.find((candidate) => candidate.projectId === link.blocker_project_id)?.board;
+    return [`a task on "${boardOf(link.blocker_project_id) ?? hiddenBoard ?? 'this board'}" that could not be read`];
   };
   const stallOf = stallReader(workflow);
   const tasks = created.map(({ projectId, task }): WorkflowTaskView => {
@@ -260,7 +263,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       ownPlanApproval: task.plan_approval ?? workflow.plan_approval,
     };
   });
-  return { workflow, homeProjectId, tasks };
+  return { workflow, homeProjectId, tasks, hiddenBoards: hiddenBoardsOf(hiddenTasks) };
 }
 
 /** How a task on another board names that board: its project's name, or its id when the project is gone. */
@@ -1107,6 +1110,9 @@ export async function resumeWorkflow(
 ): Promise<{ workflow: Workflow } & WorkflowResumeReport> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'paused') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, not paused.`);
+  // Its tasks there cannot run, and running without them could finish it with them undone.
+  const hiddenBoards = hiddenBoardsOf(readWorkflowTasks(context, homeProjectId, workflowId).hiddenTasks);
+  if (hiddenBoards.length > 0) throw new WorkflowRequestError(WORKFLOW_REFUSALS.hiddenBoard(workflow.title, hiddenBoards.join(', ')));
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'running');
   notifyWorkflowChanged(homeProjectId, workflowId);
   announceWorkflowBoards(context, homeProjectId, workflowId);
@@ -1527,7 +1533,13 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
   const workflow = requireWorkflow(homeProjectId, workflowId);
   const released: ReleasedWorkflowTask[] = [];
   if (workflow.state !== 'draft') {
-    for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
+    const { tasks, hiddenTasks } = readWorkflowTasks(context, homeProjectId, workflowId);
+    // A hidden board's tasks leave too, or they come back naming a workflow that is gone. They are not
+    // `released`, which offers a task for deletion: nothing is deleted on a removed host's behalf.
+    for (const { projectId, task } of hiddenTasks) {
+      new TaskRepository(getProjectDb(projectId)).setWorkflowMembership(task.id, null);
+    }
+    for (const { projectId, task } of tasks) {
       const lanes = safeLanes(projectId);
       const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
       if (task.archived_at || lane?.role === 'done') continue;

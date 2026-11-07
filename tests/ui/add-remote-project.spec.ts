@@ -35,8 +35,15 @@ test.beforeEach(async () => {
   await expect(page.locator('[data-testid="add-project-chooser"], [data-testid="add-remote-project"]')).toHaveCount(0);
   await page.evaluate(async () => {
     const api = window.electronAPI.ssh;
-    for (const status of await api.listHosts()) await api.removeHost(status.host.id);
+    // Clear the host's data first: Remove only hides its projects, and the same address added again by the
+    // next test would bring a previous test's projects back.
+    for (const status of await api.listHosts()) {
+      await api.clearHostData(status.host.id);
+      await api.removeHost(status.host.id);
+    }
+    (window as unknown as { __mockSshForgetRemoved: () => void }).__mockSshForgetRemoved();
     delete (window as unknown as Record<string, unknown>).__mockSshFolders;
+    delete (window as unknown as Record<string, unknown>).__mockSshDirectories;
     delete (window as unknown as Record<string, unknown>).__mockSshFolderError;
   });
 });
@@ -183,7 +190,7 @@ test('removing the host in Settings takes its projects out of the sidebar', asyn
   await page.locator('[data-testid="settings-tab-ssh"]').click();
   await page.locator('[data-testid="ssh-host-remove"]').click();
   const confirmDialog = page.locator('h3:has-text("Remove host")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
-  await expect(confirmDialog).toContainText('1 project');
+  await expect(confirmDialog).toContainText('hides its projects and suspends their agents until it is added again, and nothing is deleted.');
   await confirmDialog.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
 
@@ -235,6 +242,268 @@ test('a remote project\'s Agent tab shows what the host has installed, and never
   await page.evaluate(() => {
     delete (window as unknown as { __mockHostAgents?: unknown }).__mockHostAgents;
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+});
+
+/** Adds a project on the host through the Add project dialog and waits for its sidebar row. */
+async function addRemoteProject(projectName: string) {
+  await page.locator('[data-testid="sidebar-new-project-button"]').click();
+  await page.locator('[data-testid="add-project-host"]').click();
+  const form = page.locator('[data-testid="add-remote-project"]');
+  await form.locator('[data-testid="add-remote-project-folder"]').fill(`/srv/${projectName}`);
+  await form.locator('[data-testid="add-remote-project-submit"]').click();
+  await expect(form).toHaveCount(0);
+  const row = page.locator('[data-testid^="project-row-"]', { hasText: projectName });
+  await expect(row).toHaveCount(1);
+  return row;
+}
+
+async function openSshSettings() {
+  await page.locator('[data-testid="settings-button"]').click();
+  await page.locator('[data-testid="settings-tab-ssh"]').click();
+  await expect(page.locator('[data-testid="ssh-hosts-card"]')).toBeVisible();
+}
+
+async function closeSettings() {
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await expect(page.locator('[data-testid="ssh-hosts-card"]')).toHaveCount(0);
+}
+
+test('removing a host hides its projects, and adding the same address again brings them back', async () => {
+  await addHost('Build server');
+  const projectName = `back-${Date.now()}`;
+  const row = await addRemoteProject(projectName);
+
+  await openSshSettings();
+  await page.locator('[data-testid="ssh-host-remove"]').click();
+  await page.locator('[data-testid="ssh-remove-host-confirm-confirm"]').click();
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="ssh-no-hosts"]')).toBeVisible();
+  await closeSettings();
+  await expect(row).toHaveCount(0);
+
+  // The same address, through the normal Add host steps. Nothing else is asked, and the project is back.
+  await openSshSettings();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Build server');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('dev@host.example.test');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+  await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+  await page.locator('[data-testid="ssh-add-submit"]').click();
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="ssh-host-project-count"]')).toHaveText('1 project');
+  await closeSettings();
+  await expect(row).toHaveCount(1);
+});
+
+test('a different address after Remove is a new host, and the hidden project stays hidden', async () => {
+  await addHost('Build server');
+  const projectName = `stays-${Date.now()}`;
+  const row = await addRemoteProject(projectName);
+  await openSshSettings();
+  await page.locator('[data-testid="ssh-host-remove"]').click();
+  await page.locator('[data-testid="ssh-remove-host-confirm-confirm"]').click();
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
+
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Elsewhere');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('dev@other.example.test');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+  await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+  await page.locator('[data-testid="ssh-add-submit"]').click();
+  await expect(page.locator('[data-testid="ssh-host-project-count"]')).toHaveText('0 projects');
+  await closeSettings();
+  await expect(row).toHaveCount(0);
+});
+
+test('Clear data lists the projects and their directories, deletes them, and the host stays with none', async () => {
+  await addHost('Build server');
+  const projectName = `clear-${Date.now()}`;
+  const row = await addRemoteProject(projectName);
+
+  await openSshSettings();
+  await expect(page.locator('[data-testid="ssh-host-project-count"]')).toHaveText('1 project');
+  await page.locator('[data-testid="ssh-host-clear-data"]').click();
+  const list = page.locator('[data-testid="ssh-clear-data-projects"]');
+  await expect(list).toContainText(projectName);
+  await expect(list).toContainText(`/srv/${projectName}`);
+  await page.locator('[data-testid="ssh-clear-data-confirm-confirm"]').click();
+
+  // The host stays, with no projects, and nothing is left to clear.
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="ssh-host-project-count"]')).toHaveText('0 projects');
+  await expect(page.locator('[data-testid="ssh-host-clear-data"]')).toHaveCount(0);
+  await closeSettings();
+  await expect(row).toHaveCount(0);
+});
+
+test('a host with no projects has no Clear data, and Cancel on the confirm deletes nothing', async () => {
+  await addHost('Build server');
+  const projectName = `keep-${Date.now()}`;
+  await openSshSettings();
+  await expect(page.locator('[data-testid="ssh-host-clear-data"]')).toHaveCount(0);
+  await closeSettings();
+
+  await addRemoteProject(projectName);
+  await openSshSettings();
+  await page.locator('[data-testid="ssh-host-clear-data"]').click();
+  await page.locator('[data-testid="ssh-clear-data-confirm-cancel"]').click();
+  await expect(page.locator('[data-testid="ssh-host-project-count"]')).toHaveText('1 project');
+});
+
+test.describe('the Directory field', () => {
+  async function openRemoteForm() {
+    await addHost('Build server');
+    await page.locator('[data-testid="sidebar-new-project-button"]').click();
+    await page.locator('[data-testid="add-project-host"]').click();
+    const form = page.locator('[data-testid="add-remote-project"]');
+    await expect(form).toBeVisible();
+    return form;
+  }
+
+  test('is named Directory, and its explanation is a tip on an info icon rather than a standing line', async () => {
+    const form = await openRemoteForm();
+
+    await expect(form.getByText('Directory', { exact: true })).toBeVisible();
+    await expect(form.locator('[data-testid="field-hint"]')).toHaveCount(0);
+    await expect(form.getByRole('button', { name: 'About Directory' })).toHaveAccessibleDescription(/inside your home/);
+  });
+
+  test('suggests the folders of the directory typed so far, narrowed as you type, and a pick opens the next level', async () => {
+    const form = await openRemoteForm();
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+
+    await field.fill('~/co');
+    // The suggestions are a popover on the page, outside the dialog's own tree.
+    const suggestions = page.locator('[data-testid="add-remote-project-suggestion"]');
+    await expect(suggestions).toHaveText(['code']);
+
+    await suggestions.first().click();
+    await expect(field).toHaveValue('~/code/');
+    await expect(suggestions).toHaveText(['api' + 'git', 'web' + 'git']);
+
+    // The name follows the chosen folder, as it does for a typed one.
+    await field.fill('~/code/ap');
+    await expect(suggestions).toHaveText(['apigit']);
+    await suggestions.first().click();
+    await expect(form.locator('[data-testid="add-remote-project-name"]')).toHaveValue('api');
+  });
+
+  test('moves through suggestions with the arrow keys, and Enter picks the highlighted one instead of adding', async () => {
+    const form = await openRemoteForm();
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+    await field.fill('~/');
+    await expect(page.locator('[data-testid="add-remote-project-suggestion"]')).toHaveCount(2);
+
+    await field.press('ArrowDown');
+    await field.press('ArrowDown');
+    await field.press('Enter');
+
+    await expect(field).toHaveValue('~/notes/');
+    await expect(form).toBeVisible();
+  });
+
+  test('Escape closes the suggestions and leaves the dialog open, and the next one closes the dialog', async () => {
+    const form = await openRemoteForm();
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+    await field.fill('~/');
+    await expect(page.locator('[data-testid="add-remote-project-suggestion"]')).toHaveCount(2);
+    await expect(field).toHaveAttribute('aria-controls', 'add-remote-project-suggestions');
+    await expect(page.locator('#add-remote-project-suggestions')).toBeVisible();
+
+    await field.press('Escape');
+
+    await expect(page.locator('[data-testid="add-remote-project-suggestion"]')).toHaveCount(0);
+    await expect(form).toBeVisible();
+
+    await field.press('Escape');
+    await expect(form).toHaveCount(0);
+  });
+
+  test('drops a stale reason once the host is back, without the path being edited', async () => {
+    const form = await openRemoteForm();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshFolderError = 'The link to the host is down.';
+    });
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+    await field.fill('~/code/');
+    const reason = form.locator('[data-testid="add-remote-project-suggestions-error"]');
+    await expect(reason).toContainText('link to the host is down');
+
+    await page.evaluate(async () => {
+      const mockWindow = window as unknown as Record<string, unknown> & { __mockFireSshHostsChanged: () => void };
+      delete mockWindow.__mockSshFolderError;
+      const [status] = await window.electronAPI.ssh.listHosts();
+      mockWindow.__mockSshHosts = [{ ...status, state: 'reconnecting' }];
+      mockWindow.__mockFireSshHostsChanged();
+    });
+    await expect(reason).toHaveCount(0);
+    await page.evaluate(() => {
+      delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+    });
+  });
+
+  test('says nothing when a half-typed path matches no directory', async () => {
+    const form = await openRemoteForm();
+    await form.locator('[data-testid="add-remote-project-folder"]').fill('~/nowhere/sub');
+
+    // Wait for the answer for the typed directory, so an empty popover is not just a list not asked yet.
+    await expect(form.locator('[data-testid="add-remote-project-folder"]')).toHaveValue('~/nowhere/sub');
+    await page.waitForTimeout(500);
+    await expect(page.locator('[data-testid="add-remote-project-suggestions"]')).toHaveCount(0);
+    await expect(form.locator('[data-testid="add-remote-project-suggestions-error"]')).toHaveCount(0);
+  });
+
+  test('shows the reason in place when the host cannot be asked, and keeps what was typed', async () => {
+    const form = await openRemoteForm();
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshFolderError = 'The link to the host is down.';
+    });
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+
+    await field.fill('~/code/');
+
+    await expect(form.locator('[data-testid="add-remote-project-suggestions-error"]')).toContainText('link to the host is down');
+    await expect(field).toHaveValue('~/code/');
+  });
+
+  test('Browse lists the host\'s folders from home, goes down and back up by the breadcrumb, and Choose fills the field', async () => {
+    const form = await openRemoteForm();
+    const browse = form.locator('[data-testid="add-remote-project-browse"]');
+    await expect(browse).toBeEnabled();
+    // The press must land while the suggestions are open: their closing must not move the button under the pointer.
+    await expect(page.locator('[data-testid="add-remote-project-suggestion"]')).toHaveCount(2);
+    await browse.click();
+
+    const entries = form.locator('[data-testid="add-remote-project-browse-entry"]');
+    await expect(entries).toHaveText(['code', 'notes']);
+    await entries.filter({ hasText: 'code' }).click();
+    await expect(form.locator('[data-testid="add-remote-project-crumb"]')).toHaveText(['~', 'code']);
+    await expect(entries).toHaveText(['apigit', 'webgit']);
+
+    await form.locator('[data-testid="add-remote-project-crumb"]').first().click();
+    await expect(entries).toHaveText(['code', 'notes']);
+
+    await entries.filter({ hasText: 'code' }).click();
+    await entries.filter({ hasText: 'api' }).click();
+    await form.locator('[data-testid="add-remote-project-browse-choose"]').click();
+
+    await expect(form.locator('[data-testid="add-remote-project-browser"]')).toHaveCount(0);
+    await expect(form.locator('[data-testid="add-remote-project-folder"]')).toHaveValue('/home/dev/code/api');
+  });
+
+  test('Cancel in Browse goes back to the form with the field as it was', async () => {
+    const form = await openRemoteForm();
+    const field = form.locator('[data-testid="add-remote-project-folder"]');
+    await field.fill('~/notes');
+    await form.locator('[data-testid="add-remote-project-browse"]').click();
+    await form.locator('[data-testid="add-remote-project-browse-entry"]').first().click();
+
+    await form.locator('[data-testid="add-remote-project-browse-cancel"]').click();
+
+    await expect(field).toHaveValue('~/notes');
   });
 });
 

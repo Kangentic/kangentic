@@ -73,6 +73,7 @@ describe('readPlanApprovalDecision', () => {
     ];
     context = {
       projectRepo: {
+        listHidden: () => [],
         list: () => projects,
         getById: (id: string) => projects.find((project) => project.id === id),
       },

@@ -122,6 +122,10 @@ msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task 
 msgstr "{value, select, automatic {Автоматически} other {Вручную}}, задано для этой задачи (столбец {columnName} доски {boardName}: {columnValue, select, automatic {автоматически} other {вручную}})."
 
 #: src/shared/workflow-refusals.ts
+msgid "{workflowTitle} has tasks on {boards}, whose SSH host was removed. Add the host again to resume it."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
 #, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "Задача не может ждать саму себя."

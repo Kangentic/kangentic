@@ -249,6 +249,8 @@ Plan approval to Manual. To wait on something outside, the agent ends on a Needs
 task must never start on its own, leave it out of the workflow.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
 
+**A task on a removed SSH host.** Removing a host pauses every workflow with a task on its projects, because those tasks can no longer run. The workflow picker names the project, and Resume is refused until the host is added again. Add the host, then press Resume yourself.
+
 **Pausing.** The Running button pauses the workflow, and so do the phone and
 `kangentic_pause_workflow`. Pause stops every one of its agents at once and frees what they hold. If an agent cannot be stopped, a toast names its
 task. When an agent pauses its own workflow, that agent stops once its turn ends, so its reply

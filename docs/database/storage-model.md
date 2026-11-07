@@ -177,10 +177,19 @@ A Linux machine Kangentic runs agents on over SSH. Holds no password and no key 
 | key_path | TEXT | | NULL |
 | key_created | INTEGER | NOT NULL | 0 |
 | created_at | TEXT | NOT NULL | |
+| removed_at | TEXT | | NULL |
+| reveal_pending | INTEGER | NOT NULL | 0 |
 
 `destination` is what `ssh` is given. `key_path` names a private key file in Kangentic's own folder, or is
 NULL when the host signs in through the user's SSH config. `key_created` is 1 when Kangentic made that key,
 so removing the host also deletes it and its line on the host.
+
+`removed_at` is NULL for a host in use. Removing a host sets it and keeps the row, which hides the host's
+projects without deleting them: `ProjectRepository.list()`, `getById()` and `getLastOpened()` leave them out,
+and `listIncludingHidden()`, `listHidden()` and `listOnHost()` still find them. Adding the same address again
+clears it, so each project's `remote_host_id` still points at the host, and sets `reveal_pending`. That is 1
+until the host's first connection has ended what it still runs for those projects and started them, so a restart
+in between does not resume an agent beside one a Remove could not stop.
 
 ### project_groups table
 

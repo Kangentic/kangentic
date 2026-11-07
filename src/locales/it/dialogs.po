@@ -612,6 +612,10 @@ msgctxt "git area"
 msgid "Branch"
 msgstr "Ramo"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Browse"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -686,6 +690,10 @@ msgstr "Modifiche - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "Le modifiche sono aperte in una finestra separata"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose"
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #, fuzzy
@@ -1238,6 +1246,10 @@ msgstr "Differenze"
 msgid "Diff scope"
 msgstr "Ambito del diff"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Directory"
+msgstr ""
+
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
@@ -1464,11 +1476,6 @@ msgstr "Filtra file..."
 #, fuzzy
 msgid "Flat list"
 msgstr "Elenco semplice"
-
-#: src/renderer/components/dialogs/AddProjectDialogs.tsx
-#, fuzzy
-msgid "Folder on the host"
-msgstr "Cartella sull'host"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
@@ -1953,6 +1960,10 @@ msgstr "Nessuna descrizione"
 msgid "No files changed"
 msgstr "Nessun file modificato"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "No folders here."
+msgstr ""
+
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #, fuzzy
 msgid "No fonts match \"{typedFilter}\""
@@ -2132,6 +2143,10 @@ msgstr "Uno alla volta"
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "Rilevata una sola CLI dell'agente: installane un'altra per scegliere"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Only the first folders are shown. Type the rest in the Directory field."
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
@@ -2263,6 +2278,10 @@ msgstr "Panoramica"
 #, fuzzy
 msgid "Page kept"
 msgstr "Pagina mantenuta"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Path"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -3115,6 +3134,10 @@ msgstr "Questo commit non ha modificato alcun file"
 #, fuzzy
 msgid "This computer"
 msgstr "Questo computer"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This directory is not on the host."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

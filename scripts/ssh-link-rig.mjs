@@ -4,6 +4,10 @@
 //
 // Usage:
 //   node scripts/ssh-link-rig.mjs --work <empty scratch dir> [--drops 20] [--port 2252] [--keep]
+//   node scripts/ssh-link-rig.mjs --client removal --work <empty scratch dir> [--port 2252] [--keep]
+//
+// `--client removal` runs ssh-removal-rig.client.ts on the same stage instead: what removing a host and
+// editing its sign-in do on a real host.
 //
 // It builds the host bundle and the rig client with esbuild, stages them with node-pty's Linux prebuild and a
 // pinned Node onto a fresh rig container, then runs the client. The client starts a PTY that prints a counter
@@ -41,13 +45,14 @@ const nullConfig = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const forwardSlash = (value) => value.replaceAll('\\', '/');
 
 function parseArguments(argumentList) {
-  const parsed = { work: null, drops: 20, port: 2252, keep: false };
+  const parsed = { work: null, drops: 20, port: 2252, keep: false, client: 'link' };
   for (let index = 0; index < argumentList.length; index += 1) {
     const argument = argumentList[index];
     if (argument === '--work') parsed.work = argumentList[(index += 1)];
     else if (argument === '--drops') parsed.drops = Number(argumentList[(index += 1)]);
     else if (argument === '--port') parsed.port = Number(argumentList[(index += 1)]);
     else if (argument === '--keep') parsed.keep = true;
+    else if (argument === '--client') parsed.client = argumentList[(index += 1)];
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (!parsed.work) throw new Error('--work is required. See the header comment.');
@@ -113,7 +118,8 @@ async function buildBundles() {
   const clientDirectory = path.join(repoRoot, '.kangentic', 'rig');
   fs.mkdirSync(clientDirectory, { recursive: true });
   const clientPath = path.join(clientDirectory, 'ssh-link-rig-client.js');
-  await esbuild.build({ ...common, entryPoints: [path.join(repoRoot, 'scripts/ssh-link-rig.client.ts')], outfile: clientPath });
+  const clientSource = options.client === 'removal' ? 'scripts/ssh-removal-rig.client.ts' : 'scripts/ssh-link-rig.client.ts';
+  await esbuild.build({ ...common, entryPoints: [path.join(repoRoot, clientSource)], outfile: clientPath });
 
   const nodePtySource = fs.realpathSync(path.join(repoRoot, 'node_modules/node-pty'));
   const nodePtyTarget = path.join(stage, 'node_modules/node-pty');
@@ -206,8 +212,14 @@ async function main() {
       ],
       asset,
       drops: options.drops,
+      // What the removal client needs on top: the same connection with no key or destination in it.
+      sshKeygenPath,
+      sshOptions: ['-p', String(options.port), '-o', `UserKnownHostsFile=${forwardSlash(knownHosts)}`, '-o', 'StrictHostKeyChecking=accept-new', '-F', nullConfig],
+      destination: 'dev@127.0.0.1',
+      rigKeyPath: keyPath,
+      workDirectory: path.join(workDirectory, 'client'),
     };
-    say(`running the client: ${options.drops} drops`);
+    say(options.client === 'removal' ? 'running the removal client' : `running the client: ${options.drops} drops`);
     const outcome = await new Promise((resolve) => {
       const child = spawn(process.execPath, [clientPath, JSON.stringify(clientOptions)], { cwd: repoRoot, windowsHide: true });
       let stdout = '';

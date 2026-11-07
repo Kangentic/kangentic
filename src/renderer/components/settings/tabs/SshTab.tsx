@@ -3,14 +3,16 @@ import { Check, CircleAlert, KeyRound, Loader2, Pencil, Plus, RefreshCw, Server,
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
-import type { SshHostConnectionState, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshSignIn } from '../../../../shared/types';
+import type { SshConfigHost, SshHostConnectionState, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshSignIn } from '../../../../shared/types';
 import { formatDateTime, formatShortDateTime } from '../../../lib/datetime';
 import { describeIpcError } from '../../../lib/ipc-error';
+import { useProjectStore } from '../../../stores/project-store';
 import { useSshStore } from '../../../stores/ssh-store';
 import { INPUT_CLASS, ReportedError } from '../shared';
 import { SettingsCard, CardTile, CardStatusRow } from '../settings-card';
 import { SegmentedControl } from '../../SegmentedControl';
 import type { SegmentedControlOption } from '../../SegmentedControl';
+import { HostAddressInput } from '../../HostAddressInput';
 import { Pill } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
 import { settingProps } from '../settings-registry';
@@ -171,6 +173,71 @@ function HostProgramLine({ hostId }: { hostId: string }) {
   );
 }
 
+/**
+ * The fields behind each way of signing in: a note for the user's own config, a key file path with a picker, or
+ * the password asked once. Add host and the row's edit form both show it, so they read the same.
+ */
+function SignInFields({ prefix, method, keyFilePath, onKeyFilePathChange, onChooseKeyFile, password, onPasswordChange, onSubmit }: {
+  prefix: 'ssh-add' | 'ssh-edit';
+  method: SignInMethod;
+  keyFilePath: string;
+  onKeyFilePathChange: (value: string) => void;
+  onChooseKeyFile: () => void;
+  password: string;
+  onPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  if (method === 'config') {
+    return <p className="text-xs text-fg-faint"><Trans>Kangentic uses your SSH config, agent and keys, the way a terminal does.</Trans></p>;
+  }
+  if (method === 'key-file') {
+    return (
+      <label className="block space-y-1">
+        <span className="text-xs text-fg-muted"><Trans>Path to the private key</Trans></span>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className={`${INPUT_CLASS} min-w-0 flex-1 font-mono`}
+            value={keyFilePath}
+            spellCheck={false}
+            data-testid={`${prefix}-key-path`}
+            onChange={(event) => onKeyFilePathChange(event.target.value)}
+          />
+          <button
+            type="button"
+            className="shrink-0 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors"
+            data-testid={`${prefix}-key-choose`}
+            onClick={onChooseKeyFile}
+          >
+            <Trans>Choose…</Trans>
+          </button>
+        </div>
+        <span className="block text-xs text-fg-faint"><Trans>A key with a passphrase must be in your SSH agent.</Trans></span>
+      </label>
+    );
+  }
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs text-fg-muted"><Trans>Password for the host</Trans></span>
+      <input
+        type="password"
+        className={INPUT_CLASS}
+        value={password}
+        autoComplete="off"
+        data-testid={`${prefix}-password`}
+        onChange={(event) => onPasswordChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onSubmit();
+        }}
+      />
+      <span className="block text-xs text-fg-faint"><Trans>Used once to add a key Kangentic makes for this host. It is never stored.</Trans></span>
+    </label>
+  );
+}
+
+/** The sign-in choice in a host's edit form: the three ways, or leave it as it is. */
+type EditSignInMethod = SignInMethod | 'keep';
+
 export function SshTab() {
   const { t, i18n } = useLingui();
   const hosts = useSshStore((state) => state.hosts);
@@ -180,9 +247,11 @@ export function SshTab() {
   const loadHosts = useSshStore((state) => state.loadHosts);
   const loadClient = useSshStore((state) => state.loadClient);
   const probeHostKey = useSshStore((state) => state.probeHostKey);
+  const listConfigHosts = useSshStore((state) => state.listConfigHosts);
   const addHost = useSshStore((state) => state.addHost);
   const removeHost = useSshStore((state) => state.removeHost);
-  const renameHost = useSshStore((state) => state.renameHost);
+  const clearHostData = useSshStore((state) => state.clearHostData);
+  const updateHost = useSshStore((state) => state.updateHost);
   const reconnectHost = useSshStore((state) => state.reconnectHost);
   const checkKeyFile = useSshStore((state) => state.checkKeyFile);
   const probeChangedKey = useSshStore((state) => state.probeChangedKey);
@@ -201,10 +270,20 @@ export function SshTab() {
   const [busy, setBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const [renamingHostId, setRenamingHostId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
+  /** The host whose row is open for editing, and the form's fields. One host is edited at a time. */
+  const [editTarget, setEditTarget] = useState<SshHostStatus | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDestination, setEditDestination] = useState('');
+  const [editSignInMethod, setEditSignInMethod] = useState<EditSignInMethod>('keep');
+  const [editKeyFilePath, setEditKeyFilePath] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  /** The key a new address presents, shown for the user to trust before the address is saved. */
+  const [editProbe, setEditProbe] = useState<SshHostKeyProbe | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ hostId: string; message: string } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<SshHostStatus | null>(null);
+  const [clearTarget, setClearTarget] = useState<SshHostStatus | null>(null);
   /** A host whose key changed, with the key it presents now, while the user decides whether to trust it. */
   const [trustTarget, setTrustTarget] = useState<{ status: SshHostStatus; probe: SshHostKeyProbe } | null>(null);
   const [trustBusy, setTrustBusy] = useState(false);
@@ -238,10 +317,29 @@ export function SshTab() {
     void loadClient();
   }, [loadHosts, loadClient]);
 
+  // The names in the user's SSH config, for the address fields. Only a convenience: a config that cannot be read is no suggestions.
+  const [configHosts, setConfigHosts] = useState<SshConfigHost[]>([]);
+  useEffect(() => {
+    let current = true;
+    listConfigHosts().then((found) => {
+      if (current) setConfigHosts(found);
+    }, () => undefined);
+    return () => {
+      current = false;
+    };
+  }, [listConfigHosts]);
+
   const signInOptions = useMemo<SegmentedControlOption<SignInMethod>[]>(() => [
     { value: 'config', label: t`My SSH config`, tip: t`Use your own ssh setup: its config, agent and keys, as a terminal does`, testId: 'ssh-signin-config' },
     { value: 'key-file', label: t`Key file`, tip: t`A private key file; Kangentic keeps a copy in its own folder`, testId: 'ssh-signin-key-file' },
     { value: 'create-key', label: t`Password`, tip: t`Use the password once to add a key Kangentic makes. It is never stored`, testId: 'ssh-signin-password' },
+  ], [t]);
+
+  const editSignInOptions = useMemo<SegmentedControlOption<EditSignInMethod>[]>(() => [
+    { value: 'keep', label: t`Keep`, tip: t`Keep signing in the way the host does now`, testId: 'ssh-edit-signin-keep' },
+    { value: 'config', label: t`My SSH config`, tip: t`Use your own ssh setup: its config, agent and keys, as a terminal does`, testId: 'ssh-edit-signin-config' },
+    { value: 'key-file', label: t`Key file`, tip: t`A private key file; Kangentic keeps a copy in its own folder`, testId: 'ssh-edit-signin-key-file' },
+    { value: 'create-key', label: t`Password`, tip: t`Use the password once to add a key Kangentic makes. It is never stored`, testId: 'ssh-edit-signin-password' },
   ], [t]);
 
   function resetAdd(): void {
@@ -324,12 +422,82 @@ export function SshTab() {
     }
   }
 
-  async function commitRename(hostId: string): Promise<void> {
-    const trimmed = renameDraft.trim();
-    setRenamingHostId(null);
-    if (trimmed.length === 0) return;
-    await runRowAction(hostId, () => renameHost(hostId, trimmed));
+  function openEdit(status: SshHostStatus): void {
+    setRowError(null);
+    setEditTarget(status);
+    setEditName(status.host.name);
+    setEditDestination(status.host.destination);
+    setEditSignInMethod('keep');
+    setEditKeyFilePath('');
+    setEditPassword('');
+    setEditProbe(null);
+    setEditBusy(false);
+    setEditError(null);
   }
+
+  function closeEdit(): void {
+    setEditTarget(null);
+    setEditPassword('');
+    setEditProbe(null);
+    setEditBusy(false);
+    setEditError(null);
+  }
+
+  async function chooseEditKeyFile(): Promise<void> {
+    const chosen = await window.electronAPI.dialog.selectFile({ title: t`Private key`, defaultPath: '~/.ssh' });
+    if (!chosen) return;
+    setEditError(null);
+    try {
+      await checkKeyFile(chosen);
+      setEditKeyFilePath(chosen);
+    } catch (error) {
+      setEditKeyFilePath('');
+      setEditError(describeIpcError(error));
+    }
+  }
+
+  /**
+   * Save the form. A new address is first shown its key to trust, in the same form, and saved only on the second
+   * press, so the host that answers at it is the one the user agreed to.
+   */
+  async function saveEdit(): Promise<void> {
+    if (!editTarget) return;
+    const target = editTarget;
+    const destination = editDestination.trim();
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      if (destination !== target.host.destination && !editProbe) {
+        setEditProbe(await probeHostKey(destination));
+        return;
+      }
+      const signIn: SshSignIn | undefined = editSignInMethod === 'key-file'
+        ? { method: 'key-file', keyFilePath: editKeyFilePath.trim() }
+        : editSignInMethod === 'create-key'
+          ? { method: 'create-key', password: editPassword }
+          : editSignInMethod === 'config'
+            ? { method: 'config' }
+            : undefined;
+      await updateHost(target.host.id, { name: editName.trim(), destination, expectedFingerprint: editProbe?.fingerprint, signIn });
+      closeEdit();
+    } catch (error) {
+      // The password is not kept past a failed attempt.
+      setEditPassword('');
+      setEditError(describeIpcError(error));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  const editAddressChanged = editTarget !== null && editDestination.trim() !== editTarget.host.destination;
+  // A key Kangentic made was added to the old machine only, so a new address needs a new sign-in.
+  const editNeedsSignIn = editAddressChanged && editTarget?.host.key_created === true && editSignInMethod === 'keep';
+  const canSaveEdit = !editBusy
+    && editName.trim().length > 0
+    && editDestination.trim().length > 0
+    && !editNeedsSignIn
+    && (editSignInMethod !== 'key-file' || editKeyFilePath.trim().length > 0)
+    && (editSignInMethod !== 'create-key' || editPassword.length > 0);
 
   const canContinue = name.trim().length > 0 && destination.trim().length > 0 && !busy;
   const canAdd = !busy
@@ -339,12 +507,34 @@ export function SshTab() {
 
   const removeName = removeTarget?.host.name ?? '';
   const removeProjectCount = removeTarget?.projectCount ?? 0;
+  // One sentence, and nothing in it is deleted: Remove hides the projects and Clear data is its own action.
   const removeMessage = removeProjectCount === 0
-    ? t`Remove "${removeName}"? Kangentic stops connecting to it. Nothing on the host is deleted.`
-    : plural(removeProjectCount, {
-      one: `Remove "${removeName}"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.`,
-      other: `Remove "${removeName}"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.`,
-    });
+    ? t`Removing "${removeName}" forgets the connection, and nothing is deleted.`
+    : t`Removing "${removeName}" hides its projects and suspends their agents until it is added again, and nothing is deleted.`;
+  // Read when the dialog opens, so a change to the project list does not redraw every host row.
+  const clearProjects = useMemo(
+    () => (clearTarget ? useProjectStore.getState().projects.filter((project) => project.remote?.hostId === clearTarget.host.id) : []),
+    [clearTarget],
+  );
+  const clearCount = clearProjects.length;
+  const clearMessage = (
+    <>
+      <p>
+        {plural(clearCount, {
+          one: 'Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.',
+          other: 'Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.',
+        })}
+      </p>
+      <ul className="mt-3 divide-y divide-edge rounded-md border border-edge text-sm" data-testid="ssh-clear-data-projects">
+        {clearProjects.map((project) => (
+          <li key={project.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
+            <span className="min-w-0 truncate text-fg">{project.name}</span>
+            <span className="min-w-0 truncate font-mono text-xs text-fg-faint">{project.remote?.path}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 
   return (
     <div className="space-y-4">
@@ -379,55 +569,10 @@ export function SshTab() {
                     data-testid="ssh-host-row"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      {renamingHostId === host.id ? (
-                        <div className="flex-1 flex items-center gap-1">
-                          <input
-                            type="text"
-                            autoFocus
-                            maxLength={60}
-                            className={`${INPUT_CLASS} flex-1`}
-                            value={renameDraft}
-                            aria-label={t`Host name`}
-                            onChange={(event) => setRenameDraft(event.target.value)}
-                            onKeyDown={(event) => {
-                              // The panel dismisses on a bubble-phase document Escape, so cancelling the rename must not reach it.
-                              event.stopPropagation();
-                              if (event.key === 'Enter') void commitRename(host.id);
-                              if (event.key === 'Escape') setRenamingHostId(null);
-                            }}
-                          />
-                          <Tooltip label={t`Save name`}>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                              aria-label={t`Save name`}
-                              onClick={() => void commitRename(host.id)}
-                            >
-                              <Check size={14} />
-                            </button>
-                          </Tooltip>
-                          <Tooltip label={t`Cancel`}>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                              aria-label={t`Cancel`}
-                              onClick={() => setRenamingHostId(null)}
-                            >
-                              <X size={14} />
-                            </button>
-                          </Tooltip>
-                        </div>
-                      ) : (
+                      {editTarget?.host.id === host.id ? null : (
                         <>
                           <div className="min-w-0 flex items-center gap-2">
                             <span className="text-sm font-medium text-fg truncate" data-testid="ssh-host-name">{host.name}</span>
-                            <Tooltip label={host.destination}>
-                              <span className="min-w-0">
-                                <Pill size="sm" className="shrink-0 max-w-[16rem] truncate bg-surface-hover/60 text-fg-faint font-mono" data-testid="ssh-host-destination">
-                                  {host.destination}
-                                </Pill>
-                              </span>
-                            </Tooltip>
                           </div>
                           <div className="shrink-0 flex items-center gap-1">
                             {changedKey ? (
@@ -456,16 +601,13 @@ export function SshTab() {
                                 </button>
                               </Tooltip>
                             ) : null}
-                            <Tooltip label={t`Rename`}>
+                            <Tooltip label={t({ message: 'Edit', context: 'host row action' })}>
                               <button
                                 type="button"
                                 className="rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                                aria-label={t`Rename`}
-                                data-testid="ssh-host-rename"
-                                onClick={() => {
-                                  setRenamingHostId(host.id);
-                                  setRenameDraft(host.name);
-                                }}
+                                aria-label={t({ message: 'Edit', context: 'host row action' })}
+                                data-testid="ssh-host-edit"
+                                onClick={() => openEdit(status)}
                               >
                                 <Pencil size={14} />
                               </button>
@@ -485,6 +627,127 @@ export function SshTab() {
                         </>
                       )}
                     </div>
+                    {editTarget?.host.id === host.id ? (
+                      <div className="space-y-3" data-testid="ssh-edit-form">
+                        <label className="block space-y-1">
+                          <span className="text-xs text-fg-muted"><Trans>Name</Trans></span>
+                          <input
+                            type="text"
+                            autoFocus
+                            maxLength={60}
+                            className={INPUT_CLASS}
+                            value={editName}
+                            data-testid="ssh-edit-name"
+                            onChange={(event) => setEditName(event.target.value)}
+                            onKeyDown={(event) => {
+                              // The panel dismisses on a bubble-phase document Escape, so cancelling the edit must not reach it.
+                              if (event.key === 'Escape') {
+                                event.stopPropagation();
+                                closeEdit();
+                              }
+                              if (event.key === 'Enter' && canSaveEdit) void saveEdit();
+                            }}
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className="text-xs text-fg-muted"><Trans>Address</Trans></span>
+                          <HostAddressInput
+                            value={editDestination}
+                            onChange={(next) => {
+                              setEditDestination(next);
+                              // A different address is a different machine: the key shown before no longer applies.
+                              setEditProbe(null);
+                            }}
+                            onEnter={() => {
+                              if (canSaveEdit) void saveEdit();
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Escape') {
+                                event.stopPropagation();
+                                closeEdit();
+                              }
+                            }}
+                            suggestions={configHosts}
+                            testId="ssh-edit-destination"
+                          />
+                        </label>
+
+                        <SegmentedControl
+                          options={editSignInOptions}
+                          value={editSignInMethod}
+                          onChange={setEditSignInMethod}
+                          quiet
+                          ariaLabel={t`How Kangentic signs in`}
+                          testId="ssh-edit-signin-method"
+                        />
+                        {editSignInMethod === 'keep' ? null : (
+                          <SignInFields
+                            prefix="ssh-edit"
+                            method={editSignInMethod}
+                            keyFilePath={editKeyFilePath}
+                            onKeyFilePathChange={setEditKeyFilePath}
+                            onChooseKeyFile={() => void chooseEditKeyFile()}
+                            password={editPassword}
+                            onPasswordChange={setEditPassword}
+                            onSubmit={() => {
+                              if (canSaveEdit) void saveEdit();
+                            }}
+                          />
+                        )}
+                        {editNeedsSignIn ? (
+                          <p className="text-xs text-fg-faint" data-testid="ssh-edit-needs-signin">
+                            <Trans>The key Kangentic made was added to the old address, so choose how to sign in to the new one.</Trans>
+                          </p>
+                        ) : null}
+
+                        {editProbe ? (
+                          <div className="rounded-md border border-edge bg-surface-hover/40 px-3 py-2.5 space-y-1.5" data-testid="ssh-edit-trust">
+                            <p className="text-sm font-medium text-fg"><Trans>This is the key {editProbe.hostname} presents.</Trans></p>
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
+                              <dt className="text-fg-faint"><Trans>Type</Trans></dt>
+                              <dd className="font-mono text-fg-secondary">{editProbe.keyType}</dd>
+                              <dt className="text-fg-faint"><Trans>Fingerprint</Trans></dt>
+                              <dd className="font-mono text-fg select-text [overflow-wrap:anywhere]" data-testid="ssh-edit-fingerprint">{editProbe.fingerprint}</dd>
+                            </dl>
+                          </div>
+                        ) : null}
+
+                        {editError ? <ReportedError error={editError} testId="ssh-edit-error" /> : null}
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors disabled:opacity-50"
+                            disabled={!canSaveEdit}
+                            data-testid="ssh-edit-save"
+                            onClick={() => void saveEdit()}
+                          >
+                            {editBusy ? <Loader2 size={14} className="animate-spin" /> : null}
+                            {editAddressChanged && !editProbe ? <Trans>Continue</Trans> : editProbe ? <Trans>Trust this key and save</Trans> : <Trans>Save</Trans>}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-md px-3 py-1.5 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
+                            data-testid="ssh-edit-cancel"
+                            onClick={closeEdit}
+                          >
+                            <Trans>Cancel</Trans>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      // The address on its own line, so up to four icons never squeeze the name. A long one is cut
+                      // here and its whole value is in the tip.
+                      <div className="min-w-0 -mt-1.5">
+                        <Tooltip label={host.destination}>
+                          <span className="inline-flex max-w-full min-w-0">
+                            <Pill size="sm" className="max-w-full truncate bg-surface-hover/60 text-fg-faint font-mono" data-testid="ssh-host-destination">
+                              {host.destination}
+                            </Pill>
+                          </span>
+                        </Tooltip>
+                      </div>
+                    )}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-edge pt-2.5 text-xs text-fg-faint">
                       <span className="flex items-center gap-2">
                         <span className={`flex items-center gap-1 font-medium ${connection.className}`} data-testid="ssh-host-connection">
@@ -501,6 +764,17 @@ export function SshTab() {
                         {plural(projectCount, { one: '# project', other: '# projects' })}
                       </span>
                       {status.state === 'connected' ? <HostProgramLine hostId={host.id} /> : null}
+                      {/* Beside the project count it acts on. Not shown with no projects: there is nothing to clear. */}
+                      {projectCount > 0 ? (
+                        <button
+                          type="button"
+                          className="ml-auto rounded-md border border-danger/60 px-2.5 py-0.5 text-xs text-danger hover:bg-danger/10 transition-colors"
+                          data-testid="ssh-host-clear-data"
+                          onClick={() => setClearTarget(status)}
+                        >
+                          <Trans>Clear data</Trans>
+                        </button>
+                      ) : null}
                     </div>
                     {detail ? (
                       <div>
@@ -545,18 +819,15 @@ export function SshTab() {
                   </label>
                   <label className="block space-y-1">
                     <span className="text-xs text-fg-muted"><Trans>Address</Trans></span>
-                    <input
-                      type="text"
-                      className={`${INPUT_CLASS} font-mono`}
+                    <HostAddressInput
                       value={destination}
-                      placeholder={DESTINATION_EXAMPLE}
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      data-testid="ssh-add-destination"
-                      onChange={(event) => setDestination(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' && canContinue) void handleContinue();
+                      onChange={setDestination}
+                      onEnter={() => {
+                        if (canContinue) void handleContinue();
                       }}
+                      suggestions={configHosts}
+                      placeholder={DESTINATION_EXAMPLE}
+                      testId="ssh-add-destination"
                     />
                   </label>
                   <p className="text-xs text-fg-faint">
@@ -594,50 +865,18 @@ export function SshTab() {
                     ariaLabel={t`How Kangentic signs in`}
                     testId="ssh-signin-method"
                   />
-                  {signInMethod === 'config' ? (
-                    <p className="text-xs text-fg-faint"><Trans>Kangentic uses your SSH config, agent and keys, the way a terminal does.</Trans></p>
-                  ) : null}
-                  {signInMethod === 'key-file' ? (
-                    <label className="block space-y-1">
-                      <span className="text-xs text-fg-muted"><Trans>Path to the private key</Trans></span>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          className={`${INPUT_CLASS} min-w-0 flex-1 font-mono`}
-                          value={keyFilePath}
-                          spellCheck={false}
-                          data-testid="ssh-add-key-path"
-                          onChange={(event) => setKeyFilePath(event.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-md border border-edge bg-surface-hover px-3 py-1.5 text-sm text-fg hover:bg-surface-hover/70 transition-colors"
-                          data-testid="ssh-add-key-choose"
-                          onClick={() => void chooseKeyFile()}
-                        >
-                          <Trans>Choose…</Trans>
-                        </button>
-                      </div>
-                      <span className="block text-xs text-fg-faint"><Trans>A key with a passphrase must be in your SSH agent.</Trans></span>
-                    </label>
-                  ) : null}
-                  {signInMethod === 'create-key' ? (
-                    <label className="block space-y-1">
-                      <span className="text-xs text-fg-muted"><Trans>Password for the host</Trans></span>
-                      <input
-                        type="password"
-                        className={INPUT_CLASS}
-                        value={password}
-                        autoComplete="off"
-                        data-testid="ssh-add-password"
-                        onChange={(event) => setPassword(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' && canAdd) void handleAdd();
-                        }}
-                      />
-                      <span className="block text-xs text-fg-faint"><Trans>Used once to add a key Kangentic makes for this host. It is never stored.</Trans></span>
-                    </label>
-                  ) : null}
+                  <SignInFields
+                    prefix="ssh-add"
+                    method={signInMethod}
+                    keyFilePath={keyFilePath}
+                    onKeyFilePathChange={setKeyFilePath}
+                    onChooseKeyFile={() => void chooseKeyFile()}
+                    password={password}
+                    onPasswordChange={setPassword}
+                    onSubmit={() => {
+                      if (canAdd) void handleAdd();
+                    }}
+                  />
                 </div>
               ) : null}
 
@@ -725,13 +964,32 @@ export function SshTab() {
           title={t`Remove host`}
           message={removeMessage}
           confirmLabel={t`Remove`}
-          variant="danger"
+          // Not a warning: nothing is deleted, so the button is the accent colour and the icon is the host's.
+          variant="default"
+          icon={<Server size={20} className="text-accent-fg" />}
+          testId="ssh-remove-host-confirm"
           onConfirm={() => {
             const target = removeTarget;
             setRemoveTarget(null);
             void runRowAction(target.host.id, () => removeHost(target.host.id));
           }}
           onCancel={() => setRemoveTarget(null)}
+        />
+      ) : null}
+
+      {clearTarget ? (
+        <ConfirmDialog
+          title={t`Clear data`}
+          message={clearMessage}
+          confirmLabel={t`Clear data`}
+          variant="danger"
+          testId="ssh-clear-data-confirm"
+          onConfirm={() => {
+            const target = clearTarget;
+            setClearTarget(null);
+            void runRowAction(target.host.id, () => clearHostData(target.host.id));
+          }}
+          onCancel={() => setClearTarget(null)}
         />
       ) : null}
     </div>

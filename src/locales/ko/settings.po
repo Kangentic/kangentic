@@ -12,6 +12,10 @@ msgstr ""
 msgid "{blurb}. Opens the docs page."
 msgstr "{blurb}. 문서 페이지를 엽니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{clearCount, plural, one {Stop the running agents of this project and delete its boards, tasks and history for good? Its files on the host stay.} other {Stop the running agents of these # projects and delete their boards, tasks and history for good? Their files on the host stay.}}"
+msgstr ""
+
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
@@ -134,11 +138,6 @@ msgstr "{projectCount, plural, other {프로젝트 #개}}"
 #, fuzzy
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs}ms"
-
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
-msgstr "{removeProjectCount, plural, other {\"{removeName}\"을(를) 제거할까요? 프로젝트 #개가 Kangentic에서 제외되고 해당 에이전트가 일시 중단됩니다. 호스트에서는 아무것도 삭제되지 않습니다.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -675,6 +674,7 @@ msgid "Clear browser data?"
 msgstr "브라우저 데이터를 삭제하시겠습니까?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Clear data"
 msgstr "데이터 삭제"
@@ -1193,6 +1193,11 @@ msgstr "다운로드 중"
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
 msgstr "각 에이전트 세션은 로컬 MCP 서버를 받아 이 도구들을 자동으로 찾습니다. 에이전트가 만든 작업은 알림과 함께 보드에 표시됩니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgctxt "host row action"
+msgid "Edit"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Editors"
@@ -1435,11 +1440,6 @@ msgstr "푸시투토크를 누른 채 터미널이나 입력란에 말하세요.
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "누르고 있으면 녹음되고, 놓으면 변환된 텍스트가 삽입됩니다. 단축키에서 다시 지정할 수 있습니다."
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Host name"
-msgstr "호스트 이름"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hosts"
@@ -1653,6 +1653,10 @@ msgstr "Kangentic은 터미널처럼 SSH 구성, 에이전트, 키를 사용합�
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 운영 릴레이"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
@@ -1662,6 +1666,10 @@ msgstr "키를 놓은 후에도 잠시 녹음을 계속해 마지막 단어가 �
 #, fuzzy
 msgid "Keep editing"
 msgstr "계속 편집"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Keep signing in the way the host does now"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2498,11 +2506,6 @@ msgstr "원격"
 msgid "Remove"
 msgstr "제거"
 
-#: src/renderer/components/settings/tabs/SshTab.tsx
-#, fuzzy
-msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
-msgstr "\"{removeName}\"을(를) 제거할까요? Kangentic이 더 이상 연결하지 않습니다. 호스트에서는 아무것도 삭제되지 않습니다."
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Remove a task's worktree when the task completes."
@@ -2513,8 +2516,15 @@ msgstr "작업이 완료되면 작업의 작업 트리를 제거합니다."
 msgid "Remove host"
 msgstr "호스트 제거"
 
-#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" forgets the connection, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Removing \"{removeName}\" hides its projects and suspends their agents until it is added again, and nothing is deleted."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "이름 바꾸기"
@@ -2622,13 +2632,13 @@ msgstr "작업 트리가 생성된 후 실행됩니다. Windows에서는 cmd.exe
 msgid "Runs on this machine unless you choose a cloud refinement."
 msgstr "클라우드 보정을 선택하지 않으면 이 컴퓨터에서 실행됩니다."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 #, fuzzy
 msgid "Save"
 msgstr "저장"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
-#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Save name"
 msgstr "이름 저장"
@@ -3034,6 +3044,10 @@ msgstr "새 워크플로에서 에이전트가 받는 첫 메시지입니다."
 msgid "The Kangentic relay"
 msgstr "Kangentic 릴레이"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "The key Kangentic made was added to the old address, so choose how to sign in to the new one."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy
 msgid "The language of menus, settings and dialogs."
@@ -3106,6 +3120,7 @@ msgstr "테마"
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "이 단축키는 고정되어 있어 다시 지정할 수 없습니다"
 
+#. placeholder {0}: editProbe.hostname
 #. placeholder {0}: probe.hostname
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "This is the key {0} presents."
@@ -3190,6 +3205,10 @@ msgstr ""
 #, fuzzy
 msgid "Trust this key"
 msgstr "이 키 신뢰"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key and save"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy

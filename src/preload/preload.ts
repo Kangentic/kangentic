@@ -808,15 +808,18 @@ const api: ElectronAPI = {
     detectClient: () => ipcRenderer.invoke(IPC.SSH_DETECT_CLIENT),
     listHosts: () => ipcRenderer.invoke(IPC.SSH_LIST_HOSTS),
     probeHostKey: (destination) => ipcRenderer.invoke(IPC.SSH_PROBE_HOST_KEY, destination),
+    listConfigHosts: () => ipcRenderer.invoke(IPC.SSH_LIST_CONFIG_HOSTS),
     addHost: (input) => ipcRenderer.invoke(IPC.SSH_ADD_HOST, input),
     removeHost: (hostId) => ipcRenderer.invoke(IPC.SSH_REMOVE_HOST, hostId),
-    renameHost: (hostId, name) => ipcRenderer.invoke(IPC.SSH_RENAME_HOST, hostId, name),
+    clearHostData: (hostId) => ipcRenderer.invoke(IPC.SSH_CLEAR_HOST_DATA, hostId),
+    updateHost: (hostId, input) => ipcRenderer.invoke(IPC.SSH_UPDATE_HOST, hostId, input),
     reconnectHost: (hostId) => ipcRenderer.invoke(IPC.SSH_RECONNECT_HOST, hostId),
     hostProgram: (hostId) => ipcRenderer.invoke(IPC.SSH_HOST_PROGRAM, hostId),
     checkKeyFile: (keyFilePath) => ipcRenderer.invoke(IPC.SSH_CHECK_KEY_FILE, keyFilePath),
     probeChangedKey: (hostId) => ipcRenderer.invoke(IPC.SSH_PROBE_CHANGED_KEY, hostId),
     trustNewKey: (hostId, shownFingerprint) => ipcRenderer.invoke(IPC.SSH_TRUST_NEW_KEY, hostId, shownFingerprint),
     probeRemoteFolder: (hostId, folderPath) => ipcRenderer.invoke(IPC.SSH_PROBE_REMOTE_FOLDER, hostId, folderPath),
+    listDirectories: (hostId, directoryPath) => ipcRenderer.invoke(IPC.SSH_LIST_DIRECTORIES, hostId, directoryPath),
     onHostsChanged: (callback) => {
       const handler = () => callback();
       ipcRenderer.on(IPC.SSH_HOSTS_CHANGED, handler);

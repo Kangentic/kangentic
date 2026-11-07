@@ -16,10 +16,31 @@ function toProject(row: ProjectRow): Project {
   return { ...project, remote: hostId && remotePath ? { hostId, path: remotePath } : null };
 }
 
+/**
+ * A project of a removed host is hidden (#913): the SSH host it lives on was removed, which keeps its data
+ * and forgets the connection. `list`, `getById` and `getLastOpened` leave it out, so what a person or an agent
+ * picks from never offers it, and recovery never starts it.
+ *
+ * Hidden is not deleted. A reader for which "not in the list" means "gone" reads every row, or it destroys
+ * what the user can bring back: a sweep, a prune, a count of what survives, and anything that asks whether a
+ * folder is a remote project's. Those use `listIncludingHidden`, `listHidden`, `isHidden` or `listOnHost`.
+ */
+const VISIBLE_PROJECT_CONDITION = '(remote_host_id IS NULL OR remote_host_id NOT IN (SELECT id FROM ssh_hosts WHERE removed_at IS NOT NULL))';
+
 export class ProjectRepository {
   list(): Project[] {
     const db = getGlobalDb();
-    return (db.prepare('SELECT * FROM projects ORDER BY position ASC').all() as ProjectRow[]).map(toProject);
+    return (db.prepare(`SELECT * FROM projects WHERE ${VISIBLE_PROJECT_CONDITION} ORDER BY position ASC`).all() as ProjectRow[]).map(toProject);
+  }
+
+  /** Every row, a removed host's projects included. For a reader that must not read hidden as gone. */
+  listIncludingHidden(): Project[] {
+    return (getGlobalDb().prepare('SELECT * FROM projects ORDER BY position ASC').all() as ProjectRow[]).map(toProject);
+  }
+
+  /** The projects of removed hosts. */
+  listHidden(): Project[] {
+    return (getGlobalDb().prepare(`SELECT * FROM projects WHERE NOT ${VISIBLE_PROJECT_CONDITION} ORDER BY position ASC`).all() as ProjectRow[]).map(toProject);
   }
 
   private read(id: string): Project {
@@ -43,7 +64,7 @@ export class ProjectRepository {
 
   getById(id: string): Project | undefined {
     const db = getGlobalDb();
-    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+    const row = db.prepare(`SELECT * FROM projects WHERE id = ? AND ${VISIBLE_PROJECT_CONDITION}`).get(id) as ProjectRow | undefined;
     return row ? toProject(row) : undefined;
   }
 
@@ -83,7 +104,7 @@ export class ProjectRepository {
   getLastOpened(): Project | undefined {
     const db = getGlobalDb();
     const row = db.prepare(
-      'SELECT * FROM projects ORDER BY last_opened DESC LIMIT 1'
+      `SELECT * FROM projects WHERE ${VISIBLE_PROJECT_CONDITION} ORDER BY last_opened DESC LIMIT 1`
     ).get() as ProjectRow | undefined;
     return row ? toProject(row) : undefined;
   }
@@ -137,7 +158,16 @@ export class ProjectRepository {
     return this.read(projectId);
   }
 
-  /** The projects that live on a host, which removing it takes out of Kangentic. */
+  /**
+   * Whether the project exists but is hidden because its host was removed. A reader that treats "not found" as
+   * "deleted" (a workflow link's end) must ask this first, or hiding a project would be read as deleting it.
+   */
+  isHidden(id: string): boolean {
+    const row = getGlobalDb().prepare(`SELECT id FROM projects WHERE id = ? AND NOT ${VISIBLE_PROJECT_CONDITION}`).get(id);
+    return row !== undefined;
+  }
+
+  /** The projects that live on a host, hidden ones included: removing the host hides them, adding it again shows them. */
   listOnHost(hostId: string): Project[] {
     const db = getGlobalDb();
     return (db.prepare('SELECT * FROM projects WHERE remote_host_id = ? ORDER BY position ASC').all(hostId) as ProjectRow[]).map(toProject);

@@ -420,7 +420,8 @@ test('asks before removing a host, and removing takes the row away', async () =>
   const confirmDialog = () => page.locator('h3:has-text("Remove host")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
 
   await row.locator('[data-testid="ssh-host-remove"]').click();
-  await expect(confirmDialog()).toContainText('Remove "Lab"?');
+  // No project on the host, so the sentence says only that the connection is forgotten. Nothing is deleted either way.
+  await expect(confirmDialog()).toContainText('Removing "Lab" forgets the connection, and nothing is deleted.');
   await confirmDialog().getByRole('button', { name: 'Cancel' }).click();
   await expect(confirmDialog()).toHaveCount(0);
   await expect(row).toHaveCount(1);
@@ -479,5 +480,194 @@ test('shows no program line for a host that is not connected', async () => {
   await expect(page.locator('[data-testid="ssh-host-program"]')).toHaveCount(0);
   await page.evaluate(() => {
     delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+  });
+});
+
+test.describe('address suggestions from the SSH config', () => {
+  const suggestion = () => page.locator('[data-testid="ssh-add-destination-suggestion"]');
+
+  async function openAddForm() {
+    await openSshTab();
+    await page.locator('[data-testid="ssh-add-host"]').click();
+    await expect(page.locator('[data-testid="ssh-add-destination"]')).toBeVisible();
+  }
+
+  test('suggests names from the config as you type, with the machine each one is, and a pick fills the address', async () => {
+    await openAddForm();
+    const field = page.locator('[data-testid="ssh-add-destination"]');
+
+    await expect(suggestion()).toHaveCount(0);
+    await field.fill('b');
+    await expect(suggestion()).toHaveText(['build-boxdev@build.example.test']);
+
+    await suggestion().first().click();
+    await expect(field).toHaveValue('build-box');
+    // A name typed in full is not offered back.
+    await expect(suggestion()).toHaveCount(0);
+  });
+
+  test('moves through the suggestions with the arrow keys, and Enter picks one instead of continuing', async () => {
+    await openAddForm();
+    const field = page.locator('[data-testid="ssh-add-destination"]');
+    await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+    await field.fill('g');
+    await expect(suggestion()).toHaveCount(2);
+
+    await field.press('ArrowDown');
+    await field.press('ArrowDown');
+    await field.press('ArrowUp');
+    await field.press('Enter');
+
+    await expect(field).toHaveValue('gpu-rig');
+    await expect(page.locator('[data-testid="ssh-add-trust"]')).toHaveCount(0);
+  });
+
+  test('offers nothing for an address that is not a config name, and Continue is not covered by a list', async () => {
+    await openAddForm();
+    await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+    await page.locator('[data-testid="ssh-add-destination"]').fill('dev@lab.example.test');
+
+    await expect(suggestion()).toHaveCount(0);
+    await page.locator('[data-testid="ssh-add-continue"]').click();
+    await expect(page.locator('[data-testid="ssh-add-fingerprint"]')).toBeVisible();
+  });
+
+  test('Escape closes the suggestions and leaves the panel and the form open', async () => {
+    await openAddForm();
+    const field = page.locator('[data-testid="ssh-add-destination"]');
+    await field.fill('b');
+    await expect(suggestion()).toHaveCount(1);
+
+    await field.press('Escape');
+
+    await expect(suggestion()).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-add-panel"]')).toBeVisible();
+    await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+
+    // The next keystroke offers them again.
+    await field.fill('bu');
+    await expect(suggestion()).toHaveCount(1);
+  });
+
+  test('is no suggestions, and no error, when the config has no hosts', async () => {
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshConfigHosts = [];
+    });
+    await openAddForm();
+    await page.locator('[data-testid="ssh-add-destination"]').fill('b');
+
+    await expect(suggestion()).toHaveCount(0);
+    await page.evaluate(() => {
+      delete (window as unknown as Record<string, unknown>).__mockSshConfigHosts;
+    });
+  });
+});
+
+test.describe('editing a host in place', () => {
+  async function addHostThroughApi(signInMethod: 'config' | 'create-key' = 'config') {
+    await page.evaluate(async (method) => {
+      await window.electronAPI.ssh.addHost({
+        name: 'Lab',
+        destination: 'dev@lab.example.test',
+        signIn: method === 'create-key' ? { method, password: 'pw' } : { method },
+        expectedFingerprint: 'SHA256:x',
+      });
+    }, signInMethod);
+  }
+
+  async function openEditForm() {
+    await openSshTab();
+    await page.locator('[data-testid="ssh-host-edit"]').click();
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toBeVisible();
+  }
+
+  test('saves a new name at once, with no key to trust', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+
+    await page.locator('[data-testid="ssh-edit-name"]').fill('Build server');
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toHaveText('Save');
+    await page.locator('[data-testid="ssh-edit-save"]').click();
+
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-host-name"]')).toHaveText('Build server');
+    await expect(page.locator('[data-testid="ssh-host-destination"]')).toHaveText('dev@lab.example.test');
+  });
+
+  test('shows the new address\'s key first, and saves the address only once it is trusted', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+
+    await page.locator('[data-testid="ssh-edit-destination"]').fill('dev@lab2.example.test');
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toHaveText('Continue');
+    await page.locator('[data-testid="ssh-edit-save"]').click();
+
+    await expect(page.locator('[data-testid="ssh-edit-fingerprint"]')).toContainText('SHA256:');
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toHaveText('Trust this key and save');
+    // Nothing is saved while the key is only shown.
+    const saved = await page.evaluate(async () => (await window.electronAPI.ssh.listHosts())[0].host.destination);
+    expect(saved).toBe('dev@lab.example.test');
+
+    await page.locator('[data-testid="ssh-edit-save"]').click();
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-host-destination"]')).toHaveText('dev@lab2.example.test');
+  });
+
+  test('asks for the key again when the address is typed over after it was shown', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+    await page.locator('[data-testid="ssh-edit-destination"]').fill('dev@lab2.example.test');
+    await page.locator('[data-testid="ssh-edit-save"]').click();
+    await expect(page.locator('[data-testid="ssh-edit-trust"]')).toBeVisible();
+
+    await page.locator('[data-testid="ssh-edit-destination"]').fill('dev@lab3.example.test');
+
+    await expect(page.locator('[data-testid="ssh-edit-trust"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toHaveText('Continue');
+  });
+
+  test('Cancel discards the edit', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+    await page.locator('[data-testid="ssh-edit-name"]').fill('Discarded');
+
+    await page.locator('[data-testid="ssh-edit-cancel"]').click();
+
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-host-name"]')).toHaveText('Lab');
+  });
+
+  test('needs a new sign-in with a new address when the key Kangentic made was for the old one', async () => {
+    await addHostThroughApi('create-key');
+    await openEditForm();
+    await page.locator('[data-testid="ssh-edit-destination"]').fill('dev@lab2.example.test');
+
+    await expect(page.locator('[data-testid="ssh-edit-needs-signin"]')).toBeVisible();
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toBeDisabled();
+
+    await page.locator('[data-testid="ssh-edit-signin-password"]').click();
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toBeDisabled();
+    await page.locator('[data-testid="ssh-edit-password"]').fill('pw');
+    await expect(page.locator('[data-testid="ssh-edit-needs-signin"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-edit-save"]')).toBeEnabled();
+  });
+
+  test('keeps the form open with the reason in place when saving is refused, and drops the password', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+    await page.locator('[data-testid="ssh-edit-signin-password"]').click();
+    await page.locator('[data-testid="ssh-edit-password"]').fill('wrong');
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockSshUpdateError = 'Stop the terminals running on this host first.';
+    });
+
+    await page.locator('[data-testid="ssh-edit-save"]').click();
+
+    await expect(page.locator('[data-testid="ssh-edit-error"]')).toContainText('Stop the terminals');
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toBeVisible();
+    await expect(page.locator('[data-testid="ssh-edit-password"]')).toHaveValue('');
+    await page.evaluate(() => {
+      delete (window as unknown as Record<string, unknown>).__mockSshUpdateError;
+    });
   });
 });

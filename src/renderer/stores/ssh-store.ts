@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useProjectStore } from './project-store';
 import { describeIpcError } from '../lib/ipc-error';
-import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshRemoteFolderProbe } from '../../shared/types';
+import type { SshClientStatus, SshConfigHost, SshDirectoryListing, SshHostAddInput, SshHostKeyProbe, SshHostProgram, SshHostStatus, SshHostUpdateInput, SshRemoteFolderProbe } from '../../shared/types';
 
 /**
  * Identifies the newest in-flight listHosts() so an older reply cannot clobber a newer one. A host's
@@ -34,9 +34,14 @@ interface SshStore {
   loadHosts: () => Promise<void>;
   loadClient: () => Promise<void>;
   probeHostKey: (destination: string) => Promise<SshHostKeyProbe>;
+  /** The named hosts in this computer's SSH config, for the address field's suggestions. */
+  listConfigHosts: () => Promise<SshConfigHost[]>;
   addHost: (input: SshHostAddInput) => Promise<SshHostStatus>;
   removeHost: (hostId: string) => Promise<void>;
-  renameHost: (hostId: string, name: string) => Promise<void>;
+  /** Delete Kangentic's data for the host's projects. The host stays. */
+  clearHostData: (hostId: string) => Promise<void>;
+  /** Save a host's name, address or sign-in. Rejects with the reason and keeps what the host had. */
+  updateHost: (hostId: string, input: SshHostUpdateInput) => Promise<SshHostStatus>;
   reconnectHost: (hostId: string) => Promise<void>;
   /** Whether a key file the user chose can be used. Rejects with the reason, such as a passphrase. */
   checkKeyFile: (keyFilePath: string) => Promise<void>;
@@ -47,6 +52,8 @@ interface SshStore {
   /** What the program on a connected host reports. Rejects with the reason while the host cannot answer. */
   hostProgram: (hostId: string) => Promise<SshHostProgram>;
   probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
+  /** The folders directly inside a directory on a host. A directory that is not there reads as `exists: false`; a host that cannot answer rejects. */
+  listDirectories: (hostId: string, directoryPath: string) => Promise<SshDirectoryListing>;
 }
 
 /**
@@ -92,15 +99,18 @@ const createSshStore = () => create<SshStore>((set, get) => ({
 
   probeHostKey: (destination) => window.electronAPI.ssh.probeHostKey(destination),
 
+  listConfigHosts: () => window.electronAPI.ssh.listConfigHosts(),
+
   addHost: async (input) => {
     const status = await window.electronAPI.ssh.addHost(input);
-    await get().loadHosts();
+    // The same address as a removed host brings its hidden projects back, so the sidebar must hear.
+    await Promise.all([get().loadHosts(), useProjectStore.getState().loadProjects()]);
     return status;
   },
 
   removeHost: async (hostId) => {
     await window.electronAPI.ssh.removeHost(hostId);
-    // Main took the host's projects out of Kangentic with it, so the sidebar and an open board must hear.
+    // Main hid the host's projects, so the sidebar and an open board must hear.
     await Promise.all([
       get().loadHosts(),
       useProjectStore.getState().loadProjects(),
@@ -108,9 +118,20 @@ const createSshStore = () => create<SshStore>((set, get) => ({
     ]);
   },
 
-  renameHost: async (hostId, name) => {
-    await window.electronAPI.ssh.renameHost(hostId, name);
+  clearHostData: async (hostId) => {
+    await window.electronAPI.ssh.clearHostData(hostId);
+    // The host stays, with no projects: its count and the sidebar change, and an open board may be gone.
+    await Promise.all([
+      get().loadHosts(),
+      useProjectStore.getState().loadProjects(),
+      useProjectStore.getState().loadCurrent(),
+    ]);
+  },
+
+  updateHost: async (hostId, input) => {
+    const status = await window.electronAPI.ssh.updateHost(hostId, input);
     await get().loadHosts();
+    return status;
   },
 
   reconnectHost: async (hostId) => {
@@ -130,6 +151,8 @@ const createSshStore = () => create<SshStore>((set, get) => ({
   hostProgram: (hostId) => window.electronAPI.ssh.hostProgram(hostId),
 
   probeRemoteFolder: (hostId, folderPath) => window.electronAPI.ssh.probeRemoteFolder(hostId, folderPath),
+
+  listDirectories: (hostId, directoryPath) => window.electronAPI.ssh.listDirectories(hostId, directoryPath),
 }));
 
 // Pattern E: this module's only runtime export is a hook, so it is not a Fast Refresh boundary. A re-eval
