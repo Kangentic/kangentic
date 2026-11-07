@@ -512,6 +512,12 @@ export class PtyHostClient {
     return result;
   }
 
+  /** Drop a handle `adoptRemoteSessions` made that no session took. The agent behind it is left running. */
+  forgetRemoteHandle(handle: PtyHandle): void {
+    this.handles.delete(handle.ptyId);
+    this.exitListeners.delete(handle.ptyId);
+  }
+
   async spawn(params: Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'>): Promise<PtyHostSpawnOutcome> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;

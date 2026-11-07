@@ -41,7 +41,7 @@ import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
-import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
+import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn, type RejoinSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
 import { AgentStartRefusedError } from './spawn/pty-spawn';
 import type { RemoteHostRequest, RemoteSessionRoute, SuspendPlan } from '../remote/protocol/messages';
@@ -71,6 +71,7 @@ import type {
   ActivityReason,
   SessionEvent,
   SessionResumer,
+  SpawnRemote,
   SpawnSessionInput,
   PerToolStat,
   PtyResizeOrigin,
@@ -2716,7 +2717,28 @@ export class SessionManager extends EventEmitter {
     await Promise.all(exits);
   }
 
-  private async doSpawn(input: SpawnSessionInput): Promise<Session> {
+  /**
+   * Take back a session a host kept running while the app was closed (#913). The host's agent is rebound
+   * to a PTY made here and registered as a session under its own id; nothing is started or typed. Null
+   * when the host no longer holds it alive (it exited while nobody was attached), in which case nothing
+   * changed and the caller settles the record. Rejects when the host cannot be asked or the registration
+   * fails: the agent is untouched and the caller leaves the record for a later attempt.
+   */
+  async adoptRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
+    const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
+    const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
+    const pty = adopted.get(input.id);
+    if (!pty) return null;
+    try {
+      return await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
+    } catch (error) {
+      // The agent keeps running; only this handle, which nothing will use, is dropped.
+      this.host.forgetRemoteHandle(pty);
+      throw error;
+    }
+  }
+
+  private async doSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {
     // The id is fixed here rather than in the spawn flow, so a teardown that
     // lands before the host answers can find this spawn by it.
     const id = input.id ?? uuidv4();
@@ -2735,7 +2757,7 @@ export class SessionManager extends EventEmitter {
       markSettled();
     };
     try {
-      const session = await this.performTrackedSpawn({ ...input, id });
+      const session = await this.performTrackedSpawn({ ...input, id }, rejoin);
       // A failed spawn's row is exited with no PTY, so no exit will release
       // the hold its command took (adapter-lifecycle.releaseCommandHold).
       if (session.status === 'exited') releaseCommandHold(input.agentParser, input.cwd, id);
@@ -2745,13 +2767,14 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
-      if (session.status === 'running') {
+      // A rejoined agent is long past its launch: no overlay to lift, no first output to wait for.
+      if (session.status === 'running' && !rejoin) {
         const spawned = this.registry.get(id);
         if (spawned) logLaunchStep(spawned, 'spawned');
         this.armAgentReadyCeiling(id);
         this.armUnjudgedLaunchCheck(id);
       }
-      if (session.status === 'running' && input.resuming && !input.transient) {
+      if (session.status === 'running' && input.resuming && !input.transient && !rejoin) {
         this.announceResumed(id, input.agentSessionId ?? null, input.resumedBy ?? 'user');
       }
       return session;
@@ -2797,7 +2820,7 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private performTrackedSpawn(input: SpawnSessionInput): Promise<Session> {
+  private performTrackedSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {
     return performSpawn(input, {
       registry: this.registry,
       host: this.host,
@@ -2844,7 +2867,7 @@ export class SessionManager extends EventEmitter {
         this.endCommandTerminalAfterPtyExit(sessionId);
       },
       ...(this.remoteSessionRelay ? { remoteSessions: this.remoteSessionRelay } : {}),
-    });
+    }, rejoin);
   }
 
   /**

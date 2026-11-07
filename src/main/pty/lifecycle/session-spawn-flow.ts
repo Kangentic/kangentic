@@ -272,9 +272,21 @@ async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, ses
  * All state lives in the SpawnFlowContext; this function is stateless
  * and can be unit-tested with mocks.
  */
+/**
+ * A session the host kept running while the app was closed, taken back instead of started (#913). The PTY
+ * is the one `PtyHostClient.adoptRemoteSessions` made for it, already rebound to the running agent. A
+ * rejoin starts nothing and types nothing, empties no file the session already wrote, and registers with
+ * the host as a reattach (its files are already there). Everything after the PTY is the ordinary spawn's:
+ * the registry row, the readers, telemetry, the exit handling.
+ */
+export interface RejoinSpawn {
+  pty: PtyHandle;
+}
+
 export async function performSpawn(
   input: SpawnSessionInput,
   context: SpawnFlowContext,
+  rejoin?: RejoinSpawn,
 ): Promise<Session> {
   if (isShuttingDown()) {
     throw new Error('Cannot spawn session during shutdown');
@@ -474,7 +486,8 @@ export async function performSpawn(
   // its first lines land after the reset (see resetStatusFiles). Awaited off
   // main's thread; a teardown that lands meanwhile is handled as one that
   // lands in the host round trip below, with no PTY started.
-  if (input.statusOutputPath || input.eventsOutputPath) {
+  // Not for a rejoin: the files hold what the running agent already reported, and are read as it goes on.
+  if (!rejoin && (input.statusOutputPath || input.eventsOutputPath)) {
     await resetStatusFiles(input.statusOutputPath || null, input.eventsOutputPath || null);
     if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
   }
@@ -513,6 +526,7 @@ export async function performSpawn(
         // so the viewer, the search index and the token ledger have it on this computer.
         transcriptFiles: input.agentSessionId ? transcripts?.files(input.agentSessionId) ?? [] : [],
         agentSessionId: input.agentSessionId ?? null,
+        ...(rejoin ? { reattach: true } : {}),
         ...(transcripts ? { transcripts } : {}),
         // Only a resume: finding the earlier folder reads every session record of the project.
         resumeSeed: input.resuming && input.agentSessionId && input.cliTarget
@@ -546,7 +560,9 @@ export async function performSpawn(
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
-  const spawnOutcome = registrationError ? { ok: false as const, error: registrationError, previousScrollback: '' } : await context.host.spawn({
+  const spawnOutcome = rejoin
+    ? { ok: true as const, pty: rejoin.pty }
+    : registrationError ? { ok: false as const, error: registrationError, previousScrollback: '' } : await context.host.spawn({
     sessionId: id,
     projectId: carryoverSource?.projectId || input.projectId,
     agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
@@ -580,7 +596,8 @@ export async function performSpawn(
   // ago, the agent has not reached its boot canary, so no grace is owed.
   if (spawnOutcome.ok && isShuttingDown()) {
     releaseRemote();
-    safeKillPty(spawnOutcome.pty);
+    // A rejoined agent was running before this launch: it is left running, as the quit leaves every agent on a host.
+    if (!rejoin) safeKillPty(spawnOutcome.pty);
     throw new Error('Cannot spawn session during shutdown');
   }
 

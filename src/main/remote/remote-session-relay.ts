@@ -107,6 +107,12 @@ export interface RemoteSessionRegistration {
   transcripts?: RemoteTranscriptSource;
   /** A folder to copy on the host before the agent starts (`AgentParser.remoteResumeSeed`). */
   resumeSeed?: RemoteResumeSeed | null;
+  /**
+   * The agent is already running on the host, left there by a quit (#913). Its settings, MCP config and hook
+   * script are in place and are not written again, since a CLI reads some of them as it runs; the host
+   * watches its hooks and tails its files again, and the paths are still tracked so a release removes them.
+   */
+  reattach?: boolean;
 }
 
 /** A file opened to be written anywhere in, made when it is not there. */
@@ -411,7 +417,7 @@ export class RemoteSessionRelay {
       pushedPaths.push(...files.map((file) => file.path));
       await this.options.files.writeFiles(
         registration.hostId,
-        files,
+        registration.reattach ? [] : files,
         ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
       );
       await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));

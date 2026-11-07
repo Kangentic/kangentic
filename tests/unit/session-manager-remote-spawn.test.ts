@@ -51,6 +51,7 @@ async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 
 
 interface Rig {
   manager: SessionManager;
+  router: HostRouter;
   postedCommands: PtyHostCommand[];
   helperRig: HelperRig;
   relay: RemoteSessionRelay;
@@ -80,8 +81,9 @@ function routedTransport(
   };
 }
 
-async function makeRig(): Promise<Rig> {
-  const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/zsh' } });
+/** `existing`: the host a first app process left running, which a second process (a new boot) attaches to. */
+async function makeRig(existing?: HelperRig): Promise<Rig> {
+  const helperRig = existing ?? makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/zsh' } });
   const listenerRef: { current: ((event: PtyHostEvent) => void) | null } = { current: null };
   const emit = (event: PtyHostEvent): void => listenerRef.current?.(event);
   const core = new PtyHostCore({ emit, resolveAgent: () => undefined, transcriptSinkFor: () => null, coalesceMs: 0, platform: 'linux', spawnPty: vi.fn() as never });
@@ -129,6 +131,7 @@ async function makeRig(): Promise<Rig> {
   fs.writeFileSync(path.join(localSession, 'settings.json'), '{"hooks":{}}');
   return {
     manager,
+    router,
     postedCommands,
     helperRig,
     relay,
@@ -381,5 +384,94 @@ describe('spawning an agent session on a host', () => {
     expect(session.status).toBe('exited');
     expect(session.exitCode).toBe(-1);
     expect(rig.helperRig.spawnPty).not.toHaveBeenCalled();
+  });
+});
+
+describe('taking back an agent a host kept running while the app was closed', () => {
+  /** A first app process starts the agent and goes away without ending it; a second one attaches to the same host. */
+  async function relaunch(): Promise<{ first: Rig; second: Rig }> {
+    const first = await makeRig();
+    await spawnRemote(first);
+    // The quit: this process's link lets go. The host, and the agent on it, stay, and so do its watches.
+    await first.router.handleRequest('remote', { op: 'removeHost', hostId: 'host-a' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = await makeRig(first.helperRig);
+    return { first, second };
+  }
+
+  function adoptInput(rig: Rig) {
+    return {
+      id: 's1',
+      taskId: 'task-1',
+      projectId: 'project-1',
+      command: '',
+      cwd: shellFolder,
+      startPath: 'startup_recovery' as const,
+      statusOutputPath: rig.statusPath,
+      eventsOutputPath: rig.eventsPath,
+      exitSequence: ['\x03' as const],
+      shell: 'zsh',
+      cliTarget: toStoredCliTarget(rig.place),
+      remote: { hostId: 'host-a', cwd: hostProject.replace(/\\/g, '/'), shellName: 'zsh' },
+      restoredGrid: { cols: 100, rows: 30 },
+    };
+  }
+
+  it('registers the running agent as a session, starting nothing and typing nothing', async () => {
+    const { first, second } = await relaunch();
+    const typedBefore = first.helperRig.fakes[0].write.mock.calls.length;
+
+    const session = await second.manager.adoptRemoteSession(adoptInput(second));
+
+    expect(session?.status).toBe('running');
+    expect(session?.id).toBe('s1');
+    expect(first.helperRig.spawnPty).toHaveBeenCalledTimes(1);
+    expect(second.manager.listSessions().map((entry) => entry.id)).toEqual(['s1']);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(first.helperRig.fakes[0].write.mock.calls.length).toBe(typedBefore);
+  });
+
+  it('leaves the files already on the host as they are, since a running CLI reads some of them', async () => {
+    const { first, second } = await relaunch();
+    const settings = path.join(first.hostSession, 'settings.json');
+    fs.writeFileSync(settings, '{"hooks":{"edited":"on the host"}}');
+
+    await second.manager.adoptRemoteSession(adoptInput(second));
+
+    expect(fs.readFileSync(settings, 'utf8')).toBe('{"hooks":{"edited":"on the host"}}');
+  });
+
+  it('keeps the events file the agent already wrote, and brings in what it published while nobody was attached', async () => {
+    const { first, second } = await relaunch();
+    fs.writeFileSync(second.eventsPath, '{"before":"the quit"}\n');
+    fs.writeFileSync(path.join(first.hostSession, 'wsl-hooks', 'inbox', '1700000000000000000-4242.rec'), 'K1\nidle\n\n{}');
+
+    await second.manager.adoptRemoteSession(adoptInput(second));
+
+    await waitFor(() => fs.readFileSync(second.eventsPath, 'utf8').includes('"idle"'));
+    expect(fs.readFileSync(second.eventsPath, 'utf8')).toContain('"before":"the quit"');
+  });
+
+  it('ends the session when the rejoined agent exits, as any session ends', async () => {
+    const { first, second } = await relaunch();
+    const exits: string[] = [];
+    second.manager.on('exit', (sessionId: string) => exits.push(sessionId));
+    await second.manager.adoptRemoteSession(adoptInput(second));
+
+    first.helperRig.fakes[0].exit(0);
+
+    await waitFor(() => exits.includes('s1'));
+    expect(second.manager.listSessions().find((entry) => entry.id === 's1')?.status).toBe('exited');
+  });
+
+  it('returns null, and registers nothing, when the agent exited while nobody was attached', async () => {
+    const { first, second } = await relaunch();
+    first.helperRig.fakes[0].exit(0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const session = await second.manager.adoptRemoteSession(adoptInput(second));
+
+    expect(session).toBeNull();
+    expect(second.manager.listSessions()).toEqual([]);
   });
 });
