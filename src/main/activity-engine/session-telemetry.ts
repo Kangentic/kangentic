@@ -158,9 +158,9 @@ interface SessionTelemetryCallbacks {
    */
   reportTerminatedBackgroundShells?(sessionId: string, shellIds: string[]): string[];
   /**
-   * Report which of `toolIds` were manually REJECTED, per a terminal
-   * marker in the agent's durable session transcript at or after
-   * `sinceMs`. An approval is out of scope here: it already clears
+   * Report which of `toolIds` ended without running, a user's denial or the
+   * CLI's own, per a terminal marker in the agent's durable session transcript
+   * at or after `sinceMs`. An approval is out of scope here: it already clears
    * through the normal ToolEnd hook. Called every poll tick for each
    * session awaiting a permission decision (task #640) - a denial fires
    * no hook of any kind, so this transcript check is the only way the
@@ -633,8 +633,9 @@ export class SessionTelemetry {
   }
 
   /**
-   * Check every session currently `permissionPending` for a manual denial
-   * recorded in its durable transcript, and clear the flag on a match.
+   * Check every session currently `permissionPending` for a denial of the
+   * awaited call recorded in its durable transcript, whoever denied it, and
+   * clear the flag on a match.
    *
    * A denial fires NO hook event of any kind (see
    * `permission-rejection-transcript.ts` and

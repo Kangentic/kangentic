@@ -1,11 +1,10 @@
 /**
  * Unit tests for the Claude permission-rejection transcript detector (task
- * #640). Locks the two real rejection content variants captured from real
- * sessions plus the defensive array-of-blocks fallback, the `is_error` +
- * prefix double-signal (so an ordinary tool failure never counts), id
- * filtering to the caller's tracked `toolIds`, and the `sinceMs` freshness
- * guard that keeps a bounded tail re-scan from matching a stale historical
- * rejection after a `--resume`.
+ * #640). Locks the real denial content variants captured from real sessions
+ * plus the array-of-blocks shape, the rule that any error result for the
+ * awaited id ends the wait whatever it says, id filtering to the caller's
+ * tracked `toolIds`, and the `sinceMs` freshness guard that keeps a bounded
+ * tail re-scan from matching a stale historical denial after a `--resume`.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
@@ -64,8 +63,12 @@ function denyWithFeedbackLine(rejectedToolId: string, timestamp: string, feedbac
   });
 }
 
-/** An ordinary (non-rejection) tool failure - is_error, but no rejection prefix. */
-function ordinaryToolFailureLine(failedToolId: string, timestamp: string): string {
+/**
+ * A prompt that timed out on Claude's built-in safety check, with nobody there
+ * to answer. Its wording shares nothing with a user's denial, so the card read
+ * "needs you" for 7m42s after the agent had moved on.
+ */
+function safetyCheckDenialLine(deniedToolId: string, timestamp: string): string {
   return JSON.stringify({
     type: 'user',
     uuid: 'a2c9c7e0-1c3f-4c39-9f6b-2a2f4e9b6d7a',
@@ -75,9 +78,11 @@ function ordinaryToolFailureLine(failedToolId: string, timestamp: string): strin
       content: [
         {
           type: 'tool_result',
-          tool_use_id: failedToolId,
+          tool_use_id: deniedToolId,
           is_error: true,
-          content: 'ENOENT: no such file or directory',
+          content:
+            'Permission for this command was denied by a built-in Claude Code safety check, not by the user. ' +
+            'The check stops removals that can delete far more than intended.',
         },
       ],
     },
@@ -178,12 +183,12 @@ describe('reportRejectedPromptTools', () => {
     expect(result).toEqual([toolId]);
   });
 
-  it('does not report an ordinary tool failure (is_error without the rejection prefix)', () => {
-    fs.writeFileSync(transcriptPath, `${ordinaryToolFailureLine(toolId, '2026-09-12T00:25:19.438Z')}\n`);
+  it('reports a denial Claude\'s safety check wrote: a result for the awaited id ends the wait, whatever it says', () => {
+    fs.writeFileSync(transcriptPath, `${safetyCheckDenialLine(toolId, '2026-09-12T00:25:19.438Z')}\n`);
 
     const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
 
-    expect(result).toEqual([]);
+    expect(result).toEqual([toolId]);
   });
 
   it('does not report a normal (non-error) tool_result for the same id (the tool was approved and ran)', () => {
@@ -196,6 +201,72 @@ describe('reportRejectedPromptTools', () => {
 
   it('does not report a rejection for an untracked id (structural rejection of unrelated denials)', () => {
     fs.writeFileSync(transcriptPath, `${plainDenyLine('toolu_someOtherId', '2026-09-12T00:25:19.438Z')}\n`);
+
+    const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
+
+    expect(result).toEqual([]);
+  });
+
+  it('leaves a brand-new error result to the hook: an approved call that failed writes one too', () => {
+    // An approved call keeps the prompt open until its own end, and its failure
+    // reaches the transcript just before PostToolUseFailure is read. Taken for a
+    // denial, the card would drop to idle and that `tool_end` would count twice.
+    const timestamp = '2026-09-12T00:25:19.438Z';
+    fs.writeFileSync(transcriptPath, `${safetyCheckDenialLine(toolId, timestamp)}\n`);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.parse(timestamp) + 500);
+      expect(reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 })).toEqual([]);
+
+      vi.setSystemTime(Date.parse(timestamp) + 3000);
+      expect(reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 })).toEqual([toolId]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('a prompt a subagent raised', () => {
+    // A subagent's conversation has its own transcript, which the main one does
+    // not mention, so its denial landed where the poll never looked.
+    function writeSubagentTranscript(content: string): string {
+      const directory = path.join(path.dirname(transcriptPath), agentSessionId, 'subagents');
+      fs.mkdirSync(directory, { recursive: true });
+      const subagentPath = path.join(directory, 'agent-a376bcb8eada15.jsonl');
+      fs.writeFileSync(subagentPath, content);
+      return subagentPath;
+    }
+
+    it('reports its denial from the subagent\'s own transcript', () => {
+      fs.writeFileSync(transcriptPath, '');
+      writeSubagentTranscript(`${safetyCheckDenialLine(toolId, '2026-09-12T00:25:19.438Z')}\n`);
+
+      const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
+
+      expect(result).toEqual([toolId]);
+    });
+
+    it('finds it with no main transcript line at all, and a sibling\'s error ends nothing', () => {
+      writeSubagentTranscript(`${safetyCheckDenialLine('toolu_someOtherId', '2026-09-12T00:25:19.438Z')}\n`);
+
+      const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
+
+      expect(result).toEqual([]);
+    });
+
+    it('skips a subagent transcript nothing wrote to since the prompt opened', () => {
+      const openedAt = Date.parse('2026-09-12T00:25:19.438Z');
+      const subagentPath = writeSubagentTranscript(`${safetyCheckDenialLine(toolId, '2026-09-12T00:25:19.438Z')}\n`);
+      const untouchedSince = new Date(openedAt - 60_000);
+      fs.utimesSync(subagentPath, untouchedSince, untouchedSince);
+
+      const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: openedAt });
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  it('does not report a sibling call\'s error while the awaited call\'s own result has not landed', () => {
+    fs.writeFileSync(transcriptPath, `${safetyCheckDenialLine('toolu_someOtherId', '2026-09-12T00:25:19.438Z')}\n`);
 
     const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
 
