@@ -185,6 +185,8 @@ export class StatusFileReader {
     };
     if (options.eventsFromEnd && eventsOutputPath) {
       try {
+        // sync-read-ok: once per rejoin of an agent a quit left on a host. `attach` is synchronous, and the offset
+        // must be the file's size before the first read can run, or that read would replay the earlier run.
         state.eventsFileOffset = fs.statSync(eventsOutputPath).size;
       } catch {
         // No file yet: whatever the agent writes first is new.

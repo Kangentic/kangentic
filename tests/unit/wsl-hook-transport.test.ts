@@ -729,7 +729,8 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     // Byte for byte, with the line break the here-document ends it with.
     expect(relayed[2].body).toBe(`${awkward}\n`);
     expect(fs.readdirSync(paths.responses)).toEqual([]);
-  });
+    // Three calls through the real script, each starting `sleep` per poll: 1.5 s alone on Windows, over the default under load.
+  }, 20_000);
 
   it('drains what is still waiting synchronously, for the exit flush', async () => {
     const sessionDirectory = makeSessionDirectory();
