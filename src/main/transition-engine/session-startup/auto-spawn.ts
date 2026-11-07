@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { hostOfRecord } from '../../remote/rejoin-sessions';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
@@ -274,7 +275,14 @@ export async function autoSpawnTasks(
       try {
         // First-ever-spawn detection: the board path for a task with none,
         // and the override lock's input for the rest (prepareAgentSpawn below).
-        const hasSessionRecord = sessionRepo.getLatestForTask(task.id) !== undefined;
+        const latestRecord = sessionRepo.getLatestForTask(task.id);
+        const hasSessionRecord = latestRecord !== undefined;
+        // A record that still says `running` on a host (#913): a quit left its agent there, and recovery has not
+        // taken it back yet (its host could not be asked). A fresh agent would run beside it in the same worktree.
+        if (!lostScope && latestRecord?.status === 'running' && hostOfRecord(latestRecord) !== null) {
+          console.log(`[AUTO_SPAWN] Skipped task ${task.id}: its agent is still running on its host and has not been taken back yet`);
+          continue;
+        }
         if (!hasSessionRecord) {
           if (!startFirstAgent) {
             console.log(`[AUTO_SPAWN] Skipped task ${task.id}: it never had an agent, and this pass starts none through the board path`);

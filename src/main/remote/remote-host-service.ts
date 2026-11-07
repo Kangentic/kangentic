@@ -250,6 +250,11 @@ export class RemoteHostService {
     return this.helper(hostId, 'pathPresence', { paths });
   }
 
+  /** The terminals the host's program runs, alive or exited, as its own ledger holds them. A failed ask rejects. */
+  snapshot(hostId: string): Promise<HelperRequestMap['snapshot']['result']> {
+    return this.helper(hostId, 'snapshot', {});
+  }
+
   /** Which program version the host runs, for how long, with how many terminals, and which versions it holds. */
   programInfo(hostId: string): Promise<HelperRequestMap['programInfo']['result']> {
     return this.helper(hostId, 'programInfo', {});

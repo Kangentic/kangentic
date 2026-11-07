@@ -26,6 +26,7 @@ import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCom
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { remoteGitRunnerFor } from '../../git/remote-git';
 import { probeGitOnHost } from '../../git/remote-git-probe';
+import type { HelperSessionRecord } from '../../remote/protocol/messages';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, getExistingProjectDb, closeProjectDb, projectDbPath } from '../../db/database';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
@@ -646,6 +647,19 @@ export async function recoverRemoteProjectsOnHost(context: IpcContext, hostId: s
 }
 
 /**
+ * What a host's helper holds, asked only of a host that is connected. A host that is not rejects at once:
+ * a request to a link that is down waits out its whole timeout, and a project's open would wait with it.
+ * The rejection reads as "could not ask", which leaves a running record alone (`rejoin-sessions.ts`).
+ */
+async function snapshotWhenConnected(context: IpcContext, hostId: string): Promise<{ sessions: HelperSessionRecord[] }> {
+  const hosting = context.remoteHosting;
+  if (!hosting || hosting.status.get(hostId)?.state !== 'connected') {
+    throw new Error('the host is not connected');
+  }
+  return hosting.hostService.snapshot(hostId);
+}
+
+/**
  * What every recovery pass passes `resumeSuspendedSessions` beyond its
  * positional inputs: the expired-conversation notice, and the project's own
  * team-shared default base branch for the recap (read by path, since a pass
@@ -660,6 +674,7 @@ function recoveryOptions(
     onlySessionIds,
     onConversationExpired: (notice) => notifyConversationExpired(context, notice),
     boardDefaultBaseBranch: context.boardConfigManager.getDefaultBaseBranchForPath(projectPath) ?? null,
+    ...(context.remoteHosting ? { rejoinRemote: { snapshot: (hostId: string) => snapshotWhenConnected(context, hostId) } } : {}),
   };
 }
 

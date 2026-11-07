@@ -304,16 +304,31 @@ export class SessionRepository {
    * is in the exclusion set. This prevents re-entrant recovery calls (e.g.
    * Vite hot-reload) from orphaning sessions that are actively running.
    */
-  markRunningAsOrphanedExcluding(excludeTaskIds: Set<string>): void {
-    if (excludeTaskIds.size === 0) {
+  markRunningAsOrphanedExcluding(excludeTaskIds: Set<string>, keepSessionIds: ReadonlySet<string> = new Set()): void {
+    if (excludeTaskIds.size === 0 && keepSessionIds.size === 0) {
       this.markAllRunningAsOrphaned();
       return;
     }
-    const ids = Array.from(excludeTaskIds);
-    const placeholders = ids.map(() => '?').join(', ');
+    const taskIds = Array.from(excludeTaskIds);
+    const sessionIds = Array.from(keepSessionIds);
+    const clauses = [
+      ...(taskIds.length > 0 ? [`task_id NOT IN (${taskIds.map(() => '?').join(', ')})`] : []),
+      ...(sessionIds.length > 0 ? [`id NOT IN (${sessionIds.map(() => '?').join(', ')})`] : []),
+    ];
     this.db.prepare(
-      `UPDATE sessions SET status = 'orphaned' WHERE status IN ('running', 'queued') AND task_id NOT IN (${placeholders})`
-    ).run(...ids);
+      `UPDATE sessions SET status = 'orphaned' WHERE status IN ('running', 'queued') AND ${clauses.join(' AND ')}`
+    ).run(...taskIds, ...sessionIds);
+  }
+
+  /**
+   * Agent sessions recorded as running whose agent ran on an SSH host (#913). A quit leaves such an agent
+   * running on the host, so at the next launch the record is not a crash's leftover: its agent may still be
+   * there. Startup asks the host before it orphans or resumes one (`rejoin-sessions.ts`).
+   */
+  getRunningRemote(): SessionRecord[] {
+    return this.db.prepare(
+      `SELECT * FROM sessions WHERE status = 'running' AND session_type != 'run_script' AND cli_target LIKE '%"kind":"ssh"%'`
+    ).all() as SessionRecord[];
   }
 
   /** Get orphaned agent sessions */

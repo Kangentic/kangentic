@@ -29,6 +29,7 @@ import { canRecreateWorktree, demoteMissingWorktree, isWorktreeMissing } from '.
 import { startStartupTimer } from './timing';
 import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
 import { workflowOfTask } from '../../workflows/workflow-home';
+import { createRecordAdopter, rejoinRunningRemoteSessions, type RejoinDeps } from '../../remote/rejoin-sessions';
 
 /**
  * A low-memory pause an earlier version made on a task in a running workflow.
@@ -68,6 +69,14 @@ export interface ResumeSuspendedOptions {
    * active project's: recovery also runs for projects not on screen.
    */
   boardDefaultBaseBranch?: string | null;
+  /**
+   * How to ask a host which agents it kept running (#913). A quit leaves a remote agent running, so a
+   * record that is still `running` at launch is not a crash's leftover: its agent may be on the host. With
+   * this, each such record is taken back, left alone while its host cannot be asked, or (only when the
+   * host says it is gone) orphaned and resumed. Without it, such a record is orphaned like any other,
+   * which is only right where no host exists to ask.
+   */
+  rejoinRemote?: { snapshot: RejoinDeps['snapshot'] };
 }
 
 /**
@@ -107,7 +116,7 @@ export async function resumeSuspendedSessions(
   boardProfiles?: ReadonlyArray<BoardProfile>,
   options: ResumeSuspendedOptions = {},
 ): Promise<void> {
-  const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch } = options;
+  const { onlySessionIds, onConversationExpired, boardDefaultBaseBranch, rejoinRemote } = options;
   if (isShuttingDown()) return;
 
   const done = startStartupTimer('resumeSuspendedSessions', projectId, 'resumed');
@@ -115,12 +124,38 @@ export async function resumeSuspendedSessions(
   const sessionRepo = new SessionRepository(db);
   const taskRepo = new TaskRepository(db);
 
+  // 0. An agent a quit left running on a host is taken back before anything is orphaned or resumed. A
+  //    `running` record that names a host is not a crash's leftover: resumed, it would run a second agent
+  //    in the same worktree beside the first. A record whose host could not be asked stays `running` and
+  //    untouched (the host's first connect asks again). Only the host's own answer that the agent is gone
+  //    lets it fall through to the orphan step. A scoped recovery (a pty host loss) is mid-launch and
+  //    leaves this to the launch.
+  const keepRunning = new Set<string>();
+  if (!onlySessionIds && rejoinRemote) {
+    const remoteRunning = sessionRepo.getRunningRemote();
+    if (remoteRunning.length > 0) {
+      const outcomes = await rejoinRunningRemoteSessions(remoteRunning, {
+        snapshot: rejoinRemote.snapshot,
+        adopt: createRecordAdopter({ sessionManager, projectId, projectPath }),
+        log: (line) => console.log(line),
+      });
+      for (const [recordId, outcome] of outcomes) {
+        if (outcome !== 'gone') keepRunning.add(recordId);
+      }
+      if (keepRunning.size > 0) {
+        const pending = [...outcomes.values()].filter((outcome) => outcome === 'pending').length;
+        console.log(`[SESSION_RECOVERY] ${keepRunning.size - pending} agent(s) taken back from a host, ${pending} waiting for their host`);
+      }
+    }
+  }
+
   // 1. Mark leftover 'running' records as orphaned (crash case).
   //    SKIP records whose task already has a live PTY session -- this prevents
   //    re-entrant calls (Vite hot-reload, duplicate PROJECT_OPEN) from
   //    orphaning sessions that were JUST created and are actively running.
   //    A scoped recovery skips it: its sessions' exits were already recorded,
   //    and every other 'running' record belongs to a live session.
+  //    Read after step 0, so an agent taken back from a host counts as live.
   const liveSessions = sessionManager.listSessions()
     .filter((session) => session.status === 'running' || session.status === 'queued');
   const liveTaskIds = new Set(liveSessions.map((session) => session.taskId));
@@ -130,8 +165,8 @@ export async function resumeSuspendedSessions(
   if (!onlySessionIds) sweepIntervalsOncePerLaunch(projectId, db, new Set(liveSessions.map((session) => session.id)));
   if (onlySessionIds) {
     // Nothing to orphan.
-  } else if (liveTaskIds.size > 0) {
-    sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds);
+  } else if (liveTaskIds.size > 0 || keepRunning.size > 0) {
+    sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds, keepRunning);
   } else {
     sessionRepo.markAllRunningAsOrphaned();
   }
