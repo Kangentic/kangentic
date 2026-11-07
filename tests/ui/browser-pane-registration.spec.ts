@@ -170,6 +170,37 @@ async function openBrowserPane(page: Page): Promise<void> {
 }
 
 test.describe('BrowserPaneActive - webContents registration', () => {
+  test('sends the pane widget size at registration, in the same turn and before any resize', async () => {
+    await openBrowserPane(sharedPage);
+    await sharedPage.locator('[data-testid="browser-webview"]').waitFor({ state: 'attached', timeout: 5000 });
+
+    // Dispatch and read in ONE synchronous evaluate. The ResizeObserver path
+    // reports later (it needs the registered id in state and a trailing debounce),
+    // so a widget-size call visible here can only come from registration itself.
+    const result = await sharedPage.evaluate((webContentsId: number) => {
+      const element = document.querySelector('[data-testid="browser-webview"]');
+      if (!element) throw new Error('browser-webview element not found in DOM');
+      const stub = element as HTMLElement & { getWebContentsId: () => number; getURL: () => string };
+      stub.getWebContentsId = () => webContentsId;
+      stub.getURL = () => 'http://localhost:5173/';
+      element.dispatchEvent(new Event('dom-ready'));
+      const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+      return {
+        types: calls.map((call) => call.type),
+        sizes: calls.flatMap((call) => (call.type === 'widget-size' && call.webContentsId === webContentsId
+          ? [{ width: call.width, height: call.height }]
+          : [])),
+      };
+    }, MOCK_WEB_CONTENTS_ID);
+
+    expect(result.sizes).toHaveLength(1);
+    expect(result.sizes[0].width).toBeGreaterThan(0);
+    expect(result.sizes[0].height).toBeGreaterThan(0);
+    // Registration first, then the size: the size is for a guest main already knows.
+    expect(result.types.indexOf('register')).toBeGreaterThanOrEqual(0);
+    expect(result.types.indexOf('widget-size')).toBeGreaterThan(result.types.indexOf('register'));
+  });
+
   test('calls registerPane on dom-ready with correct payload and unregisterPane on unmount', async () => {
     await openBrowserPane(sharedPage);
 

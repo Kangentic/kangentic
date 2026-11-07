@@ -287,7 +287,7 @@ indexes it and Cursor gets no copy.
 - `derived-detail-ownership.md` - task-detail ownership is a host's COMPLETE mounted set, reconciled, never accumulated.
 - `retained-pane-never-remounts.md` - a window with an open Browser pane is RETAINED across a project switch; hide it with `opacity: 0`.
 - `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route it through `mayTakeArrivalFocus`.
-- `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
+- `agent-driven-focus.md` - no agent call shows a window, an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
 - `xterm-unicode11-parity.md` - every xterm `Terminal` activates Unicode 11 widths; hand-rolled parsers use `wcwidthV11`.
 - `xterm-query-replies.md` - a terminal whose `onData` reaches a PTY swallows XTVERSION and keeps the `vtExtensions` replies off, before its first write.
 - `cookie-jar-sharing.md` - jar cookies are copied only through `cookie-seed.ts`, and partitions stay task-keyed.
