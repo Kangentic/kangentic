@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import { Check, CircleExclamationPoint, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -97,7 +97,7 @@ function connectionStateDisplay(state: MobileDeviceConnectionState, i18n: I18n):
     case 'offline':
       return { label: i18n._(msg`Offline`), className: 'text-fg-faint', icon: <WifiOff size={12} /> };
     case 'closed':
-      return { label: i18n._(msg`Disconnected`), className: 'text-danger', icon: <CircleAlert size={12} /> };
+      return { label: i18n._(msg`Disconnected`), className: 'text-danger', icon: <CircleExclamationPoint size={12} /> };
     case 'idle':
       return null;
   }
@@ -602,7 +602,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         data-testid="mobile-relay-test-result"
                         data-reachable="false"
                       >
-                        <CircleAlert size={13} className="text-attention shrink-0" />
+                        <CircleExclamationPoint size={13} className="text-attention shrink-0" />
                         <Trans>No response</Trans>
                       </span>
                     </Tooltip>

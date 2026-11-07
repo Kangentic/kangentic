@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLingui } from '@lingui/react/macro';
-import { AlertTriangle, Folder, Workflow as WorkflowIcon } from 'lucide-react';
+import { TriangleExclamationPoint, Folder, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
@@ -181,7 +181,7 @@ function StallMark({ reason }: { reason: string }) {
   return (
     <Tooltip label={t`Stalled: ${reason}`}>
       <span className="inline-flex shrink-0 text-warning" role="img" aria-label={t`Stalled`} data-testid="workflow-card-stalled">
-        <AlertTriangle size={12} />
+        <TriangleExclamationPoint size={12} />
       </span>
     </Tooltip>
   );

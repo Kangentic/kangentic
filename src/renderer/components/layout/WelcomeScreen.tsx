@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleExclamationPoint, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { DOCS_URLS } from '../../../shared/docs-links';
@@ -65,7 +65,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
           {loading ? (
             <Loader2 size={14} className="animate-spin text-fg-faint" />
           ) : unauthenticated ? (
-            <CircleAlert size={14} className="text-attention" />
+            <CircleExclamationPoint size={14} className="text-attention" />
           ) : found ? (
             <CheckCircle size={14} className="text-active" />
           ) : (
@@ -306,7 +306,7 @@ export function WelcomeScreen() {
               {!detectionResolved ? (
                 <Loader2 size={14} className="animate-spin text-fg-faint shrink-0" />
               ) : blocked ? (
-                <CircleAlert size={14} className="text-attention shrink-0" />
+                <CircleExclamationPoint size={14} className="text-attention shrink-0" />
               ) : (
                 <CheckCircle size={14} className="text-active shrink-0" />
               )}

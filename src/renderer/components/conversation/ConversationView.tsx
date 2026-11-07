@@ -30,7 +30,7 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive, FileText, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, MessageSquareExclamationPoint, Bot, User, Terminal, Copy, Check, Archive, FileText, Loader2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -723,7 +723,7 @@ export function ConversationView({
           className="flex items-center gap-2 px-4 py-2 text-xs text-amber-300 bg-amber-500/10 border-b border-amber-500/20"
           data-testid="conversation-degraded-banner"
         >
-          <MessageSquareWarning size={14} className="flex-shrink-0" />
+          <MessageSquareExclamationPoint size={14} className="flex-shrink-0" />
           <span><Trans>Original transcript file is gone - showing indexed text.</Trans></span>
         </div>
       )}

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { CirclePause, Gauge, RotateCw, TriangleAlert } from 'lucide-react';
+import { CirclePause, Gauge, RotateCw, TriangleExclamationPoint } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
@@ -94,7 +94,7 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
             above already says Graphics acceleration. */}
         {turnedOffByApp && (
           <CardTile className="flex items-start gap-2.5" testId="graphics-acceleration-notice">
-            <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
+            <TriangleExclamationPoint size={16} className="text-warning mt-0.5 flex-shrink-0" />
             <p className="text-sm text-fg-muted"><Trans>Kangentic turned this off after repeated failures.</Trans></p>
           </CardTile>
         )}
