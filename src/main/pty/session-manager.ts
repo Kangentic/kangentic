@@ -5045,6 +5045,25 @@ export class SessionManager extends EventEmitter {
     return this.registry.getSessionAgentName(sessionId);
   }
 
+  /** The keys that move the session's agent prompt cursor to the end of the input
+   *  (`AgentAdapter.promptEndKeys`), or '' for a shell or an unmeasured agent. */
+  getPromptEndKeys(sessionId: string): string {
+    return this.registry.get(sessionId)?.agentParser?.promptEndKeys ?? '';
+  }
+
+  /**
+   * Whether an Enter on this session should show up as a turn starting: it is
+   * idle, and its agent's activity comes only from hooks, so a submit fires one.
+   * False mid-turn, where a submitted message queues and starts no turn, at a
+   * permission prompt, and for an agent read from the PTY, whose hooks may never
+   * flow. The paste engine reads this to decide whether output alone proves a
+   * submit.
+   */
+  expectsTurnAfterSubmit(sessionId: string): boolean {
+    const activityKind = this.registry.get(sessionId)?.agentParser?.runtime?.activity?.kind;
+    return activityKind === 'hooks' && this.telemetry.getSessionActivity(sessionId) === 'idle';
+  }
+
   /**
    * The folder the session's command was built for, which its agent works in.
    * Differs from `Session.cwd` when the PTY started in the home folder and the

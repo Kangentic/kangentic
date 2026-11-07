@@ -3875,6 +3875,38 @@ export interface DictationModelProgress {
   error?: string;
 }
 
+/** What ended a push-to-talk hold, as the `[dictation-hold]` log line names it. */
+export type DictationHoldEndReason =
+  /** `pointerup` of the bound button, or the bound key's `keyup`. */
+  | 'released'
+  /** The bound button lifted with another still down, a `pointermove`. */
+  | 'lifted-with-other-button'
+  /** A pointer event showed the bound button up, and no event said it lifted. */
+  | 'missed-release'
+  | 'pointercancel'
+  /** The OS window lost focus, so no release can arrive. */
+  | 'window-blur'
+  /** A press while recording: the release before it was never seen. */
+  | 'second-press'
+  /** A short tap over a pane that could go back. It cancelled and navigated. */
+  | 'navigation-tap'
+  /** A Browser pane guest reported the button up. */
+  | 'guest-up'
+  /** A guest reported a press while recording. */
+  | 'guest-second-press';
+
+/** One push-to-talk press, refused press, or hold end, for the app log. Carries
+ *  no spoken text. `reason`, `heldMs` and `targetKind` are null except on an end,
+ *  since a press comes before its target is known. `buttons` (the pointer event's
+ *  bitmask) is null for a key or a guest report. */
+export interface DictationHoldTrace {
+  phase: 'press' | 'end' | 'refused';
+  reason: DictationHoldEndReason | null;
+  heldMs: number | null;
+  buttons: number | null;
+  targetKind: 'terminal' | 'input' | null;
+}
+
 /** One streamed PCM frame (16 kHz mono Int16, carried as a transferable
  *  ArrayBuffer). `seq` lets the service detect dropped frames. */
 export interface DictationAudioChunk {
@@ -6586,6 +6618,11 @@ export interface AgentParser {
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
   /**
+   * Optional: the keys that move the agent's prompt cursor to the end of the
+   * input, measured on the real CLI. See `AgentAdapter.promptEndKeys`.
+   */
+  readonly promptEndKeys?: string;
+  /**
    * Optional: this agent reports that it started, by its SessionStart hook or
    * its first alt-screen entry, so a session that shows neither did not start.
    * Read at spawn onto the session row. See `AgentAdapter.reportsAgentStart`.
@@ -8604,6 +8641,12 @@ export interface ElectronAPI {
      *  instant (the model load happens ahead of the press, not during it). Pass
      *  `null` to release the warm engines (dictation disabled). Fire-and-forget. */
     prewarm: (config: DictationConfig | null) => void;
+    /** Record a push-to-talk press or how a hold ended in the app log, the
+     *  evidence for a report of a stuck hold. Fire-and-forget. */
+    holdTrace: (trace: DictationHoldTrace) => void;
+    /** The main window lost OS focus. Not DOM `window` blur, which also fires
+     *  when a click moves focus into a Browser pane guest. */
+    onWindowBlur: (callback: () => void) => () => void;
   };
 
   // Config

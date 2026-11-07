@@ -736,6 +736,8 @@ export const IPC = {
   TRANSCRIBE_DOWNLOAD_MODEL: 'transcribe:downloadModel',
   TRANSCRIBE_LIVE_WRITE: 'transcribe:liveWrite',
   TRANSCRIBE_PREWARM: 'transcribe:prewarm',
+  TRANSCRIBE_HOLD_TRACE: 'transcribe:holdTrace',
+  TRANSCRIBE_WINDOW_BLUR: 'transcribe:windowBlur',
 } as const;
 
 /**

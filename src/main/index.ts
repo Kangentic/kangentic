@@ -1283,6 +1283,14 @@ const createWindow = () => {
     popOutWindowManager.destroyAll();
   });
 
+  // A release after the window lost OS focus lands anywhere and tells nobody, so
+  // push-to-talk ends its hold here. Sent from this event rather than read off
+  // DOM `window` blur, which also fires when a click moves focus into a Browser
+  // pane guest, and a click into the page must never end a hold.
+  mainWindow.on('blur', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.TRANSCRIBE_WINDOW_BLUR);
+  });
+
   // Browser LANES are OS BrowserWindows too (offscreen and never shown, but
   // still counted by getAllWindows), so they hold the window count above zero
   // exactly like an orphan pop-out. That is worse here than for a pop-out: the

@@ -561,6 +561,16 @@ export class ClaudeAdapter implements AgentAdapter {
     return platform === 'win32' || platform === 'linux';
   }
 
+  /**
+   * Ctrl+E. Measured on 2.1.319 with an Up arrow or a click before the erase: as
+   * the head of one write with the DELs it reaches the end of a wrapped input,
+   * and it leaves an empty prompt and its suggestion alone. End stops at the end
+   * of the visual row, Ctrl+End does nothing, Down works for one row only, and
+   * Ctrl+U destroys a draft. In a multi-line draft it stops at the end of the
+   * cursor's own line, so the words land there and later partials find them.
+   */
+  readonly promptEndKeys = '\x05';
+
   /** The SessionStart hook runs at launch, resumes included, before any prompt. */
   readonly reportsAgentStart = true;
 

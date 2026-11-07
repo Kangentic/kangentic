@@ -3,6 +3,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import type {
   DictationAudioChunk,
   DictationConfig,
+  DictationHoldTrace,
   DictationMicPermission,
   DictationModelProgress,
   DictationStartOptions,
@@ -83,10 +84,26 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // the focused terminal as the user speaks. Into the same ordered FIFO in the
   // pty host that the user's keystrokes go through, so it never fragments
   // concurrent typing.
+  //
+  // The agent's cursor-to-end keys lead every write, the first partial included,
+  // because the payload's DELs eat whatever sits before the cursor and the user
+  // can move it during a hold. Words therefore land after any draft.
   ipcMain.on(IPC.TRANSCRIBE_LIVE_WRITE, (_event, sessionId: string, payload: string) => {
     // 'user': dictation is the user speaking into the prompt, so it counts as
     // a draft that an injected auto_command must not concatenate onto.
-    if (sessionId && payload) context.sessionManager.write(sessionId, payload, 'user');
+    if (sessionId && payload) {
+      context.sessionManager.write(sessionId, context.sessionManager.getPromptEndKeys(sessionId) + payload, 'user');
+    }
+  });
+
+  // A press, or how a hold ended. Written at `warn` because that is the one level
+  // the log mirror keeps in a production build, and a renderer's own console never
+  // reaches the log. One line per press and per end, with no spoken text in it.
+  ipcMain.on(IPC.TRANSCRIBE_HOLD_TRACE, (_event, trace: DictationHoldTrace | null) => {
+    if (!trace) return;
+    const line = `[dictation-hold] ${trace.phase} reason=${trace.reason ?? '-'} heldMs=${trace.heldMs ?? '-'}`
+      + ` buttons=${trace.buttons ?? '-'} target=${trace.targetKind ?? '-'}`;
+    console.warn(line.replace(/[\r\n]+/g, ' '));
   });
 
   // Inject finalized text into the focused terminal WITHOUT submitting. The
@@ -117,7 +134,11 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
     async (_event, sessionId: string, text: string, eraseCount: number): Promise<boolean> => {
       const sanitized = text.replace(/[\r\n]+/g, ' ').trim();
       if (!sessionId || sanitized.length === 0) return false;
-      if (eraseCount > 0) context.sessionManager.write(sessionId, '\x7f'.repeat(eraseCount), 'user');
+      // The keys go even with nothing to erase: a paste lands at the agent's
+      // cursor, and the cursor may sit inside a draft.
+      const deletes = Number.isInteger(eraseCount) && eraseCount > 0 ? '\x7f'.repeat(eraseCount) : '';
+      const erase = context.sessionManager.getPromptEndKeys(sessionId) + deletes;
+      if (erase.length > 0) context.sessionManager.write(sessionId, erase, 'user');
       try {
         await context.terminalSubmit.submitContent(sessionId, sanitized, { source: 'dictation' });
         return true;

@@ -436,6 +436,12 @@ const api: ElectronAPI = {
     downloadModel: (config) => ipcRenderer.invoke(IPC.TRANSCRIBE_DOWNLOAD_MODEL, config),
     liveWrite: (sessionId, payload) => ipcRenderer.send(IPC.TRANSCRIBE_LIVE_WRITE, sessionId, payload),
     prewarm: (config) => ipcRenderer.send(IPC.TRANSCRIBE_PREWARM, config),
+    holdTrace: (trace) => ipcRenderer.send(IPC.TRANSCRIBE_HOLD_TRACE, trace),
+    onWindowBlur: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.TRANSCRIBE_WINDOW_BLUR, handler);
+      return () => ipcRenderer.removeListener(IPC.TRANSCRIBE_WINDOW_BLUR, handler);
+    },
   },
 
   config: {

@@ -3430,8 +3430,22 @@
         return { dictationSessionId: 'mock-dictation-1', engineId: 'stub', modelId: null, needsDownload: false, sentenceCaseFinal: sentenceCaseFinal };
       },
       __stopCalls: [],
+      // Test hook: hold `stop` open, the window a cold refinement model stretches
+      // to seconds. A press in that window has to be refused.
+      __stopGate: null,
+      __blockStop: function () {
+        var release = function () {};
+        window.electronAPI.dictation.__stopGate = new Promise(function (resolve) { release = resolve; });
+        window.electronAPI.dictation.__releaseStop = function () {
+          release();
+          window.electronAPI.dictation.__stopGate = null;
+        };
+      },
+      __releaseStop: function () {},
       stop: async function (dictationSessionId, expectedFrames) {
         window.electronAPI.dictation.__stopCalls.push({ dictationSessionId, expectedFrames });
+        var stopGate = window.electronAPI.dictation.__stopGate;
+        if (stopGate) await stopGate;
         // Test hook: window.__mockDictationStopError, a string, makes stop()
         // reject with an Error carrying that message - so a spec can exercise
         // useDictation's finalizeOnRelease() catch branch (a real engine fault
@@ -3573,6 +3587,26 @@
       __prewarmCalls: [],
       prewarm: function (config) {
         window.electronAPI.dictation.__prewarmCalls.push(config);
+      },
+      __holdTraces: [],
+      holdTrace: function (trace) {
+        window.electronAPI.dictation.__holdTraces.push(trace);
+      },
+      // Main's OS window blur. Tests drive it with window.__emitDictationWindowBlur().
+      onWindowBlur: function (callback) {
+        if (!window.__mockDictationWindowBlurListeners) window.__mockDictationWindowBlurListeners = [];
+        window.__mockDictationWindowBlurListeners.push(callback);
+        if (!window.__emitDictationWindowBlur) {
+          window.__emitDictationWindowBlur = function () {
+            var listeners = (window.__mockDictationWindowBlurListeners || []).slice();
+            for (var listenerIndex = 0; listenerIndex < listeners.length; listenerIndex++) { listeners[listenerIndex](); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDictationWindowBlurListeners || [];
+          var callbackIndex = listeners.indexOf(callback);
+          if (callbackIndex >= 0) listeners.splice(callbackIndex, 1);
+        };
       },
     },
 

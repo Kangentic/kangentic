@@ -835,6 +835,23 @@ export interface AgentAdapter {
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
 
   /**
+   * Optional: the keys that move this agent's prompt cursor to the end of the
+   * input, for dictation's live preview. Dictation types into a prompt the user
+   * can also touch and erases with a run of DELs, which eat whatever sits before
+   * the cursor: an arrow key or a click during a hold left the live text's tail
+   * behind the refined text in the send. Main sends these keys ahead of every
+   * write, the first partial included, so the words always land after a draft.
+   *
+   * Declare it only from a measurement of the real CLI's prompt, in one write
+   * with the DELs: the keys differ per CLI, and one that clears the line
+   * destroys a draft typed before the press. Keys that stop at the end of a
+   * visual row leave a wrapped input's last row behind.
+   *
+   * Default (if not implemented): nothing is sent and the erase trusts the cursor.
+   */
+  readonly promptEndKeys?: string;
+
+  /**
    * Optional: this agent reports that it started, at launch and before any
    * prompt, by a SessionStart hook or its first alt-screen entry. A session the
    * agent-absence sweep retires with neither then reports a launch that never
