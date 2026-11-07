@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CircleAlert, Loader2, Signal } from 'lucide-react';
+import { Check, CircleExclamationPoint, Loader2, Signal } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, AppConfig, RemoteServerStatus } from '../../../../shared/types';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
@@ -91,7 +91,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                 ) : (
                   <Tooltip label={probeResult.reason}>
                     <span className="text-xs flex items-center gap-1 text-attention">
-                      <CircleAlert size={13} /><Trans>Unreachable</Trans>
+                      <CircleExclamationPoint size={13} /><Trans>Unreachable</Trans>
                     </span>
                   </Tooltip>
                 )

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { CardTile } from '../settings-card';
 
@@ -18,7 +18,7 @@ import { CardTile } from '../settings-card';
 export function OsHotkeyBanner({ action, status }: { action?: ReactNode; status?: ReactNode }) {
   return (
     <CardTile className="flex items-center gap-3" testId="os-hotkey-banner">
-      <TriangleAlert size={16} className="text-yellow-400 flex-shrink-0" />
+      <TriangleExclamationPoint size={16} className="text-yellow-400 flex-shrink-0" />
       <div className="min-w-0 flex-1 space-y-1.5">
         <p className="text-sm text-fg-muted">
           <Trans>

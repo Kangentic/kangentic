@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { TriangleExclamationPoint, ChevronDown, ChevronUp } from 'lucide-react';
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -256,7 +256,7 @@ export function ByToolTable({ rows }: ByToolTableProps) {
               {anyInterrupted && (
                 <td className="py-1 text-right">
                   {row.interruptedCount > 0
-                    ? <span className="inline-flex items-center gap-0.5 text-amber-400/80"><AlertTriangle size={10} />{row.interruptedCount}</span>
+                    ? <span className="inline-flex items-center gap-0.5 text-amber-400/80"><TriangleExclamationPoint size={10} />{row.interruptedCount}</span>
                     : <span className="text-fg-disabled">-</span>}
                 </td>
               )}

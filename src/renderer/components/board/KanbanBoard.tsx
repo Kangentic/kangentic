@@ -8,7 +8,7 @@ import {
   horizontalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
-import { AlertTriangle, X } from 'lucide-react';
+import { TriangleExclamationPoint, X } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Swimlane, type SwimlaneProps } from './Swimlane';
 import { DoneSwimlane } from './DoneSwimlane';
@@ -234,7 +234,7 @@ function ConfigWarningBanner() {
 
   return (
     <div className="mx-4 mt-4 mb-0 flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-sm text-amber-400">
-      <AlertTriangle size={16} className="flex-shrink-0" />
+      <TriangleExclamationPoint size={16} className="flex-shrink-0" />
       <span className="flex-1">{configWarnings[0]}</span>
       <button
         type="button"

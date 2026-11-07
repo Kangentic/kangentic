@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CircleAlert, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
+import { Loader2, CircleExclamationPoint, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -134,7 +134,7 @@ function StartBlockedFooter({ reason, divider, testId }: { reason: StartBlockedR
   const { label, tip } = useStartBlockedCopy(reason);
   return (
     <CardStatusBar testId={testId ?? 'status-bar'} divider={divider} tip={tip} toneClass="text-warning">
-      <CircleAlert size={12} className="shrink-0" />
+      <CircleExclamationPoint size={12} className="shrink-0" />
       <span className="truncate">{label}</span>
     </CardStatusBar>
   );
@@ -146,7 +146,7 @@ function StartBlockedCompactLine({ reason }: { reason: StartBlockedReason }) {
   return (
     <Tooltip label={tip} describe={false}>
       <span className="text-xs text-warning mt-1 flex items-center gap-1 min-w-0" data-testid="task-card-start-blocked-line">
-        <CircleAlert size={12} className="shrink-0" />
+        <CircleExclamationPoint size={12} className="shrink-0" />
         <span className="truncate">{label}</span>
       </span>
     </Tooltip>

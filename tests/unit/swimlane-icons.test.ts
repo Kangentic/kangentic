@@ -250,6 +250,14 @@ describe('ColumnGlyph', () => {
     expect(render({ column: { icon: 'git-fork', role: null }, strokeWidth: 2.5 })).toContain('stroke-width="2.5"');
   });
 
+  it('paints a column saved under a name lucide has renamed, not its role default', async () => {
+    await registry.loadIconCatalog();
+    const markup = render({ column: { icon: 'triangle-alert', role: 'todo' } });
+    expect(markup).toContain('lucide-triangle-exclamation-point');
+    expect(markup).not.toContain('lucide-layers');
+    expect(markup).not.toContain('column-glyph-dot');
+  });
+
   it('draws a dot for a non-core icon until the full map lands, then the icon itself', async () => {
     const column = { icon: NON_CORE_ICON, role: null };
     expect(render({ column })).toContain('column-glyph-dot');
@@ -259,6 +267,19 @@ describe('ColumnGlyph', () => {
     const markup = render({ column });
     expect(markup).toContain('lucide-rocket');
     expect(markup).not.toContain('column-glyph-dot');
+  });
+});
+
+describe('getUsedIcons', () => {
+  it('names a column saved under a renamed icon the way the picker names its tile', async () => {
+    const { swimlaneIcons } = await freshModules();
+    const used = swimlaneIcons.getUsedIcons([
+      { id: 'renamed', icon: 'triangle-alert', role: null },
+      { id: 'current', icon: 'rocket', role: null },
+    ] as Parameters<SwimlaneIconsModule['getUsedIcons']>[0]);
+    expect(used.has('triangle-exclamation-point')).toBe(true);
+    expect(used.has('triangle-alert')).toBe(false);
+    expect(used.has('rocket')).toBe(true);
   });
 });
 
@@ -336,6 +357,39 @@ describe('the icon registry', () => {
     expect(registry.isIconPending(UNKNOWN_ICON)).toBe(false);
     expect(registry.resolveIcon(UNKNOWN_ICON)).toBeUndefined();
     expect(registry.ensureIcons([NON_CORE_ICON, UNKNOWN_ICON])).toBeNull();
+  });
+
+  describe('names lucide has renamed', () => {
+    // A rename leaves the old name out of lucide's `icons` map with nothing thrown, so a saved column
+    // quietly loses its glyph. This fails the next time lucide renames one of these targets.
+    it('sends every legacy name to a real catalog entry', async () => {
+      const catalog = await import('../../src/renderer/utils/icon-catalog');
+      expect(registry.LEGACY_ICON_NAMES.size).toBe(22);
+      for (const [legacyName, currentName] of registry.LEGACY_ICON_NAMES) {
+        expect(catalog.CATALOG.has(currentName), `"${legacyName}" points at "${currentName}"`).toBe(true);
+        expect(catalog.CATALOG.has(legacyName), `"${legacyName}" is back in the catalog`).toBe(false);
+      }
+    });
+
+    it('resolves a legacy name to the component its current name resolves to', async () => {
+      await registry.loadIconCatalog();
+      for (const [legacyName, currentName] of registry.LEGACY_ICON_NAMES) {
+        const resolved = registry.resolveIcon(legacyName);
+        expect(resolved, `"${legacyName}"`).toBeDefined();
+        expect(resolved).toBe(registry.resolveIcon(currentName));
+      }
+    });
+
+    it('leaves a name that was not renamed as it is', () => {
+      expect(registry.canonicalIconName('layers')).toBe('layers');
+      expect(registry.canonicalIconName(UNKNOWN_ICON)).toBe(UNKNOWN_ICON);
+    });
+
+    it('reads a legacy name as pending until the map lands, like any other name outside the core set', async () => {
+      expect(registry.isIconPending('triangle-alert')).toBe(true);
+      await registry.loadIconCatalog();
+      expect(registry.isIconPending('triangle-alert')).toBe(false);
+    });
   });
 
   it('notifies subscribers once the map lands', async () => {

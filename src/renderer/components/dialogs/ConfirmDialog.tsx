@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { TriangleExclamationPoint } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 
@@ -88,7 +88,7 @@ export function ConfirmDialog({
     <BaseDialog
       onClose={onCancel}
       title={title}
-      icon={icon ?? <AlertTriangle size={16} className={iconStyles[variant]} />}
+      icon={icon ?? <TriangleExclamationPoint size={16} className={iconStyles[variant]} />}
       zIndex="z-[60]"
       testId={testId}
       trapFocus

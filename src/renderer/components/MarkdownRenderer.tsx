@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components, ExtraProps } from 'react-markdown';
 import type { Element, ElementContent } from 'hast';
-import { Info, Lightbulb, Loader2, MessageSquareWarning, OctagonAlert, TriangleAlert, type LucideProps } from 'lucide-react';
+import { Info, Lightbulb, Loader2, MessageSquareExclamationPoint, OctagonExclamationPoint, TriangleExclamationPoint, type LucideProps } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from './Tooltip';
 import { imageKindForPath } from '../../shared/image-preview';
@@ -240,9 +240,9 @@ function DocumentSource({ srcSet, media, node: _node, ...rest }: ComponentProps<
 const ALERT_ICONS: Record<MarkdownAlertKind, ComponentType<LucideProps>> = {
   note: Info,
   tip: Lightbulb,
-  important: MessageSquareWarning,
-  warning: TriangleAlert,
-  caution: OctagonAlert,
+  important: MessageSquareExclamationPoint,
+  warning: TriangleExclamationPoint,
+  caution: OctagonExclamationPoint,
 };
 
 function DocumentDiv({ children, node, ...rest }: ComponentProps<'div'> & ExtraProps) {
