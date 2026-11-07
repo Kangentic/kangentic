@@ -204,6 +204,21 @@ describe('DictationClient', () => {
     client.dispose();
   });
 
+  it('passes on a model the worker says the addon refused, and nothing else reads as one', async () => {
+    const client = new DictationClient();
+    const refused: string[] = [];
+    client.on('model-load-failed', (modelId: string) => refused.push(modelId));
+    const promise = client.ensureWarm(fakeEnsureEngineRequest());
+    const child = lastChild();
+
+    child.emit('message', { type: 'model-load-failed', modelId: 'parakeet-tdt-0.6b-v3' });
+    child.emit('message', { type: 'error', id: lastRequestId(child), message: 'Failed to create offline recognizer' });
+    await expect(promise).rejects.toThrow('Failed to create offline recognizer');
+
+    expect(refused).toEqual(['parakeet-tdt-0.6b-v3']);
+    client.dispose();
+  });
+
   it('push posts the pcm buffer fire-and-forget, with no id (no round trip)', () => {
     // No transfer list: Electron's UtilityProcess.postMessage accepts only
     // MessagePortMain[] there, not ArrayBuffer[] - unlike a browser

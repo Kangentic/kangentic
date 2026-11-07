@@ -1,9 +1,10 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type {
-  CreateSessionOptions,
-  ResolvedModel,
-  TranscriptionEngine,
-  TranscriptionEngineSession,
+import {
+  ModelLoadError,
+  type CreateSessionOptions,
+  type ResolvedModel,
+  type TranscriptionEngine,
+  type TranscriptionEngineSession,
 } from './transcription-engine';
 import { int16ToFloat32 } from '../audio/pcm';
 import { SHERPA_ONLINE_INFO } from './engine-infos';
@@ -39,18 +40,22 @@ export class SherpaOnlineEngine implements TranscriptionEngine {
     const model = models.find((entry) => entry.kind === 'online-transducer') ?? models[0];
     if (!model) throw new Error('sherpa-onnx streaming engine requires a model');
     const { encoder, decoder, joiner, tokens } = model.paths;
-    this.recognizer = new sherpa.OnlineRecognizer({
-      featConfig: { sampleRate: 16000, featureDim: 80 },
-      modelConfig: {
-        transducer: { encoder, decoder, joiner },
-        tokens,
-        numThreads: 2,
-        provider: 'cpu',
-        debug: 0,
-      },
-      decodingMethod: 'greedy_search',
-      enableEndpoint: false,
-    });
+    try {
+      this.recognizer = new sherpa.OnlineRecognizer({
+        featConfig: { sampleRate: 16000, featureDim: 80 },
+        modelConfig: {
+          transducer: { encoder, decoder, joiner },
+          tokens,
+          numThreads: 2,
+          provider: 'cpu',
+          debug: 0,
+        },
+        decodingMethod: 'greedy_search',
+        enableEndpoint: false,
+      });
+    } catch (error) {
+      throw new ModelLoadError(model.id, error);
+    }
   }
 
   createSession(options: CreateSessionOptions): TranscriptionEngineSession {

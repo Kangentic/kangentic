@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HybridEngine } from '../../src/main/transcription/engines/hybrid-engine';
-import type {
-  CreateSessionOptions,
-  ResolvedModel,
-  TranscriptionEngine,
-  TranscriptionEngineSession,
+import {
+  ModelLoadError,
+  type CreateSessionOptions,
+  type ResolvedModel,
+  type TranscriptionEngine,
+  type TranscriptionEngineSession,
 } from '../../src/main/transcription/engines/transcription-engine';
 
 /**
@@ -94,6 +95,50 @@ function flush(): Promise<void> {
 }
 
 describe('HybridEngine', () => {
+  describe('a model the addon refuses', () => {
+    const buildWith = (live: FakeEngine, final: FakeEngine, onModelLoadFailed: (modelId: string) => void): HybridEngine => new HybridEngine({
+      live: { factory: () => live, modelId: 'live-model' },
+      final: { factory: () => final, modelId: 'final-model' },
+    }, onModelLoadFailed);
+
+    it('reports the live model and still rejects the load', async () => {
+      const live = makeFakeEngine('live text');
+      const refused = new ModelLoadError('live-model', new Error('Please check your config!'));
+      live.load = vi.fn(async () => { throw refused; });
+      const onModelLoadFailed = vi.fn();
+
+      await expect(buildWith(live, makeFakeEngine('final text'), onModelLoadFailed).load(BOTH_MODELS)).rejects.toBe(refused);
+
+      expect(onModelLoadFailed).toHaveBeenCalledExactlyOnceWith('live-model');
+    });
+
+    // The case a request cannot carry: the press commits its live text and nothing rejects, so
+    // without this report a corrupt refinement model loses its accuracy silently on every press.
+    it('reports the refinement model, whose failure no request ever sees', async () => {
+      const final = makeFakeEngine('final text');
+      final.load = vi.fn(async () => { throw new ModelLoadError('final-model', new Error('Failed to create offline recognizer')); });
+      const onModelLoadFailed = vi.fn();
+      const engine = buildWith(makeFakeEngine('live text'), final, onModelLoadFailed);
+      await engine.load(BOTH_MODELS);
+
+      const session = engine.createSession(makeOptions());
+      await flush();
+
+      expect(onModelLoadFailed).toHaveBeenCalledExactlyOnceWith('final-model');
+      await expect(session.finalize()).resolves.toBe('live text');
+    });
+
+    it('stays quiet about any other load failure, which names no file to replace', async () => {
+      const live = makeFakeEngine('live text');
+      live.load = vi.fn(async () => { throw new Error('sherpa-onnx streaming engine requires a model'); });
+      const onModelLoadFailed = vi.fn();
+
+      await expect(buildWith(live, makeFakeEngine('final text'), onModelLoadFailed).load(BOTH_MODELS)).rejects.toThrow();
+
+      expect(onModelLoadFailed).not.toHaveBeenCalled();
+    });
+  });
+
   describe('lazy final slot', () => {
     it('load() loads only the live slot; the final slot loads on the first createSession, once across sessions', async () => {
       const live = makeFakeEngine('live text');

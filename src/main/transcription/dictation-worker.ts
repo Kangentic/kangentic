@@ -102,8 +102,15 @@ export interface PartialMessage {
   dictationSessionId: string;
   text: string;
 }
+/** The addon refused this model's files. Sent on its own, with no request id,
+ *  because the final slot's load fails behind the live fallback, where no reply
+ *  carries it. Main owns the model cache, so main replaces the files. */
+export interface ModelLoadFailedMessage {
+  type: 'model-load-failed';
+  modelId: string;
+}
 /** Every message this worker may post back to main. */
-export type WorkerReply = ResultMessage | ErrorMessage | PartialMessage;
+export type WorkerReply = ResultMessage | ErrorMessage | PartialMessage | ModelLoadFailedMessage;
 
 const parentPort = process.parentPort;
 
@@ -199,7 +206,7 @@ async function ensureEngine(request: EnsureEngineRequest): Promise<EnsuredEngine
 }
 
 async function buildAndLoad(request: EnsureEngineRequest): Promise<TranscriptionEngine> {
-  const engine = buildEngine(request.selection, request.remote);
+  const engine = buildEngine(request.selection, request.remote, (modelId) => post({ type: 'model-load-failed', modelId }));
   try {
     await engine.load(request.models);
   } catch (error) {

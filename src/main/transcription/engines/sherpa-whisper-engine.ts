@@ -1,9 +1,10 @@
 import * as sherpa from 'sherpa-onnx-node';
-import type {
-  CreateSessionOptions,
-  ResolvedModel,
-  TranscriptionEngine,
-  TranscriptionEngineSession,
+import {
+  ModelLoadError,
+  type CreateSessionOptions,
+  type ResolvedModel,
+  type TranscriptionEngine,
+  type TranscriptionEngineSession,
 } from './transcription-engine';
 import { concatInt16ToFloat32 } from '../audio/pcm';
 import { SHERPA_WHISPER_INFO } from './engine-infos';
@@ -33,7 +34,11 @@ export class SherpaWhisperEngine implements TranscriptionEngine {
   async load(models: ResolvedModel[]): Promise<void> {
     const model = models.find((entry) => isOfflineKind(entry.kind)) ?? models[0];
     if (!model) throw new Error('Offline engine requires a model');
-    this.recognizer = await sherpa.OfflineRecognizer.createAsync(buildOfflineConfig(model, this.language));
+    try {
+      this.recognizer = await sherpa.OfflineRecognizer.createAsync(buildOfflineConfig(model, this.language));
+    } catch (error) {
+      throw new ModelLoadError(model.id, error);
+    }
   }
 
   createSession(_options: CreateSessionOptions): TranscriptionEngineSession {

@@ -4,17 +4,26 @@
  * and scripts/record-dictation-demo.mjs records the web demo's transcript from it.
  * The speech is sherpa-onnx's own Kokoro TTS, so a clip is regenerated, never
  * committed.
+ *
+ * sherpa-onnx 2.0 removed espeak-ng, so Kokoro reads text only through a lexicon, and
+ * that frontend drops any word the lexicon lacks while synthesis still succeeds. A
+ * clip with a word missing would be scored against the full sentence, so
+ * `assertLexiconCovers` runs before synthesis and `assertGeneratedAudio` after it.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { fileURLToPath } from 'node:url';
 import { DICTATION_CACHE_ROOT } from './dictation-engine-recipes.mjs';
 
 /** The Kokoro release the clips are synthesized with. */
 export const KOKORO_MODEL = 'kokoro-en-v0_19';
 const KOKORO_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${KOKORO_MODEL}.tar.bz2`;
+const LEXICON_URL = 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/lexicon-en-us.txt';
+/** Words the release lexicon lacks that the scripts' prompts say. Same format, phonemes from the model's tokens.txt. */
+const EXTRA_LEXICON = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dictation-lexicon-extra.txt');
 
 /** Download `url` to `dest` unless it is already there, through a .part file so a cut download never passes as whole. */
 export async function fetchTo(url, dest) {
@@ -47,7 +56,11 @@ async function renameWithRetry(fromPath, toPath) {
   }
 }
 
-/** Download and unpack the Kokoro model once, into the dictation cache. Returns its folder. */
+/**
+ * Download and unpack the Kokoro model once, into the dictation cache, and fetch its
+ * lexicon, which ships outside the tarball. Returns `{ kokoro, lexicons }`: the model's
+ * folder and the lexicon files, the release's first.
+ */
 export async function ensureKokoro() {
   const root = DICTATION_CACHE_ROOT;
   const kokoro = path.join(root, KOKORO_MODEL);
@@ -68,16 +81,49 @@ export async function ensureKokoro() {
     }
     fs.writeFileSync(extractedMarker, '');
   }
-  return kokoro;
+  const releaseLexicon = path.join(root, 'lexicon-en-us.txt');
+  await fetchTo(LEXICON_URL, releaseLexicon);
+  return { kokoro, lexicons: [releaseLexicon, EXTRA_LEXICON] };
 }
 
-/** A Kokoro TTS over the folder `ensureKokoro` returned, from the caller's sherpa-onnx-node. */
-export function createKokoroTts(sherpa, kokoro) {
+/** A Kokoro TTS over what `ensureKokoro` returned, from the caller's sherpa-onnx-node. */
+export function createKokoroTts(sherpa, { kokoro, lexicons }) {
   return new sherpa.OfflineTts({
     model: {
-      kokoro: { model: path.join(kokoro, 'model.onnx'), voices: path.join(kokoro, 'voices.bin'), tokens: path.join(kokoro, 'tokens.txt'), dataDir: path.join(kokoro, 'espeak-ng-data') },
+      // A comma-separated list, so no lexicon path may hold a comma.
+      kokoro: { model: path.join(kokoro, 'model.onnx'), voices: path.join(kokoro, 'voices.bin'), tokens: path.join(kokoro, 'tokens.txt'), lexicon: lexicons.join(',') },
       numThreads: 4, provider: 'cpu', debug: false,
     },
     maxNumSentences: 1,
   });
+}
+
+/** The lowercase words `text` is read as, keeping an apostrophe inside a word. */
+export function spokenWords(text) {
+  return text.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? [];
+}
+
+/** The words a lexicon file defines. A line is `word || phones`, and `#` opens a comment. */
+export function lexiconWords(lexiconText) {
+  const words = new Set();
+  for (const line of lexiconText.split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    const separator = line.indexOf('||');
+    if (separator > 0) words.add(line.slice(0, separator).trim());
+  }
+  return words;
+}
+
+/** Throw, naming them, when a text says a word no lexicon defines. Kokoro would drop it with no error. */
+export function assertLexiconCovers(lexicons, texts) {
+  const known = new Set(lexicons.flatMap((lexicon) => [...lexiconWords(fs.readFileSync(lexicon, 'utf8'))]));
+  const missing = [...new Set(texts.flatMap((text) => spokenWords(text)))].filter((word) => !known.has(word));
+  if (missing.length > 0) {
+    throw new Error(`No lexicon defines ${missing.join(', ')}. Add them to scripts/lib/${path.basename(EXTRA_LEXICON)}, with phonemes from the model's tokens.txt.`);
+  }
+}
+
+/** Throw on empty audio, before a caller writes it. A cached empty clip would be scored on every later run. */
+export function assertGeneratedAudio(audio, text) {
+  if (!audio?.samples?.length) throw new Error(`Kokoro produced no audio for "${text}"`);
 }

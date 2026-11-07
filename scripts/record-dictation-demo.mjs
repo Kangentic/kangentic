@@ -24,7 +24,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import { CACHE_FOLDERS, DICTATION_CACHE_ROOT } from './lib/dictation-engine-recipes.mjs';
-import { KOKORO_MODEL, createKokoroTts, ensureKokoro } from './lib/dictation-tts.mjs';
+import { KOKORO_MODEL, assertGeneratedAudio, assertLexiconCovers, createKokoroTts, ensureKokoro } from './lib/dictation-tts.mjs';
 
 const require = createRequire(import.meta.url);
 const sherpa = require('sherpa-onnx-node');
@@ -96,8 +96,11 @@ async function speech(wavPath) {
     samples = resample(wave.samples, wave.sampleRate);
     source = { kind: 'wav' };
   } else {
-    const tts = createKokoroTts(sherpa, await ensureKokoro());
+    const kokoro = await ensureKokoro();
+    assertLexiconCovers(kokoro.lexicons, [PHRASE]);
+    const tts = createKokoroTts(sherpa, kokoro);
     const audio = tts.generate({ text: PHRASE, generationConfig: new sherpa.GenerationConfig({ sid: VOICE, speed: 1.0 }) });
+    assertGeneratedAudio(audio, PHRASE);
     samples = resample(audio.samples, audio.sampleRate);
     source = { kind: 'tts', model: KOKORO_MODEL, voice: VOICE, text: PHRASE };
   }
