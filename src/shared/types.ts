@@ -6991,8 +6991,9 @@ export interface AdapterRuntimeStrategy {
   readonly permissionPrompts?: {
     /**
      * Report which of `toolIds` ended without running, a user's denial or
-     * the CLI's own, per a terminal marker in the agent's durable session
-     * transcript at or after `sinceMs`. An approval is out of scope here:
+     * the CLI's own, per an error result for that id in the agent's durable
+     * session transcript, or in one of its subagent transcripts, at or after
+     * `sinceMs`. An approval is out of scope here:
      * it already clears through the normal ToolEnd hook. Returns the
      * matched subset. Must not throw: return
      * [] when the transcript is missing, unreadable, or nothing terminal
