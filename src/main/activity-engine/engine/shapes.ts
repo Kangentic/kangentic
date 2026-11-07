@@ -247,7 +247,17 @@ export interface ActivityEngineOptions {
   idleStabilityWindowMs?: number;
   /** Time source - injectable for tests. */
   now?: () => number;
+  /**
+   * True while nothing can reach the engine for this session, so silence proves nothing: the
+   * session runs on an SSH host and its link is down (#913). A watchdog that is due waits instead
+   * of forcing idle, and asks again every `HELD_WATCHDOG_RECHECK_MS`. The caller resets the
+   * liveness anchor when the hold ends (`markThinkingSignal`).
+   */
+  isHeld?: (sessionId: string) => boolean;
 }
+
+/** How often a due watchdog asks `isHeld` again while it is held. */
+export const HELD_WATCHDOG_RECHECK_MS = 5_000;
 
 /**
  * One in-flight tool tracked on the `pendingToolStack`. `id` is the

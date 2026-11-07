@@ -499,6 +499,12 @@ export class SessionManager extends EventEmitter {
    */
   private readonly hiddenUntilAdopted = new Set<string>();
   /**
+   * SSH hosts whose link is not connected right now (#913). A session on one of them hears nothing, so
+   * its silence is held against it by neither the activity watchdog nor the idle timeout. Only a link
+   * event changes it; a drop never changes a session's own state.
+   */
+  private readonly hostsWithLinkDown = new Set<string>();
+  /**
    * Sessions whose agent draws its input box in the alternate screen
    * (`spawn({ inputInAlternateScreen })`). Until the TUI enters it, any screen
    * on show is one the agent draws first, so `awaitInputReady` holds a
@@ -966,7 +972,14 @@ export class SessionManager extends EventEmitter {
         // task's setup script ends, and has no task record to pause.
         if (this.hiddenUntilAdopted.has(sessionId)) return true;
         const session = this.registry.get(sessionId);
+        if (session !== undefined && this.isOnHostWithLinkDown(session)) return true;
         return session !== undefined && isCommandTerminalSession(session);
+      },
+      // Silence from a session on a host whose link is down is not a stuck agent (#913): no hook and no
+      // output can arrive, and its agent goes on running there.
+      isActivityHeld: (sessionId) => {
+        const session = this.registry.get(sessionId);
+        return session !== undefined && this.isOnHostWithLinkDown(session);
       },
       // The idle sweep's suspend. A task's agent is NOT suspended here: the
       // 'idle-timeout' listener (ipc/handlers/sessions.ts) pauses it through
@@ -1125,6 +1138,20 @@ export class SessionManager extends EventEmitter {
    * Apply one event from the pty host. The host runs the per-chunk work; what
    * main needs of it arrives here, in the order the host produced it.
    */
+  /** The session runs on an SSH host whose link is down. */
+  private isOnHostWithLinkDown(session: ManagedSession): boolean {
+    return typeof session.hostId === 'string' && this.hostsWithLinkDown.has(session.hostId);
+  }
+
+  /** A host's link came back: what it was down for is neither idle time nor silence. */
+  private noteLinkRestored(hostId: string): void {
+    const sessionIds: string[] = [];
+    for (const session of this.registry.values()) {
+      if (session.hostId === hostId && session.status === 'running') sessionIds.push(session.id);
+    }
+    this.telemetry.noteLinkRestored(sessionIds);
+  }
+
   private handleHostEvent(event: PtyHostEvent): void {
     switch (event.type) {
       case 'promptDraft':
@@ -1246,7 +1273,13 @@ export class SessionManager extends EventEmitter {
         return;
       case 'remoteLink':
         // An SSH host's connection changed (#913). Its own event: a drop never ends a session, and the
-        // sessions on the host are neither marked exited nor respawned because of it.
+        // sessions on the host are neither marked exited nor respawned because of it. It does change what
+        // silence means: while the link is down the activity watchdog and the idle timeout wait.
+        if (event.state === 'connected') {
+          if (this.hostsWithLinkDown.delete(event.hostId)) this.noteLinkRestored(event.hostId);
+        } else {
+          this.hostsWithLinkDown.add(event.hostId);
+        }
         this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
         return;
       case 'hookFile':

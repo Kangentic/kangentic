@@ -91,6 +91,10 @@ process, a path tested against the wrong disk, an environment that overwrites th
 - **A drop is a state, never an exit.** The link reports `remoteLink`, and agents on the host keep
   running. A session ends only when the host reports its exit, or reports it gone after a restart
   (`remoteSessions`, `lost`), which resumes it through the recovery path.
+- **A drop is not silence either.** Anything that reads quiet as "stuck" or "idle" asks whether the
+  session's link is down first. The activity watchdog takes `isActivityHeld`, the idle sweep takes
+  `isIdleTimeoutExempt`, and `noteLinkRestored` wipes the outage from their clocks when the link
+  returns. A new timer that acts on a session's silence does the same.
 - **A quit hands remote sessions to the link.** `killAllSessions` signals, types into and counts
   nothing for them. `SessionManager` posts each host its plan (`remoteQuitPlan`: the adapter's exit
   sequence and whether closing the console is graceful), the link sends it as one `suspendAll` frame,

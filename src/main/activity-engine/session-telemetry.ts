@@ -136,6 +136,12 @@ interface SessionTelemetryCallbacks {
    */
   isIdleTimeoutExempt?(sessionId: string): boolean;
   /**
+   * Nothing can reach the engine for this session right now, so its silence proves nothing: it runs
+   * on an SSH host and the link is down (#913). The stale-thinking watchdog waits instead of forcing
+   * idle. Optional: a missing answer means the watchdog applies.
+   */
+  isActivityHeld?(sessionId: string): boolean;
+  /**
    * Returns the OS PID of the agent CLI for the session, used by the
    * bg-shell watcher to enumerate descendant processes. Returns
    * undefined for unknown / not-yet-spawned sessions.
@@ -338,7 +344,10 @@ export class SessionTelemetry {
       // and the session shows as waiting on the user, as it is.
       release: (sessionId, event) => this.processAdmittedEvents(sessionId, [event]),
     });
-    const activityEngineOptions = options.activityEngineOptions ?? {};
+    const activityEngineOptions: ActivityEngineOptions = {
+      ...options.activityEngineOptions,
+      isHeld: (sessionId) => callbacks.isActivityHeld?.(sessionId) ?? false,
+    };
     // Two equivalent forms: a literal string path (legacy / test usage) or
     // a resolver function (production hookup, lets the path follow a
     // runtime toggle). Static strings are normalized into a resolver so
@@ -587,6 +596,22 @@ export class SessionTelemetry {
     if (minutes > 0) {
       this.idleTimeoutInterval = setInterval(() => this.checkIdleTimeouts(), 60_000);
       this.idleTimeoutInterval.unref();
+    }
+  }
+
+  /**
+   * A host's link came back (#913). The time it was down is not idle time and not silence: an idle
+   * session starts its idle clock again, so the sweep does not suspend it for the outage, and a
+   * thinking one gets a fresh liveness anchor, so the watchdog measures from now rather than from the
+   * last signal before the drop.
+   */
+  noteLinkRestored(sessionIds: Iterable<string>): void {
+    const now = Date.now();
+    for (const sessionId of sessionIds) {
+      const state = this.activityEngine.getState(sessionId);
+      if (!state) continue;
+      if (state.activity === 'idle' && state.idleTimestamp) state.idleTimestamp = now;
+      this.activityEngine.markThinkingSignal(sessionId);
     }
   }
 
