@@ -110,22 +110,17 @@ const createSshStore = () => create<SshStore>((set, get) => ({
 
   removeHost: async (hostId) => {
     await window.electronAPI.ssh.removeHost(hostId);
-    // Main hid the host's projects, so the sidebar and an open board must hear.
-    await Promise.all([
-      get().loadHosts(),
-      useProjectStore.getState().loadProjects(),
-      useProjectStore.getState().loadCurrent(),
-    ]);
+    // Main hid the host's projects, so the sidebar and an open board must hear. When the open board was one of
+    // them the next project opens in its place, rather than the app dropping to the app-wide theme.
+    await Promise.all([get().loadHosts(), useProjectStore.getState().loadProjects()]);
+    await useProjectStore.getState().settleOpenProject();
   },
 
   clearHostData: async (hostId) => {
     await window.electronAPI.ssh.clearHostData(hostId);
     // The host stays, with no projects: its count and the sidebar change, and an open board may be gone.
-    await Promise.all([
-      get().loadHosts(),
-      useProjectStore.getState().loadProjects(),
-      useProjectStore.getState().loadCurrent(),
-    ]);
+    await Promise.all([get().loadHosts(), useProjectStore.getState().loadProjects()]);
+    await useProjectStore.getState().settleOpenProject();
   },
 
   updateHost: async (hostId, input) => {

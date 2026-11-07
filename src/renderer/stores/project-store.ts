@@ -10,6 +10,7 @@ import { killTransientSessionForProject, markIdleSessionsSeen } from './session-
 import { useConfigStore } from './config-store';
 import { useToastStore } from './toast-store';
 import { dropProject as dropProjectCache } from './project-cache';
+import { nextProjectToOpen } from '../utils/next-project';
 
 /**
  * What `openProject` actually did. `openProject` never throws: every failure is
@@ -73,6 +74,14 @@ interface ProjectStore {
   setDefaultModel: (id: string, model: string | null) => Promise<void>;
   setDefaultEffort: (id: string, effort: string | null) => Promise<void>;
   loadCurrent: () => Promise<void>;
+  /**
+   * Called after the list was reloaded following something that can take the open project away (a delete, an
+   * SSH host's removal or Clear data). When the open project is no longer listed it opens the most recently
+   * opened one that is, and only if none is left does the app drop to its empty state. The old project stays
+   * current until the next one opens, so nothing paints with the app-wide theme in between: a project's theme
+   * is its own, and the default is only for when there is no project at all.
+   */
+  settleOpenProject: () => Promise<void>;
 
   // Group actions
   loadGroups: () => Promise<void>;
@@ -135,10 +144,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   deleteProject: async (id) => {
     killTransientSessionForProject(id);
     await window.electronAPI.projects.delete(id);
-    set((s) => ({
-      projects: s.projects.filter((p) => p.id !== id),
-      currentProject: s.currentProject?.id === id ? null : s.currentProject,
-    }));
+    // The open project stays current until `settleOpenProject` has opened the next one, so there is no
+    // empty frame that paints the app-wide theme.
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
+    await get().settleOpenProject();
     // Drop the deleted project's remembered active task. Stale entries are
     // harmless (they'd never match a real session) but accumulate over time.
     const existing = useConfigStore.getState().config.lastActiveTaskByProject ?? {};
@@ -392,6 +401,15 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }
     currentReady = true;
     set({ currentProject: project, hydrated: projectsReady && currentReady });
+  },
+
+  settleOpenProject: async () => {
+    const { currentProject, projects } = get();
+    if (!currentProject || projects.some((project) => project.id === currentProject.id)) return;
+    const next = nextProjectToOpen(projects, currentProject.id);
+    if (next && (await get().openProject(next.id)) === 'opened') return;
+    // Nothing to open, or it would not open (openProject has said why): main's own answer is the state.
+    await get().loadCurrent();
   },
 
   // Group actions
