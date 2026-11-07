@@ -274,22 +274,66 @@ export async function forcePreviewCheapModels(cloneDir: string): Promise<void> {
   }
 }
 
+/** Attempts at a preview clone, and the wait between them. The one repack seen failing a
+ *  clone wrote its commit-graph 5 s after that clone failed, so two waits outlast it. */
+const PREVIEW_CLONE_ATTEMPTS = 3;
+const PREVIEW_CLONE_RETRY_DELAY_MS = 4000;
+
+/** Remove `cloneDir` if it exists. Only ever removes a direct child of the preview-projects root. */
+async function clearPreviewCloneFolder(cloneDir: string): Promise<void> {
+  if (!fs.existsSync(cloneDir)) return;
+  if (path.dirname(path.resolve(cloneDir)) !== path.resolve(previewProjectsRoot())) {
+    throw new Error(`Refusing to clear ${cloneDir}: it is not a preview clone folder under ${previewProjectsRoot()}`);
+  }
+  await fs.promises.rm(cloneDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
+
+function runPreviewClone(cloneDir: string, worktreePath: string): Promise<unknown> {
+  return execFileAsync('git', ['clone', '--no-checkout', '--local', worktreePath, cloneDir]);
+}
+
 /**
  * Make `cloneDir` a `--no-checkout` clone of `worktreePath`, adopting one already on
  * disk. A folder there WITHOUT `.git` is debris, from a data-dir wipe that got the
  * `.git` but not everything around it, and is removed first. `git clone` refuses a
  * non-empty destination, and a failed clone used to drop the preview back onto the
- * worktree itself. Only ever removes a direct child of the preview-projects root.
+ * worktree itself.
+ *
+ * A failed clone is retried. Every worktree shares one object store, so another
+ * session's git maintenance can pack and remove a loose object mid-clone, which fails as
+ * `fatal: hardlink different from source`. That fails every clone until the repack ends,
+ * and `scripts/dev.js`'s pre-clone runs moments before this one, so the retries wait. With
+ * no clone the preview opens no project, so its inspection bridge never starts.
  */
-export async function ensurePreviewClone(cloneDir: string, worktreePath: string): Promise<void> {
+export async function ensurePreviewClone(
+  cloneDir: string,
+  worktreePath: string,
+  options: {
+    runClone?: (cloneDir: string, worktreePath: string) => Promise<unknown>;
+    retryDelayMs?: number;
+  } = {},
+): Promise<void> {
+  const { runClone = runPreviewClone, retryDelayMs = PREVIEW_CLONE_RETRY_DELAY_MS } = options;
   if (fs.existsSync(path.join(cloneDir, '.git'))) return;
-  if (fs.existsSync(cloneDir)) {
-    if (path.dirname(path.resolve(cloneDir)) !== path.resolve(previewProjectsRoot())) {
-      throw new Error(`Refusing to clear ${cloneDir}: it is not a preview clone folder under ${previewProjectsRoot()}`);
+  await clearPreviewCloneFolder(cloneDir);
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await runClone(cloneDir, worktreePath);
+      return;
+    } catch (cloneError) {
+      if (attempt >= PREVIEW_CLONE_ATTEMPTS) throw cloneError;
+      const reason = cloneError instanceof Error ? cloneError.message : String(cloneError);
+      console.warn(`[DEV] Preview clone attempt ${attempt} of ${PREVIEW_CLONE_ATTEMPTS} failed, retrying: ${reason}`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      try {
+        await clearPreviewCloneFolder(cloneDir);
+      } catch (clearError) {
+        // `git clone` would refuse the folder, so stop here and report the clone's own reason.
+        console.warn('[DEV] Could not clear the failed preview clone:', clearError);
+        throw cloneError;
+      }
     }
-    await fs.promises.rm(cloneDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
-  await execFileAsync('git', ['clone', '--no-checkout', '--local', worktreePath, cloneDir]);
 }
 
 /**

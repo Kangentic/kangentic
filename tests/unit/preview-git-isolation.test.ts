@@ -179,6 +179,7 @@ describe('ensurePreviewClone and the preview boot never fall back to the worktre
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (previousDataDir === undefined) delete process.env.KANGENTIC_DATA_DIR;
     else process.env.KANGENTIC_DATA_DIR = previousDataDir;
     await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
@@ -195,6 +196,87 @@ describe('ensurePreviewClone and the preview boot never fall back to the worktre
 
     expect(fs.existsSync(path.join(cloneDir, '.git'))).toBe(true);
     expect(fs.existsSync(path.join(cloneDir, '.claude'))).toBe(false);
+  });
+
+  it('retries a failed clone on a cleared folder until it lands', async () => {
+    // Another session's repack can fail every clone for as long as it runs. With no clone
+    // the preview opens no project, so the retries are what save that launch.
+    const cloneDir = path.join(dataDir, 'preview-projects', 'project-3');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const attempts: boolean[] = [];
+
+    await ensurePreviewClone(cloneDir, sourceRepo, {
+      retryDelayMs: 0,
+      runClone: async (targetDir, sourceDir) => {
+        attempts.push(fs.existsSync(targetDir));
+        if (attempts.length < 3) {
+          fs.mkdirSync(path.join(targetDir, 'partial'), { recursive: true });
+          throw new Error('fatal: hardlink different from source');
+        }
+        git(tempDir, ['clone', '--no-checkout', '--local', sourceDir, targetDir]);
+      },
+    });
+
+    // All false: a failed attempt's partial folder is gone before the next one runs.
+    expect(attempts).toEqual([false, false, false]);
+    expect(fs.existsSync(path.join(cloneDir, '.git'))).toBe(true);
+  });
+
+  it('gives up after the last attempt, so the boot reports the failure', async () => {
+    const cloneDir = path.join(dataDir, 'preview-projects', 'project-4');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const runClone = vi.fn(async () => {
+      throw new Error('fatal: still failing');
+    });
+
+    await expect(ensurePreviewClone(cloneDir, sourceRepo, { runClone, retryDelayMs: 0 })).rejects.toThrow(/still failing/);
+
+    expect(runClone).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits between attempts instead of retrying at once', async () => {
+    // Default options: only runClone is injected, so the real delay applies. Only
+    // setTimeout is faked, so the fs work in the retry path keeps running for real.
+    // runClone creates no folder, so clearing returns on existsSync and the timer is
+    // the only async step between attempts.
+    const cloneDir = path.join(dataDir, 'preview-projects', 'project-5');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const runClone = vi.fn(async () => {
+      throw new Error('fatal: still failing');
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const outcome = ensurePreviewClone(cloneDir, sourceRepo, { runClone }).then(
+        () => 'resolved',
+        (error: Error) => error.message,
+      );
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(runClone).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(runClone).toHaveBeenCalledTimes(3);
+      await expect(outcome).resolves.toMatch(/still failing/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports the clone error, and stops, when clearing the failed clone throws', async () => {
+    const cloneDir = path.join(dataDir, 'preview-projects', 'project-6');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const runClone = vi.fn(async (targetDir: string) => {
+      fs.mkdirSync(path.join(targetDir, 'partial'), { recursive: true });
+      throw new Error('fatal: hardlink different from source');
+    });
+    vi.spyOn(fs.promises, 'rm').mockRejectedValueOnce(new Error('EBUSY: resource busy'));
+
+    const outcome = ensurePreviewClone(cloneDir, sourceRepo, { runClone, retryDelayMs: 0 });
+    await expect(outcome).rejects.toThrow(/hardlink different from source/);
+    await expect(outcome).rejects.not.toThrow(/EBUSY/);
+
+    expect(runClone).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[DEV] Could not clear the failed preview clone:', expect.any(Error));
   });
 
   it('adopts a clone already on disk without touching it', async () => {
