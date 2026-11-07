@@ -364,7 +364,9 @@ export function resumeTaskSession(
                   ...resolveSpawnOverrides(current, currentLane, project),
                   forceFresh: false,
                   startPath: options.startPath,
-                  resumeOnly: options.plainResume !== undefined,
+                  // Set only for a plain resume, so a Resume's overrides stay what
+                  // they were (`split-lock-cas.test.ts` pins them).
+                  ...(options.plainResume ? { resumeOnly: true } : {}),
                 };
                 // Messages held for the task go out with this resume, after the
                 // prompt it carries (a command from the task's Commands menu),

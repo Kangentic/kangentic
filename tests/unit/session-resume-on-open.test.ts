@@ -224,7 +224,8 @@ describe('resumeTaskOnOpen', () => {
 
     expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(mockClaimHeldMessages).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, TASK_ID);
-    expect(spawnOverrides().resumeOnly).toBe(false);
+    // Left out entirely, so a Resume's overrides are what they were before this option.
+    expect(spawnOverrides()).not.toHaveProperty('resumeOnly');
     expect(mockDeferHeld).not.toHaveBeenCalled();
   });
 
