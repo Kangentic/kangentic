@@ -374,6 +374,7 @@ function unaccountedShellPids(
   const unaccounted = topmostShellLike
     .map((descendant) => descendant.pid)
     .filter((pid) => !state.helperPids.has(pid) && !trackedPids.has(pid));
+  if (unaccounted.length === 0) return unaccounted;
   const containers = new Set([...unaccounted, ...trackedPids]);
   const parentOf = new Map(descendants.map((descendant) => [descendant.pid, descendant.ppid]));
   return unaccounted.filter((pid) => {
@@ -1201,7 +1202,8 @@ export class BgShellWatcher {
       // its id has not arrived.
       state.preExistingHelpers += surplus;
       const shellAwaitsItsPid = state.pendingCaptures.size > 0 || anonCount > 0;
-      for (const pid of newPids) (shellAwaitsItsPid ? state.heldBackHelperPids : state.helperPids).add(pid);
+      const destination = shellAwaitsItsPid ? state.heldBackHelperPids : state.helperPids;
+      for (const pid of newPids) destination.add(pid);
       state.consecutiveDeficitCycles = 0;
       return;
     }

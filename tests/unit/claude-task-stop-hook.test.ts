@@ -8,8 +8,9 @@
  * stayed open for 87 minutes, held the card's move, and recovery told the agent
  * to stop a command that no longer existed.
  *
- * The payloads carry the input a real transcript recorded for the call
- * (`{"task_id":"..."}`), with the hook envelope around it that
+ * The payloads carry the input and result a real transcript recorded for the
+ * call (`{"task_id":"..."}` and `{message, task_id, task_type, command}`, its
+ * command replaced), with the hook envelope around them that
  * `tests/fixtures/claude-tool-hook-agent-id.jsonl` captured.
  *
  * Test tier: Unit (vitest). Bridge output goes to a directory under
@@ -66,7 +67,12 @@ function taskStopEvents(taskId: string, extraFields: Record<string, unknown> = {
   return bridgeEvents({
     tool_name: 'TaskStop',
     tool_input: { task_id: taskId },
-    tool_response: { message: `Successfully stopped task: ${taskId} (sleep 600)`, task_id: taskId },
+    tool_response: {
+      message: `Successfully stopped task: ${taskId} (sleep 600)`,
+      task_id: taskId,
+      task_type: 'local_bash',
+      command: 'sleep 600',
+    },
     ...extraFields,
   });
 }

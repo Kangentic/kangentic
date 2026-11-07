@@ -333,8 +333,8 @@ export function buildHooks(
       // notifications. Real bg-shell termination is owned elsewhere: the
       // process-tree watcher (plus 5-min escape hatch) detects natural
       // exit, and an explicit stop reports `background_shell_end` through
-      // the `TaskStop` directive below (older CLIs, the PreToolUse KillBash
-      // remap). BashOutput polling must not decrement.
+      // the `TaskStop` directive below, or the PreToolUse KillBash remap on
+      // older CLIs. BashOutput polling must not decrement.
       { matcher: '', hooks: [{ type: 'command', command: bridge(E.ToolEnd,
         extractTool('tool_name'),
         // Same correlation id extraction as PreToolUse so the engine
