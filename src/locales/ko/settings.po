@@ -2177,8 +2177,8 @@ msgstr "개인 키 경로"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "이 시간(분) 동안 응답을 기다린 에이전트를 일시 중지합니다. 단, 명령 터미널의 에이전트는 제외합니다."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "이 시간 동안 응답을 기다린 에이전트를 작업을 열 때까지 일시 중지합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

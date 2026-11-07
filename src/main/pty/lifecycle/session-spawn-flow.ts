@@ -678,6 +678,7 @@ export async function performSpawn(
     consoleCloseIsGraceful: remotePlan
       ? remotePlan.consoleCloseIsGraceful
       : !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    idlePauseLosesConversation: input.agentParser?.resumePromptDelivery === 'no-resume',
     ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
     reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
     reportsAgentStart: input.agentParser?.reportsAgentStart === true,

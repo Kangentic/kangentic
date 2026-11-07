@@ -399,6 +399,53 @@ test.describe('Task detail session writes in the Agent Monitor for a task of ano
     }
   });
 
+  // Red: `requestMonitorDetail` stops asking, or stops passing the row's project.
+  test('opening the task asks main to resume it, stamped with the task\'s project', async () => {
+    const taskId = 'task-hosts-open';
+    const { browser, page } = await launch({
+      tasks: [{
+        id: taskId, displayId: 90, title: 'Paused task opened from the monitor', lane: 'Executing',
+        session: true, sessionStatus: 'suspended', otherProject: true,
+      }],
+    });
+    try {
+      await openMonitorDetail(page, taskId);
+      await expect.poll(() => page.evaluate(() => (
+        window as unknown as { __mockResumeOnOpenCalls?: unknown[] }
+      ).__mockResumeOnOpenCalls ?? [])).toEqual([{ taskId, projectId: OTHER_PROJECT_ID }]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: `requestMonitorDetail` asks to resume for an `initialEdit` open too. The
+  // edit form is not the agent, so a paused task must stay paused behind it.
+  test('opening the task\'s edit form from the row menu does not ask main to resume it', async () => {
+    const taskId = 'task-hosts-open-edit';
+    const { browser, page } = await launch({
+      tasks: [{
+        id: taskId, displayId: 93, title: 'Paused task edited from the monitor', lane: 'Executing',
+        session: true, sessionStatus: 'suspended', otherProject: true,
+      }],
+    });
+    try {
+      await openMonitor(page);
+      await byTestId(page, 'monitor-page')
+        .locator(`[data-session-id="${sessionIdOf(taskId)}"] [data-testid="monitor-card-title"]`)
+        .click({ button: 'right' });
+      await byTestId(page, 'context-edit-task').click();
+      const detail = page.locator('#monitor-detail-layer-root [data-testid^="window-frame-"]');
+      await expect(detail).toHaveCount(1);
+
+      // The window is open, so an ask made on this gesture would already be recorded.
+      expect(await page.evaluate(() => (
+        window as unknown as { __mockResumeOnOpenCalls?: unknown[] }
+      ).__mockResumeOnOpenCalls ?? [])).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
   // Red: `useTaskActions` stops passing `taskProjectId` to `resumeSession`.
   test('the header Resume is stamped with the task\'s project', async () => {
     const taskId = 'task-hosts-resume';

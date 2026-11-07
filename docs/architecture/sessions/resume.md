@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Resume
-description: Why Resume is refused for To Do, Done and archived tasks, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, the return recap a main conversation gets after an isolated column's session, who resumed a session (resumedBy), fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
+description: Why Resume is refused for To Do, Done and archived tasks, resume on open for an idle-paused task, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, the return recap a main conversation gets after an isolated column's session, who resumed a session (resumedBy), fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
 tags: [sessions, resume, expired-conversation, recap, return-recap]
 sources:
   - resource: src/main/transition-engine/resume-conversation-guard.ts
@@ -12,6 +12,7 @@ sources:
   - resource: src/main/agent/shared/project-folders.ts
   - resource: src/main/ipc/helpers/pending-conversation-expired.ts
   - resource: src/main/ipc/handlers/session-resume.ts
+  - resource: src/main/ipc/handlers/session-resume-on-open.ts
   - resource: src/shared/session-resume-eligibility.ts
   - resource: src/main/ipc/handlers/session-reconcile.ts
   - resource: src/main/transition-engine/spawn-progress.ts
@@ -37,6 +38,66 @@ background commands it started, so its recovery starts over at once (see
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, or as
 `'turn-ended-held'` when a running workflow task's Stop is held by background work, both separate
 events from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
+
+## Resume on open
+
+A person opening a task the idle timeout paused resumes it at once, with no click and no settle
+delay (`resumeTaskOnOpen`, `handlers/session-resume-on-open.ts`). The idle timeout is on by default
+because of this: a pause costs the user nothing. Flicking across cards starts each idle-paused one.
+That was accepted: a plain resume spends no tokens, a full column queues it, and the agent idles out
+again on the normal clock, which a spawn seeds from its start.
+
+**What counts as opening.** Every open a person makes passes `setDetailTaskId`, and it calls
+`sessions.resumeOnOpen` unless the open is an agent's or the edit form's. The Agent Monitor's own
+open, `requestMonitorDetail`, calls it too. A project switch writes `detailTaskId` with `setState`
+and a workspace restore rebuilds windows directly, so neither reaches it, and that is why the call
+is in the action and not in the bridge's effect, which a restore fires. The one open a switch does
+make is a person's: a task a notification click or a Monitor row parked across the switch opens
+through `setDetailTaskId` (`useProjectSwitchEffect`). The pause landing does not
+reach it either: a level check ("focused and paused") would resume, idle and pause in a loop all
+night. So a window already open when the pause lands keeps its Resume button until the user clicks
+it or the task's card.
+
+**What main requires.** The renderer has no `suspended_by`, so it asks on every open and main
+decides. One read (`isPlainIdleResume`) runs unlocked first, where most opens end with no log line,
+and again under the task lock in both of `resumeTaskSession`'s locked phases, through its
+`plainResume` option:
+
+- No refusal from `resumeBlockReasonForTask`.
+- The latest record is `suspended` with `suspended_by = 'auto'`, so a user's Pause stays paused.
+- No `launch_failed_at`: that launch still owes its prompt.
+- The task has not entered a column since the pause: the column's message is a paid turn.
+- The task's workflow is not paused, and is readable. A member the idle timeout paused first never
+  reached the workflow's Pause, so its record still reads `auto`.
+- No workflow recovery is armed or running, the same check the idle pause makes.
+
+A resume already in flight wins (`isResumeInFlight`), since `resumeTaskSession` cancels whatever is
+in flight and that could be a Resume carrying a prompt, a workflow's Resume, or the launch retry.
+
+**It never sends a message.** `plainResume` claims no held messages, and passes `resumeOnly`, so the
+engine declines (`SpawnOutcome.declined`) a start that is not a resume: no id to resume, an agent
+changed while paused, or a `never-started` or `expired` verdict. The record stays `suspended`, and
+the card keeps its Resume button after a brief "Resuming" label. The engine can only decline after
+the git phase and the CLI checks, so `resumeTaskOnOpen` remembers the record in memory and later
+opens of the card end at the first read. Held messages wait for the agent to end a turn
+(`deferHeldUntilTurnEnd`): the flush that follows any other start would paste them and spend a paid
+turn. The mark clears on `'turn-ended'`, the agent's own Stop, and never on an activity edge: Claude
+reloads its context on a resume with no hook, the status heartbeat reads that as thinking, and a
+watchdog idles it with no turn run. If no turn ends they stay held for the next start, which is also
+where an agent that reports no Stop leaves them. A task in a running workflow is the one way a turn
+can still follow: its resume announces `'session-resumed'` like any other, so the turn-end runner
+catches the workflow step up, and recovery may nudge the agent.
+
+**Failures.** A refusal is quiet, and a resume that fails after it started raises the spawn-blocked
+notice through `onFailed`, since nobody awaits it. The launch carries `startPath: 'open'`, so returns
+can be counted.
+
+**What the sweep leaves running.** With the timeout on by default, the idle pause also waits while
+`getOpenWork` lists a background shell. The activity engine reclaims a shell the watcher cannot
+confirm at the five-minute cap, so a long build can read idle, and a pause ends it. A service the
+agent marked never opens there, so a task that only left a dev server running still pauses. An agent
+that cannot resume (`resumePromptDelivery: 'no-resume'`) is exempt from the sweep
+(`isIdleTimeoutExempt`), because a pause would end its conversation for good.
 
 ## Where resume is refused
 

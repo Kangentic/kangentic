@@ -1797,8 +1797,9 @@ msgid "Path to the private key"
 msgstr "私钥路径"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "暂停等待你达到此分钟数的智能体，命令终端中的除外。"
+#, fuzzy
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "暂停等待你达到此时长的智能体，直到你打开其任务。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

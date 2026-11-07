@@ -615,6 +615,15 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     return newSession;
   },
 
+  resumeOnOpen: (taskId, projectId) => {
+    // Asked for every open, since only main knows why a task is paused. Optional
+    // calls: a store test runs with no bridge, and this must never fail an open.
+    void window.electronAPI?.sessions?.resumeOnOpen?.(taskId, projectId ?? useProjectStore.getState().currentProject?.id ?? null)
+      ?.catch((error: unknown) => {
+        console.warn('[session-store] resume on open failed', error);
+      });
+  },
+
   reconcileSession: async (taskId, projectId) => {
     const liveSession = await window.electronAPI.sessions.reconcile(taskId, projectId ?? useProjectStore.getState().currentProject?.id ?? null);
     if (!liveSession) {
@@ -682,12 +691,20 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   // Both companion flags reset when their option is absent, so a later USER open
   // can never inherit a stale agent stamp (or a stale edit intent) from the open
   // before it. See `.claude/rules/agent-driven-focus.md`.
-  setDetailTaskId: (id, options) =>
+  //
+  // Every open a person makes passes through here, and nothing else does: a
+  // project switch writes `detailTaskId` with `setState`, and a restored window
+  // is rebuilt without it. So this is where an open resumes a task the idle
+  // timeout paused. An agent's open is not the user coming back, and an edit
+  // open is the form, not the agent.
+  setDetailTaskId: (id, options) => {
     set({
       detailTaskId: id,
       detailTaskInitialEdit: id ? !!options?.initialEdit : false,
       detailTaskAgentInitiated: id ? !!options?.agentInitiated : false,
-    }),
+    });
+    if (id && !options?.initialEdit && !options?.agentInitiated) get().resumeOnOpen(id);
+  },
   claimDialogSession: (sessionId) =>
     set((state) =>
       state.dialogSessionIds.includes(sessionId)

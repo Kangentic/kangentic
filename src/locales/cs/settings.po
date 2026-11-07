@@ -2177,8 +2177,8 @@ msgstr "Cesta k privátnímu klíči"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Pozastavit každého agenta, který na vás čeká tolik minut, kromě agenta v Command Terminalu."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Pozastavit agenta, který na vás takto dlouho čeká, dokud neotevřete jeho úlohu."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

@@ -433,6 +433,22 @@ describe('performSpawn - a command too long to type', () => {
     expect(silent.registry.get('silent-session')?.reportsAgentStart).toBe(false);
   });
 
+  it('records that a pause would end the conversation of an agent that cannot resume', async () => {
+    const noResume = makeContext();
+    await performSpawn(
+      makeInput({ id: 'no-resume-session', agentParser: { ...makeAdapter({}), resumePromptDelivery: 'no-resume' } as AgentParser }),
+      noResume,
+    );
+    const resumable = makeContext();
+    await performSpawn(
+      makeInput({ id: 'resumable-session', agentParser: { ...makeAdapter({}), resumePromptDelivery: 'command-line' } as AgentParser }),
+      resumable,
+    );
+
+    expect(noResume.registry.get('no-resume-session')?.idlePauseLosesConversation).toBe(true);
+    expect(resumable.registry.get('resumable-session')?.idlePauseLosesConversation).toBe(false);
+  });
+
   it('types the cwd fixup first and then the line that runs the launcher, not the whole command', async () => {
     const fixup = "Set-Location -LiteralPath '/home/dev/[foo]/bar'";
     vi.mocked(resolveSpawnCwd).mockReturnValueOnce({ effectiveCwd: '/home/dev/[foo]/bar', cwdFixupCommand: fixup });

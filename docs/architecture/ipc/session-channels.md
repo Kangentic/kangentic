@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (53 channels)
+## Sessions (54 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -47,6 +47,7 @@ sources:
 | `session:activity` | on | Activity state or reason changed (includes `projectId`, `taskId`). Two main-side emitters feed this one channel: `activity` on a real state transition, and `activity-reason` when the state holds but the reason's kind moves (a fan-out starting mid-turn, say). Only the first reaches the desktop notifier, the mobile push notifier, turn-completion auto-move, and the activity-interval recorder, which all read an `activity` emit as a transition. On the idle that ends a turn in which the session moved its own task or paused its own workflow, main adds `inOwnCall: true` to the idle reason it broadcasts (`markOwnCallIdle`), and the renderer raises no idle toast and does no auto-focus for it. |
 | `session:event` | on | Structured event (includes `projectId`) |
 | `session:idleTimeout` | on | Session idle timeout fired |
+| `session:resumeOnOpen` | invoke | A person opened this task, so main resumes it if the idle timeout paused it and the resume would send the agent nothing (`resumeTaskOnOpen`, [Resume on open](../sessions/resume.md#resume-on-open)). Sent for every open a person makes, with an explicit `projectId`. Resolves with nothing: a resume that starts arrives by push, and any other task is a quiet no-op |
 | `session:getSummary` | invoke | Get summary of a single session |
 | `session:listSummaries` | invoke | Get summaries of multiple sessions |
 | `session:getTaskReport` | invoke | Read a completed task's report in one call (`readTaskReport`, `src/main/ipc/helpers/task-report.ts`; assembled by the pure `assembleTaskReport` in `task-report-assemble.ts`): its summary, its span from the first move into a working column to the last move into Done, its route through the columns with each visit, its runs grouped by conversation with each run's own cost and runtime, its models and their four token kinds from the turn ledger (`usage.taskModels`), each automation a condition check was asked about with its outcome (ran, skipped, or error) and the reason, plus its other calls with no automation (title, task summary, terminal name), its linked commits and changed files (`task.knowledge`), whether a task summary is written (`summary.forTask`), and the Total row each Usage card shows (`totals`: a run figure no run reported is null, the models total is null when the turn ledger cannot be read, and a condition check that answered several automations counts once). Takes an explicit `projectId`. The view waits 8 seconds on the three index reads, and a read that fails or is still running costs its own section, never the report. The reads keep the client's own budget, since a call that runs out of it restarts the worker. With indexing off they are not made |

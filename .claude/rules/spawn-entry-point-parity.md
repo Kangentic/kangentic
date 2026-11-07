@@ -52,9 +52,13 @@ contract was kept in sync across three files by prose comments alone.
   lane). When that lane is unknowable (create, promote, MCP create, unarchive), the destination
   the user chose is the fallback - never a lane no dialog ever showed.
 - In-place restarts of an EXISTING session (`resumeTaskSession` in `handlers/session-resume.ts`,
-  which the `SESSION_RESUME` handler and a phone resume of a paused task both call, and
-  `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are allowlisted direct
-  engine calls; they are not first-spawn entry points.
+  which the `SESSION_RESUME` handler, a phone resume of a paused task and `resumeTaskOnOpen` all
+  call, and `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are allowlisted
+  direct engine calls; they are not first-spawn entry points.
+- **Opening a task resumes it only with `plainResume`.** `resumeTaskOnOpen`
+  (`handlers/session-resume-on-open.ts`) lifts an idle pause when a person opens the task, and
+  must send the agent nothing: it claims no held messages, and `resumeOnly` makes the engine
+  decline a start that would go fresh. A start that needs a message keeps its Resume button.
 - **A Resume after an entry goes through `spawnAgent`.** A move never starts a paused agent: it
   runs the destination's enter rows that need no agent and skips the rest (`agentPaused`). When
   the task entered its column after the pause, `resumeTaskSession` calls `spawnAgent` with

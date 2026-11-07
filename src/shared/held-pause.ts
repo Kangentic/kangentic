@@ -6,9 +6,10 @@ import type { SessionRecordStatus, SuspendedBy } from './types';
  * idle timeout; `'low_memory'`, which only an earlier version wrote). Neither a
  * restart nor a column move starts a held task again, apart from startup
  * recovery's one exception, a `'low_memory'` row on a running workflow's task
- * (`resume-suspended.ts`). A `'system'` suspend (a quit, a move, a settings
- * restart) holds nothing: those agents come back on the next launch or the next
- * move, as before.
+ * (`resume-suspended.ts`). The user opening the task lifts an `'auto'` pause
+ * (`resumeTaskOnOpen`), which is the user coming back, not something starting
+ * by itself. A `'system'` suspend (a quit, a move, a settings restart) holds
+ * nothing: those agents come back on the next launch or the next move, as before.
  *
  * One list, so the startup recovery, the spawn guard and the auto-spawn
  * queries cannot disagree about which pauses stick.

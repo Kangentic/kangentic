@@ -4532,7 +4532,7 @@ export interface AppConfig {
     permissionMode: PermissionMode;
     cliPaths: Record<string, string | null>; // keyed by agent name, null = auto-detect
     maxConcurrentSessions: number;
-    /** Pause an agent that has waited on the user `idleTimeoutMinutes`. Never a Command Terminal, which a pause would end. Global-only. */
+    /** Pause an agent that has waited on the user `idleTimeoutMinutes`; opening its task brings it back. Never a Command Terminal, which a pause would end, or an agent that cannot resume. Global-only. */
     idleTimeoutEnabled: boolean;
     /** How long an agent waits on the user before the idle timer pauses it. Read only while `idleTimeoutEnabled`. */
     idleTimeoutMinutes: number;
@@ -5109,6 +5109,13 @@ export interface AppConfig {
    *  block), and the marker bounds it to one rewrite. Same unreadable-file deferral
    *  and retirement as `hasMigratedWindowLightDismissDefault`. */
   hasMigratedNativeTerminalDefaults: boolean;
+  /** One-shot marker for turning the idle pause on by default. `save()` writes the whole
+   *  config, so every install that ran while the default was off carries a saved `false`,
+   *  which cannot be told from a deliberate off. The migration in `ConfigManager.load()`
+   *  turns it on once and keeps the saved minutes; the marker bounds it to one rewrite, so
+   *  turning it off afterwards sticks. Same unreadable-file deferral and retirement as
+   *  `hasMigratedWindowLightDismissDefault`. */
+  hasMigratedIdleTimeoutDefault: boolean;
   /** Task IDs the automatic rename has already run for. Persisted so a restart never
    *  renames a task twice. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -5347,7 +5354,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     permissionMode: 'acceptEdits',
     cliPaths: {},
     maxConcurrentSessions: 8,
-    idleTimeoutEnabled: false,
+    idleTimeoutEnabled: true,
     idleTimeoutMinutes: 30,
     autoResumeSessionsOnRestart: true,
     executionServers: {},
@@ -5434,6 +5441,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowLightDismiss: 'focused',
   hasMigratedWindowLightDismissDefault: false,
   hasMigratedNativeTerminalDefaults: false,
+  hasMigratedIdleTimeoutDefault: false,
   hasPurgedSeededDiscoveredModels: false,
   hasAnsweredLanguageSuggestion: false,
   autoNameAskedTaskIds: [],
@@ -6879,6 +6887,13 @@ export interface AgentParser {
    */
   readonly reportsAgentStart?: boolean;
   /**
+   * How a resume carries its message, and whether the agent resumes at all
+   * (`'no-resume'`: every start is fresh). Read at spawn onto the session row, so
+   * the idle timeout leaves an agent alone that a pause would end for good. See
+   * `AgentAdapter.resumePromptDelivery`.
+   */
+  readonly resumePromptDelivery?: 'command-line' | 'typed' | 'no-resume';
+  /**
    * Optional: a login or configuration failure this CLI's own output names. See
    * `AgentAdapter.identifyUserSetupFailure`.
    */
@@ -7672,7 +7687,8 @@ export type LaunchStartPath =
   | 'workflow'
   | 'phone'
   | 'startup_recovery'
-  | 'retry';
+  | 'retry'
+  | 'open';
 
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
@@ -8652,6 +8668,12 @@ export interface ElectronAPI {
     suspend: (taskId: string, projectId?: string | null) => Promise<void>;
     /** Null when a newer resume, a suspend, a reset or a relocation cancelled this one. */
     resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session | null>;
+    /**
+     * The user opened this task. Resumes it only if the idle timeout paused it and
+     * the resume would send the agent nothing. Main decides, and every other task
+     * is a quiet no-op. A resume that does start arrives by push.
+     */
+    resumeOnOpen: (taskId: string, projectId?: string | null) => Promise<void>;
     /**
      * Targeted "is this task's session alive right now?" probe. Returns
      * the live registry Session if main has one for this task, or null

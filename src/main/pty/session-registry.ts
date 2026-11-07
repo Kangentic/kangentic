@@ -185,6 +185,9 @@ export interface ManagedSession {
    *  (`AgentParser.consoleCloseIsGraceful`, read at spawn): end it by closing,
    *  never by typing. */
   consoleCloseIsGraceful?: boolean;
+  /** The agent cannot resume (`AgentParser.resumePromptDelivery`, read at spawn), so
+   *  a pause ends its conversation for good and the idle sweep leaves it alone. */
+  idlePauseLosesConversation?: boolean;
   /** The agent reports its background commands (`AgentParser.backgroundCommands`,
    *  read at spawn), so its session is offered `kangentic_mark_background_service`. */
   reportsBackgroundCommands?: boolean;

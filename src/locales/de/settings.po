@@ -2177,8 +2177,8 @@ msgstr "Pfad zum privaten Schlüssel"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Jeden Agenten pausieren, der so viele Minuten auf dich gewartet hat, außer in einem Command Terminal."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Einen Agenten, der so lange auf Sie wartet, pausieren, bis Sie seine Aufgabe öffnen."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

@@ -195,7 +195,7 @@ describe('Config Manager - idle timeout switch migration', () => {
   });
 
   it('reads a saved 0 as off and resets the minutes to the default, so turning it on starts from 30', async () => {
-    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutMinutes: 0 } }));
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutMinutes: 0 }, hasMigratedIdleTimeoutDefault: true }));
 
     const configManager = await createConfigManager();
     const config = configManager.load();
@@ -207,8 +207,24 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect(raw.agent.idleTimeoutMinutes).toBe(30);
   });
 
+  // The two migrations run in order: the legacy read turns a saved 0 into off with
+  // 30 minutes, then the default migration turns every install's saved off on once.
+  // Reversed, the legacy read would write its `false` last and the timer would stay off.
+  it('turns a legacy 0 on with 30 minutes once, when the default migration has not run', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutMinutes: 0 } }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
+    expect(config.agent.idleTimeoutMinutes).toBe(30);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent.idleTimeoutEnabled).toBe(true);
+    expect(raw.agent.idleTimeoutMinutes).toBe(30);
+    expect(raw.hasMigratedIdleTimeoutDefault).toBe(true);
+  });
+
   it('leaves a file already in the new shape alone, its saved switch winning', async () => {
-    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutEnabled: false, idleTimeoutMinutes: 45 } }));
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutEnabled: false, idleTimeoutMinutes: 45 }, hasMigratedIdleTimeoutDefault: true }));
 
     const configManager = await createConfigManager();
     const config = configManager.load();
@@ -217,12 +233,45 @@ describe('Config Manager - idle timeout switch migration', () => {
     expect(config.agent.idleTimeoutMinutes).toBe(45);
   });
 
-  it('gives a fresh install the defaults: the idle timer off at 30 minutes', async () => {
+  it('gives a fresh install the defaults: the idle timer on at 30 minutes', async () => {
     const configManager = await createConfigManager();
     const config = configManager.load();
 
-    expect(config.agent.idleTimeoutEnabled).toBe(false);
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
     expect(config.agent.idleTimeoutMinutes).toBe(30);
+  });
+
+  // The default moved from off to on. save() writes the whole config, so every
+  // install that ran under the old default carries a saved false, and changing
+  // the default alone would reach fresh installs only.
+  it('turns the idle timer on once for an install saved under the old default, keeping its minutes', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutEnabled: false, idleTimeoutMinutes: 45 } }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
+    expect(config.agent.idleTimeoutMinutes).toBe(45);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent.idleTimeoutEnabled).toBe(true);
+    expect(raw.hasMigratedIdleTimeoutDefault).toBe(true);
+  });
+
+  it('lets a user turn the idle timer off afterwards, and it stays off across a restart', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutEnabled: false } }));
+    const configManager = await createConfigManager();
+    configManager.load();
+
+    configManager.save({ agent: { idleTimeoutEnabled: false } as never });
+
+    expect((await createConfigManager()).load().agent.idleTimeoutEnabled).toBe(false);
+  });
+
+  it('leaves an unreadable file on disk, as the other one-time migrations do', async () => {
+    fs.writeFileSync(configPath, '{ not json');
+
+    (await createConfigManager()).load();
+
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe('{ not json');
   });
 
   it('loads a config saved by a version with the low-memory pause setting', async () => {
@@ -362,7 +411,7 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
     fs.writeFileSync(configPath, JSON.stringify({
       theme: 'rust', themeLight: 'clay', themeDark: 'rust', themeFollowsSystem: true,
       hasMigratedWindowLightDismissDefault: true, hasPurgedSeededDiscoveredModels: true,
-      hasMigratedNativeTerminalDefaults: true,
+      hasMigratedNativeTerminalDefaults: true, hasMigratedIdleTimeoutDefault: true,
     }));
     // Backdate so a spurious write is unmissable rather than possibly landing in the same
     // millisecond as the fixture write above.
@@ -1116,7 +1165,7 @@ describe('Config Manager -- native terminal defaults', () => {
   it('leaves the old default alone once the marker is set', async () => {
     fs.writeFileSync(configPath, JSON.stringify({
       terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' },
-      hasMigratedNativeTerminalDefaults: true,
+      hasMigratedNativeTerminalDefaults: true, hasMigratedIdleTimeoutDefault: true,
     }));
 
     const config = (await createConfigManager()).load();
@@ -1191,7 +1240,7 @@ describe('Config Manager - platformDefaults() returns a fresh terminal object', 
   // carries every one-time marker, no `terminal` key, and nothing legacy to migrate.
   it('keeps a change to the loaded terminal config out of DEFAULT_CONFIG', async () => {
     const settledConfig = JSON.stringify({
-      hasMigratedNativeTerminalDefaults: true,
+      hasMigratedNativeTerminalDefaults: true, hasMigratedIdleTimeoutDefault: true,
       hasMigratedWindowLightDismissDefault: true,
       hasPurgedSeededDiscoveredModels: true,
     });

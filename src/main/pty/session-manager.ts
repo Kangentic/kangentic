@@ -965,14 +965,17 @@ export class SessionManager extends EventEmitter {
       // in place, so a suspend ends the terminal the user was looking at (its
       // conversation only survives as an Earlier row). The sweep
       // skips it before it times anything out. A workflow's own agent is
-      // transient too but stays in the sweep.
+      // transient too but stays in the sweep. An agent that cannot resume is
+      // skipped for the same reason: a pause would end its conversation.
       isIdleTimeoutExempt: (sessionId) => {
         // A session launched hidden sits idle at its input box until its
         // task's setup script ends, and has no task record to pause.
         if (this.hiddenUntilAdopted.has(sessionId)) return true;
         const session = this.registry.get(sessionId);
+        // A session on a host whose link is down (#913): its silence is the link's, not a stuck agent's.
         if (session !== undefined && this.isOnHostWithLinkDown(session)) return true;
-        return session !== undefined && isCommandTerminalSession(session);
+        return session !== undefined
+          && (isCommandTerminalSession(session) || session.idlePauseLosesConversation === true);
       },
       // Silence from a session on a host whose link is down is not a stuck agent (#913): no hook and no
       // output can arrive, and its agent goes on running there.

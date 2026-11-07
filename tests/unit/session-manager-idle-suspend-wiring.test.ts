@@ -102,6 +102,12 @@ describe('SessionManager idle-sweep wiring', () => {
       expect(isExempt('sess-workflow')).toBe(false);
     });
 
+    it('exempts an agent that cannot resume: a pause would end its conversation for good', () => {
+      register('sess-no-resume', { taskId: 'task-2', idlePauseLosesConversation: true });
+
+      expect(isExempt('sess-no-resume')).toBe(true);
+    });
+
     it('answers false for a session it does not hold', () => {
       expect(isExempt('sess-unknown')).toBe(false);
     });

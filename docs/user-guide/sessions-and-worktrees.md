@@ -59,20 +59,38 @@ If Claude Code has already deleted a conversation (it removes transcripts older 
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you on the idle timer (see [Pausing agents](#pausing-agents)) stays paused across a restart too, until you open its task. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Pausing agents
 
 An agent waiting on you holds all the memory it reserved: about 1 GB for each Claude Code agent on
 Windows. Kangentic can pause one for you on a timer, in Settings > Performance > Pausing agents.
 
-**When idle** (off by default). Pauses any agent that has waited on you for the minutes you set (30
-by default). It counts idle waits only, not a permission prompt. It never pauses a Command
-Terminal: a pause would end the terminal, and its conversation with it.
+**When idle** (on by default). Pauses any agent that has waited on you for the minutes you set (30
+by default). It counts idle waits only, not a permission prompt, and it waits while a background job
+the agent started is still open. It never pauses a Command Terminal: a pause would end the terminal,
+and its conversation with it. It also leaves alone an agent that cannot resume, such as Warp or
+Ollama, for the same reason.
 
-The agent stays paused until you resume it: a restart does not bring it back, and neither does a
-move into a column that starts agents. Resume it from its card or its task window, as you would one
-you paused yourself. The conversation picks up where it stopped. Pausing frees a slot, so a queued
-task can start in it.
+The agent stays paused until you come back to it: a restart does not bring it back, and neither does
+a move into a column that starts agents. Open the task and it resumes at once, from its card, a
+toast, search, or anywhere else that opens it. The conversation picks up where it stopped, and
+opening sends the agent nothing, so it costs no tokens. Pausing frees a slot, so a queued task can
+start in it. If the column is full when you open the task, it queues, and its window says why.
+
+A paused task keeps its Resume button, and opening it does not resume it, in these cases:
+
+- You paused it yourself.
+- Its workflow is paused.
+- You moved it to another column while it was paused. Resume runs that column's message, which is a
+  paid turn, so it waits for your click.
+- Its conversation cannot be resumed as it stands, so a resume would start a new one.
+
+A window that was already open when the pause landed keeps its Resume button too. Click the button,
+or click the task's card.
+
+A message held for the task, such as what a Stop script stopped, reaches the agent after your next
+turn ends. A task in a running workflow also rejoins that workflow when it resumes, so the workflow
+can check its last reply and message it, as it can after Resume.
 
 A short "Agent paused" toast names the task.

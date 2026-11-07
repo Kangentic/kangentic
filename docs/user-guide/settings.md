@@ -227,7 +227,7 @@ Global-only, like Behavior.
 |---------|-------------|
 | Graphics Acceleration | Hardware rendering for the app window and terminals. A change restarts Kangentic. See [Graphics failures](troubleshooting.md#graphics-failures). |
 | Animations | Transition and motion effects across the app. |
-| Pausing agents: When idle | Off by default. Pause any agent that has waited on you for the minutes on its second line, Minutes idle (30 by default). Command Terminals are never paused. See [Pausing agents](sessions-and-worktrees.md#pausing-agents). |
+| Pausing agents: When idle | On by default. Pause an agent that has waited on you for the minutes on its second line, Minutes idle (30 by default), until you open its task. Command Terminals, agents that cannot resume, and agents with a background job open are not paused. See [Pausing agents](sessions-and-worktrees.md#pausing-agents). |
 
 ## Hotkeys
 

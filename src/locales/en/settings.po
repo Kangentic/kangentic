@@ -1771,8 +1771,8 @@ msgid "Path to the private key"
 msgstr "Path to the private key"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Pause an agent waiting on you this long until you open its task."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
