@@ -107,9 +107,23 @@ vi.mock('../../src/shared/paths', async (importOriginal) => ({
   buildSpawnClearPrelude: vi.fn(() => ''),
 }));
 
+// The real buildTypedLaunch, watched: one test pins what the spawn hands it.
+const buildTypedLaunchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/pty/spawn/typed-launch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/pty/spawn/typed-launch')>();
+  return {
+    ...original,
+    buildTypedLaunch: (...callArguments: Parameters<typeof original.buildTypedLaunch>) => {
+      buildTypedLaunchSpy(...callArguments);
+      return original.buildTypedLaunch(...callArguments);
+    },
+  };
+});
+
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
+import { directLaunchOfBatchShim } from '../../src/main/agent/shared/npm-shim-target';
 import { AgentCwdMissingError, resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
 import { handleSpawnFailure } from '../../src/main/pty/spawn/spawn-failure-handler';
 import { safeKillPty } from '../../src/main/pty/lifecycle/pty-kill';
@@ -351,6 +365,13 @@ describe('performSpawn - a command too long to type', () => {
     const session = context.registry.get('input-session-id-0000-000000000000');
     expect(session?.launcherUsed).toBe(true);
     expect(session?.typedLineBytes).toBe(Buffer.byteLength(line));
+  });
+
+  it('hands the typed launch the reader of a .cmd shim, so a shim past cmd\'s limit can start directly', async () => {
+    await performSpawn(makeInput({ command: LONG_COMMAND }), makeContext());
+
+    expect(buildTypedLaunchSpy).toHaveBeenCalledTimes(1);
+    expect(buildTypedLaunchSpy.mock.calls[0][0].batchShimLaunch).toBe(directLaunchOfBatchShim);
   });
 
   it.skipIf(process.platform === 'win32')('writes the launcher readable by its owner alone', async () => {
