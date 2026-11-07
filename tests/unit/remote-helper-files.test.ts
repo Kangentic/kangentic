@@ -308,7 +308,7 @@ describe('HookWatcher', () => {
     return new HookWatcher({ emit: (event) => events.push(event), intervalMs: 10 });
   }
 
-  it('sends each published record once, in name order, and removes it from the host', async () => {
+  it('sends each published record once, in name order, and keeps it on the host until it is claimed', async () => {
     const hooks = makeSession();
     const events: HookFileEvent[] = [];
     const watcher = makeWatcher(events);
@@ -323,8 +323,8 @@ describe('HookWatcher', () => {
       ['inbox', '1000000000000000000-10.rec'],
       ['inbox', '2000000000000000000-20.rec'],
     ]);
-    expect(events[0]).toMatchObject({ sessionId: 's1', content: 'K1\na\n\n{}' });
-    expect(fs.readdirSync(path.join(hooks, 'inbox'))).toEqual([]);
+    expect(events[0]).toMatchObject({ sessionId: 's1', content: 'K1\na\n\n{}', claim: true });
+    expect(fs.readdirSync(path.join(hooks, 'inbox')).sort()).toEqual(['1000000000000000000-10.rec', '2000000000000000000-20.rec']);
     watcher.dispose();
   });
 
@@ -383,9 +383,47 @@ describe('HookWatcher', () => {
     expect(fs.existsSync(request)).toBe(true);
     expect(events.filter((event) => event.folder === 'requests')).toHaveLength(1);
     expect(events.find((event) => event.folder === 'requests')?.claim).toBe(true);
-    // An event is still removed once sent, and is not one to claim.
-    expect(fs.readdirSync(path.join(hooks, 'inbox'))).toEqual([]);
-    expect(events.find((event) => event.folder === 'inbox')?.claim).toBeUndefined();
+    // An event is kept the same way: it goes once, and stays until Kangentic has stored it.
+    expect(fs.readdirSync(path.join(hooks, 'inbox'))).toEqual(['1000000000000000000-11.rec']);
+    expect(events.filter((event) => event.folder === 'inbox')).toHaveLength(1);
+    expect(events.find((event) => event.folder === 'inbox')?.claim).toBe(true);
+    watcher.dispose();
+  });
+
+  it('sends a record again after resendUnclaimed, because a new app process never saw what the old one was handed', async () => {
+    const hooks = makeSession();
+    const events: HookFileEvent[] = [];
+    const watcher = makeWatcher(events);
+    fs.writeFileSync(path.join(hooks, 'inbox', '1000000000000000000-10.rec'), 'K1\na\n\n{}');
+    fs.writeFileSync(path.join(hooks, 'inbox', '2000000000000000000-20.rec'), 'K1\nb\n\n{}');
+    watcher.watch('s1', hooks);
+    await waitFor(() => events.length === 2);
+
+    // The first process stored the first record and removed it; it never stored the second.
+    fs.rmSync(path.join(hooks, 'inbox', '1000000000000000000-10.rec'));
+    watcher.resendUnclaimed();
+    await waitFor(() => events.length === 3);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(events.map((event) => event.name)).toEqual(['1000000000000000000-10.rec', '2000000000000000000-20.rec', '2000000000000000000-20.rec']);
+    watcher.dispose();
+  });
+
+  it('forgets a record that was claimed, so its name can be used again', async () => {
+    const hooks = makeSession();
+    const events: HookFileEvent[] = [];
+    const watcher = makeWatcher(events);
+    const record = path.join(hooks, 'inbox', '1000000000000000000-10.rec');
+    fs.writeFileSync(record, 'K1\na\n\n{}');
+    watcher.watch('s1', hooks);
+    await waitFor(() => events.length === 1);
+
+    fs.rmSync(record);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    fs.writeFileSync(record, 'K1\na2\n\n{}');
+    await waitFor(() => events.length === 2);
+
+    expect(events[1].content).toBe('K1\na2\n\n{}');
     watcher.dispose();
   });
 

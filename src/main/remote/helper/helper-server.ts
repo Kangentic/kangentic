@@ -301,6 +301,8 @@ export class HelperServer {
       this.wireToCore.clear();
       this.coreToWire.clear();
       this.endpoint.discardRetained();
+      // The hook files it was handed and never stored are still on disk, and nothing else will send them.
+      this.hookWatcher.resendUnclaimed();
     }
     this.ownerInstallId = installId;
     this.ownerBootId = bootId;

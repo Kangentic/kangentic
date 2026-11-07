@@ -135,6 +135,10 @@ const RESPONSE_JSON_LIMIT_BYTES = 100_000;
 /** The most a raw frame carries (`MAX_FRAME_RAW_BYTES`), less what the request around it takes. */
 const RESPONSE_RAW_LIMIT_BYTES = MAX_FRAME_RAW_BYTES - 4096;
 const RESPONSE_POLL_MS = 100;
+/** How long stored hook records wait to be removed from the host together. */
+const CLAIM_BATCH_MS = 50;
+/** The record names remembered per session. A host that sends one again does so within one attach. */
+const STORED_RECORD_LIMIT = 2_000;
 
 /** How soon after the start or an id's arrival the first export runs: a session has nothing to export before. */
 const SNAPSHOT_FIRST_DELAY_MS = 5_000;
@@ -264,6 +268,14 @@ interface Registered extends RemoteSessionRegistration {
   lastFailure: string | null;
   /** The release under way, so a second one waits on it and asks the host nothing. */
   releaseDone: Promise<void> | null;
+  /**
+   * Hook records already stored on this computer, so a record the host sends again is acknowledged and not
+   * written twice. Bounded: the oldest names go first, and a name this old is long gone from the host.
+   */
+  storedRecords: Set<string>;
+  /** Stored records whose host copy is still to be removed, sent in one batch a moment after the first. */
+  claimQueue: Set<string>;
+  claimTimer: ReturnType<typeof setTimeout> | null;
   /** The transcript files the host sends, by the key it names them with, to where each is written here. */
   tails: Map<string, Tail>;
   /** The next key to hand out. A key is never reused, so a chunk still on its way cannot land in another file. */
@@ -461,6 +473,9 @@ export class RemoteSessionRelay {
       inFlight: new Set(),
       lastFailure: null,
       releaseDone: null,
+      storedRecords: new Set(),
+      claimQueue: new Set(),
+      claimTimer: null,
       tails,
       nextTailKey: tails.size,
       currentAgentSessionId: pending.agentSessionId ?? registration.agentSessionId ?? null,
@@ -703,6 +718,10 @@ export class RemoteSessionRelay {
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
+    // The records that flush stored are removed from the host now, not a moment later.
+    if (entry.claimTimer) clearTimeout(entry.claimTimer);
+    entry.claimTimer = null;
+    await this.flushClaims(entry);
     // A last export, for what the session did since the one before. Bounded by the run's own timeout, and a
     // failure leaves the last whole copy. It can be the first one: a session shorter than the first tick.
     if (entry.transcripts?.snapshot && entry.currentAgentSessionId) {
@@ -797,9 +816,44 @@ export class RemoteSessionRelay {
         void this.claimRequest(entry, event);
         return;
       }
+      // A record the host keeps until it is told it is stored: written here first, then the host's copy is
+      // removed. One it sends again (a new app process attached before the removal landed) is only removed.
+      if (event.folder === 'inbox' && event.claim === true) {
+        if (!entry.storedRecords.has(event.name)) {
+          this.writeHookFile(entry, entry.localHooks.inbox, event);
+          entry.storedRecords.add(event.name);
+          if (entry.storedRecords.size > STORED_RECORD_LIMIT) entry.storedRecords.delete(entry.storedRecords.values().next().value as string);
+        }
+        this.queueClaim(entry, event.name);
+        return;
+      }
       this.writeHookFile(entry, event.folder === 'inbox' ? entry.localHooks.inbox : entry.localHooks.requests, event);
     } catch (error) {
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** Remove the host's copy of the stored records, a batch at a time. A failure keeps them queued for the next batch. */
+  private queueClaim(entry: Registered, name: string): void {
+    entry.claimQueue.add(name);
+    if (entry.claimTimer) return;
+    entry.claimTimer = setTimeout(() => {
+      entry.claimTimer = null;
+      void this.flushClaims(entry);
+    }, CLAIM_BATCH_MS);
+    entry.claimTimer.unref?.();
+  }
+
+  private async flushClaims(entry: Registered): Promise<void> {
+    if (entry.claimQueue.size === 0) return;
+    const names = [...entry.claimQueue];
+    entry.claimQueue.clear();
+    try {
+      await this.options.files.removeFiles(entry.hostId, names.map((name) => `${entry.hostHooksDirectory}/inbox/${name}`));
+    } catch (error) {
+      // Still on the host, so it is sent again on the next attach and acknowledged then.
+      for (const name of names) entry.claimQueue.add(name);
+      this.options.log?.(`could not remove stored records from the host for ${entry.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

@@ -10,6 +10,7 @@
 // `--client removal` runs ssh-removal-rig.client.ts on the same stage instead: what removing a host and
 // editing its sign-in do on a real host. `--client mcp` runs ssh-mcp-rig.client.ts: what an agent's Kangentic
 // tool calls do while the link drops and the app is away, with the real bridge script run by the host's sh.
+// `--client quit` runs ssh-quit-rig.client.ts: an agent left running by a quit, taken back by a new boot.
 //
 // It builds the host bundle and the rig client with esbuild, stages them with node-pty's Linux prebuild and a
 // pinned Node onto a fresh rig container, then runs the client. The client starts a PTY that prints a counter
@@ -120,7 +121,7 @@ async function buildBundles() {
   const clientDirectory = path.join(repoRoot, '.kangentic', 'rig');
   fs.mkdirSync(clientDirectory, { recursive: true });
   const clientPath = path.join(clientDirectory, 'ssh-link-rig-client.js');
-  const clientSource = { removal: 'scripts/ssh-removal-rig.client.ts', mcp: 'scripts/ssh-mcp-rig.client.ts' }[options.client] ?? 'scripts/ssh-link-rig.client.ts';
+  const clientSource = { removal: 'scripts/ssh-removal-rig.client.ts', mcp: 'scripts/ssh-mcp-rig.client.ts', quit: 'scripts/ssh-quit-rig.client.ts' }[options.client] ?? 'scripts/ssh-link-rig.client.ts';
   await esbuild.build({ ...common, entryPoints: [path.join(repoRoot, clientSource)], outfile: clientPath });
 
   const nodePtySource = fs.realpathSync(path.join(repoRoot, 'node_modules/node-pty'));

@@ -10,13 +10,17 @@
  * server. The host never dials that server, which only this computer can reach; the token still sits
  * on the host in the agent's MCP config, because the agent's bridge sends it with each request.
  *
- * - A file is sent once and removed from the host once it is sent. The link retains and replays what
- *   an interrupted connection lost, so a drop loses nothing already handed over.
- * - A REQUEST is the exception: it is sent once and stays on the host until Kangentic claims it (removes
- *   it, through `removeFiles`, before it acts on it) or the script that wrote it gives up and removes it
- *   itself. Whoever removes it first wins, since an unlink happens once. So a call sent while the link was
- *   down, delivered minutes later, finds its file gone, and is never acted on after the agent has been
- *   told it failed; and a call that was claimed is never reported as failed.
+ * - A record stays on the host until Kangentic claims it, through `removeFiles`, and is sent once per
+ *   attachment. The link retains and replays what an interrupted connection lost, so a drop loses nothing
+ *   already handed over. But a quit leaves the agent running and the next launch is a new process, which
+ *   discards what its predecessor retained: a record sent and removed in the moments before the helper
+ *   noticed the old link was gone would be lost for good. So a record is removed only after Kangentic has
+ *   stored it, and `resendUnclaimed` sends again whatever is still here when a new process attaches. A
+ *   crash between storing and removing sends one record twice, which is better than not at all.
+ * - A REQUEST is also removed by the script that wrote it when it gives up. Whoever removes it first wins,
+ *   since an unlink happens once. So a call sent while the link was down, delivered minutes later, finds
+ *   its file gone, and is never acted on after the agent has been told it failed; and a call that was
+ *   claimed is never reported as failed.
  * - Records are sent in name order, which is the order their hooks ran (names start with the epoch ns).
  * - A poll, not a watch: inotify drops events without an error under load, and a poll of three small
  *   folders every 100 ms is cheap next to the CLI it serves.
@@ -35,7 +39,7 @@ export interface HookFileEvent {
   name: string;
   content: string;
   /**
-   * A request this watcher left on the host until it is claimed. Set only by a watcher that keeps requests,
+   * A record this watcher left on the host until it is claimed. Set only by a watcher that keeps records,
    * so Kangentic claims only those: a program installed before this one removed every file as it sent it,
    * and a claim on one of its requests would find nothing and drop a call that is waiting.
    */
@@ -201,28 +205,34 @@ export class HookWatcher {
     const names = publishedNames(await fs.readdir(folderPath).catch(() => [] as string[]), RECORD_EXTENSION[folder]);
     for (const name of names) {
       const key = `${folder}/${name}`;
-      const file = path.join(folderPath, name);
-      if (!entry.sent.has(key)) {
-        const content = await fs.readFile(file, 'utf8').catch(() => null);
-        if (content === null) continue;
-        this.options.emit({
-          sessionId,
-          folder,
-          name,
-          content: fitHookRecord(content, this.options.maxContentJsonBytes ?? DEFAULT_MAX_CONTENT_JSON_BYTES),
-          ...(folder === 'requests' ? { claim: true } : {}),
-        });
-        entry.sent.add(key);
-      }
-      // A request stays until it is claimed or given up on (see the header).
-      if (folder === 'requests') continue;
-      // Removed once sent. A removal that fails leaves it in `sent`, so it is not sent again.
-      if (await fs.rm(file, { force: true }).then(() => true, () => false)) entry.sent.delete(key);
+      if (entry.sent.has(key)) continue;
+      const content = await fs.readFile(path.join(folderPath, name), 'utf8').catch(() => null);
+      if (content === null) continue;
+      // Every record stays on the host until Kangentic claims it (see the header).
+      this.options.emit({
+        sessionId,
+        folder,
+        name,
+        content: fitHookRecord(content, this.options.maxContentJsonBytes ?? DEFAULT_MAX_CONTENT_JSON_BYTES),
+        claim: true,
+      });
+      entry.sent.add(key);
     }
-    // A request that is gone was claimed or given up on: forget it, so the set holds what is still there.
-    if (folder === 'requests') {
-      const present = new Set(names.map((name) => `${folder}/${name}`));
-      for (const key of entry.sent) if (key.startsWith('requests/') && !present.has(key)) entry.sent.delete(key);
+    // A record that is gone was claimed (or a request given up on): forget it, so the set holds what is still there.
+    const present = new Set(names.map((name) => `${folder}/${name}`));
+    for (const key of entry.sent) if (key.startsWith(`${folder}/`) && !present.has(key)) entry.sent.delete(key);
+  }
+
+  /**
+   * Send everything not yet claimed again, and the status file once more. Called when a link process the
+   * helper has not talked to before attaches: what the old one was handed but never stored went with its
+   * retained frames, and the files are still here to be sent. A link that comes back as the same process
+   * needs none of this, because the endpoint replays what it retained.
+   */
+  resendUnclaimed(): void {
+    for (const entry of this.watched.values()) {
+      entry.sent.clear();
+      entry.statusSignature = null;
     }
   }
 

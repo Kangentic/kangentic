@@ -224,6 +224,47 @@ describe('what the host publishes', () => {
   });
 });
 
+describe('a hook record from the host is stored here before the host forgets it', () => {
+  const NAME = '1700000000000000000-5.rec';
+  const RECORD = 'K1\nidle\n\n{}';
+
+  const eventCount = (rig: Rig): number => fs.readFileSync(rig.eventsPath, 'utf8').split('\n').filter((line) => line.includes('"idle"')).length;
+
+  it('becomes an event here, and the host\'s copy is removed only after it was stored', async () => {
+    const rig = await makeRig();
+    const hostInbox = path.join(rig.hostSession, 'wsl-hooks', 'inbox');
+
+    fs.writeFileSync(path.join(hostInbox, NAME), RECORD);
+
+    await waitFor(() => eventCount(rig) === 1);
+    await waitFor(() => fs.readdirSync(hostInbox).length === 0);
+  });
+
+  it('is acknowledged but not run again when the host sends one this process already stored', async () => {
+    const rig = await makeRig();
+    const hostInbox = path.join(rig.hostSession, 'wsl-hooks', 'inbox');
+    fs.writeFileSync(path.join(hostInbox, NAME), RECORD);
+    await waitFor(() => eventCount(rig) === 1);
+    await waitFor(() => fs.readdirSync(hostInbox).length === 0);
+
+    // A new attach made the host send what it still held: its copy is back, and it is sent again.
+    fs.writeFileSync(path.join(hostInbox, NAME), RECORD);
+    rig.relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: NAME, content: RECORD, claim: true });
+
+    await waitFor(() => fs.readdirSync(hostInbox).length === 0);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(eventCount(rig)).toBe(1);
+  });
+
+  it('is still run when it carries no claim, as a record from a host program that removed it as it sent it', async () => {
+    const rig = await makeRig();
+
+    rig.relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: NAME, content: RECORD });
+
+    await waitFor(() => eventCount(rig) === 1);
+  });
+});
+
 describe('an MCP message from the host', () => {
   it('is relayed here, with the token and URL from this computer, and its answer returns to the host', async () => {
     const rig = await makeRig();
@@ -401,7 +442,8 @@ describe.runIf(hasSh)('with the real hook script, run by sh on the host', () => 
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe('{"jsonrpc":"2.0","id":1,"result":{"ok":true}}');
     expect(rig.mcpCalls).toHaveLength(1);
-  });
+    // The script starts `sleep` for each poll, and a process start under Git Bash on Windows takes a while.
+  }, 20_000);
 
   it('carries the status line over the host\'s status file', async () => {
     const rig = await makeRig();
