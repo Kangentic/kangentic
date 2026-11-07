@@ -101,7 +101,7 @@
     "@xterm/addon-webgl": "0.20.0-beta.300",
     "@xterm/headless": "6.1.0-beta.304",
     "@xterm/xterm": "6.1.0-beta.304",
-    "@xyflow/react": "^12.12.0",
+    "@xyflow/react": "^12.12.1",
     "camera-controls": "^3.1.2",
     "electron": "45.1.0",
     "electron-builder": "^26.8.1",
