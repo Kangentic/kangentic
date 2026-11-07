@@ -142,8 +142,16 @@ export interface HostCommandResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
-  /** Why the program could not start (it is not installed, the folder is not there). */
+  /** Why the program was not run to its end: it could not start, the folder is not there, its output was capped. */
   error?: string;
+}
+
+/**
+ * Whether a command's `error` means the program could not be started. Its other errors (a missing folder, capped
+ * output, a shell that ended first) ran no program, so they say nothing about whether it is installed.
+ */
+export function isHostCommandNotStarted(error: string): boolean {
+  return /\bENOENT\b/.test(error);
 }
 
 /**

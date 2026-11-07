@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
-import { probeAgentOnHost, versionFromOutput, type HostAgentProbe } from '../../src/main/remote/host-agent-probe';
+import { createSpawnAgentProbe, probeAgentOnHost, versionFromOutput, type HostAgentProbe } from '../../src/main/remote/host-agent-probe';
 import { invalidateHostAgentList, listAgentsOnHost, resetAgentListForTests } from '../../src/main/agent/agent-list';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import {
@@ -57,9 +57,91 @@ describe('asking a host whether a CLI is installed', () => {
     expect(refused).toEqual({ status: 'unknown', version: null, detail: 'unrecognized option --version' });
   });
 
+  it('reads a helper error that is not "could not start" as unknown, with its text, since no program ran', async () => {
+    const folderText = 'The folder /home/dev/gone does not exist on this host, so claude was not run.';
+    const shellText = 'The host\'s shell (bash) ended before running claude (exit 1).';
+
+    expect(await probeAgentOnHost(async () => result({ code: null, error: folderText }), 'h', 'claude')).toEqual({ status: 'unknown', version: null, detail: folderText });
+    expect(await probeAgentOnHost(async () => result({ code: null, error: shellText }), 'h', 'claude')).toEqual({ status: 'unknown', version: null, detail: shellText });
+  });
+
   it('reads a version with a prerelease tag whole, and none out of text without one', () => {
     expect(versionFromOutput('Codex CLI 0.46.0-rc.1')).toBe('0.46.0-rc.1');
     expect(versionFromOutput('no digits here')).toBeNull();
+  });
+});
+
+describe('the probe a spawn makes (createSpawnAgentProbe)', () => {
+  it('keeps a found answer, so two probes run one command', async () => {
+    const runCommand = vi.fn(async () => result({ stdout: 'claude 2.1.304' }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+
+    const first = await spawnProbe.probe('host-a', 'claude');
+    const second = await spawnProbe.probe('host-a', 'claude');
+
+    expect(first.status).toBe('found');
+    expect(second).toEqual(first);
+    expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one in-flight ask between spawns that arrive together', async () => {
+    let release: (value: HostCommandResult) => void = () => undefined;
+    const runCommand = vi.fn(() => new Promise<HostCommandResult>((resolve) => { release = resolve; }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+
+    const first = spawnProbe.probe('host-a', 'claude');
+    const second = spawnProbe.probe('host-a', 'claude');
+    release(result({ stdout: 'claude 2.1.304' }));
+
+    expect((await first).status).toBe('found');
+    expect((await second).status).toBe('found');
+    expect(runCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again after missing, so a CLI installed since is seen on the next start', async () => {
+    const runCommand = vi.fn(async () => result({ code: 127 }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+
+    expect((await spawnProbe.probe('host-a', 'claude')).status).toBe('missing');
+    runCommand.mockResolvedValue(result({ stdout: 'claude 2.1.304' }));
+
+    expect((await spawnProbe.probe('host-a', 'claude')).status).toBe('found');
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again after unknown', async () => {
+    const runCommand = vi.fn(async () => result({ code: 2, stderr: 'unrecognized option' }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+
+    expect((await spawnProbe.probe('host-a', 'claude')).status).toBe('unknown');
+    expect((await spawnProbe.probe('host-a', 'claude')).status).toBe('unknown');
+
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks again for a found CLI once the host\'s link comes back', async () => {
+    const runCommand = vi.fn(async () => result({ stdout: 'claude 2.1.304' }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+    await spawnProbe.probe('host-a', 'claude');
+
+    spawnProbe.forgetHost('host-a');
+    await spawnProbe.probe('host-a', 'claude');
+
+    expect(runCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps hosts apart: one host\'s answer and its forgetting touch no other', async () => {
+    const runCommand = vi.fn(async () => result({ stdout: 'claude 2.1.304' }));
+    const spawnProbe = createSpawnAgentProbe(runCommand);
+    await spawnProbe.probe('host-a', 'claude');
+    await spawnProbe.probe('host-b', 'claude');
+    expect(runCommand).toHaveBeenCalledTimes(2);
+
+    spawnProbe.forgetHost('host-a');
+    await spawnProbe.probe('host-b', 'claude');
+    expect(runCommand).toHaveBeenCalledTimes(2);
+    await spawnProbe.probe('host-a', 'claude');
+    expect(runCommand).toHaveBeenCalledTimes(3);
   });
 });
 

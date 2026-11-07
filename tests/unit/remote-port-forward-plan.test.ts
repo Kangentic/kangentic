@@ -84,6 +84,19 @@ describe('the ports wanted for a host', () => {
     expect(rig.sent).toHaveLength(2);
   });
 
+  it('are sent again for one host whose link was made again, and left alone for every other', async () => {
+    const rig = makeRig();
+    rig.leases.push({ port: 7400, projectId: 'remote-2' });
+    rig.projects.push({ id: 'remote-2', remote: { hostId: 'host-b', path: '/home/dev/other' } });
+    await rig.plan.syncNow();
+    expect(rig.sent).toHaveLength(2);
+
+    rig.plan.resendHost('host-a');
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(rig.sent.slice(2)).toEqual([{ op: 'setForwards', hostId: 'host-a', ports: [7300, 7301] }]);
+  });
+
   it('are tried again after a send that failed', async () => {
     const rig = makeRig();
     rig.failNext.value = true;

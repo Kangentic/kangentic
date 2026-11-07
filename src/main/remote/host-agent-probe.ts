@@ -7,10 +7,10 @@
  *
  * Three answers, never two: a failed ask is not an absence (`ssh-remote.md`). A link that is down, a
  * program that timed out, or a refusal reads `unknown` with the reason, and only the shell's own
- * "not found" (an `error` from the helper, or exit 127) reads `missing`.
+ * "not found" (the helper's "could not start", or exit 127) reads `missing`.
  */
 
-import type { HostCommandRequest, HostCommandResult } from './protocol/messages';
+import { isHostCommandNotStarted, type HostCommandRequest, type HostCommandResult } from './protocol/messages';
 
 export type HostAgentStatus = 'found' | 'missing' | 'unknown';
 
@@ -42,7 +42,11 @@ export async function probeAgentOnHost(runCommand: HostCommandRunner, hostId: st
   } catch (error) {
     return { status: 'unknown', version: null, detail: error instanceof Error ? error.message : String(error) };
   }
-  if (result.error) return { status: 'missing', version: null, detail: null };
+  if (result.error) {
+    return isHostCommandNotStarted(result.error)
+      ? { status: 'missing', version: null, detail: null }
+      : { status: 'unknown', version: null, detail: result.error };
+  }
   if (result.timedOut) return { status: 'unknown', version: null, detail: `${cliName} --version did not answer in time` };
   if (result.code === SHELL_COMMAND_NOT_FOUND) return { status: 'missing', version: null, detail: null };
   if (result.code === 0) {
@@ -51,4 +55,36 @@ export async function probeAgentOnHost(runCommand: HostCommandRunner, hostId: st
   // The program ran and said no. It is there, so it is not missing, but nothing says it works.
   const words = (result.stderr || result.stdout).trim().split('\n')[0] ?? '';
   return { status: 'unknown', version: null, detail: words || `${cliName} --version exited with ${result.code}` };
+}
+
+export interface SpawnAgentProbe {
+  probe(hostId: string, cliName: string): Promise<HostAgentProbe>;
+  /** The host's link came back, and what is installed there may have changed while it was away. */
+  forgetHost(hostId: string): void;
+}
+
+/**
+ * The probe a spawn makes. Each `--version` is a login shell and a CLI start on the host, so a found CLI is not
+ * asked about again until the link comes back, and spawns that arrive together share one ask. Any other answer is
+ * asked again, so a CLI installed after a refusal is seen on the next start.
+ */
+export function createSpawnAgentProbe(runCommand: HostCommandRunner): SpawnAgentProbe {
+  const probesByHost = new Map<string, Map<string, Promise<HostAgentProbe>>>();
+  return {
+    probe(hostId, cliName) {
+      const probes = probesByHost.get(hostId) ?? new Map<string, Promise<HostAgentProbe>>();
+      probesByHost.set(hostId, probes);
+      const known = probes.get(cliName);
+      if (known) return known;
+      const asked = probeAgentOnHost(runCommand, hostId, cliName).then((answer) => {
+        if (answer.status !== 'found') probes.delete(cliName);
+        return answer;
+      });
+      probes.set(cliName, asked);
+      return asked;
+    },
+    forgetHost(hostId) {
+      probesByHost.delete(hostId);
+    },
+  };
 }

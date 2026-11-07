@@ -210,10 +210,21 @@ describe('running a CLI on the host (execCliForTarget)', () => {
   });
 
   it('rejects with code ENOENT when the host could not start the program', async () => {
-    const error = await runOnHost(null);
+    const error = await runOnHost(() => ({ code: null, stdout: '', stderr: '', timedOut: false, error: 'spawn probe-cli ENOENT' }));
     expect(error.code).toBe('ENOENT');
     expect(error.killed).toBe(false);
-    expect(error.message).toContain('command not found');
+    expect(error.message).toContain('spawn probe-cli ENOENT');
+  });
+
+  it.each([
+    ['a folder that is not there', 'The folder /home/dev/gone does not exist on this host, so probe-cli was not run.'],
+    ['a shell that ended first', 'The host\'s shell (bash) ended before running probe-cli (exit 1).'],
+    ['output past the cap', 'The program printed more than 8 MB, so it was stopped.'],
+  ])('rejects with no code when the helper ran no program: %s', async (_label, helperError) => {
+    const error = await runOnHost(() => ({ code: null, stdout: '', stderr: '', timedOut: false, error: helperError }));
+    expect(error.code).toBeNull();
+    expect(error.killed).toBe(false);
+    expect(error.message).toBe(helperError);
   });
 
   it('rejects as killed, with no code, when the program timed out', async () => {

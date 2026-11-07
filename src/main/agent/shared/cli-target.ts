@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseWslUncPath, toForwardSlash, toWslPath } from '../../../shared/paths';
 import type { StoredCliTarget } from '../../../shared/types';
-import type { HostCommandRequest, HostCommandResult, HostFileWrite, JsonPatchRequest, JsonPatchResult } from '../../remote/protocol/messages';
+import { isHostCommandNotStarted, type HostCommandRequest, type HostCommandResult, type HostFileWrite, type JsonPatchRequest, type JsonPatchResult } from '../../remote/protocol/messages';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
@@ -625,7 +625,7 @@ async function execCliOnHost(
     ...(options.env ? { env: options.env } : {}),
     timeoutMs: options.timeout,
   });
-  if (result.error) throw new HostCommandError(result.error, result.stdout, result.stderr, 'ENOENT', false);
+  if (result.error) throw new HostCommandError(result.error, result.stdout, result.stderr, isHostCommandNotStarted(result.error) ? 'ENOENT' : null, false);
   if (result.timedOut) throw new HostCommandError(`${target.linuxCliPath} did not finish in ${Math.round(options.timeout / 1000)} s on the host.`, result.stdout, result.stderr, null, true);
   if (result.code !== 0) throw new HostCommandError(`${target.linuxCliPath} exited with code ${result.code} on the host.`, result.stdout, result.stderr, result.code, false);
   return { stdout: result.stdout, stderr: result.stderr };

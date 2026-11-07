@@ -419,8 +419,9 @@ function scheduleArchiveSweep(context: IpcContext, projectId: string): void {
   });
 }
 
-/** False once a project is deleted. A context that cannot say counts it as
- *  present, so a missing repository never silently stops indexing. */
+/** False once a project is deleted, or hidden because its host was removed: a
+ *  hidden one's index waits for it to come back. A context that cannot say
+ *  counts it as present, so a missing repository never silently stops indexing. */
 function projectStillExists(context: IpcContext, projectId: string): boolean {
   try {
     return context.projectRepo.getById(projectId) != null;
