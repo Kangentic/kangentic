@@ -434,7 +434,9 @@ is what raises the notice for a retry that really failed.
 **A failed fresh launch keeps its prompt.** Claude's `--session-id` is written to the record at spawn
 and the CLI writes its conversation on the first turn, so a Resume of a launch that never ran would
 spawn `--resume` on nothing, and the task's prompt would be lost. So the pause marks a fresh launch
-`sessions.launch_failed_at`, under the task lock and before the PTY goes down.
+`sessions.launch_failed_at`, under the task lock and before the PTY goes down. A fresh launch refused at
+promotion (`agent-start-refused` in `handlers/sessions.ts`) is marked the same way, so its Resume starts it
+with its prompt.
 `assessResumeConversation` reads a marked record with no turns as `never-started`, and
 `resumeTaskSession` replays that record's own `prompt` with no template over it. That string is what
 the launch would have run, a column's message and held messages included, so a person's Resume
