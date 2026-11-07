@@ -765,6 +765,25 @@ describe('UsageAccumulator - per-tool aggregation', () => {
     expect(usage.getToolCallCount('s1')).toBe(0);
   });
 
+  it('adds a run\'s earlier totals to what it has counted, whichever comes first', () => {
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 2000));
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 1000));
+    usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 1500));
+
+    usage.restoreRunTotals('s1', [
+      { toolName: 'Bash', callCount: 12, totalDurationMs: 900, interruptedCount: 1, waitedCount: 2, costUsd: 0.5 },
+      { toolName: 'Grep', callCount: 3, totalDurationMs: 30, interruptedCount: 0 },
+    ], 2);
+
+    expect(usage.getToolCallCount('s1')).toBe(17);
+    expect(usage.getCompactionCount('s1')).toBe(2);
+    expect(usage.getToolBreakdown('s1')).toEqual([
+      { toolName: 'Bash', callCount: 13, totalDurationMs: 1400, interruptedCount: 1, waitedCount: 2, costUsd: 0.5 },
+      { toolName: 'Grep', callCount: 3, totalDurationMs: 30, interruptedCount: 0 },
+      { toolName: 'Read', callCount: 1, totalDurationMs: 0, interruptedCount: 0 },
+    ]);
+  });
+
   it('pairs ToolStart/ToolEnd by name (FIFO) and accumulates duration', () => {
     usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Bash', 1000));
     usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Bash', 1500));

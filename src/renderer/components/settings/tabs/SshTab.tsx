@@ -667,7 +667,7 @@ export function SshTab() {
                             }}
                             suggestions={configHosts}
                             testId="ssh-edit-destination"
-                            disabled={editBusy}
+                            readOnly={editBusy}
                           />
                         </label>
 
@@ -827,7 +827,7 @@ export function SshTab() {
                       suggestions={configHosts}
                       placeholder={DESTINATION_EXAMPLE}
                       testId="ssh-add-destination"
-                      disabled={busy}
+                      readOnly={busy}
                     />
                   </label>
                   <p className="text-xs text-fg-faint">

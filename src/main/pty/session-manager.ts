@@ -204,6 +204,13 @@ function noteHostStopResult(result: StopProcessResult): void {
   reportTaskReapFailure('stop', result.failureCode, null, result.failurePass, result.failureCause);
 }
 
+/** A session a host kept running, and what its record counted of this run before the app last let go of it. */
+export type RemoteSessionAdoption = SpawnSessionInput & {
+  id: string;
+  remote: SpawnRemote;
+  runSoFar?: { toolBreakdown: PerToolStat[]; compactionCount: number };
+};
+
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
 interface InFlightSpawn {
   taskId: string;
@@ -2732,7 +2739,7 @@ export class SessionManager extends EventEmitter {
    * overlap, and a later pass finds it still `running`. A session already held is the answer, and a take under
    * way is shared. A second take would drain the first as its sibling and release its files off the host.
    */
-  adoptRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
+  adoptRemoteSession(input: RemoteSessionAdoption): Promise<Session | null> {
     const held = this.registry.get(input.id);
     if (held?.status === 'running') return Promise.resolve(toSession(held));
     const underWay = this.adoptionsInFlight.get(input.id);
@@ -2742,13 +2749,15 @@ export class SessionManager extends EventEmitter {
     return adoption;
   }
 
-  private async takeBackRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
+  private async takeBackRemoteSession({ runSoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
     const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
     const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
     const pty = adopted.get(input.id);
     if (!pty) return null;
     try {
-      return await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
+      const session = await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
+      if (runSoFar) this.telemetry.restoreRunTotals(session.id, runSoFar.toolBreakdown, runSoFar.compactionCount);
+      return session;
     } catch (error) {
       // The agent keeps running; only this handle, which nothing will use, is dropped.
       this.host.forgetRemoteHandle(pty);

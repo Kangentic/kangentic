@@ -10,7 +10,7 @@ import { describeConfigHost, matchingConfigHosts } from './host-address';
  * `~/.ssh/config` as they type, since a name from that file is already something `ssh` resolves. A suggestion
  * fills the field and nothing else: the address stays whatever the field holds.
  */
-export function HostAddressInput({ value, onChange, onEnter, onKeyDown, suggestions, placeholder, testId, autoFocus, disabled }: {
+export function HostAddressInput({ value, onChange, onEnter, onKeyDown, suggestions, placeholder, testId, autoFocus, readOnly }: {
   value: string;
   onChange: (value: string) => void;
   /** Enter with no suggestion highlighted: the form's own next step. */
@@ -21,14 +21,14 @@ export function HostAddressInput({ value, onChange, onEnter, onKeyDown, suggesti
   placeholder?: string;
   testId: string;
   autoFocus?: boolean;
-  /** Held while the form asks about this address, so the answer cannot land on another one. */
-  disabled?: boolean;
+  /** Held while the form asks about this address, so the answer cannot land on another one. Focus stays, for the next Enter. */
+  readOnly?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   /** Escape closed the menu. The next keystroke opens it again. */
   const [menuClosed, setMenuClosed] = useState(false);
   const matches = matchingConfigHosts(suggestions, value);
-  const open = focused && !menuClosed && matches.length > 0;
+  const open = !readOnly && focused && !menuClosed && matches.length > 0;
   const wrapRef = useRef<HTMLDivElement>(null);
   const menu = useSuggestionMenu({
     anchorRef: wrapRef,
@@ -47,7 +47,7 @@ export function HostAddressInput({ value, onChange, onEnter, onKeyDown, suggesti
         className={`${INPUT_CLASS} font-mono`}
         value={value}
         placeholder={placeholder}
-        disabled={disabled}
+        readOnly={readOnly}
         spellCheck={false}
         autoCapitalize="off"
         role="combobox"

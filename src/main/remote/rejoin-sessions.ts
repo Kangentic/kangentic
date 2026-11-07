@@ -21,8 +21,9 @@ import * as path from 'node:path';
 import { agentRegistry } from '../agent/agent-registry';
 import { shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { recordedPtyGrid } from '../db/recorded-pty-grid';
-import type { PermissionMode, Session, SessionRecord, SpawnSessionInput } from '../../shared/types';
-import type { SessionManager } from '../pty/session-manager';
+import { parseToolBreakdown } from '../db/repositories/session-repository';
+import type { PermissionMode, Session, SessionRecord } from '../../shared/types';
+import type { RemoteSessionAdoption, SessionManager } from '../pty/session-manager';
 import { sessionOutputPaths } from '../transition-engine/session-paths';
 import type { HelperSnapshot } from './protocol/messages';
 import { hostOfRecord } from './record-host';
@@ -97,7 +98,7 @@ export function createRecordAdopter(context: RecordAdopterContext): (record: Ses
     if (!launch) return null;
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(path.join(context.projectPath, '.kangentic', 'sessions', record.id));
     const restoredGrid = recordedPtyGrid(record);
-    const input: SpawnSessionInput & { id: string; remote: typeof launch.remote } = {
+    const input: RemoteSessionAdoption = {
       id: record.id,
       taskId: record.task_id,
       projectId: context.projectId,
@@ -115,6 +116,8 @@ export function createRecordAdopter(context: RecordAdopterContext): (record: Ses
       shell: shellForTarget(launch.place) ?? undefined,
       cliTarget: toStoredCliTarget(launch.place),
       remote: launch.remote,
+      // The same run goes on in the same record, whose counts are this run's.
+      runSoFar: { toolBreakdown: parseToolBreakdown(record.tool_breakdown), compactionCount: record.compaction_count ?? 0 },
       ...(restoredGrid ? { restoredGrid } : {}),
     };
     return context.sessionManager.adoptRemoteSession(input);

@@ -274,13 +274,13 @@ test('locks the address field of Add host while its key is being read, so the an
   await page.locator('[data-testid="ssh-add-name"]').fill('Slow');
   const destination = page.locator('[data-testid="ssh-add-destination"]');
   await destination.fill('slow');
-  await expect(destination).toBeEnabled();
+  await expect(destination).toBeEditable();
 
   await page.locator('[data-testid="ssh-add-continue"]').click();
-  await expect(destination).toBeDisabled();
+  await expect(destination).not.toBeEditable();
 
   await releaseProbe();
-  await expect(destination).toBeEnabled();
+  await expect(destination).toBeEditable();
 });
 
 test('locks the address field of a host edit while the new address\'s key is being read', async () => {
@@ -297,14 +297,14 @@ test('locks the address field of a host edit while the new address\'s key is bei
   await expect(page.locator('[data-testid="ssh-edit-form"]')).toBeVisible();
   const destination = page.locator('[data-testid="ssh-edit-destination"]');
   await destination.fill('dev@lab2.example.test');
-  await expect(destination).toBeEnabled();
+  await expect(destination).toBeEditable();
 
   await holdProbeThatWillBeRefused();
   await page.locator('[data-testid="ssh-edit-save"]').click();
-  await expect(destination).toBeDisabled();
+  await expect(destination).not.toBeEditable();
 
   await releaseProbe();
-  await expect(destination).toBeEnabled();
+  await expect(destination).toBeEditable();
 });
 
 test('clears the password after a refused add, and keeps the rest of the form', async () => {
@@ -665,6 +665,30 @@ test.describe('editing a host in place', () => {
     expect(saved).toBe('dev@lab.example.test');
 
     await page.locator('[data-testid="ssh-edit-save"]').click();
+    await expect(page.locator('[data-testid="ssh-edit-form"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="ssh-host-destination"]')).toHaveText('dev@lab2.example.test');
+  });
+
+  test('takes a new address with Enter twice: the first shows its key, the second saves it', async () => {
+    await addHostThroughApi();
+    await openEditForm();
+    const destination = page.locator('[data-testid="ssh-edit-destination"]');
+
+    await destination.fill('dev@lab2.example.test');
+    // Held open as a real host's answer is, so the field is locked for longer than a frame.
+    await page.evaluate(() => {
+      const mockWindow = window as unknown as { __mockSshProbeGate?: Promise<void>; __releaseSshProbe?: () => void };
+      mockWindow.__mockSshProbeGate = new Promise<void>((resolve) => { mockWindow.__releaseSshProbe = resolve; });
+    });
+    await destination.press('Enter');
+    await expect(destination).not.toBeEditable();
+    await page.waitForFunction(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))));
+    await expect(destination).toBeFocused();
+    await releaseProbe();
+    await expect(page.locator('[data-testid="ssh-edit-fingerprint"]')).toContainText('SHA256:');
+    await expect(destination).toBeFocused();
+
+    await page.keyboard.press('Enter');
     await expect(page.locator('[data-testid="ssh-edit-form"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="ssh-host-destination"]')).toHaveText('dev@lab2.example.test');
   });

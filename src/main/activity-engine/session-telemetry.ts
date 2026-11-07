@@ -1528,6 +1528,11 @@ export class SessionTelemetry {
     return this.usage.getToolCallCount(sessionId);
   }
 
+  /** What a run counted before this process took it over (`UsageAccumulator.restoreRunTotals`). */
+  restoreRunTotals(sessionId: string, toolBreakdown: readonly PerToolStat[], compactionCount: number): void {
+    this.usage.restoreRunTotals(sessionId, toolBreakdown, compactionCount);
+  }
+
   /** This run's per-tool rows only, for the same reason as `getToolCallCount`. */
   getToolBreakdown(sessionId: string): PerToolStat[] {
     return this.usage.getToolBreakdown(sessionId);

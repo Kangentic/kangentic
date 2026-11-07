@@ -554,9 +554,9 @@ export class SessionRepository {
 
   /** Update the metric columns for a session record. */
   /**
-   * Save what a session's telemetry knows. A reading never takes away what the record holds: an agent taken back
-   * from a host (#913) keeps its record but starts with empty telemetry, so until its next report a capture
-   * reads no usage and no tools, and its counts start again from zero.
+   * Save what a session's telemetry knows. No reading of usage keeps what the record holds: an agent taken back
+   * from a host (#913) keeps its record, and this process has no usage for it until the agent next reports. Its
+   * counts are restored at the take (`restoreRunTotals`), so they are written as read.
    */
   updateMetrics(id: string, metrics: SessionMetricsInput): void {
     this.db.prepare(`
@@ -567,9 +567,9 @@ export class SessionRepository {
         model_id = COALESCE(?, model_id),
         model_display_name = COALESCE(?, model_display_name),
         total_duration_ms = COALESCE(?, total_duration_ms),
-        tool_call_count = MAX(COALESCE(?, 0), COALESCE(tool_call_count, 0)),
-        tool_breakdown = COALESCE(?, tool_breakdown),
-        compaction_count = MAX(?, COALESCE(compaction_count, 0))
+        tool_call_count = ?,
+        tool_breakdown = ?,
+        compaction_count = ?
       WHERE id = ?
     `).run(
       metrics.totalCostUsd,

@@ -542,6 +542,19 @@ describe('taking back an agent a host kept running while the app was closed', ()
   }
 
   describe('a record two recovery passes both ask for', () => {
+    it('goes on counting the run its record holds, once however many passes ask', async () => {
+      const { second } = await relaunch();
+      const toolBreakdown = [{ toolName: 'Bash', callCount: 12, totalDurationMs: 900, interruptedCount: 1 }];
+      const runSoFar = { toolBreakdown, compactionCount: 2 };
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), runSoFar });
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), runSoFar });
+
+      expect(second.manager.getToolCallCount('s1')).toBe(12);
+      expect(second.manager.getToolBreakdown('s1')).toEqual(toolBreakdown);
+      expect(second.manager.getCompactionCount('s1')).toBe(2);
+    });
+
     it('returns the session already held as running, and does not ask the host a second time or drain the first', async () => {
       const { first, second } = await relaunch();
       const taken = await second.manager.adoptRemoteSession(adoptInput(second));

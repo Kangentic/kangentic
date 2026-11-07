@@ -132,21 +132,19 @@ describe('the metrics of a record whose agent was taken back', () => {
     compactionCount: 2,
   };
 
-  it('keeps what the record holds while the new telemetry has read nothing, and takes what it reads next', () => {
+  it('keeps the usage the record holds until the agent next reports, and takes what it reports then', () => {
     insertRecord('rec-1', { cli_target: SSH_TARGET });
     sessionRepo.updateMetrics('rec-1', measured);
 
-    // The snapshot timer's first capture after the take: no usage yet, and counts starting from zero.
+    // The snapshot timer's first capture after the take: this process has no usage for the session yet.
     sessionRepo.updateMetrics('rec-1', {
+      ...measured,
       totalCostUsd: null,
       totalInputTokens: null,
       totalOutputTokens: null,
       modelId: null,
       modelDisplayName: null,
       totalDurationMs: null,
-      toolCallCount: 0,
-      toolBreakdown: null,
-      compactionCount: 0,
     });
 
     expect(sessionRepo.findByAnyId('rec-1')).toMatchObject({
@@ -155,14 +153,11 @@ describe('the metrics of a record whose agent was taken back', () => {
       total_output_tokens: 900,
       model_id: 'a-model',
       total_duration_ms: 60_000,
-      tool_call_count: 12,
-      tool_breakdown: measured.toolBreakdown,
-      compaction_count: 2,
     });
 
-    sessionRepo.updateMetrics('rec-1', { ...measured, totalCostUsd: 2.5, toolCallCount: 15 });
+    sessionRepo.updateMetrics('rec-1', { ...measured, totalCostUsd: 2.5 });
 
-    expect(sessionRepo.findByAnyId('rec-1')).toMatchObject({ total_cost_usd: 2.5, tool_call_count: 15 });
+    expect(sessionRepo.findByAnyId('rec-1')).toMatchObject({ total_cost_usd: 2.5 });
   });
 });
 

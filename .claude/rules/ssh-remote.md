@@ -110,7 +110,9 @@ process, a path tested against the wrong disk, an environment that overwrites th
   worktree is the worst outcome here. A cold open and a host's first connection can both reach one record,
   so a session the app already holds is the answer and two takes share one, or the second would drain the
   first and release its files off the host. A take whose registration fails adds no session: an agent with
-  no registration has no hooks, so the agent stays and the record waits. After recovery, an agent alive on
+  no registration has no hooks, so the agent stays and the record waits. A take goes on in the same record,
+  so it restores the run's counts from that record (`restoreRunTotals`), and a capture with no usage yet
+  keeps the record's. After recovery, an agent alive on
   the host for this app's projects that the app neither holds nor has a `running` record for is hung up
   (`endUnownedHostSessions`).
 - **Every hook record stays on the host until the app has stored it.** The helper keeps a record, marked

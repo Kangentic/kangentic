@@ -145,7 +145,13 @@ describe('createRecordAdopter', () => {
     const sessionType = agentRegistry.get('claude')!.sessionType;
 
     await createRecordAdopter({ sessionManager: { adoptRemoteSession } as never, projectId: 'proj-1', projectPath: '/shell' })(
-      record('rec-1', { session_type: sessionType, last_pty_cols: 140, last_pty_rows: 40 }),
+      record('rec-1', {
+        session_type: sessionType,
+        last_pty_cols: 140,
+        last_pty_rows: 40,
+        tool_breakdown: JSON.stringify([{ toolName: 'Bash', callCount: 12, totalDurationMs: 900, interruptedCount: 1 }]),
+        compaction_count: 2,
+      }),
     );
 
     expect(adoptRemoteSession).toHaveBeenCalledTimes(1);
@@ -161,6 +167,7 @@ describe('createRecordAdopter', () => {
       remote,
       restoredGrid: { cols: 140, rows: 40 },
       cliTarget: expect.objectContaining({ kind: 'ssh', hostId: 'host-1' }),
+      runSoFar: { toolBreakdown: [{ toolName: 'Bash', callCount: 12, totalDurationMs: 900, interruptedCount: 1 }], compactionCount: 2 },
     });
     expect(String(input.statusOutputPath).replace(/\\/g, '/')).toBe('/shell/.kangentic/sessions/rec-1/status.json');
     expect(String(input.eventsOutputPath).replace(/\\/g, '/')).toBe('/shell/.kangentic/sessions/rec-1/events.jsonl');

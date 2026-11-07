@@ -287,6 +287,54 @@ describe('what cannot be replayed', () => {
     expect(helper.endpoint.connected).toBe(true);
   });
 
+  /** A pipe that lets the first chunk from first to second through, its hello, and loses what follows until it dies. */
+  function connectLosingAllButTheHello(first: Side, second: Side): void {
+    const [firstOuter, firstInner] = duplexPair();
+    const [secondOuter, secondInner] = duplexPair();
+    let chunks = 0;
+    firstInner.on('data', (chunk: Buffer) => {
+      chunks += 1;
+      if (chunks === 1) secondInner.write(chunk);
+    });
+    secondInner.on('data', (chunk: Buffer) => firstInner.write(chunk));
+    firstOuter.on('close', () => secondOuter.destroy());
+    secondOuter.on('close', () => firstOuter.destroy());
+    first.endpoint.attach(firstOuter);
+    second.endpoint.attach(secondOuter);
+  }
+
+  it.each([
+    ['on a queued frame\'s end', [300, 300], [300, 300, 300, 300]],
+    ['inside a queued frame', [100], [2000, 2000]],
+  ])('sends the reset again when the first connection died before the peer read it, its offset %s', async (_where, previousSizes, queuedSizes) => {
+    const helper = makeSide('helper');
+    const previousLink = makeSide('link');
+    connect(previousLink, helper);
+    await settle();
+    previousSizes.forEach((size, index) => previousLink.endpoint.send({ n: 200 + index }, Buffer.alloc(size)));
+    await settle();
+    previousLink.endpoint.detach();
+    await settle();
+    const restartedLink = makeSide('link');
+    queuedSizes.forEach((size, index) => restartedLink.endpoint.send({ n: 100 + index }, Buffer.alloc(size)));
+
+    connectLosingAllButTheHello(restartedLink, helper);
+    await settle();
+    expect(restartedLink.endpoint.connected).toBe(true);
+    const heardBeforeTheDrop = indexes(helper);
+    restartedLink.endpoint.detach('network dropped');
+    await settle();
+
+    connect(restartedLink, helper);
+    await settle();
+
+    expect(heardBeforeTheDrop).toEqual(previousSizes.map((_size, index) => 200 + index));
+    expect(indexes(helper)).toEqual([...heardBeforeTheDrop, ...queuedSizes.map((_size, index) => 100 + index)]);
+    expect(helper.detached.filter((reason) => reason.includes('inside a frame'))).toEqual([]);
+    expect(restartedLink.detached.filter((reason) => reason.includes('inside a frame'))).toEqual([]);
+    expect(restartedLink.endpoint.connected).toBe(true);
+  });
+
   it('resumes an ordinary drop after that first handshake without a reset or a repeated frame', async () => {
     const { helper, restartedLink } = await restartWithQueue([300, 300], [300, 300, 300, 300]);
     expect(indexes(helper)).toEqual([200, 201, 100, 101, 102, 103]);

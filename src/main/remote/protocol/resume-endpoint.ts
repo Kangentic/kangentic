@@ -123,6 +123,11 @@ export class ResumeEndpoint {
    * before this process, however small it is, and this side's own offsets cannot be compared with it.
    */
   private peerFollowsThisStream = false;
+  /**
+   * The offset a hello named that this side answered with a reset, until the peer shows it read the reset. A
+   * connection can die with the reset unread, and the peer then names the same offset, still of the older stream.
+   */
+  private offsetAwaitingReset: number | null = null;
 
   constructor(private readonly handlers: ResumeEndpointHandlers, options: ResumeEndpointOptions) {
     this.options = { ...DEFAULTS, ...options };
@@ -316,7 +321,9 @@ export class ResumeEndpoint {
 
   /** Send the peer what it has not got, from the offset its hello named. False when the connection was dropped. */
   private replay(connection: Connection, peerResumeFrom: number): boolean {
-    if (peerResumeFrom > this.sendOffset || (peerResumeFrom > 0 && !this.peerFollowsThisStream)) {
+    const fromAnOlderStream = peerResumeFrom > 0 && (!this.peerFollowsThisStream || peerResumeFrom === this.offsetAwaitingReset);
+    if (peerResumeFrom > this.sendOffset || fromAnOlderStream) {
+      this.offsetAwaitingReset = peerResumeFrom;
       // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream starts
       // now, which is the first frame this side still holds. A process that queued a request before it connected
       // (the app, right after it dials) holds it from offset 0, and neither trimming those frames against the
@@ -334,6 +341,7 @@ export class ResumeEndpoint {
       }
       return true;
     }
+    this.offsetAwaitingReset = null;
     this.trimThrough(peerResumeFrom);
     const retainedStart = this.retained.length > 0 ? this.retained[0].offset : this.sendOffset;
     if (peerResumeFrom < retainedStart) {
@@ -356,6 +364,8 @@ export class ResumeEndpoint {
       this.refuse(connection, `the peer acknowledged ${offset}, past what was sent (${this.sendOffset})`);
       return;
     }
+    // An acknowledgement follows only frames taken on this connection, so the peer has read any reset before them.
+    this.offsetAwaitingReset = null;
     this.trimThrough(offset);
   }
 
