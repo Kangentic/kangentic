@@ -116,7 +116,7 @@ A TUI app can emit `ESC]8;;<url>ESC\` to mark text as a clickable hyperlink. Lik
 are agent-controlled bytes with no user intent behind them - anything a session prints, `cat`s, or
 echoes can carry one - so activation is gated rather than handed to the OS directly. `useTerminal`
 installs a `linkHandler` (`src/renderer/utils/terminal-link-handler.ts`) that opens on a Ctrl click
-(Cmd on a Mac) only, checks the URL against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`)
+(Cmd alone on a Mac, where Ctrl+click is a right click) only, checks the URL against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`)
 from `src/shared/external-url.ts`, and routes an allowed URL to the OS default browser via
 `shell:openExternal`; anything else is dropped with a warning. Supplying this handler also replaces
 xterm's built-in fallback, which would otherwise show a native `confirm()` dialog and then open the
