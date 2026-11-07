@@ -12,7 +12,11 @@ name: SSH hosts against a real sshd
 #   - ssh-setup-rig: the steps of Add host against a host that takes a password (learn the host key and
 #     compare it with the host's own, add a key with the password, sign in with it, recover from a changed key).
 #   - ssh-link-rig: the real link and helper, with the connection killed again and again; the PTY must stay
-#     alive and its output must have no gap after every drop.
+#     alive and its output must have no gap after every drop. Its other clients: removing a host and editing
+#     its sign-in, an MCP call across a dropped link and an absent app (answered once, never run late), and a
+#     quit that leaves an agent running, which the next launch (a new boot) must take back with the same pid,
+#     its whole scrollback and every hook record in order. That last one found five of eight records lost.
+#     The older-host (Debian 10) and ProxyJump variants are run by hand (see .claude/rules/ssh-remote.md).
 #
 # Costs one ubuntu-24.04 job of about 10 minutes (Docker build, an npm ci, a Node tarball from nodejs.org
 # checked against its published SHA-256). Path-filtered, and deliberately NOT a required check, for the reason
@@ -27,6 +31,9 @@ on:
       - 'src/main/agent/shared/cli-target.ts'
       - 'scripts/ssh-link-rig.mjs'
       - 'scripts/ssh-link-rig.client.ts'
+      - 'scripts/ssh-removal-rig.client.ts'
+      - 'scripts/ssh-mcp-rig.client.ts'
+      - 'scripts/ssh-quit-rig.client.ts'
       - 'scripts/ssh-setup-rig.mjs'
       - 'scripts/ssh-setup-rig.client.ts'
       - 'scripts/probe-ssh-rig/**'
@@ -40,6 +47,9 @@ on:
       - 'src/main/agent/shared/cli-target.ts'
       - 'scripts/ssh-link-rig.mjs'
       - 'scripts/ssh-link-rig.client.ts'
+      - 'scripts/ssh-removal-rig.client.ts'
+      - 'scripts/ssh-mcp-rig.client.ts'
+      - 'scripts/ssh-quit-rig.client.ts'
       - 'scripts/ssh-setup-rig.mjs'
       - 'scripts/ssh-setup-rig.client.ts'
       - 'scripts/probe-ssh-rig/**'
@@ -101,6 +111,13 @@ jobs:
         run: node scripts/ssh-setup-rig.mjs --work "$RUNNER_TEMP/ssh-setup-rig"
       - name: Link survives dropped connections
         run: node scripts/ssh-link-rig.mjs --work "$RUNNER_TEMP/ssh-link-rig" --drops 5
+      # The same container, three more clients. Each exits non-zero when a check fails.
+      - name: Removing a host and editing its sign-in
+        run: node scripts/ssh-link-rig.mjs --client removal --work "$RUNNER_TEMP/ssh-removal-rig" --port 2253
+      - name: An MCP call survives a dropped link and an absent app
+        run: node scripts/ssh-link-rig.mjs --client mcp --work "$RUNNER_TEMP/ssh-mcp-rig" --port 2254
+      - name: An agent a quit left running is taken back by the next launch
+        run: node scripts/ssh-link-rig.mjs --client quit --work "$RUNNER_TEMP/ssh-quit-rig" --port 2255
       # Says which containers ran, for a failure that only shows in the container's own log.
       - name: Container logs on failure
         if: ${{ failure() }}
