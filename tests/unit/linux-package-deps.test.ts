@@ -90,6 +90,33 @@ describe('electron-builder.yml rpm.depends', () => {
   });
 });
 
+describe('Linux launcher badge: the installed .desktop file matches package.json desktopName', () => {
+  // app.setBadgeCount silently does nothing on Linux unless Electron's desktopName names the
+  // .desktop file the package installed. electron-builder names that file from the executable
+  // unless linux.syncDesktopName is on, when it takes the basename of desktopName instead
+  // (app-builder-lib LinuxTargetHelper.getDesktopFileName).
+  const electronBuilderConfig = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf-8');
+  const linuxBlock = extractTopLevelBlock(electronBuilderConfig, 'linux');
+  const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as { name: string; productName?: string; desktopName?: string };
+
+  it('declares a desktopName that ends in .desktop', () => {
+    expect(packageJson.desktopName, 'package.json desktopName').toMatch(/^[^/\\]+\.desktop$/);
+  });
+
+  it('installs the .desktop file under that name', () => {
+    const desktopBasename = (packageJson.desktopName ?? '').replace(/\.desktop$/, '');
+    const syncOn = /^\s+syncDesktopName:\s*true\s*(#.*)?$/m.test(linuxBlock);
+    // electron-builder's default executable name is the lowercased sanitized product name.
+    const executableName = linuxBlock.match(/^\s+executableName:\s*(\S+)/m)?.[1] ?? (packageJson.productName ?? packageJson.name).toLowerCase();
+    const installedBasename = syncOn ? desktopBasename : executableName;
+    expect(
+      installedBasename,
+      'linux.syncDesktopName must be true (or the executable name must equal the desktopName basename), ' +
+        'or the launcher badge count never reaches the Linux launcher',
+    ).toBe(desktopBasename);
+  });
+});
+
 describe('electron-builder.yml deb.depends', () => {
   const electronBuilderConfig = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf-8');
   const debBlock = extractTopLevelBlock(electronBuilderConfig, 'deb');

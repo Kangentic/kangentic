@@ -195,6 +195,7 @@ function makeContext(overrides?: {
     currentProjectId: overrides?.currentProjectId ?? null,
     mcpServerHandle: null,
     mobileBridgeService: { reconcile: vi.fn() },
+    appBadge: { refresh: vi.fn() },
   };
 }
 
@@ -460,6 +461,34 @@ describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => 
     invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
 
     expect(context.mobileBridgeService.reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('CONFIG_SET IPC handler - app icon badge refresh wiring', () => {
+  // Mute and the App icon badge switch must apply at once, not at the next
+  // activity, so a write that touches notifications recounts the badge.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('refreshes the badge when the write carries notifications', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { notifications: { muted: true } });
+
+    expect(context.appBadge.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the badge alone when the write has no notifications', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
+
+    expect(context.appBadge.refresh).not.toHaveBeenCalled();
   });
 });
 
