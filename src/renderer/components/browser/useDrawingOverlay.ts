@@ -35,12 +35,21 @@ interface UseDrawingOverlayOptions {
   enabled: boolean;
   color?: string;
   lineWidth?: number;
+  /** Runs as a stroke starts, whichever way it started. */
+  onStrokeStart?: () => void;
+}
+
+/** A press on the canvas keeps focus where it is. The canvas takes no focus, so
+ *  the default would drop it to `<body>` and off the note beside the drawing. */
+function keepFocusOnCanvasPress(event: React.MouseEvent<HTMLCanvasElement>): void {
+  event.preventDefault();
 }
 
 export function useDrawingOverlay({
   enabled,
   color = '#ff3b3b',
   lineWidth = 3,
+  onStrokeStart,
 }: UseDrawingOverlayOptions) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -99,7 +108,8 @@ export function useDrawingOverlay({
     currentStrokeRef.current = [point];
     canvasRef.current?.setPointerCapture(event.pointerId);
     setStrokes((previous) => [...previous, [point]]);
-  }, [enabled, pointFromEvent]);
+    onStrokeStart?.();
+  }, [enabled, onStrokeStart, pointFromEvent]);
 
   const onPointerUp = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drawingRef.current) return;
@@ -176,7 +186,14 @@ export function useDrawingOverlay({
   return {
     canvasRef,
     strokes,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onPointerLeave: onPointerUp },
+    handlers: {
+      onMouseDown: keepFocusOnCanvasPress,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel: onPointerUp,
+      onPointerLeave: onPointerUp,
+    },
     clear,
     undo,
   };
