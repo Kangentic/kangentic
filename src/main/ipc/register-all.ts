@@ -78,6 +78,9 @@ import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import { DesktopNotifier } from '../notifications/desktop-notifier';
+import { AppBadge } from '../notifications/app-badge';
+import { createAppBadgeDisplay } from '../notifications/app-badge-display';
+import { effectiveNotificationConfig } from '../../shared/notification-settings';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
 import { CommandTerminalNamer } from '../agent/shared/command-terminal-namer';
 import { CommandTerminalLeftoverReaper } from './helpers/command-terminal-leftovers';
@@ -220,9 +223,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // is constructed before `context` is assigned below, and its callbacks only
   // ever run later (in response to a SessionManager event), by which point
   // `context` is set.
+  const notificationConfigNow = () => effectiveNotificationConfig(requireContext().configManager.load().notifications);
   const desktopNotifier = new DesktopNotifier({
     sessionManager,
-    getNotificationConfig: () => requireContext().configManager.load().notifications,
+    getNotificationConfig: notificationConfigNow,
     getActiveProjectId: () => requireContext().currentProjectId ?? undefined,
     isWindowFocused: () => {
       const mainWindow = requireContext().mainWindow;
@@ -254,6 +258,13 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     isWorkflowStepTask: (projectId, taskId) => isRunningWorkflowStepTask(projectId, taskId),
     isSessionInOwnCall,
     showNotification: (input) => showDesktopNotification(requireContext(), input),
+  });
+  const appBadge = new AppBadge({
+    sessionManager,
+    getNotificationConfig: notificationConfigNow,
+    isSessionInOwnCall,
+    isWorkflowStepTask: (projectId, taskId) => isRunningWorkflowStepTask(projectId, taskId),
+    show: createAppBadgeDisplay(() => requireContext().mainWindow).show,
   });
 
   // Lazy-initialize heavy objects on first access
@@ -304,6 +315,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     mobileBridgeService,
     boardEvents,
     desktopNotifier,
+    appBadge,
     spareWorktrees: spareWorktreePool,
   };
 
@@ -314,6 +326,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // first reconcile's syncSessions() has handlers to route into.
   mobileBridgeService.attachContext(context);
   desktopNotifier.start();
+  appBadge.start();
 
   // Durable activity-disposition-interval ledger (see
   // activity-interval-recorder.ts and the session_activity_intervals

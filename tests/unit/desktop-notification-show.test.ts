@@ -66,6 +66,7 @@ vi.mock('../../src/main/ipc/handlers/projects', () => ({ syncProjectMcpConfig: v
 import { notificationIdentity, showDesktopNotification } from '../../src/main/ipc/handlers/system';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../src/shared/notification-constants';
 import { IPC } from '../../src/shared/ipc-channels';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const TASK_ID = '0b6f1d2e-aaaa-4c3b-9d7e-1234567890ab';
@@ -82,7 +83,9 @@ function makeContext() {
     once: vi.fn(),
     webContents: { send: vi.fn() },
   };
-  return { context: { mainWindow } as unknown as IpcContext, mainWindow };
+  const notifications = structuredClone(DEFAULT_CONFIG.notifications);
+  const configManager = { load: () => ({ notifications }) };
+  return { context: { mainWindow, configManager } as unknown as IpcContext, mainWindow, notifications };
 }
 
 beforeEach(() => {
@@ -146,5 +149,63 @@ describe('showDesktopNotification', () => {
     expect(mainWindow.show).toHaveBeenCalled();
     expect(mainWindow.focus).toHaveBeenCalled();
     expect(mainWindow.webContents.send).toHaveBeenCalledWith(IPC.NOTIFICATION_CLICKED, PROJECT_ID, TASK_ID);
+  });
+
+  describe('Mute and sound', () => {
+    const idleNotice = { title: 't', body: 'b', projectId: PROJECT_ID, taskId: TASK_ID, event: 'onAgentIdle' } as const;
+
+    it('shows nothing while muted, which is what stops a Notify me row with no event', () => {
+      const { context, mainWindow, notifications } = makeContext();
+      notifications.muted = true;
+      notifications.sounds.onAgentIdle = 'chime';
+
+      showDesktopNotification(context, { title: 't', body: 'b', projectId: PROJECT_ID, taskId: TASK_ID });
+      showDesktopNotification(context, idleNotice);
+
+      expect(constructed).toHaveLength(0);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('silences the OS when the event has no sound, so Off means quiet', () => {
+      const { context, mainWindow } = makeContext();
+      showDesktopNotification(context, idleNotice);
+
+      expect(constructed[0].options.silent).toBe(true);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('leaves the OS sound on for System, and asks the window to play nothing', () => {
+      const { context, mainWindow, notifications } = makeContext();
+      notifications.sounds.onAgentIdle = 'system';
+      showDesktopNotification(context, idleNotice);
+
+      expect(constructed[0].options.silent).toBe(false);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('silences the OS and has the main window play a chosen sound, so only one is heard', () => {
+      const { context, mainWindow, notifications } = makeContext();
+      notifications.sounds.onAgentIdle = 'chime';
+      showDesktopNotification(context, idleNotice);
+
+      expect(constructed[0].options.silent).toBe(true);
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(IPC.NOTIFICATION_PLAY_SOUND, 'onAgentIdle');
+    });
+
+    it('falls back to the OS sound with no window to play in (macOS, window closed)', () => {
+      const { context, mainWindow, notifications } = makeContext();
+      notifications.sounds.onAgentIdle = 'chime';
+      mainWindow.isDestroyed.mockReturnValue(true);
+      showDesktopNotification(context, idleNotice);
+
+      expect(constructed[0].options.silent).toBe(false);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('keeps a Notify me row on the OS default sound, since it has no event to choose one', () => {
+      const { context } = makeContext();
+      showDesktopNotification(context, { title: 't', body: 'b', projectId: PROJECT_ID, taskId: TASK_ID });
+      expect(constructed[0].options).not.toHaveProperty('silent');
+    });
   });
 });

@@ -1058,15 +1058,15 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   },
   notifications: {
     ready: '[data-testid="setting-row-notifications.onAgentIdle"]',
-    alt: 'Settings on the Notifications tab: for each event, whether it raises a desktop notification, a toast, or both, and how toasts are delivered.',
+    alt: 'Settings on the Notifications tab: a switch to mute everything, a table of events with a Toast switch, a Desktop switch and a sound for each, the app icon badge, and how many toasts show and for how long.',
     // An idle agent set to raise a toast only, and a finished plan a desktop notification only.
-    // Then the cut, and both back to both.
+    // Then the cut, and both back on.
     choreography: [
-      pickSetting('[data-testid="notify-channel-onAgentIdle-toast"]', 1400),
-      pickSetting('[data-testid="notify-channel-onPlanComplete-desktop"]', 2000),
+      { click: '[data-testid="notify-channel-onAgentIdle-desktop"]', waitFor: '[data-testid="notify-channel-onAgentIdle-desktop"][aria-checked="false"]', ms: 1400 },
+      { click: '[data-testid="notify-channel-onPlanComplete-toast"]', waitFor: '[data-testid="notify-channel-onPlanComplete-toast"][aria-checked="false"]', ms: 2000 },
       { cut: true },
-      pickSetting('[data-testid="notify-channel-onAgentIdle-both"]'),
-      pickSetting('[data-testid="notify-channel-onPlanComplete-both"]'),
+      pickSetting('[data-testid="notify-channel-onAgentIdle-desktop"]'),
+      pickSetting('[data-testid="notify-channel-onPlanComplete-toast"]'),
     ],
   },
   // `ready` is the model list, which mounts only once getInfo has answered, so the frame is never
@@ -1463,6 +1463,10 @@ export const SCENES: Record<string, SceneDefinition> = {
     // visitor could set, not one only a scene can reach.
     config: {
       notifications: {
+        muted: false,
+        appBadge: true,
+        sounds: { onAgentIdle: 'off', onAgentCrash: 'off', onPlanComplete: 'off', onWorkflowComplete: 'off', onWorkflowStalled: 'off', onSpawnStalled: 'off' },
+        customSounds: {},
         desktop: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true },
         toasts: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true, durationSeconds: 30, maxCount: 5 },
         cooldownSeconds: 10,

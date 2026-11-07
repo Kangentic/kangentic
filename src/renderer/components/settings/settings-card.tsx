@@ -627,25 +627,116 @@ interface CardRowProps {
   labelTrailing?: React.ReactNode;
   /** Rendered at the right end of the label line, on the card's right edge, e.g. a detected version. */
   trailing?: React.ReactNode;
+  /** The control sits on the label's line, at the switches' right edge, for one small enough to fit (a `NumberStepper`). */
+  inline?: boolean;
 }
 
 /** A setting inside a card whose control sits under its label, in its own tile. */
-export function CardRow({ label, description, searchId, children, labelTrailing, trailing }: CardRowProps) {
+export function CardRow({ label, description, searchId, children, labelTrailing, trailing, inline }: CardRowProps) {
   const visible = useSettingVisible(searchId);
   if (!visible) return null;
   return (
     <div
-      className={`flex flex-col gap-1.5 ${TILE_CLASS}`}
+      className={`flex ${inline ? 'items-center gap-3' : 'flex-col gap-1.5'} ${TILE_CLASS}`}
       style={TILE_STYLE}
       data-testid={searchId ? `setting-row-${searchId}` : undefined}
     >
-      <div className="flex items-center gap-1.5">
+      <div className={`flex items-center gap-1.5 ${inline ? 'min-w-0 flex-1' : ''}`}>
         <span className={SETTING_LABEL_CLASS}>{label}</span>
         <InfoTip label={label} text={description} />
         {labelTrailing}
         {trailing ? <div className="ml-auto flex min-w-0 items-center">{trailing}</div> : null}
       </div>
       {children}
+    </div>
+  );
+}
+
+/** Each switch column of a card table. */
+const TABLE_SWITCH_COLUMN_PX = 56;
+/** The tile a card table's last column gets to itself. */
+const TABLE_SIDE_TILE_PX = 148;
+/** A side tile's own inset, tighter than `TILE_INSET_PX`, so its control has the room. */
+const TABLE_SIDE_TILE_INSET_PX = 10;
+
+interface CardTableHeadsProps {
+  label: string;
+  /** One heading per switch column. */
+  switchColumns: readonly string[];
+  /** The side tile's heading. */
+  side: string;
+}
+
+/**
+ * The column headings over a card table's `CardTableRow`s. It is the one thing in a
+ * card body with no fill, since headings label tiles and are not one. Its columns
+ * add the main tile's right inset to the tile gap, so each heading stays over its column.
+ */
+export function CardTableHeads({ label, switchColumns, side }: CardTableHeadsProps) {
+  const spacer = TILE_INSET_PX - TILE_GAP_PX;
+  return (
+    <div
+      className="grid items-center text-xs text-fg-muted"
+      style={{
+        gridTemplateColumns: `minmax(0, 1fr) repeat(${switchColumns.length}, ${TABLE_SWITCH_COLUMN_PX}px) ${spacer}px ${TABLE_SIDE_TILE_PX}px`,
+        columnGap: TILE_GAP_PX,
+        paddingLeft: TILE_INSET_PX,
+        paddingBottom: 2,
+      }}
+    >
+      <span>{label}</span>
+      {switchColumns.map((column) => <span key={column} className="text-center">{column}</span>)}
+      <span />
+      <span style={{ paddingLeft: TABLE_SIDE_TILE_INSET_PX }}>{side}</span>
+    </div>
+  );
+}
+
+interface CardTableRowProps {
+  label: string;
+  description: string;
+  searchId?: string;
+  /** One cell per switch column, in the order of `CardTableHeads`. */
+  switches: readonly React.ReactNode[];
+  /** The control in the side tile. */
+  side: React.ReactNode;
+  /** A line under the row, such as why a file was refused. */
+  footer?: React.ReactNode;
+}
+
+/**
+ * One row of a card table, for settings that share columns. Two tiles sit side by
+ * side, so the gap between them runs down the table as a gutter and sets the side
+ * column apart. Switches do not make the row one click target: with several in a
+ * row, a click on the tile could not say which one it meant.
+ */
+export function CardTableRow({ label, description, searchId, switches, side, footer }: CardTableRowProps) {
+  const visible = useSettingVisible(searchId);
+  if (!visible) return null;
+  return (
+    <div data-testid={searchId ? `setting-row-${searchId}` : undefined}>
+      <div className="grid" style={{ gridTemplateColumns: `minmax(0, 1fr) ${TABLE_SIDE_TILE_PX}px`, columnGap: TILE_GAP_PX }}>
+        <div
+          className={`grid items-center ${TILE_CLASS}`}
+          style={{ ...TILE_STYLE, gridTemplateColumns: `minmax(0, 1fr) repeat(${switches.length}, ${TABLE_SWITCH_COLUMN_PX}px)`, columnGap: TILE_GAP_PX }}
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className={SETTING_LABEL_CLASS}>{label}</span>
+            <InfoTip label={label} text={description} />
+          </div>
+          {switches.map((cell, index) => (
+            // The cells are positional and never reorder.
+            <div key={index} className="flex justify-center">{cell}</div>
+          ))}
+        </div>
+        <div
+          className={`flex items-center justify-center ${TILE_FILL_CLASS}`}
+          style={{ paddingLeft: TABLE_SIDE_TILE_INSET_PX, paddingRight: TABLE_SIDE_TILE_INSET_PX }}
+        >
+          {side}
+        </div>
+      </div>
+      {footer}
     </div>
   );
 }

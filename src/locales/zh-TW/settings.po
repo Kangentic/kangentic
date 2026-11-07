@@ -63,6 +63,18 @@ msgstr "{displayName}，{percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}，{sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
 msgstr "{hours, plural, other {剩餘 # 小時}}"
@@ -134,6 +146,10 @@ msgstr "小型模型回答一樣好且更快，但會在任務摘要中捏造更
 #: src/renderer/components/settings/settings-registry.ts
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "小型快速模型通常足以讀一則回覆並回答是或否。"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr ""
 
 #: src/renderer/components/settings/settings-card.tsx
 msgid "About {label}"
@@ -279,6 +295,10 @@ msgstr "API 金鑰（選用）"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "應用程式當機與錯誤（堆疊追蹤已移除程式碼中的電腦專屬路徑）"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "App launches, platform, and architecture"
 msgstr "應用程式啟動、平台與架構"
@@ -395,11 +415,6 @@ msgstr "看板"
 msgid "Board layout"
 msgstr "看板版面配置"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
-msgid "Both"
-msgstr "兩者"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgctxt "shortcut display"
 msgid "Both"
@@ -470,6 +485,11 @@ msgstr "變更"
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "Checking..."
 msgstr "正在檢查..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 msgid "Choose a model"
@@ -764,6 +784,10 @@ msgstr "可從任務詳細資料對話方塊使用的自訂命令"
 msgid "Custom commands in the task window's header and menu."
 msgstr "任務視窗標題列與選單中的自訂命令。"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Custom relay address"
 msgstr "自訂中繼位址"
@@ -825,7 +849,7 @@ msgid "Description"
 msgstr "描述"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "桌面"
 
@@ -930,6 +954,11 @@ msgstr "手動輸入路徑"
 msgid "Environment variables that turn telemetry off."
 msgstr "關閉遙測用的環境變數。"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 msgid "Events"
@@ -964,6 +993,11 @@ msgstr "失敗"
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Fair accuracy"
 msgstr "普通準確度"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "File list"
@@ -1137,16 +1171,17 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "代理等你多久後，閒置計時器會將其暫停。"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "How long toasts remain visible"
-msgstr "提示顯示的時間"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgid "How long toasts stay up and how many stack at once."
-msgstr "提示停留的時間及同時堆疊的數量。"
+msgid "How long toasts appear, in seconds"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 msgid "How many agents run at once and what happens when idle."
 msgstr "同時執行幾個代理，以及閒置時的處理方式。"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "How much each task card shows on the board."
@@ -1184,6 +1219,10 @@ msgstr "此專案如何停止工作遺留的執行項目。"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
 msgstr "安裝與配對方式"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Icon"
@@ -1390,12 +1429,9 @@ msgid "Max concurrent sessions"
 msgstr "最大並行工作階段數"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Max visible toasts"
-msgstr "最多可見提示數"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Maximum simultaneous toasts on screen"
-msgstr "畫面上可同時顯示的提示數"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "MCP connection"
@@ -1453,6 +1489,10 @@ msgstr "移動..."
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Moving between task windows and arranging them."
 msgstr "在任務視窗之間移動與排列。"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -1553,8 +1593,8 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "關閉"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
 msgid "Off"
 msgstr "關閉"
 
@@ -1630,6 +1670,10 @@ msgid "Password"
 msgstr "密碼"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "此專案任務在伺服器上的路徑，留空則用伺服器的預設目錄"
 
@@ -1685,6 +1729,10 @@ msgstr "計畫已完成"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "規劃每個工作流程。選定代理前不會啟動任何流程。"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Post-worktree script"
@@ -1963,6 +2011,11 @@ msgstr "要撤銷「{revokeTargetName}」（{revokeTargetFingerprint}）嗎？�
 msgid "Revoke device"
 msgstr "撤銷裝置"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
 msgstr "請在終端機執行 <0>{loginCommand}</0> 完成驗證。"
@@ -2104,9 +2157,17 @@ msgstr "在看板下方顯示終端機面板"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "當你可略過 PR 的必要審查時，顯示為就緒；但絕不會越過失敗的檢查。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgid "Side by side"
 msgstr "並排"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "since {sinceTime}"
@@ -2125,6 +2186,11 @@ msgstr "大小"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "將長行自動換到下一列，而非水平捲動差異。"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Source code"
@@ -2186,6 +2252,11 @@ msgstr "摘要已撰寫"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "把根目錄的 node_modules 符號連結到每個工作樹，省去重新安裝；工作區存放庫應關閉此選項。"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 msgctxt "settings tab group"
@@ -2361,6 +2432,11 @@ msgstr "這會將所有快速鍵還原為預設值，並移除你的自訂繫結
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "這會清除所有任務和專案中內嵌瀏覽器窗格的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。你將登出所有網站。"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Ticket numbers"
 msgstr "任務編號"
@@ -2370,13 +2446,9 @@ msgid "Ticking session duration"
 msgstr "工作階段時間持續計時"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "提示"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Toast auto-dismiss"
-msgstr "提示自動關閉"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -2403,6 +2475,10 @@ msgstr "轉場與動態效果。"
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"
 msgstr "請嘗試其他搜尋字詞"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"
@@ -2521,10 +2597,6 @@ msgstr "閒置時"
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic 何時暫停正在等候你的代理。"
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-msgid "Where each kind of alert shows up."
-msgstr "各類警示的顯示位置。"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Where new work starts, and how current it stays."

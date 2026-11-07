@@ -14,7 +14,8 @@ import type { AutomationAdapter } from '../../shared/automation-adapter';
  * `DesktopNotifier` uses, so it inherits click-to-open-the-task; the phone half
  * is a push with this row's own Title and Body, which opens the task when
  * tapped (`showAutomationNotification`). Neither reads the notification
- * settings: the row itself is the user's choice to be told.
+ * settings: the row itself is the user's choice to be told. Mute notifications
+ * alone stops the desktop half.
  *
  * No timeout and no retry: it cannot hang, and a push that fails is the push
  * notifier's to log.

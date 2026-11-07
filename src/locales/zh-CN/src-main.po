@@ -7,6 +7,18 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
 
+#: src/main/notifications/app-badge-display.ts
+msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
+msgstr ""
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
+msgstr ""
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is not a wav, mp3, ogg or m4a file"
+msgstr ""
+
 #: src/main/notifications/desktop-notifier.ts
 msgid "{place}. Stalled: {reason}"
 msgstr "{place}。已停滞：{reason}"
@@ -147,6 +159,10 @@ msgstr "全选"
 #: src/main/notifications/desktop-notifier.ts
 msgid "Session crashed: {label}"
 msgstr "会话已崩溃：{label}"
+
+#: src/main/notifications/custom-sound.ts
+msgid "Sound files"
+msgstr ""
 
 #: src/main/notifications/desktop-notifier.ts
 msgid "Terminals restarted"

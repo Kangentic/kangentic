@@ -286,4 +286,6 @@ On load, the ConfigManager auto-migrates legacy permission mode values:
 - `manual` → `acceptEdits` (removed as a separate mode)
 - `project-settings` → `acceptEdits`
 
+It also moves a saved `notifications.toasts.durationSeconds` of 4, the old default, to 5, once. A file with no `notifications.muted` key predates that change, and the save writes the key, so a 4 chosen later stays.
+
 A parallel normalization runs on swimlane and session records in the DB. Note the swimlane normalization maps the removed `manual` and `project-settings` values to `default` rather than `acceptEdits` (see [Migration Strategy](../database/migrations.md)).

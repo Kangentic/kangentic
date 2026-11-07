@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
 import type { QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
-import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
+import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationEventKey, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
 import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
@@ -547,6 +547,13 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string, taskId: string) => callback(projectId, taskId);
       ipcRenderer.on(IPC.NOTIFICATION_CLICKED, handler);
       return () => ipcRenderer.removeListener(IPC.NOTIFICATION_CLICKED, handler);
+    },
+    pickSound: (eventKey) => ipcRenderer.invoke(IPC.NOTIFICATION_PICK_SOUND, eventKey),
+    readSound: (eventKey) => ipcRenderer.invoke(IPC.NOTIFICATION_READ_SOUND, eventKey),
+    onPlaySound: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, eventKey: NotificationEventKey) => callback(eventKey);
+      ipcRenderer.on(IPC.NOTIFICATION_PLAY_SOUND, handler);
+      return () => ipcRenderer.removeListener(IPC.NOTIFICATION_PLAY_SOUND, handler);
     },
   },
 

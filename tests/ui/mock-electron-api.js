@@ -385,6 +385,17 @@
       showRateLimits: true,
     },
     notifications: {
+      muted: false,
+      appBadge: true,
+      sounds: {
+        onAgentIdle: 'off',
+        onAgentCrash: 'off',
+        onPlanComplete: 'off',
+        onWorkflowComplete: 'off',
+        onWorkflowStalled: 'off',
+        onSpawnStalled: 'off',
+      },
+      customSounds: {},
       desktop: {
         onAgentIdle: true,
         onAgentCrash: true,
@@ -400,7 +411,7 @@
         onWorkflowComplete: true,
         onWorkflowStalled: true,
         onSpawnStalled: true,
-        durationSeconds: 4,
+        durationSeconds: 5,
         maxCount: 5,
       },
       cooldownSeconds: 10,
@@ -5648,6 +5659,34 @@
         window.__mockNotificationClickListeners.push(callback);
         return function () {
           var listeners = window.__mockNotificationClickListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      // A spec sets `window.__mockCustomSoundPick` to answer the Custom file choice.
+      // `window.__mockCustomSoundPickRejects = 'reason'` makes it reject, as main's IPC
+      // does when the file dialog or the copy throws.
+      pickSound: function () {
+        if (window.__mockCustomSoundPickRejects) {
+          return Promise.reject(new Error(String(window.__mockCustomSoundPickRejects)));
+        }
+        return Promise.resolve(window.__mockCustomSoundPick || { status: 'cancelled' });
+      },
+      readSound: function () { return Promise.resolve(null); },
+      onPlaySound: function (callback) {
+        // Main pushes the event key when a desktop notification left its sound to this
+        // window. Tests fire it with `window.__mockFirePlaySound(eventKey)`. A REAL
+        // unsubscribe, like onClicked, so a StrictMode double mount leaves one listener.
+        if (!window.__mockPlaySoundListeners) window.__mockPlaySoundListeners = [];
+        window.__mockPlaySoundListeners.push(callback);
+        if (!window.__mockFirePlaySound) {
+          window.__mockFirePlaySound = function (eventKey) {
+            var listeners = (window.__mockPlaySoundListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](eventKey); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockPlaySoundListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

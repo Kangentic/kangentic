@@ -30,7 +30,9 @@ stated here and held by the components.
   `CardToggleRow` for a label with a switch, `CardChoiceRow` for a choice between two named
   options, `CardStatusRow` for a status, `CardSourceList` for a list of sources, `CardLinkRow`
   for a label whose value is links (a License line), `CardGroupTile` for a titled group of items
-  that collapses (MCP Server's tool groups), and `CardTile`
+  that collapses (MCP Server's tool groups), `CardTableRow` under `CardTableHeads` for settings
+  that share columns (the Notifications tab's Events table, the one place a row is two tiles and a
+  body holds headings with no fill), and `CardTile`
   for anything custom: an action row, a group of controls, a sortable list item. A component of your own may sit in a
   body when every one of its returns is a tile (`NotifyChannelRow`, `HotkeyRow`). Never put a raw
   element in a body, and never give a `CardTile` its own fill or padding (its `className` is for
