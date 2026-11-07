@@ -235,6 +235,7 @@ function createMockContext() {
       clearFocusedSessionsFor: vi.fn(),
       getScrollback: vi.fn(),
       getScrollbackForRenderer: vi.fn(),
+      resetTerminal: vi.fn(),
     },
     configManager: {
       getEffectiveConfig: vi.fn(() => ({ git: { defaultBaseBranch: 'main' } })),
@@ -569,6 +570,17 @@ describe('sessions.ts renderer port broker', () => {
       expect(context.sessionManager.getScrollback).toHaveBeenCalledWith('sess-1');
       expect(context.sessionManager.getScrollbackForRenderer).not.toHaveBeenCalled();
       expect(result).toBe('plain-scrollback');
+    });
+  });
+
+  describe('SESSION_RESET_TERMINAL', () => {
+    it('hands the session id to sessionManager.resetTerminal, and nothing else', () => {
+      const handler = findIpcHandleHandler(IPC.SESSION_RESET_TERMINAL);
+
+      handler({ sender: { id: 7 } }, 'sess-1');
+
+      expect(context.sessionManager.resetTerminal).toHaveBeenCalledTimes(1);
+      expect(context.sessionManager.resetTerminal).toHaveBeenCalledWith('sess-1');
     });
   });
 });
