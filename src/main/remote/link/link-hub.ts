@@ -26,7 +26,7 @@ import type {
 } from '../../pty/host/protocol';
 import type { PtyHostRequestOptions, PtyHostTransport } from '../../pty/host/pty-host-client';
 import { commandRoute, requestRoute } from '../host-routes';
-import type { RemoteSessionRoute, SuspendPlan } from '../protocol/messages';
+import type { RemoteSessionRoute } from '../protocol/messages';
 import { RemoteLink, type RemoteLinkHandlers, type RemoteLinkOptions } from './remote-link';
 
 export interface HubHostOptions extends Omit<RemoteLinkOptions, 'log'> {
@@ -165,18 +165,6 @@ export class LinkHub implements PtyHostTransport {
     return this.linkForRequest(method, params) !== undefined;
   }
 
-  /** How each session on `hostId` ends if the app quits. Sent as the one `suspendAll` frame at `shutdown`. */
-  setQuitPlan(hostId: string, sessions: SuspendPlan[]): void {
-    this.links.get(hostId)?.setQuitPlan(() => sessions);
-  }
-
-  /** Links that have sent, or are sending, their quit frame and have not let go yet. The quit waits for these. */
-  get shuttingDownCount(): number {
-    let count = 0;
-    for (const link of this.links.values()) if (link.isShuttingDown) count += 1;
-    return count;
-  }
-
   // PtyHostTransport
 
   setEventListener(listener: (event: PtyHostEvent) => void): void {
@@ -221,9 +209,12 @@ export class LinkHub implements PtyHostTransport {
     return link.request(method, params, options);
   }
 
-  /** The app is quitting: each link sends its one `suspendAll` and lets go once answered or out of time. */
-  shutdown(exitWaitMs?: number): void {
-    for (const link of this.links.values()) link.shutdown(exitWaitMs);
+  /**
+   * The app is quitting: each link lets go. Nothing is sent to end anything, so every agent on a host
+   * keeps running and the next launch takes it back (`rejoin-sessions.ts`).
+   */
+  shutdown(): void {
+    for (const link of this.links.values()) link.shutdown();
   }
 
   // Routing

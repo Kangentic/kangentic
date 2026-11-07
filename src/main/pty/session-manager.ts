@@ -44,7 +44,7 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn, type RejoinSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary, type SuspendedPlaceholderInput } from './session-registry';
 import { AgentStartRefusedError } from './spawn/pty-spawn';
-import type { RemoteHostRequest, RemoteSessionRoute, SuspendPlan } from '../remote/protocol/messages';
+import type { RemoteHostRequest, RemoteSessionRoute } from '../remote/protocol/messages';
 import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
@@ -528,8 +528,6 @@ export class SessionManager extends EventEmitter {
   private hostExitWaitMs: number | undefined;
   /** Keeps a remote session's folder in step with its host's (#913); null until startup sets it. */
   private remoteSessionRelay: RemoteSessionRelay | null = null;
-  /** At a quit, how each session on a remote host ends, by host (#913). Sent to the host as it grows. */
-  private readonly remoteQuitPlans = new Map<string, SuspendPlan[]>();
   /** Main's mirror of each session's alternate-screen state, from the host. */
   private inAltScreen = new Map<string, boolean>();
   /** The column count each session's ring was last sized to, mirroring the
@@ -1295,10 +1293,11 @@ export class SessionManager extends EventEmitter {
         return;
       case 'remoteSessions':
         // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable ones
-        // are live agents on a host this app holds no row for. Nothing adopts them yet, so they are
-        // logged and left running; the next quit's `suspendAll` ends them on the helper's own clock.
+        // are live agents on a host that this app holds no session for yet: ones a quit left running,
+        // which startup recovery takes back (`rejoin-sessions.ts`) once the link is up, and any another
+        // computer or an earlier run started. Only logged here; recovery adopts by the session records.
         if (event.adoptable.length > 0) {
-          console.warn(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app holds no row for`);
+          console.log(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app has not taken back`);
         }
         return;
       case 'exit':
@@ -5206,7 +5205,6 @@ export class SessionManager extends EventEmitter {
    * there would undo the deferral the drain is about to wait on.
    */
   killAll(options?: { allowGrace?: boolean }): PtyKillReport {
-    this.remoteQuitPlans.clear();
     const report = killAllSessions(this.shutdownContext(), {
       allowGrace: options?.allowGrace === true,
       deferredKills: this.deferredKills,
@@ -5226,9 +5224,6 @@ export class SessionManager extends EventEmitter {
     // spawn still in its round trip all have an exit to land and no session
     // row. An idle host exits at once, so the wait costs the drain's settle.
     const hostPid = this.host.hostPid;
-    // This covers a session on a remote host (#913) too: nothing local was killed for it, but the host
-    // process holds the link that sends the helper its one quit frame, and Electron tearing it down
-    // first would leave the agent running there until the next connect.
     if (hostPid === null) return report;
     return { ...report, pids: [...report.pids, hostPid], killedCount: report.killedCount + 1 };
   }
@@ -5240,27 +5235,6 @@ export class SessionManager extends EventEmitter {
       sessionFiles: this.sessionFiles,
       firstOutputTracker: this.firstOutputTracker,
       killPty: safeKillPty,
-      endRemoteSession: (session: ManagedSession) => this.handOverRemoteSession(session),
     };
-  }
-
-  /**
-   * The quit reaches a session whose PTY runs on a remote host. Nothing here can end it, because the
-   * adapter's exit keys and pauses have to run on the host's own clock, so the host's helper is told
-   * how this session ends, once, with the rest of that host's sessions. A command, not a request: the
-   * quit cannot wait for an answer. Each call re-sends the host's whole plan so far, and the link
-   * keeps the last one.
-   */
-  private handOverRemoteSession(session: ManagedSession): void {
-    const hostId = session.hostId;
-    if (!hostId) return;
-    const plan = this.remoteQuitPlans.get(hostId) ?? [];
-    plan.push({
-      sessionId: session.id,
-      exitSequence: session.exitSequence,
-      consoleCloseIsGraceful: session.consoleCloseIsGraceful === true,
-    });
-    this.remoteQuitPlans.set(hostId, plan);
-    this.host.post({ type: 'remoteQuitPlan', hostId, sessions: [...plan] });
   }
 }

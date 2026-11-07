@@ -25,7 +25,6 @@ export type CommandRoute =
   | 'core';
 
 export const COMMAND_ROUTES = {
-  remoteQuitPlan: 'router',
   write: 'by-pty',
   enqueueWrite: 'by-pty',
   sealUserInput: 'by-pty',

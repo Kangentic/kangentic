@@ -186,11 +186,11 @@ function shutdown(exitWaitMs: number | undefined): void {
   const waitMs = typeof exitWaitMs === 'number' && Number.isFinite(exitWaitMs)
     ? Math.max(0, Math.min(MAX_SHUTDOWN_EXIT_WAIT_MS, exitWaitMs))
     : DEFAULT_SHUTDOWN_EXIT_WAIT_MS;
-  // The links send their quit frame within the same bound the PTYs' exits get.
-  hostRouter.beginShutdown(waitMs);
+  // The links let go of their hosts at once; the agents there keep running (#913).
+  hostRouter.beginShutdown();
   const deadline = Date.now() + waitMs;
   const waitForExits = (): void => {
-    // The PTYs the core still runs, and the links still sending their quit frame (#913).
+    // The PTYs the core still runs.
     if (hostRouter.liveChildCount === 0 || Date.now() >= deadline) {
       process.exit(0);
       return;

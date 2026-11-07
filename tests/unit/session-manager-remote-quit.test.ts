@@ -3,9 +3,10 @@
  * (the in-process core stands in for the pty host, and answers a host spawn with a pid on its own
  * machine, as the helper does).
  *
- * What a user loses if this breaks: the quit signals or types into a process that is not here, the
- * quit holds on a pid that never exits, or the host process is torn down before the helper was
- * told how each remote agent ends, which leaves them running until the next connect.
+ * A quit leaves a remote agent running, and the next launch takes it back (`rejoin-sessions.ts`).
+ *
+ * What a user loses if this breaks: the quit signals, types into, seals or kills an agent that was to
+ * keep working overnight, or holds on a pid that never exits, or posts a command that would end it.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -111,7 +112,7 @@ describe('killAll with a session on a remote host', () => {
     expect(report).toEqual({ pids: [], killedCount: 0, deferredCount: 0 });
   });
 
-  it('tells the host how the session ends, in a command posted before the shutdown', async () => {
+  it('posts no command for it at all: no seal, no write, no kill, no plan to end it', async () => {
     const manager = new SessionManager();
     const { session } = await spawnRemote(manager, 'task-remote', 'host-a', 77_001, true);
     const posted: PtyHostCommand[] = [];
@@ -124,35 +125,26 @@ describe('killAll with a session on a remote host', () => {
 
     manager.killAll();
 
-    expect(posted).toContainEqual({
-      type: 'remoteQuitPlan',
-      hostId: 'host-a',
-      sessions: [{ sessionId: session.id, exitSequence: EXIT_SEQUENCE, consoleCloseIsGraceful: true }],
-    });
+    // A seal is kept by the host, so it would stop the rejoined agent taking keystrokes.
+    const aboutIt = posted.filter((command) => ('sessionId' in command && command.sessionId === session.id) || command.type === 'sealUserInput' || command.type === 'kill' || command.type === 'write');
+    expect(aboutIt).toEqual([]);
+    expect(posted.map((command) => command.type)).not.toContain('remoteQuitPlan');
   });
 
-  it('sends each host the plan for its own sessions only, the whole of it', async () => {
+  it('does not delete the remote session\'s folder here, whose files the rejoin reads on', async () => {
     const manager = new SessionManager();
-    const first = await spawnRemote(manager, 'task-one', 'host-a', 77_001);
-    const second = await spawnRemote(manager, 'task-two', 'host-a', 77_002);
-    const third = await spawnRemote(manager, 'task-three', 'host-b', 77_003);
-    const posted: PtyHostCommand[] = [];
-    const host = hostOf(manager);
-    const originalPost = host.post.bind(host);
-    host.post = (command) => {
-      posted.push(command);
-      originalPost(command);
-    };
+    const { session } = await spawnRemote(manager, 'task-remote', 'host-a', 77_001);
+    const statusPath = path.join(tmpDir, '.kangentic', 'sessions', 'task-remote', 'status.json');
+    fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+    fs.writeFileSync(statusPath, '{"kept":true}');
 
     manager.killAll();
 
-    const plans = posted.filter((command): command is Extract<PtyHostCommand, { type: 'remoteQuitPlan' }> => command.type === 'remoteQuitPlan');
-    const lastFor = (hostId: string) => plans.filter((plan) => plan.hostId === hostId).at(-1)?.sessions.map((plan) => plan.sessionId).sort();
-    expect(lastFor('host-a')).toEqual([first.session.id, second.session.id].sort());
-    expect(lastFor('host-b')).toEqual([third.session.id]);
+    expect(session.status).toBe('running');
+    expect(fs.readFileSync(statusPath, 'utf8')).toBe('{"kept":true}');
   });
 
-  it('keeps the host process in the drain when only remote agents are running, so the quit frame is sent', async () => {
+  it('counts the host process in the drain when only remote agents are running, as for every quit', async () => {
     const manager = new SessionManager();
     giveHostAPid(manager, 4_321);
     await spawnRemote(manager, 'task-remote', 'host-a', 77_001);

@@ -287,17 +287,16 @@ describe('RemoteLink state reports and a link that was stopped', () => {
     expect(sends).not.toHaveBeenCalled();
   });
 
-  it('still sends suspendAll with no sessions when reading the quit plan throws', async () => {
+  it('sends the helper nothing at a quit and just lets go, so no agent is ended', async () => {
     const helper = makeHelperRig(0);
     teardown.push(() => helper.helper.dispose());
     const { link } = await connectedLink(helper);
-    link.setQuitPlan(() => { throw new Error('the plan could not be built'); });
     const requests = vi.spyOn(link, 'requestHelper');
 
     link.shutdown();
     await settle();
 
-    expect(requests).toHaveBeenCalledWith('suspendAll', expect.objectContaining({ sessions: [] }), expect.any(Number));
+    expect(requests).not.toHaveBeenCalled();
     expect(link.state).toBe('stopped');
   });
 });

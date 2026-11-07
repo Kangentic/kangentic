@@ -30,7 +30,7 @@ import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedRe
 import type { WriteOrigin } from '../prompt-draft-ledger';
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
-import type { HelperSessionRecord, RemoteHostRequest, SuspendPlan } from '../../remote/protocol/messages';
+import type { HelperSessionRecord, RemoteHostRequest } from '../../remote/protocol/messages';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
 export interface PtyHostSpawnParams {
@@ -138,11 +138,6 @@ export interface RendererPort {
 }
 
 export type PtyHostCommand =
-  /** The app is quitting and these sessions run on `hostId` (#913): how each one ends, which only
-   *  the app knows (it holds the adapters). The link sends it as the one `suspendAll` frame when the
-   *  `shutdown` that follows arrives, so it must be posted first. A command, not a request, because
-   *  the quit path cannot wait for an answer. */
-  | { type: 'remoteQuitPlan'; hostId: string; sessions: SuspendPlan[] }
   /** Straight to the PTY, ahead of anything queued: the exit sequence, a
    *  bracketed-paste packet after a `drainWrites`, a probe's keys. */
   | { type: 'write'; ptyId: number; data: string }

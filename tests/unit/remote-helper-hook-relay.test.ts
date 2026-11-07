@@ -145,7 +145,8 @@ describe('a session\'s hook files', () => {
     await waitFor(() => rig.events.some((event) => event.type === 'hookFile'));
 
     const files = rig.events.filter((event): event is Extract<PtyHostEvent, { type: 'hookFile' }> => event.type === 'hookFile');
-    expect(files).toEqual([{ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: '1000000000000000000-10.rec', content: 'K1\ntool_start\n\n{"tool_name":"Read"}' }]);
+    // Marked for claiming: it stays on the host until Kangentic has stored it and says so.
+    expect(files).toEqual([{ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: '1000000000000000000-10.rec', content: 'K1\ntool_start\n\n{"tool_name":"Read"}', claim: true }]);
   });
 
   it('are all delivered before the session\'s exit, including one published as the CLI exited', async () => {

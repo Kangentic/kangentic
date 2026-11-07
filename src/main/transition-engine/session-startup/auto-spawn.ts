@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { hostOfRecord } from '../../remote/rejoin-sessions';
+import { hostOfRecord } from '../../remote/record-host';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';

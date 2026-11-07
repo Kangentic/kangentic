@@ -13,6 +13,7 @@ import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers
 import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
 import { recordAbandonedLaunches } from './pty/abandoned-launches';
+import { hostOfRecord } from './remote/record-host';
 import type { SessionManager } from './pty/session-manager';
 import type { PtyKillReport } from './pty/shutdown/session-shutdown';
 import type { BoardConfigManager } from './config/board-config-manager';
@@ -206,6 +207,13 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
             // resolveOwnSessionRecord). A Command Terminal has no record and
             // is skipped.
             const record = sessionRepo.findByAnyId(session.id);
+            // An agent on a remote host (#913) is not ended by the quit, so its record is not suspended: it
+            // stays `running` and the task keeps pointing at it. The next launch asks the host and takes the
+            // agent back (`rejoin-sessions.ts`); only the host's own word that it is gone sends it down the
+            // resume path. Suspended here, the next launch would resume a second agent beside the live one.
+            if (record && record.status === 'running' && hostOfRecord(record) !== null) {
+              continue;
+            }
             if (record && record.status === 'running') {
               // Flush in-flight metrics from usageCache to the DB BEFORE
               // marking suspended. captureSessionMetrics is fully synchronous

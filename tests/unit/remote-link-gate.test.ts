@@ -197,36 +197,18 @@ describe('a PTY in the helper, through the link', () => {
 });
 
 describe('quit', () => {
-  it('hangs up an agent whose console close is its graceful exit, and types nothing into it', async () => {
+  it('lets go and ends nothing: the agent is not hung up, typed into or killed, and keeps running on the host', async () => {
     const rig = makeRig();
     rig.link.start();
     await settle();
     await spawnSession(rig, 's1', 'task-1');
-    rig.link.setQuitPlan(() => [{ sessionId: 's1', consoleCloseIsGraceful: true, exitSequence: ['\x1b', '/exit\r'] }]);
 
     rig.link.shutdown();
-    await settle();
-    expect(rig.fakes[0].kill).toHaveBeenCalledTimes(1);
+    await settle(2_000);
+
+    expect(rig.fakes[0].kill).not.toHaveBeenCalled();
     expect(rig.fakes[0].write).not.toHaveBeenCalled();
     expect(rig.link.state).toBe('stopped');
-  });
-
-  it('types an agent its exit keys with their pauses, then kills it after the grace', async () => {
-    const rig = makeRig();
-    rig.link.start();
-    await settle();
-    await spawnSession(rig, 's1', 'task-1');
-    rig.link.setQuitPlan(() => [{ sessionId: 's1', consoleCloseIsGraceful: false, exitSequence: ['\x1b', { delayMs: 200 }, '/exit\r'] }]);
-
-    rig.link.shutdown();
-    await settle(50);
-    expect(rig.fakes[0].write).toHaveBeenCalledWith('\x1b');
-    expect(rig.fakes[0].write).not.toHaveBeenCalledWith('/exit\r');
-    await settle(200);
-    expect(rig.fakes[0].write).toHaveBeenCalledWith('/exit\r');
-    expect(rig.fakes[0].kill).not.toHaveBeenCalled();
-    await settle(1600);
-    expect(rig.fakes[0].kill).toHaveBeenCalledTimes(1);
   });
 
   it('ignores a suspend from an earlier owner epoch', async () => {

@@ -58,17 +58,18 @@ describe('killAllSessions', () => {
   function makeContext(sessions: ShutdownSession[]) {
     const sessionMap = new Map(sessions.map((session) => [session.id, session]));
     const detachAndDelete = vi.fn();
+    const detachPreservingFiles = vi.fn();
     const killPty = vi.fn(() => true);
     const sessionQueueClear = vi.fn();
     const firstOutputClear = vi.fn();
     const context = {
       sessions: sessionMap,
       sessionQueue: { clear: sessionQueueClear },
-      sessionFiles: { detachAndDelete },
+      sessionFiles: { detachAndDelete, detachPreservingFiles },
       firstOutputTracker: { clear: firstOutputClear },
       killPty,
     } as unknown as ShutdownContext;
-    return { context, sessionMap, detachAndDelete, killPty, sessionQueueClear, firstOutputClear };
+    return { context, sessionMap, detachAndDelete, detachPreservingFiles, killPty, sessionQueueClear, firstOutputClear };
   }
 
   it('disposes each retained PTY listener so node-pty stops invoking callbacks after kill', () => {
@@ -118,9 +119,10 @@ describe('killAllSessions', () => {
     expect(firstOutputClear).toHaveBeenCalledTimes(1);
   });
 
-  // A PTY on a remote host (#913) has a null pid. The quit may not signal it, type into it, count
-  // it, or wait for it: the drain polls local pids only, so a counted remote session would hold the
-  // quit on a process that is not here. The helper ends the agent from the link's one plan frame.
+  // A PTY on a remote host (#913) has a null pid, and the quit ends nothing there: the agent keeps
+  // running and the next launch takes it back. So the quit may not signal it, type into it, seal it
+  // (a seal is kept by the host and would stop the rejoined agent taking keystrokes), count it, wait
+  // for it, or delete its folder here, whose files the rejoin reads on.
   describe('a PTY on a remote host', () => {
     function makeRemoteSession(overrides: Partial<ShutdownSession> = {}) {
       const write = vi.fn();
@@ -136,14 +138,12 @@ describe('killAllSessions', () => {
       return { session, write, kill, sealUserInput };
     }
 
-    it('is handed to the link, never killed, typed into or counted', () => {
+    it('is left running: never killed, typed into or counted', () => {
       const remote = makeRemoteSession();
-      const endRemoteSession = vi.fn();
       const { context, killPty, sessionMap } = makeContext([remote.session]);
 
-      const report = killAllSessions({ ...context, endRemoteSession });
+      const report = killAllSessions(context);
 
-      expect(endRemoteSession).toHaveBeenCalledWith(remote.session);
       expect(killPty).not.toHaveBeenCalled();
       expect(remote.write).not.toHaveBeenCalled();
       expect(remote.kill).not.toHaveBeenCalled();
@@ -151,14 +151,23 @@ describe('killAllSessions', () => {
       expect(sessionMap.size).toBe(0);
     });
 
-    it('is sealed first and its row lets go of the handle, as any quit-time PTY is', () => {
+    it('is not sealed, because the host keeps a seal and the rejoined agent would take no keystrokes', () => {
       const remote = makeRemoteSession();
       const { context } = makeContext([remote.session]);
 
       killAllSessions(context);
 
-      expect(remote.sealUserInput).toHaveBeenCalledTimes(1);
-      expect(remote.session.pty).toBeNull();
+      expect(remote.sealUserInput).not.toHaveBeenCalled();
+    });
+
+    it('keeps its session folder here, whose status, events and hook files the rejoin reads on', () => {
+      const remote = makeRemoteSession();
+      const { context, detachAndDelete, detachPreservingFiles } = makeContext([remote.session]);
+
+      killAllSessions(context);
+
+      expect(detachPreservingFiles).toHaveBeenCalledWith('remote-1');
+      expect(detachAndDelete).not.toHaveBeenCalled();
     });
 
     it('does not stop a local session beside it from being killed and counted', () => {
@@ -175,15 +184,25 @@ describe('killAllSessions', () => {
       expect(report).toEqual({ pids: [4242], killedCount: 1, deferredCount: 0 });
     });
 
-    it('detaches the exit listeners it holds, so a late exit cannot run into a deleted session folder', () => {
+    it('detaches the exit listeners it holds, so the link letting go cannot run exit handling on the way out', () => {
       const disposable = makeDisposable();
       const remote = makeRemoteSession({ ptyDisposables: [disposable] as unknown as pty.IDisposable[] });
-      const { context, detachAndDelete } = makeContext([remote.session]);
+      const { context } = makeContext([remote.session]);
 
       killAllSessions(context);
 
       expect(disposable.dispose).toHaveBeenCalledTimes(1);
-      expect(detachAndDelete).toHaveBeenCalledWith('remote-1');
+    });
+
+    it('still deletes the folder of a local session beside it', () => {
+      const remote = makeRemoteSession();
+      const local = makeSession({ id: 'sess-local', pty: { pid: 4242, write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn() } as unknown as PtyHandle });
+      const { context, detachAndDelete, detachPreservingFiles } = makeContext([remote.session, local]);
+
+      killAllSessions(context);
+
+      expect(detachAndDelete).toHaveBeenCalledWith('sess-local');
+      expect(detachPreservingFiles).toHaveBeenCalledWith('remote-1');
     });
   });
 

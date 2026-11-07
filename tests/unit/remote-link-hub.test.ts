@@ -232,17 +232,20 @@ describe('sessions and renderers the hub lets go of', () => {
 });
 
 describe('quit', () => {
-  it('asks every host to suspend its own sessions, each with the plan the app gave', async () => {
+  it('lets go of every host and ends nothing: each agent keeps running for the next launch to take back', async () => {
     const rig = makeHubRig();
     await settle();
     await spawnOn(rig, 'host-a', 's1', 'task-1');
     await spawnOn(rig, 'host-b', 's2', 'task-2');
-    rig.hub.linkOf('host-a')?.setQuitPlan(() => [{ sessionId: 's1', consoleCloseIsGraceful: true }]);
-    rig.hub.linkOf('host-b')?.setQuitPlan(() => [{ sessionId: 's2', consoleCloseIsGraceful: true }]);
 
     rig.hub.shutdown();
-    await settle();
-    expect(rig.hosts['host-a'].fakes[0].kill).toHaveBeenCalledTimes(1);
-    expect(rig.hosts['host-b'].fakes[0].kill).toHaveBeenCalledTimes(1);
+    await settle(2_000);
+
+    for (const hostId of ['host-a', 'host-b']) {
+      expect(rig.hosts[hostId].fakes[0].kill).not.toHaveBeenCalled();
+      expect(rig.hosts[hostId].fakes[0].write).not.toHaveBeenCalled();
+      expect(rig.hosts[hostId].helper.snapshot().sessions.every((entry) => entry.alive)).toBe(true);
+      expect(rig.hub.linkOf(hostId)?.state).toBe('stopped');
+    }
   });
 });

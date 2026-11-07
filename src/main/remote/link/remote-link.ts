@@ -43,7 +43,6 @@ import {
   type RemoteMethod,
   type RemoteRequestParams,
   type RemoteRequestResult,
-  type SuspendPlan,
 } from '../protocol/messages';
 
 /** The one renderer id the helper's core knows. Real renderers are mapped onto it here. */
@@ -107,13 +106,10 @@ export class RemoteLink implements PtyHostTransport {
   private handlers: RemoteLinkHandlers = {};
   private nextRequestId = 1;
   private nextScrollbackId = 1;
-  /** The helper's owner epoch as the last snapshot reported it, sent back with the quit. */
+  /** The helper's owner epoch as the last snapshot reported it. */
   private ownerEpoch = 0;
-  private quitPlan: (() => SuspendPlan[]) | null = null;
   private currentState: RemoteLinkState = 'connecting';
   private stopped = true;
-  /** The quit frame is sent and the link has not let go yet: the app's quit waits for this. */
-  private shutdownInFlight = false;
   private everConnected = false;
   private cycleWaiter: (() => void) | null = null;
   private cycleAttached = false;
@@ -160,7 +156,6 @@ export class RemoteLink implements PtyHostTransport {
   /** Stop dialing and let go of the connection. Every agent keeps running on the host. */
   stop(): void {
     this.stopped = true;
-    this.shutdownInFlight = false;
     this.endRetryWait();
     this.endpoint.detach('the link stopped');
     this.failPending(new Error('the link stopped'));
@@ -272,38 +267,12 @@ export class RemoteLink implements PtyHostTransport {
     this.eventListener = listener;
   }
 
-  /** What the app knows about ending each session, which the helper cannot: the adapters' exit sequences. */
-  setQuitPlan(provider: () => SuspendPlan[]): void {
-    this.quitPlan = provider;
-  }
-
   /**
-   * The app is quitting. Sends the one `suspendAll` frame now, the quit being what the helper
-   * cannot learn later, and lets go of the connection once the helper answers or `exitWaitMs` has
-   * passed. Never blocks: the helper ends every session on its own clock, so a frame that never
-   * gets through leaves the agents running until the next connect suspends them or the lease ends.
+   * The app is quitting. The link lets go and sends nothing: the agents on the host keep running, and the next
+   * launch takes them back. (It used to send the helper one `suspendAll` that ended every session.)
    */
-  shutdown(exitWaitMs = 1_300): void {
-    if (this.stopped) return;
-    this.shutdownInFlight = true;
-    const finish = (): void => {
-      this.shutdownInFlight = false;
-      this.stop();
-    };
-    let sessions: SuspendPlan[];
-    try {
-      sessions = this.quitPlan?.() ?? [];
-    } catch (error) {
-      // The helper still ends every session by its own recorded exit sequence.
-      this.log(`the quit plan could not be read: ${String(error)}`);
-      sessions = [];
-    }
-    this.requestHelper('suspendAll', { ownerEpoch: this.ownerEpoch, sessions }, exitWaitMs).then(finish, finish);
-  }
-
-  /** True from the quit frame being sent until the link lets go. */
-  get isShuttingDown(): boolean {
-    return this.shutdownInFlight;
+  shutdown(): void {
+    this.stop();
   }
 
   /** A request only the helper answers. */

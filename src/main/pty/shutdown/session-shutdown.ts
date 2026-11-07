@@ -45,13 +45,6 @@ export interface ShutdownContext<S extends ShutdownSession = ShutdownSession> {
   sessionFiles: SessionFileManager;
   firstOutputTracker: FirstOutputTracker;
   killPty: (ptyRef: PtyHandle) => boolean;
-  /**
-   * A session whose PTY runs on a remote host reaches the quit (#913). The quit signals, types into
-   * and waits for local processes only, so it hands the session here instead, and the link ends the
-   * agent from one plan frame the helper carries out on its own clock. Without it the session is
-   * dropped from the registry and the agent runs on until the next connect reconciles it.
-   */
-  endRemoteSession?: (session: S) => void;
 }
 
 /**
@@ -149,37 +142,36 @@ export function killAllSessions<S extends ShutdownSession>(
   const previouslyParkedPids = deferredKills?.pendingPids() ?? [];
   const previouslyParkedCount = deferredKills?.size ?? 0;
   for (const session of context.sessions.values()) {
-    if (session.pty) {
+    // A session on a remote host (#913) is left as it is: the quit ends nothing there. The agent keeps
+    // running on the host and the next launch takes it back (`rejoin-sessions.ts`). So the PTY is not
+    // sealed (a seal is kept by the host and would stop a rejoined agent taking keystrokes), nothing is
+    // signalled, typed or waited for, and the session's folder here stays: its status, events and hook
+    // files are what the rejoin reads on.
+    const ptyRef = session.pty;
+    // Read before nulling: the drain needs the child pid, not the wrapper. Null for a PTY on a remote host.
+    const childPid = ptyRef ? ptyRef.pid : null;
+    const onRemoteHost = ptyRef !== null && childPid === null;
+    if (ptyRef && childPid !== null) {
       // An agent whose console close is its graceful exit gets the close alone,
       // at any age (see SessionManager.kill).
       const closeIsGraceful = session.consoleCloseIsGraceful === true;
-      const ptyRef = session.pty;
-      // Read before nulling: the drain needs the child pid, not the wrapper.
-      const childPid = ptyRef.pid;
       // Sealed first, as in kill(): a renderer's keystrokes stop reaching it
       // before the exit sequence, which the seal lets through, is written.
       ptyRef.sealUserInput();
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      if (childPid === null) {
-        // A PTY on a remote host (#913). Nothing here may signal it, type into it, count it in the
-        // report or wait for it: the drain polls local pids, and the host's helper ends the agent
-        // from the plan the link sends in one frame (`RemoteLink.setQuitPlan`), on its own clock.
-        context.endRemoteSession?.(session);
+      if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
+      if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
+        // The registry's timer does the kill; the listeners are detached just
+        // below like every other row's, so the entry carries none.
+        deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });
+        deferredCount += 1;
       } else {
-        if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
-        if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
-          // The registry's timer does the kill; the listeners are detached just
-          // below like every other row's, so the entry carries none.
-          deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });
-          deferredCount += 1;
-        } else {
-          context.killPty(ptyRef);
-        }
-        // Count the kill first, unconditionally. An unreadable pid means the drain
-        // has nothing to probe for this child, NOT that nothing was killed.
-        killedCount += 1;
-        if (Number.isInteger(childPid) && childPid > 0) pids.push(childPid);
+        context.killPty(ptyRef);
       }
+      // Count the kill first, unconditionally. An unreadable pid means the drain
+      // has nothing to probe for this child, NOT that nothing was killed.
+      killedCount += 1;
+      if (Number.isInteger(childPid) && childPid > 0) pids.push(childPid);
     }
     // Detach our onData / onExit listeners so node-pty stops invoking the
     // callbacks on a later tick. Without this a final ConPTY chunk fires
@@ -197,7 +189,8 @@ export function killAllSessions<S extends ShutdownSession>(
       }
       session.ptyDisposables = undefined;
     }
-    context.sessionFiles.detachAndDelete(session.id);
+    if (onRemoteHost) context.sessionFiles.detachPreservingFiles(session.id);
+    else context.sessionFiles.detachAndDelete(session.id);
   }
   // PTYs an earlier kill() parked, whose rows may already be gone. Their
   // listeners come off now for the same reason as the rows' above; the kill

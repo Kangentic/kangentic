@@ -73,9 +73,9 @@ export class HostRouter {
     });
   }
 
-  /** The PTYs the core still runs, and the links still sending their quit frame. */
+  /** The PTYs the core still runs. A link has nothing to finish at a quit: it lets go and the host's agents stay. */
   get liveChildCount(): number {
-    return this.core.liveChildCount + this.hub.shuttingDownCount;
+    return this.core.liveChildCount;
   }
 
   attachRendererPort(rendererId: number, port: RendererPort): void {
@@ -84,10 +84,6 @@ export class HostRouter {
   }
 
   handleCommand(command: PtyHostCommand): void {
-    if (command.type === 'remoteQuitPlan') {
-      this.hub.setQuitPlan(command.hostId, command.sessions);
-      return;
-    }
     const route = commandRoute(command);
     if (route === 'every-host' || route === 'core-and-session') {
       this.core.handleCommand(command);
@@ -108,12 +104,12 @@ export class HostRouter {
   }
 
   /**
-   * The app is quitting. The core is told to shut down and each link sends its quit frame; the host
-   * process stays up until both are done (`liveChildCount`), or the bound passes.
+   * The app is quitting. The core is told to shut down and each link lets go of its host, whose agents
+   * keep running there. The host process stays up until the core's PTYs are done, or the bound passes.
    */
-  beginShutdown(exitWaitMs: number | undefined): void {
+  beginShutdown(): void {
     this.core.handleCommand({ type: 'shutdown' });
-    this.hub.shutdown(exitWaitMs);
+    this.hub.shutdown();
     this.forwarder.dispose();
   }
 

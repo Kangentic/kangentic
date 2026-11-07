@@ -345,27 +345,25 @@ describe('a new app process rejoining what the host kept running', () => {
 });
 
 describe('quitting', () => {
-  it('sends each host its one plan and keeps the host process up until the link let go', async () => {
+  it('lets go of the host and ends nothing there: the agent keeps running, and nothing is typed into it', async () => {
     const rig = makeRig();
     await addHost(rig);
     const spawning = rig.router.handleRequest('spawn', fullSpawn('remote-1', 11, 'host-a'));
     await settle();
     await spawning;
 
-    rig.router.handleCommand({
-      type: 'remoteQuitPlan',
-      hostId: 'host-a',
-      sessions: [{ sessionId: 'remote-1', exitSequence: ['\x03'], consoleCloseIsGraceful: false }],
-    });
-    rig.router.beginShutdown(1_300);
+    rig.router.beginShutdown();
 
     expect(rig.core.handleCommand).toHaveBeenCalledWith({ type: 'shutdown' });
-    expect(rig.router.liveChildCount).toBeGreaterThan(0);
-
     await settle(2_000);
 
-    expect(rig.helperRig.fakes[0].write).toHaveBeenCalledWith('\x03');
+    const fake = rig.helperRig.fakes[0];
+    expect(fake.write).not.toHaveBeenCalled();
+    expect(fake.kill).not.toHaveBeenCalled();
+    expect(rig.helperRig.helper.snapshot().sessions.find((entry) => entry.sessionId === 'remote-1')?.alive).toBe(true);
+    // No link is left to wait for.
     expect(rig.router.liveChildCount).toBe(0);
+    expect(rig.router.hub.linkOf('host-a')?.state).toBe('stopped');
   });
 
   it('counts the core\'s PTYs too, so the host process waits for either', async () => {

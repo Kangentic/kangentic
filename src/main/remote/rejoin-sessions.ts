@@ -19,12 +19,13 @@
 
 import * as path from 'node:path';
 import { agentRegistry } from '../agent/agent-registry';
-import { parseStoredCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
+import { shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { recordedPtyGrid } from '../db/recorded-pty-grid';
 import type { PermissionMode, Session, SessionRecord, SpawnSessionInput } from '../../shared/types';
 import type { SessionManager } from '../pty/session-manager';
 import { sessionOutputPaths } from '../transition-engine/session-paths';
 import type { HelperSnapshot } from './protocol/messages';
+import { hostOfRecord } from './record-host';
 import { resolveRemoteLaunch } from './remote-launch';
 
 export type RejoinOutcome = 'rejoined' | 'pending' | 'gone';
@@ -35,12 +36,6 @@ export interface RejoinDeps {
   /** Take one record's agent back. Null when the host no longer holds it. Rejects when that could not be done. */
   adopt(record: SessionRecord): Promise<Session | null>;
   log?(line: string): void;
-}
-
-/** The host a record's agent ran on, or null for a record that ran on this computer. */
-export function hostOfRecord(record: Pick<SessionRecord, 'cli_target'>): string | null {
-  const target = parseStoredCliTarget(record.cli_target);
-  return target?.kind === 'ssh' ? target.hostId : null;
 }
 
 /** Decide, for each running record that names a host, whether its agent is back, still to ask, or gone. */

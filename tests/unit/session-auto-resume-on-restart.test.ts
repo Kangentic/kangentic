@@ -38,11 +38,14 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 // The returned record status is driven by the module-level
 // `sessionRecordStatusRef` so tests can pick 'running' vs 'queued' per case.
 const sessionRecordStatusRef = { current: 'running' as 'running' | 'queued' };
+// Where the record's agent ran: null for this computer, or the stored target of an SSH host (#913).
+const sessionRecordTargetRef = { current: null as string | null };
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     findByAnyId = vi.fn(() => ({
       id: 'record-1',
       status: sessionRecordStatusRef.current,
+      cli_target: sessionRecordTargetRef.current,
     }));
   }
   return { SessionRepository: FakeSessionRepository };
@@ -90,6 +93,27 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
     settleQueuedRecordMock.mockClear();
     taskRepoUpdateMock.mockClear();
     sessionRecordStatusRef.current = 'running';
+    sessionRecordTargetRef.current = null;
+  });
+
+  // A quit leaves an agent on a host running (#913). Its record stays `running` and its task keeps pointing at it,
+  // so the next launch can ask the host and take the agent back. Suspended here, that launch would resume a second
+  // agent beside the live one.
+  it('leaves the record of an agent on a remote host running, and the task still pointing at it', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'zsh', roots: [] });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+  });
+
+  it('still suspends the record of an agent that ran on a distro of this computer', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'wsl', distro: 'Ubuntu' });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(markRecordSuspendedMock).toHaveBeenCalledTimes(1);
   });
 
   it("always marks running sessions as 'system' (reserves 'user' for explicit pause)", () => {

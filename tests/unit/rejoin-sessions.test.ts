@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
-import { createRecordAdopter, hostOfRecord, rejoinRunningRemoteSessions } from '../../src/main/remote/rejoin-sessions';
+import { hostOfRecord } from '../../src/main/remote/record-host';
+import { createRecordAdopter, rejoinRunningRemoteSessions } from '../../src/main/remote/rejoin-sessions';
 import type { SessionRecord } from '../../src/shared/types';
 
 const sshTarget = (hostId: string): string => serializeCliTarget({

@@ -1043,9 +1043,6 @@ export class PtyHostCore {
         // has posted most of these stops already; a second is a no-op.
         this.spawnService.stopAllCli();
         return;
-      case 'remoteQuitPlan':
-        // For a link, handled by the host router; a core with no links has nothing to end remotely.
-        return;
       default: {
         const unknownCommand: never = command;
         throw new Error(`unknown pty host command: ${JSON.stringify(unknownCommand)}`);
