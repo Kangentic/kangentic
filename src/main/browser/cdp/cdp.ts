@@ -517,6 +517,17 @@ export function getDialogEntries(webContents: WebContents): DialogEntry[] {
 }
 
 /**
+ * Did this session dismiss a `beforeunload` at or after `sinceMs`? That is a
+ * page keeping itself open. By timestamp rather than by ring length, because
+ * the ring drops its oldest entry once full.
+ */
+export function dismissedBeforeunloadSince(webContents: WebContents, sinceMs: number): boolean {
+  return getDialogEntries(webContents).some((entry) => (
+    entry.type === 'beforeunload' && !entry.accepted && Date.parse(entry.ts) >= sinceMs
+  ));
+}
+
+/**
  * Arm how the next dialog (or every later one) is answered.
  *
  * Armed AHEAD of the action rather than answered after it, because a pending
