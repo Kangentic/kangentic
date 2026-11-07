@@ -198,6 +198,45 @@ describe('TransitionEngine spawn for a project on a remote host', () => {
   });
 });
 
+// A prompt over the Windows command-line limit and under Linux's. The engine reads
+// process.platform for the length rule, so this runs as Windows.
+describe('TransitionEngine fresh launch: the opening prompt length on a host', () => {
+  const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const LONG_DESCRIPTION = 'x'.repeat(40_000);
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', hostPlatform);
+  });
+
+  function longTask() {
+    return { ...makeTask(), description: LONG_DESCRIPTION };
+  }
+
+  it('keeps the prompt on a host launch, which is Linux whatever this computer is', async () => {
+    setRemoteLaunchResolver({ resolve: async () => ({ place, remote }) });
+    const { engine } = makeEngine();
+
+    await engine.runLegacySpawnAgent({ promptTemplate: '{{task_xml}}' } as never, longTask() as never);
+
+    const options = mockAdapter.buildCommand.mock.calls[0][0] as { prompt?: string };
+    expect(options.prompt).toContain(LONG_DESCRIPTION);
+  });
+
+  it('types the same prompt for a launch on this computer (control)', async () => {
+    setRemoteLaunchResolver({ resolve: async () => null });
+    const { engine } = makeEngine();
+
+    await engine.runLegacySpawnAgent({ promptTemplate: '{{task_xml}}' } as never, longTask() as never);
+
+    const options = mockAdapter.buildCommand.mock.calls[0][0] as { prompt?: string };
+    expect(options.prompt).toBeUndefined();
+  });
+});
+
 describe('TransitionEngine spawn for a project on this computer (control)', () => {
   it('detects the CLI, passes its path to the resume reconcile, and sends no remote descriptor', async () => {
     setRemoteLaunchResolver({ resolve: async () => null });

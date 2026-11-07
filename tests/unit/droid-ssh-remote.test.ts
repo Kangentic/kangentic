@@ -59,7 +59,7 @@ describe('a Droid session on a remote host', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(sessionFolders(workspace).local, 'droid-settings.json'), 'utf8')) as { hooks: unknown };
     expect(JSON.stringify(settings.hooks)).toContain('playwright');
     expect(workspace.host.files.get(userFile)).toBe(content);
-    expect(workspace.host.writes.map((write) => write.path)).not.toContain(userFile);
+    expect(workspace.host.writes).not.toContain(userFile);
   });
 
   it('merges the Kangentic MCP bridge into the user\'s file, on host paths, with the token only in the environment', async () => {

@@ -73,7 +73,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
-## SSH hosts (17 channels)
+## SSH hosts (16 channels)
 Machine-global like the mobile bridge, so none takes a trailing `projectId`: a host serves every project and must be addable with no project open. Backs the SSH settings tab and the Add project chooser. See [SSH remote hosts](../../platforms/ssh-remote.md).
 
 | Channel | Pattern | Purpose |

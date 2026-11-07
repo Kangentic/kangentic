@@ -1195,3 +1195,96 @@ describe('a resume that needs a folder an earlier session left on the host', () 
     return { script: commands[0].args[1] };
   }
 });
+
+describe('what stays on the host when this computer could not keep its end', () => {
+  const HOST_SESSION = '/home/dev/api/.kangentic/sessions/s1';
+  const NAME = '1700000000000000000-5.rec';
+  const RECORD = 'K1\nidle\n\n{}';
+
+  function relayWith(overrides: Partial<RemoteSessionFiles> = {}) {
+    const host = makeFakeHost();
+    const removeFiles = vi.fn(host.files.removeFiles);
+    const removeEmptyDirectories = vi.fn(host.files.removeEmptyDirectories);
+    const relay = new RemoteSessionRelay({ files: { ...host.files, removeFiles, removeEmptyDirectories, ...overrides }, log: () => undefined });
+    teardown.push(() => relay.dispose());
+    const localSessionDirectory = path.join(shellFolder, '.kangentic', 'sessions', 's1');
+    fs.mkdirSync(localSessionDirectory, { recursive: true });
+    prepareWslHookTransport(localSessionDirectory);
+    fs.writeFileSync(path.join(localSessionDirectory, 'settings.json'), '{"version":1}');
+    const place: SshCliPlace = { kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'sh', localHome: path.join(scratch, 'mirror'), roots: [{ local: shellFolder, host: '/home/dev/api' }] };
+    const registration = { hostId: 'host-a', sessionId: 's1', place, localSessionDirectory, statusOutputPath: path.join(localSessionDirectory, 'status.json') };
+    return { host, relay, removeFiles, removeEmptyDirectories, registration, inbox: wslHookPaths(localSessionDirectory).inbox };
+  }
+
+  const removedInboxRecords = (removeFiles: ReturnType<typeof vi.fn>): string[] =>
+    removeFiles.mock.calls.flatMap((call) => call[1] as string[]).filter((removed) => removed === `${HOST_SESSION}/wsl-hooks/inbox/${NAME}`);
+
+  describe('a claimed hook record', () => {
+    it('is not removed from the host when it could not be written here, and is written and then removed when it is sent again after the disk recovers', async () => {
+      const { relay, removeFiles, registration, inbox } = relayWith();
+      await relay.register(registration);
+      // A folder where the record's file would go: the rename onto it fails, as a full or unwritable disk does.
+      fs.mkdirSync(path.join(inbox, NAME));
+
+      relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: NAME, content: RECORD, claim: true });
+
+      // Negative assertion: nothing can be polled for. Give a wrongly eager removal several claim batches (50 ms each).
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(removedInboxRecords(removeFiles)).toEqual([]);
+      expect(fs.statSync(path.join(inbox, NAME)).isDirectory()).toBe(true);
+
+      // The disk recovers and the host sends the record again on the next attach.
+      fs.rmSync(path.join(inbox, NAME), { recursive: true });
+      relay.deliver({ type: 'hookFile', sessionId: 's1', folder: 'inbox', name: NAME, content: RECORD, claim: true });
+
+      expect(fs.readFileSync(path.join(inbox, NAME), 'utf8')).toBe(RECORD);
+      await waitFor(() => removedInboxRecords(removeFiles).length === 1);
+    });
+  });
+
+  describe('a session taken back while its agent keeps running', () => {
+    const removedSessionFiles = (removeFiles: ReturnType<typeof vi.fn>, removeEmptyDirectories: ReturnType<typeof vi.fn>): unknown[] => [
+      ...removeFiles.mock.calls.flatMap((call) => call[1] as string[]),
+      ...removeEmptyDirectories.mock.calls.flatMap((call) => call[1] as string[]),
+    ];
+
+    it.each([
+      ['reattach', true, false],
+      ['a fresh registration', false, true],
+    ])('%s: when the host cannot watch the folder, the session\'s files are removed from the host only if %s', async (_name, reattach, removed) => {
+      const { relay, removeFiles, removeEmptyDirectories, registration } = relayWith({ watchHooks: async () => { throw new Error('the host could not watch the folder'); } });
+
+      await expect(relay.register({ ...registration, ...(reattach ? { reattach: true } : {}) })).rejects.toThrow(/could not watch/);
+
+      const touched = removedSessionFiles(removeFiles, removeEmptyDirectories);
+      if (removed) {
+        expect(touched).toContain(`${HOST_SESSION}/settings.json`);
+        expect(touched).toContain(HOST_SESSION);
+      } else {
+        expect(touched).toEqual([]);
+      }
+    });
+
+    it.each([
+      ['reattach', true, false],
+      ['a fresh registration', false, true],
+    ])('%s: when it is released while it is pushing, the session\'s files are removed from the host only if %s', async (_name, reattach, removed) => {
+      const { host, relay, removeFiles, removeEmptyDirectories, registration } = relayWith();
+      host.state.holdWrites = true;
+      const registering = relay.register({ ...registration, ...(reattach ? { reattach: true } : {}) });
+      await vi.waitFor(() => expect(host.writeGates).toHaveLength(1));
+
+      await relay.release('s1');
+      host.writeGates[0].release();
+      await registering;
+
+      const touched = removedSessionFiles(removeFiles, removeEmptyDirectories);
+      expect(relay.has('s1')).toBe(false);
+      if (removed) {
+        expect(touched).toContain(`${HOST_SESSION}/settings.json`);
+      } else {
+        expect(touched).toEqual([]);
+      }
+    });
+  });
+});

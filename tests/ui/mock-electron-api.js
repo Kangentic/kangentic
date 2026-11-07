@@ -4152,7 +4152,7 @@
         // A remote project's agents run on its host, so main answers with what the host has: the CLI's
         // name in place of a path, the host's version, and no capabilities (they come from running the
         // CLI). Claude is installed there unless a spec sets window.__mockHostAgents =
-        // { codex: 'found', claude: 'missing' | 'unknown' }; any other agent is missing.
+        // { codex: 'found', claude: 'missing' | 'unknown' | 'unsupported' }; any other agent is missing.
         var targetProject = _projectPath
           ? projects.find(function (project) { return project.path === _projectPath; })
           : projects.find(function (project) { return project.id === currentProjectId; });
@@ -4160,6 +4160,19 @@
         var hostStates = (typeof window !== 'undefined' && window.__mockHostAgents) || {};
         return inventory.map(function (agent) {
           var status = hostStates[agent.name] || (agent.name === 'claude' ? 'found' : 'missing');
+          // 'unsupported' is an agent with no CLI name on a host (main's buildHostAgentList): not found, no
+          // hostStatus, and unsupportedOnHost set.
+          if (status === 'unsupported') {
+            var unsupported = Object.assign({}, agent, {
+              hostId: targetProject.remote.hostId,
+              found: false,
+              path: null,
+              version: null,
+              unsupportedOnHost: true,
+            });
+            delete unsupported.capabilities;
+            return unsupported;
+          }
           var hostEntry = Object.assign({}, agent, {
             hostId: targetProject.remote.hostId,
             hostStatus: status,

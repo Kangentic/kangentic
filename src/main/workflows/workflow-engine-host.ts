@@ -129,6 +129,8 @@ export class WorkflowEngineHost {
   /** Workflows whose gone links would not delete, logged once until a delete goes through. */
   private readonly failedDrops = new Set<string>();
   private readonly durationsMs: number[] = [];
+  /** The workflows on each hidden board, by project (`workflowsOnHiddenBoards`). */
+  private readonly hiddenBoardWorkflows = new Map<string, string[]>();
   /**
    * Registered projects looked at without opening them, and what the look
    * found. What they hold cannot change while they stay closed, since every
@@ -464,7 +466,7 @@ export class WorkflowEngineHost {
     }
     const freeSlots = this.context.sessionManager.getFreeAgentSlots() - this.inFlightSlots.size;
     const planned = planPass(snapshots, freeSlots, blocked, this.columnRoomReader());
-    const held = hiddenProjectIds.length > 0 ? this.workflowsOnHiddenBoards(hiddenProjectIds) : EMPTY_ID_SET;
+    const held = this.workflowsOnHiddenBoards(hiddenProjectIds);
     // A workflow with tasks on a hidden board is paused at the removal. This holds one that was not, and
     // a paused one, which can otherwise complete: the snapshot never saw those tasks, so all it read may be done.
     const intents = planned.filter((intent) => intent.kind === 'drop-links' || !held.has(intent.workflowId));
@@ -477,15 +479,25 @@ export class WorkflowEngineHost {
 
   /**
    * The workflows holding a task on a board hidden because its SSH host was removed. A board that cannot be
-   * read here is skipped: its workflows' snapshots are no less complete than the next pass's, and nothing about
-   * a hidden board changes between passes, since nothing can move its tasks.
+   * read here is skipped: its workflows' snapshots are no less complete than the next pass's. A hidden board
+   * stays cold and a read of one opens its database on this thread, while nothing about it changes between
+   * passes, since nothing can move its tasks. So each is read once per hiding: a pass that finds it no longer
+   * hidden forgets the answer.
    */
   private workflowsOnHiddenBoards(hiddenProjectIds: string[]): Set<string> {
+    const stillHidden = new Set(hiddenProjectIds);
+    for (const projectId of this.hiddenBoardWorkflows.keys()) {
+      if (!stillHidden.has(projectId)) this.hiddenBoardWorkflows.delete(projectId);
+    }
     const held = new Set<string>();
     for (const projectId of hiddenProjectIds) {
       try {
-        const db = getOpenProjectDb(projectId);
-        const memberOf = db ? new TaskRepository(db).workflowIdsOnBoard() : probeWorkflowProject(projectId).memberOf;
+        let memberOf = this.hiddenBoardWorkflows.get(projectId);
+        if (!memberOf) {
+          const db = getOpenProjectDb(projectId);
+          memberOf = [...(db ? new TaskRepository(db).workflowIdsOnBoard() : probeWorkflowProject(projectId).memberOf)];
+          this.hiddenBoardWorkflows.set(projectId, memberOf);
+        }
         for (const workflowId of memberOf) held.add(workflowId);
       } catch (error) {
         if (!isSqliteError(error)) throw error;
@@ -688,8 +700,6 @@ function withoutUnreadOutcomes(intents: CoreIntent[], snapshots: CoreWorkflow[],
     ));
   });
 }
-
-const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
 
 function sharesAny(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   for (const value of left) {

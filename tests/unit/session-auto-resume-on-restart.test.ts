@@ -40,6 +40,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 const sessionRecordStatusRef = { current: 'running' as 'running' | 'queued' };
 // Where the record's agent ran: null for this computer, or the stored target of an SSH host (#913).
 const sessionRecordTargetRef = { current: null as string | null };
+const updateMetricsMock = vi.fn();
 vi.mock('../../src/main/db/repositories/session-repository', () => {
   class FakeSessionRepository {
     findByAnyId = vi.fn(() => ({
@@ -47,6 +48,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
       status: sessionRecordStatusRef.current,
       cli_target: sessionRecordTargetRef.current,
     }));
+    updateMetrics = (...args: unknown[]) => updateMetricsMock(...args);
   }
   return { SessionRepository: FakeSessionRepository };
 });
@@ -69,6 +71,10 @@ function makeDeps(options: { sessionStatus?: 'running' | 'queued' } = {}) {
     ]),
     killAll: vi.fn(() => [] as number[]),
     dispose: vi.fn(),
+    getUsageCache: () => ({}),
+    getToolCallCount: () => 4,
+    getToolBreakdown: () => [],
+    getCompactionCount: () => 0,
   };
   return {
     getSessionManager: () => sessionManager as never,
@@ -92,6 +98,7 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
     markRecordExitedMock.mockClear();
     settleQueuedRecordMock.mockClear();
     taskRepoUpdateMock.mockClear();
+    updateMetricsMock.mockClear();
     sessionRecordStatusRef.current = 'running';
     sessionRecordTargetRef.current = null;
   });
@@ -106,6 +113,16 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
 
     expect(markRecordSuspendedMock).not.toHaveBeenCalled();
     expect(taskRepoUpdateMock).not.toHaveBeenCalled();
+  });
+
+  // What the session measured up to the quit is on this computer only, and the telemetry that held it ends with it.
+  it('saves what a remote session measured before leaving it running', () => {
+    sessionRecordTargetRef.current = JSON.stringify({ kind: 'ssh', hostId: 'host-1', home: '/home/dev', shellName: 'zsh', roots: [] });
+
+    syncShutdownCleanup(makeDeps());
+
+    expect(updateMetricsMock).toHaveBeenCalledTimes(1);
+    expect(updateMetricsMock).toHaveBeenCalledWith('record-1', expect.objectContaining({ toolCallCount: 4 }));
   });
 
   it('still suspends the record of an agent that ran on a distro of this computer', () => {

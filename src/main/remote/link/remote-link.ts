@@ -269,7 +269,7 @@ export class RemoteLink implements PtyHostTransport {
 
   /**
    * The app is quitting. The link lets go and sends nothing: the agents on the host keep running, and the next
-   * launch takes them back. (It used to send the helper one `suspendAll` that ended every session.)
+   * launch takes them back.
    */
   shutdown(): void {
     this.stop();

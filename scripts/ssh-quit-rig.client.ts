@@ -22,6 +22,7 @@ import { openSshStream } from '../src/main/remote/link/ssh-connection';
 import { createSshRunner } from '../src/main/remote/link/ssh-run';
 import { installHost, type HostAsset } from '../src/main/remote/link/host-installer';
 import type { PtyHostEvent } from '../src/main/pty/host/protocol';
+import { check, finishChecks, sleep, waitFor } from './ssh-rig-checks';
 
 interface Options {
   sshPath: string;
@@ -35,23 +36,6 @@ const HOOK_DIRECTORY = '/home/dev/quit-rig-hooks';
 const COUNTER_SESSION = 'quit-rig-counter';
 const SHORT_SESSION = 'quit-rig-short';
 let remoteCommand = '';
-const checks: Array<{ name: string; passed: boolean; detail?: string }> = [];
-
-function check(name: string, passed: boolean, detail?: string): void {
-  checks.push({ name, passed, ...(detail ? { detail } : {}) });
-  process.stderr.write(`[${passed ? 'ok' : 'FAILED'}] ${name}${detail ? `: ${detail}` : ''}\n`);
-}
-
-const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitFor(description: string, condition: () => boolean, timeoutMs: number): Promise<void> {
-  const started = Date.now();
-  while (!condition()) {
-    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${description}`);
-    await sleep(50);
-  }
-}
-
 function openLink(label: string): { link: RemoteLink; connected: () => boolean; events: PtyHostEvent[] } {
   let state: RemoteLinkState = 'connecting';
   const streams: Duplex[] = [];
@@ -180,9 +164,7 @@ async function main(): Promise<void> {
   await sleep(500);
   second.link.stop();
 
-  const failed = checks.filter((entry) => !entry.passed);
-  process.stdout.write(`${JSON.stringify({ allPassed: failed.length === 0, passed: checks.length - failed.length, of: checks.length, failed }, null, 2)}\n`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  finishChecks();
 }
 
 main().catch((error: unknown) => {

@@ -118,6 +118,11 @@ export class ResumeEndpoint {
   private receiveOffset = 0;
   private retained: RetainedFrame[] = [];
   private retainedByteCount = 0;
+  /**
+   * A peer has taken up this process's stream. Until one has, an offset a peer names counts bytes of a stream
+   * before this process, however small it is, and this side's own offsets cannot be compared with it.
+   */
+  private peerFollowsThisStream = false;
 
   constructor(private readonly handlers: ResumeEndpointHandlers, options: ResumeEndpointOptions) {
     this.options = { ...DEFAULTS, ...options };
@@ -296,6 +301,7 @@ export class ResumeEndpoint {
     connection.ready = true;
     connection.protocolVersion = version;
     if (!this.replay(connection, frame.offset)) return;
+    this.peerFollowsThisStream = true;
     this.safely(() => this.handlers.onAttached({ protocolVersion: version, peer }));
   }
 
@@ -310,12 +316,14 @@ export class ResumeEndpoint {
 
   /** Send the peer what it has not got, from the offset its hello named. False when the connection was dropped. */
   private replay(connection: Connection, peerResumeFrom: number): boolean {
-    if (peerResumeFrom > this.sendOffset) {
+    if (peerResumeFrom > this.sendOffset || (peerResumeFrom > 0 && !this.peerFollowsThisStream)) {
       // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream starts
       // now, which is the first frame this side still holds. A process that queued a request before it connected
       // (the app, right after it dials) holds it from offset 0, and neither trimming those frames against the
       // peer's offset (which belongs to the stream before the restart) nor a reset to the END of the stream may
-      // drop it: the request would never be answered. What is held is sent after the reset.
+      // drop it: the request would never be answered. That holds however much was queued: a queue longer than
+      // the peer's memory would otherwise be trimmed by it, or refused on every reconnect for an offset inside a
+      // frame. What is held is sent after the reset.
       const heldFrom = this.retained.length > 0 ? this.retained[0].offset : this.sendOffset;
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: heldFrom, json: { cause: 'peer-ahead' } }));
       this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: heldFrom, lostTo: peerResumeFrom, cause: 'peer-ahead' }));

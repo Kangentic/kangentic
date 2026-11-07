@@ -207,13 +207,6 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
             // resolveOwnSessionRecord). A Command Terminal has no record and
             // is skipped.
             const record = sessionRepo.findByAnyId(session.id);
-            // An agent on a remote host (#913) is not ended by the quit, so its record is not suspended: it
-            // stays `running` and the task keeps pointing at it. The next launch asks the host and takes the
-            // agent back (`rejoin-sessions.ts`); only the host's own word that it is gone sends it down the
-            // resume path. Suspended here, the next launch would resume a second agent beside the live one.
-            if (record && record.status === 'running' && hostOfRecord(record) !== null) {
-              continue;
-            }
             if (record && record.status === 'running') {
               // Flush in-flight metrics from usageCache to the DB BEFORE
               // marking suspended. captureSessionMetrics is fully synchronous
@@ -229,6 +222,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
                 record.started_at,
                 record.session_type,
               );
+              // An agent on a remote host (#913) is not ended by the quit, so its record is not suspended: it
+              // stays `running` and the task keeps pointing at it. The next launch asks the host and takes the
+              // agent back (`rejoin-sessions.ts`); only the host's own word that it is gone sends it down the
+              // resume path. Suspended here, the next launch would resume a second agent beside the live one.
+              if (hostOfRecord(record) !== null) continue;
               markRecordSuspended(sessionRepo, record.id, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             } else if (record && record.status === 'queued') {

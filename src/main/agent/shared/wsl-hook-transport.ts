@@ -79,8 +79,8 @@ const REPLY_WAIT_TRIES = 1000;
 export const WSL_MCP_TAKE_WAIT_SECONDS = 30;
 /** How long it then waits for the answer to a call Kangentic took. The longest tool call is a browser step. */
 export const WSL_MCP_ANSWER_WAIT_SECONDS = 600;
-/** The longest MCP request line (characters) the script sends: a frame carries about 200 KB, escaped. */
-export const WSL_MCP_REQUEST_MAX_CHARS = 150_000;
+/** The longest MCP request line (bytes) the script sends: a frame carries about 200 KB, escaped. */
+export const WSL_MCP_REQUEST_MAX_BYTES = 150_000;
 /** What the agent reads when nobody took its call. Holds no quote, backslash or newline: the script prints it as JSON. */
 export const WSL_MCP_NOT_TAKEN_MESSAGE = `Kangentic did not take this call within ${WSL_MCP_TAKE_WAIT_SECONDS} seconds, so nothing ran. Its desktop app is not connected to this machine right now. Carry on without it, or call the tool again later.`;
 /** What the agent reads when Kangentic took its call and then said nothing. */
@@ -155,17 +155,20 @@ export const WSL_HOOK_SCRIPT = [
   '    # up on (and then never run, even if it is delivered later).',
   '    url=$1',
   '    umask 077',
+  '    # A length below is in bytes, as a frame\'s limit is. Without this, bash counts characters in a UTF-8 locale.',
+  '    LC_ALL=C',
   '    answer_error() {',
   "      # $1 is the JSON-RPC line that was sent and $2 the message, which holds no quote or backslash.",
-  '      # An error for that line\'s id, or nothing for a notification, which has none and waits on nothing. The id is',
-  '      # looked for ahead of "params" only, so an id inside a notification\'s parameters is never taken for the call\'s.',
-  String.raw`      id=$(printf '%s' "$1" | sed 's/"params" *:.*$//' | awk -F'"id" *: *' '{ s = $2; if (s ~ /^"/) { sub(/^"/, "", s); sub(/".*/, "", s); printf "\"%s\"", s } else { sub(/[^0-9].*/, "", s); printf "%s", s } }')`,
+  '      # An error for that line\'s id, or nothing for a notification, which has none and waits on nothing. The id is the',
+  '      # key at the top of the object wherever it sits (an MCP client may write it last), so an id inside a',
+  '      # notification\'s parameters is never taken for the call\'s.',
+  String.raw`      id=$(printf '%s' "$1" | awk '{ depth = 0; quoted = 0; for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (quoted) { if (c == "\\") i++; else if (c == "\"") quoted = 0; continue } if (c == "\"") { if (depth == 1 && substr($0, i, 4) == "\"id\"") { s = substr($0, i + 4); if (sub(/^ *: */, "", s)) { if (s ~ /^"/) { sub(/^"/, "", s); sub(/".*/, "", s); printf "\"%s\"", s } else { sub(/[^0-9].*/, "", s); printf "%s", s } exit } } quoted = 1; continue } if (c == "{" || c == "[") depth++; else if (c == "}" || c == "]") depth-- } }')`,
   String.raw`      [ -n "$id" ] && printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"%s"}}\n' "$id" "$2"`,
   '    }',
   '    while IFS= read -r line || [ -n "$line" ]; do',
   '      [ -n "$line" ] || continue',
-  `      if [ "\${#line}" -gt ${WSL_MCP_REQUEST_MAX_CHARS} ]; then`,
-  `        answer_error "$line" "This request is $(( \${#line} / 1024 )) KB, more than the ${Math.floor(WSL_MCP_REQUEST_MAX_CHARS / 1024)} KB that can be sent to Kangentic from a host. Send less in one call."`,
+  `      if [ "\${#line}" -gt ${WSL_MCP_REQUEST_MAX_BYTES} ]; then`,
+  `        answer_error "$line" "This request is $(( \${#line} / 1024 )) KB, more than the ${Math.floor(WSL_MCP_REQUEST_MAX_BYTES / 1024)} KB that can be sent to Kangentic from a host. Send less in one call."`,
   '        continue',
   '      fi',
   `      publish requests req ${WSL_MCP_REQUEST_HEAD} "\${${WSL_MCP_TOKEN_ENV}:-} $url" <<KANGENTIC_MCP_LINE || continue`,

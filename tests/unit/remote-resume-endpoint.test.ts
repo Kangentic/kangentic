@@ -245,6 +245,65 @@ describe('what cannot be replayed', () => {
     // The frames before it are the previous process's, and are not repeated.
     expect(indexes(helper)).toEqual([0, 1, 2, 3, 4, 100, 101]);
   });
+
+  /**
+   * A helper that heard `previousSizes.length` frames from a previous app process, then a restarted app whose
+   * process queued `queuedSizes.length` frames (raw byte sizes) before it connected.
+   */
+  async function restartWithQueue(previousSizes: number[], queuedSizes: number[]): Promise<{ helper: Side; restartedLink: Side; previousOffset: number }> {
+    const helper = makeSide('helper');
+    const previousLink = makeSide('link');
+    connect(previousLink, helper);
+    await settle();
+    previousSizes.forEach((size, index) => previousLink.endpoint.send({ n: 200 + index }, Buffer.alloc(size)));
+    await settle();
+    const previousOffset = previousLink.endpoint.stats.sendOffset;
+    previousLink.endpoint.detach();
+    await settle();
+    const restartedLink = makeSide('link');
+    queuedSizes.forEach((size, index) => restartedLink.endpoint.send({ n: 100 + index }, Buffer.alloc(size)));
+    connect(restartedLink, helper);
+    await settle();
+    return { helper, restartedLink, previousOffset };
+  }
+
+  it('delivers every queued frame when the peer\'s remembered offset falls exactly on a queued frame\'s end', async () => {
+    // Two frames of 300 bytes remembered; the restarted side queued four of the same shape, so the peer's
+    // offset is the end of the second queued frame. Trimming against it would drop frames 100 and 101.
+    const { helper, restartedLink, previousOffset } = await restartWithQueue([300, 300], [300, 300, 300, 300]);
+    expect(restartedLink.endpoint.stats.sendOffset).toBe(previousOffset * 2);
+    expect(indexes(helper)).toEqual([200, 201, 100, 101, 102, 103]);
+    expect(restartedLink.detached).toEqual([]);
+  });
+
+  it('delivers every queued frame, and is not refused, when the peer\'s remembered offset is inside a queued frame', async () => {
+    const { helper, restartedLink, previousOffset } = await restartWithQueue([100], [2000, 2000]);
+    // The precondition that makes the offset fall inside the first queued frame.
+    expect(restartedLink.endpoint.stats.sendOffset / 2).toBeGreaterThan(previousOffset);
+    expect(indexes(helper)).toEqual([200, 100, 101]);
+    expect(restartedLink.detached).toEqual([]);
+    expect(helper.detached.filter((reason) => reason.includes('inside a frame'))).toEqual([]);
+    expect(restartedLink.endpoint.connected).toBe(true);
+    expect(helper.endpoint.connected).toBe(true);
+  });
+
+  it('resumes an ordinary drop after that first handshake without a reset or a repeated frame', async () => {
+    const { helper, restartedLink } = await restartWithQueue([300, 300], [300, 300, 300, 300]);
+    expect(indexes(helper)).toEqual([200, 201, 100, 101, 102, 103]);
+    const helperGaps = helper.gaps.length;
+    const linkGaps = restartedLink.gaps.length;
+
+    // The connection drops; the restarted side sends more while it is down, and the same two endpoints reconnect.
+    restartedLink.endpoint.detach('network dropped');
+    await settle();
+    restartedLink.endpoint.send({ n: 104 }, Buffer.alloc(300));
+    connect(restartedLink, helper);
+    await settle();
+
+    expect(indexes(helper)).toEqual([200, 201, 100, 101, 102, 103, 104]);
+    expect(helper.gaps).toHaveLength(helperGaps);
+    expect(restartedLink.gaps).toHaveLength(linkGaps);
+  });
 });
 
 describe('refusal', () => {

@@ -146,7 +146,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     await window.electronAPI.projects.delete(id);
     // The open project stays current until `settleOpenProject` has opened the next one, so there is no
     // empty frame that paints the app-wide theme.
-    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
+    set((state) => ({ projects: state.projects.filter((project) => project.id !== id) }));
     await get().settleOpenProject();
     // Drop the deleted project's remembered active task. Stale entries are
     // harmless (they'd never match a real session) but accumulate over time.

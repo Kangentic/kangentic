@@ -13,7 +13,7 @@ import { resetStatusFiles, type StatusFileReader } from '../readers/status-file-
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
 import type { FirstOutputTracker } from './first-output-tracker';
-import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
+import type { PtyHandle, PtyHostClient, PtyHostSpawnOutcome } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { AgentCommandTooLongError, AgentCwdMissingError, resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
@@ -247,6 +247,20 @@ async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, ses
 }
 
 /**
+ * A session the host kept running while the app was closed, taken back instead of started (#913). The PTY
+ * is the one `PtyHostClient.adoptRemoteSessions` made for it, already rebound to the running agent. A
+ * rejoin starts nothing and types nothing, empties no file the session already wrote, and registers with
+ * the host as a reattach (its files are already there). Everything after the PTY is the ordinary spawn's:
+ * the registry row, the readers, telemetry, the exit handling.
+ */
+export interface RejoinSpawn {
+  pty: PtyHandle;
+}
+
+/** A spawn's PTY: one the host started or a rejoin was handed, or the failure a placeholder reports. */
+type StartedPty = { ok: true; pty: PtyHandle } | Extract<PtyHostSpawnOutcome, { ok: false }>;
+
+/**
  * Execute a PTY spawn for a SpawnSessionInput.
  *
  * Orchestrates the full lifecycle of turning a spawn request into a
@@ -272,17 +286,6 @@ async function writeLauncher(launcher: NonNullable<TypedLaunch['launcher']>, ses
  * All state lives in the SpawnFlowContext; this function is stateless
  * and can be unit-tested with mocks.
  */
-/**
- * A session the host kept running while the app was closed, taken back instead of started (#913). The PTY
- * is the one `PtyHostClient.adoptRemoteSessions` made for it, already rebound to the running agent. A
- * rejoin starts nothing and types nothing, empties no file the session already wrote, and registers with
- * the host as a reattach (its files are already there). Everything after the PTY is the ordinary spawn's:
- * the registry row, the readers, telemetry, the exit handling.
- */
-export interface RejoinSpawn {
-  pty: PtyHandle;
-}
-
 export async function performSpawn(
   input: SpawnSessionInput,
   context: SpawnFlowContext,
@@ -541,6 +544,10 @@ export async function performSpawn(
       releaseRemote();
       abandonCancelledSpawn(id, null, context);
     }
+    // A rejoin has a running agent and no failed-spawn placeholder to show for it: a session with no
+    // registration would run with no hooks and no transcript. The agent stays, and the record waits for a
+    // later attempt (`adoptRemoteSession`).
+    if (rejoin && registrationError) throw registrationError;
   }
 
   // What the shell gets typed. A launcher file that line sources has to exist
@@ -560,25 +567,28 @@ export async function performSpawn(
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
-  const spawnOutcome = rejoin
-    ? { ok: true as const, pty: rejoin.pty }
-    : registrationError ? { ok: false as const, error: registrationError, previousScrollback: '' } : await context.host.spawn({
-    sessionId: id,
-    projectId: carryoverSource?.projectId || input.projectId,
-    agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
-    transient: input.transient === true,
-    file: shellExe,
-    args: shellArgs,
-    cwd: effectiveCwd,
-    env: cleanEnv,
-    cols: spawnCols,
-    rows: spawnRows,
-    carryoverFromSessionId: carryoverSource?.id ?? null,
-    agentSessionIdKnown: !!input.agentSessionId,
-    exitSequence: input.exitSequence ?? ['\x03'],
-    taskId: input.taskId,
-    ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
-  });
+  const spawnPty = async (): Promise<StartedPty> => {
+    if (rejoin) return { ok: true, pty: rejoin.pty };
+    if (registrationError) return { ok: false, error: registrationError, previousScrollback: '' };
+    return context.host.spawn({
+      sessionId: id,
+      projectId: carryoverSource?.projectId || input.projectId,
+      agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
+      transient: input.transient === true,
+      file: shellExe,
+      args: shellArgs,
+      cwd: effectiveCwd,
+      env: cleanEnv,
+      cols: spawnCols,
+      rows: spawnRows,
+      carryoverFromSessionId: carryoverSource?.id ?? null,
+      agentSessionIdKnown: !!input.agentSessionId,
+      exitSequence: input.exitSequence ?? ['\x03'],
+      taskId: input.taskId,
+      ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
+    });
+  };
+  const spawnOutcome = await spawnPty();
 
   // A remote session whose PTY did not start has no use for the host's watcher.
   if (!spawnOutcome.ok) releaseRemote();

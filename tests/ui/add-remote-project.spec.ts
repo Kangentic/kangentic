@@ -253,6 +253,35 @@ test('a remote project\'s Agent tab shows what the host has installed, and never
   });
 });
 
+for (const hostState of ['missing', 'unsupported'] as const) {
+  test(`a remote project's Agent tab has no model row for a CLI the host reports as ${hostState}`, async () => {
+    await addHost('Build server');
+    await page.evaluate((state) => {
+      (window as unknown as { __mockHostAgents: Record<string, string> }).__mockHostAgents = { claude: state };
+    }, hostState);
+    try {
+      const projectName = `nomodel-${hostState}-${Date.now()}`;
+      await page.locator('[data-testid="sidebar-new-project-button"]').click();
+      await page.locator('[data-testid="add-project-host"]').click();
+      const form = page.locator('[data-testid="add-remote-project"]');
+      await form.locator('[data-testid="add-remote-project-folder"]').fill(`/srv/${projectName}`);
+      await form.locator('[data-testid="add-remote-project-submit"]').click();
+      await expect(form).toHaveCount(0);
+
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.locator('[data-testid="settings-tab-agent"]').click();
+      // The default agent row is there (the tab rendered), the model row is not: the host has no CLI to take --model.
+      await expect(page.locator('[data-testid="project-default-agent"]')).toBeVisible();
+      await expect(page.locator('[data-testid="project-default-model"]')).toHaveCount(0);
+    } finally {
+      await page.evaluate(() => {
+        delete (window as unknown as { __mockHostAgents?: unknown }).__mockHostAgents;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+    }
+  });
+}
+
 /** Adds a project on the host through the Add project dialog and waits for its sidebar row. */
 async function addRemoteProject(projectName: string) {
   await page.locator('[data-testid="sidebar-new-project-button"]').click();

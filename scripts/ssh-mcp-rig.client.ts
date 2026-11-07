@@ -24,11 +24,12 @@ import { WslHookInbox } from '../src/main/pty/readers/wsl-hook-inbox';
 import {
   WSL_HOOK_SCRIPT,
   WSL_MCP_NOT_TAKEN_MESSAGE,
-  WSL_MCP_REQUEST_MAX_CHARS,
+  WSL_MCP_REQUEST_MAX_BYTES,
   WSL_MCP_TAKE_WAIT_SECONDS,
   prepareWslHookTransport,
 } from '../src/main/agent/shared/wsl-hook-transport';
 import type { SshCliPlace } from '../src/main/agent/shared/cli-target';
+import { check, finishChecks, sleep, waitFor } from './ssh-rig-checks';
 
 interface Options {
   sshPath: string;
@@ -43,23 +44,6 @@ const HOST_HOME = '/home/dev';
 const HOST_PROJECT = `${HOST_HOME}/project`;
 const HOST_HOOKS = `${HOST_PROJECT}/.kangentic/sessions/s1/wsl-hooks`;
 let remoteCommand = '';
-const checks: Array<{ name: string; passed: boolean; detail?: string }> = [];
-
-function check(name: string, passed: boolean, detail?: string): void {
-  checks.push({ name, passed, ...(detail ? { detail } : {}) });
-  process.stderr.write(`[${passed ? 'ok' : 'FAILED'}] ${name}${detail ? `: ${detail}` : ''}\n`);
-}
-
-const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitFor(description: string, condition: () => boolean | Promise<boolean>, timeoutMs: number): Promise<void> {
-  const started = Date.now();
-  while (!(await condition())) {
-    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${description}`);
-    await sleep(100);
-  }
-}
-
 /** What the fake MCP server does with the next call: how long it takes, and how big its answer is. */
 const server = { delayMs: 0, answerBytes: 0, executions: [] as string[] };
 
@@ -223,7 +207,7 @@ async function scenarios(desktop: Desktop): Promise<void> {
 
   // 5. A request past the limit.
   server.executions.length = 0;
-  bridge = await startBridge(desktop, realScript, call(5, 'a'.repeat(WSL_MCP_REQUEST_MAX_CHARS + 100)));
+  bridge = await startBridge(desktop, realScript, call(5, 'a'.repeat(WSL_MCP_REQUEST_MAX_BYTES + 100)));
   await waitFor('the refusal', async () => (await bridge.output()).includes('Send less in one call'), 20_000);
   check('a request past the limit is refused at once, with an error for its id', answers(await bridge.output())[0]?.id === 5);
   check('and nothing was sent', server.executions.length === 0 && (await bridge.requestFiles()).trim() === '');
@@ -248,9 +232,7 @@ async function main(): Promise<void> {
   } finally {
     desktop.link.stop();
   }
-  const failed = checks.filter((entry) => !entry.passed);
-  process.stdout.write(`${JSON.stringify({ allPassed: failed.length === 0, passed: checks.length - failed.length, of: checks.length, failed }, null, 2)}\n`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  finishChecks();
 }
 
 main().catch((error: unknown) => {

@@ -1136,10 +1136,6 @@ export class SessionManager extends EventEmitter {
     });
   }
 
-  /**
-   * Apply one event from the pty host. The host runs the per-chunk work; what
-   * main needs of it arrives here, in the order the host produced it.
-   */
   /** The session runs on an SSH host whose link is down. */
   private isOnHostWithLinkDown(session: ManagedSession): boolean {
     return typeof session.hostId === 'string' && this.hostsWithLinkDown.has(session.hostId);
@@ -1154,6 +1150,10 @@ export class SessionManager extends EventEmitter {
     this.telemetry.noteLinkRestored(sessionIds);
   }
 
+  /**
+   * Apply one event from the pty host. The host runs the per-chunk work; what
+   * main needs of it arrives here, in the order the host produced it.
+   */
   private handleHostEvent(event: PtyHostEvent): void {
     switch (event.type) {
       case 'promptDraft':
@@ -2375,6 +2375,8 @@ export class SessionManager extends EventEmitter {
    * (`abandonCancelledSpawn`).
    */
   private readonly spawnsInFlight = new Map<string, InFlightSpawn>();
+  /** Agents being taken back from a host, by session id (`adoptRemoteSession`). */
+  private readonly adoptionsInFlight = new Map<string, Promise<Session | null>>();
 
   /** Restarts in place keeping their column slot: see `holdColumnSlot`. */
   private readonly columnSlotHolds = new Set<ColumnHolder>();
@@ -2725,8 +2727,22 @@ export class SessionManager extends EventEmitter {
    * when the host no longer holds it alive (it exited while nobody was attached), in which case nothing
    * changed and the caller settles the record. Rejects when the host cannot be asked or the registration
    * fails: the agent is untouched and the caller leaves the record for a later attempt.
+   *
+   * Two recovery passes can ask for one record, since a project's cold open and its host's first connection
+   * overlap, and a later pass finds it still `running`. A session already held is the answer, and a take under
+   * way is shared. A second take would drain the first as its sibling and release its files off the host.
    */
-  async adoptRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
+  adoptRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
+    const held = this.registry.get(input.id);
+    if (held?.status === 'running') return Promise.resolve(toSession(held));
+    const underWay = this.adoptionsInFlight.get(input.id);
+    if (underWay) return underWay;
+    const adoption = this.takeBackRemoteSession(input).finally(() => this.adoptionsInFlight.delete(input.id));
+    this.adoptionsInFlight.set(input.id, adoption);
+    return adoption;
+  }
+
+  private async takeBackRemoteSession(input: SpawnSessionInput & { id: string; remote: SpawnRemote }): Promise<Session | null> {
     const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
     const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
     const pty = adopted.get(input.id);

@@ -37,7 +37,7 @@ import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
 import { pullHostFilesFor, pushHostFilesForSpawn, withHostFilePull, type HostFilePull } from '../remote/host-file-sync';
 import { resolveRemoteLaunch, resolveSpawnCli } from '../remote/remote-launch';
-import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
+import { cliPathForTarget, isSshPlace, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
@@ -51,7 +51,7 @@ import { retireRecord } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
-import { freshPromptTypedForLength, resumePromptRidesCommandLine } from './resume-prompt-delivery';
+import { promptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
@@ -747,17 +747,19 @@ export class TransitionEngine {
       cliTarget,
     };
     const inputInAlternateScreen = adapter.firstPromptMayBeTyped?.(commandOptions) === true;
-    // A resume's prompt rides its command line only where it arrives whole
-    // (resume-prompt-delivery.ts), and a fresh spawn's only where the CLI takes
-    // a starting prompt (`freshPromptDelivery`) and the line can hold it
-    // (`freshPromptTypedForLength`). Print mode has no input box to type into.
-    // Kept off, the prompt is handed back, and the caller types it in.
+    // Kept off the line, the prompt is handed back, and the caller types it in.
+    // Print mode has no input box to type into.
     const promptText = input.prompt?.trim() ? input.prompt : null;
-    const typedForLength = promptText !== null && !input.nonInteractive
-      && freshPromptTypedForLength({ prompt: promptText, mayBeTyped: inputInAlternateScreen, agentPath: launch.agentPath, shell });
-    const promptKeptOff = promptText !== null && (input.canResume
-      ? !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: promptText, launchStrategy: launch.strategy, shell })
-      : adapter.freshPromptDelivery === 'typed' || typedForLength);
+    const promptKeptOff = promptText !== null && !promptRidesCommandLine({
+      prompt: promptText,
+      resuming: input.canResume,
+      adapter,
+      launchStrategy: launch.strategy,
+      agentPath: launch.agentPath,
+      shell,
+      mayBeTyped: inputInAlternateScreen && !input.nonInteractive,
+      onHost: isSshPlace(cliTarget),
+    });
     if (promptKeptOff) commandOptions.prompt = undefined;
     return {
       sessionDir,

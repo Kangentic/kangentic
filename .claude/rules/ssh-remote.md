@@ -107,12 +107,17 @@ process, a path tested against the wrong disk, an environment that overwrites th
   ask, so the record stays `running` and nothing is resumed or started for its task, and auto-spawn
   skips it) or gone (only the host's own list saying the agent is not alive, or a task that was deleted,
   archived or moved to To Do or Done meanwhile). Could not ask is never gone: two agents in one
-  worktree is the worst outcome here. After recovery, an agent alive on the host for this app's projects
-  that the app neither holds nor has a `running` record for is hung up (`endUnownedHostSessions`).
+  worktree is the worst outcome here. A cold open and a host's first connection can both reach one record,
+  so a session the app already holds is the answer and two takes share one, or the second would drain the
+  first and release its files off the host. A take whose registration fails adds no session: an agent with
+  no registration has no hooks, so the agent stays and the record waits. After recovery, an agent alive on
+  the host for this app's projects that the app neither holds nor has a `running` record for is hung up
+  (`endUnownedHostSessions`).
 - **Every hook record stays on the host until the app has stored it.** The helper keeps a record, marked
-  `claim`, and the relay writes it to the local inbox before removing the host's copy. A new boot
-  attaching to the helper resends what is still there (`resendUnclaimed`), because the old link's
-  retained frames are discarded. A real sshd showed five of eight records lost before this.
+  `claim`, and the relay writes it to the local inbox before removing the host's copy, and a write that
+  failed removes nothing. A new boot attaching to the helper resends what is still there
+  (`resendUnclaimed`), because the old link's retained frames are discarded. A real sshd showed five of
+  eight records lost before this.
 - **A reconnect never prompts.** `ssh` runs with `BatchMode=yes`, so a host that needs a password or a
   passphrase fails with its own words, shown as given. Kangentic never asks for a passphrase. A
   destination that `ssh` would read as an option (a leading `-`) is refused before it reaches `ssh`.
@@ -188,8 +193,9 @@ process, a path tested against the wrong disk, an environment that overwrites th
   posts to the running server with the current token and ignores the address and token the agent was
   started with (`setMcpRelayServer`), so a restart strands no agent. Every failure is a JSON-RPC error
   for the call's own id that says what happened and what to do: not taken, no answer, too large to send
-  or to receive, refused token, server off, server failed, timed out. A new failure path ends in one of
-  these, never in a wait with no bound.
+  or to receive, refused token, server off, server failed, timed out. The id is read at the top of the
+  object wherever it sits, because the MCP TypeScript SDK writes it last, and a request's length is its
+  bytes. A new failure path ends in one of these, never in a wait with no bound.
 - **Bytes cross through `remote/host-transfer.ts`, over `runCommand`.** The helper's file jobs decode
   text, and a new helper method has no handler on a daemon a relay rejoins with no version check.
   Its scripts hold a path beneath the home and refuse a symlink themselves, because `runCommand`

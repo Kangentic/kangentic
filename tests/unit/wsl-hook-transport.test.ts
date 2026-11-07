@@ -21,7 +21,7 @@ import {
   WSL_MCP_ANSWER_WAIT_SECONDS,
   WSL_MCP_NOT_TAKEN_MESSAGE,
   WSL_MCP_NO_ANSWER_MESSAGE,
-  WSL_MCP_REQUEST_MAX_CHARS,
+  WSL_MCP_REQUEST_MAX_BYTES,
   WSL_MCP_TAKE_WAIT_SECONDS,
   wslHookEventCommand,
   wslHookPaths,
@@ -861,13 +861,99 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
       const sessionDirectory = makeSessionDirectory();
       const paths = prepareWslHookTransport(sessionDirectory);
 
-      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(3, 'a'.repeat(WSL_MCP_REQUEST_MAX_CHARS + 10))}\n`);
+      const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p'], `${call(3, 'a'.repeat(WSL_MCP_REQUEST_MAX_BYTES + 10))}\n`);
 
       const [answer] = lines(result.stdout);
       expect(answer.id).toBe(3);
       expect(answer.error?.message).toMatch(/^This request is \d+ KB, more than the 146 KB that can be sent to Kangentic from a host\. Send less in one call\.$/);
       expect(fs.readdirSync(paths.requests)).toEqual([]);
       expect(fs.readFileSync(paths.signal, 'utf-8')).toBe('');
+    });
+
+    describe('the id of a request too large for the link', () => {
+      const OVER_LIMIT = 'a'.repeat(WSL_MCP_REQUEST_MAX_BYTES + 10);
+      const MCP_URL = 'http://127.0.0.1:4100/mcp/p';
+      const refused = async (line: string) => {
+        const sessionDirectory = makeSessionDirectory();
+        const paths = prepareWslHookTransport(sessionDirectory);
+        const result = await runScript(sessionDirectory, ['mcp', MCP_URL], `${line}\n`);
+        expect(fs.readdirSync(paths.requests)).toEqual([]);
+        return lines(result.stdout);
+      };
+
+      it('is found when the client writes it last, after params, as the MCP TypeScript SDK does', async () => {
+        const line = `{"method":"tools/call","params":{"name":"x","pad":"${OVER_LIMIT}"},"jsonrpc":"2.0","id":7}`;
+
+        const answers = await refused(line);
+
+        expect(answers).toHaveLength(1);
+        expect(answers[0].id).toBe(7);
+        expect(answers[0].error?.code).toBe(-32603);
+      });
+
+      it('is found when it is a string', async () => {
+        const line = `{"method":"tools/call","params":{"name":"x","pad":"${OVER_LIMIT}"},"jsonrpc":"2.0","id":"call-9"}`;
+
+        const answers = await refused(line);
+
+        expect(answers.map((answer) => answer.id)).toEqual(['call-9']);
+      });
+
+      it('is found when it sits between params and another key', async () => {
+        const line = `{"method":"tools/call","params":{"name":"x","pad":"${OVER_LIMIT}"},"id":4,"jsonrpc":"2.0"}`;
+
+        const answers = await refused(line);
+
+        expect(answers.map((answer) => answer.id)).toEqual([4]);
+      });
+
+      it('is absent from a notification, which gets no answer even when its params hold an id', async () => {
+        const line = `{"jsonrpc":"2.0","method":"notifications/x","params":{"id":5,"pad":"${OVER_LIMIT}"}}`;
+
+        const answers = await refused(line);
+
+        expect(answers).toEqual([]);
+      });
+
+      it('is not taken from a string value that quotes one, and a brace inside a string does not throw off the depth', async () => {
+        const note = 'before "id":9 } { "id": 9 after';
+        const withId = JSON.stringify({ jsonrpc: '2.0', method: 'tools/call', params: { note, pad: OVER_LIMIT }, id: 12 });
+        const withoutId = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/x', params: { note, pad: OVER_LIMIT } });
+
+        expect((await refused(withId)).map((answer) => answer.id)).toEqual([12]);
+        expect(await refused(withoutId)).toEqual([]);
+      });
+    });
+
+    // The script runs under sh, which is bash on some hosts: a length is counted in characters there when the locale is
+    // UTF-8, so a request over the limit in bytes would pass. Only a bash that counts characters here shows the fix.
+    const utf8Locale = { LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8' };
+    const bashCountsCharacters = spawnSync('bash', ['-c', 'x=€€€; echo ${#x}'], { env: { ...process.env, ...utf8Locale }, encoding: 'utf-8' }).stdout?.trim() === '3';
+
+    it.skipIf(!bashCountsCharacters)('counts a request\'s length in bytes under bash in a UTF-8 locale, so a multi-byte line over the limit is refused', async () => {
+      const sessionDirectory = makeSessionDirectory();
+      const paths = prepareWslHookTransport(sessionDirectory);
+      // Under the limit in characters, over it in bytes (3 bytes each).
+      const characters = Math.floor(WSL_MCP_REQUEST_MAX_BYTES / 3) + 1_000;
+      expect(characters).toBeLessThan(WSL_MCP_REQUEST_MAX_BYTES);
+      const line = JSON.stringify({ jsonrpc: '2.0', id: 11, method: 'tools/call', params: { note: '€'.repeat(characters) } });
+
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = spawn('bash', [wslHookPaths(sessionDirectory).script, 'mcp', 'http://127.0.0.1:4100/mcp/p'], {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env, ...utf8Locale },
+        });
+        let output = '';
+        // Without the fix the line is published and the script waits for an answer: end it rather than hang.
+        const timer = setTimeout(() => child.kill(), 8_000);
+        child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf-8'); });
+        child.on('error', reject);
+        child.on('close', () => { clearTimeout(timer); resolve(output); });
+        child.stdin.end(`${line}\n`);
+      });
+
+      expect(lines(stdout).map((answer) => answer.id)).toEqual([11]);
+      expect(fs.readdirSync(paths.requests)).toEqual([]);
     });
   });
 

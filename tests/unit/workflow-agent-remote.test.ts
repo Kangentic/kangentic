@@ -180,6 +180,24 @@ describe('a workflow\'s agent on a remote project', () => {
     expect((adapter.buildCommand.mock.calls[0][0] as { cliTarget: { kind: string } }).cliTarget.kind).toBe('ssh');
   });
 
+  // A host is Linux whatever this computer is, so a Windows desktop must not hold a host's command to its own limit.
+  it('leaves a first message too long for a Windows command line on the command for a host', async () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+    Object.defineProperty(process, 'platform', { ...realPlatform, value: 'win32' });
+    try {
+      const adapter = harness.adapter as { buildCommand: ReturnType<typeof vi.fn>; firstPromptMayBeTyped?: () => boolean };
+      adapter.firstPromptMayBeTyped = () => true;
+      vi.spyOn(context.configManager, 'load').mockReturnValue({ workflows: { agentPrompt: 'x'.repeat(40_000) } } as never);
+
+      await agent.openWorkflowAgent(context, 'home', workflowId, {});
+
+      const options = adapter.buildCommand.mock.calls[0][0] as { prompt?: string };
+      expect(options.prompt?.length).toBeGreaterThanOrEqual(40_000);
+    } finally {
+      Object.defineProperty(process, 'platform', realPlatform);
+    }
+  });
+
   function fakeSync(push: () => Promise<void> = async () => undefined) {
     return { push: vi.fn(push), abandon: vi.fn() };
   }

@@ -52,6 +52,7 @@ async function resetMock() {
     delete mockWindow.__mockSshProbeError;
     delete mockWindow.__mockSshAddError;
     delete mockWindow.__mockSshProbeGate;
+    delete mockWindow.__releaseSshProbe;
     delete mockWindow.__mockFileGate;
     delete mockWindow.__mockSshChangedKeyError;
     delete mockWindow.__mockSshTrustError;
@@ -249,6 +250,61 @@ test('stays closed when Cancel is pressed while the host key is still being read
   await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="ssh-add-trust"]')).toHaveCount(0);
   await expect(page.locator('[data-testid="ssh-add-host"]')).toBeVisible();
+});
+
+/** Holds probeHostKey open, then makes its answer a refusal so the form stays on its address step when released. */
+async function holdProbeThatWillBeRefused() {
+  await page.evaluate(() => {
+    const mockWindow = window as unknown as { __mockSshProbeGate?: Promise<void>; __releaseSshProbe?: () => void; __mockSshProbeError?: string };
+    mockWindow.__mockSshProbeGate = new Promise<void>((resolve) => { mockWindow.__releaseSshProbe = resolve; });
+    mockWindow.__mockSshProbeError = 'ssh: connect to host lab port 22: Connection refused';
+  });
+}
+
+async function releaseProbe() {
+  await page.evaluate(() => {
+    (window as unknown as { __releaseSshProbe: () => void }).__releaseSshProbe();
+  });
+}
+
+test('locks the address field of Add host while its key is being read, so the answer cannot land on another address', async () => {
+  await holdProbeThatWillBeRefused();
+  await openSshTab();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Slow');
+  const destination = page.locator('[data-testid="ssh-add-destination"]');
+  await destination.fill('slow');
+  await expect(destination).toBeEnabled();
+
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+  await expect(destination).toBeDisabled();
+
+  await releaseProbe();
+  await expect(destination).toBeEnabled();
+});
+
+test('locks the address field of a host edit while the new address\'s key is being read', async () => {
+  await page.evaluate(async () => {
+    await window.electronAPI.ssh.addHost({
+      name: 'Lab',
+      destination: 'dev@lab.example.test',
+      signIn: { method: 'config' },
+      expectedFingerprint: 'SHA256:x',
+    });
+  });
+  await openSshTab();
+  await page.locator('[data-testid="ssh-host-edit"]').click();
+  await expect(page.locator('[data-testid="ssh-edit-form"]')).toBeVisible();
+  const destination = page.locator('[data-testid="ssh-edit-destination"]');
+  await destination.fill('dev@lab2.example.test');
+  await expect(destination).toBeEnabled();
+
+  await holdProbeThatWillBeRefused();
+  await page.locator('[data-testid="ssh-edit-save"]').click();
+  await expect(destination).toBeDisabled();
+
+  await releaseProbe();
+  await expect(destination).toBeEnabled();
 });
 
 test('clears the password after a refused add, and keeps the rest of the form', async () => {

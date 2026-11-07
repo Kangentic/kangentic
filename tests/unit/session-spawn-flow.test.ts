@@ -2553,6 +2553,23 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
     });
 
+    it('throws the host\'s error for a rejoin whose registration failed, leaving no running row and the rejoined PTY alive', async () => {
+      // A rejoined agent has no failed-spawn placeholder to show for it, and a session with no registration
+      // would run with no hooks. The agent stays running on the host and the record waits for a later attempt.
+      const context = makeContext();
+      vi.mocked(context.remoteSessions!.register).mockRejectedValue(new Error('Connection refused'));
+      vi.mocked(handleSpawnFailure).mockClear();
+      const rejoinedPty = { ptyId: 7, pid: null, kill: vi.fn() };
+
+      await expect(performSpawn(remoteInput(), context, { pty: rejoinedPty as never })).rejects.toThrow('Connection refused');
+
+      expect(context.registry.get(makeInput().id!)).toBeUndefined();
+      expect(rejoinedPty.kill).not.toHaveBeenCalled();
+      expect(context.host.spawn).not.toHaveBeenCalled();
+      expect(handleSpawnFailure).not.toHaveBeenCalled();
+      expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+    });
+
     it('is released once when a quit begins while the host starts the PTY', async () => {
       const context = makeContext();
       const spawnThroughHost = PtyHostClient.prototype.spawn.bind(context.host);

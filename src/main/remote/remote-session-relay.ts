@@ -451,10 +451,11 @@ export class RemoteSessionRelay {
       }
     } catch (error) {
       // The spawn fails, so nothing releases a session that was never registered: what was pushed (the
-      // settings and the MCP config, which holds the token) is removed here, as a release would.
+      // settings and the MCP config, which holds the token) is removed here, as a release would. A reattach
+      // pushed nothing, and the running agent still reads those files.
       if (pushedPaths.length > 0) {
         await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
-        await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
+        if (!registration.reattach) await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory).catch(() => undefined);
       }
       throw error;
     }
@@ -462,7 +463,7 @@ export class RemoteSessionRelay {
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
       if (tails.size > 0) await this.options.files.unwatchFiles(registration.hostId, registration.sessionId).catch(() => undefined);
-      await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
+      if (!registration.reattach) await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
       return;
     }
 
@@ -824,9 +825,10 @@ export class RemoteSessionRelay {
       }
       // A record the host keeps until it is told it is stored: written here first, then the host's copy is
       // removed. One it sends again (a new app process attached before the removal landed) is only removed.
+      // A write that failed stored nothing, so the host keeps its copy and the next attach sends it again.
       if (event.folder === 'inbox' && event.claim === true) {
         if (!entry.storedRecords.has(event.name)) {
-          this.writeHookFile(entry, entry.localHooks.inbox, event);
+          if (!this.writeHookFile(entry, entry.localHooks.inbox, event)) return;
           entry.storedRecords.add(event.name);
           if (entry.storedRecords.size > STORED_RECORD_LIMIT) entry.storedRecords.delete(entry.storedRecords.values().next().value as string);
         }
@@ -863,20 +865,22 @@ export class RemoteSessionRelay {
     }
   }
 
-  /** Write one delivered file into the local hook folder and wake the reader that watches it. */
-  private writeHookFile(entry: Registered, folder: string, event: HookFileEvent): void {
+  /** Write one delivered file into the local hook folder and wake the reader that watches it. False when it was not written. */
+  private writeHookFile(entry: Registered, folder: string, event: HookFileEvent): boolean {
     try {
       writeAtomicallySync(path.join(folder, event.name), event.content);
-      // The reader watches this file, as it does for a distro; a byte is what wakes it.
-      try {
-        // sync-write-ok: the reader also polls, so a missed byte costs 250 ms.
-        fsSync.appendFileSync(entry.localHooks.signal, 'x');
-      } catch {
-        // The polling reader still finds the file.
-      }
     } catch (error) {
       this.options.log?.(`could not write a hook file for ${event.sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
+    // The reader watches this file, as it does for a distro; a byte is what wakes it.
+    try {
+      // sync-write-ok: the reader also polls, so a missed byte costs 250 ms.
+      fsSync.appendFileSync(entry.localHooks.signal, 'x');
+    } catch {
+      // The polling reader still finds the file.
+    }
+    return true;
   }
 
   /**

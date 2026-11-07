@@ -23,8 +23,14 @@ vi.mock('../../src/main/browser/browser-pane-driver', () => ({
   validateNavigationUrl: vi.fn((url: string) => ({ ok: true, url })),
   navigateGuest: vi.fn(),
 }));
-vi.mock('../../src/main/browser/browser-pane-registry', () => ({ browserPaneRegistry: { list: vi.fn(() => []) } }));
+vi.mock('../../src/main/browser/browser-pane-registry', () => ({
+  browserPaneRegistry: {
+    list: vi.fn(() => []),
+    listForProject: vi.fn(() => ({ panes: [], otherProjectPaneCount: 0, unknownProjectPaneCount: 0 })),
+  },
+}));
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
+  getNetworkEntries: vi.fn(() => []),
   dropFilesOnSelector: vi.fn(async () => true),
   getOuterHtml: vi.fn(async () => '<p>hello</p>'),
   runtimeEvaluate: vi.fn(async () => ({ value: 'page text', error: null })),
@@ -40,6 +46,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { dropFilesOnSelector } from '../../src/main/browser/cdp/cdp';
+import { withGuest } from '../../src/main/browser/browser-pane-driver';
 import { registerBrowserTools, type BrowserToolDependencies } from '../../src/main/agent/mcp-http/browser-tools';
 import type { DeliveredCapture } from '../../src/main/agent/mcp-http/browser-capture-file';
 
@@ -105,6 +112,51 @@ describe('kangentic_browser_drop_files on a remote project', () => {
     await client.callTool({ name: 'kangentic_browser_drop_files', arguments: { selector: '#zone', paths: ['/tmp/x.txt'] } });
 
     expect(dropFilesOnSelector).toHaveBeenCalledWith(expect.anything(), '#zone', ['/tmp/x.txt']);
+  });
+});
+
+// The pane is on this computer wherever the agent runs, so `localhost` in a pane URL is the user's computer. Without
+// the label an agent on a host reads it as its own machine and reports its dev server unreachable or reachable wrongly.
+describe('a pane URL result is labeled as this computer\'s', () => {
+  it('navigate says location local', async () => {
+    await connect({});
+
+    const result = await client.callTool({ name: 'kangentic_browser_navigate', arguments: { url: 'http://localhost:5173/' } });
+
+    expect(result.structuredContent).toMatchObject({ url: 'http://localhost:5173/', location: 'local' });
+  });
+
+  it('history back says location local', async () => {
+    await connect({});
+    vi.mocked(withGuest).mockImplementationOnce((async (_request: unknown, body: (guest: unknown, entry: unknown) => Promise<unknown>) => ({
+      ok: true,
+      data: await body({
+        navigationHistory: { canGoBack: () => true, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() },
+        once: (_event: string, listener: () => void) => listener(),
+        off: vi.fn(),
+        getURL: () => 'http://localhost:5173/previous',
+      }, {}),
+    })) as never);
+
+    const result = await client.callTool({ name: 'kangentic_browser_history', arguments: { direction: 'back' } });
+
+    expect(result.structuredContent).toMatchObject({ url: 'http://localhost:5173/previous', location: 'local' });
+  });
+
+  it('the network log says location local', async () => {
+    await connect({});
+
+    const result = await client.callTool({ name: 'kangentic_browser_network', arguments: {} });
+
+    expect(result.structuredContent).toMatchObject({ returned: 0, location: 'local' });
+  });
+
+  it('list_panes says location local, so a pane URL is not read as the host\'s', async () => {
+    await connect({});
+
+    const result = await client.callTool({ name: 'kangentic_browser_list_panes', arguments: {} });
+
+    expect(result.structuredContent).toMatchObject({ projectId: 'p1', location: 'local' });
   });
 });
 

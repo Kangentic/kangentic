@@ -178,6 +178,23 @@ describe('markResumeMiss', () => {
     expect(failedAt('resume-1')).toBeNull();
   });
 
+  it('leaves a record on a host unmarked: the copy here cannot show that a conversation had no turns', async () => {
+    const hostTarget = JSON.stringify({ kind: 'ssh', hostId: 'host-a', home: '/home/dev', shellName: 'bash', localHome: '', roots: [] });
+    database.prepare('UPDATE sessions SET cli_target = ? WHERE id = ?').run(hostTarget, 'resume-1');
+
+    await mark(fakeContext('conversation_missing'));
+
+    expect(failedAt('resume-1')).toBeNull();
+  });
+
+  it('still marks the same record once it has no cli_target, so the host case cannot pass vacuously', async () => {
+    database.prepare('UPDATE sessions SET cli_target = NULL WHERE id = ?').run('resume-1');
+
+    await mark(fakeContext('conversation_missing'));
+
+    expect(failedAt('resume-1')).not.toBeNull();
+  });
+
   it('never throws: a failed read must not cost the listener its retry', async () => {
     const context = fakeContext(undefined);
     vi.mocked(context.sessionManager.launchOutputClass).mockRejectedValue(new Error('host gone'));

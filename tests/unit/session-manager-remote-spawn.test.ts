@@ -25,6 +25,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { AgentCommandTooLongError } from '../../src/main/pty/spawn/pty-spawn';
+import type { AgentParser } from '../../src/shared/types';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
 import type { PtyHostCommand, PtyHostEvent, PtyHostMethod, PtyHostRequestMap, RendererPort } from '../../src/main/pty/host/protocol';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
@@ -364,6 +366,65 @@ describe('spawning an agent session on a host', () => {
     await waitFor(() => !rig.relay.has('s1'));
   });
 
+  // The spawn refuses a command its shell cannot start (`commandFitsShell`). A host is Linux whatever this computer is,
+  // so Windows' command-line limit must not refuse a launch on a host: without it a long opening prompt that fits a
+  // host's 131,072 bytes would be refused as `prompt-too-long` from a Windows computer.
+  describe('a command over the Windows command-line limit and under Linux\'s', () => {
+    const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const LONG_COMMAND = `claude ${'x'.repeat(40_000)}`;
+    const agentParser = {
+      detectFirstOutput: () => false,
+      removeHooks: vi.fn(),
+      runtime: { activity: { kind: 'pty' as const, detectIdle: () => false }, sessionId: { fromOutput: () => null } },
+    } as unknown as AgentParser;
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', hostPlatform);
+    });
+
+    function asWindows(): void {
+      Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+    }
+
+    it('is not refused for a launch on a host, when this computer is Windows', async () => {
+      const rig = await makeRig();
+      asWindows();
+
+      const session = await rig.manager.spawn({
+        id: 's1',
+        taskId: 'task-1',
+        projectId: 'project-1',
+        command: LONG_COMMAND,
+        cwd: shellFolder,
+        statusOutputPath: rig.statusPath,
+        eventsOutputPath: rig.eventsPath,
+        exitSequence: ['\x03'],
+        shell: 'zsh',
+        agentParser,
+        cliTarget: toStoredCliTarget(rig.place),
+        remote: { hostId: 'host-a', cwd: hostProject.replace(/\\/g, '/'), shellName: 'zsh' },
+      });
+
+      expect(session.status).toBe('running');
+      expect(rig.helperRig.spawnPty).toHaveBeenCalledTimes(1);
+    });
+
+    it('is refused for the same command on this computer as Windows (control)', async () => {
+      const rig = await makeRig();
+      asWindows();
+
+      await expect(rig.manager.spawn({
+        id: 's2',
+        taskId: 'task-2',
+        projectId: 'project-1',
+        command: LONG_COMMAND,
+        cwd: shellFolder,
+        shell: 'zsh',
+        agentParser,
+      })).rejects.toBeInstanceOf(AgentCommandTooLongError);
+    });
+  });
+
   it('ends the spawn as an exited session, not a throw, when the host has no connection, and starts nothing', async () => {
     const rig = await makeRig();
     rig.manager.setRemoteSessionRelay(new RemoteSessionRelay({
@@ -473,5 +534,75 @@ describe('taking back an agent a host kept running while the app was closed', ()
 
     expect(session).toBeNull();
     expect(second.manager.listSessions()).toEqual([]);
+  });
+
+  /** The times the host was asked to hand an agent back, from the router every request passes through. */
+  function adoptAsks(handleRequest: { mock: { calls: unknown[][] } }): number {
+    return handleRequest.mock.calls.filter((call) => call[0] === 'remote' && (call[1] as { op?: string }).op === 'adopt').length;
+  }
+
+  describe('a record two recovery passes both ask for', () => {
+    it('returns the session already held as running, and does not ask the host a second time or drain the first', async () => {
+      const { first, second } = await relaunch();
+      const taken = await second.manager.adoptRemoteSession(adoptInput(second));
+      const handleRequest = vi.spyOn(second.router, 'handleRequest');
+
+      const again = await second.manager.adoptRemoteSession(adoptInput(second));
+
+      expect(taken?.status).toBe('running');
+      expect(again?.id).toBe('s1');
+      expect(again?.status).toBe('running');
+      expect(adoptAsks(handleRequest)).toBe(0);
+      expect(second.manager.listSessions().map((entry) => [entry.id, entry.status])).toEqual([['s1', 'running']]);
+      expect(first.helperRig.fakes[0].kill).not.toHaveBeenCalled();
+    });
+
+    it('shares one take between two calls in the same tick: the host is asked once and the first session is not drained', async () => {
+      const { first, second } = await relaunch();
+      const handleRequest = vi.spyOn(second.router, 'handleRequest');
+      const register = vi.spyOn(second.relay, 'register');
+
+      const [one, other] = await Promise.all([
+        second.manager.adoptRemoteSession(adoptInput(second)),
+        second.manager.adoptRemoteSession(adoptInput(second)),
+      ]);
+
+      expect(adoptAsks(handleRequest)).toBe(1);
+      expect(register).toHaveBeenCalledTimes(1);
+      expect(one?.id).toBe('s1');
+      expect(other?.id).toBe('s1');
+      expect(second.manager.listSessions().map((entry) => [entry.id, entry.status])).toEqual([['s1', 'running']]);
+      expect(first.helperRig.fakes[0].kill).not.toHaveBeenCalled();
+    });
+
+    it('leaves nothing in flight when the take fails, so a later call asks the host again', async () => {
+      const { second } = await relaunch();
+      const handleRequest = vi.spyOn(second.router, 'handleRequest');
+      handleRequest.mockImplementationOnce(async () => { throw new Error('the link dropped'); });
+
+      await expect(second.manager.adoptRemoteSession(adoptInput(second))).rejects.toThrow('the link dropped');
+      expect(adoptAsks(handleRequest)).toBe(1);
+
+      const retried = await second.manager.adoptRemoteSession(adoptInput(second));
+
+      expect(adoptAsks(handleRequest)).toBe(2);
+      expect(retried?.status).toBe('running');
+    });
+  });
+
+  it('adds no session, forgets the handle and leaves the agent running when the registration with the relay fails', async () => {
+    const { first, second } = await relaunch();
+    const handles = (second.manager as unknown as { host: { handles: Map<number, unknown> } }).host.handles;
+    const handlesBefore = handles.size;
+    vi.spyOn(second.relay, 'register').mockRejectedValueOnce(new Error('the host refused the registration'));
+
+    await expect(second.manager.adoptRemoteSession(adoptInput(second))).rejects.toThrow('the host refused the registration');
+
+    expect(second.manager.listSessions()).toEqual([]);
+    expect(handles.size).toBe(handlesBefore);
+    expect(first.helperRig.fakes[0].kill).not.toHaveBeenCalled();
+    // The agent is still there for the next attempt, which takes it back.
+    const retried = await second.manager.adoptRemoteSession(adoptInput(second));
+    expect(retried?.status).toBe('running');
   });
 });

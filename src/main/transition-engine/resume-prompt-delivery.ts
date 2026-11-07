@@ -106,7 +106,32 @@ export function freshPromptTypedForLength(input: {
   mayBeTyped: boolean;
   agentPath: string;
   shell: string;
+  /** The agent runs on an SSH host: a host is always Linux, whatever this computer is. */
+  onHost?: boolean;
 }): boolean {
   return input.mayBeTyped && !isSlashCommand(input.prompt)
-    && !freshPromptRidesCommandLine({ prompt: input.prompt, agentPath: input.agentPath, shell: input.shell, platform: process.platform });
+    && !freshPromptRidesCommandLine({ prompt: input.prompt, agentPath: input.agentPath, shell: input.shell, platform: input.onHost ? 'linux' : process.platform });
+}
+
+/**
+ * Whether a prompt rides the start's command line, for the two places that build one: a task's spawn and a
+ * workflow's own agent. Kept off it, the prompt is handed back for the caller to type in once the agent is ready.
+ * A resume's rides only where it arrives whole (`resumePromptRidesCommandLine`), and a fresh start's only where the
+ * CLI takes a starting prompt (`freshPromptDelivery`) and the line can hold it (`freshPromptTypedForLength`).
+ */
+export function promptRidesCommandLine(input: {
+  prompt: string;
+  resuming: boolean;
+  adapter: Pick<AgentAdapter, 'resumePromptDelivery' | 'freshPromptDelivery'>;
+  launchStrategy: ShimLaunchStrategy;
+  agentPath: string;
+  shell: string;
+  /** `firstPromptMayBeTyped`'s answer for this launch, false for a run with no input box to type into. */
+  mayBeTyped: boolean;
+  onHost: boolean;
+}): boolean {
+  if (input.resuming) {
+    return resumePromptRidesCommandLine({ delivery: input.adapter.resumePromptDelivery, prompt: input.prompt, launchStrategy: input.launchStrategy, shell: input.shell });
+  }
+  return input.adapter.freshPromptDelivery !== 'typed' && !freshPromptTypedForLength(input);
 }

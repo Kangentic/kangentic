@@ -337,10 +337,8 @@ export function SshTab() {
 
   const editSignInOptions = useMemo<SegmentedControlOption<EditSignInMethod>[]>(() => [
     { value: 'keep', label: t`Keep`, tip: t`Keep signing in the way the host does now`, testId: 'ssh-edit-signin-keep' },
-    { value: 'config', label: t`My SSH config`, tip: t`Use your own ssh setup: its config, agent and keys, as a terminal does`, testId: 'ssh-edit-signin-config' },
-    { value: 'key-file', label: t`Key file`, tip: t`A private key file; Kangentic keeps a copy in its own folder`, testId: 'ssh-edit-signin-key-file' },
-    { value: 'create-key', label: t`Password`, tip: t`Use the password once to add a key Kangentic makes. It is never stored`, testId: 'ssh-edit-signin-password' },
-  ], [t]);
+    ...signInOptions.map((option) => ({ ...option, testId: option.testId?.replace('ssh-signin-', 'ssh-edit-signin-') })),
+  ], [t, signInOptions]);
 
   function resetAdd(): void {
     addSessionRef.current += 1;
@@ -669,6 +667,7 @@ export function SshTab() {
                             }}
                             suggestions={configHosts}
                             testId="ssh-edit-destination"
+                            disabled={editBusy}
                           />
                         </label>
 
@@ -828,6 +827,7 @@ export function SshTab() {
                       suggestions={configHosts}
                       placeholder={DESTINATION_EXAMPLE}
                       testId="ssh-add-destination"
+                      disabled={busy}
                     />
                   </label>
                   <p className="text-xs text-fg-faint">

@@ -1421,7 +1421,7 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   const probeFolder = async (folderPath: string): Promise<ProjectPathProbe> => {
     const normalized = path.resolve(folderPath);
-    const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
+    const existingProject = context.projectRepo.list().find((candidate) => path.resolve(candidate.path) === normalized);
     // A remote project's folder here is an empty stand-in, so its git is read on the host. A host that cannot
     // answer rejects, which the caller reads as "unknown", never as "not a repository".
     const hostRunner = remoteGitRunnerFor(normalized);

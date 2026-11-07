@@ -1,6 +1,7 @@
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { hostOfRecord } from '../../remote/record-host';
 import { lineageHadTurns, resolveResumeLineage } from '../../transition-engine/resume-conversation-guard';
 import type { IpcContext } from '../ipc-context';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -26,6 +27,9 @@ import { withTaskLock } from '../task-lifecycle-lock';
  * next Resume has to heal from. It takes the task lock, which the pause has released,
  * and a newer record means a person started the task in the gap, so that record
  * judges itself. Never throws: a report must not cost the listener its retry.
+ *
+ * A session on a host is left unmarked. Only the host shows that a conversation had turns: the evidence here is a
+ * copy that can be empty or stale, and read as "no turns" it would replay the prompt into one that ran.
  */
 export async function markResumeMiss(
   context: IpcContext,
@@ -43,7 +47,7 @@ export async function markResumeMiss(
     await withTaskLock(taskId, async () => {
       const sessionRepo = new SessionRepository(getProjectDb(projectId));
       const latest = sessionRepo.getLatestForTask(taskId);
-      if (latest?.id !== sessionId || !latest.agent_session_id) return;
+      if (latest?.id !== sessionId || !latest.agent_session_id || hostOfRecord(latest)) return;
       const { lineage } = resolveResumeLineage({
         taskRecords: sessionRepo.listForTaskNewestFirst(taskId),
         retiringRecordId: sessionId,

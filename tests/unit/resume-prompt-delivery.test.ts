@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   RESUME_PROMPT_COMMAND_LINE_CAP,
   freshPromptTypedForLength,
+  promptRidesCommandLine,
   resumePromptRidesCommandLine,
 } from '../../src/main/transition-engine/resume-prompt-delivery';
 import { commandLineLength } from '../../src/main/agent/shared/prompt-budget';
@@ -281,5 +282,79 @@ describe('freshPromptTypedForLength', () => {
 
   it('is false for the same prompt through a native program, whose line is longer', () => {
     expect(typed({ agentPath: NATIVE_CLI })).toBe(false);
+  });
+
+  describe('on an SSH host', () => {
+    const HOST_AGENT = '/home/dev/.local/bin/agent';
+    // Over the Windows limit (32,766 less the reserve), well under Linux's 131,072 bytes.
+    const OVER_WINDOWS_UNDER_LINUX = 'x'.repeat(40_000);
+
+    it('types a prompt over the Windows limit when this computer is Windows and the agent is not on a host', () => {
+      expect(typed({ prompt: OVER_WINDOWS_UNDER_LINUX, agentPath: HOST_AGENT, shell: 'bash' })).toBe(true);
+    });
+
+    it('keeps the same prompt on the command with onHost, since a host is Linux whatever this computer is', () => {
+      expect(typed({ prompt: OVER_WINDOWS_UNDER_LINUX, agentPath: HOST_AGENT, shell: 'bash', onHost: true })).toBe(false);
+    });
+
+    it('still types a prompt over the Linux limit on a host', () => {
+      expect(typed({ prompt: 'x'.repeat(140_000), agentPath: HOST_AGENT, shell: 'bash', onHost: true })).toBe(true);
+    });
+  });
+});
+
+describe('promptRidesCommandLine', () => {
+  const hostPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...hostPlatform, value: 'win32' });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', hostPlatform);
+  });
+
+  function ridesLine(overrides: Partial<Parameters<typeof promptRidesCommandLine>[0]>): boolean {
+    return promptRidesCommandLine({
+      prompt: 'Fix the login flow',
+      resuming: false,
+      adapter: { resumePromptDelivery: 'command-line', freshPromptDelivery: 'command-line' },
+      launchStrategy: 'unchanged',
+      agentPath: 'C:\\Users\\dev\\AppData\\Local\\Programs\\agent.exe',
+      shell: 'powershell',
+      mayBeTyped: true,
+      onHost: false,
+      ...overrides,
+    });
+  }
+
+  it('sends a resume by the resume rules: a delivery that is not command-line never rides', () => {
+    expect(ridesLine({ resuming: true })).toBe(true);
+    expect(ridesLine({ resuming: true, adapter: { resumePromptDelivery: 'typed', freshPromptDelivery: 'command-line' } })).toBe(false);
+  });
+
+  it('sends a resume by the resume cap, not the fresh limit', () => {
+    expect(ridesLine({ resuming: true, prompt: 'x'.repeat(RESUME_PROMPT_COMMAND_LINE_CAP + 1) })).toBe(false);
+    expect(ridesLine({ resuming: false, prompt: 'x'.repeat(RESUME_PROMPT_COMMAND_LINE_CAP + 1) })).toBe(true);
+  });
+
+  it('keeps a fresh start off the command on an adapter whose freshPromptDelivery is typed', () => {
+    expect(ridesLine({ adapter: { resumePromptDelivery: 'command-line', freshPromptDelivery: 'typed' } })).toBe(false);
+  });
+
+  it('keeps a long fresh prompt off the command, and a short one on it', () => {
+    expect(ridesLine({ prompt: 'x'.repeat(40_000) })).toBe(false);
+    expect(ridesLine({})).toBe(true);
+  });
+
+  it('rides however long when the launch may not be typed (print mode), since the spawn refuses it instead', () => {
+    expect(ridesLine({ prompt: 'x'.repeat(40_000), mayBeTyped: false })).toBe(true);
+  });
+
+  it('rides on a host at a length that would be typed from this Windows computer', () => {
+    const prompt = 'x'.repeat(40_000);
+    const hostInput = { prompt, agentPath: '/home/dev/.local/bin/agent', shell: 'bash' };
+    expect(ridesLine({ ...hostInput, onHost: false })).toBe(false);
+    expect(ridesLine({ ...hostInput, onHost: true })).toBe(true);
   });
 });

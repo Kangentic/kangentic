@@ -28,6 +28,7 @@ import { SshHostAdmin, type SshHostAdminDeps } from '../src/main/remote/ssh-host
 import { createHostKey, runProgram, type RunProgram, type SshSetupDeps } from '../src/main/remote/ssh-setup';
 import type { HelperMethod, HelperRequestMap } from '../src/main/remote/protocol/messages';
 import type { SshHost } from '../src/shared/types';
+import { check, finishChecks, sleep, waitFor } from './ssh-rig-checks';
 
 interface Options {
   sshPath: string;
@@ -47,23 +48,6 @@ const HIDDEN_PROJECT = 'rig-hidden-project';
 const OTHER_PROJECT = 'rig-other-project';
 const AGENT_MARK = 'sleep 7913';
 let remoteCommand = '';
-const checks: Array<{ name: string; passed: boolean; detail?: string }> = [];
-
-function check(name: string, passed: boolean, detail?: string): void {
-  checks.push({ name, passed, ...(detail ? { detail } : {}) });
-  process.stderr.write(`[${passed ? 'ok' : 'FAILED'}] ${name}${detail ? `: ${detail}` : ''}\n`);
-}
-
-const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitFor(description: string, condition: () => boolean, timeoutMs: number): Promise<void> {
-  const started = Date.now();
-  while (!condition()) {
-    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${description}`);
-    await sleep(20);
-  }
-}
-
 function openLink(): { link: RemoteLink; connected: () => boolean } {
   let state: RemoteLinkState = 'connecting';
   const streams: Duplex[] = [];
@@ -246,9 +230,7 @@ async function main(): Promise<void> {
   const run = createSshRunner({ sshPath: options.sshPath, args: options.sshArgs });
   remoteCommand = (await installHost(run, options.asset)).relayCommand;
   await leftoverSessions();
-  const failed = checks.filter((entry) => !entry.passed);
-  process.stdout.write(`${JSON.stringify({ allPassed: failed.length === 0, passed: checks.length - failed.length, of: checks.length, failed }, null, 2)}\n`);
-  process.exit(failed.length === 0 ? 0 : 1);
+  finishChecks();
 }
 
 main().catch((error: unknown) => {
