@@ -674,6 +674,14 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
       expect(wslEnvEntries()).toContain('USERPROFILE/p');
     });
 
+    it('lists FORCE_HYPERLINK, so a Claude in a WSL shell draws links too', async () => {
+      const context = makeContext();
+      vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+      await performSpawn(makeInput({ taskId: 'task-wsl-links', env: { FORCE_HYPERLINK: '1' } }), context);
+
+      expect(wslEnvEntries()).toContain('FORCE_HYPERLINK/u');
+    });
+
     it('does not list a renderer variable the input env does not carry', async () => {
       const context = makeContext();
       vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');

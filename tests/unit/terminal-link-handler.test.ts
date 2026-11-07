@@ -3,10 +3,28 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createTerminalLinkHandler } from '../../src/renderer/utils/terminal-link-handler';
 
-const fakeEvent = {} as MouseEvent;
+const fakeEvent = { ctrlKey: true, metaKey: false } as MouseEvent;
 const fakeRange = {} as never;
 
 describe('createTerminalLinkHandler', () => {
+  it('opens on Ctrl or Cmd, and a plain click stays the TUI\'s', () => {
+    const openExternal = vi.fn();
+    const handler = createTerminalLinkHandler(openExternal);
+    handler.activate({ ctrlKey: false, metaKey: false } as MouseEvent, 'https://kangentic.com', fakeRange);
+    expect(openExternal).not.toHaveBeenCalled();
+    handler.activate({ ctrlKey: false, metaKey: true } as MouseEvent, 'https://kangentic.com', fakeRange);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the gesture about a hover, so an OSC 8 click does not also reach the TUI', () => {
+    const gesture = { noteLinkHover: vi.fn(), noteLinkLeave: vi.fn() };
+    const handler = createTerminalLinkHandler(vi.fn(), gesture);
+    handler.hover?.(fakeEvent, 'https://kangentic.com', fakeRange);
+    handler.leave?.(fakeEvent, 'https://kangentic.com', fakeRange);
+    expect(gesture.noteLinkHover).toHaveBeenCalledTimes(1);
+    expect(gesture.noteLinkLeave).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ['http', 'http://localhost:3000'],
     ['https', 'https://kangentic.com/docs'],

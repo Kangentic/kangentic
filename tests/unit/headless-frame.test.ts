@@ -54,6 +54,33 @@ function readScrollRegion(terminal: Terminal): { top: number; bottom: number } {
  * pty-buffer-manager.test.ts.
  */
 describe('HeadlessFrameBuffer', () => {
+  describe('OSC 8 links', () => {
+    interface ParserAccessor {
+      terminal: { _core: { buffer: { markers: unknown[] } } };
+    }
+
+    /** A fullscreen agent's link, drawn on every row in turn as its conversation scrolls. */
+    const scrollingLink = (buffer: HeadlessFrameBuffer): void => {
+      buffer.write('\x1b[?1049h');
+      for (let row = 1; row <= 20; row += 1) {
+        buffer.write(`\x1b[${row};1H\x1b]8;id=u-1;https://example.com/a\x1b\\https://example.com/a\x1b]8;;\x1b\\\x1b[K`);
+      }
+    };
+
+    it('keeps no marker per row, which the alternate screen would never release', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      scrollingLink(buffer);
+      await buffer.serialize();
+      expect((buffer as unknown as ParserAccessor).terminal._core.buffer.markers).toHaveLength(0);
+    });
+
+    it('still serializes the text a link labels', async () => {
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      scrollingLink(buffer);
+      expect(await buffer.serialize()).toContain('https://example.com/a');
+    });
+  });
+
   describe('serialize', () => {
     it('rejects, rather than throwing uncaught, when the serializer throws mid-callback', async () => {
       const buffer = new HeadlessFrameBuffer(80, 24);

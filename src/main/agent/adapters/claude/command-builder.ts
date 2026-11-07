@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { HYPERLINK_ENV_KEY } from '../../../../shared/hyperlink-env';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { toClaudeModelArgument } from './model-display-name';
@@ -304,6 +305,33 @@ export class CommandBuilder {
       if (Object.keys(usersOwn).length > 0) return usersOwn;
     }
     return this.fullscreenByDefault(options) ? { CLAUDE_CODE_NO_FLICKER: '1' } : null;
+  }
+
+  /**
+   * Tells Claude this terminal renders OSC 8 hyperlinks, which it cannot detect.
+   * On Windows it looks for `WT_SESSION`, elsewhere for a known `TERM_PROGRAM`, and
+   * Kangentic's terminal has neither, so a Kangentic started from anywhere but a
+   * Windows Terminal tab showed sessions with no links at all. Measured on 2.1.319
+   * under a ConPTY: no OSC 8 without either variable, the same OSC 8 with
+   * `WT_SESSION` or this, and an identical capability log (`XTVERSION: no reply`,
+   * `DECSTBM: gated`), so it does not reopen the gate `pty-spawn.ts` keeps shut.
+   *
+   * A regex over the screen cannot stand in for it: Claude wraps a long URL itself,
+   * indenting the next row, while OSC 8 carries the whole target on both rows.
+   * Claude only, because that is what was measured: other agents' output is parsed
+   * by their adapters' detectors, and a TUI that starts drawing links changes those
+   * bytes. A user's own value wins, and is inherited, so it is not repeated here. A
+   * Claude installed in a WSL distro takes no value from this machine's environment,
+   * as with `rendererEnvironment`. It gets this one across `WSLENV`, and the distro's
+   * shell profile overrides it, since the profile runs after `WSLENV` sets it.
+   */
+  hyperlinkEnvironment(
+    options: Pick<CommandOptions, 'cliTarget'>,
+    environment: NodeJS.ProcessEnv = process.env,
+  ): Record<string, string> | null {
+    const usersOwn = environment[HYPERLINK_ENV_KEY];
+    if (!options.cliTarget && usersOwn !== undefined && usersOwn !== '') return null;
+    return { [HYPERLINK_ENV_KEY]: '1' };
   }
 
   /**

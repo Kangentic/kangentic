@@ -1,3 +1,4 @@
+import { TRAILING_PARTIAL_ESCAPE, carryForPartialEscape } from '../../../shared/ansi-strip';
 import { findSpawnHandoffClear, hasPrintableOutput, stripAnsiSequences } from '../buffer/pty-buffer-manager';
 
 /**
@@ -16,21 +17,6 @@ import { findSpawnHandoffClear, hasPrintableOutput, stripAnsiSequences } from '.
  */
 export const AGENT_READY_CEILING_MS = 15_000;
 
-/**
- * An escape sequence cut off at the end of a chunk: a lone ESC, an
- * unterminated CSI, or a string (OSC, DCS, APC, PM, SOS) still waiting for its
- * terminator. It is held for the next chunk, so neither half of a split
- * sequence is read as text: a window title's path split across two chunks
- * would otherwise count as the agent's first output.
- */
-const TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[\x30-\x3f]*[\x20-\x2f]*|[\]P_^X][^\x07\x1b]*\x1b?|[\x20-\x2f]+)?$/;
-
-/**
- * A carried partial longer than this keeps only its introducer and a trailing
- * ESC (see carryFor), so the carry never grows past it.
- */
-const MAX_CARRY_LENGTH = 4096;
-
 /** nF escapes such as the charset designation `\x1b(B` that `sgr0` emits. */
 const DESIGNATION_ESCAPE = /\x1b[\x20-\x2f]+[\x30-\x7e]/g;
 
@@ -47,20 +33,6 @@ interface AgentOutputState {
 
 function hasVisibleText(text: string): boolean {
   return /\S/.test(stripAnsiSequences(text.replace(DESIGNATION_ESCAPE, '')));
-}
-
-/**
- * What to hold over from a partial escape. A long one keeps its introducer
- * (`\x1b]`, `\x1b[`, ...) and a trailing ESC that may start its terminator.
- * The payload between them never decides whether text is visible, and keeping
- * the introducer is what makes the rest of the sequence, when it ends in a
- * later chunk, still read as a sequence. Dropping the whole partial read that
- * rest as text: a window title longer than the cap, such as cmd's title
- * carrying a long agent command line, lifted the overlay on the shell.
- */
-function carryFor(partial: string): string {
-  if (partial.length <= MAX_CARRY_LENGTH) return partial;
-  return partial.slice(0, 2) + (partial.endsWith('\x1b') ? '\x1b' : '');
 }
 
 /**
@@ -120,7 +92,7 @@ export class AgentOutputTracker {
     const combined = state.carry + data;
     const partial = combined.match(TRAILING_PARTIAL_ESCAPE);
     const complete = partial ? combined.slice(0, partial.index) : combined;
-    state.carry = partial ? carryFor(partial[0]) : '';
+    state.carry = partial ? carryForPartialEscape(partial[0]) : '';
     let afterHandoff = complete;
     if (!state.handoffSeen) {
       const handoff = findSpawnHandoffClear(complete, state.shellTextSeen);

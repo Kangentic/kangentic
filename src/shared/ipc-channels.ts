@@ -136,6 +136,8 @@ export const IPC = {
   /** The Reset terminal action: clear stuck terminal modes in place. */
   SESSION_RESET_TERMINAL: 'session:resetTerminal',
   SESSION_LIST: 'session:list',
+  SESSION_RESOLVE_LINK_PATHS: 'session:resolveLinkPaths',
+  SESSION_REVEAL_LINK_PATH: 'session:revealLinkPath',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   /**
    * Renderer -> main (send): a renderer asks for its direct port to the pty

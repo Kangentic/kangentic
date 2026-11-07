@@ -394,6 +394,14 @@ passes one (the renderer variables from `rendererEnvironment`, a user's own opt-
 WSL shell lists them in `WSLENV`. An explicit value already present in the environment always wins
 for each, and non-Claude agents ignore them.
 
+`FORCE_HYPERLINK=1` is not a `CLAUDE_CODE_*` key, so nothing strips it. The Claude adapter sets it
+(`hyperlinkEnvironment`), and a WSL shell lists it in `WSLENV` too. A user's own value wins, `0`
+included. A Claude installed in a WSL distro takes no value from this machine, so a value for it goes
+in the distro's shell profile, which runs after `WSLENV` sets it. Claude's tool shells inherit it. `supports-hyperlinks` reads it ahead of its TTY check, so a
+tool built on that package prints OSC 8 into a pipe or a redirected file there, and Claude hands
+those bytes to the model unstripped (measured on 2.1.319). See
+[Terminal links](../architecture/sessions/terminal-ownership.md#terminal-links).
+
 - `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT`: defaulted to `1` on **win32 only**, matching what Claude
   Code's own agent views do on Windows, because the fullscreen TUI otherwise intermittently drops
   history entries from its incremental scrolled-view updates.

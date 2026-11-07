@@ -23,6 +23,8 @@ sources:
 | `session:resize` | invoke | Resize PTY (cols/rows) |
 | `session:resetTerminal` | invoke | Clear stuck terminal modes in the session's stream and repaint by resizing, never by writing to the PTY |
 | `session:list` | invoke | Fetch all sessions |
+| `session:resolveLinkPaths` | invoke | Which paths a session printed exist on this computer, in request order. Main resolves each against the session's folder and place, and answers false without a read for a network share or a session on a remote host |
+| `session:revealLinkPath` | invoke | Show a path a session printed in the file manager, resolving it again in main. False when nothing is there |
 | `session:getScrollback` | invoke | Get terminal scrollback buffer. Goes through main so it stays behind this renderer's resizes; the pty host answers on the renderer's port, after the output it flushed before the sample, and the invoke itself returns the data only when the host held no port for that renderer |
 | `session:getFirstOutput` | invoke | Fetch the agent-on-screen cache (sessionId -> true, `SessionManager.markAgentReady`) so `syncSessions` can rebuild `sessionFirstOutput` after an HMR reload |
 | `session:getUsage` | invoke | Fetch session usage (tokens, cost). Optional `projectId` scopes to one project. |

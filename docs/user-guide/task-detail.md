@@ -36,6 +36,10 @@ The amber idle indicator replaces the previous auto-focus behavior (which switch
 
 The leftmost tab shows an activity log - structured events from all sessions. This is a plain list (not a terminal) showing tool calls, idle events, and session state changes.
 
+### Links
+
+Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your browser. The same click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and a plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
+
 ### Clipboard Paste
 
 Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary PNG, capped at a 2000px long edge so a 4K or 5K grab does not land on disk at full size. The cap costs no detail - it sits at the point above which the extra pixels are discarded before an agent ever sees them. Saved pastes are pruned by age and count, so the temp directory no longer grows for the life of the install. The saved file's path is then pasted into the terminal the way a native terminal delivers a dropped file: as a bracketed paste when the program in the terminal asked for one, as plain text otherwise. With Claude Code in the foreground, the pasted path becomes an `[Image #1]` chip and the image lands in your next message directly, with no `Read` tool call and no extra model round trip; Claude still knows the file's path on disk. Kangentic's own capture is more reliable than the CLI's clipboard reader, which can silently miss a Windows Snipping Tool image. Gemini CLI and OpenCode attach the pasted capture the same way. Agents that do not attach from a pasted path receive the quoted path as text. At a plain shell prompt the quoted path is inserted as text and nothing runs. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).

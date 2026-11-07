@@ -3006,6 +3006,9 @@ describe('ClaudeAdapter.buildEnv renderer environment', () => {
     vi.stubEnv('CLAUDECODE', undefined);
     vi.stubEnv('CLAUDE_CODE_NO_FLICKER', undefined);
     vi.stubEnv('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', undefined);
+    // A user's own value, which keeps the hyperlink default out of these answers.
+    // The default has its own block below.
+    vi.stubEnv('FORCE_HYPERLINK', '0');
   });
 
   afterEach(() => {
@@ -3013,6 +3016,31 @@ describe('ClaudeAdapter.buildEnv renderer environment', () => {
     vi.unstubAllEnvs();
     fs.rmSync(projectDir, { recursive: true, force: true });
     fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  it('adds FORCE_HYPERLINK beside the renderer variables when the user set none', () => {
+    vi.stubEnv('FORCE_HYPERLINK', undefined);
+    expect(new ClaudeAdapter().buildEnv(spawnOptions())).toEqual({ ...NO_FLICKER, FORCE_HYPERLINK: '1' });
+  });
+
+  it('still carries FORCE_HYPERLINK for a renderer the user chose, which sets no variable', () => {
+    vi.stubEnv('FORCE_HYPERLINK', undefined);
+    fs.writeFileSync(path.join(projectDir, '.claude', 'settings.json'), JSON.stringify({ tui: 'default' }));
+    expect(new ClaudeAdapter().buildEnv(spawnOptions())).toEqual({ FORCE_HYPERLINK: '1' });
+  });
+
+  it('leaves a user\'s own FORCE_HYPERLINK to be inherited, an opt-out included', () => {
+    expect(new CommandBuilder().hyperlinkEnvironment({}, { FORCE_HYPERLINK: '0' })).toBeNull();
+    expect(new CommandBuilder().hyperlinkEnvironment({}, {})).toEqual({ FORCE_HYPERLINK: '1' });
+  });
+
+  it('sets FORCE_HYPERLINK for a Claude in a distro even when this machine opted out, since the distro takes no value from here', () => {
+    const cliTarget = { kind: 'wsl' as const, distro: 'Ubuntu' };
+    expect(new CommandBuilder().hyperlinkEnvironment({ cliTarget }, { FORCE_HYPERLINK: '0' })).toEqual({ FORCE_HYPERLINK: '1' });
+  });
+
+  it('treats an empty FORCE_HYPERLINK as unset when there is no distro', () => {
+    expect(new CommandBuilder().hyperlinkEnvironment({}, { FORCE_HYPERLINK: '' })).toEqual({ FORCE_HYPERLINK: '1' });
   });
 
   const spawnOptions = () => ({

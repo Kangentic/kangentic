@@ -629,6 +629,10 @@ msgstr "無法儲存版面配置"
 msgid "Couldn't save the task"
 msgstr "無法儲存任務"
 
+#: src/renderer/utils/terminal-links/register-terminal-links.ts
+msgid "Couldn't show file"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't start the workflow"
 msgstr "無法啟動工作流程"
