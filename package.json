@@ -145,7 +145,7 @@
     "which": "^7.0.0",
     "ws": "^8.22.1",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.1.0"
   },
   "commitlint": {
     "extends": [
