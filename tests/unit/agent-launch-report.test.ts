@@ -21,10 +21,12 @@ vi.mock('node:fs', async (importOriginal) => {
 
 import {
   classifyLaunchOutput,
+  isLaunchRetryPointless,
   hasAgentRunEvidence,
   launchNeverStarted,
   launchTagsOf,
   launchVersionTag,
+  lineTooLongSentence,
   logLaunchStep,
   preflightTagsOf,
   reportLaunchFailure,
@@ -35,6 +37,7 @@ import {
   resetLaunchReports,
 } from '../../src/main/pty/agent-launch-report';
 import { AgentCliNotFoundError } from '../../src/main/agent/shared/agent-cli-not-found';
+import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import type { AgentParser } from '../../src/shared/types';
 
@@ -244,6 +247,72 @@ describe('classifyLaunchOutput', () => {
   });
 });
 
+describe('classifyLaunchOutput on real ConPTY output under cmd', () => {
+  const { claudeResumeMiss, cmdInputLineTooLong, resumedId } = conptyCaptures;
+  const namesMiss = {
+    namesMissingConversation: (output: string, id: string) => output.includes(`No conversation found with session ID: ${id}`),
+  } as unknown as AgentParser;
+
+  it('names a line cmd refused, under its wrapped echo', () => {
+    expect(classifyLaunchOutput(cmdInputLineTooLong)).toBe('line_too_long');
+  });
+
+  it('names a line refused for a command cmd runs for another shell', () => {
+    expect(classifyLaunchOutput('PS C:\\project> & agent.cmd\r\nThe command line is too long.\r\n')).toBe('line_too_long');
+  });
+
+  it('reads the refusal a spawn types, whose prompt follows it by a cursor move with no newline', () => {
+    const output = '\x1b[3J\x1b[HThe command line is too long.\x1b[3;1HC:\\Users\\dev\\project>\x1b[?25h';
+    expect(classifyLaunchOutput(output)).toBe('line_too_long');
+  });
+
+  it('does not read a prompt that quotes the sentence as the refusal', () => {
+    expect(classifyLaunchOutput('C:\\project>claude "The input line is too long."\r\n')).toBe('other');
+  });
+
+  it('names a conversation the CLI could not find, for a launch that resumed it', () => {
+    expect(classifyLaunchOutput(claudeResumeMiss, namesMiss, resumedId)).toBe('conversation_missing');
+  });
+
+  it('never calls a fresh launch a missing conversation, since it resumed nothing', () => {
+    expect(classifyLaunchOutput(claudeResumeMiss, namesMiss, null)).toBe('other');
+  });
+
+  it('asks only an adapter that knows its CLI\'s words', () => {
+    expect(classifyLaunchOutput(claudeResumeMiss, undefined, resumedId)).toBe('other');
+  });
+
+  it('lets the adapter speak before a later shell-shaped line', () => {
+    const output = `${claudeResumeMiss}\r\nzsh: permission denied: x\r\n`;
+    expect(classifyLaunchOutput(output, namesMiss, resumedId)).toBe('conversation_missing');
+    // Without the adapter's word the shell's line is what the output holds.
+    expect(classifyLaunchOutput(output)).toBe('permission_denied');
+  });
+
+  it.each(['powershellShimLineTooLong', 'cmdSpawnRefusal'] as const)('names %s as a line too long, and quotes the shell\'s sentence', (key) => {
+    expect(classifyLaunchOutput(conptyCaptures[key])).toBe('line_too_long');
+    expect(lineTooLongSentence(conptyCaptures[key])).toBe('The command line is too long.');
+  });
+
+  it('lets the user\'s own setup speak first', () => {
+    const adapter = {
+      ...namesMiss,
+      identifyUserSetupFailure: () => ({ failure: 'login_required', line: 'x' }),
+    } as unknown as AgentParser;
+    expect(classifyLaunchOutput(claudeResumeMiss, adapter, resumedId)).toBe('login_required');
+  });
+});
+
+describe('isLaunchRetryPointless', () => {
+  it.each(['line_too_long', 'login_required', 'bad_configuration'] as const)('answers yes for %s', (outputClass) => {
+    expect(isLaunchRetryPointless(outputClass)).toBe(true);
+  });
+
+  it.each(['other', 'not_read', 'unreadable', 'conversation_missing', 'command_not_found'] as const)('answers no for %s', (outputClass) => {
+    expect(isLaunchRetryPointless(outputClass)).toBe(false);
+  });
+});
+
 describe('reportLaunchFailure', () => {
   const tags = { agent: 'claude', attempt: '1' };
 
@@ -336,6 +405,27 @@ describe('reportSessionLaunchFailure', () => {
     expect(sent).not.toContain('Acme');
     expect(sent).not.toContain('claude --session-id');
     expect(sent).not.toContain('/Users/dev');
+  });
+
+  describe('a resumed conversation the CLI says does not exist', () => {
+    const resumedId = conptyCaptures.resumedId;
+    const namesMiss = {
+      namesMissingConversation: (output: string, id: string) => output.includes(`No conversation found with session ID: ${id}`),
+    } as unknown as AgentParser;
+
+    it('is reported as conversation_missing when the launch resumed', async () => {
+      const target = session({ agentParser: namesMiss, resuming: true, agentSessionId: resumedId });
+      reportSessionLaunchFailure({ session: target, stage: 'never_started', readOutput: async () => conptyCaptures.claudeResumeMiss });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      expect(reportHandledError.mock.calls[0][1].output_class).toBe('conversation_missing');
+    });
+
+    it('is not reported as one when the launch was fresh, which resumed nothing', async () => {
+      const target = session({ agentParser: namesMiss, resuming: false, agentSessionId: resumedId });
+      reportSessionLaunchFailure({ session: target, stage: 'never_started', readOutput: async () => conptyCaptures.claudeResumeMiss });
+      await vi.waitFor(() => expect(reportHandledError).toHaveBeenCalledTimes(1));
+      expect(reportHandledError.mock.calls[0][1].output_class).not.toBe('conversation_missing');
+    });
   });
 
   it('posts the read before it returns, ahead of the kill a caller does next', () => {

@@ -151,46 +151,7 @@ export async function assessResumeConversation(params: {
   const { adapter, agentSessionId, records, cwd, projectPath, place: spawnPlace } = params;
   if (!projectPath) return 'unknown';
 
-  // Adapters with no status-file pipeline never report a transcript path.
-  // Optional-chained because a partially-shaped adapter stub may lack `runtime`.
-  const parseStatus = adapter.runtime?.statusFile?.parseStatus;
-
-  let hadTurns = false;
-  /** The first record whose folder holds the agent's own report decides `never-started`. */
-  let firstAgentReport: ConversationEvidence | null = null;
-  const reportedPaths: string[] = [];
-  const addReportedPath = (candidate: string | null | undefined): void => {
-    if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
-  };
-  /** Where the newest record's CLI ran, for the agent's own locator. */
-  let newestPlace: CliPlace | null | undefined;
-
-  for (const record of records) {
-    if (!record) continue;
-    // Each record's CLI ran where its own row says (a WSL distro, or here).
-    const place = placeOfRecord(record);
-    if (newestPlace === undefined) newestPlace = place;
-    // Token totals on the row prove turns. Zero totals prove nothing: the
-    // path is written on the first status tick, before any metrics capture.
-    if (rowHadTurns(record)) hadTurns = true;
-    addReportedPath(reportedPathOnHost(record.transcript_path, place));
-    if (!parseStatus) continue;
-    try {
-      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', record.id);
-      // Two independent reports, both agent-written. The status line is
-      // preferred (richest usage), but it only runs once the TUI is up: a CLI
-      // killed in its first second leaves none. The SessionStart hook fires
-      // far earlier and carries the same `transcript_path`.
-      const reported = readStatusEvidence(sessionDir, parseStatus, agentSessionId) ?? readSessionStartEvidence(sessionDir);
-      if (!reported) continue;
-      const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
-      if (evidence.hadTurns) hadTurns = true;
-      addReportedPath(evidence.transcriptPath);
-      if (!firstAgentReport) firstAgentReport = evidence;
-    } catch (error) {
-      console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
-    }
-  }
+  const { hadTurns, firstAgentReport, reportedPaths, newestPlace } = readLineageEvidence({ adapter, agentSessionId, records, projectPath });
 
   // A record read by its folder alone keeps no `cli_target`, so it decides
   // nothing about where the conversation is.
@@ -223,6 +184,93 @@ export async function assessResumeConversation(params: {
     console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
     return 'unknown';
   }
+}
+
+/** What every record of a lineage says about its conversation, read once. */
+interface LineageEvidence {
+  hadTurns: boolean;
+  /** The first record whose folder holds the agent's own report decides `never-started`. */
+  firstAgentReport: ConversationEvidence | null;
+  reportedPaths: string[];
+  /** Where the newest record's CLI ran, for the agent's own locator. */
+  newestPlace: CliPlace | null | undefined;
+}
+
+function readLineageEvidence(params: {
+  adapter: AgentAdapter;
+  agentSessionId: string;
+  records: ReadonlyArray<ResumeLineageRecord | null | undefined>;
+  projectPath: string;
+}): LineageEvidence {
+  const { adapter, agentSessionId, records, projectPath } = params;
+  // Adapters with no status-file pipeline never report a transcript path.
+  // Optional-chained because a partially-shaped adapter stub may lack `runtime`.
+  const parseStatus = adapter.runtime?.statusFile?.parseStatus;
+
+  let hadTurns = false;
+  let firstAgentReport: ConversationEvidence | null = null;
+  const reportedPaths: string[] = [];
+  const addReportedPath = (candidate: string | null | undefined): void => {
+    if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
+  };
+  let newestPlace: CliPlace | null | undefined;
+
+  for (const record of records) {
+    if (!record) continue;
+    // Each record's CLI ran where its own row says (a WSL distro, or here).
+    const place = placeOfRecord(record);
+    if (newestPlace === undefined) newestPlace = place;
+    // Token totals on the row prove turns. Zero totals prove nothing: the
+    // path is written on the first status tick, before any metrics capture.
+    if (rowHadTurns(record)) hadTurns = true;
+    addReportedPath(reportedPathOnHost(record.transcript_path, place));
+    if (!parseStatus) continue;
+    try {
+      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', record.id);
+      // Two independent reports, both agent-written. The status line is
+      // preferred (richest usage), but it only runs once the TUI is up: a CLI
+      // killed in its first second leaves none. The SessionStart hook fires
+      // far earlier and carries the same `transcript_path`.
+      const reported = readStatusEvidence(sessionDir, parseStatus, agentSessionId) ?? readSessionStartEvidence(sessionDir);
+      if (!reported) continue;
+      const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
+      if (evidence.hadTurns) hadTurns = true;
+      addReportedPath(evidence.transcriptPath);
+      if (!firstAgentReport) firstAgentReport = evidence;
+    } catch (error) {
+      console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
+    }
+  }
+  return { hadTurns, firstAgentReport, reportedPaths, newestPlace };
+}
+
+/**
+ * Whether any record of a lineage shows a turn, for a caller about to mark a
+ * resume failed. A mark replays the lineage's prompt in a fresh start, which is
+ * right only for a conversation that never ran: a moved project prints the same
+ * "No conversation found", and its conversation must never be dropped.
+ */
+export function lineageHadTurns(params: {
+  adapter: AgentAdapter;
+  agentSessionId: string;
+  records: ReadonlyArray<ResumeLineageRecord | null | undefined>;
+  projectPath: string;
+}): boolean {
+  return readLineageEvidence(params).hadTurns;
+}
+
+/**
+ * The prompt a lineage that never ran still owes: its oldest record's, the fresh
+ * launch. `lineage` is newest first, as `resolveResumeLineage` builds it. A later
+ * record is a resume, which carries none of its own, or only the messages it was
+ * holding. Those stay out: a failed resume puts its held messages back on hold
+ * (`settleLaunchRide`), and the next start claims them again.
+ *
+ * Every record here shares one agent session id. A fresh retry gets a new id, so it
+ * heads a lineage of its own, and what it carried is not read past.
+ */
+export function owedPromptOf(lineage: ReadonlyArray<ResumeLineageRecord | null | undefined>): string | null {
+  return lineage.filter((record) => record !== null && record !== undefined).at(-1)?.prompt ?? null;
 }
 
 function rowHadTurns(record: ResumeLineageRecord): boolean {

@@ -24,10 +24,71 @@
  * shape is seen on a real card, with the wording it printed.
  */
 import { describe, it, expect } from 'vitest';
-import { describeClaudeStartupFailure } from '../../src/main/agent/adapters/claude/startup-failure';
+import {
+  claudeNamesMissingConversation,
+  describeClaudeStartupFailure,
+  identifyClaudeUserSetupFailure,
+} from '../../src/main/agent/adapters/claude/startup-failure';
+import conptyCaptures from '../fixtures/conpty-cmd-failures.json';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 
 const MISSING_ID = '2451ea6b-0035-47a3-bf0c-d2371074312c';
+
+/**
+ * A captured line with its spaces written as cursor moves, the way ConPTY writes
+ * a row it repaints as a cell diff. Built from the real bytes, not captured: every
+ * capture of these lines from a fresh cmd held real spaces (conpty-cmd-failures.json),
+ * and the shape was only seen on repainted TUI rows. A ring that holds it must
+ * still read.
+ */
+function asRepaintedRow(output: string, sentence: string): string {
+  expect(output).toContain(sentence);
+  return output.replace(sentence, sentence.replaceAll(' ', '\x1b[1C'));
+}
+
+describe('real ConPTY output under cmd', () => {
+  const { claudeResumeMiss, claudeNotLoggedIn, resumedId } = conptyCaptures;
+  const missSentence = `No conversation found with session ID: ${resumedId}`;
+
+  it('names the miss on the captured stream', () => {
+    expect(describeClaudeStartupFailure(claudeResumeMiss, 0)).toContain('found no conversation to resume');
+  });
+
+  it('names the miss on a repainted row, whose spaces are cursor moves', () => {
+    const repainted = asRepaintedRow(claudeResumeMiss, missSentence);
+    expect(describeClaudeStartupFailure(repainted, 0)).toContain('(session 2451ea6b)');
+  });
+
+  it('identifies a login line on the captured stream, under the line Claude prints ahead of it', () => {
+    expect(identifyClaudeUserSetupFailure(claudeNotLoggedIn)?.failure).toBe('login_required');
+  });
+
+  it('identifies a login line on a repainted row', () => {
+    const repainted = asRepaintedRow(claudeNotLoggedIn, 'Not logged in · Please run /login');
+    expect(identifyClaudeUserSetupFailure(repainted)?.line).toBe('Not logged in · Please run /login');
+  });
+});
+
+describe('claudeNamesMissingConversation', () => {
+  const { claudeResumeMiss, resumedId } = conptyCaptures;
+
+  it('reads the captured miss for the id being resumed', () => {
+    expect(claudeNamesMissingConversation(claudeResumeMiss, resumedId)).toBe(true);
+  });
+
+  it('says nothing of a line about another conversation', () => {
+    expect(claudeNamesMissingConversation(claudeResumeMiss, '11111111-0000-4000-8000-000000000000')).toBe(false);
+  });
+
+  it('says nothing of a typed line that quotes the sentence', () => {
+    const echoed = `C:\\project>claude "fix: No conversation found with session ID: ${resumedId}"\r\nC:\\project>`;
+    expect(claudeNamesMissingConversation(echoed, resumedId)).toBe(false);
+  });
+
+  it('is what the adapter exposes through the generic capability', () => {
+    expect(new ClaudeAdapter().namesMissingConversation(claudeResumeMiss, resumedId)).toBe(true);
+  });
+});
 
 describe('describeClaudeStartupFailure', () => {
   it('names a resume of a conversation the CLI could not find, with the id it printed', () => {

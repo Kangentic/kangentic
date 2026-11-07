@@ -9,6 +9,7 @@ sources:
   - resource: src/main/pty/session-manager.ts
     title: isAgentAbsenceCandidate and retireAgentlessSession
   - resource: src/main/pty/agent-launch-report.ts
+  - resource: src/main/ipc/helpers/resume-miss.ts
   - resource: src/main/pty/host/dead-root-orphans.ts
   - resource: scripts/probe-claude-exit-paths.js
   - resource: scripts/probe-claude-exit-paths-linux.py
@@ -413,7 +414,9 @@ restarts from. A session hidden until adopted retires too, since no listener may
 **A failed launch gets one retry.** Once the pause lands and the task lock is free, the listener asks
 `mayRetryLaunch`, and with no evidence the agent ran and no cause identified as the user's it calls
 `resumeTaskSession` with `startPath: 'retry'` on a fresh PTY. A second launch cannot sign anyone in,
-so that cause skips straight to the notice. A cause nobody identified retries, since it may be ours.
+so that cause skips straight to the notice. Neither can it shorten a line, so `line_too_long`, a
+shell's refusal of the typed line, skips it too, and the notice shows the shell's own sentence. A
+cause nobody identified retries, since it may be ours.
 The answer waits for the report's read of the output (`launchOutputRead`). The evidence is read
 after the pause, because a late hook can land while the session goes down, so no prompt runs twice
 and no second paid turn starts. The notice waits for that outcome. A retry is never retried, so a second failure stays paused and raises it.
@@ -431,13 +434,46 @@ is what raises the notice for a retry that really failed.
 **A failed fresh launch keeps its prompt.** Claude's `--session-id` is written to the record at spawn
 and the CLI writes its conversation on the first turn, so a Resume of a launch that never ran would
 spawn `--resume` on nothing, and the task's prompt would be lost. So the pause marks a fresh launch
-`sessions.launch_failed_at`, under the task lock and before the PTY goes down.
+`sessions.launch_failed_at`, under the task lock and before the PTY goes down. A fresh launch refused at
+promotion (`agent-start-refused` in `handlers/sessions.ts`) is marked the same way, so its Resume starts it
+with its prompt.
 `assessResumeConversation` reads a marked record with no turns as `never-started`, and
 `resumeTaskSession` replays that record's own `prompt` with no template over it. That string is what
 the launch would have run, a column's message and held messages included, so a person's Resume
 and the retry do the same thing, no enter row runs twice, and nothing held is lost. Startup recovery
-folds the same prompt in, since a `'system'` pause resumes on a restart. A failed resume is not
-marked: its conversation is still there, and it resumes with no prompt.
+folds the same prompt in, since a `'system'` pause resumes on a restart.
+
+**A failed resume is not marked, unless the CLI said the conversation does not exist and it never
+had a turn.** A resume's conversation is normally still there, and it resumes with no prompt. But
+0.54.0 paused launches that never ran with no mark, because `launch_failed_at` came in 0.55.0, so a
+restart read them as `unknown` and ran `--resume` on an id the CLI never wrote. Measured on Claude
+Code 2.1.319 under cmd in a ConPTY, that prints "No conversation found with session ID", exits,
+enters no alt screen and fires no SessionStart hook. That is what this sweep reports as
+`never_started`, and the retry ran the same line, so those tasks stayed paused with their prompts
+undelivered (Sentry DESKTOP-2E).
+
+So `classifyLaunchOutput` reads the CLI's own words for a resuming launch
+(`AgentParser.namesMissingConversation`, class `conversation_missing`), and `markResumeMiss`
+(`src/main/ipc/helpers/resume-miss.ts`) marks that record once the pause lands. It needs no mark on
+any earlier record, which is what makes it work for rows 0.54.0 paused. The rest is the path above:
+`assessResumeConversation` answers `never-started` and the retry starts fresh. The prompt is on the
+oldest record of the lineage, the fresh launch, so `owedPromptOf` reads it from there. A newer
+record's own prompt stays out, because a failed resume's held messages went back on hold at its
+pause, and the next start claims them again.
+
+Three things keep this safe:
+
+- **The no-turns check gates the write, not only the verdict.** A moved project prints the same
+  line, and a mark on a conversation that ran would replay a finished prompt into it. Such a resume
+  stays unmarked, resumes as before and gets the notice.
+- **It runs after the pause,** because the report's read of the output is still pending when the
+  pause is accepted. It awaits that read itself, since `mayRetryLaunch` returns ahead of it on a
+  session that is already a retry, and it takes the task lock.
+- **A newer record judges itself.** A person's start in that gap makes one, and the mark is skipped.
+
+`tests/e2e/resume-miss-heal.spec.ts` runs the whole chain, from a real process tree to the fresh
+start. It takes over two minutes because the sweep cannot be hurried: a CLI that signalled its end
+would have shown it ran.
 
 **It must also emit `session-changed`, and that emit is load-bearing.** Measured in a live preview:
 with `kill()` alone, main and the DB were both correct (`exited`, code 0) while the board kept

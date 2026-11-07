@@ -68,6 +68,10 @@ export type LaunchOutputClass =
   | 'permission_denied'
   | 'no_such_file'
   | 'unknown_option'
+  /** cmd refused a line past its limit. The same line gets the same answer, so it is never retried. */
+  | 'line_too_long'
+  /** The CLI said the conversation this launch resumes does not exist. */
+  | 'conversation_missing'
   /** The adapter identified the user's own setup. These two never reach Sentry. */
   | UserSetupFailure
   | 'other'
@@ -209,6 +213,11 @@ export function launchNeverStarted(session: ManagedSession): boolean {
   return session.reportsAgentStart === true && !hasAgentRunEvidence(session);
 }
 
+const LINE_TOO_LONG_SENTENCES: readonly RegExp[] = [
+  /^The input line is too long\.$/,
+  /^The command line is too long\.$/,
+];
+
 /**
  * The shapes each class takes, anchored on how a shell words the failure so text
  * the shell merely echoed cannot match: a task titled "fix permission denied"
@@ -258,17 +267,44 @@ const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: rea
       /^(?:[\w.-]+:\s)?(?:unknown|unrecognized|invalid) (?:option|argument|flag)\b/i,
     ],
   },
+  {
+    outputClass: 'line_too_long',
+    // cmd's two words for it: a typed line past 8190 characters, and a command
+    // line a `.cmd` runs through cmd.exe under PowerShell or Git Bash. The second
+    // is also what a spawn types for a shim it cannot get past (`typed-launch.ts`).
+    // English only, like every shape here: cmd words its own refusal in the
+    // system's language, and on another one that reads as `other` and retries.
+    shapes: LINE_TOO_LONG_SENTENCES,
+  },
 ];
+
+/**
+ * The shell's own refusal of a line as too long, as it printed it, for the
+ * notice. Null when the last output holds none.
+ */
+export function lineTooLongSentence(rawScrollback: string): string | null {
+  return finalLinesOf(rawScrollback).find((line) => LINE_TOO_LONG_SENTENCES.some((sentence) => sentence.test(line))) ?? null;
+}
 
 /**
  * Classify the last output into a fixed value. Only the class leaves this
  * process. The adapter speaks first, since only it knows its own CLI's words.
  * Then the shell's shapes, newest line first, so the failure that ended the
  * launch wins over an older line of the same session.
+ *
+ * `resumedAgentSessionId` is the conversation a resuming launch asked for, and
+ * null for a fresh one, which has no conversation to miss.
  */
-export function classifyLaunchOutput(rawScrollback: string, agentParser?: AgentParser): LaunchOutputClass {
+export function classifyLaunchOutput(
+  rawScrollback: string,
+  agentParser?: AgentParser,
+  resumedAgentSessionId?: string | null,
+): LaunchOutputClass {
   const userSetupFailure = agentParser?.identifyUserSetupFailure?.(rawScrollback);
   if (userSetupFailure) return userSetupFailure.failure;
+  if (resumedAgentSessionId && agentParser?.namesMissingConversation?.(rawScrollback, resumedAgentSessionId)) {
+    return 'conversation_missing';
+  }
   for (const line of finalLinesOf(rawScrollback)) {
     for (const { outputClass, shapes } of OUTPUT_SHAPES) {
       if (shapes.some((shape) => shape.test(line))) return outputClass;
@@ -285,6 +321,11 @@ export function isIdentifiedFailureClass(outputClass: LaunchOutputClass): boolea
 /** True for a cause identified as the user's own setup, which gets no retry and no event. */
 export function isUserSetupFailureClass(outputClass: LaunchOutputClass): outputClass is UserSetupFailure {
   return outputClass === 'login_required' || outputClass === 'bad_configuration';
+}
+
+/** True for a cause a second launch of the same line cannot change. */
+export function isLaunchRetryPointless(outputClass: LaunchOutputClass): boolean {
+  return isUserSetupFailureClass(outputClass) || outputClass === 'line_too_long';
 }
 
 const reported = new Set<string>();
@@ -499,7 +540,7 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     return;
   }
   session.launchOutputRead = readOutput().then(
-    (rawScrollback) => send(classifyLaunchOutput(rawScrollback, session.agentParser)),
+    (rawScrollback) => send(classifyLaunchOutput(rawScrollback, session.agentParser, session.resuming ? session.agentSessionId : null)),
     () => send('unreadable'),
   );
 }

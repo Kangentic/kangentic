@@ -46,7 +46,7 @@ import {
 import { openStdinJsonSession } from '../../shared/answer-session/stdin-json-session';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
-import { describeClaudeStartupFailure, identifyClaudeUserSetupFailure } from './startup-failure';
+import { claudeNamesMissingConversation, describeClaudeStartupFailure, identifyClaudeUserSetupFailure } from './startup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 import { proveClaudeConversationGone } from './conversation-gone';
 import { claudeBackgroundSessionOf, claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
@@ -1079,6 +1079,11 @@ export class ClaudeAdapter implements AgentAdapter {
   /** See `startup-failure.ts`. */
   identifyUserSetupFailure(finalOutput: string): UserSetupMatch | null {
     return identifyClaudeUserSetupFailure(finalOutput);
+  }
+
+  /** See `startup-failure.ts`. */
+  namesMissingConversation(finalOutput: string, agentSessionId: string): boolean {
+    return claudeNamesMissingConversation(finalOutput, agentSessionId);
   }
 
   /**

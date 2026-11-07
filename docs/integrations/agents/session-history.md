@@ -497,8 +497,10 @@ before any empty transcript is written.
 This is **not** the reverted `canResumeSession` guard, and does not reintroduce its problems:
 
 1. It never downgrades resume to fresh. It performs a non-destructive directory rename, then issues
-   the same `--resume <id>`. On any failure it degrades to today's exact behavior (a visible "No
-   conversation found"), never to silent loss.
+   the same `--resume <id>`. On any failure it degrades to the resume as it was before the rename: the
+   CLI's own "No conversation found" is shown, and if the lineage has no turns the next start is fresh with
+   the prompt it owed (see [Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md)).
+   Never silent loss.
 2. It is gated on `oldCwd !== newCwd`. The mocked E2E resume specs keep cwd identical across spawns,
    so the helper early-returns before touching `locateSessionHistoryFile` or `onProjectRelocated` -
    the 10 specs that killed the old guard cannot be reached.

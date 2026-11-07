@@ -171,6 +171,19 @@ vi.mock('../../src/main/ipc/handlers/session-resume', async (importOriginal) => 
   resumeTaskSession: mockResumeTaskSession,
 }));
 
+// The real markResumeMiss, watched: the listener's call to it is what is pinned here.
+const markResumeMissSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/helpers/resume-miss', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/ipc/helpers/resume-miss')>();
+  return {
+    ...original,
+    markResumeMiss: (...callArguments: Parameters<typeof original.markResumeMiss>) => {
+      markResumeMissSpy(...callArguments);
+      return original.markResumeMiss(...callArguments);
+    },
+  };
+});
+
 // Import under test AFTER all mocks are registered.
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { AgentCwdMissingError } from '../../src/main/pty/spawn/pty-spawn';
@@ -331,6 +344,56 @@ describe('agent-never-started listener', () => {
     expect(mockResumeTaskSession).toHaveBeenCalledWith(context, 'task-never', { projectId: 'proj-1', startPath: 'retry', onFailed: expect.any(Function) });
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-never');
     expect(notifySpawnBlocked).not.toHaveBeenCalled();
+  });
+
+  it('reads the launch\'s output for a resume miss before it answers the retry', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.mayRetryLaunch.mockReturnValue(true);
+    mockResumeTaskSession.mockResolvedValue(null);
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(mockResumeTaskSession).toHaveBeenCalledTimes(1));
+    const [classRead] = context.sessionManager.launchOutputClass.mock.invocationCallOrder;
+    const [retryAsked] = context.sessionManager.mayRetryLaunch.mock.invocationCallOrder;
+    expect(classRead).toBeLessThan(retryAsked);
+  });
+
+  it('marks a resume miss for the session, only after the pause landed', async () => {
+    // A resume's held messages settle at the pause's `suspended` push and must see
+    // the record unmarked, so a mark ahead of the pause would commit messages
+    // nothing replays.
+    const context = registerWithLiveSession('sess-never');
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(markResumeMissSpy).toHaveBeenCalledTimes(1));
+    expect(markResumeMissSpy).toHaveBeenCalledWith(context, { sessionId: 'sess-never', taskId: 'task-never', projectId: 'proj-1' });
+    const markedAt = markResumeMissSpy.mock.invocationCallOrder[0];
+    expect(vi.mocked(markRecordSuspended).mock.invocationCallOrder[0]).toBeLessThan(markedAt);
+    expect(context.sessionManager.suspend.mock.invocationCallOrder[0]).toBeLessThan(markedAt);
+  });
+
+  it('marks no resume miss when the pause did not land', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.getSession.mockReturnValue(null);
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(context.sessionManager.retireAgentlessSession).toHaveBeenCalled());
+    expect(markResumeMissSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows a line the shell refused as too long, word for word, in place of the fallback', async () => {
+    const context = registerWithLiveSession('sess-never');
+    context.sessionManager.launchOutputClass.mockResolvedValue('line_too_long');
+    context.sessionManager.getRawScrollback.mockResolvedValue('C:\\project>\r\nThe input line is too long.\r\n');
+    mockTaskRepositoryGetById.mockReturnValue({ id: 'task-never', title: 'Never started' });
+
+    await fireNeverStarted();
+
+    await vi.waitFor(() => expect(notifySpawnBlocked).toHaveBeenCalledTimes(1));
+    expect((notifySpawnBlocked as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][3]).toEqual(new Error('The input line is too long.'));
   });
 
   it('raises the notice when the retry could not start', async () => {

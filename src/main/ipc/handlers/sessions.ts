@@ -11,9 +11,10 @@ import { UsageHistoryRepository } from '../../db/repositories/usage-history-repo
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
-import { isUserSetupFailureClass, reportPtyPortFailure } from '../../pty/agent-launch-report';
+import { isUserSetupFailureClass, lineTooLongSentence, reportPtyPortFailure } from '../../pty/agent-launch-report';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { planExitTargetFor } from '../helpers/plan-exit-target';
+import { markResumeMiss } from '../helpers/resume-miss';
 import { readTaskLastMessage, readTaskReport, readTaskRoute } from '../helpers/task-report';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { handleTaskMove } from './task-move';
@@ -753,7 +754,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       const userSetupLine = outputClass && isUserSetupFailureClass(outputClass)
         ? adapter?.identifyUserSetupFailure?.(rawScrollback)?.line
         : undefined;
-      const startupFailure = namedByCli ?? userSetupLine ?? fallbackReason;
+      // The shell's own refusal, word for word, as the user's setup line is.
+      const shellRefusal = outputClass === 'line_too_long' ? lineTooLongSentence(rawScrollback) : null;
+      const startupFailure = namedByCli ?? userSetupLine ?? shellRefusal ?? fallbackReason;
       if (!startupFailure) return;
       // The session's report keeps it to one, if the sweep reported this launch.
       if (namedByCli) context.sessionManager.noteAgentExitedAtStart(exitedSession.id);
@@ -803,7 +806,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // the pause released the task lock, and the notice waits for that one's outcome.
   // A fresh launch is marked failed under the lock, so this retry and any later
   // Resume start it fresh with its own prompt: `--resume` would find no
-  // conversation. A failed resume is unmarked, and its conversation is still there.
+  // conversation. A failed resume is unmarked, and its conversation is still there,
+  // unless the CLI said it is not and its lineage had no turns (`markResumeMiss`).
   //
   // The retry is Kangentic's own, so a person's gesture beats it. The decision
   // needs the output read and the retry takes the task lock itself, so it cannot
@@ -835,6 +839,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         retire();
         return;
       }
+      await markResumeMiss(context, { sessionId, taskId: session.taskId, projectId });
       const mayRetry = await context.sessionManager.mayRetryLaunch(sessionId);
       releaseResumeController(session.taskId, retryWindow);
       // Another start owns the task now, so it has no failure to show, and a retry

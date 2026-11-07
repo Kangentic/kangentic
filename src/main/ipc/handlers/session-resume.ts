@@ -38,6 +38,7 @@ import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { wrapWorktreeSetupError } from '../helpers/worktree-setup-error';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
+import { owedPromptOf, resolveResumeLineage } from '../../transition-engine/resume-conversation-guard';
 import { textLeftToType } from '../../transition-engine/resume-prompt-delivery';
 import { forgetRecapSession } from '../../automations/turn-end/recap-turns';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -352,9 +353,21 @@ export function resumeTaskSession(
                 // A launch that never ran still owes its prompt, whatever filled it
                 // (the task, a column's message, messages held for it). The record
                 // has it word for word, so no template is built and no row runs again.
+                // A marked resume carries none of its own: the prompt is on the
+                // fresh launch at the far end of its lineage.
                 const failedLaunch = sessionRepo.getLatestForTask(taskId);
-                const owedPrompt = failedLaunch?.launch_failed_at ? failedLaunch.prompt : null;
-                const opening = composeOpeningMessage(options.resumePrompt ?? owedPrompt ?? undefined, held?.text);
+                const owedPrompt = failedLaunch?.launch_failed_at
+                  ? owedPromptOf(resolveResumeLineage({
+                      taskRecords: sessionRepo.listForTaskNewestFirst(taskId),
+                      retiringRecordId: failedLaunch.id,
+                      resumedAgentSessionId: failedLaunch.agent_session_id ?? failedLaunch.id,
+                    }).lineage)
+                  : null;
+                // A launch stopped before its agent ran put its messages back on hold,
+                // and the prompt it owes still holds them, so they are not added again.
+                // A message held since makes the texts differ, and both go out.
+                const lead = options.resumePrompt ?? owedPrompt ?? undefined;
+                const opening = composeOpeningMessage(lead, held && lead?.includes(held.text) ? undefined : held?.text);
                 let heldHandedOff = false;
                 try {
                   const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, failedLaunch?.launch_failed_at ? true : undefined, opening.prompt, signal, undefined, undefined, overrides);

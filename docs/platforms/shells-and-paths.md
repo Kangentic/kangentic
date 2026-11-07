@@ -94,7 +94,7 @@ is slow: the same 5,848-byte line never reached a stub agent when typed during a
 in WSL, and ran when typed after the prompt.
 
 `buildTypedLaunch` (`src/main/pty/spawn/typed-launch.ts`) keeps the typed line under
-`TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included). Past that, `performSpawn` writes
+`TYPED_LINE_BYTE_BUDGET` (900 bytes, Enter and prelude included, for every shell but cmd on Windows, which has its own budget below). Past that, `performSpawn` writes
 the output of `adaptCommandForShell` to a launcher file in the session's
 `.kangentic/sessions/<id>/` folder, owner-only since it holds the prompt, and types the clear
 prelude plus a statement that runs the file. The file runs in the same shell the typed line
@@ -106,6 +106,7 @@ would have, so a shell's own functions, aliases and environment apply as before.
 | fish | `source <path>` | `launch.fish` |
 | nushell | `source <path>`, a literal, because `source` is a parser keyword that reads the file while the line parses | `launch.nu` |
 | pwsh on macOS or Linux | `. <path>` | `launch.ps1` |
+| cmd on Windows | `call <path>`, or the bare path for a folder holding `^` | `launch.cmd` |
 
 A POSIX shell evaluates the file's text instead of sourcing it, for a measured reason. On bash, a
 SIGHUP to the shell leaves an agent started from a sourced file running, where it ends an agent
@@ -121,11 +122,84 @@ control, so its `. <path>.ps1` form has had no hangup or round-trip check.
 
 A WSL shell gets the path through `toWslPath`, except a session folder on a Windows share or in
 another distro. WSL cannot read those, so that shell types the whole command: a sourced path that
-does not resolve fails every launch, where a typed line fails only while the shell is slow. Native
-Windows shells and Git Bash on Windows type the whole command: a console has no such limit, and a
-sourced `.ps1` would meet the execution policy. A session with no output paths (a raw
-`SESSION_SPAWN`) has no folder to use and types the whole command, as does a spawn whose launcher
-write failed, which still works once the shell has reached its prompt.
+does not resolve fails every launch, where a typed line fails only while the shell is slow.
+PowerShell and Git Bash on Windows type the whole command: a console has no canonical mode, each
+carried 15,769 bytes whole, and a sourced `.ps1` would meet the execution policy. The one exception
+is a `.cmd` shim head past `CMD_TYPED_LINE_BYTE_BUDGET` (below). A session with no
+output paths (a raw `SESSION_SPAWN`) has no folder to use and types the whole command, as does a
+spawn whose launcher write failed, which still works once the shell has reached its prompt.
+
+**cmd has a limit of its own.** Measured through a real ConPTY on cmd 10.0.26200, 8,190 typed
+characters ran, and 8,191 printed "The input line is too long." and ran nothing, a `cls` ahead of
+it included (Sentry DESKTOP-2D). So cmd keeps typing up to `CMD_TYPED_LINE_BYTE_BUDGET` (7,000
+bytes), which leaves most launches unchanged and leaves room for a shim's own text, and past it the
+launch moves to `launch.cmd`. The limit counts UTF-16 characters and the budget UTF-8 bytes, which
+is never fewer, so it errs safe. An agent's command reaches `launch.cmd` only when its UTF-8 length is past that budget and
+its length in characters is at most 8,191, because `performSpawn` refuses an agent's command past
+8,191 characters through cmd (later in this section) and a long prompt is typed in after the agent
+starts. The
+launcher itself was measured to 30,000 characters, and a raw command (`SESSION_SPAWN`), which that
+refusal does not cover, gets all of it. `launch.cmd` is not the shape of the other launchers, because
+a batch file does not read a line the way a prompt does:
+
+- `adaptCommandForShell`'s output cannot go in as it is, for two reasons.
+  - `quoteArg` writes each `%` as `"^%"`, which works only on a typed line. In a batch file percent
+    expansion runs first, and `100% and %NOTSET% and %PATH%` arrived as `100NOTSETPATH`.
+  - Past 8,191 characters cmd's parser goes on reading the line but no longer knows it is inside a
+    quote. A filler of one repeated letter ran 15,769 characters clean, which hid this. A real
+    prompt's `<` past that point stopped the launch with "`<` was unexpected at this time", and a
+    `&` ended the command and ran the rest of the prompt as a second one. A prompt can come from an
+    imported issue, so that is an injection.
+
+  So the launcher undoes the `%` escape, doubles every `%`, and puts a caret on every `"` and
+  metacharacter of the arguments, which leaves cmd never inside a quote and with no state to lose.
+  cmd removes the carets, so the agent's C runtime reads the quotes as before. Measured to 30,000
+  characters, exact, with metacharacters on both sides of the limit and an escape across it in every
+  alignment. A `for /f` variable also keeps text from the parser, but it does not work here: past
+  8,191 characters once expanded, nothing runs and nothing is printed.
+- The file is UTF-8 with no BOM, and starts with `@chcp 65001 >nul`. Without it a batch file is read
+  in the console's code page, and `café` arrives as `caf├⌐`. The code page outlives the file (437
+  before, 65001 after), and that is accepted. A restore has to read the old page from `chcp`'s
+  output, which is worded per locale, and would run after the agent exits, when nothing reads that
+  console. The console is the session's alone and ends with it.
+- It never runs a `.cmd` or `.bat`. A shim's `%*` line has cmd's limit with the shim's own text
+  added, and past it the shim fails with no error at all: through an npm-style shim, 8,000 characters
+  ran and 8,388 never did. `resolveShimLaunch` keeps the shim on a cmd host, so `directLaunchOfBatchShim`
+  (`src/main/agent/shared/npm-shim-target.ts`) reads the target out of it and the file starts that:
+  the `node.exe` beside the shim or `node`, as the shim does, or a binary target directly. A shim
+  it cannot read, or one that sets `NODE_PATH` as pnpm's does, is never run past the budget. The
+  spawn types `echo The command line is too long.` instead, which reports like cmd's own refusal.
+  The launcher does not use a `.ps1` sibling, because `call` keeps the tree as cmd then agent, the
+  shape the absence sweep and `exited-root-wait` were measured on. With a bare `node`, the file's
+  `PATHEXT` line outlives it as the code page does.
+- `call` parses its line twice and doubles each caret, so it cannot find a folder holding `^`.
+  That one path is typed bare, which runs the same file in the same cmd.
+
+**Known gap.** A child that a Ctrl+C kills while `launch.cmd` runs leaves cmd asking "Terminate batch
+job (Y/N)?", and `/exit` typed after it does not clear the question, though a second Ctrl+C does.
+An npm shim install has always had this, and past the budget a native install has it too. A child
+that reads stdin in raw mode, as a TUI does, takes Ctrl+C as a key and exits with no question, and
+Claude is never typed into on Windows. All measured with Node children. Only an agent that is not in
+raw mode when its exit sequence arrives can leave the question up, and a kill closes the console
+either way.
+
+**Known gap.** A bare `cliPath` override such as `claude` has no extension to read, and cmd resolves
+it through PATHEXT, so a shim found that way still runs its `%*` line and fails past the limit. The
+launch ends as any other that never started, and a full path avoids it.
+
+**Known gap.** The launch report reads a refusal in English only, as it does every shell failure.
+cmd words its own in the system's language, so on another one the launch classifies as `other` and
+gets its retry and the generic notice. The sentence a spawn types for itself is always English.
+
+**An npm shim that stayed under PowerShell or Git Bash has the same limit.** It stays when there is
+no sibling shim or the execution policy blocks one, and those shells then hand the line to cmd.
+Measured with a shell metacharacter in the prompt's tail, up to 8,000 characters ran exact, about
+8,050 ran nothing and printed nothing, and from 8,100 cmd printed "The command line is too long."
+So past `CMD_TYPED_LINE_BYTE_BUDGET` the spawn types what the shim would have started, read by
+`directLaunchOfBatchShim`. Those shells can start it directly, so there is no launcher file. A shim
+it cannot read gets the same named refusal as under cmd, from the same budget: its text is unknown,
+so a line of 7,000 to 8,000 bytes that might have run is refused rather than left to fail with no
+error.
 
 A Windows console has no line limit, but the process the line starts does: 32,766 characters, and
 8,191 through cmd.exe. `commandLineLimit` holds both. Linux limits one argument to 131,072 bytes,
@@ -135,7 +209,10 @@ refuses an agent's command that does not fit
 
 `tests/unit/typed-launch-round-trip.test.ts` runs both lines through real shells with a controlled
 startup delay and asserts what a stub agent received, never the scrollback, since a shell's echo of
-a command is not the agent getting it.
+a command is not the agent getting it. `tests/unit/cmd-launcher-round-trip.test.ts` does the same for
+`launch.cmd` through a real ConPTY in `shell-quoting-windows.yml`, with the real Claude builder's
+output, to an `.exe` and past an npm shim, from folders holding `%`, `^`, a run of spaces and
+non-ASCII text.
 
 ### npm `.cmd` shims under PowerShell and Git Bash
 

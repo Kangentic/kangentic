@@ -25,6 +25,7 @@ import { traceTerminal } from '../terminal-trace';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
 import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
 import { remoteTranscriptSource, type RemoteSessionRegistration } from '../../remote/remote-session-relay';
+import { directLaunchOfBatchShim } from '../../agent/shared/npm-shim-target';
 import { buildTypedLaunch, commandFitsShell, type TypedLaunch, type TypedLaunchInput } from '../spawn/typed-launch';
 
 /**
@@ -227,6 +228,7 @@ function typedLaunchInput(input: SpawnSessionInput, command: string, shell: stri
     shell,
     platform: process.platform,
     sessionDirectory: outputPath ? path.dirname(outputPath) : null,
+    batchShimLaunch: directLaunchOfBatchShim,
   };
 }
 

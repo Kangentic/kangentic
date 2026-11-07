@@ -86,10 +86,42 @@ export function stripAnsiEscapes(text: string): string {
   result = result.replace(/\n{3,}/g, '\n\n');
 
   // 8. Trim trailing whitespace on each line.
-  //    Cursor positioning often pads lines with spaces.
-  result = result.replace(/[ \t]+$/gm, '');
+  //    Cursor positioning often pads lines with spaces. The lookbehind starts one
+  //    attempt per run: without it a run with text after it costs its length
+  //    squared, and 128,000 spaces held the main process 19 s (measured).
+  result = result.replace(/(?<![ \t])[ \t]+$/gm, '');
 
   return result;
+}
+
+/** A move to the right edge (`\x1b[999C`) is positioning, not a gap in a sentence. */
+const MAX_EXPANDED_SPACES = 256;
+
+/**
+ * Terminal output as lines a matcher can read. `stripAnsiEscapes` deletes every
+ * cursor move, and ConPTY writes some of a line's layout as moves:
+ *
+ *  - A repainted row is a cell diff, where a cell the last frame already held is
+ *    skipped with a cursor-forward. Its spaces arrive as `\x1b[1C` and are lost
+ *    (`Workedfor11s` in stored transcripts). Each becomes its spaces.
+ *  - A new row can arrive as a move to its first column rather than a newline.
+ *    Measured on cmd 10.0.26200 after `cls`: `\x1b[HThe command line is too
+ *    long.\x1b[3;1HC:\project>`, which stripped reads as one line that ends in
+ *    the prompt. Each becomes a line break. A move to any other column stays a
+ *    move: ConPTY lands one in the middle of a sentence when it repaints.
+ *
+ * Kept apart from `stripAnsiEscapes` because its other readers depend on what it
+ * returns today: `resize-manager.ts` dedups frames on it, so added spaces would
+ * change what counts as activity, and `transcript-writer.ts` stores it.
+ */
+export function readableTerminalText(text: string): string {
+  const laidOut = text
+    .replace(/\x1b\[(\d*)C/g, (_move, count: string) => {
+      const columns = count === '' ? 1 : Number(count);
+      return ' '.repeat(Math.min(columns, MAX_EXPANDED_SPACES));
+    })
+    .replace(/\x1b\[(?:\d*;1)?H/g, '\n');
+  return stripAnsiEscapes(laidOut);
 }
 
 /**
