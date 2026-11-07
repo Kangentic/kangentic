@@ -152,6 +152,36 @@ describe('SessionTelemetry: permission-rejection poll (task #640)', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('closes the denied call in the open-work ledger, and fires no turn end for a denial the agent carries on from', () => {
+    const turnEnds: string[] = [];
+    telemetry = new SessionTelemetry(
+      {
+        onUsageChange: () => {},
+        onActivityChange: () => {},
+        onEvent: () => {},
+        onIdleTimeout: () => {},
+        onPlanExit: () => {},
+        onPRCandidate: () => {},
+        requestSuspend: () => {},
+        isSessionRunning: () => true,
+        reportRejectedPermissionTools: (_sessionId, toolIds) => toolIds,
+        onTurnEnded: (sessionId) => turnEnds.push(sessionId),
+      },
+      { disableBgShellWatcher: true, activityEngineOptions: { idleStabilityWindowMs: 0 } },
+    );
+    raisePermissionPrompt(telemetry, 's1', 'tool-awaited');
+    expect(telemetry.getOpenWork('s1').toolCalls.map((call) => call.id)).toEqual(['tool-awaited']);
+
+    vi.advanceTimersByTime(POLL_MS);
+
+    expect(telemetry.getOpenWork('s1').toolCalls).toEqual([]);
+    expect(telemetry.getSessionActivity('s1')).toBe('idle');
+    // The prompt timed out and the model went on: the next call is the same work.
+    telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.ToolStart, tool: 'Bash', toolId: 'tool-next' }]);
+    expect(telemetry.getSessionActivity('s1')).toBe('thinking');
+    expect(turnEnds).toEqual([]);
+  });
+
   it('keeps polling (and stays in permission) when the callback reports no rejection', () => {
     telemetry = makeTelemetry({ log, reportRejectedPermissionTools: () => [] });
     raisePermissionPrompt(telemetry, 's1', 'tool-awaited');
