@@ -12,16 +12,22 @@ sources:
 ---
 # Dependency upgrades
 
-`/upgrade-deps` researches every npm dependency with a newer eligible release and files the work on
-the board. It changes no code. The task agent does the upgrade by following
-`.claude/skills/upgrade-deps/apply.md`, and the task then runs through Code Review, Testing and Merge
-like any other ([board test gate](board-test-gate.md)). Dependabot covers GitHub Actions only, so this
-is the path for npm.
+`/upgrade-deps` researches every npm dependency with a newer eligible release, and one agent does the
+upgrade by following `.claude/skills/upgrade-deps/apply.md`. The task then runs through Code Review,
+Testing and Merge like any other ([board test gate](board-test-gate.md)). Dependabot covers GitHub
+Actions only, so this is the path for npm.
 
-To stay with a task yourself, pause its automations and drag it straight to Executing. The agent still
-starts with the description and briefs, and the card stays there, so no Apply findings message arrives
-and nothing moves it to review. Nothing reaches Code Review, Testing or Merge until you resume
-automations and move the card.
+There are two ways to run it, and the folder it runs in decides which:
+
+- **In a task.** Make a card with `/upgrade-deps` as its description and drag it straight to Executing.
+  That agent researches and does the upgrade itself, and files nothing. Planning runs in plan mode,
+  which cannot install, so the run stops there and says so.
+- **From a Command Terminal.** It starts at the project root, where no task branch can carry the work,
+  so the run researches, files one task in To Do, and stops. Drag that task when you want it.
+
+To stay with a task yourself, pause its automations before you drag it to Executing. The card stays
+there, so no Apply findings message arrives and nothing moves it to review. Nothing reaches Code Review,
+Testing or Merge until you resume automations and move the card.
 
 Run it as often as you like. Packages ship daily, so nothing here depends on the date: every run
 targets the newest release, and research already done is skipped. `--dry-run` prints the planned task
@@ -33,8 +39,8 @@ and files nothing.
 |---|---|
 | `scripts/upgrade-deps.mjs` | Reads the manifests, the lockfile, the registry and `npm audit`. Decides by version number what can move, and whether earlier research still answers it. |
 | `upgrade-researcher` agent | Reads the release notes for every version crossed, checks how the repo uses the package, finds what can be removed or adopted, and writes a brief. |
-| `/upgrade-deps` skill | Drives the run: spawns the researchers, plans the tasks, files them, and records them on the briefs. |
-| `apply.md` | What the task agent follows to install, migrate, adopt, verify and commit. |
+| `/upgrade-deps` skill | Drives the run: spawns the researchers, orders the phases, and either follows `apply.md` or files a task, then records the task on the briefs. |
+| `apply.md` | What the agent follows to install, migrate, adopt, verify and commit. |
 
 ## Why a script decides what can move
 
@@ -96,7 +102,9 @@ to what it just read and gives the group a state:
 | `research` | No usable brief | Everything |
 
 A blocked brief names the packages it waits on and their versions, so the check is a comparison and
-needs no agent, even for a package nothing here declares. A run with nothing new spawns nothing. A
+needs no agent, even for a package nothing here declares. The check follows the line the brief recorded,
+so a blocker that waits on a beta we run moves on the next beta, where `latest` would never move. A run
+with nothing new spawns nothing. A
 deep pass writes a draft as it goes, which the next pass continues and never reuses as an answer.
 
 A filed group stays tied to its task when a new release moves its target. The run checks the task
@@ -113,18 +121,23 @@ install something else, the brief says so in `installTargets`.
 
 ## One task, one agent
 
-A run files one task and one agent does all of it, whatever its size. It never splits a group out and
-never files a follow-up. The first full run filed the fewest tasks it judged safe and got four, three of
-them in sequence. Tasks in sequence wait on a merge each, and tasks in parallel conflict in
-`package-lock.json`, so a split only added waiting. The cost of one task is one large PR.
+One agent does all of it, whatever its size. A run never splits a group out and never files a
+follow-up. An early run filed the fewest tasks it judged safe and got four, three of them in sequence.
+Tasks in sequence wait on a merge each, and tasks in parallel conflict in `package-lock.json`, so a
+split only added waiting. The cost of one task is one large PR.
+
+A run from a task does the upgrade itself because filing from a task is a trap. The filing task has no
+commits, so with automations on it goes to Code Review, comes back blocked for having no diff, and loops
+until the board's limits stop it. The first run from a task spent $2.27 on that.
 
 Each group is a phase with its own commit, ordered safest first with the terminal stack last. `apply.md`
 drops a phase that cannot pass its gates and carries on, so a red group late in the run leaves every
 commit before it standing.
 
-The task rolls, because a run can come as often as you like. A run adds to the upgrade task waiting in
-To Do. While one is past To Do, a run reports what could move and stops, and the first run after that
-task merges picks it up.
+The task rolls, because a run can come as often as you like. An upgrade task is one with the
+`dependencies` label, so a card that only has a similar title never counts, and a run ignores the task
+it is in. A filing run adds to the upgrade task waiting in To Do. While one is past To Do, a run reports
+what could move and stops, and the first run after that task merges picks it up.
 
 Blocked groups get no phase, and the task lists them. The description is the plan, and each group's
 brief is attached, because the attachments reach the agent's opening prompt anyway. Descriptions stay
@@ -133,12 +146,15 @@ paths ride the same command line: past the shell's limit the spawn refuses the s
 agent that can take the prompt typed
 ([A prompt too long for its command line](../architecture/sessions/spawn-flow.md#a-prompt-too-long-for-its-command-line)).
 
-What a release adds is part of the job: workarounds it makes removable, deprecated APIs, new APIs that
-replace our code, and new features. Anything a person would see is the task's last section, because it
-starts from a mockup someone reviews. The agent publishes the mockup and builds nothing until you
-approve it. Executing's Apply findings row tells an agent to take its recommended option, so `apply.md`
-says that message is no approval. With automations on, the card then moves to review without the
-feature, so pause them if you want it in the same PR.
+What a release adds is part of the job: workarounds it makes removable, deprecated APIs and new APIs
+that replace our code. A new feature a person would see is not. It gets one line in the report and no
+mockup, and you decide whether it is worth a task of its own. The first full run mocked one up inside
+the upgrade, and the mockup read as finished work. It had also never been checked against the languages
+we support.
+
+Executing's Apply findings row can fire while an agent waits on a background command, because the
+5-minute hold on a background shell can end before the shell does. `apply.md` says that message does not
+end the run, and that `Findings: applied` is only for when the whole plan is done.
 
 The last upgrade phase is a lockfile refresh, because nothing else reaches a package nothing declares,
 and most advisories live there. It stays in range and gets its own commit.
@@ -185,3 +201,9 @@ in the agent cut a pass from 191k to 43k. The first full run, 28 groups from not
 3.6M tokens, about a third of it on the four Opus groups. A second run took 3 s and no agents. Replaying
 a daily run across 30 days of our real releases gave 1.8 groups a day with a new target, at most 6, and
 12 days with none, so a repeat run pays only for what changed.
+
+Doing the upgrade is the larger cost. The first full one landed all 29 groups in 31 commits, in 4 hours
+12 minutes and about $45 before review. Most phases took 1 to 4 minutes. `node-pty` took 83, of which 76
+was waiting on the ConPTY probes, and two runs of the demo tier took about 30. Waiting spends no tokens,
+but the card reads as working throughout. `apply.md` now runs each probe mode once, which saves about 30
+minutes, and leaves the demo tier to CI.
