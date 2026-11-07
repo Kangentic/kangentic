@@ -14,9 +14,11 @@ import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { dictationPopupActions } from '../../hooks/useDictation';
 import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
 import { ANCHOR_BOUNDS_ATTRIBUTE } from '../../utils/dictation-anchor';
 import { registerBrowserNavigationTarget } from '../../utils/browser-navigation-registry';
+import { KEEPS_PANE_FOCUS_ATTRIBUTE } from '../../utils/pane-focus';
 import { useAgentDriveStore } from '../../stores/agent-drive-store';
 import { useAgentDriveVeil } from '../../hooks/useAgentDriveVeil';
 import { PopOutButton } from '../../pop-out/PopOutButton';
@@ -229,7 +231,22 @@ function BrowserPaneActive({
   const hoveredRef = useRef(false);
   const [zoomFactor, setZoomFactorState] = useState(1.0);
 
-  const { canvasRef, strokes, handlers, clear, undo } = useDrawingOverlay({ enabled: drawMode });
+  // Drawing keeps focus on the note, so what the user types or dictates while they
+  // annotate goes with the strokes. Keyboard focus says where dictation lands, and
+  // a stroke gives no other sign of it. A hold that started before the drawing
+  // moves to the note too.
+  const focusNote = useCallback(() => {
+    const noteInput = noteInputRef.current;
+    if (!noteInput) return;
+    // Already there: a Fast Refresh re-runs the Draw effect below, and a second
+    // pane in Draw must not pull focus back to itself.
+    if (document.activeElement !== noteInput) noteInput.focus({ preventScroll: true });
+    dictationPopupActions.moveToInput(noteInput);
+  }, []);
+  const { canvasRef, strokes, handlers, clear, undo } = useDrawingOverlay({ enabled: drawMode, onStrokeStart: focusNote });
+  useEffect(() => {
+    if (drawMode) focusNote();
+  }, [drawMode, focusNote]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -628,10 +645,15 @@ function BrowserPaneActive({
   };
   const browserKeyOptions = { target: 'document', capture: true, stopPropagation: false } as const;
   useKeybinding('browser.inspect', () => void startInspect(), { ...browserKeyOptions, when: paneActive });
+  // Draw answers in the note too: drawing puts focus there, and the key that
+  // turned Draw on has to turn it off. It carries a modifier, so it types nothing.
   useKeybinding('browser.draw', () => setDrawMode((previous) => {
     if (!previous) cancelInspect();
     return !previous;
-  }), { ...browserKeyOptions, when: paneActive });
+  }), {
+    ...browserKeyOptions,
+    when: (event) => event.target === noteInputRef.current || paneActive(event),
+  });
   useKeybinding('browser.zoomIn', () => zoomIn(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomReset', () => resetZoom(), { ...browserKeyOptions, when: paneActive });
@@ -1143,6 +1165,7 @@ function BrowserPaneActive({
         <canvas
           ref={canvasRef}
           {...handlers}
+          {...{ [KEEPS_PANE_FOCUS_ATTRIBUTE]: '' }}
           style={{
             position: 'absolute',
             inset: 0,
@@ -1278,7 +1301,15 @@ function BrowserPaneActive({
       />
 
       {/* Toolbar: capture zone (left) | flex spacer | compose zone (right) */}
-      <div className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0">
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0"
+        // While Draw is on, Undo, Clear, Send and the gaps between them leave focus
+        // on the note. Their clicks still land: only the focus move is stopped.
+        {...(drawMode ? { [KEEPS_PANE_FOCUS_ATTRIBUTE]: '' } : {})}
+        onMouseDown={(event) => {
+          if (drawMode && event.target !== noteInputRef.current) event.preventDefault();
+        }}
+      >
         {/* Capture zone: Draw + its stroke sub-actions, then Inspect. */}
         <Tooltip label={i18n._(msg`Toggle draw mode`)} keys="browser.draw">
           <button

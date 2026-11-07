@@ -120,6 +120,12 @@ bound button's own `mousedown` and `mouseup` are stopped by name instead. Stoppi
 also matters on its own: on an unconsumed Back release Chromium went back through history in the
 measuring harness.
 
+A hold's target is decided once, at the press, from keyboard focus. Drawing holds that focus on the
+Browser pane's note input, so a hold while annotating goes to the note and is sent with the strokes.
+A hold already running when the drawing starts, by turning Draw on or by a stroke, moves to the note:
+what it had typed at its first target is erased, and the current partial is written in the note. A
+refused hold (a password field) does not move.
+
 A press with another button down is a `pointermove` too, so `useKeybinding` takes `chordedPress`,
 which only dictation sets. A one-shot action such as the middle-click close stays on `pointerdown`.
 The drawing overlay starts and ends a stroke on the same kind of move (`chordedStrokeChange`).

@@ -20,6 +20,7 @@ import { useWindowDrag } from '../dnd/useWindowDrag';
 import { useWindowResize } from '../dnd/useWindowResize';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
+import { KEEPS_PANE_FOCUS_ATTRIBUTE } from '../../utils/pane-focus';
 import { WindowContent } from './WindowContent';
 import { WindowResizeHandles } from './WindowResizeHandles';
 
@@ -172,6 +173,11 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         // but when it does the preventDefault below would pull the user's focus
         // out of the page they just clicked and into the terminal.
         if (target.closest('webview')) return;
+        // The drawing canvas, and the pane's toolbar while Draw is on. A stroke
+        // belongs with the note beside it, which holds focus for the drawing.
+        // Taking focus to the terminal here sent the dictated note to the agent
+        // as a plain message, with the strokes left behind.
+        if (target.closest(`[${KEEPS_PANE_FOCUS_ATTRIBUTE}]`)) return;
         event.preventDefault();
         // arrival-focus-ok: a literal pointer-down on THIS window's chrome.
         frameRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')?.focus();

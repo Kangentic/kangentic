@@ -81,11 +81,21 @@ export function toPreviewCase(text: string): string {
  * Bridge so the popup / docked-bar Send / Clear / Cancel buttons reach the
  * single mounted hook instance, which owns the finalize + commit + clear logic.
  * Re-registered on every mount, so resetting on a Fast Refresh is correct.
+ *
+ * `moveToInput` is how a Browser pane hands a running hold to its note when
+ * drawing starts: the target is otherwise fixed at the press.
  */
-export const dictationPopupActions: { commit: () => void; clear: () => void; cancel: () => void } = {
+// hmr-safe: reset on every mount; the useDictation effect fills it again.
+export const dictationPopupActions: {
+  commit: () => void;
+  clear: () => void;
+  cancel: () => void;
+  moveToInput: (element: HTMLInputElement) => void;
+} = {
   commit: () => undefined,
   clear: () => undefined,
   cancel: () => undefined,
+  moveToInput: () => undefined,
 };
 
 /**
@@ -165,6 +175,11 @@ export function useDictation(): void {
   // and the `stop` round trip, which runs long while a cold refinement model
   // loads. A press in that span is refused (`decidePress`).
   const finalizingRef = useRef(false);
+  // Counts starts. A release before `start` returns finds no session to stop,
+  // so the next press may start again while the first start is still awaiting.
+  // `activeRef` is the newer press's by then, so each start keeps its own number
+  // and backs out, touching only what it created, once a newer one has begun.
+  const startGenerationRef = useRef(0);
   /** `performance.now()` at the press that started this hold, for the trace. */
   const holdStartedAtRef = useRef<number | null>(null);
   /** When a GUEST-forwarded press landed, in MAIN's `Date.now()` clock.
@@ -238,6 +253,8 @@ export function useDictation(): void {
       return;
     }
     activeRef.current = true;
+    const generation = ++startGenerationRef.current;
+    const superseded = (): boolean => startGenerationRef.current !== generation;
     framesSentRef.current = 0;
     sentenceCaseFinalRef.current = false;
     // Before the sink is built: `cleanupSubscriptions` releases the sink too, so
@@ -279,6 +296,8 @@ export function useDictation(): void {
     let startedSessionId: string | null = null;
     try {
       const permission = await window.electronAPI.dictation.requestMic();
+      // A newer press owns the subscriptions, the sink and the store now.
+      if (superseded()) return;
       if (permission !== 'granted') {
         activeRef.current = false;
         cleanupSubscriptions();
@@ -304,6 +323,10 @@ export function useDictation(): void {
         language: optionsRef.current.language,
       });
       startedSessionId = result.dictationSessionId;
+      if (superseded()) {
+        void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+        return;
+      }
       sentenceCaseFinalRef.current = result.sentenceCaseFinal === true;
       // The release found no session in the store, since `beginRecording` is
       // below, so a session it overtook is ours to cancel.
@@ -325,6 +348,10 @@ export function useDictation(): void {
       let guestProbe: GuestFieldProbe | null = null;
       if (target?.kind === 'guest') {
         guestProbe = await probeGuestField(target.webview);
+        if (superseded()) {
+          void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+          return;
+        }
         // Released during the probe.
         if (!activeRef.current) {
           await abandonSession();
@@ -397,6 +424,13 @@ export function useDictation(): void {
           pcm,
         });
       });
+      // Released while the audio graph started, and pressed again: this capture
+      // and its session are the old press's, and nothing else will stop them.
+      if (superseded()) {
+        handle.stop();
+        void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+        return;
+      }
       captureRef.current = handle;
       // Released while the audio graph was starting: tear it back down. The
       // release handler already finalized; just stop the now-orphaned capture.
@@ -404,6 +438,10 @@ export function useDictation(): void {
         stopCapture();
       }
     } catch (error) {
+      if (superseded()) {
+        if (startedSessionId) void window.electronAPI.dictation.cancel(startedSessionId).catch(() => undefined);
+        return;
+      }
       activeRef.current = false;
       stopCapture();
       // The session may have been created before the throw (mic capture failed
@@ -557,6 +595,38 @@ export function useDictation(): void {
     void finalizeOnRelease();
   }, [finalizeOnRelease, traceHold]);
 
+  /**
+   * Move a hold that is already recording to a text field, for a person who
+   * started speaking and then began drawing on a Browser pane: the words belong
+   * with the strokes. What was typed at the old target is erased, and the
+   * current partial is written at the new one.
+   *
+   * Only a hold the engine has started and that has somewhere to write. A start
+   * still in flight builds its target as it finishes, and a refused hold (a
+   * password field) writes nowhere and must not start now.
+   */
+  const moveToInput = useCallback((element: HTMLInputElement): void => {
+    if (!activeRef.current) return;
+    const state = useDictationStore.getState();
+    if (state.status !== 'recording' || state.refusal !== null) return;
+    if (state.targetElement === element) return;
+    sinkRef.current?.clear();
+    sinkRef.current = createDictationSink({ kind: 'input', element }, {
+      // Never called: an input is written in this renderer, with no paste to guard.
+      onSubmitStarted: () => {},
+      onSubmitSettled: () => {},
+    });
+    useDictationStore.setState({
+      targetKind: 'input',
+      targetSessionId: null,
+      targetElement: element,
+      contentEditableElement: null,
+      guestAnchor: null,
+      willSubmit: optionsRef.current.autoSubmit && mayAutoSubmit(element),
+    });
+    if (state.partialText.length > 0) sinkRef.current?.write(sanitizeInline(state.partialText));
+  }, []);
+
   // Wire the surface buttons to this instance.
   useEffect(() => {
     dictationPopupActions.commit = () => {
@@ -568,12 +638,14 @@ export function useDictation(): void {
     dictationPopupActions.cancel = () => {
       void cancelDictation();
     };
+    dictationPopupActions.moveToInput = moveToInput;
     return () => {
       dictationPopupActions.commit = () => undefined;
       dictationPopupActions.clear = () => undefined;
       dictationPopupActions.cancel = () => undefined;
+      dictationPopupActions.moveToInput = () => undefined;
     };
-  }, [commitFinal, clearDictation, cancelDictation]);
+  }, [commitFinal, clearDictation, cancelDictation, moveToInput]);
 
   // Surface first-use model download progress in the popup. `done` clears it.
   useEffect(() => {
@@ -635,7 +707,14 @@ export function useDictation(): void {
 
   /** A press, from the window or a guest. Reports whether it starts a hold, which
    *  is the only kind a later release may read as a navigation tap. */
-  const handlePress = useCallback((repeat: boolean, recoveryReason: DictationHoldEndReason, buttons: number | null): boolean => {
+  const handlePress = useCallback(({ repeat, recoveryReason, buttons }: {
+    /** A keyboard auto-repeat, which never starts or ends a hold. */
+    repeat: boolean;
+    /** How this press ends a hold whose release was missed. */
+    recoveryReason: DictationHoldEndReason;
+    /** The pointer event's bitmask, or null for a key or a guest report. */
+    buttons: number | null;
+  }): boolean => {
     const decision = decidePress({ active: activeRef.current, finalizing: finalizingRef.current, repeat });
     if (decision === 'finish') endHold(recoveryReason, buttons);
     if (decision === 'ignore' && !repeat) traceHold('refused', null, buttons);
@@ -655,7 +734,7 @@ export function useDictation(): void {
     (event) => {
       const repeat = 'repeat' in event && event.repeat;
       const buttons = 'buttons' in event ? event.buttons : null;
-      if (!handlePress(repeat, 'second-press', buttons)) return;
+      if (!handlePress({ repeat, recoveryReason: 'second-press', buttons })) return;
       pressedAtRef.current = event.timeStamp;
       startDictationSafely();
     },
@@ -746,7 +825,7 @@ export function useDictation(): void {
 
       if (event.phase === 'down') {
         if (!boundToThisButton) return;
-        if (!handlePress(false, 'guest-second-press', null)) return;
+        if (!handlePress({ repeat: false, recoveryReason: 'guest-second-press', buttons: null })) return;
         guestPressedAtRef.current = event.at;
         startDictationSafely();
         return;
