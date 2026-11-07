@@ -5,7 +5,7 @@
  * pinned at the unit tier (terminal-mode-reset.test.ts); this is the key's wiring.
  */
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { launchWithTransientTerminal, openTransientCommandTerminal, writtenToSession } from './helpers';
+import { fireSessionData, launchWithTransientTerminal, openTransientCommandTerminal, writtenToSession } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -37,6 +37,31 @@ function resizeCount(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as {
     electronAPI: { sessions: { __resizeCalls: unknown[] } };
   }).electronAPI.sessions.__resizeCalls.length);
+}
+
+/** Primary device attributes, which xterm always answers. */
+const DEVICE_ATTRIBUTES_QUERY = '\x1b[c';
+const DEVICE_ATTRIBUTES_REPLY = /\x1b\[\?[\d;]+c/gu;
+
+/**
+ * The mount replay has landed and the focus it hands the terminal has run. The
+ * replay releases the live bytes it held, then schedules that focus on the next
+ * animation frame (`focusOnArrival`), so a reply to a device-attributes query is
+ * proof the replay is over, and one more frame runs the focus. Without this a blur
+ * can land first, the frame hands focus back, and a press meant to do nothing
+ * resets the terminal. The veil `TerminalTab` draws is not in a Command Terminal,
+ * so waiting for it proves nothing here.
+ */
+async function settleMountFocus(page: Page): Promise<void> {
+  // Re-fired inside the poll: a chunk that lands during the mount replay is
+  // superseded by the replay's frame.
+  await expect.poll(async () => {
+    await fireSessionData(page, SESSION_ID, DEVICE_ATTRIBUTES_QUERY);
+    return [...(await writtenToSession(page, SESSION_ID)).matchAll(DEVICE_ATTRIBUTES_REPLY)].length;
+  }, { timeout: 10000, intervals: [250] }).toBeGreaterThan(0);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
 }
 
 async function focusedTerminal(commandWindow: Locator): Promise<Locator> {
@@ -72,8 +97,10 @@ test('the combo does nothing while focus is outside the terminal', async () => {
   const { browser, page } = await launch({ 'terminal.reset': RESET_COMBO });
   try {
     const commandWindow = await openTransientCommandTerminal(page, SESSION_ID);
+    await settleMountFocus(page);
     const textarea = await focusedTerminal(commandWindow);
     await textarea.blur();
+    await expect(textarea).not.toBeFocused();
 
     await page.keyboard.press(RESET_COMBO);
     // The same press with focus back is the fence: one call, and it is this one.
