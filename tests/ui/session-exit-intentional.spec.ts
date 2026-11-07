@@ -47,6 +47,10 @@ const EXIT_CODE = 1073807364; // Windows ConPTY hard-kill code (non-zero).
 const CONFIG_OVERRIDE_SCRIPT = `
   window.__mockConfigOverrides = {
     notifications: {
+      muted: false,
+      appBadge: true,
+      sounds: { onAgentIdle: 'off', onAgentCrash: 'off', onPlanComplete: 'off', onWorkflowComplete: 'off', onWorkflowStalled: 'off', onSpawnStalled: 'off' },
+      customSounds: {},
       desktop: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true },
       toasts: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true, durationSeconds: 99999, maxCount: 10 },
       cooldownSeconds: 10,
