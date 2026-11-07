@@ -41,7 +41,8 @@ which is the same split.
   the old and new `lib/xterm.mjs` and handle every new reply that is on by default. From 6.0.0 to
   6.1.0-beta.304 there were three: XTVERSION, the color-scheme report and the kitty keyboard
   query. Every other reply (DA1, DA2, DSR, DECRQM, DECRQSS, OSC color, window ops, focus) already
-  existed.
+  existed. From 6.1.0-beta.304 to 6.1.0-beta.336 (headless 6.1.0-beta.334) there were none: both
+  bundles hold the same reply sites.
 - A terminal whose `onData` goes nowhere (main's headless parser, the devtools re-parse, the web
   demo's replay emulator) answers into the void and is exempt.
 
