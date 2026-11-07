@@ -632,13 +632,20 @@ test('with two terminals on screen, the shortcut and Escape act only on the focu
     const first = windows.nth(0);
     const second = windows.nth(1);
 
-    // A script focus, so the window's own pointer handling stays out of it.
-    await first.locator('.xterm-helper-textarea').focus();
+    // The new window holds window-layer focus, so its terminal takes keyboard focus every time
+    // one of its arrivals lands (deferred init, mount replay, the reload after the tiling
+    // refit). A script focus on the first pane does not move window-layer focus, so an arrival
+    // between that focus and the key sends the shortcut to the second pane. A click is the
+    // user's own gesture and moves window-layer focus, so the arbiter denies the other
+    // window's arrivals from then on (terminal-arrival-focus.md, tier 2).
+    await first.locator('.xterm').click();
+    await expect(first.locator('.xterm-helper-textarea')).toBeFocused();
     await page.keyboard.press('ControlOrMeta+f');
     await expect(first.getByTestId('terminal-find-bar')).toBeVisible();
     await expect(findBar(page)).toHaveCount(1);
 
-    await second.locator('.xterm-helper-textarea').focus();
+    await second.locator('.xterm').click();
+    await expect(second.locator('.xterm-helper-textarea')).toBeFocused();
     await page.keyboard.press('ControlOrMeta+f');
     await expect(second.getByTestId('terminal-find-bar')).toBeVisible();
     await expect(findBar(page)).toHaveCount(2);
