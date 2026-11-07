@@ -10,7 +10,11 @@ import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './
 import { abortWorktreeSetup, isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
-import { linkNodeModules, removeNodeModulesPath, removeNodeModulesLinkOnly } from './node-modules-link';
+import { linkNodeModules } from './node-modules-link';
+import { clearMovedWorktreeLinks, clearWorktreeLinks, linkWorktreeFolders } from './worktree-links';
+import { hasGlobMagic, isClaudePath, linkedFoldersOf, normalizeEntry } from './worktree-copy/entry-path';
+import { copyEntries } from './worktree-copy/copy-entries';
+import { worktreeCopyClient } from './worktree-copy/worktree-copy-client';
 import { moveIntoRemovedWorktrees } from './removed-worktrees';
 import { fetchIfStale, type FetchIfStaleOutcome } from './fetch-throttle';
 import {
@@ -245,13 +249,15 @@ export interface WorktreeSkipped {
 export type EnsureWorktreeResult = WorktreeCreateResult | WorktreeSkipped;
 
 /**
- * What `setUpWorktree` puts into a freshly created worktree: the files copied
- * from the project root, the node_modules link (on unless `false`), and the
- * user's Post-Worktree Script. The shape of `config.git`'s matching keys.
+ * What `setUpWorktree` puts into a freshly created worktree: the files, folders
+ * and glob matches copied from the project root, the node_modules link (on
+ * unless `false`), the linked folders, and the user's Post-Worktree Script. The
+ * shape of `config.git`'s matching keys.
  */
 export interface WorktreeSetup {
   copyFiles: string[];
   linkNodeModules?: boolean;
+  linkFolders?: string[];
   initScript?: string | null;
 }
 
@@ -1315,46 +1321,69 @@ export class WorktreeManager {
       await linkNodeModules(worktreePath, this.projectPath);
       logCreateStep('link-node-modules', linkStartedAt);
     }
+    await this.linkFolders(worktreePath, setup);
     options?.signal?.throwIfAborted();
   }
 
   /**
-   * Copy the configured files from the project root into a worktree, the first
-   * step of `prepareWorktreeFiles`. Alone, it is what a task's claim of a spare
-   * worktree runs: the spare's node_modules link step must not run again,
+   * Link the configured folders. Alone, it is the link step a task's claim of a
+   * spare runs: unlike `linkNodeModules` it deletes nothing, so it only adds a
+   * folder the project gained after the build.
+   */
+  async linkFolders(worktreePath: string, setup: Pick<WorktreeSetup, 'linkFolders'>): Promise<void> {
+    if (!setup.linkFolders?.length) return;
+    const linkStartedAt = Date.now();
+    await linkWorktreeFolders(worktreePath, this.projectPath, setup.linkFolders);
+    logCreateStep('link-folders', linkStartedAt);
+  }
+
+  /**
+   * Copy the configured entries from the project root into a worktree, the
+   * first step of `prepareWorktreeFiles`. Alone, it is what a task's claim of a
+   * spare worktree runs: the spare's node_modules link step must not run again,
    * because `linkNodeModules` deletes a real node_modules directory, which is
    * the spare's install.
+   *
+   * A list of plain files runs here, a few small copies with no process to
+   * start, async so a busy main still yields between them. A folder or a glob
+   * sends the whole list to the copy worker: `COPY_LIMITS` bounds that walk and
+   * copy to seconds of IO, which stay off main, and a list over the limits
+   * rejects before anything is copied. Either way `copyEntries` does the work.
    */
   async copyWorktreeFiles(
     worktreePath: string,
-    setup: Pick<WorktreeSetup, 'copyFiles'>,
+    setup: Pick<WorktreeSetup, 'copyFiles' | 'linkNodeModules' | 'linkFolders'>,
     options?: { signal?: AbortSignal },
   ): Promise<void> {
-    options?.signal?.throwIfAborted();
-
-    // Copy specified files into the worktree (skip .claude/ entries --
-    // sparse-checkout keeps .claude/ but excludes commands/,
-    // and hooks are delivered via --settings flag pointing to session directory).
-    // Async fs so the per-file copy loop yields the event loop between files
-    // instead of blocking it: a busy main process otherwise bunches the spawn
-    // progress IPC pushes, which then land as one burst on the renderer.
+    const signal = options?.signal;
+    signal?.throwIfAborted();
     const copyStartedAt = Date.now();
-    let copiedCount = 0;
-    for (const file of setup.copyFiles) {
-      if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;
-      const src = path.join(this.projectPath, file);
-      const dest = path.join(worktreePath, file);
+    const request = {
+      projectPath: this.projectPath,
+      worktreePath,
+      entries: setup.copyFiles,
+      linkedFolders: linkedFoldersOf(setup),
+    };
+    const result = (await this.needsCopyWorker(setup.copyFiles))
+      ? await worktreeCopyClient.copy(request, signal)
+      : await copyEntries(request, signal);
+    logCreateStep('copy-files', copyStartedAt, ` (files=${result.copied} unchanged=${result.unchanged} skippedLinks=${result.skippedLinks})`);
+    signal?.throwIfAborted();
+  }
+
+  /** True when an entry of the list is a folder or a glob, the work `copyWorktreeFiles` keeps off main. */
+  private async needsCopyWorker(entries: string[]): Promise<boolean> {
+    for (const entry of entries) {
+      const file = normalizeEntry(entry);
+      if (!file || isClaudePath(file)) continue;
       try {
-        await fs.promises.access(src);
+        if ((await fs.promises.stat(path.join(this.projectPath, file))).isDirectory()) return true;
       } catch {
-        continue; // Source does not exist -- nothing to copy.
+        // No such path, so it is a glob or there is nothing to copy.
+        if (hasGlobMagic(file)) return true;
       }
-      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-      await fs.promises.copyFile(src, dest);
-      copiedCount++;
     }
-    logCreateStep('copy-files', copyStartedAt, ` (files=${copiedCount})`);
-    options?.signal?.throwIfAborted();
+    return false;
   }
 
   /**
@@ -1548,7 +1577,7 @@ export class WorktreeManager {
     if (fs.existsSync(worktreePath)) {
       const movedTo = await moveIntoRemovedWorktrees(this.projectPath, worktreePath);
       if (!movedTo) return false;
-      removeNodeModulesLinkOnly(path.join(movedTo, 'node_modules'));
+      await clearMovedWorktreeLinks(movedTo);
       try {
         await fs.promises.unlink(path.join(movedTo, '.git'));
       } catch {
@@ -1676,7 +1705,12 @@ export class WorktreeManager {
     timeoutMs: number,
     deadline?: number,
   ): Promise<{ removed: boolean; timedOut: boolean }> {
-    await clearWorktreeNodeModules(worktreePath, profile, deadline);
+    // A link left in place would take `git worktree remove` into its target:
+    // measured on Windows, it deleted what a junction pointed at.
+    if (!(await clearLinksAndNodeModules(worktreePath, profile, deadline))) {
+      console.warn(`[WORKTREE] remove refused: a linked folder in ${worktreePath} would not come out`);
+      return { removed: false, timedOut: false };
+    }
 
     const gitStartedAt = Date.now();
     try {
@@ -1908,8 +1942,8 @@ export function parseWorktreeBranches(porcelain: string): Map<string, string> {
  * process-scan cost. Idempotent (node_modules removal no-ops on ENOENT), so it
  * is correct to call this before the lock AND have `removeWorktree` clear
  * node_modules again inside each removal attempt. Never throws
- * (removeNodeModulesPath swallows its own errors). The junction guard in
- * `removeNodeModulesPath` is load-bearing.
+ * (removeNodeModulesPath swallows its own errors). The junction guards in
+ * `clearWorktreeLinks` and `removeNodeModulesPath` are load-bearing.
  *
  * Waits first for a creation still in flight at this path
  * (`worktree-creation-registry.ts`): its setup script runs outside the git queue
@@ -1931,22 +1965,27 @@ export async function prepareWorktreeForRemoval(
   if (await waitForWorktreeCreation(worktreePath)) {
     console.log(`[WORKTREE] remove step=creation-wait done in ${Date.now() - waitStartedAt}ms: ${worktreePath}`);
   }
-  await clearWorktreeNodeModules(worktreePath, profile, deadline);
+  await clearLinksAndNodeModules(worktreePath, profile, deadline);
 }
 
-/** The node_modules step of a removal, without `prepareWorktreeForRemoval`'s wait. */
-async function clearWorktreeNodeModules(
+/**
+ * The links-and-node_modules step of a removal, without
+ * `prepareWorktreeForRemoval`'s wait. Returns false when a link would not come
+ * out, so the worktree must not be deleted recursively.
+ */
+async function clearLinksAndNodeModules(
   worktreePath: string,
   profile: WorktreeRemovalProfile,
   deadline?: number,
-): Promise<void> {
-  if (!fs.existsSync(worktreePath)) return;
+): Promise<boolean> {
+  if (!fs.existsSync(worktreePath)) return true;
 
   const nodeModulesStartedAt = Date.now();
-  await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), {
+  const cleared = await clearWorktreeLinks(worktreePath, {
     removeOptions: removalOptionsFor(profile, nodeModulesDeadline(deadline)),
   });
   console.log(`[WORKTREE] remove step=node-modules done in ${Date.now() - nodeModulesStartedAt}ms`);
+  return cleared;
 }
 
 /**
@@ -1980,7 +2019,7 @@ export async function prepareStaleWorktreeForCreation(
 
   onProgress?.('creating-worktree');
   const nodeModulesStartedAt = Date.now();
-  await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), {
+  await clearWorktreeLinks(worktreePath, {
     removeOptions: removalOptionsFor('thorough', removalDeadlineFor('thorough', NODE_MODULES_REMOVAL_BUDGET_MS)),
   });
   logCreateStep('stale-node-modules', nodeModulesStartedAt);

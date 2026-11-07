@@ -101,7 +101,7 @@ beforeAll(() => {
   git(projectPath, ['init', '-q', '-b', 'main']);
   git(projectPath, ['config', 'user.email', 'dev@example.com']);
   git(projectPath, ['config', 'user.name', 'Dev']);
-  fs.writeFileSync(path.join(projectPath, '.gitignore'), '.kangentic/\n.install-runs\nnode_modules/\nlocal.env\n');
+  fs.writeFileSync(path.join(projectPath, '.gitignore'), '.kangentic/\n.install-runs\nnode_modules/\nlocal.env\nshared-data/\ngained-data/\n');
   fs.writeFileSync(path.join(projectPath, 'README.md'), 'project\n');
   git(projectPath, ['add', '-A']);
   commit(projectPath, 'initial');
@@ -215,7 +215,7 @@ function makeTaskRepository(tasks: Task[], onRecordWorktree?: (worktreePath: str
 function makeContext(
   pool: SpareWorktreePool,
   projectInitScript: string = initScript,
-  gitOverrides: { copyFiles?: string[]; defaultBaseBranch?: string } = {},
+  gitOverrides: { copyFiles?: string[]; linkFolders?: string[]; defaultBaseBranch?: string } = {},
 ): IpcContext {
   const config = {
     agent: { execution: {} },
@@ -223,6 +223,7 @@ function makeContext(
       worktreesEnabled: true,
       defaultBaseBranch: gitOverrides.defaultBaseBranch ?? 'main',
       copyFiles: gitOverrides.copyFiles ?? ['local.env'],
+      linkFolders: gitOverrides.linkFolders ?? [],
       linkNodeModules: false,
       initScript: projectInitScript,
     },
@@ -304,6 +305,83 @@ describe('spare worktrees', () => {
     expect(refilled[0]).not.toBe(spareFolder);
 
     await discardAllSpares(pool);
+  });
+
+  it('a claim re-checks a copied folder, copying only what changed, and a discard leaves a linked folder alone', async () => {
+    const copiedFolder = path.join(projectPath, 'local-data');
+    const linkedFolder = path.join(projectPath, 'shared-data');
+    const sentinel = path.join(linkedFolder, 'sentinel.txt');
+    const unchangedFile = path.join(copiedFolder, 'unchanged.txt');
+    const changedFile = path.join(copiedFolder, 'changed.txt');
+    fs.mkdirSync(copiedFolder);
+    fs.mkdirSync(linkedFolder);
+    fs.writeFileSync(unchangedFile, 'same');
+    fs.writeFileSync(changedFile, 'first');
+    fs.writeFileSync(sentinel, 'the main checkout');
+    const pool = new SpareWorktreePool();
+    const gitOverrides = { copyFiles: ['local-data'], linkFolders: ['shared-data'] };
+    const context = makeContext(pool, initScript, gitOverrides);
+    try {
+      const spareFolder = await buildSpare(pool, context);
+      const sparePath = path.join(worktreesRoot(), spareFolder);
+      expect(fs.readFileSync(path.join(sparePath, 'local-data', 'changed.txt'), 'utf8')).toBe('first');
+      expect(fs.readlinkSync(path.join(sparePath, 'shared-data'))).toBeTruthy();
+
+      fs.writeFileSync(changedFile, 'second, longer');
+      const copyFile = vi.spyOn(fs.promises, 'copyFile');
+      const task = makeTask('Adopt with a folder');
+      const repository = makeTaskRepository([task]);
+      await ensureTaskWorktree(context, task, repository as never, projectPath);
+
+      expect(repository.getById(task.id)?.worktree_folder).toBe(spareFolder);
+      expect(fs.readFileSync(path.join(sparePath, 'local-data', 'changed.txt'), 'utf8')).toBe('second, longer');
+      expect(copyFile.mock.calls.map(([source]) => path.basename(String(source)))).toEqual(['changed.txt']);
+      copyFile.mockRestore();
+
+      await pool.idle(projectPath);
+      await discardAllSpares(pool);
+      await pool.discard(projectPath, sparePath);
+      expect(fs.existsSync(sparePath)).toBe(false);
+      expect(fs.readFileSync(sentinel, 'utf8')).toBe('the main checkout');
+    } finally {
+      fs.rmSync(copiedFolder, { recursive: true, force: true });
+      fs.rmSync(linkedFolder, { recursive: true, force: true });
+    }
+  });
+
+  it('a claim links a folder the project gained after the spare was built, and stops the build loop before it copies', async () => {
+    const gainedFolder = path.join(projectPath, 'gained-data');
+    const sentinel = path.join(gainedFolder, 'sentinel.txt');
+    const pool = new SpareWorktreePool();
+    // In the setting from the start: a changed setting would mismatch the spare.
+    const context = makeContext(pool, initScript, { linkFolders: ['gained-data'] });
+    try {
+      const spareFolder = await buildSpare(pool, context);
+      const sparePath = path.join(worktreesRoot(), spareFolder);
+      expect(fs.existsSync(path.join(sparePath, 'gained-data'))).toBe(false);
+
+      fs.mkdirSync(gainedFolder);
+      fs.writeFileSync(sentinel, 'the main checkout');
+      const yieldBuilds = vi.spyOn(pool, 'yieldBuilds');
+      const copyWorktreeFiles = vi.spyOn(WorktreeManager.prototype, 'copyWorktreeFiles');
+      const task = makeTask('Adopt and link');
+      const repository = makeTaskRepository([task]);
+      await ensureTaskWorktree(context, task, repository as never, projectPath);
+
+      expect(repository.getById(task.id)?.worktree_folder).toBe(spareFolder);
+      expect(fs.readlinkSync(path.join(sparePath, 'gained-data'))).toBeTruthy();
+      expect(fs.readFileSync(path.join(sparePath, 'gained-data', 'sentinel.txt'), 'utf8')).toBe('the main checkout');
+      expect(yieldBuilds).toHaveBeenCalled();
+      expect(copyWorktreeFiles).toHaveBeenCalledTimes(1);
+      // A large folder should not share the disk with a build.
+      expect(yieldBuilds.mock.invocationCallOrder[0]).toBeLessThan(copyWorktreeFiles.mock.invocationCallOrder[0]);
+
+      await pool.idle(projectPath);
+      await discardAllSpares(pool);
+      expect(fs.readFileSync(sentinel, 'utf8')).toBe('the main checkout');
+    } finally {
+      fs.rmSync(gainedFolder, { recursive: true, force: true });
+    }
   });
 
   it('a task with a base branch of its own, or a custom branch, gets a fresh worktree and leaves the spare', async () => {
@@ -822,7 +900,7 @@ describe('spare worktrees: background mode, aborts and claim guards', () => {
     fs.writeFileSync(path.join(soloPath, 'README.md'), 'solo\n');
     git(soloPath, ['add', '-A']);
     commit(soloPath, 'initial');
-    const inputs: SpareInputs = { baseBranch: 'trunk', initScript, linkNodeModules: false, copyFiles: [] };
+    const inputs: SpareInputs = { baseBranch: 'trunk', initScript, linkNodeModules: false, copyFiles: [], linkFolders: [] };
 
     expect(await pool.build(soloPath, inputs, new AbortController().signal)).toBe(true);
     const soloWorktrees = path.join(soloPath, '.kangentic', 'worktrees');

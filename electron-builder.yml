@@ -106,6 +106,7 @@ asarUnpack:
   - "node_modules/better-sqlite3/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/line-count-worker.js"
+  - ".vite/build/worktree-copy-worker.js"
   - ".vite/build/dictation-worker.js"
   - ".vite/build/retrieval-worker.js"
   - ".vite/build/pty-host.js"

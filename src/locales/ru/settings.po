@@ -1213,15 +1213,14 @@ msgstr "Сортировка файлов"
 msgid "Files & Terminal"
 msgstr "Файлы и терминал"
 
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Files copied into each new worktree, such as .env."
-msgstr "Файлы, копируемые в каждое новое рабочее дерево, например .env."
-
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Files to copy into a worktree"
 msgstr "Файлы для копирования в рабочее дерево"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1248,6 +1247,10 @@ msgstr "Сворачивать большие неизменённые фраг�
 #, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
 msgstr "Папка на диске, на которую указывает проект. Переместите её в другое место — все задачи, история и рабочие деревья переместятся вместе с ней."
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Folders to link into a worktree"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1290,6 +1293,10 @@ msgstr "Git"
 #, fuzzy
 msgid "Git changes"
 msgstr "Изменения Git"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1657,6 +1664,10 @@ msgstr "Светлая, если в системе светлая тема"
 #, fuzzy
 msgid "Limit how many agents can run at the same time"
 msgstr "Ограничить число одновременно работающих агентов"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link folders"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

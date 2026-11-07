@@ -27,6 +27,7 @@ export function spareInputsFor(context: IpcContext, projectPath: string): SpareI
     initScript,
     linkNodeModules: git.linkNodeModules ?? true,
     copyFiles: [...(git.copyFiles ?? [])],
+    linkFolders: [...(git.linkFolders ?? [])],
   };
 }
 

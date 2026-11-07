@@ -21,6 +21,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../git/worktree-manager';
+import { clearWorktreeLinks } from '../../git/worktree-links';
 import { deleteRemovedWorktreesNow } from '../../git/removed-worktrees';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
@@ -341,8 +342,17 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     // never enters a link, and without waiting for init scripts. The rmSync
     // below would block main for the length of a whole node_modules.
     await deleteRemovedWorktreesNow(projectPath);
+    // Step 2 reached the worktrees a task on the board named. An archived
+    // task's or an unrecorded one still holds its links, and this rmSync
+    // follows a junction into the main checkout (measured on Electron 45).
+    let linksCleared = true;
+    for (const worktreePath of directories.slice(1)) {
+      if (!(await clearWorktreeLinks(worktreePath))) linksCleared = false;
+    }
     const kangenticDir = path.join(projectPath, '.kangentic');
-    if (fs.existsSync(kangenticDir)) {
+    if (!linksCleared) {
+      console.error(`[PROJECT_DELETE] Left ${kangenticDir}: a linked folder would not come out`);
+    } else if (fs.existsSync(kangenticDir)) {
       try {
         fs.rmSync(kangenticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       } catch (err) {

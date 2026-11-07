@@ -980,13 +980,13 @@ msgstr "File sort"
 msgid "Files & Terminal"
 msgstr "Files & Terminal"
 
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Files copied into each new worktree, such as .env."
-msgstr "Files copied into each new worktree, such as .env."
-
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Files to copy into a worktree"
 msgstr "Files to copy into a worktree"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
+msgstr "Files, folders and glob patterns copied into each new worktree before its agent starts."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Finds your work by meaning and answers questions."
@@ -1008,6 +1008,10 @@ msgstr "Fold away large unchanged spans so a big file shows only the changed hun
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
 msgstr "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Folders to link into a worktree"
+msgstr "Folders to link into a worktree"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Follow system appearance"
@@ -1042,6 +1046,10 @@ msgstr "Git"
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Git changes"
 msgstr "Git changes"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
+msgstr "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Give agents tools to work with your board."
@@ -1338,6 +1346,10 @@ msgstr "Light, when the system is light"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Limit how many agents can run at the same time"
 msgstr "Limit how many agents can run at the same time"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link folders"
+msgstr "Link folders"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Link node_modules"

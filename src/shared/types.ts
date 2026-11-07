@@ -4385,6 +4385,13 @@ export interface AppConfig {
      */
     linkNodeModules: boolean;
     /**
+     * Folders each worktree shares with the project through a link, for a heavy
+     * folder that should not be copied. Relative paths at any depth, no globs.
+     * A folder links only when git ignores it in the project and the worktree
+     * has nothing at its path.
+     */
+    linkFolders: string[];
+    /**
      * What a task's agent does while its new worktree runs `initScript`. On
      * (the default), the agent starts at once but gets its first prompt only
      * once the script succeeds, and a failed script fails the task as it always
@@ -5170,6 +5177,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     initScript: null,
     stopScript: null,
     linkNodeModules: true,
+    linkFolders: [],
     holdPromptForInitScript: true,
     prAutoRefresh: true,
     autoFetch: true,

@@ -154,6 +154,7 @@ describe('pickOverridableSubset', () => {
         copyFiles: ['.env'],
         initScript: null,
         linkNodeModules: false,
+        linkFolders: ['.cache'],
         prAutoRefresh: false,
         autoFetch: false,
         prBypassCountsAsReady: false,
@@ -170,6 +171,7 @@ describe('pickOverridableSubset', () => {
         copyFiles: ['.env'],
         initScript: null,
         linkNodeModules: false,
+        linkFolders: ['.cache'],
         // false is a real value, not an absence: pruneUndefined keeps it, so a
         // project that turned a default-on switch off carries that choice.
         prAutoRefresh: false,

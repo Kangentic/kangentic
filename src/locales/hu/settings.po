@@ -1213,15 +1213,14 @@ msgstr "Fájlrendezés"
 msgid "Files & Terminal"
 msgstr "Fájlok és terminál"
 
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Files copied into each new worktree, such as .env."
-msgstr "Minden új worktree-be átmásolt fájlok, például .env."
-
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
 msgid "Files to copy into a worktree"
 msgstr "Worktree-be másolandó fájlok"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1248,6 +1247,10 @@ msgstr "A nagy, változatlan szakaszok összecsukása, így egy nagy fájl csak 
 #, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
 msgstr "A lemezen lévő mappa, amelyre a projekt mutat. Áthelyezéskor minden feladat, előzmény és worktree vele együtt költözik."
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Folders to link into a worktree"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1290,6 +1293,10 @@ msgstr "Git"
 #, fuzzy
 msgid "Git changes"
 msgstr "Git-módosítások"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1657,6 +1664,10 @@ msgstr "Világos, ha a rendszer világos"
 #, fuzzy
 msgid "Limit how many agents can run at the same time"
 msgstr "Az egyszerre futó ágensek számának korlátozása"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link folders"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

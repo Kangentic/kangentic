@@ -57,6 +57,15 @@ Uses real temp files with mocked `os.homedir()`.
 - No `skip-worktree` or `update-index` calls
 - Does not call `rmSync` for `.claude` directories
 
+**Copy files and linked folders** (`worktree-copy-entries.test.ts`, `worktree-copy-client.test.ts`, `worktree-links.test.ts`):
+- A folder copies whole and a glob copies its matches, at their relative paths, on real files
+- Refused entries, every prune, the `.claude` skip per copied path, and no read of a linked folder
+- No write through a link in the worktree, and no walk through one in the project
+- Over a limit, the entry is named and nothing is copied; a second run skips what matches
+- The worker: one per copy, an abort settles only after its exit, the fallback to main, the quit
+- A link never replaces what the worktree has, and its record comes before it
+- On real git, a sentinel behind a link survives each removal path, read from the record and not the setting. On Windows it reads red with `clearWorktreeLinks` stubbed. Linux has no junctions, so CI alone cannot show this.
+
 **Parallel checkout workers:**
 - `worktree add` carries `-c checkout.workers=N`, N being the core count capped at 8
 - No `checkout.workers` on a single core
@@ -116,7 +125,7 @@ Uses real temp files with mocked `os.homedir()`.
 **Done removal (move aside, then a deferred delete):**
 - With a real repo and a real blocking script (`done-worktree-move-aside.test.ts`): a Done move takes the worktree off its path, out of `git worktree list` and off the row at once; a script that starts while the deleter is mid-delete parks it with its removed-entry count unchanged until the script ends, and a Done during a running script deletes nothing until it ends. The test reads the deleter's own state, never a timed wait. With the gate disabled both fail on an assertion in about 2 s
 - A task moved back out of Done gets its worktree at the same path and branch while the old copy waits (the move pruned the old record), and a pnpm-style link in the copy (a junction on Windows) whose absolute target the restored worktree re-creates is removed as a link, with the live files kept
-- In the default setup, where the worktree's `node_modules` links to the project root's, the link is removed from the copy as soon as it moves, and every root file survives. `removeNodeModulesLinkOnly` removes a link and keeps its target, and leaves a real directory alone
+- In the default setup, where the worktree's `node_modules` links to the project root's, the link is removed from the copy as soon as it moves, and every root file survives. `removeLinkOnly` removes a link and keeps its target, and leaves a real directory alone
 - The deleter stops after the batch in flight when told to (relocation), and a project delete deletes the copies at once without waiting for a running script
 - `waitForChurnRead` waits for a running or still-queued churn read in that directory, ignores another directory's, and returns at its bound (`wait-for-churn-read.test.ts`)
 - The walker removes files, directories, a read-only file and a link without entering it, stops when told to, refuses any path that is not a direct child of `removed-worktrees/`, and each move gets its own name

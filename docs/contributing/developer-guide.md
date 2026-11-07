@@ -197,7 +197,7 @@ scripts/
 Three parallel processes:
 
 1. **Vite dev server** -- serves renderer with HMR on port 5173 (5174+ in worktrees)
-2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the five `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/pty/host/pty-host-entry.ts` (the pty host: every PTY and its output pipeline, plus main's one-shot child processes - see `.claude/rules/pty-host-out-of-process.md`), `src/main/retrieval/embedder/embed-worker.ts`, `src/main/retrieval/worker/retrieval-worker.ts` (every read and write of the Knowledge Graph index and the agent transcript parses - see `.claude/rules/retrieval-out-of-process.md`), `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
+2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the six `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/pty/host/pty-host-entry.ts` (the pty host: every PTY and its output pipeline, plus main's one-shot child processes - see `.claude/rules/pty-host-out-of-process.md`), `src/main/retrieval/embedder/embed-worker.ts`, `src/main/retrieval/worker/retrieval-worker.ts` (every read and write of the Knowledge Graph index and the agent transcript parses - see `.claude/rules/retrieval-out-of-process.md`), `src/main/git/line-count/line-count-worker.ts`, `src/main/git/worktree-copy/worktree-copy-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
 
 Every renderer dev server (`vite.config.mts`, the worktree config, the HMR probe) registers
@@ -278,7 +278,7 @@ It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to s
    absent is how two releases shipped with unreadable stacks.
 1. `tsc --noEmit` (type check)
 2. Vite builds renderer → `.vite/build/renderer/main_window/`
-3. esbuild bundles main + preload + the five utility-process workers (embed, line-count, dictation, retrieval, pty-host), minified.
+3. esbuild bundles main + preload + the six utility-process workers (embed, line-count, worktree-copy, dictation, retrieval, pty-host), minified.
    A build that uploads fails on any bundle whose sourcemap did not reach the upload
    (`scripts/sentry-upload-gate.js`, see [Error reporting](../telemetry/error-reporting.md#sourcemaps-and-debug-files)), in step 2 as well as here.
 4. Copies bridge scripts (`status-bridge.js`, `event-bridge.js`, `plan-approval-bridge.js`, `background-shell-hint-bridge.js`) to `.vite/build/`

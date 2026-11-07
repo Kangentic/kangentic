@@ -981,13 +981,13 @@ msgstr "檔案排序"
 msgid "Files & Terminal"
 msgstr "檔案與終端機"
 
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Files copied into each new worktree, such as .env."
-msgstr "複製到每個新工作樹的檔案，例如 .env。"
-
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "Files to copy into a worktree"
 msgstr "要複製到工作樹的檔案"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files, folders and glob patterns copied into each new worktree before its agent starts."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Finds your work by meaning and answers questions."
@@ -1009,6 +1009,10 @@ msgstr "摺疊大段未變更內容，讓大檔案只顯示變更區塊與少量
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
 msgstr "此專案指向的磁碟資料夾。移到新位置後，所有任務、歷程記錄與工作樹都會跟著移動。"
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Folders to link into a worktree"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Follow system appearance"
@@ -1043,6 +1047,10 @@ msgstr "Git"
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Git changes"
 msgstr "Git 變更"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Git-ignored folders each worktree shares through a link, so a change reaches the project and every task."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Give agents tools to work with your board."
@@ -1342,6 +1350,10 @@ msgstr "系統為淺色時使用淺色"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Limit how many agents can run at the same time"
 msgstr "限制同時執行的代理數量"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link folders"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Link node_modules"
