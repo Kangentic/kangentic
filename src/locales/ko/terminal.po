@@ -22,10 +22,31 @@ msgstr "{contextLabel} 컨텍스트 창"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, other {#개 더 보기}}"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+ on screen"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+msgstr ""
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
 msgstr "컨텍스트 {pct}%"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
+msgid "{position} of {total}"
+msgstr "{position}/{total}"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -36,6 +57,10 @@ msgstr "{remainingPercent}% 남음"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} 중단됨"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -61,6 +86,10 @@ msgstr "전체"
 #, fuzzy
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "보드 프로필 - 이 작업이 따르는 열별 에이전트, 모델 및 노력 수준"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Close find"
+msgstr ""
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -119,6 +148,19 @@ msgstr "세션 경과 시간"
 msgid "Expand terminal panel"
 msgstr "터미널 패널 확장"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgctxt "terminal find field"
+msgid "Find"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find in terminal"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Idle (no activity detected)"
@@ -145,6 +187,10 @@ msgstr "모델"
 msgid "Model done"
 msgstr "모델 완료"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Newer match"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "No active sessions. Drag a task into a column that starts an agent."
@@ -155,6 +201,10 @@ msgstr "활성 세션이 없습니다. 에이전트를 시작하는 열로 작�
 msgid "No activity yet for {filteredLabel}..."
 msgstr "{filteredLabel}에 대한 활동이 아직 없습니다..."
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "No matches on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
 msgid "No tool calls yet"
@@ -164,6 +214,10 @@ msgstr "아직 도구 호출 없음"
 #, fuzzy
 msgid "Notice"
 msgstr "알림"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Older match"
+msgstr ""
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

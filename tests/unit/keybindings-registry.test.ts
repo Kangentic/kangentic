@@ -124,6 +124,15 @@ describe('scopesOverlap', () => {
     // conversation.find intentionally shadows search.plainFind's Mod+F while a
     // Conversation window is focused - see the id's registry comment.
     expect(scopesOverlap('conversation', 'global')).toBe(false);
+    // terminal.find takes Mod+F while a terminal holds focus, the same shadow.
+    expect(scopesOverlap('terminal-focused', 'global')).toBe(false);
+    expect(scopesOverlap('terminal-focused', 'board')).toBe(false);
+  });
+
+  it('overlaps a focused terminal with the window keys live beside it', () => {
+    expect(scopesOverlap('terminal-focused', 'task-dialog')).toBe(true);
+    expect(scopesOverlap('terminal-focused', 'panel')).toBe(true);
+    expect(scopesOverlap('terminal-focused', 'command-bar')).toBe(true);
   });
 });
 
@@ -137,6 +146,11 @@ describe('detectConflicts', () => {
     const real = conflicts.filter((entry) => entry.severity === 'conflict');
     expect(real).toHaveLength(1);
     expect(new Set(real[0].ids)).toEqual(new Set(['view.toggleSidebar', 'commandBar.toggle']));
+  });
+
+  it('flags Find in terminal rebound onto a key its window still uses', () => {
+    const conflicts = detectConflicts({ 'terminal.find': 'Mod+Shift+G' }).filter((entry) => entry.severity === 'conflict');
+    expect(conflicts.some((entry) => entry.ids.includes('terminal.find') && entry.ids.includes('taskDetail.toggleChanges'))).toBe(true);
   });
 
   it('flags the save key rebound onto a panel key, since New Task binds both', () => {

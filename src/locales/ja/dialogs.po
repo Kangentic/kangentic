@@ -716,6 +716,10 @@ msgstr "ダイアログを閉じる"
 msgid "Close dropdown"
 msgstr "ドロップダウンを閉じる"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -1426,6 +1430,10 @@ msgstr "変更されたファイル"
 #, fuzzy
 msgid "Filter files..."
 msgstr "ファイルをフィルター..."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

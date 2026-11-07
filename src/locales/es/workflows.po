@@ -311,6 +311,10 @@ msgstr "Todas las rutas empiezan en {name}"
 msgid "Failed to load the workflows"
 msgstr "No se pudieron cargar los flujos de trabajo"
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 #, fuzzy
 msgid "Fit every card in view"

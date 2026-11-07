@@ -51,6 +51,10 @@ msgstr "Clear search"
 msgid "Close browser"
 msgstr "Close browser"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Close find"
+msgstr "Close find"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
 msgstr "Command Terminal"
@@ -122,6 +126,11 @@ msgstr "Expand terminal"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Failed to load the Changes panel"
 msgstr "Failed to load the Changes panel"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Find in terminal"
+msgstr "Find in terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Go to {name}"

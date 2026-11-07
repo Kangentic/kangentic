@@ -149,6 +149,22 @@ async function agentSessionId(page: Page): Promise<string> {
   return String(await handle.jsonValue());
 }
 
+test('the pane header opens the terminal find bar, and Escape closes it', async () => {
+  const { browser, page } = await launch();
+  try {
+    await expect(byTestId(page, 'workflow-agent-terminal')).toBeVisible();
+    await byTestId(page, 'workflow-agent-find').click();
+    await expect(byTestId(page, 'terminal-find-input')).toBeFocused();
+    await expect(byTestId(page, 'workflow-agent-find')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.keyboard.press('Escape');
+    await expect(byTestId(page, 'terminal-find-bar')).toHaveCount(0);
+    await expect(byTestId(page, 'workflow-agent-find')).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('opening a workflow opens its agent in the pane, and Pause and Resume stop and restart it', async () => {
   const { browser, page } = await launch();
   try {

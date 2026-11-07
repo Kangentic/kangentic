@@ -470,7 +470,14 @@ export function ConversationView({
   useKeybinding(
     'conversation.find',
     () => searchBarRef.current?.focus(),
-    { capture: true, enabled: isFocused, stopPropagation: true },
+    {
+      capture: true,
+      enabled: isFocused,
+      stopPropagation: true,
+      // This window can keep window-layer focus while the keyboard is in the bottom
+      // panel's terminal, and there the key belongs to terminal.find.
+      when: (event) => !(event.target instanceof Element && event.target.closest('[data-terminal-host]')),
+    },
   );
 
   // Mount-time positioning: applied once on the first render with non-empty

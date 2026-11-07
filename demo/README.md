@@ -235,7 +235,8 @@ dialog. That holds wherever the pointer is. On the desktop a task window's termi
 for the agent while the pointer is over it, and a card click leaves the pointer exactly there once
 the window opens. Here the terminal replays a recording with no agent to interrupt, so `boot.js`
 does what the desktop does with the pointer outside: the terminal never gets the key, and the
-window closes through its own X.
+window closes through its own X. A terminal's open find bar comes first in both: it takes the key
+from its own pane, as on the desktop, and the window stays open.
 
 Three kinds of open frame are no sign the app will act on the key, so none of them is claimed:
 

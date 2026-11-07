@@ -87,6 +87,11 @@ as the `mayTakeArrivalFocus` option, so the hook stays surface-agnostic.
 - **Genuinely user-initiated focus stays unconditional** and must NOT be routed through the
   arbiter: pointer-down on a window frame, a file drop on a terminal, the maximize/restore
   re-homing, and the imperative `focus()` those use.
+- **An arrival never takes the keyboard out of its own terminal's find bar.** `focusOnArrival`
+  returns before it asks the arbiter when focus is in a text field inside that terminal's
+  `data-terminal-host`, because tier 2 allows a window's own terminal without looking at what has
+  focus. A replay landing mid-search otherwise pulls the keyboard out of the field. The obligation
+  is still discharged. `tests/ui/terminal-find-bar.spec.ts` pins it with a held replay.
 - **Do not reuse the word "focused" for this.** `focused-terminals.ts` already owns it for the
   PTY-stream focused SET (which sessions main forwards bytes for). This is keyboard focus, and
   exactly one terminal holds it.

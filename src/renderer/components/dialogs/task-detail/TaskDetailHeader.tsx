@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Search, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { ShortcutGlyph, SwimlaneIcon, shortcutIcon } from '../../../utils/swimlane-icons';
 import { ActivityMark } from '../../ActivityMark';
@@ -18,6 +18,7 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { useSessionStore } from '../../../stores/session-store';
+import { useTerminalFindControl } from '../../../utils/terminal-find-registry';
 import { openTaskConversation } from './open-task-conversation';
 import { prStatePresentation } from '../../../lib/pr-state';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
@@ -223,6 +224,7 @@ export function TaskDetailHeader({
     return () => { cancelled = true; };
   }, [task.id, liveSessionId, hostProjectId, historyKey]);
   const conversationAvailable = Boolean(liveSessionId) || historicalConversationAvailable;
+  const terminalFind = useTerminalFindControl(liveSessionId);
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
@@ -235,6 +237,7 @@ export function TaskDetailHeader({
   // kebab-only (no header pill) - it is a menu, not a one-tap toggle.
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
+    if (terminalFind.available) specs.push({ id: 'find', priority: 22 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     // A workflow task's route and blockers, kept above Changes: it is the one
     // view a blocked task in To Do has to offer.
@@ -246,7 +249,7 @@ export function TaskDetailHeader({
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, canOpenConversation, headerShortcuts]);
+  }, [terminalFind.available, task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, canOpenConversation, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -349,6 +352,21 @@ export function TaskDetailHeader({
           `data-pill-id`. */}
       {!isArchived && (
         <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
+          {/* Find in terminal: opens the find bar on this task's terminal. Absent
+              while the task has no terminal in this window. */}
+          {showPill('find') && terminalFind.available && (
+            <div data-pill-id="find" className="flex-shrink-0">
+              <HeaderActionButton
+                icon={Search}
+                onClick={terminalFind.toggle}
+                active={terminalFind.open}
+                tip={t`Find in terminal`}
+                keys="terminal.find"
+                testId="terminal-find-toggle"
+              />
+            </div>
+          )}
+
           {/* Open folder pill - icon-only. The FolderGit2 (worktree) vs FolderGit
               (no worktree) glyph signals worktree-vs-project at a glance; the
               tooltip names the action, not the branch it's based on (that's a
@@ -510,6 +528,9 @@ export function TaskDetailHeader({
               workflowPanelOpen={workflowPanelOpen}
               onToggleWorkflow={onToggleWorkflow}
               conversationAvailable={conversationAvailable}
+              terminalFindAvailable={terminalFind.available}
+              terminalFindOpen={terminalFind.open}
+              onToggleTerminalFind={terminalFind.toggle}
             />
           )}
         </KebabMenu>
@@ -587,6 +608,10 @@ interface TaskDetailKebabItemsProps {
   /** Whether this task has any session (live or historical) to view. Disables
    *  the "View conversation" item rather than letting it resolve to nothing. */
   conversationAvailable: boolean;
+  /** This task's terminal is in this window, so the find bar can open. */
+  terminalFindAvailable: boolean;
+  terminalFindOpen: boolean;
+  onToggleTerminalFind: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -611,6 +636,9 @@ function TaskDetailKebabItems({
   changesOpen,
   onToggleChanges,
   conversationAvailable,
+  terminalFindAvailable,
+  terminalFindOpen,
+  onToggleTerminalFind,
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
@@ -784,6 +812,16 @@ function TaskDetailKebabItems({
         label={t({ message: 'Edit', context: 'task action' })}
         onClick={() => { closeAll(); setIsEditing(true); }}
       />
+
+      {/* Find in terminal (parity with the header pill when it folds) */}
+      {terminalFindAvailable && (
+        <KebabMenuItem
+          icon={<Search size={14} />}
+          label={terminalFindOpen ? t`Close find` : t`Find in terminal`}
+          onClick={() => { closeAll(); onToggleTerminalFind(); }}
+          data-testid="terminal-find-menu-item"
+        />
+      )}
 
       {/* View conversation - opens the structured transcript viewer. Disabled
           (muted) when the task has no session, live or historical, and absent

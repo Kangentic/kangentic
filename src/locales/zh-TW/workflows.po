@@ -254,6 +254,10 @@ msgstr "每條路線都從 {name} 開始"
 msgid "Failed to load the workflows"
 msgstr "載入工作流程失敗"
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 msgid "Fit every card in view"
 msgstr "讓所有卡片都顯示在畫面中"

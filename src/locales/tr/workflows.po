@@ -311,6 +311,10 @@ msgstr "Her rota {name} ile başlar"
 msgid "Failed to load the workflows"
 msgstr "İş akışları yüklenemedi"
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 #, fuzzy
 msgid "Fit every card in view"

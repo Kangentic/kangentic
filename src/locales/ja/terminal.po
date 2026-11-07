@@ -22,10 +22,31 @@ msgstr "{contextLabel} コンテキストウィンドウ"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, other {さらに # 件を表示}}"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+ on screen"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+msgstr ""
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
 msgstr "コンテキスト {pct}%"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+#, fuzzy
+msgid "{position} of {total}"
+msgstr "{position} / {total}"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
@@ -36,6 +57,10 @@ msgstr "残り {remainingPercent}%"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} が中断されました"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -61,6 +86,10 @@ msgstr "すべて"
 #, fuzzy
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "ボードプロファイル - このタスクが従う列ごとのエージェント、モデル、エフォート"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Close find"
+msgstr ""
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
@@ -119,6 +148,19 @@ msgstr "セッション経過時間"
 msgid "Expand terminal panel"
 msgstr "ターミナル パネルを展開"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgctxt "terminal find field"
+msgid "Find"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find in terminal"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #, fuzzy
 msgid "Idle (no activity detected)"
@@ -145,6 +187,10 @@ msgstr "モデル"
 msgid "Model done"
 msgstr "モデル完了"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Newer match"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "No active sessions. Drag a task into a column that starts an agent."
@@ -155,6 +201,10 @@ msgstr "アクティブなセッションはありません。エージェント
 msgid "No activity yet for {filteredLabel}..."
 msgstr "{filteredLabel} のアクティビティはまだありません..."
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "No matches on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 #, fuzzy
 msgid "No tool calls yet"
@@ -164,6 +214,10 @@ msgstr "ツール呼び出しはまだありません"
 #, fuzzy
 msgid "Notice"
 msgstr "通知"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Older match"
+msgstr ""
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

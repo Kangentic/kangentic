@@ -311,6 +311,10 @@ msgstr "Každá trasa začíná v {name}"
 msgid "Failed to load the workflows"
 msgstr "Nepodařilo se načíst pracovní postupy"
 
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Find in terminal"
+msgstr ""
+
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
 #, fuzzy
 msgid "Fit every card in view"

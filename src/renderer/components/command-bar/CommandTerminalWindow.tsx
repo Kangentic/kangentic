@@ -18,7 +18,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderGit, GitCompare, Globe, Loader2, Maximize2, Minimize2, Pencil } from 'lucide-react';
+import { FolderGit, GitCompare, Globe, Loader2, Maximize2, Minimize2, Pencil, Search } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -34,6 +34,7 @@ import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-deta
 import { resolveTerminalBackground } from '../../hooks/useTerminal';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
+import { useTerminalFindControl } from '../../utils/terminal-find-registry';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { findAdoptableTransientSession } from '../../stores/session-store/transient-recovery';
@@ -299,16 +300,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
 
   // Quick-access pills fold into the kebab in DESCENDING priority as the window
   // narrows, so the title always wins the space fight (useHeaderPillOverflow).
+  const terminalFind = useTerminalFindControl(sessionId);
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     // Commands is kebab-only (a menu, not a one-tap toggle), matching the task-detail header.
     const specs: HeaderPillSpec[] = [];
+    if (terminalFind.available) specs.push({ id: 'find', priority: 26 });
     if (projectPath) specs.push({ id: 'folder', priority: 40 });
     if (projectPath) specs.push({ id: 'changes', priority: 30 });
     specs.push({ id: 'browser', priority: 28 });
     specs.push({ id: 'branch', priority: 25 });
     for (const action of headerShortcuts) specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     return specs;
-  }, [projectPath, headerShortcuts]);
+  }, [terminalFind.available, projectPath, headerShortcuts]);
 
   // Frozen while the name field is open: it replaces the title the calc
   // measures, and nothing in the header may shift while the user types.
@@ -746,6 +749,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         {/* Quick-access pills - each wrapped with `data-pill-id` so the overflow
             calc can measure it; only the ones that fit are rendered. */}
         <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
+          {showPill('find') && terminalFind.available && (
+            <div data-pill-id="find" className="flex-shrink-0">
+              <HeaderActionButton
+                icon={Search}
+                onClick={terminalFind.toggle}
+                active={terminalFind.open}
+                tip={t`Find in terminal`}
+                keys="terminal.find"
+                testId="command-bar-find-toggle"
+              />
+            </div>
+          )}
+
           {/* Open folder pill - icon-only. The command terminal always runs in the
               project git dir (never a worktree), so the FolderGit glyph matches the
               task-detail no-worktree case; the path shows once the folder opens. */}
@@ -851,6 +867,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   onToggleBrowser={handleToggleBrowser}
                   browserAlive={browserAlive}
                   onCloseBrowser={handleCloseBrowser}
+                  terminalFind={terminalFind.available ? { open: terminalFind.open, onToggle: terminalFind.toggle } : undefined}
                   shortcuts={overflowMenuShortcuts}
                   onShortcut={handleShortcutExecute}
                   stopping={stopping}
