@@ -26,13 +26,29 @@ vi.mock('node:fs', () => ({
     mkdirSync: vi.fn(),
     rmSync: vi.fn(),
     copyFileSync: vi.fn(),
+    constants: { COPYFILE_FICLONE: 2 },
     // Async fs used by createWorktree's non-blocking worktrees-dir creation
-    // and setUpWorktree's copy loop. access() resolves by default (treat source as
-    // present); mkdir/copyFile resolve to undefined.
+    // and setUpWorktree's `copyEntries`. access() resolves by default (treat
+    // source as present); mkdir/copyFile/utimes resolve to undefined. lstat
+    // reads every project path as a plain file and the worktree as empty.
     promises: {
       mkdir: vi.fn(),
       access: vi.fn(),
       copyFile: vi.fn(),
+      utimes: vi.fn(),
+      lstat: vi.fn(async (target: string) => {
+        if (target.includes('.kangentic')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+        return {
+          isFile: () => true,
+          isDirectory: () => false,
+          isSymbolicLink: () => false,
+          size: 1,
+          mode: 0o644,
+          mtimeMs: 1,
+          mtime: new Date(1),
+          atime: new Date(1),
+        };
+      }),
     },
   },
 }));
@@ -356,6 +372,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
     expect(fs.promises.copyFile).toHaveBeenCalledWith(
       expect.stringContaining('README.md'),
       expect.stringContaining('README.md'),
+      fs.constants.COPYFILE_FICLONE,
     );
   });
 
@@ -709,7 +726,7 @@ describe('WorktreeManager - setUpWorktree (initScript and node_modules linking)'
     await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: ['README.md'], initScript: 'echo setup' });
 
     const lines = logSpy.mock.calls.map((call) => String(call[0]));
-    expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=copy-files done in \d+ms \(files=1\)$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=copy-files done in \d+ms \(files=1 unchanged=0 skippedLinks=0\)$/));
     expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=link-node-modules done in \d+ms$/));
     expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=init-script done in \d+ms$/));
     expect(lines).toContainEqual(expect.stringMatching(/^\[INIT-SCRIPT\] Post-worktree script completed in \d+ms$/));

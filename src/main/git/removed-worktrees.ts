@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import fs from './original-fs';
 import { renameWithRetry, TRANSIENT_HANDLE_CODES } from '../fs/directory-move';
+import { isLinkEntry } from './link-check';
 import { isAnyInitScriptRunning, whenNoInitScriptRuns } from './run-init-script';
 import { isShuttingDown } from '../shutdown-state';
 
@@ -159,27 +160,6 @@ async function withWritableParent(entryPath: string, operation: () => Promise<vo
   }
 }
 
-/**
- * True for a symlink, and on Windows for a junction. Windows `lstat` can call
- * a junction a directory, so a `readlink` probe decides there, as
- * `isJunction` in `node-modules-link.ts` does. Unlike that one it fails
- * closed: only EINVAL (libuv's answer for a directory that is not a reparse
- * point) means a real directory. Any other error leaves the walker unable to
- * tell, and entering a junction would delete what it points at, so it throws
- * and the copy is left for the next project open.
- */
-async function isLink(entryPath: string, stats: Stats): Promise<boolean> {
-  if (stats.isSymbolicLink()) return true;
-  if (process.platform !== 'win32' || !stats.isDirectory()) return false;
-  try {
-    await fs.promises.readlink(entryPath);
-    return true;
-  } catch (error) {
-    if (errorCode(error) === 'EINVAL') return false;
-    throw error;
-  }
-}
-
 /** Remove a link itself, never what it points at. */
 async function removeLink(entryPath: string, stats: Stats): Promise<void> {
   await retryTransient(() => withWritableParent(entryPath, async () => {
@@ -238,7 +218,8 @@ async function removeUnlessDirectory(entryPath: string): Promise<'removed' | 'di
     throw error;
   }
   try {
-    if (await isLink(entryPath, stats)) {
+    // A throw here leaves the copy for the next project open.
+    if (await isLinkEntry(entryPath, stats)) {
       await removeLink(entryPath, stats);
       return 'removed';
     }

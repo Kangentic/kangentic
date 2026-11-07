@@ -30,6 +30,13 @@ vi.mock('../../src/main/git/node-modules-link', async (importOriginal) => {
   return { ...actual, removeNodeModulesPath: vi.fn(actual.removeNodeModulesPath) };
 });
 
+// The real clearing, unless a test answers once: a link that will not come out is
+// not something this file's fs mock can produce.
+vi.mock('../../src/main/git/worktree-links', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/git/worktree-links')>();
+  return { ...actual, clearWorktreeLinks: vi.fn(actual.clearWorktreeLinks) };
+});
+
 vi.mock('node:fs', () => ({
   default: {
     existsSync: mockExistsSync,
@@ -74,6 +81,7 @@ import type { AutomationRunRepository } from '../../src/main/db/repositories/aut
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
+import { clearWorktreeLinks } from '../../src/main/git/worktree-links';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -867,7 +875,7 @@ describe('cleanupStaleResources', () => {
 
       // The pass reached the node_modules step for this directory, and the
       // creation is the one that started during it.
-      expect(removeNodeModulesPath).toHaveBeenCalledWith(`${lateClaimedPath}/node_modules`);
+      expect(removeNodeModulesPath).toHaveBeenCalledWith(`${lateClaimedPath}/node_modules`, undefined);
       expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(true);
       expect(execFileCalls()).not.toContainEqual(['git', ['worktree', 'remove', '--force', lateClaimedPath], projectPath]);
       expect(mockRm).not.toHaveBeenCalledWith(lateClaimedPath, expect.anything());
@@ -877,6 +885,38 @@ describe('cleanupStaleResources', () => {
       await creation;
       // Back to the delegating implementation, in case the loop never ran.
       vi.mocked(removeNodeModulesPath).mockReset();
+    }
+  });
+
+  it('leaves a worktree whose link will not come out, because git worktree remove would follow the link', async () => {
+    const task = createMockTask({
+      id: 'dddd4444-0000-0000-0000-000000000000',
+      title: 'Add dark mode',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+    const linkedPath = '/home/dev/my-project/.kangentic/worktrees/7';
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === linkedPath);
+    vi.mocked(clearWorktreeLinks).mockResolvedValueOnce(false);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      await cleanupStaleResources(
+        ownershipOf(projectPath),
+        taskRepo as never,
+        taskMoveRepo as never,
+        swimlaneRepo as never,
+        sessionRepo as never,
+        sessionManager as never,
+      );
+
+      // The loop reached this directory, so the absence below is the refusal.
+      expect(clearWorktreeLinks).toHaveBeenCalledWith(linkedPath);
+      expect(execFileCalls().filter(([, args]) => args[0] === 'worktree' && args[1] === 'remove')).toEqual([]);
+      expect(mockRm).not.toHaveBeenCalledWith(linkedPath, expect.anything());
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining(linkedPath));
+    } finally {
+      warnSpy.mockRestore();
+      vi.mocked(clearWorktreeLinks).mockReset();
     }
   });
 

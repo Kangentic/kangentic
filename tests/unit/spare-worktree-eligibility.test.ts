@@ -369,7 +369,7 @@ describe('ensureTaskWorktree - an eligible start asks for the next spare once it
     const [requestedPath, hooks] = requestedWith(pool);
     expect(requestedPath).toBe(repoPath);
     // The hooks the pool reads later are this project's.
-    expect(hooks.inputs()).toEqual({ baseBranch: 'main', initScript: INIT_SCRIPT, linkNodeModules: true, copyFiles: [] });
+    expect(hooks.inputs()).toEqual({ baseBranch: 'main', initScript: INIT_SCRIPT, linkNodeModules: true, copyFiles: [], linkFolders: [] });
     expect(typeof hooks.referencedFolders).toBe('function');
   });
 

@@ -518,8 +518,10 @@ queue at BACKGROUND):
 3. Rename the directory to `.kangentic/removed-worktrees/<folder>-<timestamp>-<random>`, unique per move. It sits
    outside `worktrees/`, so the orphan sweep never runs a recursive delete over it. A failed
    rename changes nothing in the worktree.
-4. Remove the copy's `node_modules` link if it is one, so the copy holds no link to the root's
-   `node_modules`. Delete the copy's `.git` file, then `git worktree prune`. Paths are pinned per
+4. Remove the copy's links as links, never what they point at: each folder its record names
+   (`git.linkFolders`, read through the copy's `.git` file) and the `node_modules` link if it is
+   one, so the copy holds no link to the project's folders. Delete the copy's `.git` file, then
+   `git worktree prune`. Paths are pinned per
    task, so a move back out of Done adds the same path on the same branch, and git refuses that
    while the old record names it.
 5. Fire the removed listener, inside the move. Then `deleteTaskWorktree` clears `worktree_path` and

@@ -301,6 +301,13 @@ function buildMainBundles() {
       entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
     }),
+    // Worktree copy worker (Electron utilityProcess entry), same dev-parity
+    // reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/git/worktree-copy/worktree-copy-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/worktree-copy-worker.js'),
+    }),
     // Dictation (sherpa-onnx) worker (Electron utilityProcess entry, see
     // DESKTOP-X), same dev-parity reasoning as the embed worker above.
     esbuild.build({
@@ -485,7 +492,7 @@ async function start() {
   //    the renderer from blocking on mid-load re-optimization.
   await mainBundlesBuilt;
   console.timeEnd('[dev] esbuild');
-  console.log('[dev] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
+  console.log('[dev] Main + preload + embed, line-count, worktree-copy, dictation and retrieval workers and the pty host built');
   // Before Electron starts, so main reads this session's catalogs. Never fails
   // the boot: a failed compile has warned, and main then runs in English.
   await mainCatalogsCompiled;

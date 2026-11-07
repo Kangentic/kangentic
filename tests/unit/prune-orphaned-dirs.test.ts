@@ -87,6 +87,10 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 vi.mock('../../src/main/git/node-modules-link', () => ({
   removeNodeModulesPath: vi.fn(),
 }));
+vi.mock('../../src/main/git/worktree-links', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/git/worktree-links')>();
+  return { ...actual, clearWorktreeLinks: vi.fn(actual.clearWorktreeLinks) };
+});
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
@@ -96,6 +100,7 @@ import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resou
 import { ownershipOf } from './helpers/verified-ownership';
 import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
+import { clearWorktreeLinks } from '../../src/main/git/worktree-links';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -408,7 +413,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
 
       // The sweep reached the removal stage for the claimed directory, so the
       // skip below is the second ask and not an earlier guard.
-      expect(removeNodeModulesPath).toHaveBeenCalledWith(path.join(lateClaimedPath, 'node_modules'));
+      expect(removeNodeModulesPath).toHaveBeenCalledWith(path.join(lateClaimedPath, 'node_modules'), undefined);
       expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(true);
       expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', lateClaimedPath);
       // The sweep carried on: the next orphan, which nothing claimed, is removed.
@@ -417,6 +422,40 @@ describe('pruneStaleResources -- async background cleanup', () => {
       finishCreation();
       await creation;
       vi.mocked(removeNodeModulesPath).mockReset();
+      logSpy.mockRestore();
+    }
+  });
+
+  it('keeps an orphan whose link will not come out, because a project delete\'s rmSync would follow it', async () => {
+    const stuckPath = path.join(WORKTREES_DIR, 'stuck-abcd1234');
+    vi.mocked(clearWorktreeLinks).mockResolvedValueOnce(false);
+    setupReaddir({ [WORKTREES_DIR]: [dirEntry('stuck-abcd1234')] });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await pruneOrphanedDirectories(ownershipOf(PROJECT), makeMockTaskRepo([]), makeMockSessionRepo(), makeMockSessionManager());
+      await runWithTimers();
+      // The orphan was reached and its links were asked about, so the refusal below is the
+      // link check and not the fixture ceasing to read as an orphan.
+      expect(clearWorktreeLinks).toHaveBeenCalledWith(stuckPath);
+      expect(mockMoveIntoSetAside).not.toHaveBeenCalledWith(PROJECT, 'worktrees', stuckPath);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('sets the same orphan aside once its links come out', async () => {
+    const stuckPath = path.join(WORKTREES_DIR, 'stuck-abcd1234');
+    vi.mocked(clearWorktreeLinks).mockResolvedValueOnce(true);
+    setupReaddir({ [WORKTREES_DIR]: [dirEntry('stuck-abcd1234')] });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await pruneOrphanedDirectories(ownershipOf(PROJECT), makeMockTaskRepo([]), makeMockSessionRepo(), makeMockSessionManager());
+      await runWithTimers();
+      expect(clearWorktreeLinks).toHaveBeenCalledWith(stuckPath);
+      expect(mockMoveIntoSetAside).toHaveBeenCalledWith(PROJECT, 'worktrees', stuckPath);
+    } finally {
       logSpy.mockRestore();
     }
   });

@@ -220,6 +220,38 @@ test.describe('SettingTextInput commit boundary', () => {
     }
   });
 
+  test('git.copyFiles keeps a glob with a comma in braces as one entry, and git.linkFolders commits its own list', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await createProject(page, `setting-text-linkfolders-commit-${Date.now()}`);
+      await openSettings(page);
+      await openTab(page, 'Git');
+      await installProjectOverrideWriteSpy(page);
+
+      const copyFiles = page.getByTestId('setting-row-git.copyFiles').locator('input');
+      await copyFiles.click();
+      await copyFiles.fill('config, *.{local,dev}.json');
+      await copyFiles.blur();
+
+      await expect.poll(async () => (await getProjectOverrideWriteCalls(page)).length).toBeGreaterThan(0);
+      const copyCalls = await getProjectOverrideWriteCalls(page);
+      const copyCall = copyCalls[copyCalls.length - 1] as [string, { git?: { copyFiles?: string[] } }];
+      expect(copyCall[1].git?.copyFiles).toEqual(['config', '*.{local,dev}.json']);
+
+      const linkFolders = page.getByTestId('setting-row-git.linkFolders').locator('input');
+      await linkFolders.click();
+      await linkFolders.fill('.gradle, datasets/fixtures');
+      await linkFolders.blur();
+
+      await expect.poll(async () => (await getProjectOverrideWriteCalls(page)).length).toBeGreaterThan(copyCalls.length);
+      const linkCalls = await getProjectOverrideWriteCalls(page);
+      const linkCall = linkCalls[linkCalls.length - 1] as [string, { git?: { linkFolders?: string[] } }];
+      expect(linkCall[1].git?.linkFolders).toEqual(['.gradle', 'datasets/fixtures']);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('an external config change while the field is UNFOCUSED resyncs the draft, and a subsequent blur with no further edit writes nothing', async () => {
     // The complement of the "mid-edit" case below: while unfocused, an external value
     // must flow into the draft (the useEffect's `setDraft(value)` branch, which a fresh

@@ -91,6 +91,7 @@ import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { gitFetchScheduler } from './git/git-fetch-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
 import { lineCountClient } from './git/line-count/line-count-client';
+import { worktreeCopyClient } from './git/worktree-copy/worktree-copy-client';
 import { retrievalClient } from './retrieval/retrieval-client';
 import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
@@ -2498,6 +2499,8 @@ function getShutdownDependencies() {
       // Synchronously kill the line-count worker (if spawned); in-flight
       // counts abandon and their callers fall back to inline counting.
       lineCountClient.dispose();
+      // Synchronously kill any worktree copy. Its worktree is never recorded.
+      worktreeCopyClient.dispose();
       // Synchronously kill the dictation worker (if spawned): cancels every
       // in-flight session bookkeeping-side and kills the kangentic-dictation
       // utilityProcess. This is the DESKTOP-X quit-path gap - the method

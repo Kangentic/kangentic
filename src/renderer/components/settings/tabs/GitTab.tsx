@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CircleStop, GitBranch, GitFork, GitPullRequest } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
+import { splitPathList } from '../../../../shared/split-path-list';
 import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
@@ -118,7 +119,7 @@ export function GitTab({ config }: { config: AppConfig }) {
       <SettingsCard
         icon={<GitFork size={16} />}
         {...settingProps('git.worktreesEnabled')}
-        searchIds={['git.autoCleanup', 'git.linkNodeModules', 'git.copyFiles', 'git.initScript', 'git.holdPromptForInitScript']}
+        searchIds={['git.autoCleanup', 'git.linkNodeModules', 'git.linkFolders', 'git.copyFiles', 'git.initScript', 'git.holdPromptForInitScript']}
         checked={worktreesEnabled}
         onChange={(value) => updateProject({ git: { worktreesEnabled: value } })}
       >
@@ -134,17 +135,24 @@ export function GitTab({ config }: { config: AppConfig }) {
               checked={config.git.linkNodeModules}
               onChange={(value) => updateProject({ git: { linkNodeModules: value } })}
             />
+            <CardRow {...settingProps('git.linkFolders')}>
+              <SettingTextInput
+                value={(config.git.linkFolders ?? []).join(', ')}
+                onCommit={(nextLinkFolders) => updateProject({ git: { linkFolders: splitPathList(nextLinkFolders) } })}
+                // i18n-ok: example folder names
+                placeholder=".cache, data/models"
+                ariaLabel={t`Folders to link into a worktree`}
+                className="placeholder-fg-faint"
+              />
+            </CardRow>
             <CardRow {...settingProps('git.copyFiles')}>
               {/* The split/trim/filter runs at the COMMIT, not per keystroke: typing
                   ".env, .env.local" used to write a differently-shaped array per character. */}
               <SettingTextInput
                 value={(config.git.copyFiles ?? []).join(', ')}
-                onCommit={(nextCopyFiles) => {
-                  const files = nextCopyFiles.split(',').map((file) => file.trim()).filter(Boolean);
-                  updateProject({ git: { copyFiles: files } });
-                }}
-                // i18n-ok: example file names
-                placeholder=".env, .env.local"
+                onCommit={(nextCopyFiles) => updateProject({ git: { copyFiles: splitPathList(nextCopyFiles) } })}
+                // i18n-ok: example file names and patterns
+                placeholder=".env, config/, *.local.json"
                 ariaLabel={t`Files to copy into a worktree`}
                 className="placeholder-fg-faint"
               />

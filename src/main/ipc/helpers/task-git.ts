@@ -723,8 +723,11 @@ async function adoptSpareWorktree(input: {
   const { result, release } = claimed;
   let launched: Promise<EarlyAgentHandle | null> | null = null;
   try {
-    await worktreeManager.copyWorktreeFiles(result.worktreePath, input.setup, { signal });
+    // Ahead of the copy: a large folder should not share the disk with a build.
     pool.yieldBuilds();
+    // Only the files that differ: the spare has the rest from its build.
+    await worktreeManager.copyWorktreeFiles(result.worktreePath, input.setup, { signal });
+    await worktreeManager.linkFolders(result.worktreePath, input.setup);
     if (input.scriptMode?.mode === 'hold-prompt') {
       launched = input.scriptMode.launchAgent(result.worktreePath).catch((error: unknown) => {
         if (!isAbortError(error)) console.warn(`[INIT-SCRIPT] Early agent launch failed for task ${shortId}:`, error);

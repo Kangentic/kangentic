@@ -36,27 +36,31 @@ const EXCLUDE_MARKER = '# kangentic: agent runtime files (local ignore, safe to 
 const EXCLUDE_MARKER_PREFIX = '# kangentic:';
 
 /**
- * Resolve the directory whose `info/exclude` this checkout reads, following
- * the worktree indirection: a worktree's `.git` is a FILE with a
- * `gitdir: <path>` line, and that gitdir's `commondir` file points at the
- * repository's shared `.git`. Returns null when `directory` is not a git
- * checkout (spawns outside a repo simply skip the exclude seeding).
+ * This checkout's own git directory: `.git` itself, or in a worktree the
+ * private folder its `.git` FILE names (`gitdir: <path>`). Returns null when
+ * `directory` is not a git checkout.
  */
-export function resolveGitCommonDir(directory: string): string | null {
+export function resolveGitDir(directory: string): string | null {
   const dotGit = path.join(directory, '.git');
-  let gitDir: string;
   try {
     const stats = fs.statSync(dotGit);
-    if (stats.isDirectory()) {
-      gitDir = dotGit;
-    } else {
-      const match = fs.readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+)\s*$/m);
-      if (!match) return null;
-      gitDir = path.resolve(directory, match[1].trim());
-    }
+    if (stats.isDirectory()) return dotGit;
+    const match = fs.readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+)\s*$/m);
+    return match ? path.resolve(directory, match[1].trim()) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the directory whose `info/exclude` this checkout reads, following
+ * the worktree indirection: a worktree's gitdir has a `commondir` file that
+ * points at the repository's shared `.git`. Returns null when `directory` is
+ * not a git checkout (spawns outside a repo simply skip the exclude seeding).
+ */
+export function resolveGitCommonDir(directory: string): string | null {
+  const gitDir = resolveGitDir(directory);
+  if (!gitDir) return null;
 
   try {
     const commonDirPointer = path.join(gitDir, 'commondir');

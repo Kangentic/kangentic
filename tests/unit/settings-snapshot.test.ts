@@ -53,6 +53,7 @@ const NEVER_SNAPSHOT = [
   'mobileBridge.relayUrl',
   'browser.defaultUrl',
   'git.copyFiles',
+  'git.linkFolders',
   'git.initScript',
   'terminal.colors',
   'shortcuts',
