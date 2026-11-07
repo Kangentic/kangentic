@@ -2014,8 +2014,8 @@ msgstr "Путь на сервере для задач этого проекта
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Приостанавливать агента, ожидающего вас указанное число минут, кроме агента в командном терминале."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Приостанавливать агента, ожидающего вас столько времени, пока вы не откроете его задачу."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

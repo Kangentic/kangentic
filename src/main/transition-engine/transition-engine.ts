@@ -121,6 +121,15 @@ export interface SpawnOverrides {
    * or the automatic retry). Defaults to `resume` for a resume, else `board`.
    */
   startPath?: LaunchStartPath;
+  /**
+   * Start only by resuming the conversation as it stands. A spawn that would go
+   * fresh instead (no id to resume, a conversation that never started or that
+   * the agent deleted) sends a prompt, which is a paid turn nobody asked for, so
+   * it declines (`SpawnOutcome.declined`) with the record left suspended. For a
+   * start Kangentic makes on the user's behalf (`resumeTaskSession`'s
+   * `plainResume`).
+   */
+  resumeOnly?: boolean;
 }
 
 /** What a spawn passes `resolveLaunch`: its decisions so far, the ids, and the command-line prompt. */
@@ -238,7 +247,15 @@ export interface SpawnOutcome {
    * rode the command line. Null or absent otherwise.
    */
   typedOpening?: string | null;
+  /**
+   * A `resumeOnly` spawn found it could not resume, and started nothing: no
+   * record was retired and no session exists. Absent otherwise.
+   */
+  declined?: boolean;
 }
+
+/** A `resumeOnly` spawn that could not resume, and started nothing. */
+const DECLINED_SPAWN: SpawnOutcome = { startOver: null, recapOnly: false, unsentPrompt: null, declined: true };
 
 /** Options shared by every way into an automation group. */
 interface AutomationGroupOptions {
@@ -798,6 +815,7 @@ export class TransitionEngine {
       forceFresh: spawnOverrides?.forceFresh,
     };
     let intent = resolveSpawnIntent(spawnIntentOptions);
+    if (spawnOverrides?.resumeOnly && intent.mode !== 'resume') return DECLINED_SPAWN;
 
     // The id a resume would hand the CLI: the captured/specified ID from the DB
     // record, reconciled against the retiring record's own status.json (a
@@ -858,6 +876,8 @@ export class TransitionEngine {
         projectPath: appConfig.projectPath || cwd,
         place: cliTarget,
       });
+      // Either verdict below starts fresh with a prompt or a recap.
+      if (spawnOverrides?.resumeOnly && verdict !== 'unknown') return DECLINED_SPAWN;
 
       if (verdict === 'never-started') {
         console.log(

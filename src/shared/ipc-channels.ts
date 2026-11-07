@@ -168,6 +168,7 @@ export const IPC = {
   SESSION_QUEUE_CHANGED: 'session:queueChanged',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
+  SESSION_RESUME_ON_OPEN: 'session:resumeOnOpen',
   SESSION_RECONCILE: 'session:reconcile',
   SESSION_RESET: 'session:reset',
   SESSION_IDLE_TIMEOUT: 'session:idleTimeout',

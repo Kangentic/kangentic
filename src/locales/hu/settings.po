@@ -2014,8 +2014,8 @@ msgstr "A projekt feladatainak elérési útja a kiszolgálón. Hagyja üresen a
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Minden ügynök szüneteltetése, amely ennyi perce Önre vár, kivéve a parancsterminálban futót."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Az ügynök szüneteltetése, ha ennyi ideje Önre vár, amíg meg nem nyitja a feladatát."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

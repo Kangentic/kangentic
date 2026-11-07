@@ -18,6 +18,7 @@
  *        - declines, writing nothing, when the agent went back to work
  *        - declines, writing nothing, while text is typed into the prompt
  *          (whitespace alone does not hold the pause off)
+ *        - declines, writing nothing, while a background job is open
  *        - queues ONE pause per session while a sweep fire waits on the task
  *          lock, and accepts a later fire once that pause settled
  *
@@ -241,6 +242,8 @@ function createMockContext() {
       getActivityCache: vi.fn((): Record<string, string> => ({})),
       // Read by the idle pause's eligibility re-check: typed text holds it off.
       getPendingDraft: vi.fn((_sessionId?: string) => null as string | null),
+      // Read by the same re-check: a background job still open holds it off.
+      getOpenWork: vi.fn((_sessionId?: string) => ({ backgroundShells: [] as Array<{ id: string }>, toolCalls: [] })),
       getActivityCacheForProject: vi.fn(() => ({})),
       getUsageCache: vi.fn(() => ({})),
       getUsageCacheForProject: vi.fn(() => ({})),
@@ -964,6 +967,25 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
     );
     // The draft was read and judged empty, not skipped.
     expect(context.sessionManager.getPendingDraft).toHaveBeenCalledWith('sess-idle');
+  });
+
+  // A shell the watcher cannot confirm alive is reclaimed at the five-minute cap,
+  // so the session reads idle with its build still running. A pause would end it.
+  it('declines while a background job is open, and pauses once it has ended', async () => {
+    context.sessionManager.getOpenWork.mockReturnValue({ backgroundShells: [{ id: 'build' }], toolCalls: [] });
+
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.getOpenWork.mock.calls.length > 0);
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(context.sessionManager.getOpenWork).toHaveBeenCalledWith('sess-idle');
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+
+    context.sessionManager.getOpenWork.mockReturnValue({ backgroundShells: [], toolCalls: [] });
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
   });
 
   it('queues one pause when the sweep fires again while the first still waits on the task lock', async () => {

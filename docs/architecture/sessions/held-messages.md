@@ -109,6 +109,10 @@ Two places build an opening message, and only they claim held messages (pinned b
 - **`resumeTaskSession`** (the Resume button, the phone's resume of a paused task) claims them and
   composes them with the prompt the Resume carries, or makes them a plain Resume's whole opening
   message.
+- **A plain idle resume** (opening a task the idle timeout paused, see
+  [Resume on open](resume.md#resume-on-open)) claims none. They wait for the agent's own
+  `'turn-ended'` (`deferHeldUntilTurnEnd`), since a flush would paste them into a turn the user did
+  not start. An activity edge never clears the mark.
 
 Every other start, and a message held while a start was already under way, gets them from
 **`registerHeldMessageFlush`**: on a task session's first `running` status (a direct spawn, a

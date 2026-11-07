@@ -144,7 +144,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude and Grok 
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `startPath` | `LaunchStartPath` | What started this session: `board`, `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery` or `retry`. Required, so a new spawn sink has to say. It becomes the `start_path` tag on a launch report ([Error reporting](../../telemetry/error-reporting.md)). |
+| `startPath` | `LaunchStartPath` | What started this session: `board`, `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry` or `open`. Required, so a new spawn sink has to say. It becomes the `start_path` tag on a launch report ([Error reporting](../../telemetry/error-reporting.md)). |
 | `agentCliVersion?` | `string \| null` | The agent CLI's version as detection read it. Raw detector text, so `launchVersionTag` vets it before it reaches an event. |
 | `agentName?` | `string` | Human-readable agent name (`'claude'`, `'gemini'`, etc.) captured at spawn time. Used in diagnostic logs - survives production minification unlike `agentParser.constructor.name`. |
 | `rebuildCommand?` | `(settings: { model, effort }) => string` | The same launch with another model or effort, set by the engine so a session still waiting in the queue can take a settings change on its waiting command. A spawn with none starts with the command it was queued with. |

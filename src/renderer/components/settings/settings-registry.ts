@@ -193,7 +193,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Performance > Pausing agents ──
   // The label answers the card's description, "When Kangentic pauses agents
   // that are waiting on you."
-  { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: msg`When idle`, description: msg`Pause any agent that has waited on you this many minutes, except one in a Command Terminal.`, scope: 'global', section: msg`Pausing agents`, keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
+  { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: msg`When idle`, description: msg`Pause an agent waiting on you this long until you open its task.`, scope: 'global', section: msg`Pausing agents`, keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'performance', label: msg`Minutes idle`, description: msg`How long an agent waits on you before the idle timer pauses it.`, scope: 'global', section: msg`Pausing agents`, keywords: ['idle timeout', 'minutes', 'pause', 'suspend', 'timeout'] },
 
   // ── Behavior > Windows ──

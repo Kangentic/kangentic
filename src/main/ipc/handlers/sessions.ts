@@ -32,6 +32,7 @@ import { persistPtyGrid } from './session-grid-persistence';
 import { forgetTranscriptPath, persistTranscriptPath } from './session-transcript-path';
 import { abortInFlightResume, isResumeInFlight, registerResumeController, releaseResumeController } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
+import { resumeTaskOnOpen } from './session-resume-on-open';
 import { pauseTaskSession } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
@@ -148,6 +149,10 @@ export function registerSessionHandlers(context: IpcContext): void {
   // paused task and with Resume workflow, so the three cannot drift.
   ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string, projectId?: string | null) =>
     resumeTaskSession(context, taskId, { projectId, resumePrompt }));
+
+  // The user opened a task. Main decides whether that resumes it.
+  ipcMain.handle(IPC.SESSION_RESUME_ON_OPEN, (_, taskId: string, projectId?: string | null) =>
+    resumeTaskOnOpen(context, taskId, projectId));
 
   registerSessionRecoveryHandlers(context);
 }
@@ -673,9 +678,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
 
     // A task's agent is paused the way the Pause button pauses it, recorded
     // as Kangentic's own (`'auto'`), which holds it paused until the user
-    // resumes it. The record is written before the PTY goes down: the sweep
-    // used to suspend the registry first and write the row later, so a quit
-    // in between left the record `running` for the next launch to resume.
+    // resumes it or opens the task (`resumeTaskOnOpen`). The record is written
+    // before the PTY goes down: the sweep used to suspend the registry first
+    // and write the row later, so a quit in between left the record `running`
+    // for the next launch to resume.
     idlePausesInFlight.add(sessionId);
     void pauseTaskSession(context, taskId, {
       projectId,
@@ -683,10 +689,14 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       // The agent may have started working, or been moved or resumed onto a
       // new session, while this waited for the task lock. Text the user is
       // typing into its prompt also holds the pause off: the next sweep tries
-      // again once the prompt is empty.
+      // again once the prompt is empty. So does a background job still open. A
+      // shell the watcher cannot confirm alive is reclaimed at the five-minute
+      // cap, so a long build can read idle while it runs, and a pause ends it.
+      // A service the agent marked never opens here, so it does not hold this.
       stillEligible: (liveSession) => liveSession.id === sessionId
         && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId])
         && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === ''
+        && context.sessionManager.getOpenWork(sessionId).backgroundShells.length === 0
         && !isUnderWorkflowRecovery(taskId),
       onAccepted: () => {
         context.terminalSubmitScheduler.cancel(taskId);

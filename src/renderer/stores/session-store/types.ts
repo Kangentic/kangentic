@@ -199,6 +199,11 @@ export interface CoreSessionSlice {
   suspendSession: (taskId: string, projectId?: string | null) => Promise<void>;
   resumeSession: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<Session | null>;
   /**
+   * The user opened this task, so main resumes it if the idle timeout paused it.
+   * Nothing to wait on: a resume that starts arrives by push.
+   */
+  resumeOnOpen: (taskId: string, projectId?: string | null) => void;
+  /**
    * Probe main's registry for the live session of `taskId` and reconcile
    * the renderer cache. If main returns a live Session (running/queued),
    * replace any stale row for the task with it. If main returns null

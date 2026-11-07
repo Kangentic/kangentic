@@ -103,7 +103,7 @@ function fullyDeviatedConfig(): AppConfig {
       ...DEFAULT_CONFIG.agent,
       maxConcurrentSessions: 2,
       autoResumeSessionsOnRestart: false,
-      idleTimeoutEnabled: true,
+      idleTimeoutEnabled: false,
       idleTimeoutMinutes: 45,
     },
     knowledgeGraph: {
@@ -218,7 +218,7 @@ describe('buildSettingsSnapshot', () => {
       'knowledgeGraph.acceleration': 'cpu',
       'agent.maxConcurrentSessions': '1-3',
       'agent.autoResumeSessionsOnRestart': 'false',
-      'agent.idleTimeoutEnabled': 'true',
+      'agent.idleTimeoutEnabled': 'false',
       'agent.idleTimeoutMinutes': '31-60',
       'browserAutomation.enabled': 'false',
       'browserAutomation.allowEval': 'true',

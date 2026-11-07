@@ -273,6 +273,7 @@ comes back as it was. An agent that comes back with no message has its last repl
 it left, so the workflow does not judge it there: about five minutes later it tells the agent to
 carry on with the new column's step. The same holds for Resume on the card itself.
 
-The idle timeout can pause an agent while its workflow runs, and the card then reads Paused. Resume
-on its card brings it back. Pausing and resuming the whole workflow does too, but that interrupts
-every agent in the middle of its turn.
+The idle timeout can pause an agent while its workflow runs, and the card then reads Paused. Opening
+the task brings it back, and so does Resume on its card. Pausing and resuming the whole workflow does
+too, but that interrupts every agent in the middle of its turn. While the workflow is paused, opening
+the task leaves it paused.

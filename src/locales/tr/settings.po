@@ -2014,8 +2014,8 @@ msgstr "Bu projenin görevleri için sunucudaki yol. Sunucunun kendi varsayılan
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Sizi bu kadar dakika bekleyen her ajanı duraklatır; Komut Terminali'ndekiler hariç."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Sizi bu kadar süre bekleyen ajanı, görevini açana kadar duraklatır."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx

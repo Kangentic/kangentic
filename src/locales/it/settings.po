@@ -2014,8 +2014,8 @@ msgstr "Percorso sul server per le attività di questo progetto. Lascia vuoto pe
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr "Metti in pausa qualsiasi agente che ti attende da questo numero di minuti, tranne quelli in un Command Terminal."
+msgid "Pause an agent waiting on you this long until you open its task."
+msgstr "Metti in pausa un agente che ti attende da questo tempo finché non apri la sua attività."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
