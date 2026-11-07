@@ -224,7 +224,7 @@ export async function launchApp(options?: {
   ).version as string;
   const notificationDefaults = {
     desktop: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false },
-    toasts: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false, durationSeconds: 4, maxCount: 5 },
+    toasts: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false, durationSeconds: 5, maxCount: 5 },
     cooldownSeconds: 60,
   };
   try {

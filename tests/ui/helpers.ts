@@ -50,7 +50,7 @@ export function collectPageErrors(page: Page): () => string[] {
  * This is the only correct way to assert "no toast appeared", and the reason is
  * not obvious: `expect(locator).toHaveCount(0)` AUTO-RETRIES for up to the expect
  * timeout (~5s by default), while a toast auto-dismisses after
- * `notifications.toasts.durationSeconds` (4s in the mock config). So a wrongly
+ * `notifications.toasts.durationSeconds` (5s in the mock config). So a wrongly
  * raised toast disappears on its own INSIDE the retry window and the assertion
  * reports a false pass. The test goes green against the bug it exists to catch.
  *
