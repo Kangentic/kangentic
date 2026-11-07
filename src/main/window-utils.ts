@@ -40,6 +40,28 @@ export function resolveIconPath(): string {
     : path.join(app.getAppPath(), 'node_modules', '@kangentic', 'branding', 'resources', 'desktop', iconFilename);
 }
 
+/** The process AUMID of an unpackaged build. */
+export const DEV_PROCESS_AUMID = 'com.kangentic.dev';
+
+/**
+ * Give a dev window its own Windows taskbar ID. Call it before the window's first show.
+ *
+ * Electron writes `Electron.lnk` for the process AUMID with no icon. A window that shares
+ * that AUMID matches the shortcut, and the match outranks `setIcon`, so the taskbar button
+ * shows the Electron logo. No shortcut matches this ID, so the window's own icon paints. A
+ * bare `appId` is enough, and windows with the same ID share one taskbar group. A window
+ * with its own taskbar button that skips this call gets a separate Electron-logo button.
+ *
+ * A packaged window stays on the process AUMID, `com.kangentic.app`, which matches the
+ * installer's shortcut and any pin. The process AUMID is left alone in dev because toasts
+ * use it. `setAppDetails` is Windows only.
+ */
+export function applyDevTaskbarIdentity(window: BrowserWindow): void {
+  if (process.platform === 'win32' && !app.isPackaged) {
+    window.setAppDetails({ appId: 'com.kangentic.dev.window' });
+  }
+}
+
 /** Resolve the renderer's built index.html for a given Vite build name (production
  *  loadFile path, no dev server). Prefers the esbuild layout (`./renderer/`); falls back
  *  to the legacy Forge layout (`../renderer/`) if the standalone path is missing (a stale

@@ -72,7 +72,7 @@ import { PATHS } from './config/paths';
 // one-shot marker there - so a module-scope load() breaks this too.
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
-import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
+import { DEV_PROCESS_AUMID, applyDevTaskbarIdentity, resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
 import { findTaskByWorktreePath } from './worktree-task-lookup';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
@@ -485,12 +485,12 @@ function relaunchForSavedSetting(): void {
   });
 }
 
-// Set Windows AppUserModelID so the taskbar resolves the correct icon.
-// In packaged builds, this must match the appId in electron-builder.yml so
-// Windows links the running process to the Start Menu shortcut icon. In dev,
-// use a separate AUMID to avoid poisoning the icon cache.
+// Set the Windows AppUserModelID. In packaged builds, this must match the appId
+// in electron-builder.yml so Windows links the running process to the Start Menu
+// shortcut icon. In dev, this AUMID serves toasts only. Electron gives it an
+// unbranded shortcut, so dev windows take their own ID from applyDevTaskbarIdentity.
 app.setAppUserModelId(
-  app.isPackaged ? 'com.kangentic.app' : 'com.kangentic.dev'
+  app.isPackaged ? 'com.kangentic.app' : DEV_PROCESS_AUMID
 );
 
 const appLaunchTime = Date.now();
@@ -1198,6 +1198,7 @@ const createWindow = () => {
   if (process.platform !== 'darwin') {
     mainWindow.setIcon(iconImage);
   }
+  applyDevTaskbarIdentity(mainWindow);
 
   // Set macOS dock icon in dev mode (packaged apps use Info.plist icon automatically)
   if (process.platform === 'darwin' && !app.isPackaged) {
@@ -1787,7 +1788,7 @@ app.whenReady().then(async () => {
   // Redundant AUMID call inside whenReady -- ensures the ID is set even if
   // Electron clears it during app initialization on some Windows versions.
   app.setAppUserModelId(
-    app.isPackaged ? 'com.kangentic.app' : 'com.kangentic.dev'
+    app.isPackaged ? 'com.kangentic.app' : DEV_PROCESS_AUMID
   );
 
   // Restore the user's shell PATH on macOS/Linux GUI launches. Finder,

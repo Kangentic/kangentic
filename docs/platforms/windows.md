@@ -6,14 +6,19 @@ tags: [windows, aumid, long-paths, crashpad]
 sources:
   - resource: src/shared/windows-path-budget.ts
   - resource: src/main/shared/child-env.ts
+  - resource: src/main/window-utils.ts
 ---
 # Windows
 
 ## Windows Taskbar Identity (AUMID)
 
-Windows resolves taskbar icons by matching the running window's AppUserModelID (AUMID) to a `.lnk` shortcut with the same AUMID. The NSIS installer creates shortcuts with the `appId` from `electron-builder.yml`.
+Windows resolves a taskbar icon by matching the running window's AppUserModelID (AUMID) to a `.lnk` shortcut with the same AUMID. A matching shortcut outranks `BrowserWindow.setIcon()`, and the button shows the shortcut's icon, or its target exe's when the shortcut has none. With no match, `setIcon()` paints the button. The NSIS installer creates shortcuts with the `appId` from `electron-builder.yml`.
 
-`app.setAppUserModelId()` in `src/main/index.ts` must use `com.kangentic.app` in packaged builds to match the `appId` in `electron-builder.yml`. In dev mode, a separate AUMID (`com.kangentic.dev`) prevents the dev exe from poisoning the Windows icon cache with the default Electron icon. Note: `BrowserWindow.setIcon()` does not control the Windows taskbar icon -- only the AUMID match does.
+`app.setAppUserModelId()` in `src/main/index.ts` must use `com.kangentic.app` in packaged builds to match the `appId` in `electron-builder.yml`. In dev mode the process AUMID is `com.kangentic.dev`.
+
+The first time the notification presenter is created, Electron writes a Start Menu shortcut named after the exe (`Electron.lnk` in dev) with the process AUMID and no icon. Packaged builds go through the same steps and look right because electron-builder stamps the logo into `Kangentic.exe`. Dev cannot brand that file for good. Electron validates the shortcut's target, working directory, AUMID and CLSID, never its icon, and any mismatch rewrites the whole file with no icon.
+
+So a dev window takes its own AUMID, `com.kangentic.dev.window`, from `applyDevTaskbarIdentity` (`src/main/window-utils.ts`) before its first show. `createWindow()` and the pop-out manager both call it, and any new window with its own taskbar button must too, or it falls back to the process AUMID and a separate button with the Electron logo. A Browser pane popup takes no call. Its `parent` makes its host window its owner, and Windows gives an owned window no button of its own. An offscreen browser lane is never shown. Toasts use the process AUMID, so dev toasts still show Electron. A packaged window never takes this ID, because it would no longer match the installer's shortcut or a user's pin.
 
 ## PTY children and Crashpad's handler
 

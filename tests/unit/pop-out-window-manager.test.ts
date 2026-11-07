@@ -16,7 +16,8 @@ import type { PopOutChangesFileParams } from '../../src/shared/pop-out';
 // vi.mock() calls are hoisted above every other statement in this file, so any
 // outer variable a factory references must be declared through vi.hoisted() -
 // otherwise the factory would run before its own `const` initializer.
-const { mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds, mockTrackFeatureUsed, mockIsErrorReportingActive } = vi.hoisted(() => ({
+const { mockApplyDevTaskbarIdentity, mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererIndexPath, mockResolvePopOutBounds, mockSavePopOutBounds, mockTrackFeatureUsed, mockIsErrorReportingActive } = vi.hoisted(() => ({
+  mockApplyDevTaskbarIdentity: vi.fn(),
   mockResolveBackgroundColor: vi.fn(() => '#18181b'),
   mockResolveIconPath: vi.fn(() => '/mock/icon.png'),
   mockResolveRendererIndexPath: vi.fn(() => '/mock/renderer/index.html'),
@@ -29,6 +30,7 @@ const { mockResolveBackgroundColor, mockResolveIconPath, mockResolveRendererInde
 }));
 
 vi.mock('../../src/main/window-utils', () => ({
+  applyDevTaskbarIdentity: mockApplyDevTaskbarIdentity,
   resolveBackgroundColor: mockResolveBackgroundColor,
   resolveIconPath: mockResolveIconPath,
   resolveRendererIndexPath: mockResolveRendererIndexPath,
@@ -129,6 +131,7 @@ interface MockBrowserWindowLike {
   options: Record<string, unknown>;
   setPosition: ReturnType<typeof vi.fn>;
   maximize: ReturnType<typeof vi.fn>;
+  show: ReturnType<typeof vi.fn>;
   getBounds: () => { x: number; y: number; width: number; height: number };
   emit: (event: string, ...args: unknown[]) => boolean;
 }
@@ -184,6 +187,16 @@ describe('PopOutWindowManager.open()', () => {
     const ninthParams = makeChangesFileParams({ filePath: 'src/file-8.tsx' });
     const ninthWindow = manager.open('changes-file', ninthParams);
     expect(ninthWindow).toBeNull();
+  });
+
+  it('gives a pop-out the dev taskbar identity before it is shown', () => {
+    const popOutWindow = asMockWindow(manager.open('changes-file', makeChangesFileParams()));
+    popOutWindow.emit('ready-to-show');
+
+    expect(mockApplyDevTaskbarIdentity).toHaveBeenCalledWith(popOutWindow);
+    expect(popOutWindow.show).toHaveBeenCalledTimes(1);
+    expect(mockApplyDevTaskbarIdentity.mock.invocationCallOrder[0])
+      .toBeLessThan(popOutWindow.show.mock.invocationCallOrder[0]);
   });
 
   it('applies the cascade offset via setPosition for the 2nd window of a kind, but not for the 1st', () => {
