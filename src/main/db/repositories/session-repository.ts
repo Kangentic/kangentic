@@ -552,9 +552,8 @@ export class SessionRepository {
     return rows.map(r => r.id);
   }
 
-  /** Update the metric columns for a session record. */
   /**
-   * Save what a session's telemetry knows. No reading of usage keeps what the record holds: an agent taken back
+   * Update the metric columns for a session record with what its telemetry knows. No reading of usage keeps what the record holds: an agent taken back
    * from a host (#913) keeps its record, and this process has no usage for it until the agent next reports. Its
    * counts are restored at the take (`restoreRunTotals`), so they are written as read.
    */
