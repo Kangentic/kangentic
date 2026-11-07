@@ -183,6 +183,45 @@ describe('TranscriptionService: a model the addon refused', () => {
     expect(ensureModel).not.toHaveBeenCalled();
   });
 
+  it('spends no replacement on a failed delete, so the next failed load tries again', async () => {
+    makeService(client);
+    vi.mocked(deleteModel).mockImplementationOnce(() => { throw new Error('EBUSY: resource busy or locked'); });
+
+    client.emit('model-load-failed', MODEL.id);
+    await flush();
+    expect(ensureModel).not.toHaveBeenCalled();
+
+    client.emit('model-load-failed', MODEL.id);
+    await flush();
+    expect(deleteModel).toHaveBeenCalledTimes(2);
+    expect(ensureModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a prep already running finish before it deletes, so that prep never finds the model gone', async () => {
+    const { service } = makeService(client);
+    let finishPrep!: () => void;
+    const prep = new Promise<void>((resolve) => { finishPrep = resolve; });
+    vi.mocked(ensureModel).mockImplementationOnce(async (model) => {
+      await prep;
+      return { modelId: model.id, kind: model.engineKind, dir: '/mock/dir', paths: {} };
+    });
+
+    const warm = service.prewarm(CONFIG);
+    await flush();
+    expect(ensureModel).toHaveBeenCalledTimes(1);
+
+    client.emit('model-load-failed', MODEL.id);
+    await flush();
+    expect(deleteModel).not.toHaveBeenCalled();
+
+    finishPrep();
+    await warm;
+    await flush();
+    expect(deleteModel).toHaveBeenCalledTimes(1);
+    // The prep, the replacement, and the warm back.
+    expect(ensureModel).toHaveBeenCalledTimes(3);
+  });
+
   it('puts a failed download on the progress stream against the model, like any other', async () => {
     const { progress } = makeService(client);
     vi.mocked(ensureModel).mockRejectedValue(new Error('Download failed (503)'));

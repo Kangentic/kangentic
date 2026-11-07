@@ -88,9 +88,11 @@ export async function ensureKokoro() {
 
 /** A Kokoro TTS over what `ensureKokoro` returned, from the caller's sherpa-onnx-node. */
 export function createKokoroTts(sherpa, { kokoro, lexicons }) {
+  // The `lexicon` option is a comma-separated list, so a comma in a path would split it.
+  const commaPath = lexicons.find((lexicon) => lexicon.includes(','));
+  if (commaPath) throw new Error(`A lexicon path cannot hold a comma: ${commaPath}`);
   return new sherpa.OfflineTts({
     model: {
-      // A comma-separated list, so no lexicon path may hold a comma.
       kokoro: { model: path.join(kokoro, 'model.onnx'), voices: path.join(kokoro, 'voices.bin'), tokens: path.join(kokoro, 'tokens.txt'), lexicon: lexicons.join(',') },
       numThreads: 4, provider: 'cpu', debug: false,
     },

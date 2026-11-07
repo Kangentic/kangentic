@@ -29,6 +29,8 @@ const spies = vi.hoisted(() => ({
   chunkedOffline: vi.fn(),
   sherpaWhisper: vi.fn(),
   remoteOpenAi: vi.fn(),
+  // When set, the mocked SherpaOnlineEngine's load() rejects with it.
+  onlineLoadError: null as Error | null,
 }));
 
 function stubSession(): TranscriptionEngineSession {
@@ -55,7 +57,9 @@ vi.mock('../../src/main/transcription/engines/sherpa-online-engine', () => ({
     constructor(...args: unknown[]) {
       spies.sherpaOnline(...args);
     }
-    async load(): Promise<void> {}
+    async load(): Promise<void> {
+      if (spies.onlineLoadError) throw spies.onlineLoadError;
+    }
     createSession(): TranscriptionEngineSession {
       return stubSession();
     }
@@ -106,6 +110,7 @@ vi.mock('../../src/main/transcription/engines/remote-openai-engine', () => ({
 }));
 
 import { buildEngine } from '../../src/main/transcription/engines/engine-build';
+import { ModelLoadError } from '../../src/main/transcription/engines/transcription-engine';
 
 function makeSelection(overrides: Partial<EngineSelection> = {}): EngineSelection {
   return {
@@ -126,6 +131,7 @@ beforeEach(() => {
   spies.chunkedOffline.mockClear();
   spies.sherpaWhisper.mockClear();
   spies.remoteOpenAi.mockClear();
+  spies.onlineLoadError = null;
 });
 
 describe('buildEngine - live slot routing', () => {
@@ -214,5 +220,22 @@ describe('buildEngine - combined selections', () => {
     expect(spies.sherpaOnline).toHaveBeenCalledTimes(1);
     expect(spies.sherpaWhisper).toHaveBeenCalledTimes(1);
     expect(engine.info.id).toBe('hybrid');
+  });
+});
+
+describe('buildEngine - onModelLoadFailed', () => {
+  // Without this forwarding, a corrupt model is never reported to main and the
+  // model-replacement feature is silently off in production.
+  it('reports the model id to the callback when the live slot rejects its load with a ModelLoadError', async () => {
+    spies.onlineLoadError = new ModelLoadError('streaming-zipformer-en', new Error('corrupt'));
+    const onModelLoadFailed = vi.fn();
+    const engine = buildEngine(
+      makeSelection({ liveModelKind: 'online-transducer', liveModelId: 'streaming-zipformer-en' }),
+      undefined,
+      onModelLoadFailed,
+    );
+    await expect(engine.load([])).rejects.toBeInstanceOf(ModelLoadError);
+    expect(onModelLoadFailed).toHaveBeenCalledTimes(1);
+    expect(onModelLoadFailed).toHaveBeenCalledWith('streaming-zipformer-en');
   });
 });

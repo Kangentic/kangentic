@@ -136,8 +136,8 @@ export class TranscriptionService extends EventEmitter {
    * fixes itself rather than failing every press from now on. The press that hit
    * it has already failed, or committed its live text if only the refinement
    * model was bad; the next one finds the new files. Never rejects: a delete that
-   * fails leaves the file for the next run, and a failed download reports on the
-   * model-progress stream like any other.
+   * fails leaves the file for the next failed load, and a failed download reports
+   * on the model-progress stream like any other.
    */
   private async replaceModel(modelId: string): Promise<void> {
     if (this.replacedModels.has(modelId)) return;
@@ -153,11 +153,16 @@ export class TranscriptionService extends EventEmitter {
   }
 
   private async downloadReplacement(model: ModelDef): Promise<boolean> {
+    // A prep already running may reach this model later in its set. Past the delete it
+    // would find the model missing and start a second download into the same `.part` file.
+    await Promise.allSettled(this.warming.values());
     try {
       deleteModel(model.id);
     } catch (error) {
-      // On Windows a file still open elsewhere refuses the delete. The next run tries again.
+      // On Windows a file still open elsewhere refuses the delete. Nothing downloaded,
+      // so this spends no replacement and the next failed load tries again.
       console.warn(`[transcription] could not delete ${model.id}:`, error instanceof Error ? error.message : error);
+      this.replacedModels.delete(model.id);
       return false;
     }
     try {

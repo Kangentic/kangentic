@@ -432,6 +432,31 @@ test.describe('column icons outside the core set', () => {
   });
 });
 
+/** A name lucide has since renamed: the catalog lists the tile as its canonical `triangle-exclamation-point`. */
+const LEGACY_ICON = 'triangle-alert';
+const legacyIconPreConfig = buildPreConfig([
+  { projectId: PROJECT_A, laneName: 'Testing', patch: { icon: LEGACY_ICON } },
+]);
+
+test.describe('icon picker selection', () => {
+  test('a column saved under a renamed icon opens the picker with its canonical tile selected, and no other', async () => {
+    const { browser, page, getPageErrors } = await launchSeededPage(legacyIconPreConfig);
+    try {
+      await openBoardManager(page, 'Testing');
+      await page.locator('[data-testid="board-manager-icon"]').click();
+      const tiles = page.locator('button[aria-pressed]');
+      await expect(tiles.first()).toBeVisible({ timeout: 10000 });
+
+      const selected = page.locator('button[aria-pressed="true"]');
+      await expect(selected).toHaveCount(1);
+      await expect(selected).toHaveAccessibleName(/triangle exclamation point/i);
+      expect(getPageErrors()).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 test.describe('icons outside the core set, on surfaces with their own seed', () => {
   test('a shortcut pill with a non-core icon paints it on its first frame after a project switch', async () => {
     const { browser, page, getPageErrors, catalogRequested } = await launchSeededPage(shortcutPreConfig);

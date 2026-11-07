@@ -57,8 +57,9 @@ refinement model fails behind the live fallback where no request sees it. Main d
 downloads it again with the usual progress, and re-warms. The press that hit it shows its error
 once, or commits its live text if only the refinement model was bad. Models carry no checksum, so a
 load failure cannot be told from corruption, and an out-of-memory failure reads the same. Each model
-is replaced at most once per run, which caps that at one download per launch. A file that parses but
-is the wrong kind of model still exits the worker, and this does not reach it.
+is replaced at most once per run, which caps that at one download per launch. A delete Windows
+refuses downloads nothing, so it spends no replacement and the next failed load tries again. A file
+that parses but is the wrong kind of model still exits the worker, and this does not reach it.
 
 The Mode choice is a preset for each language. Main resolves it to models each session
 (`resolveDictationSlots` in `src/shared/dictation-presets.ts`), so a preset follows the lineup

@@ -29,15 +29,15 @@ const ROLE_DEFAULT_NAMES: Record<SwimlaneRole, string> = {
  */
 export function getUsedIcons(swimlanes: Swimlane[], excludeId?: string): Set<string> {
   const used = new Set<string>();
-  for (const s of swimlanes) {
-    if (s.id === excludeId) continue;
-    if (s.icon) {
-      used.add(canonicalIconName(s.icon));
-    } else if (s.role) {
+  for (const swimlane of swimlanes) {
+    if (swimlane.id === excludeId) continue;
+    if (swimlane.icon) {
+      used.add(canonicalIconName(swimlane.icon));
+    } else if (swimlane.role) {
       // Same two-key map as ROLE_DEFAULTS: a role from outside the union resolves to
       // undefined, which would go into a Set<string> silently and then compare unequal
       // to every real icon name in the picker.
-      const roleIconName = ROLE_DEFAULT_NAMES[s.role];
+      const roleIconName = ROLE_DEFAULT_NAMES[swimlane.role];
       if (roleIconName) used.add(roleIconName);
     }
   }

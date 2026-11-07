@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   assertGeneratedAudio,
   assertLexiconCovers,
+  createKokoroTts,
   lexiconWords,
   spokenWords,
 } from '../../scripts/lib/dictation-tts.mjs';
@@ -30,6 +31,22 @@ describe('lexiconWords', () => {
 
   it('reads the committed extra lexicon', () => {
     expect([...lexiconWords(fs.readFileSync(EXTRA_LEXICON, 'utf8'))].sort()).toEqual(['backoff', 'config', 'dropdown']);
+  });
+});
+
+describe('createKokoroTts', () => {
+  class FakeOfflineTts {
+    constructor(readonly config: { model: { kokoro: { lexicon: string } } }) {}
+  }
+
+  it('joins the lexicons into the comma-separated list Kokoro reads', () => {
+    const tts = createKokoroTts({ OfflineTts: FakeOfflineTts }, { kokoro: '/mock/kokoro', lexicons: ['/mock/a.txt', '/mock/b.txt'] });
+    expect(tts.config.model.kokoro.lexicon).toBe('/mock/a.txt,/mock/b.txt');
+  });
+
+  it('names a lexicon path holding a comma, which would split the list', () => {
+    expect(() => createKokoroTts({ OfflineTts: FakeOfflineTts }, { kokoro: '/mock/kokoro', lexicons: ['/mock/a,b/lexicon.txt'] }))
+      .toThrow('/mock/a,b/lexicon.txt');
   });
 });
 
