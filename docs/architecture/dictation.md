@@ -53,8 +53,10 @@ A model whose files the addon refuses replaces itself. Since sherpa-onnx 2.0 a c
 at load rather than aborting the worker (measured with truncated and garbage files through both
 load paths), and installed means only that the files exist, so the same file would fail every press.
 The worker names the model in a `model-load-failed` message, separate from any reply because a
-refinement model fails behind the live fallback where no request sees it. Main deletes the model,
-downloads it again with the usual progress, and re-warms. The press that hit it shows its error
+refinement model fails behind the live fallback where no request sees it. Main waits for any prep
+already running, since a prep past the delete would start a second download into the same `.part`
+file. It then deletes the model, downloads it again with the usual progress, and re-warms. The
+press that hit it shows its error
 once, or commits its live text if only the refinement model was bad. Models carry no checksum, so a
 load failure cannot be told from corruption, and an out-of-memory failure reads the same. Each model
 is replaced at most once per run, which caps that at one download per launch. A delete Windows
