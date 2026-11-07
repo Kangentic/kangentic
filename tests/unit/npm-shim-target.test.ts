@@ -15,11 +15,74 @@ import {
   parseNpmShimTarget,
   npmShimTargetPath,
   missingNpmShimTarget,
+  directLaunchOfBatchShim,
 } from '../../src/main/agent/shared/npm-shim-target';
 import { npmCmdShim, legacyNpmCmdShim, minimalCmdShim, npmPs1Shim, npmShShim } from '../fixtures/npm-shim-fixtures';
 
 const CMD_TARGET = 'node_modules\\@google\\gemini-cli\\bundle\\gemini.js';
 const PS1_TARGET = 'node_modules/@google/gemini-cli/bundle/gemini.js';
+
+describe('directLaunchOfBatchShim', () => {
+  const directory = path.join(os.tmpdir(), 'shims');
+  const shimPath = path.join(directory, 'gemini.cmd');
+  const target = path.join(directory, 'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
+  const siblingNode = path.join(directory, 'node.exe');
+
+  it('runs a Node script with the bare node the shim falls back to', () => {
+    const launch = directLaunchOfBatchShim(shimPath, {
+      readFile: () => npmCmdShim(CMD_TARGET),
+      fileExists: (candidate) => candidate === target,
+    });
+    expect(launch).toEqual({ program: 'node', script: target });
+  });
+
+  it('prefers the node.exe beside the shim, as the shim does', () => {
+    const launch = directLaunchOfBatchShim(shimPath, {
+      readFile: () => npmCmdShim(CMD_TARGET),
+      fileExists: () => true,
+    });
+    expect(launch).toEqual({ program: siblingNode, script: target });
+  });
+
+  it('runs a binary target as it is', () => {
+    const binaryTarget = 'node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe';
+    const launch = directLaunchOfBatchShim(shimPath, {
+      readFile: () => npmCmdShim(binaryTarget),
+      fileExists: () => true,
+    });
+    expect(launch?.script).toBeNull();
+    expect(launch?.program.endsWith('claude.exe')).toBe(true);
+  });
+
+  it('refuses a target that is gone, since starting it would fail with no error', () => {
+    expect(directLaunchOfBatchShim(shimPath, { readFile: () => npmCmdShim(CMD_TARGET), fileExists: () => false })).toBeNull();
+  });
+
+  it('refuses a file that is no shim, and one it cannot read', () => {
+    expect(directLaunchOfBatchShim(shimPath, { readFile: () => '@echo hello', fileExists: () => true })).toBeNull();
+    expect(directLaunchOfBatchShim(shimPath, {
+      readFile: () => { throw new Error('EACCES'); },
+      fileExists: () => true,
+    })).toBeNull();
+  });
+
+  it('refuses a target that is neither a program nor a Node script', () => {
+    expect(directLaunchOfBatchShim(shimPath, { readFile: () => npmCmdShim('bin\\tool.sh'), fileExists: () => true })).toBeNull();
+  });
+
+  it('refuses a shim that sets NODE_PATH, because its target expects it', () => {
+    // pnpm's shim shape.
+    const pnpmShim = [
+      '@SETLOCAL',
+      '@IF NOT DEFINED NODE_PATH (',
+      '  @SET "NODE_PATH=%~dp0\\..\\.pnpm\\node_modules"',
+      ')',
+      '@"%~dp0\\node.exe" "%~dp0\\..\\pkg\\bin\\cli.js" %*',
+    ].join('\r\n');
+    expect(parseNpmShimTarget(pnpmShim)).not.toBeNull();
+    expect(directLaunchOfBatchShim(shimPath, { readFile: () => pnpmShim, fileExists: () => true })).toBeNull();
+  });
+});
 
 describe('isNpmShimCandidate', () => {
   it.each(['gemini.CMD', 'gemini.cmd', 'tool.bat', 'gemini.ps1'])('accepts %s', (candidatePath) => {

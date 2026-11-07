@@ -30,6 +30,8 @@ import path from 'node:path';
 import {
   assessResumeConversation,
   folderOnlyRecord,
+  lineageHadTurns,
+  owedPromptOf,
   type ResumeLineageRecord,
 } from '../../src/main/transition-engine/resume-conversation-guard';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
@@ -578,6 +580,49 @@ describe('both spawn chokepoints run the check after the reconcile and the migra
     expect(checkAt).toBeGreaterThan(reconcileAt);
     expect(shimAt).toBeGreaterThan(checkAt);
     expect(source).toMatch(/prompt: prompt \?\? undefined/);
+  });
+});
+
+describe('owedPromptOf', () => {
+  it('reads the oldest record, the fresh launch, past the resumes that failed since', () => {
+    // A 0.54.0 launch that never ran, then the resumes a restart tried.
+    const lineage = [
+      { ...folderRecord(), id: 'resume-2', prompt: null },
+      { ...folderRecord(), id: 'resume-1', prompt: null },
+      { ...folderRecord(), id: 'fresh', prompt: 'Fix the login redirect' },
+    ];
+    expect(owedPromptOf(lineage)).toBe('Fix the login redirect');
+  });
+
+  it('reads a fresh launch that failed on its own', () => {
+    expect(owedPromptOf([{ ...folderRecord(), prompt: '/code-review' }])).toBe('/code-review');
+  });
+
+  it('leaves out what a newer record carried, which went back on hold when it failed', () => {
+    const lineage = [
+      { ...folderRecord(), id: 'resume', prompt: 'A held message' },
+      { ...folderRecord(), id: 'fresh', prompt: 'Fix the login redirect' },
+    ];
+    expect(owedPromptOf(lineage)).toBe('Fix the login redirect');
+  });
+
+  it('skips an empty slot, and owes nothing with no record', () => {
+    expect(owedPromptOf([{ ...folderRecord(), prompt: 'Task' }, null])).toBe('Task');
+    expect(owedPromptOf([null])).toBeNull();
+  });
+});
+
+describe('lineageHadTurns', () => {
+  function hadTurns(records: ResumeLineageRecord[]): boolean {
+    return lineageHadTurns({ adapter: claudeShapedAdapter(), agentSessionId: AGENT_SESSION_ID, records, projectPath });
+  }
+
+  it('reads a lineage that only ever launched as having none', () => {
+    expect(hadTurns([folderRecord(), { ...folderRecord(), id: 'older' }])).toBe(false);
+  });
+
+  it('finds turns on any record of the lineage, not only the one that failed', () => {
+    expect(hadTurns([folderRecord(), { ...folderRecord(), id: 'older', total_output_tokens: 40 }])).toBe(true);
   });
 });
 

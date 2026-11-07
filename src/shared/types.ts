@@ -6581,6 +6581,11 @@ export interface AgentParser {
    */
   identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
   /**
+   * Optional: this CLI's output says the conversation it was told to resume does
+   * not exist. See `AgentAdapter.namesMissingConversation`.
+   */
+  namesMissingConversation?(finalOutput: string, agentSessionId: string): boolean;
+  /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
    * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.

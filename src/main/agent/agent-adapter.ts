@@ -1364,6 +1364,24 @@ export interface AgentAdapter {
   identifyUserSetupFailure?(finalOutput: string): UserSetupMatch | null;
 
   /**
+   * Optional: whether this CLI's final output says the conversation it was told
+   * to resume, `agentSessionId`, does not exist. That makes the launch class
+   * `conversation_missing`. With no turns anywhere in its lineage the record is
+   * marked failed, so the next start is a fresh one that owes the lineage's
+   * prompt (`src/main/ipc/helpers/resume-miss.ts`).
+   *
+   * Match the CLI's own measured sentence as a whole line, since a typed prompt
+   * can quote it. That is not proof against a prompt: one padded to a shell's width
+   * can wrap so a row holds the sentence alone. A moved project prints the same
+   * words too. So this is only evidence, and the no-turns check decides. Leave this
+   * out with no measured wording.
+   *
+   * An agent-specific string in an adapter, surfaced through this generic shape,
+   * per `agent-adapters-boundary`.
+   */
+  namesMissingConversation?(finalOutput: string, agentSessionId: string): boolean;
+
+  /**
    * Optional: whether a SLASH-prefixed `auto_command` can be verified in this
    * agent's session history. Omitted or `true` means yes.
    *

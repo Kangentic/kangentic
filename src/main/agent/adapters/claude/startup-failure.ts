@@ -1,5 +1,5 @@
-import { stripAnsiEscapes } from '../../../../shared/ansi-strip';
-import { identifyLoginFailure } from '../../shared/user-setup-failure';
+import { readableTerminalText } from '../../../../shared/ansi-strip';
+import { finalLinesOf, identifyLoginFailure } from '../../shared/user-setup-failure';
 import type { UserSetupMatch } from '../../../../shared/user-configuration-error';
 
 /**
@@ -28,7 +28,7 @@ const TAIL_CHARS = 20_000;
  * seen to end the CLI with code 0 while a missing one ends it with code 1.
  */
 export function describeClaudeStartupFailure(finalOutput: string, _exitCode: number): string | null {
-  const text = stripAnsiEscapes(finalOutput.slice(-TAIL_CHARS));
+  const text = readableTerminalText(finalOutput.slice(-TAIL_CHARS));
   const resumeMiss = RESUME_NOT_FOUND.exec(text);
   if (resumeMiss) {
     const sessionId = resumeMiss[1];
@@ -40,6 +40,19 @@ export function describeClaudeStartupFailure(finalOutput: string, _exitCode: num
       + 'or the project folder moved. Move the task to To Do and back to start fresh.';
   }
   return null;
+}
+
+/**
+ * See `AgentAdapter.namesMissingConversation`. A whole line, unlike the notice
+ * above, because this one decides a task's next launch: a typed prompt can quote
+ * the sentence. The id keeps out a line about another conversation. It cannot
+ * tell this launch's miss from one a resume's ring carried in, since every
+ * attempt resumes the same id, or from a typed prompt that wrapped so a row holds
+ * the sentence alone. The caller's no-turns check is what makes both safe.
+ */
+export function claudeNamesMissingConversation(finalOutput: string, agentSessionId: string): boolean {
+  const expected = `No conversation found with session ID: ${agentSessionId}`;
+  return finalLinesOf(finalOutput).includes(expected);
 }
 
 /**

@@ -234,7 +234,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 4. Spawn the PTY in the pty host (a `spawn` request; node-pty runs there, and the reply carries the pid). On Windows node-pty sets the pid after `spawn()` returns, so the host replies once it is set and holds the PTY's output until then; a process that never started replies as a failed spawn (`src/main/pty/host/root-pid-gate.ts`). A ConPTY whose output never connected is spawned once more first, when a second attempt still fits inside main's 15 s spawn budget. node-pty reports that case as an exit carrying -1, from its 5 s connect timeout or an error in its conout worker
 5. Start two file watchers (status, events)
 6. The host runs the output handler (16ms batched flush)
-7. After 100ms delay, write the CLI command to PTY stdin (a command past the typed-line budget goes in a launcher file the typed line sources, see [A command too long to type](../platforms/shells-and-paths.md#a-command-too-long-to-type)), prefixed with the shell's own clear via `buildSpawnClearPrelude` (every typed command launches an agent, a transient session's included: a Command Terminal or a workflow's agent)
+7. After 100ms delay, write the CLI command to PTY stdin (a command past the typed-line budget goes in a launcher file the typed line runs, except under PowerShell and Git Bash on Windows, which type it whole; see [A command too long to type](../platforms/shells-and-paths.md#a-command-too-long-to-type)), prefixed with the shell's own clear via `buildSpawnClearPrelude` (every typed command launches an agent, a transient session's included: a Command Terminal or a workflow's agent)
 
 ### Output Streaming
 

@@ -282,6 +282,22 @@ describe('prepareAgentSpawn downgrades a resume to fresh when the conversation w
     expect(result.data.prompt).toBe('Fix the login redirect');
   });
 
+  it('finds the owed prompt on the fresh launch when the marked record is a resume of it', async () => {
+    // A launch 0.54.0 paused unmarked, and the resume a restart tried: the newest
+    // record is marked and holds no prompt of its own.
+    const { result } = await runPrepare({
+      taskRecords: [
+        makeSessionRecord({ id: RECORD_ID, agent_session_id: STORED_ID, prompt: null, launch_failed_at: '2026-11-05T12:00:00.000Z' }),
+        makeSessionRecord({ id: 'record-fresh', agent_session_id: STORED_ID, prompt: 'Fix the login redirect' }),
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.startOver).toBe('never-started');
+    expect(result.data.prompt).toBe('Fix the login redirect');
+  });
+
   it('does not hand the owed prompt of a launch that never ran to an agent whose fresh prompt can only be typed', async () => {
     // This path types nothing, so the prompt would be lost, or run twice once typed.
     const typedAdapter = adapter as typeof adapter & { freshPromptDelivery?: 'command-line' | 'typed' };

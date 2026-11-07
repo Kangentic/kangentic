@@ -151,6 +151,14 @@ if (permissionMode) {
   console.log('MOCK_CLAUDE_PERMISSION_MODE:' + permissionMode);
 }
 
+// When MOCK_CLAUDE_RESUME_MISS=1 is set, a resume does what Claude Code 2.1.319
+// does for an id it never wrote: names the miss and exits, before any hook fires
+// or the alt screen is entered (tests/e2e/resume-miss-heal.spec.ts).
+if (resumed && process.env.MOCK_CLAUDE_RESUME_MISS === '1') {
+  console.error('No conversation found with session ID: ' + sessionId);
+  process.exit(1);
+}
+
 if (sessionId) {
   if (resumed) {
     console.log('MOCK_CLAUDE_RESUMED:' + sessionId);

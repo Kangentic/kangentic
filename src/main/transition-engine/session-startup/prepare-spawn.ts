@@ -14,7 +14,7 @@ import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { sessionOutputPaths } from '../session-paths';
 import { notePlanApprovalSpawn, planSpawnNeedsBypass } from '../../plan-approval/plan-approval-spawns';
 import { reconcileResumeAgentSessionId } from '../resume-id-reconcile';
-import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
+import { assessResumeConversation, owedPromptOf, resolveResumeLineage, type StartOverReason } from '../resume-conversation-guard';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import {
   buildExpiredConversationRecap,
@@ -281,9 +281,8 @@ export async function prepareAgentSpawn(input: {
       // The prompt of a launch that never ran is still owed, and this path types
       // nothing, so a CLI that takes no starting prompt opens idle.
       const failedLaunch = lineage.find(Boolean);
-      if (failedLaunch?.launch_failed_at && failedLaunch.prompt && adapter.freshPromptDelivery !== 'typed') {
-        prompt = failedLaunch.prompt;
-      }
+      const owedPrompt = failedLaunch?.launch_failed_at ? owedPromptOf(lineage) : null;
+      if (owedPrompt && adapter.freshPromptDelivery !== 'typed') prompt = owedPrompt;
     } else if (verdict === 'expired') {
       canResume = false;
       startOver = 'expired';

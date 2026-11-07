@@ -94,7 +94,7 @@ import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-re
 import {
   LAUNCH_ABANDON_MS,
   hasAgentRunEvidence,
-  isUserSetupFailureClass,
+  isLaunchRetryPointless,
   launchNeverStarted,
   launchTagsOf,
   logLaunchStep,
@@ -1509,16 +1509,17 @@ export class SessionManager extends EventEmitter {
   /**
    * May this failed launch get its one retry? Only with no sign the agent ran,
    * so no prompt runs twice and no second paid turn starts, and no cause the
-   * adapter identified as the user's, which a second launch cannot fix. A cause
-   * nobody identified retries, since it may be ours. Asked after the pause, since
-   * a late hook can land while the session goes down, and it waits for the output
-   * read the report posted. A retry is never retried.
+   * adapter identified as the user's, and no line the shell refused as too long,
+   * neither of which a second launch can fix. A cause nobody identified retries,
+   * since it may be ours. Asked after the pause, since a late hook can land while
+   * the session goes down, and it waits for the output read the report posted. A
+   * retry is never retried.
    */
   async mayRetryLaunch(sessionId: string): Promise<boolean> {
     const session = this.registry.get(sessionId);
     if (!session || session.startPath === 'retry') return false;
     const outputClass = await session.launchOutputRead;
-    if (outputClass && isUserSetupFailureClass(outputClass)) return false;
+    if (outputClass && isLaunchRetryPointless(outputClass)) return false;
     return !isShuttingDown() && launchNeverStarted(session);
   }
 

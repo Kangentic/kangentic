@@ -17,7 +17,10 @@ name: Shell quoting against real Windows shells
 # top of that file), and this only has something to say
 # when the escapes, the code that builds the quoted line, or these tests change.
 # The Claude command builder, the hook managers and the Aider adapter are in the
-# filter because the round trips run their real output.
+# filter because the round trips run their real output. The typed launch, the shim
+# target and the failure readers are there for cmd-launcher-round-trip.test.ts, which types a line past
+# cmd's limit through a real ConPTY: a batch file does not read a line the way a
+# prompt does, and only a real cmd shows it.
 
 on:
   pull_request:
@@ -25,6 +28,11 @@ on:
     paths:
       - 'src/shared/shell-quote.ts'
       - 'src/shared/paths.ts'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'src/main/agent/shared/npm-shim-target.ts'
+      - 'src/main/agent/shared/user-setup-failure.ts'
+      - 'src/main/pty/agent-launch-report.ts'
+      - 'src/shared/ansi-strip.ts'
       - 'src/main/agent/shared/cli-print.ts'
       - 'src/main/agent/shared/hook-utils.ts'
       - 'src/main/agent/shared/plan-approval-hook.ts'
@@ -48,6 +56,7 @@ on:
       - 'tests/unit/shell-quote.test.ts'
       - 'tests/unit/aider-adapter.test.ts'
       - 'tests/unit/windows-cmd-shim-multiline-prompt.test.ts'
+      - 'tests/unit/cmd-launcher-round-trip.test.ts'
       - 'tests/unit/event-bridge.test.ts'
       - 'tests/unit/event-bridge-prompt-capture.test.ts'
       - 'tests/unit/event-bridge-stop-plan-mode.test.ts'
@@ -65,6 +74,11 @@ on:
     paths:
       - 'src/shared/shell-quote.ts'
       - 'src/shared/paths.ts'
+      - 'src/main/pty/spawn/typed-launch.ts'
+      - 'src/main/agent/shared/npm-shim-target.ts'
+      - 'src/main/agent/shared/user-setup-failure.ts'
+      - 'src/main/pty/agent-launch-report.ts'
+      - 'src/shared/ansi-strip.ts'
       - 'src/main/agent/shared/cli-print.ts'
       - 'src/main/agent/shared/hook-utils.ts'
       - 'src/main/agent/shared/plan-approval-hook.ts'
@@ -88,6 +102,7 @@ on:
       - 'tests/unit/shell-quote.test.ts'
       - 'tests/unit/aider-adapter.test.ts'
       - 'tests/unit/windows-cmd-shim-multiline-prompt.test.ts'
+      - 'tests/unit/cmd-launcher-round-trip.test.ts'
       - 'tests/unit/event-bridge.test.ts'
       - 'tests/unit/event-bridge-prompt-capture.test.ts'
       - 'tests/unit/event-bridge-stop-plan-mode.test.ts'
@@ -170,6 +185,7 @@ jobs:
           tests/unit/shell-quote.test.ts
           tests/unit/aider-adapter.test.ts
           tests/unit/windows-cmd-shim-multiline-prompt.test.ts
+          tests/unit/cmd-launcher-round-trip.test.ts
           tests/unit/event-bridge.test.ts
           tests/unit/event-bridge-prompt-capture.test.ts
           tests/unit/event-bridge-stop-plan-mode.test.ts
