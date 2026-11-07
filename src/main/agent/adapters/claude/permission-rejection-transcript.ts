@@ -74,7 +74,9 @@ const TAIL_BYTES = 256 * 1024;
  * Deliberately UNCACHED. This is polled once per ~2s per session that is
  * actually awaiting a permission decision - typically zero or one at a
  * time - so a bounded 256 KB read is negligible against that cadence, and
- * skipping a mtime/size cache avoids a needless correctness hazard: two
+ * each subagent still writing while the prompt is open adds one more. A cap
+ * on those reads could leave out the file that holds the denial. Skipping a
+ * mtime/size cache avoids a needless correctness hazard: two
  * back-to-back rewrites of the same size landing within one filesystem's
  * mtime resolution window could otherwise serve a stale tail. This is
  * unlike `background-shell-transcript.ts`'s forward-only byte CURSOR, which

@@ -2063,6 +2063,58 @@ describe('BgShellWatcher', () => {
         watcher.dispose();
       });
 
+      it('keeps what the fold held back while an anonymous slot is still open, even with no capture pending', async () => {
+        // The hold ends when no shell waits for its PID. An anonymous shell (counted,
+        // id not here yet) still waits, so filing the held PIDs now would make the
+        // real shell a helper and the id's capture would find no candidate.
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        const beside = hookShell(7000);
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, beside]);
+        await watcher.pollNow(); // surplus fold: both held back
+
+        await watcher.pollNow(); // nothing pending, but the slot is still anonymous
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]); // the shell beside it is gone
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        await watcher.pollNow(); // the one candidate left is the real shell
+
+        probe.trees.set(ROOT, [AGENT]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgA' }]);
+        watcher.dispose();
+      });
+
+      it('does not file a held PID that exited before the release: a later shell reusing it is still a candidate', async () => {
+        // Windows reuses PIDs eagerly. A dead PID filed as a helper survives the next
+        // cycle's prune when a new shell takes its number, and that shell is then
+        // never a candidate.
+        const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
+        const beside = hookShell(7000);
+        shellCounts.set('s1', 1); // the launch's PreToolUse: counted, no id yet
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, beside]);
+        await watcher.pollNow(); // surplus fold: both held back
+
+        namedShells.set('s1', ['bgA']);
+        watcher.noteBackgroundShellStarted('s1', 'bgA');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]); // the shell beside it exits
+        await watcher.pollNow(); // bgA adopts the real shell; the release runs with 7000 dead
+
+        // A new launch whose shell took the dead PID's number.
+        const reusedPidShell = hookShell(7000);
+        shellCounts.set('s1', 2);
+        namedShells.set('s1', ['bgA', 'bgB']);
+        watcher.noteBackgroundShellStarted('s1', 'bgB');
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL, reusedPidShell]);
+        await watcher.pollNow(); // bgB adopts the reused PID
+
+        probe.trees.set(ROOT, [AGENT, REAL_SHELL]);
+        await watcher.pollNow();
+        expect(log.shellPidExited).toEqual([{ sessionId: 's1', shellId: 'bgB' }]);
+        watcher.dispose();
+      });
+
       it('adopts a second shell past the first one\'s children', async () => {
         const { watcher, probe, shellCounts, namedShells, log } = await anchoredWatcher();
         shellCounts.set('s1', 1);

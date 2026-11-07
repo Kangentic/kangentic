@@ -28,8 +28,8 @@ import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 const MAX_EVENTS_PER_SESSION = 500;
 
 /**
- * Poll cadence for the manually-rejected-permission-prompt check (task
- * #640), matching the bg-shell watcher's 2s cycle.
+ * Poll cadence for the denied-permission-prompt check (task #640), matching
+ * the bg-shell watcher's 2s cycle.
  */
 const PERMISSION_REJECTION_POLL_MS = 2_000;
 
@@ -320,7 +320,7 @@ export class SessionTelemetry {
    * (session-telemetry-wiring.test.ts).
    */
   private readonly permissionPendingSessions = new Set<string>();
-  /** Poll for a manually-rejected permission prompt - see
+  /** Poll for a denied permission prompt - see
    *  `pollRejectedPermissionPrompts`. Null while no session is pending. */
   private permissionRejectionPollInterval: ReturnType<typeof setInterval> | null = null;
 

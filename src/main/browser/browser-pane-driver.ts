@@ -61,8 +61,8 @@ const PANE_NOT_FOCUSED_DETAIL =
 class NavigationRefusedByPageError extends Error {
   constructor(url: string) {
     super(
-      `The page stayed open: it has a beforeunload handler, and the dialog was dismissed by default, so ${url} `
-      + 'did not load. Call kangentic_browser_handle_dialog with accept true, then navigate again.',
+      `The page stayed open because its beforeunload dialog was dismissed, so ${url} did not load. `
+      + 'Call kangentic_browser_handle_dialog with accept true, then navigate again.',
     );
     this.name = 'NavigationRefusedByPageError';
   }

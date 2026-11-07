@@ -225,6 +225,23 @@ describe('reportRejectedPromptTools', () => {
     }
   });
 
+  it('waits out one 2 s poll before it reports a fresh error result: the window is longer than 2 s', () => {
+    // The wait has to outlast one poll. Shorter, an approved call that fails would
+    // be read as a denial on the next poll and its tool_end would count twice.
+    const timestamp = '2026-09-12T00:25:19.438Z';
+    fs.writeFileSync(transcriptPath, `${safetyCheckDenialLine(toolId, timestamp)}\n`);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.parse(timestamp) + 2400);
+      expect(reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 })).toEqual([]);
+
+      vi.setSystemTime(Date.parse(timestamp) + 2600);
+      expect(reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 })).toEqual([toolId]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe('a prompt a subagent raised', () => {
     // A subagent's conversation has its own transcript, which the main one does
     // not mention, so its denial landed where the poll never looked.
@@ -262,6 +279,30 @@ describe('reportRejectedPromptTools', () => {
       const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: openedAt });
 
       expect(result).toEqual([]);
+    });
+
+    it('ignores a sibling that is not a transcript: Claude writes agent-<id>.meta.json beside each one', () => {
+      fs.writeFileSync(transcriptPath, '');
+      const subagentPath = writeSubagentTranscript('');
+      const metaPath = subagentPath.replace(/\.jsonl$/, '.meta.json');
+      fs.writeFileSync(metaPath, `${safetyCheckDenialLine(toolId, '2026-09-12T00:25:19.438Z')}\n`);
+
+      const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs: 0 });
+
+      expect(result).toEqual([]);
+    });
+
+    it('reads a subagent transcript whose mtime is exactly sinceMs (inclusive boundary)', () => {
+      // A whole second, so the filesystem keeps the value exactly on every platform.
+      const sinceMs = Date.parse('2026-09-12T00:25:19.000Z');
+      const subagentPath = writeSubagentTranscript(`${safetyCheckDenialLine(toolId, '2026-09-12T00:25:19.000Z')}\n`);
+      const touchedAt = new Date(sinceMs);
+      fs.utimesSync(subagentPath, touchedAt, touchedAt);
+      expect(fs.statSync(subagentPath).mtimeMs).toBe(sinceMs);
+
+      const result = reportRejectedPromptTools({ cwd, agentSessionId, toolIds: [toolId], sinceMs });
+
+      expect(result).toEqual([toolId]);
     });
   });
 
