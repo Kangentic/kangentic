@@ -7,6 +7,9 @@
 //   node scripts/ssh-link-rig.mjs --client removal --work <empty scratch dir> [--port 2252] [--keep]
 //   node scripts/ssh-link-rig.mjs --client mcp --work <empty scratch dir> [--port 2252] [--keep]
 //
+// `--image <name>` runs the host in another Docker image than `kangentic-ssh-rig` (an older glibc, see the Dockerfile).
+// `--jump` puts the host behind a second container that is the only way in, reached with `ssh -J` (ProxyJump).
+//
 // `--client removal` runs ssh-removal-rig.client.ts on the same stage instead: what removing a host and
 // editing its sign-in do on a real host. `--client mcp` runs ssh-mcp-rig.client.ts: what an agent's Kangentic
 // tool calls do while the link drops and the app is away, with the real bridge script run by the host's sh.
@@ -33,6 +36,9 @@ import { NODE_VERSION } from './build-host.mjs';
 const NODE_TARBALL = `node-${NODE_VERSION}-linux-x64.tar.xz`;
 const NODE_BASE_URL = `https://nodejs.org/dist/${NODE_VERSION}`;
 const CONTAINER = 'kangentic-ssh-rig-link';
+// With --jump: CONTAINER is the jump host and this one is the target behind it, on a network of their own.
+const TARGET_CONTAINER = 'kangentic-ssh-rig-target';
+const NETWORK = 'kangentic-ssh-rig-net';
 const REMOTE_RUN_DIR = '/home/dev/.kangentic/host/run';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -48,7 +54,7 @@ const nullConfig = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const forwardSlash = (value) => value.replaceAll('\\', '/');
 
 function parseArguments(argumentList) {
-  const parsed = { work: null, drops: 20, port: 2252, keep: false, client: 'link' };
+  const parsed = { work: null, drops: 20, port: 2252, keep: false, client: 'link', image: 'kangentic-ssh-rig', jump: false };
   for (let index = 0; index < argumentList.length; index += 1) {
     const argument = argumentList[index];
     if (argument === '--work') parsed.work = argumentList[(index += 1)];
@@ -56,6 +62,8 @@ function parseArguments(argumentList) {
     else if (argument === '--port') parsed.port = Number(argumentList[(index += 1)]);
     else if (argument === '--keep') parsed.keep = true;
     else if (argument === '--client') parsed.client = argumentList[(index += 1)];
+    else if (argument === '--image') parsed.image = argumentList[(index += 1)];
+    else if (argument === '--jump') parsed.jump = true;
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (!parsed.work) throw new Error('--work is required. See the header comment.');
@@ -98,6 +106,34 @@ async function waitForSshd(port) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`no sshd banner on port ${port}`);
+}
+
+/** The target behind the jump host starts after the jump host's banner is up: wait until a login through it works. */
+async function waitForTarget(connection) {
+  const args = [...connection.options, ...connection.identity, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', connection.destination, 'true'];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if ((await execute(sshPath, args, { timeout: 15_000 })).code === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`the target behind the jump host did not accept a login: ${connection.destination}`);
+}
+
+/** An ssh config that reaches the target only through the jump host: the settings for each hop live here. */
+function writeJumpConfig(keyPath, knownHosts) {
+  const shared = [
+    '  User dev',
+    `  IdentityFile "${forwardSlash(keyPath)}"`,
+    '  IdentitiesOnly yes',
+    `  UserKnownHostsFile "${forwardSlash(knownHosts)}"`,
+    '  StrictHostKeyChecking accept-new',
+  ];
+  const lines = [
+    'Host rig-jump', '  HostName 127.0.0.1', `  Port ${options.port}`, ...shared,
+    'Host rig-target', `  HostName ${TARGET_CONTAINER}`, '  ProxyJump rig-jump', ...shared,
+  ];
+  const configPath = path.join(workDirectory, 'ssh_config');
+  fs.writeFileSync(configPath, `${lines.join('\n')}\n`);
+  return configPath;
 }
 
 async function buildBundles() {
@@ -166,11 +202,19 @@ async function makeKey() {
 }
 
 async function startRig(keyPath) {
-  await execute('docker', ['rm', '-f', CONTAINER]);
+  await execute('docker', ['rm', '-f', CONTAINER, TARGET_CONTAINER]);
   const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim();
-  await docker('run', '-d', '--name', CONTAINER, '--init', '-p', `127.0.0.1:${options.port}:22`, '-e', `AUTHORIZED_KEY=${publicKey}`, 'kangentic-ssh-rig');
+  if (options.jump) {
+    // The target has no published port: the only way in is through the jump host, as a ProxyJump setup has it.
+    await execute('docker', ['network', 'rm', NETWORK]);
+    await docker('network', 'create', NETWORK);
+    await docker('run', '-d', '--name', TARGET_CONTAINER, '--network', NETWORK, '--init', '-e', `AUTHORIZED_KEY=${publicKey}`, options.image);
+    await docker('run', '-d', '--name', CONTAINER, '--network', NETWORK, '--init', '-p', `127.0.0.1:${options.port}:22`, '-e', `AUTHORIZED_KEY=${publicKey}`, options.image);
+  } else {
+    await docker('run', '-d', '--name', CONTAINER, '--init', '-p', `127.0.0.1:${options.port}:22`, '-e', `AUTHORIZED_KEY=${publicKey}`, options.image);
+  }
   await waitForSshd(options.port);
-  say(`rig up on ${options.port}, nothing installed on it yet`);
+  say(options.jump ? `rig up: a jump host on ${options.port}, and a target behind it, nothing installed on it yet` : `rig up on ${options.port}, nothing installed on it yet`);
 }
 
 /**
@@ -205,20 +249,34 @@ async function main() {
   try {
     const asset = await buildAsset(stage, nodeTarball);
     await startRig(keyPath);
+    // Straight to the container's published port, or through a jump host to a target that has none. OpenSSH
+    // applies a command-line option to the destination only, never to a jump host, so a jump goes by a config
+    // file, as a user's own ProxyJump does.
+    let connection;
+    if (options.jump) {
+      const configPath = writeJumpConfig(keyPath, knownHosts);
+      connection = { destination: 'rig-target', options: ['-F', forwardSlash(configPath)], identity: [] };
+      await waitForTarget(connection);
+    } else {
+      connection = {
+        destination: 'dev@127.0.0.1',
+        options: ['-p', String(options.port), '-o', `UserKnownHostsFile=${forwardSlash(knownHosts)}`, '-o', 'StrictHostKeyChecking=accept-new', '-F', nullConfig],
+        identity: ['-i', forwardSlash(keyPath), '-o', 'IdentitiesOnly=yes'],
+      };
+    }
     const clientOptions = {
       sshPath,
       sshArgs: [
-        '-p', String(options.port), '-i', forwardSlash(keyPath),
-        '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', `UserKnownHostsFile=${forwardSlash(knownHosts)}`,
-        '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=2', '-o', 'ServerAliveCountMax=3',
-        '-F', nullConfig, '-T', 'dev@127.0.0.1',
+        ...connection.options, ...connection.identity,
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=2', '-o', 'ServerAliveCountMax=3',
+        '-T', connection.destination,
       ],
       asset,
       drops: options.drops,
       // What the removal client needs on top: the same connection with no key or destination in it.
       sshKeygenPath,
-      sshOptions: ['-p', String(options.port), '-o', `UserKnownHostsFile=${forwardSlash(knownHosts)}`, '-o', 'StrictHostKeyChecking=accept-new', '-F', nullConfig],
-      destination: 'dev@127.0.0.1',
+      sshOptions: connection.options,
+      destination: connection.destination,
       rigKeyPath: keyPath,
       workDirectory: path.join(workDirectory, 'client'),
     };
@@ -231,13 +289,16 @@ async function main() {
       child.stderr.on('data', (chunk) => { stderr += chunk; });
       child.on('close', (code) => resolve({ code, stdout, stderr }));
     });
-    const daemonLog = (await execute('docker', ['exec', '-u', 'dev', CONTAINER, 'cat', `${REMOTE_RUN_DIR}/daemon.log`])).stdout;
+    const daemonLog = (await execute('docker', ['exec', '-u', 'dev', options.jump ? TARGET_CONTAINER : CONTAINER, 'cat', `${REMOTE_RUN_DIR}/daemon.log`])).stdout;
     fs.writeFileSync(path.join(workDirectory, 'results.json'), JSON.stringify({ exitCode: outcome.code, stdout: outcome.stdout, stderrTail: outcome.stderr.slice(-4000), daemonLogTail: daemonLog.split('\n').slice(-30) }, null, 2));
     process.stdout.write(outcome.stdout);
     if (outcome.code !== 0) process.stderr.write(`client exited ${outcome.code}\n${outcome.stderr.slice(-3000)}\n`);
     process.exitCode = outcome.code === 0 ? 0 : 1;
   } finally {
-    if (!options.keep) await execute('docker', ['rm', '-f', CONTAINER]);
+    if (!options.keep) {
+      await execute('docker', ['rm', '-f', CONTAINER, TARGET_CONTAINER]);
+      if (options.jump) await execute('docker', ['network', 'rm', NETWORK]);
+    }
   }
 }
 

@@ -228,6 +228,13 @@ process, a path tested against the wrong disk, an environment that overwrites th
 - **Rig (quit, by hand):** `node scripts/ssh-link-rig.mjs --client quit --work <dir>` has one link start a
   counting agent and let go, and a second link with a new boot take it back, on a real `sshd`: same pid,
   whole scrollback, every record in order, a dead agent reported dead with its code. Needs Docker.
+- **Rig matrix (by hand):** every client (`link`, `removal`, `mcp`, `quit`) also takes `--image
+  kangentic-ssh-rig-debian10` (glibc 2.28, the host program's floor; build it from
+  `scripts/probe-ssh-rig/Dockerfile` with `--build-arg BASE=debian:10`) and `--jump` (the host behind a
+  second container, reached with `ProxyJump` from an ssh config, because OpenSSH applies a command-line
+  option to the destination only, never to a jump host). Measured on 2026-11-07: link 20 of 20 drops,
+  removal 17 of 17, mcp 12 of 12, quit 11 of 11 on Ubuntu 24.04; link 10 of 10 and quit 11 of 11 on
+  Debian 10; link 10 of 10 and quit 11 of 11 through a jump host.
 - **Tests (spawn):** `tests/unit/session-spawn-flow.test.ts` (the remote block) and
   `tests/unit/remote-spawn.test.ts` pin the shell, cwd, environment, graceful-close platform and
   quoting. `tests/unit/remote-helper-host-ops.test.ts` pins the login-shell flags, the host's own
