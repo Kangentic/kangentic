@@ -58,6 +58,13 @@
  *   1.1.0          pid       the real pid at the return of spawn()
  *   1.2.0-beta.15  pid       0 at the return, set at 155 ms, first output at 196 ms
  *                            (the pty host waits for it: src/main/pty/host/root-pid-gate.ts)
+ *
+ * Measured 2026-11-06 on the same machine, Electron 45.1.0, 16 children:
+ *   1.2.0-beta.18  kill      3 of 3 workers survived 500 rounds each
+ *   1.2.0-beta.18  natural   3 of 3 workers survived 200 rounds each
+ *   1.2.0-beta.18  churn     survived 1500 rounds, rss 37 MB to 77 MB
+ *   1.2.0-beta.18  churn     --no-release, 100 rounds: rss 37 MB to 702 MB
+ *   1.2.0-beta.18  pid       0 at the return, set at 42 ms, first output at 51 ms
  */
 const path = require('node:path');
 const fs = require('node:fs');

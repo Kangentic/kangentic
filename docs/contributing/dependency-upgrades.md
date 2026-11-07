@@ -45,7 +45,7 @@ and files nothing.
 ## Why a script decides what can move
 
 `npm outdated` lists `node-pty` and all five `@xterm` packages as behind, because npm's `latest` for
-them is older than the beta we run. Installing `node-pty@latest` swaps 1.2.0-beta.15 for 1.1.0 and
+them is older than the beta we run. Installing `node-pty@latest` swaps 1.2.0-beta.18 for 1.1.0 and
 brings back the ConPTY exit crash that `tests/unit/node-pty-version-pin.test.ts` guards.
 
 So the inventory never takes `latest` at face value. A target must be above the installed version. A

@@ -5,7 +5,7 @@
  * still answers it.
  *
  * Why a script: `npm install <package>@latest` is a downgrade for anything on a prerelease line.
- * npm's `latest` for node-pty is 1.1.0 and we run 1.2.0-beta.15 for the ConPTY lock, and the same
+ * npm's `latest` for node-pty is 1.1.0 and we run 1.2.0-beta.18 for the ConPTY lock, and the same
  * holds for every @xterm package, so following `npm outdated` brings back a crash. Whether a move is
  * a downgrade, a major or a peer conflict is a function of version numbers and is never left to a
  * reading of the output.
