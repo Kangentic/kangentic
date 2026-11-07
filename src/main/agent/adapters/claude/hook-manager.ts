@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { appendBackgroundStop, extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { BROWSER_POLICY_DENY_TEXT, browserPolicySpec, type BrowserPolicyHookSpec } from '../../shared/browser-policy-hook';
@@ -332,8 +332,9 @@ export function buildHooks(
       // counts and causing premature-idle / false "task done"
       // notifications. Real bg-shell termination is owned elsewhere: the
       // process-tree watcher (plus 5-min escape hatch) detects natural
-      // exit, and explicit kills emit `background_shell_end` via the
-      // PreToolUse KillBash remap. BashOutput polling must not decrement.
+      // exit, and an explicit stop reports `background_shell_end` through
+      // the `TaskStop` directive below (older CLIs, the PreToolUse KillBash
+      // remap). BashOutput polling must not decrement.
       { matcher: '', hooks: [{ type: 'command', command: bridge(E.ToolEnd,
         extractTool('tool_name'),
         // Same correlation id extraction as PreToolUse so the engine
@@ -377,7 +378,23 @@ export function buildHooks(
         // response shape is a retained transcript's tool result:
         // `{"taskId":"blwse3kzw","timeoutMs":1800000,"persistent":false}`.
         extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
-        setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)) }] },
+        setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
+        // `TaskStop` ends the shell it names, from the main agent or a subagent.
+        // It leaves no `<task-notification>`, and a command Claude moved to the
+        // background can have no PID to watch, so this is the only signal. Here
+        // and not on PreToolUse, because this hook fires only for a stop that
+        // worked: a stop that names nothing fires no hook at all (captured on a
+        // refused `No task found with ID`). The end is written BESIDE the tool's
+        // own `tool_end`: a type remap would leave the call pending. `TaskStop`
+        // also takes agent ids and teammate names, which the engine's unmatched
+        // path ignores. Tool-scoped for the reason `taskId` is above.
+        appendBackgroundStop({
+          toolField: 'tool_name',
+          tools: ['TaskStop'],
+          when: [],
+          unless: [],
+          idSources: [{ path: ['tool_input', 'task_id'] }],
+        })) }] },
       // The background shell hint (task #857): beside a background launch's
       // result, tell the agent the shell keeps its task working and how to
       // mark it as a service. A separate script because the event bridge
