@@ -40,10 +40,8 @@ vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: 
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/safe-write', async () => {
   const nodeFs = await import('node:fs');
-  const nodePath = await import('node:path');
   return {
     safeWriteJson: (filePath: string, value: unknown) => {
-      nodeFs.mkdirSync(nodePath.dirname(filePath), { recursive: true });
       nodeFs.writeFileSync(filePath, JSON.stringify(value));
       return true;
     },
@@ -102,6 +100,7 @@ function setAutomationsDisabled(task: Task, automationsDisabled: boolean): void 
 
 /** Bring up a live session on the task, as the spawn chokepoints record one. */
 function startSession(task: Task): void {
+  fs.mkdirSync(path.join(sessionRoot, SESSION_ID), { recursive: true });
   notePlanApprovalSpawn(SESSION_ID, { sessionDir: path.join(sessionRoot, SESSION_ID), bypassAvailable: true });
   const session = { id: SESSION_ID, taskId: task.id, projectId: 'home', status: 'running', transient: false } as unknown as Session;
   sessionManager.emit('session-changed', SESSION_ID, session);
