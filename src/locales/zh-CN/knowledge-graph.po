@@ -51,10 +51,6 @@ msgstr "{handedCount, plural, other {已读取 # 个相关任务}}"
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
 msgstr "{handedCount, plural, other {正在读取 # 个相关任务}}"
 
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr "{hitCount, plural, other {此前有 # 个相关对话}}"
-
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{hours}h"
 msgstr "{hours} 小时"
@@ -741,7 +737,6 @@ msgstr "不到一分钟"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
 msgid "Untitled conversation"
 msgstr "未命名对话"
 

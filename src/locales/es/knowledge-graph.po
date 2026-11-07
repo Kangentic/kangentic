@@ -62,11 +62,6 @@ msgstr "{handedCount, plural, one {# tarea relacionada leída} many {# de tareas
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
 msgstr "{handedCount, plural, one {Leyendo # tarea relacionada} many {Leyendo # de tareas relacionadas} other {Leyendo # tareas relacionadas}}"
 
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr "{hitCount, plural, one {# conversación anterior sobre esto} many {# de conversaciones anteriores sobre esto} other {# conversaciones anteriores sobre esto}}"
-
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
 msgid "{hours}h"
@@ -921,7 +916,6 @@ msgstr "menos de un minuto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
 #, fuzzy
 msgid "Untitled conversation"
 msgstr "Conversación sin título"

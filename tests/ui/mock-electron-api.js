@@ -193,9 +193,6 @@
   // A project missing here falls back to knowledgeGraphSnapshot.
   let knowledgeGraphSnapshotsByProject = {};
   let knowledgeGraphAnswerResult = null;
-  // Proactive-recall fixture for task detail; empty means the panel renders
-  // nothing at all, which is the common case and must stay silent.
-  let memoryRelatedToTask = null;
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
   // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
   // ConversationSessionMeta[] the session picker offers. Both seeded via
@@ -6898,13 +6895,6 @@
         }
         return Promise.resolve(result);
       },
-      relatedToTask: function (taskId, projectId) {
-        if (typeof window !== 'undefined') {
-          if (!window.__mockRelatedToTaskCalls) window.__mockRelatedToTaskCalls = [];
-          window.__mockRelatedToTaskCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
-        }
-        return Promise.resolve(memoryRelatedToTask ? JSON.parse(JSON.stringify(memoryRelatedToTask)) : []);
-      },
       onGraphChanged: function (callback) {
         if (!window.__mockGraphChangedListeners) window.__mockGraphChangedListeners = [];
         window.__mockGraphChangedListeners.push(callback);
@@ -7525,9 +7515,6 @@
     }
     if (result && result.knowledgeGraphAnswerResult && typeof result.knowledgeGraphAnswerResult === 'object') {
       knowledgeGraphAnswerResult = result.knowledgeGraphAnswerResult;
-    }
-    if (result && Array.isArray(result.memoryRelatedToTask)) {
-      memoryRelatedToTask = result.memoryRelatedToTask;
     }
     if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
       Object.assign(transcriptSeeds, result.transcriptSeeds);

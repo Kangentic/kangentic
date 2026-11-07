@@ -9418,11 +9418,6 @@ export interface ElectronAPI {
      * unsubscribe closure.
      */
     onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => () => void;
-    /**
-     * Earlier conversations semantically near a task, excluding the task's own.
-     * Proactive recall: what have I already figured out about this?
-     */
-    relatedToTask: (taskId: string, projectId?: string | null) => Promise<KnowledgeGraphQueryHit[]>;
   };
 
   // Platform
@@ -9799,23 +9794,6 @@ export interface KnowledgeGraphIndexCounts {
 export interface KnowledgeGraphIndexSummary extends KnowledgeGraphIndexCounts {
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
-}
-
-/** One conversation a task window's prior work lists. */
-export interface KnowledgeGraphQueryHit {
-  /** `${corpus}::${docId}` - the graph node this hit belongs to, so the canvas
-   *  can light it without the renderer re-deriving the join. */
-  docKey: string;
-  sessionId: string;
-  taskId: string | null;
-  taskTitle: string | null;
-  agentName: string | null;
-  snippet: string;
-  score: number;
-  matchKind: 'lexical' | 'semantic' | 'hybrid';
-  /** How many chunks in this conversation matched. */
-  matchCount: number;
-  turnTs: number | null;
 }
 
 /**

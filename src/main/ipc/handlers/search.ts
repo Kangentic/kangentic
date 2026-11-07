@@ -3,8 +3,6 @@ import { createHash } from 'node:crypto';
 import { IPC } from '../../../shared/ipc-channels';
 import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
-import { getProjectDb } from '../../db/database';
-import { TaskRepository } from '../../db/repositories/task-repository';
 import { graphService } from '../../retrieval/graph-facade';
 import { buildAnswerPrompt, buildFollowUpPrompt, NO_SOURCES_ANSWER, parseAnswerRefs } from '../../retrieval/answer-prompt';
 import { answerSessionPool, type PooledAnswerSession, type PrimedAnswerChat } from '../../retrieval/answer-session-pool';
@@ -29,9 +27,9 @@ import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory'
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
 import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
-import { INDEX_RESTARTING, rankRelatedWork, searchConversations } from '../../retrieval/retrieval-queries';
+import { INDEX_RESTARTING, searchConversations } from '../../retrieval/retrieval-queries';
 import { embedQueryTexts } from '../../retrieval/query-vectors';
-import { passageKey, PASSAGES_SHOWN, relatedQueryTexts, TASK_TEXT_CHARS } from '../../retrieval/related-query-text';
+import { passageKey, PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
 import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
 import type { PreparedAnswer } from '../../retrieval/worker/answer-prepare';
 import type {
@@ -42,7 +40,6 @@ import type {
   KnowledgeGraphSnapshotWire,
   KnowledgeGraphProjectSummary,
   KnowledgeGraphRebuildPlan,
-  KnowledgeGraphQueryHit,
   KnowledgeGraphAnswerResult,
   KnowledgeGraphAnswerContext,
   KnowledgeGraphAnswerPrewarm,
@@ -642,76 +639,6 @@ export function registerSearchHandlers(context: IpcContext): void {
       } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
-    },
-  );
-
-  /**
-   * Proactive recall: earlier conversations near THIS task.
-   *
-   * The graph as built is a place you have to remember to visit. This is the
-   * same retrieval pointed the other way - the index finding you while you are
-   * reading a task, which is the moment "have I already worked this out?"
-   * actually matters.
-   *
-   * The task's own title and description ARE the query, so there is nothing to
-   * type. It ranks through the related-work rollup with the task left out,
-   * restricted to work from before the task was created and to prose turns.
-   * A task shows when its best passage stands a margin above the text's
-   * background and reaches an absolute floor (`selectPriorWork` in
-   * related-work.ts). When none does, the line stays hidden.
-   */
-  ipcMain.handle(
-    IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK,
-    async (_event, taskId: string, projectId?: string | null): Promise<KnowledgeGraphQueryHit[]> => {
-      const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!taskId || !resolvedProjectId) return [];
-      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-      if (!project) return [];
-
-      const task = new TaskRepository(getProjectDb(resolvedProjectId)).getById(taskId);
-      if (!task) return [];
-
-      const text = `${task.title}\n${task.description ?? ''}`.trim().slice(0, TASK_TEXT_CHARS);
-      if (text.length === 0) return [];
-
-      // The ranking runs in the retrieval worker; the text is embedded here.
-      let ranked: Awaited<ReturnType<typeof rankRelatedWork>>;
-      try {
-        ranked = await rankRelatedWork({
-          projectId: project.id,
-          question: text,
-          keywordText: task.title,
-          excludeTaskId: task.id,
-          priorWorkBefore: task.created_at,
-          embedder: retrievalService.getEmbedder(context),
-          vectorTexts: [text],
-          embedWaitMs: RELATED_EMBED_WAIT_MS,
-          withExtras: false,
-        });
-      } catch (error) {
-        // Recall is never a blocker: a failure reads as nothing to show.
-        console.warn('[retrieval] prior work unavailable:', error instanceof Error ? error.message : error);
-        return [];
-      }
-      if (!ranked) return [];
-      const { related, sessionIdByDocKey } = ranked;
-      return related.handed.flatMap((row): KnowledgeGraphQueryHit[] => {
-        if (!row.sessionId) return [];
-        const docKey = row.docKeys.find((key) => sessionIdByDocKey.get(key) === row.sessionId) ?? row.docKeys[0];
-        if (!docKey) return [];
-        return [{
-          docKey,
-          sessionId: row.sessionId,
-          taskId: row.taskId,
-          taskTitle: row.title,
-          agentName: null,
-          snippet: (row.bestChunkId !== null ? related.passages.get(row.bestChunkId) : undefined) ?? '',
-          score: row.relevance,
-          matchKind: 'semantic',
-          matchCount: row.matches,
-          turnTs: null,
-        }];
-      });
     },
   );
 

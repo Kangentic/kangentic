@@ -975,8 +975,6 @@ const api: ElectronAPI = {
       requestId?: string,
       context?: KnowledgeGraphAnswerContext,
     ) => ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_ANSWER, question, projectId, granularity, requestId, context),
-    relatedToTask: (taskId: string, projectId?: string | null) =>
-      ipcRenderer.invoke(IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK, taskId, projectId),
     onGraphChanged: (callback: (projectId: string) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
       ipcRenderer.on(IPC.KNOWLEDGE_GRAPH_CHANGED, handler);
