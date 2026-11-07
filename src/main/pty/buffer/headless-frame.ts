@@ -89,6 +89,14 @@ export class HeadlessFrameBuffer {
     // cast machinery above: the helper's structural parameter type bridges
     // both packages.
     activateUnicode11(this.terminal);
+    // Links are the renderer's. This parser only serializes frames, and the serialize
+    // addon writes no link, so handling OSC 8 here buys nothing and costs a lot. xterm
+    // keeps a marker for each row a link is drawn on, and the alternate screen never
+    // releases one: a scrolling fullscreen agent reached 72,000 markers and 125 MB in a
+    // replay of 6,000 frames, in a parser that runs for every session, watched or not.
+    // UNWIND(xterm.js#4531): the day the addon serializes links, a replay can carry them
+    // only if this parser kept them, so this line goes with that upgrade.
+    this.terminal.parser.registerOscHandler(8, () => true);
   }
 
   /** Feed a raw PTY chunk into the parser (the same bytes the scrollback ring receives). */

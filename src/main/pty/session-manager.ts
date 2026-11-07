@@ -5078,6 +5078,18 @@ export class SessionManager extends EventEmitter {
     return this.registry.get(sessionId)?.cliTarget ?? null;
   }
 
+  /** What deciding where the session's printed paths live needs, or null for an unknown session. */
+  getSessionPathContext(sessionId: string): { shell: string; commandCwd: string; cliTarget: StoredCliTarget | null; projectId: string } | null {
+    const session = this.registry.get(sessionId);
+    if (!session) return null;
+    return {
+      shell: session.shell,
+      commandCwd: session.commandCwd,
+      cliTarget: session.cliTarget ?? null,
+      projectId: session.projectId,
+    };
+  }
+
   /**
    * A status line's usage with its transcript path as this machine reads it. A
    * CLI in a WSL distro reports its Linux path, which every reader of the

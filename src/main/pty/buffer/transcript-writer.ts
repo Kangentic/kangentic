@@ -6,7 +6,7 @@ export interface TranscriptSink {
 // The ANSI/control-code stripper now lives in shared/ so the renderer and the
 // shared transcript formatter can reuse it. Re-exported here to keep the PTY
 // lifecycle import sites (resize-manager, session-id-manager, tests) stable.
-import { stripAnsiEscapes } from '../../../shared/ansi-strip';
+import { TRAILING_PARTIAL_ESCAPE, carryForPartialEscape, stripAnsiEscapes } from '../../../shared/ansi-strip';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 export { stripAnsiEscapes };
 
@@ -88,6 +88,8 @@ export class TranscriptWriter {
    *  Threads across onData calls so a toggle in one chunk affects subsequent
    *  chunks. */
   private inAltScreen = new Map<string, boolean>();
+  /** The escape sequence each session's last chunk ended inside, held for its next. */
+  private partialEscape = new Map<string, string>();
 
   private static readonly FLUSH_INTERVAL_MS = 30_000;
   /** Early-flush threshold for the per-session pending buffer, in UTF-16 code
@@ -128,7 +130,12 @@ export class TranscriptWriter {
     this.inAltScreen.set(sessionId, inAltAtEnd);
     if (!content) return;
 
-    const stripped = stripAnsiEscapes(content);
+    // A stripper needs a sequence whole, so the part cut off at this chunk's end
+    // waits for the next. Stripped apart, a split OSC 8 would store its URL as text.
+    const held = (this.partialEscape.get(sessionId) ?? '') + content;
+    const partial = held.match(TRAILING_PARTIAL_ESCAPE)?.[0] ?? '';
+    this.partialEscape.set(sessionId, carryForPartialEscape(partial));
+    const stripped = stripAnsiEscapes(partial ? held.slice(0, -partial.length) : held);
     if (!stripped) return;
 
     const existing = this.pending.get(sessionId) ?? '';
@@ -193,6 +200,7 @@ export class TranscriptWriter {
     this.pending.delete(sessionId);
     this.projectBySession.delete(sessionId);
     this.inAltScreen.delete(sessionId);
+    this.partialEscape.delete(sessionId);
   }
 
   /**

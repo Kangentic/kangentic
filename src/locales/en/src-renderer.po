@@ -620,6 +620,10 @@ msgstr "Couldn't save the layout"
 msgid "Couldn't save the task"
 msgstr "Couldn't save the task"
 
+#: src/renderer/utils/terminal-links/register-terminal-links.ts
+msgid "Couldn't show file"
+msgstr "Couldn't show file"
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't start the workflow"
 msgstr "Couldn't start the workflow"

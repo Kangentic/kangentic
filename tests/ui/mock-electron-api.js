@@ -2470,6 +2470,19 @@
         throw new Error('Mock: session spawn not available in UI tests');
       },
       kill: async function () {},
+      // Nothing exists until a spec lists it in window.__mockLinkPaths, so a printed
+      // path in the web demo is plain text. A reveal records to
+      // window.__mockRevealedLinkPaths as { sessionId, printedPath }.
+      resolveLinkPaths: async function (_sessionId, printedPaths) {
+        const known = (typeof window !== 'undefined' && window.__mockLinkPaths) || [];
+        return printedPaths.map(function (printedPath) { return known.includes(printedPath); });
+      },
+      revealLinkPath: async function (sessionId, printedPath) {
+        if (typeof window === 'undefined') return false;
+        if (!window.__mockRevealedLinkPaths) window.__mockRevealedLinkPaths = [];
+        window.__mockRevealedLinkPaths.push({ sessionId: sessionId, printedPath: printedPath });
+        return (window.__mockLinkPaths || []).includes(printedPath);
+      },
       // Suspend and resume record, in call order, the project id each was
       // stamped with to window.__mockSuspendCalls / window.__mockResumeCalls as
       // { taskId, projectId } (`undefined` normalized to null, as backlog.demote

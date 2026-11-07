@@ -256,6 +256,20 @@ export function cliPathForTarget(windowsPath: string, place: CliPlace | null): s
   return toWslPath(windowsPath);
 }
 
+/** A distro's drive mount (`/mnt/c/...`) as the Windows path it is, or null for any other path. */
+export function driveMountToWindowsPath(linuxPath: string): string | null {
+  const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(linuxPath);
+  if (!driveMount) return null;
+  const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');
+  return `${driveMount[1].toUpperCase()}:\\${rest}`;
+}
+
+/** A distro's Linux path as the share at `uncRoot` names it. */
+export function linuxPathOnShare(linuxPath: string, uncRoot: string): string {
+  const segments = linuxPath.split('/').filter(Boolean);
+  return segments.length > 0 ? `${uncRoot}\\${segments.join('\\')}` : uncRoot;
+}
+
 /**
  * A path the CLI reported (a transcript path in its status, a file it wrote)
  * as Kangentic can open it. A drive mount (`/mnt/c/...`) maps back to the
@@ -267,13 +281,9 @@ export function cliPathForTarget(windowsPath: string, place: CliPlace | null): s
  */
 export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): string {
   if (!place || !cliSidePath.startsWith('/')) return cliSidePath;
-  const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(cliSidePath);
-  if (driveMount) {
-    const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');
-    return `${driveMount[1].toUpperCase()}:\\${rest}`;
-  }
-  const segments = cliSidePath.split('/').filter(Boolean);
-  return segments.length > 0 ? `${place.facts.uncRoot}\\${segments.join('\\')}` : place.facts.uncRoot;
+  const onDrive = driveMountToWindowsPath(cliSidePath);
+  if (onDrive) return onDrive;
+  return linuxPathOnShare(cliSidePath, place.facts.uncRoot);
 }
 
 /** The home the CLI keeps its files under: the distro's, reached through its share, or this machine's. */

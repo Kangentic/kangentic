@@ -9,6 +9,7 @@ import {
   type TranscriptWindowResponsePayload,
 } from '@kangentic/protocol';
 import type { ActivityReason, ActivityState, Session, SessionEvent, SessionStatus, SessionUsage } from '../../../shared/types';
+import { createHyperlinkStripper, skipTruncatedStringSequence } from '../../../shared/ansi-strip';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -357,12 +358,20 @@ function subscribeReadStream(
     const startOffset = endOffset - data.length;
     const fresh = startOffset < seedBarrierOffset ? data.slice(seedBarrierOffset - startOffset) : data;
     seedBarrierOffset = null;
-    return fresh;
+    // The seed frame carries no parser state, so a barrier inside an OSC 8 would
+    // paint the rest of that URL as text on the phone.
+    return fresh.slice(skipTruncatedStringSequence(fresh));
   };
+
+  // The phone's terminal has no link handler, and a tap on a link would reach xterm's
+  // fallback: a confirm() and a window.open() in a WebView with no second window. Its
+  // seed frame has no links either, since the serialize addon writes none, so the
+  // live feed matches it. The labels stay.
+  const stripHyperlinks = createHyperlinkStripper();
 
   const onDataTap = (tappedSessionId: string, rawData: string, endOffset?: number): void => {
     if (tappedSessionId !== sessionId) return;
-    const data = trimToSeed(rawData, endOffset);
+    const data = stripHyperlinks(trimToSeed(rawData, endOffset));
     if (!data) return;
     // Once suspend()/kill() has begun tearing this session down, drop
     // further bytes instead of queuing them: they are the adapter's own

@@ -17,6 +17,7 @@ import type { PtyHandle, PtyHostClient } from '../host/pty-host-client';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
 import { safeKillPty } from './pty-kill';
 import { AgentCommandTooLongError, AgentCwdMissingError, resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
+import { HYPERLINK_ENV_KEY } from '../../../shared/hyperlink-env';
 import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
 import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hook-transport';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
@@ -370,7 +371,7 @@ export async function performSpawn(
   // renderer variables this spawn sets are listed too, or the agent in a WSL
   // shell never reads them.
   if (wslShell) {
-    const rendererKeys = [...SPAWN_SETTABLE_CLAUDE_CODE_KEYS].filter((key) => spawnEnv[key] !== undefined);
+    const rendererKeys = [...SPAWN_SETTABLE_CLAUDE_CODE_KEYS, HYPERLINK_ENV_KEY].filter((key) => spawnEnv[key] !== undefined);
     spawnEnv = listInWslEnv(spawnEnv, rendererKeys, process.env.WSLENV);
     // A CLI installed in the distro gets its whole environment from there, so
     // every variable its adapter set is listed, and the events path is

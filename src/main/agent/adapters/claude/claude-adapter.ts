@@ -442,9 +442,16 @@ export class ClaudeAdapter implements AgentAdapter {
     return this.commandBuilder.buildClaudeCommand({ cliPath: agentPath, ...rest });
   }
 
-  /** The renderer variables: the user's own, else `CLAUDE_CODE_NO_FLICKER=1` (see `CommandBuilder.rendererEnvironment`). */
+  /**
+   * The renderer variables (`CommandBuilder.rendererEnvironment`) and
+   * `FORCE_HYPERLINK` (`CommandBuilder.hyperlinkEnvironment`).
+   */
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
-    return this.commandBuilder.rendererEnvironment(options);
+    const environment = {
+      ...this.commandBuilder.rendererEnvironment(options),
+      ...this.commandBuilder.hyperlinkEnvironment(options),
+    };
+    return Object.keys(environment).length > 0 ? environment : null;
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

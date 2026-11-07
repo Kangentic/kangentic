@@ -2989,6 +2989,20 @@ describe('PtyBufferManager', () => {
       manager.removeSession(SESSION);
     });
 
+    it('drops the rest of a hyperlink the sample cut in half, rather than painting its URL', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame\x1b]8;id=1;https://exam');
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      manager.onData(SESSION, 'ple.com/rest-of-url\x1b\\label\x1b]8;;\x1b\\');
+      const snapshot = await pendingSnapshot;
+
+      expect(snapshot).not.toContain('rest-of-url');
+      expect(snapshot).toContain('label');
+      manager.removeSession(SESSION);
+    });
+
     it('resolves empty when the session is torn down mid-sample', async () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
       manager.initSession(SESSION, '', 80, 24);

@@ -6,6 +6,12 @@ describe('findSafeStartIndex', () => {
     expect(findSafeStartIndex('')).toBe(0);
   });
 
+  it('skips the rest of a hyperlink URL when a slice starts inside it', () => {
+    const rest = 'example.com/docs/page?query=1';
+    const afterLink = 'label\x1b]8;;\x1b\\ end';
+    expect(findSafeStartIndex(`${rest}\x1b\\${afterLink}`)).toBe(rest.length + 2);
+  });
+
   it('skips 1 byte when text starts with a CSI-final-range letter', () => {
     // 'h' (0x68) falls in the CSI final byte range (0x40-0x7E), so the
     // function conservatively skips it. Losing 1 byte from a 512KB buffer
@@ -55,11 +61,8 @@ describe('findSafeStartIndex', () => {
     expect(findSafeStartIndex(longParams)).toBe(0);
   });
 
-  it('handles OSC sequence remnant (text followed by BEL)', () => {
-    // 'M' (0x4D) is in the CSI final byte range, so the function
-    // conservatively skips it. This is safe since we're only trimming
-    // 1 byte from a 512KB buffer boundary.
-    expect(findSafeStartIndex('My Title\x07rest')).toBe(1);
+  it('skips a whole OSC sequence remnant (text followed by BEL)', () => {
+    expect(findSafeStartIndex('My Title\x07rest')).toBe('My Title\x07'.length);
   });
 
   it('handles mixed parameter and intermediate bytes', () => {

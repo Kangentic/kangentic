@@ -8431,6 +8431,14 @@ export interface ElectronAPI {
      */
     resetTerminal: (sessionId: string) => Promise<void>;
     list: () => Promise<Session[]>;
+    /**
+     * Which paths a session printed exist on this computer, in request order. Main
+     * resolves each against the session's folder and place, so a path on a host this
+     * computer cannot reach, or on a network share, answers false without being read.
+     */
+    resolveLinkPaths: (sessionId: string, printedPaths: string[]) => Promise<boolean[]>;
+    /** Shows a path the session printed in the file manager. False when nothing is there. */
+    revealLinkPath: (sessionId: string, printedPath: string) => Promise<boolean>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
      * Unscoped map of sessionId -> true for sessions whose agent is on screen

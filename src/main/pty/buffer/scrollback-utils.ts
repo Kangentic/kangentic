@@ -1,14 +1,18 @@
+import { skipTruncatedStringSequence } from '../../../shared/ansi-strip';
+
 /**
  * When scrollback is sliced at MAX_SCROLLBACK, the slice may start in the
- * middle of a CSI escape sequence (e.g. `\x1b[38;2;255;0;0m`). This
- * function scans forward (max 32 bytes) to find the first byte that is NOT
- * part of a truncated CSI sequence, so the terminal parser doesn't inherit
- * corrupted graphic state.
+ * middle of an escape sequence (e.g. `\x1b[38;2;255;0;0m`). This function finds
+ * the first byte that is NOT part of the truncated sequence, so the terminal parser
+ * doesn't inherit corrupted graphic state and doesn't paint a payload as text.
  *
  * CSI sequences: ESC [ <parameter bytes 0x30-0x3F>* <intermediate 0x20-0x2F>* <final 0x40-0x7E>
- * OSC sequences: ESC ] ... ST  (ST = ESC \ or BEL)
+ *   Scanned forward at most 32 bytes.
+ * String sequences: ESC ] ... ST  (ST = ESC \ or BEL), an OSC 8 hyperlink's URL among them
+ *   See skipTruncatedStringSequence.
  *
- * Returns 0 when the buffer starts cleanly (no truncation detected).
+ * Returns 0 when the buffer starts cleanly (no truncation detected). Only for a slice
+ * at a byte the caller did not choose: a clean start of text reads as a CSI's end here.
  */
 export function findSafeStartIndex(data: string): number {
   if (data.length === 0) return 0;
@@ -17,6 +21,9 @@ export function findSafeStartIndex(data: string): number {
 
   // If the buffer starts with ESC, the sequence is intact (not truncated).
   if (data.charCodeAt(0) === 0x1b) return 0;
+
+  const pastStringSequence = skipTruncatedStringSequence(data);
+  if (pastStringSequence > 0) return pastStringSequence;
 
   // Check if we're inside a truncated CSI sequence: parameter bytes (0-9 ; : < = > ?)
   // or intermediate bytes (space through /) followed eventually by a final byte (@-~).

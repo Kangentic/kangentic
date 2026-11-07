@@ -11,6 +11,8 @@ import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-apply';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
+import { createTerminalLinkGesture } from '../utils/terminal-links/link-gesture';
+import { registerTerminalLinks } from '../utils/terminal-links/register-terminal-links';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteScrollLatencyParsed, noteScrollLatencyStage } from '../utils/scroll-latency-probe';
@@ -1686,6 +1688,7 @@ export function useTerminal(options: UseTerminalOptions) {
       family: configuredFontFamily,
       size: configuredFontSize,
     };
+    const linkGesture = createTerminalLinkGesture();
     const terminal = new Terminal({
       fontFamily: configuredFontFamily,
       fontSize: configuredFontSize,
@@ -1699,7 +1702,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // "which window is selected" cue for the unfocused panes.
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
-      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),
+      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url), linkGesture),
       // No color-scheme, kitty keyboard, or win32-input replies into the PTY.
       vtExtensions: TERMINAL_VT_EXTENSIONS,
     });
@@ -1721,6 +1724,10 @@ export function useTerminal(options: UseTerminalOptions) {
 
     terminal.open(terminalRef.current);
     constructEndedAt = readClock();
+
+    // Plain URLs and printed paths, behind the OSC 8 provider xterm registers
+    // itself, so a link the app marked wins an overlap. Gone with the terminal.
+    registerTerminalLinks(terminal, linkGesture, options.sessionId ?? null);
 
     // Record this terminal as the last-focused one for dictation injection
     // target resolution. The textarea is xterm's focusable element, so this
@@ -1820,6 +1827,10 @@ export function useTerminal(options: UseTerminalOptions) {
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData((data) => {
+        // The press and release of a Ctrl or Cmd click on a link are this
+        // terminal's, or a TUI that opens links itself opens it a second time.
+        // Wheel and motion reports carry a lane and still go through.
+        if (linkGesture.isClickingLink() && isMouseReport(data) && mouseReportLane(data) === undefined) return;
         // Arms the repaint nudge. Any REAL input counts:
         // wheel-scroll-then-stop is the primary real-world repro of the
         // missing-rows family, and the keyboard jump (Ctrl+End / Ctrl+Home) is

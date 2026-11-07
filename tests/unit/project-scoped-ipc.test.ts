@@ -35,6 +35,9 @@ const ALLOWLIST_CHANNELS = new Set([
   'TASK_TAKE_CONVERSATION_EXPIRED',
   // Session reads
   'SESSION_LIST',
+  // By session id: a stat, and a reveal that writes nothing.
+  'SESSION_RESOLVE_LINK_PATHS',
+  'SESSION_REVEAL_LINK_PATH',
   'SESSION_GET_SCROLLBACK',
   'SESSION_GET_FIRST_OUTPUT',
   'SESSION_QUEUE_SNAPSHOT',

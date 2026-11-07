@@ -40,6 +40,9 @@ import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResi
 import type { AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
+import { resolveExecutionTarget } from '../../agent/shared/execution-target';
+import { presentLinkPaths, revealLinkPath } from '../../terminal-links/link-path-service';
+import type { SessionLinkFacts } from '../../terminal-links/resolve-link-path';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -72,6 +75,28 @@ export function markOwnCallIdle(sessionId: string, state: ActivityState, reason:
   return { ...reason, inOwnCall: true };
 }
 
+/**
+ * What the link resolver reads about a session, or null for one it should not
+ * guess at. A project this session's agent runs on a remote server counts as
+ * remote when its config cannot be read, so a failure links nothing.
+ */
+export function sessionLinkFacts(context: IpcContext, sessionId: string): SessionLinkFacts | null {
+  const session = context.sessionManager.getSessionPathContext(sessionId);
+  if (!session) return null;
+  const projectPath = context.projectRepo.getById(session.projectId)?.path;
+  const agentName = context.sessionManager.getSessionAgentName(sessionId);
+  let runsOnRemoteServer = false;
+  if (agentName) {
+    try {
+      const config = context.configManager.getEffectiveConfig(projectPath ?? undefined);
+      runsOnRemoteServer = resolveExecutionTarget(agentName, config.agent.executionServers, config.agent.execution) !== null;
+    } catch {
+      runsOnRemoteServer = true;
+    }
+  }
+  return { shell: session.shell, commandCwd: session.commandCwd, cliTarget: session.cliTarget, runsOnRemoteServer };
+}
+
 export function registerSessionHandlers(context: IpcContext): void {
   // === Sessions ===
   ipcMain.handle(IPC.SESSION_SPAWN, (_, input, projectId?: string | null) => {
@@ -96,6 +121,14 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_RESET_TERMINAL, (_, id: string) => context.sessionManager.resetTerminal(id));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
+  ipcMain.handle(IPC.SESSION_RESOLVE_LINK_PATHS, (_, sessionId: string, printedPaths: string[]) => {
+    const facts = sessionLinkFacts(context, sessionId);
+    return facts ? presentLinkPaths(printedPaths, facts) : printedPaths.map(() => false);
+  });
+  ipcMain.handle(IPC.SESSION_REVEAL_LINK_PATH, (_, sessionId: string, printedPath: string) => {
+    const facts = sessionLinkFacts(context, sessionId);
+    return facts ? revealLinkPath(printedPath, facts) : false;
+  });
   // Targeted self-heal probe: returns the live registry session for a task
   // (or null) and clears any stale task.session_id pointer on the DB row.
   // Used by the task detail dialog to reconcile a 'suspended' renderer view
