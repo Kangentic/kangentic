@@ -242,6 +242,13 @@ test('a remote project\'s Agent tab shows what the host has installed, and never
   await expect(page.locator('[data-testid="agent-cli-path-claude"]')).toBeDisabled();
   await expect(page.locator('[data-testid="agent-cli-path-claude"]')).toHaveAttribute('placeholder', 'claude');
 
+  // The host's agents carry no capabilities, so the model row has no list to offer. It stays, as a
+  // field to type into, and does not disappear as it did before.
+  const defaultModel = page.locator('[data-testid="project-default-model"]');
+  await expect(defaultModel).toBeVisible();
+  await defaultModel.fill('claude-opus-5-5');
+  await expect(defaultModel).toHaveValue('claude-opus-5-5');
+
   // Another agent that this computer might have is judged by the host alone.
   const codex = await page.evaluate(async () => (await window.electronAPI.agents.list()).find((agent) => agent.name === 'codex'));
   expect(codex).toMatchObject({ found: false, hostStatus: 'missing', path: 'codex' });

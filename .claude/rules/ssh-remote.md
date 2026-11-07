@@ -126,6 +126,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   which finds this computer's CLI. The answer has three states: only the host's own "not found" is
   `missing`, and a failed ask is `unknown` with its reason, which is never cached and never shown as
   "Not found". A spawn refuses `missing` with `RemoteAgentMissingError` and goes on for `unknown`.
+- **A probe of a remote project's folder runs on the host.** `project:probePath` for a folder under a remote
+  project's shell folder asks `probeGitOnHost` (`git/remote-git-probe.ts`) through the git resolver, never
+  `isGitRepo` and `hasCommits` on the stand-in, which read "not a repository" for every remote project. A host
+  that cannot answer rejects, and the renderer reads that as unknown. A host agent has no capabilities, so the
+  model row is a free-form field for it (`useAgentCapabilityResolution`), never a row that vanishes.
 - **Removing a host hides its projects and deletes nothing, and a hidden project is never swept.** Remove
   refuses every start on the host from its first step (`holdStarts`), since the board stays usable while the key
   comes off, then marks the host row `removed_at` and `ProjectRepository.list/getById/getLastOpened` leave its

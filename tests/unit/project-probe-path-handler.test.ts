@@ -142,6 +142,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerProjectHandlers } from '../../src/main/ipc/handlers/projects';
+import { setRemoteGitResolver, type RemoteGitRunner } from '../../src/main/git/remote-git';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -186,6 +187,69 @@ describe('PROJECT_PROBE_PATH IPC handler', () => {
     readWorktreeHeadUnqueuedMock.mockReset().mockResolvedValue({ branch: null, sha: null });
     existsSyncMock.mockReset().mockReturnValue(true);
     statSyncMock.mockReset().mockReturnValue({ isDirectory: () => true });
+    setRemoteGitResolver(null);
+  });
+
+  /** The host's git, answering each command the probe asks by its first words. */
+  function hostRunner(answers: Record<string, { code: number; stdout: string }>): Pick<RemoteGitRunner, 'run'> {
+    return {
+      run: async (args) => {
+        const answer = answers[args.join(' ')] ?? { code: 1, stdout: '' };
+        return { code: answer.code, stdout: Buffer.from(answer.stdout), stderr: '' };
+      },
+    };
+  }
+
+  it('reads a remote project from the host and never from this computer\'s empty stand-in', async () => {
+    // The stand-in folder is empty here, so this computer's git says "not a repository" for every
+    // remote project and the Branch row disabled Worktree for a repository that has a commit.
+    const standIn = path.join('mock', 'shell', 'remote-project');
+    setRemoteGitResolver((directory) => (directory === path.resolve(standIn)
+      ? hostRunner({
+        'rev-parse --is-inside-work-tree': { code: 0, stdout: 'true\n' },
+        'rev-parse --show-prefix': { code: 0, stdout: '\n' },
+        'rev-parse --git-dir': { code: 0, stdout: '.git\n' },
+        'rev-parse --git-common-dir': { code: 0, stdout: '.git\n' },
+        'rev-parse --verify --quiet HEAD': { code: 0, stdout: 'abc123\n' },
+        'symbolic-ref --short -q HEAD': { code: 0, stdout: 'main\n' },
+      }) as RemoteGitRunner
+      : null));
+    const context = makeContext([{ id: 'proj-remote', path: path.resolve(standIn) }]);
+    registerProjectHandlers(context as never);
+
+    const result = await invokeProbePath(context, standIn);
+
+    expect(result).toMatchObject({ isGitRepo: true, isInsideWorktree: false, hasCommits: true, currentBranch: 'main', alreadyRegisteredProjectId: 'proj-remote' });
+    expect(isGitRepoMock).not.toHaveBeenCalled();
+    expect(hasCommitsMock).not.toHaveBeenCalled();
+  });
+
+  it('reads a remote repository with no commit yet as one without commits, not as no repository', async () => {
+    const standIn = path.join('mock', 'shell', 'fresh-remote');
+    setRemoteGitResolver(() => hostRunner({
+      'rev-parse --is-inside-work-tree': { code: 0, stdout: 'true\n' },
+      'rev-parse --show-prefix': { code: 0, stdout: '\n' },
+      'rev-parse --git-dir': { code: 0, stdout: '.git\n' },
+      'rev-parse --git-common-dir': { code: 0, stdout: '.git\n' },
+      'symbolic-ref --short -q HEAD': { code: 0, stdout: 'main\n' },
+    }) as RemoteGitRunner);
+    const context = makeContext();
+    registerProjectHandlers(context as never);
+
+    const result = await invokeProbePath(context, standIn);
+
+    expect(result.isGitRepo).toBe(true);
+    expect(result.hasCommits).toBe(false);
+  });
+
+  it('rejects when the host cannot be asked, so the renderer reads it as unknown and not as no repository', async () => {
+    const standIn = path.join('mock', 'shell', 'down-remote');
+    setRemoteGitResolver(() => ({ run: () => Promise.reject(new Error('The link to the host is down.')) }) as unknown as RemoteGitRunner);
+    const context = makeContext();
+    registerProjectHandlers(context as never);
+
+    await expect(invokeProbePath(context, standIn)).rejects.toThrow('The link to the host is down.');
+    expect(isGitRepoMock).not.toHaveBeenCalled();
   });
 
   it('reports hasCommits false for a repo with an unborn HEAD, and never probes a non-repo', async () => {

@@ -24,6 +24,8 @@ import { WorktreeManager, prepareWorktreeForRemoval } from '../../git/worktree-m
 import { deleteRemovedWorktreesNow } from '../../git/removed-worktrees';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
+import { remoteGitRunnerFor } from '../../git/remote-git';
+import { probeGitOnHost } from '../../git/remote-git-probe';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, getExistingProjectDb, closeProjectDb, projectDbPath } from '../../db/database';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
@@ -1357,6 +1359,23 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   const probeFolder = async (folderPath: string): Promise<ProjectPathProbe> => {
     const normalized = path.resolve(folderPath);
+    const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
+    // A remote project's folder here is an empty stand-in, so its git is read on the host. A host that cannot
+    // answer rejects, which the caller reads as "unknown", never as "not a repository".
+    const hostRunner = remoteGitRunnerFor(normalized);
+    if (hostRunner) {
+      const onHost = await probeGitOnHost(hostRunner);
+      return {
+        exists: true,
+        isDirectory: true,
+        isGitRepo: onHost.isGitRepo,
+        isInsideWorktree: onHost.isInsideWorktree,
+        hasCommits: onHost.hasCommits,
+        currentBranch: onHost.currentBranch,
+        suggestedName: path.basename(normalized),
+        alreadyRegisteredProjectId: existingProject?.id ?? null,
+      };
+    }
     const exists = fs.existsSync(normalized);
     const isDirectory = exists && fs.statSync(normalized).isDirectory();
     const isGit = isDirectory && isGitRepo(normalized);
@@ -1365,7 +1384,6 @@ export function registerProjectHandlers(context: IpcContext): void {
     // Same gate as the branch read: only a repo can have commits, and the
     // check shells out, so a non-repo folder never pays for it.
     const commits = isGit ? await hasCommits(normalized) : false;
-    const existingProject = context.projectRepo.list().find((p) => path.resolve(p.path) === normalized);
     return {
       exists,
       isDirectory,
