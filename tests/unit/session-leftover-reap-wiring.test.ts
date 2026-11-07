@@ -885,6 +885,44 @@ describe('a conversation in the agent CLI\'s own background session stops before
     expect(callOrder).toEqual(['stopBackgroundSession', 'reap']);
   });
 
+  it('goes ahead at the deadline, starts no stop still queued, and leaves no rejection behind', async () => {
+    const indexes = [1, 2, 3];
+    for (const index of indexes) writeMovedRecordEvents(`record-bg-${index}`, conversationId(index));
+    mockListForTaskNewestFirst.mockReturnValue(indexes.map((index) => recordOf(`record-bg-${index}`, conversationId(index))));
+    const inFlight: Array<() => void> = [];
+    stopBackgroundSession.mockImplementation(() => new Promise<boolean>((resolve) => { inFlight.push(() => resolve(true)); }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    // setImmediate stays real, so file reads and the checks' microtasks keep running.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+    try {
+      const sessionManager = makeSessionManager();
+      const reap = reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+      for (let round = 0; round < 500 && stopBackgroundSession.mock.calls.length < 2; round += 1) await yieldToEventLoop();
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await reap;
+      expect(callOrder).toEqual(['reap']);
+      expect(warn.mock.calls.some(([line]) => String(line).includes('(2 still stopping, 1 not started)'))).toBe(true);
+
+      // A stop that finishes after the deadline frees a slot. The queued stop must not take it:
+      // the reap has already gone ahead, and this would run the CLI against a task it just cleaned up.
+      // As many rounds as the first two took to start, since a started stop reads the record's
+      // events from disk first: a short wait here passes with `queue.clear()` deleted.
+      inFlight[0]();
+      for (let round = 0; round < 500 && stopBackgroundSession.mock.calls.length < 3; round += 1) await yieldToEventLoop();
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(2);
+      expect(unhandled).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('detects the CLI once per adapter however many records need a stop', async () => {
     const indexes = [1, 2, 3];
     for (const index of indexes) writeMovedRecordEvents(`record-bg-${index}`, conversationId(index));
