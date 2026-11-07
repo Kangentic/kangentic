@@ -95,11 +95,24 @@ process, a path tested against the wrong disk, an environment that overwrites th
   session's link is down first. The activity watchdog takes `isActivityHeld`, the idle sweep takes
   `isIdleTimeoutExempt`, and `noteLinkRestored` wipes the outage from their clocks when the link
   returns. A new timer that acts on a session's silence does the same.
-- **A quit hands remote sessions to the link.** `killAllSessions` signals, types into and counts
-  nothing for them. `SessionManager` posts each host its plan (`remoteQuitPlan`: the adapter's exit
-  sequence and whether closing the console is graceful), the link sends it as one `suspendAll` frame,
-  and the helper ends the agents on its own clock. A remote session keeps the pty host process in
-  the quit drain, or Electron could tear it down before that frame goes out.
+- **A quit leaves remote agents running, and the next launch takes them back.** `killAllSessions`
+  neither signals, types into, seals, counts nor deletes the folder of a session whose PTY has no pid
+  here, and the shutdown marks no remote record suspended: it stays `running` with its task still
+  pointing at it. The link lets go and sends nothing (the old `suspendAll` plan is gone). Never seal
+  a remote PTY at a quit: the host keeps the seal and the rejoined agent would take no keystrokes.
+- **Startup never reads a running remote record as a crash.** `resumeSuspendedSessions` step 0 asks the
+  host (`rejoin-sessions.ts`, only when the host is connected) for each `running` record whose
+  `cli_target` names one, and the answer is one of three: rejoined (`SessionManager.adoptRemoteSession`,
+  the same id, a rebind, a reattach registration, the events file read from its end), pending (could not
+  ask, so the record stays `running` and nothing is resumed or started for its task, and auto-spawn
+  skips it) or gone (only the host's own list saying the agent is not alive, or a task that was deleted,
+  archived or moved to To Do or Done meanwhile). Could not ask is never gone: two agents in one
+  worktree is the worst outcome here. After recovery, an agent alive on the host for this app's projects
+  that the app neither holds nor has a `running` record for is hung up (`endUnownedHostSessions`).
+- **Every hook record stays on the host until the app has stored it.** The helper keeps a record, marked
+  `claim`, and the relay writes it to the local inbox before removing the host's copy. A new boot
+  attaching to the helper resends what is still there (`resendUnclaimed`), because the old link's
+  retained frames are discarded. A real sshd showed five of eight records lost before this.
 - **A reconnect never prompts.** `ssh` runs with `BatchMode=yes`, so a host that needs a password or a
   passphrase fails with its own words, shown as given. Kangentic never asks for a passphrase. A
   destination that `ssh` would read as an option (a leading `-`) is refused before it reaches `ssh`.
@@ -201,8 +214,20 @@ process, a path tested against the wrong disk, an environment that overwrites th
   reader.
 - **Tests (pid and quit):** `tests/unit/pty-host-client-remote-pid.test.ts` pins the null pid and that
   a dying local host leaves a remote PTY alone. `tests/unit/session-shutdown-flow.test.ts` and
-  `tests/unit/session-manager-remote-quit.test.ts` pin that the quit signals, types into and counts
-  nothing for a remote session, sends each host its plan, and keeps the host in the drain.
+  `tests/unit/session-manager-remote-quit.test.ts` pin that the quit signals, types into, seals and
+  counts nothing for a remote session, posts it no command, keeps its folder, and still counts the host
+  process; `tests/unit/session-auto-resume-on-restart.test.ts` that its record stays `running`.
+- **Tests (rejoin):** `tests/unit/rejoin-sessions.test.ts` pins rejoined, pending and gone and the
+  adoption input; `tests/unit/resume-suspended-rejoin.test.ts` runs the recovery pass and auto-spawn
+  against a real database (a running remote record is never orphaned or resumed beside a live agent,
+  could not ask is never gone, a task moved to Done is not taken back);
+  `tests/unit/session-manager-remote-spawn.test.ts` takes back a running agent through a real
+  `SessionManager`, router, link and helper; `tests/unit/remote-host-router.test.ts` rebinds under a new
+  boot; `tests/unit/remote-resume-endpoint.test.ts` pins that a request queued before a restarted app
+  connects is delivered (it was dropped).
+- **Rig (quit, by hand):** `node scripts/ssh-link-rig.mjs --client quit --work <dir>` has one link start a
+  counting agent and let go, and a second link with a new boot take it back, on a real `sshd`: same pid,
+  whole scrollback, every record in order, a dead agent reported dead with its code. Needs Docker.
 - **Tests (spawn):** `tests/unit/session-spawn-flow.test.ts` (the remote block) and
   `tests/unit/remote-spawn.test.ts` pin the shell, cwd, environment, graceful-close platform and
   quoting. `tests/unit/remote-helper-host-ops.test.ts` pins the login-shell flags, the host's own
