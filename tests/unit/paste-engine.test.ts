@@ -662,6 +662,34 @@ describe('PasteEngine.pasteAndSubmit', () => {
       await tick();
       await expect(send).resolves.toBeUndefined();
     });
+
+    it('never fails a send whose hook never comes: the first window\'s output counts once the retry is silent', async () => {
+      // Hooks broken: the agent took the message and answered inside the first
+      // window, so the retry Enter lands on an empty prompt and prints nothing.
+      const { send } = await reachFirstEvidenceWindow();
+      mockSessionManager.emitData('s1', 'the whole reply to the message ' + 'x'.repeat(40));
+      await tick();
+      vi.advanceTimersByTime(3001);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(2001);
+      await tick();
+      await expect(send).resolves.toBeUndefined();
+      expect(mockSessionManager.writeCalls.map((call) => call.data)).toEqual(['\r', '\r']);
+    });
+
+    it('still fails a send when neither window saw a turn or output', async () => {
+      const { send } = await reachFirstEvidenceWindow();
+      send.catch(() => undefined);
+      vi.advanceTimersByTime(3001);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(2001);
+      await tick();
+      await expect(send).rejects.toMatchObject({ code: 'no-submission-evidence' });
+    });
   });
 
   it('ignores idle activity events during evidence wait', async () => {

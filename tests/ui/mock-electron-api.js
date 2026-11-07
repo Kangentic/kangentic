@@ -3420,8 +3420,23 @@
     dictation: {
       // Call logs for test assertions. Reset between tests by truncating length.
       __startCalls: [],
+      // Test hook: after __holdStarts(), each `start` stays pending until
+      // __releaseStart(index, dictationSessionId) resolves it with that id, the
+      // window a slow engine start stretches to. Off by default.
+      __holdStartsOn: false,
+      __heldStarts: [],
+      __holdStarts: function () { window.electronAPI.dictation.__holdStartsOn = true; },
+      __releaseStart: function (index, dictationSessionId) {
+        window.electronAPI.dictation.__heldStarts[index].resolve(dictationSessionId);
+      },
       start: async function (options) {
         window.electronAPI.dictation.__startCalls.push(options);
+        if (window.electronAPI.dictation.__holdStartsOn) {
+          var heldId = await new Promise(function (resolve) {
+            window.electronAPI.dictation.__heldStarts.push({ resolve: resolve });
+          });
+          return { dictationSessionId: heldId, engineId: 'stub', modelId: null, needsDownload: false, sentenceCaseFinal: false };
+        }
         // Test hook: window.__mockDictationSentenceCaseFinal, a boolean, is what
         // main reports when the live model writes all caps and the committed text
         // is its own (the Zipformer with no refinement). The hook recases a final

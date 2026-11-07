@@ -130,4 +130,24 @@ describe('TRANSCRIBE_HOLD_TRACE', () => {
     expect(warn.mock.calls[0][0]).not.toContain('\n');
     warn.mockRestore();
   });
+
+  it('logs nothing for a payload that is not a trace', () => {
+    register('');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    listeners.get(IPC.TRANSCRIBE_HOLD_TRACE)?.({}, 'press');
+    listeners.get(IPC.TRANSCRIBE_HOLD_TRACE)?.({}, { phase: 'hold', reason: null });
+    listeners.get(IPC.TRANSCRIBE_HOLD_TRACE)?.({}, { reason: 'released' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('prints a dash for any field outside its shape, so no payload text reaches the log', () => {
+    register('');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    listeners.get(IPC.TRANSCRIBE_HOLD_TRACE)?.({}, {
+      phase: 'end', reason: '\x1b[31mred', heldMs: 'long', buttons: Number.NaN, targetKind: 'guest',
+    });
+    expect(warn).toHaveBeenCalledWith('[dictation-hold] end reason=- heldMs=- buttons=- target=-');
+    warn.mockRestore();
+  });
 });

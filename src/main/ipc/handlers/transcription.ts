@@ -29,6 +29,31 @@ async function requestMicrophone(): Promise<DictationMicPermission> {
   }
 }
 
+const HOLD_TRACE_PHASES: ReadonlySet<string> = new Set<DictationHoldTrace['phase']>(['press', 'end', 'refused']);
+const HOLD_TRACE_TARGETS: ReadonlySet<string> = new Set(['terminal', 'input']);
+/** A reason is one of `DictationHoldEndReason`'s kebab-case words. */
+const HOLD_TRACE_REASON = /^[a-z][a-z-]{0,40}$/;
+
+/**
+ * The `[dictation-hold]` log line for a renderer's trace, or null for a payload
+ * that is not a trace. The line goes to the persisted log, so every field is
+ * checked against its shape and anything else prints as `-`: no text from the
+ * payload reaches the log except the words the trace type allows.
+ */
+export function formatHoldTraceLine(trace: unknown): string | null {
+  if (typeof trace !== 'object' || trace === null) return null;
+  const fields = trace as Record<string, unknown>;
+  const phase = fields.phase;
+  if (typeof phase !== 'string' || !HOLD_TRACE_PHASES.has(phase)) return null;
+  const word = (value: unknown, valid: (text: string) => boolean): string =>
+    typeof value === 'string' && valid(value) ? value : '-';
+  const count = (value: unknown): string =>
+    typeof value === 'number' && Number.isFinite(value) ? String(Math.round(value)) : '-';
+  return `[dictation-hold] ${phase} reason=${word(fields.reason, (text) => HOLD_TRACE_REASON.test(text))}`
+    + ` heldMs=${count(fields.heldMs)} buttons=${count(fields.buttons)}`
+    + ` target=${word(fields.targetKind, (text) => HOLD_TRACE_TARGETS.has(text))}`;
+}
+
 /**
  * Voice-to-text dictation handlers. The renderer drives a push-to-talk
  * session: `start` opens it, the popup shows live `onPartial` text, and on
@@ -99,11 +124,9 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   // A press, or how a hold ended. Written at `warn` because that is the one level
   // the log mirror keeps in a production build, and a renderer's own console never
   // reaches the log. One line per press and per end, with no spoken text in it.
-  ipcMain.on(IPC.TRANSCRIBE_HOLD_TRACE, (_event, trace: DictationHoldTrace | null) => {
-    if (!trace) return;
-    const line = `[dictation-hold] ${trace.phase} reason=${trace.reason ?? '-'} heldMs=${trace.heldMs ?? '-'}`
-      + ` buttons=${trace.buttons ?? '-'} target=${trace.targetKind ?? '-'}`;
-    console.warn(line.replace(/[\r\n]+/g, ' '));
+  ipcMain.on(IPC.TRANSCRIBE_HOLD_TRACE, (_event, trace: unknown) => {
+    const line = formatHoldTraceLine(trace);
+    if (line) console.warn(line);
   });
 
   // Inject finalized text into the focused terminal WITHOUT submitting. The
