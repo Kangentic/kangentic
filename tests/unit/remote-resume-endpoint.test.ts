@@ -222,6 +222,29 @@ describe('what cannot be replayed', () => {
     await settle();
     expect(indexes(link).at(-1)).toBe(50);
   });
+
+  it('delivers what a restarted side queued before it connected, to a peer that remembers a longer stream', async () => {
+    // The helper has heard a long stream from the app's previous process. The app is restarted, and the new
+    // process queues a request before its connection is up (right after it dials the host).
+    const helper = makeSide('helper');
+    const previousLink = makeSide('link');
+    connect(previousLink, helper);
+    await settle();
+    for (let index = 0; index < 5; index += 1) previousLink.endpoint.send({ n: index }, Buffer.alloc(300));
+    await settle();
+    previousLink.endpoint.detach();
+    await settle();
+
+    const restartedLink = makeSide('link');
+    restartedLink.endpoint.send({ n: 100 });
+    restartedLink.endpoint.send({ n: 101 });
+    connect(restartedLink, helper);
+    await settle();
+
+    expect(indexes(helper).slice(-2)).toEqual([100, 101]);
+    // The frames before it are the previous process's, and are not repeated.
+    expect(indexes(helper)).toEqual([0, 1, 2, 3, 4, 100, 101]);
+  });
 });
 
 describe('refusal', () => {

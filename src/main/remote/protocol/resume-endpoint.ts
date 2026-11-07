@@ -310,14 +310,24 @@ export class ResumeEndpoint {
 
   /** Send the peer what it has not got, from the offset its hello named. False when the connection was dropped. */
   private replay(connection: Connection, peerResumeFrom: number): boolean {
+    if (peerResumeFrom > this.sendOffset) {
+      // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream starts
+      // now, which is the first frame this side still holds. A process that queued a request before it connected
+      // (the app, right after it dials) holds it from offset 0, and neither trimming those frames against the
+      // peer's offset (which belongs to the stream before the restart) nor a reset to the END of the stream may
+      // drop it: the request would never be answered. What is held is sent after the reset.
+      const heldFrom = this.retained.length > 0 ? this.retained[0].offset : this.sendOffset;
+      this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: heldFrom, json: { cause: 'peer-ahead' } }));
+      this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: heldFrom, lostTo: peerResumeFrom, cause: 'peer-ahead' }));
+      if (!this.isLive(connection)) return false;
+      for (const entry of this.retained) {
+        this.write(connection, entry.frame);
+        if (!this.isLive(connection)) return false;
+      }
+      return true;
+    }
     this.trimThrough(peerResumeFrom);
     const retainedStart = this.retained.length > 0 ? this.retained[0].offset : this.sendOffset;
-    if (peerResumeFrom > this.sendOffset) {
-      // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream is now.
-      this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: this.sendOffset, json: { cause: 'peer-ahead' } }));
-      this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: this.sendOffset, lostTo: peerResumeFrom, cause: 'peer-ahead' }));
-      return this.isLive(connection);
-    }
     if (peerResumeFrom < retainedStart) {
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: retainedStart, json: { cause: 'retention' } }));
       this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: peerResumeFrom, lostTo: retainedStart, cause: 'retention' }));
