@@ -205,6 +205,9 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
     };
     const queue = new PQueue({ concurrency: BACKGROUND_SESSION_STOP_CONCURRENCY });
     const allStops = Promise.all(records.map((record) => queue.add(() => stopForRecord(record))));
+    // `stopForRecord` never rejects, so only `queue.clear()` below can reject this, with an
+    // AbortError for each stop it removes. The race has gone to the deadline by then.
+    allStops.catch(() => undefined);
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<'deadline'>((resolve) => {
       deadlineTimer = setTimeout(() => resolve('deadline'), BACKGROUND_SESSION_STOPS_DEADLINE_MS);

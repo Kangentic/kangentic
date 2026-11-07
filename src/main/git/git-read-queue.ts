@@ -53,8 +53,8 @@ export async function viaGitRead<T>(
   operation: () => Promise<T>,
   options?: { priority?: GitReadPriorityValue },
 ): Promise<T> {
-  // p-queue v9 .add() returns Promise<T | void>; cast like viaGh
-  // (github-connector.ts) - the job function always returns T.
+  // p-queue types .add() as Promise<Awaited<T>>, which TypeScript cannot
+  // equate with Promise<T> for a generic T; cast like viaGh (github-connector.ts).
   return gitReadQueue.add(operation, {
     priority: options?.priority ?? GitReadPriority.USER,
   }) as Promise<T>;
