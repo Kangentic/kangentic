@@ -235,6 +235,106 @@ describe('connecting a host', () => {
   });
 });
 
+describe('a host whose setup fails because the network is down', () => {
+  const NETWORK_DOWN = 'ssh exited with code 255: ssh: connect to host lab port 22: Connection timed out';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function hostingRecordingStates() {
+    const states: string[] = [];
+    let hosting: ReturnType<typeof createRemoteHosting> | null = null;
+    hosting = createRemoteHosting({
+      sessionManager: makeSessionManager() as never,
+      projects: () => projectsOf([]),
+      onHostsChanged: () => { states.push(hosting?.status.get('host-1')?.state ?? 'none'); },
+      log: () => undefined,
+    });
+    return { hosting, states };
+  }
+
+  it('is tried again on its own at launch, and stays unreachable between the tries instead of flipping back to connecting', async () => {
+    const { hosting, states } = hostingRecordingStates();
+    const connect = vi.spyOn(RemoteHostService.prototype, 'connect')
+      .mockRejectedValueOnce(new Error(NETWORK_DOWN))
+      .mockRejectedValueOnce(new Error(NETWORK_DOWN))
+      .mockResolvedValue(undefined);
+
+    await hosting.connectAll();
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(hosting.status.get('host-1')).toMatchObject({ state: 'unreachable', detail: NETWORK_DOWN });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(connect).toHaveBeenCalledTimes(3);
+
+    // One Connecting, for the first try. The retries kept the row as it was.
+    expect(states.filter((state) => state === 'connecting')).toHaveLength(1);
+
+    // Connected: nothing is scheduled any more.
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(connect).toHaveBeenCalledTimes(3);
+  });
+
+  it('waits longer each time, up to a minute', async () => {
+    const { hosting } = hostingRecordingStates();
+    const connect = vi.spyOn(RemoteHostService.prototype, 'connect').mockRejectedValue(new Error(NETWORK_DOWN));
+
+    await hosting.connectAll();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(connect).toHaveBeenCalledTimes(5);
+
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(connect).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(connect).toHaveBeenCalledTimes(6);
+  });
+
+  it('is not tried again when the sign-in was refused', async () => {
+    const { hosting } = hostingRecordingStates();
+    const connect = vi.spyOn(RemoteHostService.prototype, 'connect').mockRejectedValue(new Error('dev@lab: Permission denied (publickey).'));
+
+    await hosting.connectAll();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(hosting.status.get('host-1')?.state).toBe('unreachable');
+  });
+
+  it('is not tried again once the host was removed meanwhile, or while its removal holds starts', async () => {
+    const { hosting } = hostingRecordingStates();
+    const connect = vi.spyOn(RemoteHostService.prototype, 'connect').mockRejectedValue(new Error(NETWORK_DOWN));
+
+    await hosting.connectAll();
+    removedHosts.add('host-1');
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(connect).toHaveBeenCalledTimes(1);
+
+    removedHosts.clear();
+    await hosting.connectAll();
+    hosting.holdStarts('host-1');
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+
+  it('is not retried behind the back of a person who pressed Reconnect, whose answer is that one attempt', async () => {
+    const { hosting } = hostingRecordingStates();
+    const connect = vi.spyOn(RemoteHostService.prototype, 'connect').mockRejectedValue(new Error(NETWORK_DOWN));
+
+    await hosting.connectAll();
+    await hosting.connectHost('host-1');
+    expect(connect).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(connect).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('refusing starts while a host is being removed', () => {
   const projectPath = path.resolve(path.join('mock', 'shells', 'Held-Project'));
   // No remote CLI name: a start that gets past the removal check stops at this next refusal instead.

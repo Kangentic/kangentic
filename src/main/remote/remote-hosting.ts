@@ -17,6 +17,7 @@ import type { SessionManager } from '../pty/session-manager';
 import type { HostAsset } from './link/host-installer';
 import { readInstallId } from './install-identity';
 import { HostStatusBook } from './host-status';
+import { connectRetryDelayMs, isTransientConnectFailure } from './connect-retry';
 import { defaultSshClientPaths } from './ssh-client';
 import type { SshHostAdmin } from './ssh-host-admin';
 import { PortForwardPlan, setPortForwardPlan } from './port-forward-plan';
@@ -175,24 +176,67 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   setPortForwardPlan(forwardPlan);
   devPortRepository.onChange(() => forwardPlan.schedule());
 
-  const connectHost = async (hostId: string): Promise<void> => {
-    status.set(hostId, 'connecting');
+  /** A host whose setup failed because of the network is tried again on a timer: the one that is waiting. */
+  const retryTimers = new Map<string, NodeJS.Timeout>();
+  const cancelRetry = (hostId: string): void => {
+    const timer = retryTimers.get(hostId);
+    if (timer) clearTimeout(timer);
+    retryTimers.delete(hostId);
+  };
+  /** A retry goes on only for a host that is still stored, not being removed, and not already up. */
+  const retryIsDue = (hostId: string): boolean => {
+    const row = hosts.getById(hostId);
+    return Boolean(row) && !row?.removed_at && !startsHeld.has(hostId) && !hostService.isConnected(hostId);
+  };
+
+  /**
+   * `retry` is for the starts nobody asked for (launch, a pty host restart). A person pressing Reconnect, or
+   * adding a host, gets the answer of one attempt, and supersedes a retry that was waiting.
+   */
+  const attemptConnect = async (hostId: string, options: { retry: boolean; attempt: number }): Promise<void> => {
+    // A retry keeps the row as it is: a first try says Connecting, and the tries after it must not flip the
+    // chip back and forth while the reason stays the same.
+    if (options.attempt === 0) status.set(hostId, 'connecting');
     try {
       await hostService.connect(hostId);
+      cancelRetry(hostId);
       // Dropping a link forgets its wanted ports, and the plan would not send a set it thinks is unchanged.
       forwardPlan.resendHost(hostId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`[remote] host ${hostId.slice(0, 8)} was not connected: ${message}`);
       status.set(hostId, 'unreachable', message);
+      if (!options.retry || !isTransientConnectFailure(message)) {
+        cancelRetry(hostId);
+        return;
+      }
+      const delayMs = connectRetryDelayMs(options.attempt);
+      const timer = setTimeout(() => {
+        retryTimers.delete(hostId);
+        if (!retryIsDue(hostId)) {
+          cancelRetry(hostId);
+          return;
+        }
+        void attemptConnect(hostId, { retry: true, attempt: options.attempt + 1 });
+      }, delayMs);
+      timer.unref();
+      retryTimers.set(hostId, timer);
     }
+  };
+
+  const connectHost = async (hostId: string): Promise<void> => {
+    cancelRetry(hostId);
+    await attemptConnect(hostId, { retry: false, attempt: 0 });
   };
 
   // The links live in the pty host process, so a restart of it took every one with it while the agents
   // kept running on their hosts. Each host is added again with the PTYs main still holds there, and the
   // new link's reconcile rebinds them to their sessions on the host.
   deps.sessionManager.on('pty-host-restarted', () => {
-    for (const hostId of hostService.connectedHosts()) void connectHost(hostId);
+    for (const hostId of hostService.connectedHosts()) {
+      cancelRetry(hostId);
+      void attemptConnect(hostId, { retry: true, attempt: 0 });
+    }
     // The new process remembers no forward either.
     forwardPlan.resend();
   });
@@ -212,8 +256,12 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     remoteOfProjectPath,
     probeAgent: (hostId, cliName) => probeAgentOnHost((id, request) => hostService.runCommand(id, request), hostId, cliName),
     async connectAll() {
-      // connectHost never throws, so one host that fails or hangs holds up no other.
-      await Promise.all(hosts.list().map((host) => connectHost(host.id)));
+      // attemptConnect never throws, so one host that fails or hangs holds up no other. A launch with the
+      // network down retries by itself: nobody pressed anything to ask for these.
+      await Promise.all(hosts.list().map((host) => {
+        cancelRetry(host.id);
+        return attemptConnect(host.id, { retry: true, attempt: 0 });
+      }));
       // Ports reserved in an earlier run are still leased: forward them once their servers are up.
       forwardPlan.resend();
     },
