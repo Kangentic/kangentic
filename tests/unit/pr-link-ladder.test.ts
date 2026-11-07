@@ -45,6 +45,8 @@ const conn = vi.hoisted(() => ({
   byBranch: null as unknown,
   byCommit: null as unknown,
   detect: null as unknown,
+  /** Route detectPR to the registry's real scraper instead of `detect`. */
+  useRealDetect: false,
   calls: [] as string[],
   // Args the last call to each resolver received, so a test can assert which
   // branch/commit was queried (e.g. the live HEAD branch, not the stored slug).
@@ -116,6 +118,7 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
   const { PRResolverUnavailableError, PRResolverTransientError } = await import(
     '../../src/main/pr/shared/pr-errors'
   );
+  const realRegistry = await vi.importActual<typeof import('../../src/main/pr/pr-registry')>('../../src/main/pr/pr-registry');
   const make = (key: 'byNumber' | 'byBranch' | 'byCommit') => async (...args: unknown[]) => {
     conn.calls.push(key);
     conn.lastArgs[key] = args;
@@ -136,7 +139,9 @@ vi.mock('../../src/main/pr/pr-registry', async () => {
     resolvePRForBranch: make('byBranch'),
     resolvePRByCommit: make('byCommit'),
     commitAnchorSelfVerifies: async () => conn.selfVerifiesCommits,
-    detectPR: () => conn.detect ?? null,
+    // Stubbed unless a test asks for the registry's real scraper, which is the
+    // only way to prove what text the fallback hands it.
+    detectPR: (scrollback: string) => (conn.useRealDetect ? realRegistry.detectPR(scrollback) : conn.detect ?? null),
   };
 });
 
@@ -302,7 +307,7 @@ const readRefs = () => git.rawCalls.filter((args) => args[0] === 'for-each-ref')
 const queriedBranches = () => (conn.allArgs.byBranch ?? []).map((args) => args[1]);
 
 beforeEach(() => {
-  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.calls = [];
+  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.useRealDetect = false; conn.calls = [];
   conn.lastArgs = {}; conn.allArgs = {}; conn.selfVerifiesCommits = true;
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
   git.pointsAtRefs = []; git.rawCalls = []; git.revparseCalls = 0;
@@ -1734,6 +1739,20 @@ describe('linkPRForTask merge readiness', () => {
     });
     expect(otherUrlSpy).toHaveBeenCalledWith(expect.objectContaining({
       pr_url: 'u11', pr_number: 11, pr_state: null, pr_merge_readiness: null,
+    }));
+  });
+
+  it('scrape degradation reads the target of an OSC 8 link whose label is not the URL', async () => {
+    conn.byNumber = new PRResolverUnavailableError('gh missing');
+    conn.useRealDetect = true;
+    const task = linkedTask({ pr_merge_readiness: 'ready' });
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    await linkPRForTask(task.id, {
+      ...depsFor(task, { updateSpy }),
+      getScrollback: () => '\x1b]8;id=1;https://github.com/owner/repo/pull/12\x1b\\PR #12\x1b]8;;\x1b\\',
+    });
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({
+      pr_url: 'https://github.com/owner/repo/pull/12', pr_number: 12,
     }));
   });
 
