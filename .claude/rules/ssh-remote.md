@@ -264,6 +264,11 @@ process, a path tested against the wrong disk, an environment that overwrites th
   the server does not know prints nothing, a key with no passphrase connects. Needs Docker. Unit tests:
   `tests/unit/ssh-key-prompt.test.ts` (the helper run by a real shell, an `&` in a Windows key path) and the
   refusal cases in `tests/unit/remote-host-service.test.ts`.
+- **Rig (MCP, by hand):** `node scripts/ssh-link-rig.mjs --client mcp --work <dir>` runs the real bridge script
+  under the host's own `sh`, over the real link, helper and `ssh`, with the connection cut on purpose: an
+  ordinary call, a call the link drops under (one answer, one run), a call nobody takes (an error for its id,
+  and the frame delivered late after the link returns runs nothing), an answer past the frame, a request past
+  the limit, and the real 30-second wait with the app away. 12 of 12 on a real `sshd`. Needs Docker.
 - **Tests (forwarded ports):** `tests/unit/remote-listening-ports.test.ts` pins the kernel-table parser
   (loopback and wildcard only, both families) and that a failed read is an error, never an empty list.
   `tests/unit/remote-port-forward.test.ts` pins the exact `ssh` arguments, that a forward starts only
