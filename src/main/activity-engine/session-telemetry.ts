@@ -1306,6 +1306,12 @@ export class SessionTelemetry {
         this.callbacks.onBranchPushed?.(sessionId, pushResult.pushedBranch);
       }
 
+      // Read before the engine closes the call: a start naming a call still
+      // pending is that call moving to the background, not a launch of its own.
+      const movedFromForeground = event.type === EventType.BackgroundShellStart
+        && event.toolId !== undefined
+        && (this.activityEngine.getState(sessionId)?.pendingToolStack.some((pending) => pending.id === event.toolId) ?? false);
+
       this.activityEngine.processEvent(sessionId, event);
       this.noteOpenWork(sessionId, event);
 
@@ -1317,7 +1323,7 @@ export class SessionTelemetry {
         event.type === EventType.BackgroundShellStart
         && looksLikeShellId(event.detail)
       ) {
-        this.bgShellWatcher?.noteBackgroundShellStarted(sessionId, event.detail);
+        this.bgShellWatcher?.noteBackgroundShellStarted(sessionId, event.detail, { movedFromForeground });
       }
     }
     if (cached.length > MAX_EVENTS_PER_SESSION) {
