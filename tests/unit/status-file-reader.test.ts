@@ -692,6 +692,39 @@ describe('StatusFileReader', () => {
     expect(secondCall[1]).toEqual(['{"type":"Prompt","detail":"three"}']);
   });
 
+  it('reads only what is appended after the attach when the agent was taken back from a host (eventsFromEnd)', () => {
+    // An agent a quit left running has the earlier part of its run in the file, which the app handled before
+    // the quit. Reading it again would fire its turn ends and notifications a second time.
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '{"type":"Prompt","detail":"handled before the quit"}\n');
+    const parser = makeStubStatusFileHook({
+      parseEvent: (line) => ({ ts: 1, type: EventType.Prompt, detail: line } as SessionEvent),
+    });
+
+    reader.attach({ sessionId: 'session-1', statusOutputPath: null, eventsOutputPath: eventsPath, statusFileHook: parser, eventsFromEnd: true });
+    reader.flushPendingEvents('session-1');
+    expect(callbacks.onEventsParsed).not.toHaveBeenCalled();
+
+    fs.appendFileSync(eventsPath, '{"type":"Prompt","detail":"published while the app was away"}\n');
+    reader.flushPendingEvents('session-1');
+
+    expect(callbacks.onEventsParsed).toHaveBeenCalledTimes(1);
+    expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual(['{"type":"Prompt","detail":"published while the app was away"}']);
+  });
+
+  it('reads the whole file from the start without eventsFromEnd, as a resume always has', () => {
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '{"type":"Prompt","detail":"already there"}\n');
+    const parser = makeStubStatusFileHook({
+      parseEvent: (line) => ({ ts: 1, type: EventType.Prompt, detail: line } as SessionEvent),
+    });
+
+    reader.attach({ sessionId: 'session-1', statusOutputPath: null, eventsOutputPath: eventsPath, statusFileHook: parser });
+    reader.flushPendingEvents('session-1');
+
+    expect((callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual(['{"type":"Prompt","detail":"already there"}']);
+  });
+
   it('resets cursor when events.jsonl shrinks (truncation guard)', () => {
     const eventsPath = path.join(tempDir, 'events.jsonl');
     const parser = makeStubStatusFileHook({
