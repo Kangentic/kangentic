@@ -41,13 +41,28 @@ function detailsOf(result: ReturnType<typeof cookieToSetDetails>) {
 
 describe('isLocalCookieDomain', () => {
   it('matches loopback hosts with or without a leading dot', () => {
-    for (const host of ['localhost', '.localhost', 'app.localhost', '127.0.0.1', '::1', '[::1]']) {
+    for (const host of ['localhost', '.localhost', 'app.localhost', '127.0.0.1', '::1', '[::1]', 'LOCALHOST', '.App.LocalHost']) {
+      expect(isLocalCookieDomain(host)).toBe(true);
+    }
+  });
+
+  it('matches all of 127.0.0.0/8, so a dev server on another loopback address stays task-local', () => {
+    for (const host of ['127.0.0.2', '127.255.255.254']) {
       expect(isLocalCookieDomain(host)).toBe(true);
     }
   });
 
   it('does not match real IdP or app domains', () => {
-    for (const host of ['.google.com', 'accounts.google.com', 'example.com', 'notlocalhost.com']) {
+    for (const host of [
+      '.google.com',
+      'accounts.google.com',
+      'example.com',
+      'notlocalhost.com',
+      'localhost.evil.com',
+      '127.0.0.1.example.com',
+      '128.0.0.1',
+      '0.0.0.0',
+    ]) {
       expect(isLocalCookieDomain(host)).toBe(false);
     }
   });

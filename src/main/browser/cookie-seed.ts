@@ -15,23 +15,20 @@
 // `fromPartition` materializes it).
 
 import type { Cookie, CookiesSetDetails, Session } from 'electron';
+import { isLoopbackHost } from './loopback-host';
 
 /**
- * True for the loopback hosts a dev server runs on: `localhost`, `127.0.0.1`,
- * IPv6 loopback (`::1`, with or without brackets), and any `*.localhost`
- * subdomain. A cookie on one of these is the per-task dev-app session that
- * MUST stay isolated per task, so it is never carried between jars in either
- * direction. Tolerates a leading dot (domain cookies report `.localhost`).
+ * True for the loopback hosts a dev server runs on: `localhost`, any
+ * `*.localhost` subdomain, all of `127.0.0.0/8`, and IPv6 loopback (`::1`, with
+ * or without brackets). A cookie on one of these is the per-task dev-app session
+ * that MUST stay isolated per task, so it is never carried between jars in
+ * either direction. Tolerates a leading dot (domain cookies report `.localhost`).
+ *
+ * The loopback rule itself is `isLoopbackHost`, shared with the popup title so
+ * the two cannot disagree about what loopback is.
  */
 export function isLocalCookieDomain(domain: string): boolean {
-  const host = domain.replace(/^\./, '').toLowerCase();
-  return (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host === '127.0.0.1' ||
-    host === '::1' ||
-    host === '[::1]'
-  );
+  return isLoopbackHost(domain.replace(/^\./, ''));
 }
 
 /**
