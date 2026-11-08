@@ -7,6 +7,18 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/main/notifications/app-badge-display.ts
+msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
+msgstr "{count, plural, one {# agent needs you} other {# agents need you}}"
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
+msgstr "{fileName} is {megabytes} MB, over the 2 MB limit"
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is not a wav, mp3, ogg or m4a file"
+msgstr "{fileName} is not a wav, mp3, ogg or m4a file"
+
 #: src/main/notifications/desktop-notifier.ts
 msgid "{place}. Stalled: {reason}"
 msgstr "{place}. Stalled: {reason}"
@@ -140,6 +152,10 @@ msgstr "Select All"
 #: src/main/notifications/desktop-notifier.ts
 msgid "Session crashed: {label}"
 msgstr "Session crashed: {label}"
+
+#: src/main/notifications/custom-sound.ts
+msgid "Sound files"
+msgstr "Sound files"
 
 #: src/main/notifications/desktop-notifier.ts
 msgid "Terminals restarted"

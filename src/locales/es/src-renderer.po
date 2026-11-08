@@ -771,6 +771,10 @@ msgstr "No se pudo guardar el diseño"
 msgid "Couldn't save the task"
 msgstr "No se pudo guardar la tarea"
 
+#: src/renderer/utils/terminal-links/register-terminal-links.ts
+msgid "Couldn't show file"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't start the workflow"

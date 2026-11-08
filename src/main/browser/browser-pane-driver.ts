@@ -1,4 +1,4 @@
-import { BrowserWindow, type WebContents } from 'electron';
+import type { WebContents } from 'electron';
 import {
   browserPaneRegistry,
   type BrowserPaneEntry,
@@ -150,31 +150,6 @@ export async function withGuest<T>(
   // agent is working in it right now" - without it, `lastUsedAt` would be frozen
   // at creation and the reclaim would close lanes mid-drive.
   touchLane(target.entry.sessionId);
-
-  // A window that is not being composited has no frame for CDP to hand back, so
-  // `Page.captureScreenshot` NEVER RESOLVES and every later command for that
-  // guest queues behind it, wedging the pane permanently.
-  //
-  // This check is a fast, clear refusal for the ONE case main can actually
-  // observe. It is not the guarantee: a window that is merely hidden or fully
-  // occluded stops compositing too, and Electron exposes no way to detect that
-  // from the main process (`isVisible()` stays true, and Chromium's occlusion
-  // state is not surfaced). Measured on Electron 41 against a real backgrounded
-  // window, where this check did NOT fire and the capture hung anyway. The
-  // bounded capture in `cdp.ts` is what actually stops the hang; see
-  // SCREENSHOT_TIMEOUT_MS there. Covers both a popped-out pane (its own OS
-  // window) and a docked pane (the main window).
-  const hostWindow = BrowserWindow.fromWebContents(webContents.hostWebContents ?? webContents);
-  if (hostWindow?.isMinimized()) {
-    return {
-      ok: false,
-      error: {
-        kind: 'pane-not-rendering',
-        detail:
-          "The window holding this Browser pane is minimized, so it renders no frames and cannot be driven. Ask the user to restore the window, then retry.",
-      },
-    };
-  }
 
   if (!isDebuggerAttached(webContents)) {
     // The pane exposes no DevTools, so a re-attach can never steal a

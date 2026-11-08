@@ -1,11 +1,8 @@
 /**
  * `Page.captureScreenshot` waits for a composited frame, so it never resolves
- * when the guest is not being composited. Measured on Electron 41 during live
- * testing: a MINIMIZED host window hangs, and so does a fully OCCLUDED one - and
- * an occluded window is indistinguishable from a visible one through Electron's
- * main-process API, so no precondition check can cover it. The un-settled
- * command also wedges that guest's CDP queue, so a single screenshot at the
- * wrong moment bricks the pane for the rest of the session.
+ * when the guest is not being composited. `holdGuestRendering` keeps a guest
+ * drawing behind a covered or minimized host, and whatever it does not reach, a
+ * host hidden outright above all, still has no frame to hand back.
  *
  * This bound is therefore the real guarantee, not a nicety: the tool call fails
  * cleanly with an actionable message instead of hanging forever.

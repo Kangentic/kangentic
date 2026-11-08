@@ -440,6 +440,10 @@ msgid "Find in conversation"
 msgstr "Hledat v konverzaci"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Find on board"
 msgstr "Hledat na nástěnce"
@@ -1115,6 +1119,10 @@ msgstr "Uložit otevřený formulář, stejně jako jeho tlačítko Uložit, Vyt
 msgctxt "automation field"
 msgid "Script"
 msgstr "Skript"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

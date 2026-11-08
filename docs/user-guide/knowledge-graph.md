@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Conversation memory and Knowledge Graph
-description: "The on-device conversation index (keyword and semantic search, the conversation viewer with column tabs) and the Knowledge Graph map (Mod+Shift+A): flying the 3D map, colour modes, filters, asking questions, Index card sources, task summaries, source code indexing, and Prior work on a task."
+description: "The on-device conversation index (keyword and semantic search, the conversation viewer with column tabs) and the Knowledge Graph map (Mod+Shift+A): flying the 3D map, colour modes, filters, asking questions, Index card sources, task summaries, and source code indexing."
 tags: [knowledge-graph, search, embeddings, conversations, summaries]
 sources:
   - resource: src/renderer/components/knowledge-graph/
@@ -337,19 +337,3 @@ Mac, where the local model cannot run, the graph shows an **Unavailable** card w
 
 Like the Agent Monitor and Usage Stats, it detaches into its own window from the pop-out control in
 its header.
-
-### Prior work on a task
-
-The map is somewhere you go. This is the same recall coming to you: open a task and, if the index
-holds earlier conversations close to it, a line appears under the description reading
-**"3 earlier conversations about this"**. Expand it to see up to five of them, strongest first, and click one to open its transcript.
-Each row is named after the task the conversation belongs to. Hover it to read the passage that
-matched, which matters when that task's title sounds unrelated.
-
-The task's own title and description are the query, so there is nothing to type. Only tasks created
-before this one count, and only their turns from before it was created. Only what was said counts,
-never the files and command output a tool call read. The task's own history is left out, since it
-is one click away in the header. A task shows only when one of its conversations is much closer to
-this task than the rest of the index is. When none is, the line is not shown at all. Like the map,
-it needs the Knowledge Graph's embeddings, and an index that already holds other tasks'
-conversations to compare against, so it stays hidden with embeddings off or in a new project.

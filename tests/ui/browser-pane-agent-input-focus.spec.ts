@@ -102,13 +102,28 @@ async function loadApp(page: Page): Promise<void> {
 /**
  * Open the pane and register a synthetic guest, so the guard's id filter has
  * something to match. Mirrors browser-pane-registration.spec.ts's injection.
+ *
+ * By default the user has the task open, since an agent's push shows nothing:
+ * most of this file is about a pane on screen. `outOfSight` is the push alone.
  */
-async function openPaneWithGuest(page: Page): Promise<void> {
+async function openPaneWithGuest(page: Page, options: { outOfSight?: boolean } = {}): Promise<void> {
+  if (!options.outOfSight) {
+    await page.evaluate((taskId) => {
+      const stores = (window as unknown as {
+        __zustandStores: { session: { getState: () => { setDetailTaskId: (id: string) => void } } };
+      }).__zustandStores;
+      stores.session.getState().setDetailTaskId(taskId);
+    }, TASK_ID);
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 10000 });
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false), { timeout: 10000 })
+      .toBe(true);
+  }
   await page.evaluate(
     ([projectId, taskId]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId),
     [PROJECT_ID, TASK_ID],
   );
-  await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'attached', timeout: 10000 });
   await page.evaluate((guestId) => {
     const webview = document.querySelector('[data-testid="browser-webview"]') as HTMLElement | null;
     if (!webview) throw new Error('no webview stub');
@@ -275,27 +290,18 @@ test.describe('agent input focus guard', () => {
       .toContain('q');
   });
 
-  test('routes to the terminal the user was in, NOT the agent-opened window\'s own session', async () => {
-    // Reproduces the bug this file's other routing test could not catch. The
-    // old delivery path resolved its destination at DELIVERY time via
-    // `resolveDictationTarget()`, whose tier 1 is the FOCUSED WINDOW's session.
-    // `kangentic_browser_open_pane` deliberately makes its window
-    // `focusedWindowId` WITHOUT taking DOM focus (`openedByAgent`), so that
-    // ambient lookup named the agent's OWN session while the user kept typing
-    // in a different one - misrouting the keystroke (and an Enter) into
-    // another agent's live shell. The sibling test above has only one session
-    // in its fixture, so the ambient answer and the correct answer happen to
-    // coincide there and the misroute is invisible. This test constructs the
-    // divergence: a victim terminal the user is really focused in (session
-    // VICTIM), and a SEPARATE session (SESSION_ID, task-guard) whose window
-    // becomes focusedWindowId via the agent's open_pane.
+  test('routes to the terminal the user was in, NOT the driven pane\'s own session', async () => {
+    // A guard for this file's other routing test, which has only one session in
+    // its fixture, so the right answer and a wrong one coincide there. This test
+    // constructs the divergence: a victim terminal the user is really focused in
+    // (session VICTIM), and a SEPARATE session (SESSION_ID, task-guard) whose pane
+    // the agent drives from a window that is not on screen.
     await openVictimTaskByClick(sharedPage);
     await expect.poll(() => activeElementIsVictimTerminal(sharedPage), { timeout: 10000 }).toBe(true);
 
-    // Opens task-guard's window AND its Browser pane, agent-initiated - this
-    // makes ITS window focusedWindowId without moving DOM focus off the
-    // victim's terminal (agent-driven-focus.md, agent-open-pane-focus.spec.ts).
-    await openPaneWithGuest(sharedPage);
+    // Mounts task-guard's Browser pane parked, which moves nothing the user can
+    // see or type in (agent-driven-focus.md, agent-open-pane-focus.spec.ts).
+    await openPaneWithGuest(sharedPage, { outOfSight: true });
 
     // Intentional fixed wait, not a poll: `expect.poll` returns on its FIRST
     // successful check, so it cannot prove "nothing steals focus later" - focus
@@ -326,7 +332,7 @@ test.describe('agent input focus guard', () => {
       )
       .toContainEqual({ sessionId: SESSION_ID_VICTIM, payload: 'q' });
 
-    // The misroute target: the agent-opened window's OWN session must never
+    // The misroute target: the driven pane's OWN session must never
     // receive the user's keystroke, no matter how the write above landed.
     const writeCalls = await sharedPage.evaluate(() =>
       (window.electronAPI.sessions as unknown as { __writeCalls: { sessionId: string; payload: string }[] })

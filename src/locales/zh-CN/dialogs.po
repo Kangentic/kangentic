@@ -619,6 +619,10 @@ msgstr "关闭对话框"
 msgid "Close dropdown"
 msgstr "关闭下拉列表"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "Closing now will discard this new task and its unsaved changes."
 msgstr "现在关闭将丢弃此新任务及其未保存的更改。"
@@ -1213,6 +1217,10 @@ msgstr "更改的文件"
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Filter files..."
 msgstr "筛选文件…"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "Flat list"

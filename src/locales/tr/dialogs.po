@@ -751,6 +751,10 @@ msgstr "İletişim kutusunu kapat"
 msgid "Close dropdown"
 msgstr "Açılır listeyi kapat"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -1475,6 +1479,10 @@ msgstr "Değişen dosyalar"
 #, fuzzy
 msgid "Filter files..."
 msgstr "Dosyaları filtrele..."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

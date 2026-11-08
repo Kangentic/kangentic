@@ -7,7 +7,6 @@ import { PriorityLabelsRow } from '../PriorityLabelsRow';
 import { DescriptionEditor } from '../../DescriptionEditor';
 import { DescriptionLimitNote } from '../DescriptionLimitNote';
 import { taskDescriptionOverage } from '../../../../shared/task-description-limit';
-import { TaskPriorWork } from '../../knowledge-graph/TaskPriorWork';
 import { NameFromPromptButton } from '../../NameFromPromptButton';
 import { AdvancedOverridesSection } from '../AdvancedOverridesSection';
 import { AttachmentChipStrip } from '../AttachmentChipStrip';
@@ -82,11 +81,11 @@ export function TaskDetailEditForm({
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   // The HOSTING project's path, not the open board's: an @-mention search must
-  // look inside the project the task actually belongs to.
-  // Both come from the host context rather than ambient state: a task-detail
-  // window can be hosted for a project that is not the open board's
+  // look inside the project the task actually belongs to. It comes from the
+  // host context rather than ambient state: a task-detail window can be hosted
+  // for a project that is not the open board's
   // (`.claude/rules/pop-out-surface-registry.md`).
-  const { projectPath, projectId } = useTaskDetailHost();
+  const { projectPath } = useTaskDetailHost();
 
   // Focus title input on mount
   useEffect(() => {
@@ -120,11 +119,6 @@ export function TaskDetailEditForm({
         className="flex-1"
       />
       <DescriptionLimitNote overage={taskDescriptionOverage(description, task.description)} />
-      {/* Proactive recall belongs here as much as in the view mode: a task with
-          no session yet opens straight into this form, which is exactly the
-          "about to start" moment when "have I already worked this out?" is
-          worth answering. Renders null when there is nothing to say. */}
-      <TaskPriorWork taskId={task.id} projectId={projectId ?? null} />
       <AttachmentChipStrip
         attachments={attachments.savedAttachments}
         onOpen={(attachment) =>

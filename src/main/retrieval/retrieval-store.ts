@@ -21,9 +21,8 @@ import type {
   StoredChunk,
 } from './types';
 import { writeTransaction } from '../db/transaction';
-import { isProseChunk } from './conversation/transcript-chunker';
 
-/** Ids per `IN (...)` in `getChunkPlacements` and `nonProseChunkIds`. */
+/** Ids per `IN (...)` in `getChunkPlacements`. */
 const PLACEMENT_BATCH = 500;
 
 interface ExistingChunkRow {
@@ -857,26 +856,6 @@ export class RetrievalStore {
     return placements;
   }
 
-  /**
-   * The chunks among `ids` that are not mostly prose (`isProseChunk`): tool
-   * calls and results, which the task window's prior work leaves out. Batched
-   * like `getChunkPlacements`.
-   */
-  nonProseChunkIds(ids: number[]): Set<number> {
-    const found = new Set<number>();
-    for (let start = 0; start < ids.length; start += PLACEMENT_BATCH) {
-      const batch = ids.slice(start, start + PLACEMENT_BATCH);
-      const placeholders = batch.map(() => '?').join(',');
-      const rows = this.db
-        .prepare(`SELECT id, text FROM memory_chunks WHERE id IN (${placeholders})`)
-        .all(...batch) as Array<{ id: number; text: string }>;
-      for (const row of rows) {
-        if (!isProseChunk(row.text)) found.add(row.id);
-      }
-    }
-    return found;
-  }
-
   getChunks(ids: number[]): StoredChunk[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(',');
@@ -1693,16 +1672,6 @@ export class RetrievalStore {
     return this.db
       .prepare('SELECT id AS taskId, display_id AS displayId, title FROM tasks')
       .all() as Array<{ taskId: string; displayId: number | null; title: string }>;
-  }
-
-  /** The ids of the tasks created before `beforeMs`. Each `created_at` is
-   *  parsed the way the cutoff was, so the two compare as instants, and one
-   *  that does not parse is never before it. */
-  taskIdsCreatedBefore(beforeMs: number): Set<string> {
-    const rows = this.db
-      .prepare('SELECT id, created_at AS createdAt FROM tasks')
-      .all() as Array<{ id: string; createdAt: string }>;
-    return new Set(rows.filter((row) => Date.parse(row.createdAt) < beforeMs).map((row) => row.id));
   }
 
   /**

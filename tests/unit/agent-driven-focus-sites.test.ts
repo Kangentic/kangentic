@@ -46,8 +46,6 @@ const MARKER = 'agent-focus-ok';
  * opens a window just as surely as one that calls the store directly.
  */
 const OPENS_A_WINDOW = /\b(openWindow|setDetailTaskId|openTaskFromNotification)\s*\(/;
-/** Threading the origin through, in either of its two spellings. */
-const DECLARES_ORIGIN = /\b(agentInitiated|openedByAgent)\b/;
 /**
  * Subscribing to a main -> renderer push. Matched loosely on the `.onX(` call
  * shape rather than on `window.electronAPI.…`, because the real sites
@@ -105,19 +103,18 @@ describe('agent-reachable window opens declare their origin', () => {
     // File-scoped: the violation IS the pair of file-level facts (it takes a
     // push, it opens a window), so there is no one line to point a marker at.
     const offenders = agentReachableWindowOpeners()
-      .filter(({ source }) => !DECLARES_ORIGIN.test(source) && !hasFileScopedOptOut(source, MARKER))
+      .filter(({ source }) => !hasFileScopedOptOut(source, MARKER))
       .map(({ relative }) => relative);
 
     expect(
       offenders,
       [
         'These renderer files subscribe to a main-process push AND open a task-detail window,',
-        'but never say whether the open was agent-initiated.',
+        'but never say whose open it is.',
         '',
-        'An agent open must pass `agentInitiated` / `openedByAgent` so the arrival-focus',
-        'arbiter denies focus to every terminal; a user-initiated one must carry an',
-        '`// agent-focus-ok: <reason>` marker saying so. The push itself cannot be told',
-        'apart, which is why the decision has to be written down.',
+        'An agent never shows a window: an agent open mounts parked and takes no focus.',
+        'Each such file carries an `// agent-focus-ok: <reason>` marker saying which of',
+        'the two it is, since a push cannot be told apart by a scan.',
         '',
         'See .claude/rules/agent-driven-focus.md.',
       ].join('\n'),
@@ -139,6 +136,10 @@ describe('agent-reachable window opens declare their origin', () => {
       'src/renderer/window-manager/bridge/useBrowserPaneRequestBridge.ts',
       'src/renderer/window-manager/bridge/useTaskDetailWindowBridge.ts',
     ]);
+    // `useBrowserPaneRequestBridge` is the one that takes an agent's open, and its
+    // marker says it opens parked, which the case below pins.
+    // `useTaskDetailWindowBridge` and `useMonitorDetailOwnership` serve only a
+    // user's request, and their markers say so.
     // `CommandTerminalLayer` is on the list only because `useTrackHeadBranch`
     // subscribes to `git.onDiffChanged` in the same file that opens Command
     // Terminal windows. That push opens nothing (it re-reads HEAD for the branch
@@ -161,26 +162,22 @@ describe('agent-reachable window opens declare their origin', () => {
     // than parking an id - which is what keeps it off this list.
   });
 
-  it('the agent-reachable bridges PASS the origin into the open, not merely mention it', () => {
-    // Checked as a passed ARGUMENT (`openedByAgent:` / `agentInitiated: true`),
-    // not as the identifier appearing anywhere in the file. A presence check
-    // passes vacuously: deleting `openedByAgent: agentInitiated` from the
-    // openWindow literal leaves the surrounding `const agentInitiated = ...` and
-    // `markAgentOpened(...)` behind, so the token is still there while the stamp
-    // no longer reaches the window. Verified by removing it and watching this
-    // fail.
-    const PASSES_ORIGIN = /\bopenedByAgent\s*:|\bagentInitiated\s*:\s*true/;
-    for (const relative of [
-      'src/renderer/window-manager/bridge/useBrowserPaneRequestBridge.ts',
-      'src/renderer/window-manager/bridge/useTaskDetailWindowBridge.ts',
-      'src/renderer/components/monitor/useMonitorDetailOwnership.ts',
-    ]) {
-      const source = codeOnly(fs.readFileSync(path.join(REPO_ROOT, relative), 'utf-8'));
-      expect(
-        PASSES_ORIGIN.test(source),
-        `${relative} must PASS the origin into its window open (openedByAgent: ... / agentInitiated: true), not just compute it`,
-      ).toBe(true);
-    }
+  it('the agent bridge opens parked, and never reaches the path that raises the app', () => {
+    // Checked as code, not as a mention: comments are stripped first, because the
+    // bridge's own header explains why it avoids both of these calls.
+    const source = codeOnly(fs.readFileSync(
+      path.join(REPO_ROOT, 'src/renderer/window-manager/bridge/useBrowserPaneRequestBridge.ts'),
+      'utf-8',
+    ));
+    expect(source, 'an agent open must mount parked').toMatch(/openWindow\(\{[^}]*\bparked:\s*true/);
+    expect(
+      source,
+      'requestOpen ends in focusWindowOf, a restore() and focus() on the app window, so no agent path may reach it',
+    ).not.toMatch(/\brequestOpen\s*\(/);
+    expect(
+      source,
+      'setDetailTaskId with a task id is the signal a card click sends, and it ends in requestOpen',
+    ).not.toMatch(/setDetailTaskId\(\s*taskId/);
   });
 });
 

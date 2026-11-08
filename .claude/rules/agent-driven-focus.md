@@ -9,27 +9,31 @@ paths:
   - "src/renderer/stores/agent-drive-store.ts"
 ---
 
-# Rule: an agent never takes the user's keyboard focus silently
+# Rule: an agent never changes the user's screen, and never takes their keyboard focus silently
 
 The `kangentic_browser_*` tools drive the user's own running app, on the user's own screen, while
-the user is doing something else. Two paths took the keyboard mid-keystroke, and neither was a bug
-in the tool's own logic.
+the user is doing something else. Two paths took the user's keyboard or screen mid-keystroke, and
+neither was a bug in the tool's own logic.
 
 Measured on Electron 41 against a live guest, with the terminal focused in an OS-focused window:
 one `Input.dispatchMouseEvent` moved `document.activeElement` from the terminal's
 `xterm-helper-textarea` to the `<webview>` and flipped `document.hasFocus()` to false. The guest
 took REAL focus, so the rest of what the user was typing went into the page. Separately,
-`kangentic_browser_open_pane` opened a task-detail window, which set `focusedWindowId`, which made
-`resolveArrivalFocus`'s tier 2 match for that window - so its arriving terminal legitimately took
-focus out of the terminal the user was actually in. Both were the absence of a rule saying an
-agent's actions are not the user's.
+`kangentic_browser_open_pane` opened a task-detail window, which took the top of the stack and
+`focusedWindowId`, and asked main to raise the app. Three agents did that in one sitting while the
+user worked in another task. Both were the absence of a rule saying an agent's actions are not the
+user's.
 
 ## The rule
 
-**An agent action never moves the user's keyboard focus invisibly or unboundedly.** Split by case,
-because one of the three cannot be eliminated and the honest rule says so:
+**An agent never changes what is on the user's screen, and never moves the user's keyboard focus
+invisibly or unboundedly.** Split by case, because one of them cannot be eliminated and the honest
+rule says so:
 
-- A window open never moves focus. A mount-time `autoFocus` never moves focus.
+- No `kangentic_browser_*` call opens, raises, focuses or restores a window: not a task window, not
+  a Monitor window, not the Command Terminal panel, not the app. Showing a task is the user's. The
+  one exception is `pop_out`, which an agent asks for by name and which opens inactive. A
+  mount-time `autoFocus` never moves focus.
 - A CDP click DOES move focus into the guest, unavoidably: that is how a page gets focused at all,
   and it is the same mechanism a user's own click uses. That case is bounded to the burst, SHOWN
   while it lasts, restored when it ends, and any keystroke the user makes meanwhile is routed to
@@ -329,34 +333,39 @@ reveals what that one cannot avoid.
   user lands a keystroke inside it. That keystroke is a trusted `keydown` on the guarded element -
   the user continuing, not choosing elsewhere. Disarming on it makes the fix fail in exactly its own
   repro, intermittently. `isGestureAwayFromGuardedElement` owns that distinction.
-- **An agent-initiated window open is stamped, and stamps deny arrival focus.** An IPC push that
-  opens or raises a window passes `agentInitiated` through `setDetailTaskId`, which becomes
-  `ManagedWindow.openedByAgent` (transient, never persisted - same shape as `skipEnterAnimation`,
-  see [[restore-no-animation-replay]]). `resolveArrivalFocus` then denies EVERYONE, including that
-  window's own terminal, while such a window holds window-layer focus. Denying everyone is what
-  keeps the tier EXCLUSIVE; an allow-the-others tier degrades back into a race. The tier sits BELOW
-  the user claim, because clicking a bottom-panel tab moves no `focusedWindowId` and can legitimately
-  claim after an agent open. That is not a promise that a claim always survives an agent open:
-  `windowFocusFingerprint()` invalidates a pending claim on ANY window open, so one made just before
-  dies at tier 1 regardless.
-- **A Command Terminal panel an agent opens is stamped the same way.** `open_pane` from a
-  Command Terminal whose panel is hidden reaches `useCommandTerminalBrowserBridge`
-  (`components/command-bar/command-terminal-browser.ts`), which stamps every command window
-  `openedByAgent` before it asks for the panel, and again the moment the panel shows, since the
-  open can create the window it lands in. `resolveFocusedWindowTerminal` reads the focused command
-  window's stamp, so the agent-window tier denies every arriving terminal. A panel already showing
-  is left alone: nothing expands, nothing moves, nothing arrives. That makes it a fourth
-  agent-reachable bridge beside the three task-detail ones. Its stamp is pinned only by
-  `tests/ui/command-terminal-browser.spec.ts` (an agent open with the panel hidden, with and
-  without a window yet, takes no focus): `agent-driven-focus-sites.test.ts` pins the three
-  task-detail bridges by argument, not this one.
-- **`focusWindow` clears the stamp, and the agent path re-stamps after focusing.** The clear happens
-  BEFORE the same-id early return, because an agent-opened window IS the focused one, so the user's
-  pointer-down on its frame takes exactly that path. Default-by-omission is "user", so a user path
-  can never inherit an agent stamp.
-- **Dictation deliberately ignores `openedByAgent`.** `resolveFocusedWindowTerminal` is shared
-  between dictation and arrival focus and must stay ONE resolver; the two differ in POLICY.
-  Dictation is a later user action and must resolve a target; arrival focus must abstain.
+- **A pane an agent opens mounts out of sight, in a window born parked.** `open_pane` pushes to
+  `useBrowserPaneRequestBridge`, which sets the open flag and, with no host for the pane, calls
+  `openWindow({ parked: true })`. That is one store write that leaves `order`, `focusedWindowId`,
+  `zCounter` and `expandedWindowId` alone, so no subscriber ever sees it unparked. `openWindow` then
+  `parkWindow` would report the window to main for one write and take the detail from whichever
+  surface holds it. No terminal mounts in a parked window, so nothing arrives.
+
+  **The agent path never touches `setDetailTaskId` or `requestOpen`.** That signal is a card click,
+  and main answers it with `focusWindowOf`, a `restore()` plus `focus()` on the app's window, with no
+  way to tell who asked. Keeping the agent off it is what makes that unreachable, with nothing
+  threaded through the IPC layers. A user's click on the card runs that path as it always did and
+  un-parks the same window: same guest, same handle, terminal focused.
+
+  **A window the user closed stays closed.** An existing board window of any kind answers
+  `flag-only` (`resolvePaneOpenAction`, `bridge/pane-open-action.ts`). Nothing on this path can
+  un-park. The warm path keeps its push because it ends a HOLD inside a window the user has open,
+  which is a change inside a window already showing, and a repeat changes nothing.
+
+  **An agent's work runs without an open window.** Parked is a host, not a refusal, so every tool
+  works and the agent can read `visibility` to tell the user it is working out of sight. A screenshot
+  included: [[browser-automation-driver]] holds the guest and the host's compositor running for the
+  capture, behind a covered or minimized app, with nothing on screen.
+
+  **There is no agent stamp.** An `openedByAgent` stamp and a tier in `resolveArrivalFocus` denied
+  focus to the terminal of a window an agent had opened. They existed because agents opened windows,
+  and they came out with that. A new path that wants to show a window on an agent's behalf needs the
+  owner's decision, not a stamp.
+- **A Command Terminal panel stays hidden the same way.** `CommandTerminalBrowserHost` already keeps
+  a hidden panel's pane mounted at `opacity: 0`, so `useCommandTerminalBrowserBridge` only sets the
+  open flag, and the user opening the panel shows it.
+- **`resolveFocusedWindowTerminal` stays ONE resolver,** shared between dictation and arrival focus;
+  the two differ in POLICY. Dictation is a later user action and must resolve a target; arrival focus
+  must abstain.
 
   `resolveDictationTarget` resolves a focused TEXT INPUT as a tier ABOVE that shared
   resolver, never by changing it - arrival focus decides which terminal wins among arriving
@@ -405,10 +414,10 @@ reveals what that one cannot avoid.
 
 - **Test (sites, load-bearing for NEW paths):** `tests/unit/agent-driven-focus-sites.test.ts` scans
   `src/renderer/**` and fails when a file that BOTH subscribes to a main push AND opens a
-  task-detail window neither threads the origin nor carries an `// agent-focus-ok: <reason>` marker.
-  It additionally pins that the three agent-reachable bridges PASS the origin into the open (checked
-  as an argument, not as the identifier appearing somewhere in the file - a presence check passes
-  vacuously), that `withGuest` still calls `ensureFocusEmulation` and ends the signal in a `finally`,
+  task-detail window carries no `// agent-focus-ok: <reason>` marker saying whose open it is.
+  It additionally pins that the bridge an agent reaches opens parked and calls neither
+  `setDetailTaskId` nor `requestOpen` (checked in code with comments stripped, since its header
+  explains why it avoids both), that `withGuest` still calls `ensureFocusEmulation` and ends the signal in a `finally`,
   and that nothing under `components/browser/**` autofocuses on mount. It carries a pinned site list
   so a rename cannot silently empty the scan. Writing this scan is what found the Agent Monitor hole
   below.
@@ -485,22 +494,19 @@ reveals what that one cannot avoid.
 - **Test (policy):** `tests/unit/agent-input-focus-guard.test.ts` pins the three pure decisions, in
   particular that a keystroke into the guarded element does NOT disarm, and that a text
   target arms even inside the pane while a non-text element inside the pane still does not.
-  `terminal-arrival-focus.test.ts`
-  pins the `agent-window` tier. TWO of its cases are constructed so the tier below would have
-  ALLOWED - the arriving session matches the agent-opened window's, so tier 2 alone returns
-  `window` - and those are the ones proving the tier flips the outcome. The other two arrive with a
-  mismatched session that tier 2 would have denied anyway, so they pin PRECEDENCE (the reason is
-  `agent-window`, not `window-mismatch`) rather than the flip. Both kinds are wanted; just do not
-  read the block as four outcome-flipping cases, because `openedByAgent` rides on the same
-  `focusedWindowTerminal` object tier 2 consumes, so a mismatched session cannot flip anything.
-- **Test (store):** `tests/unit/window-store-agent-open.test.ts` pins default-by-omission, the
-  already-focused clear edge, and that the stamp never reaches the persisted workspace.
-- **Test (behavior):** `tests/ui/agent-open-pane-focus.spec.ts` drives the real race - focus task A's
-  terminal, fire the `open_pane` push for task B, and assert focus never leaves A - plus the
-  CONVERSE, that a user opening the same window still focuses its terminal (a "fix" that merely
-  stopped arriving terminals from focusing would pass the first and break the app), and that the
-  user's click on the agent-opened frame clears the stamp. Verified red-green: removing
-  `openedByAgent` from the bridge moves focus to task B.
+- **Test (decision):** `tests/unit/pane-open-action.test.ts` pins `resolvePaneOpenAction`, one case
+  per place a pane can already live, and `tests/unit/window-parking-sweep.test.ts` pins the reaper's
+  grace for a window born parked and the drop when the Monitor takes its task.
+- **Test (store):** `tests/unit/window-store-parked-open.test.ts` pins that a parked open moves
+  nothing, that it is one store write, that an existing window is left as it is, and that it never
+  reaches the persisted workspace.
+- **Test (behavior):** `tests/ui/agent-open-pane-focus.spec.ts` focuses task A's terminal, fires the
+  `open_pane` push for task B, and asserts B is not shown, A keeps focus and the top of the stack,
+  and no `requestOpen` went out, which is the proof no agent open reaches `focusWindowOf`. It repeats
+  that with B already parked and pushed twice, plus the CONVERSE, that a user's click raises B on the
+  same guest with its terminal focused (a "fix" that merely stopped windows opening would pass the
+  first and break the app). Verified red-green: putting `setDetailTaskId` back in the bridge fails
+  four of its five cases and leaves the user's own open passing.
   `tests/ui/browser-pane-agent-input-focus.spec.ts` covers the guard and the keystroke routing, to
   a terminal AND to the pane's note input, plus that an intercepted Enter still does not Send.
 - **Test (dictation, real flow):** `tests/ui/dictation-note-input.spec.ts` drives the actual
@@ -518,13 +524,11 @@ reveals what that one cannot avoid.
 
 **Mechanical coverage is deliberately incomplete in three places, and these are the gaps:**
 
-1. **Agent-vs-user origin of an IPC push is not statically decidable.** `taskDetailOwnership.onOpenHere`
-   serves BOTH the user's card click and the agent's open, and no scan can tell which fired. The
-   site scan can only demand that the question be ANSWERED - by threading the origin, or by an
-   `// agent-focus-ok:` marker where a human made the call. It cannot verify the answer is right.
-   **`onOpenHere` has TWO hosts**, the board bridge and `useMonitorDetailOwnership`; the monitor one
-   was missed on the first pass and opened its window unstamped, so an agent-opened detail hosted
-   there took focus exactly as before the fix. A new host for this push needs the same stamp.
+1. **Whose open a push is, is not statically decidable.** The site scan can only demand that the
+   question be ANSWERED, by an `// agent-focus-ok:` marker where a human made the call. It cannot
+   verify the answer is right. `taskDetailOwnership.onOpenHere` serves only a user's request today,
+   and it has TWO hosts, the board bridge and `useMonitorDetailOwnership`. A path that sent an
+   agent through it would raise the app from main, where nothing can tell who asked.
 2. **Whether Chromium's focus propagation is suppressed is not unit-testable at all.** No unit tier
    has a live `<webview>` guest, and the UI tier's is an inert stub. The live probe recorded in the
    PR and the preview rig in `docs/architecture/embedded-browser/browser-pane.md` are the only evidence, and an Electron major

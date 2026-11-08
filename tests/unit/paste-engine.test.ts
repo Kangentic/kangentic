@@ -80,6 +80,13 @@ class MockSessionManager extends EventEmitter {
     return this.blocker;
   }
 
+  /** An idle session whose agent reports every turn (`SessionManager.expectsTurnAfterSubmit`). */
+  turnExpected = false;
+
+  expectsTurnAfterSubmit(_sessionId: string): boolean {
+    return this.turnExpected;
+  }
+
   /** The blocker cleared: the tool call ended, as its hook event says. */
   clearBlocker(sessionId: string): void {
     this.blocker = null;
@@ -586,6 +593,103 @@ describe('PasteEngine.pasteAndSubmit', () => {
     // No retry should have fired
     expect(mockSessionManager.writeCalls).toHaveLength(1);
     await expect(promise).resolves.toBeUndefined();
+  });
+
+  describe('an idle session whose agent reports every turn', () => {
+    const repaint = 'the agent repainting its own prompt ' + 'x'.repeat(40);
+
+    /** Drive through the paste to the end of the first Enter's drain. The send
+     *  comes back in an object because an async function would wait on it. */
+    async function reachFirstEvidenceWindow(): Promise<{ send: Promise<void> }> {
+      mockSessionManager.turnExpected = true;
+      const send = engine.pasteAndSubmit('s1', 'hello', { timeoutMs: 30000 });
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(1100);
+      await tick();
+      expect(mockSessionManager.writeCalls).toHaveLength(1);
+      mockSessionManager.flushDrain();
+      await tick();
+      return { send };
+    }
+
+    it('does not take a repaint for a submit, and presses Enter again', async () => {
+      // The reported send: the paste sat unsent in the prompt while the engine
+      // logged evidence=data, because the TUI's own redraw crossed the byte floor.
+      const { send } = await reachFirstEvidenceWindow();
+      mockSessionManager.emitData('s1', repaint);
+      await tick();
+      vi.advanceTimersByTime(3001);
+      await tick();
+      expect(mockSessionManager.writeCalls.map((call) => call.data)).toEqual(['\r', '\r']);
+
+      mockSessionManager.flushDrain();
+      await tick();
+      await emitEvidence();
+      await expect(send).resolves.toBeUndefined();
+    });
+
+    it('takes the turn starting as proof, with no second Enter', async () => {
+      const { send } = await reachFirstEvidenceWindow();
+      await emitEvidence();
+      await expect(send).resolves.toBeUndefined();
+      expect(mockSessionManager.writeCalls).toHaveLength(1);
+    });
+
+    it('keeps the data path for a slash command, which a CLI can run with no turn', async () => {
+      mockSessionManager.turnExpected = true;
+      const send = engine.pasteAndSubmit('s1', '/clear', { timeoutMs: 30000 });
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(1100);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      mockSessionManager.emitData('s1', repaint);
+      await expect(send).resolves.toBeUndefined();
+      expect(mockSessionManager.writeCalls).toHaveLength(1);
+    });
+
+    it('never fails a send whose hook is late: the retry window still takes output', async () => {
+      const { send } = await reachFirstEvidenceWindow();
+      vi.advanceTimersByTime(3001);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      mockSessionManager.emitData('s1', repaint);
+      await tick();
+      await expect(send).resolves.toBeUndefined();
+    });
+
+    it('never fails a send whose hook never comes: the first window\'s output counts once the retry is silent', async () => {
+      // Hooks broken: the agent took the message and answered inside the first
+      // window, so the retry Enter lands on an empty prompt and prints nothing.
+      const { send } = await reachFirstEvidenceWindow();
+      mockSessionManager.emitData('s1', 'the whole reply to the message ' + 'x'.repeat(40));
+      await tick();
+      vi.advanceTimersByTime(3001);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(2001);
+      await tick();
+      await expect(send).resolves.toBeUndefined();
+      expect(mockSessionManager.writeCalls.map((call) => call.data)).toEqual(['\r', '\r']);
+    });
+
+    it('still fails a send when neither window saw a turn or output', async () => {
+      const { send } = await reachFirstEvidenceWindow();
+      send.catch(() => undefined);
+      vi.advanceTimersByTime(3001);
+      await tick();
+      mockSessionManager.flushDrain();
+      await tick();
+      vi.advanceTimersByTime(2001);
+      await tick();
+      await expect(send).rejects.toMatchObject({ code: 'no-submission-evidence' });
+    });
   });
 
   it('ignores idle activity events during evidence wait', async () => {

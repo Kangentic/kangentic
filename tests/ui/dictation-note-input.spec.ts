@@ -30,7 +30,7 @@
  * keyboard stand-in) is the dev-only activity debug overlay.
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type CDPSession, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
@@ -313,6 +313,51 @@ function navigationCalls(page: Page): Promise<string[]> {
       { __navigationCalls?: string[] } | null;
     return webview?.__navigationCalls ?? [];
   });
+}
+
+/** The hold trace log, reduced to phase and reason. */
+function holdTraces(page: Page): Promise<{ phase: string; reason: string | null }[]> {
+  return page.evaluate(() =>
+    (window.electronAPI.dictation as unknown as { __holdTraces: { phase: string; reason: string | null }[] })
+      .__holdTraces.map((trace) => ({ phase: trace.phase, reason: trace.reason })));
+}
+
+/** The reasons holds ended with, in order. */
+async function holdEnds(page: Page): Promise<(string | null)[]> {
+  return (await holdTraces(page)).filter((trace) => trace.phase === 'end').map((trace) => trace.reason);
+}
+
+/** The middle of the Browser pane: the pointer has to be over it for the pane to
+ *  be the one a Back gesture belongs to. */
+async function paneCenter(page: Page): Promise<{ x: number; y: number }> {
+  const box = await page.locator('[data-testid="browser-pane"]').boundingBox();
+  if (!box) throw new Error('no browser pane');
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+type CdpMouseType = 'mouseMoved' | 'mousePressed' | 'mouseReleased';
+type CdpMouseButton = 'none' | 'left' | 'back';
+
+/** Real mouse input through CDP, at a point. */
+function cdpMouse(
+  cdp: CDPSession,
+  point: { x: number; y: number },
+  type: CdpMouseType,
+  button: CdpMouseButton,
+  buttons: number,
+): Promise<unknown> {
+  return cdp.send('Input.dispatchMouseEvent', {
+    type, button, buttons, x: point.x, y: point.y, clickCount: type === 'mouseMoved' ? 0 : 1,
+  });
+}
+
+/** A Back button press or lift as the window sees it, dispatched on `document.body`. */
+function backPointer(page: Page, type: 'pointerdown' | 'pointerup'): Promise<void> {
+  return page.evaluate((eventType) => {
+    document.body.dispatchEvent(new PointerEvent(eventType, {
+      button: 3, buttons: eventType === 'pointerdown' ? 8 : 0, pointerType: 'mouse', bubbles: true, cancelable: true,
+    }));
+  }, type);
 }
 
 /** Hold the push-to-talk combo and wait until the hook is actually recording.
@@ -1008,6 +1053,7 @@ test.describe('dictation into the Browser pane note input', () => {
       // a plain `finalizeOnRelease()` lands on, so without this a hold and a
       // tap are indistinguishable from here - the whole point of the split.
       expect(await navigationCalls(page)).toEqual([]);
+      expect(await holdEnds(page)).toEqual(['guest-up']);
     } finally {
       await page.context().close();
     }
@@ -1058,6 +1104,479 @@ test.describe('dictation into the Browser pane note input', () => {
       });
       await page.waitForTimeout(400);
       expect(await dictationStatus(page)).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a guest press while recording finishes the hold, and its tap does not navigate', async () => {
+    // A hold whose release never arrived: the next press has to end it. A quick
+    // release of that press is the shape of a navigation tap, and it must not
+    // cancel the words and move the page.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await page.locator('[data-testid="browser-note-input"]').click();
+
+      const pressedAt = Date.now();
+      await page.evaluate((at) => {
+        window.__mockBrowser?.emitGuestMouseButton(4242, 'back', 'down', at);
+      }, pressedAt);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+
+      await page.evaluate((at) => {
+        window.__mockBrowser?.emitGuestMouseButton(4242, 'back', 'down', at);
+        window.__mockBrowser?.emitGuestMouseButton(4242, 'back', 'up', at + 40);
+      }, pressedAt + 5000);
+
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      expect(await navigationCalls(page)).toEqual([]);
+      // One start, ended by the second press, and the trailing up added nothing.
+      expect(await page.evaluate(() => window.electronAPI.dictation.__startCalls.length)).toBe(1);
+      expect(await holdTraces(page)).toEqual([
+        { phase: 'press', reason: null },
+        { phase: 'end', reason: 'guest-second-press' },
+      ]);
+      await expect(page.locator('[data-testid="browser-note-input"]')).toHaveValue('This is a test of dictation.');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a window press while recording finishes the hold, and its tap does not navigate', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await page.locator('[data-testid="browser-note-input"]').click();
+
+      const backButton = (type: 'pointerdown' | 'pointerup'): Promise<void> => backPointer(page, type);
+      await backButton('pointerdown');
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+
+      await backButton('pointerdown');
+      await backButton('pointerup');
+
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      expect(await navigationCalls(page)).toEqual([]);
+      await expect(page.locator('[data-testid="browser-note-input"]')).toHaveValue('This is a test of dictation.');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a release during the guest probe cancels the session it started', async () => {
+    // The chip must not sit on Listening with nothing left to end it.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await focusGuestWebview(page);
+      await page.evaluate(() => {
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as
+          { executeJavaScript: (script: string) => Promise<unknown>; __releaseProbe?: () => void };
+        const original = webview.executeJavaScript;
+        webview.executeJavaScript = async (script: string) => {
+          await new Promise<void>((resolve) => { webview.__releaseProbe = resolve; });
+          return original(script);
+        };
+      });
+
+      await page.evaluate(() => {
+        window.__mockBrowser?.emitGuestMouseButton(4242, 'back', 'down', Date.now());
+      });
+      await expect.poll(() => page.evaluate(() => {
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as { __releaseProbe?: () => void };
+        return typeof webview.__releaseProbe;
+      }), { timeout: 10000 }).toBe('function');
+
+      await page.evaluate(() => {
+        window.__mockBrowser?.emitGuestMouseButton(4242, 'back', 'up', Date.now() + 1000);
+        const webview = document.querySelector('[data-testid="browser-webview"]') as unknown as { __releaseProbe?: () => void };
+        webview.__releaseProbe?.();
+      });
+
+      await expect.poll(() => page.evaluate(() =>
+        (window.electronAPI.dictation as unknown as { __cancelCalls: string[] }).__cancelCalls), { timeout: 10000 })
+        .toEqual(['mock-dictation-1']);
+      expect(await dictationStatus(page)).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a hold whose release was missed recovers on a move, and does not navigate', async () => {
+    // A missed release is not a tap, however quickly it is noticed: the move that
+    // ends it has no button of its own to have lifted. Back to back with the press
+    // so it lands inside the tap window, where a wrong reading would navigate.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await page.locator('[data-testid="browser-note-input"]').click();
+      const cdp = await page.context().newCDPSession(page);
+      const point = await paneCenter(page);
+      await cdpMouse(cdp, point, 'mouseMoved', 'none', 0);
+      await cdpMouse(cdp, point, 'mousePressed', 'back', 8);
+      await cdpMouse(cdp, point, 'mouseMoved', 'none', 0);
+
+      await expect.poll(() => holdEnds(page), { timeout: 10000 }).toEqual(['missed-release']);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      expect(await navigationCalls(page)).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a quick Back tap with Left held, Back lifted first, navigates the pane', async () => {
+    // Back lifting while Left stays down arrives as a pointermove, not a pointerup.
+    // It is still the bound button's own lift, so a quick one is a tap.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await setGuestNavigable(page, true, true);
+      await page.locator('[data-testid="browser-note-input"]').click();
+      const cdp = await page.context().newCDPSession(page);
+      const point = await paneCenter(page);
+      await cdpMouse(cdp, point, 'mouseMoved', 'none', 0);
+      await cdpMouse(cdp, point, 'mousePressed', 'back', 8);
+      await cdpMouse(cdp, point, 'mousePressed', 'left', 9);
+      await cdpMouse(cdp, point, 'mouseReleased', 'back', 1);
+
+      await expect.poll(() => navigationCalls(page), { timeout: 10000 }).toEqual(['goBack']);
+      expect(await holdEnds(page)).toEqual(['navigation-tap']);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      await cdpMouse(cdp, point, 'mouseReleased', 'left', 0);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a stroke drawn during a Back hold lands on the canvas, and Back alone draws nothing', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
+      if (!box) throw new Error('no drawing canvas');
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const cdp = await page.context().newCDPSession(page);
+      const send = (type: CdpMouseType, button: CdpMouseButton, buttons: number, offset: number): Promise<unknown> =>
+        cdpMouse(cdp, { x: x + offset, y: y + offset }, type, button, buttons);
+      const inkedPixels = (): Promise<number> => page.evaluate(() => {
+        const canvas = document.querySelector('[data-testid="browser-overlay"]') as HTMLCanvasElement;
+        const context = canvas.getContext('2d');
+        if (!context) return 0;
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+        let inked = 0;
+        for (let index = 3; index < data.length; index += 4) if (data[index] > 0) inked += 1;
+        return inked;
+      });
+
+      await send('mouseMoved', 'none', 0, 0);
+      await send('mousePressed', 'back', 8, 0);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await inkedPixels()).toBe(0);
+
+      await send('mousePressed', 'left', 9, 0);
+      await send('mouseMoved', 'none', 9, 40);
+      await send('mouseMoved', 'none', 9, 80);
+      await send('mouseReleased', 'left', 8, 80);
+      await expect.poll(inkedPixels, { timeout: 5000 }).toBeGreaterThan(0);
+      const afterStroke = await inkedPixels();
+
+      // The stroke ended with Back still down, so this move adds nothing to it.
+      await send('mouseMoved', 'none', 8, 20);
+      expect(await dictationStatus(page)).toBe('recording');
+      expect(await inkedPixels()).toBe(afterStroke);
+
+      await send('mouseReleased', 'back', 0, 20);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  /**
+   * Drawing holds focus on the note, so what the user says while annotating goes
+   * with the strokes. A press on the window's chrome focuses the terminal, and the
+   * canvas used to count as chrome: the first stroke after a Send took focus there,
+   * and the next hold went to the agent as a plain message with the strokes left
+   * behind. These drive a real press, because only that reaches `WindowFrame`.
+   */
+  async function focusTerminal(page: Page): Promise<void> {
+    const terminalTextarea = page.locator('[data-testid="task-detail-dialog"] .xterm-helper-textarea').first();
+    await terminalTextarea.waitFor({ state: 'attached', timeout: 10000 });
+    await terminalTextarea.focus();
+  }
+
+  async function strokeOnCanvas(page: Page): Promise<void> {
+    const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
+    if (!box) throw new Error('no drawing canvas');
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2 + 40);
+    await page.mouse.up();
+  }
+
+  test('a stroke puts focus on the note, and a hold then dictates into it', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      const note = page.locator('[data-testid="browser-note-input"]');
+      await expect(note).toBeFocused();
+
+      await focusTerminal(page);
+      await strokeOnCanvas(page);
+      await expect(note).toBeFocused();
+
+      await backPointer(page, 'pointerdown');
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await dictationTargetKind(page)).toBe('input');
+
+      await emitPartial(page, PARTIAL_RAW);
+      await expect(note).toHaveValue(PARTIAL_SHOWN);
+      expect(await liveWritePayloads(page)).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('the toolbar keeps focus on the note while Draw is on, and its clicks still land', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      await strokeOnCanvas(page);
+      const note = page.locator('[data-testid="browser-note-input"]');
+      await expect(page.getByText('1 stroke')).toBeVisible();
+
+      await page.getByRole('button', { name: 'Undo' }).click();
+      await expect(page.getByText('1 stroke')).toBeHidden();
+      await expect(note).toBeFocused();
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a click into the terminal still wins over Draw, so a hold goes there', async () => {
+    // The converse. The note holds focus for a drawing, but a person who clicks
+    // the terminal has said where they are working.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      await focusTerminal(page);
+
+      await backPointer(page, 'pointerdown');
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await dictationTargetKind(page)).toBe('terminal');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a hold that started in the terminal moves to the note when the drawing starts', async () => {
+    // Speak first, then draw: the words belong with the strokes. The live text
+    // the terminal already took is erased there.
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      const canvasBox = await page.locator('[data-testid="browser-overlay"]').boundingBox();
+      const toggleBox = await page.locator('[data-testid="browser-draw-toggle"]').boundingBox();
+      if (!canvasBox || !toggleBox) throw new Error('no drawing canvas or Draw button');
+      const canvas = { x: canvasBox.x + canvasBox.width / 2, y: canvasBox.y + canvasBox.height / 2 };
+      const toggle = { x: toggleBox.x + toggleBox.width / 2, y: toggleBox.y + toggleBox.height / 2 };
+      const cdp = await page.context().newCDPSession(page);
+      const send = (type: CdpMouseType, button: CdpMouseButton, buttons: number, at: { x: number; y: number }): Promise<unknown> =>
+        cdpMouse(cdp, at, type, button, buttons);
+      await send('mouseMoved', 'none', 0, toggle);
+      await focusTerminal(page);
+
+      await send('mousePressed', 'back', 8, toggle);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await dictationTargetKind(page)).toBe('terminal');
+      await emitPartial(page, PARTIAL_RAW);
+      await expect.poll(() => liveWritePayloads(page), { timeout: 5000 }).toContain(PARTIAL_SHOWN);
+
+      // Click Draw with Back held, the gesture as it was reported.
+      await send('mousePressed', 'left', 9, toggle);
+      await send('mouseReleased', 'left', 8, toggle);
+      const note = page.locator('[data-testid="browser-note-input"]');
+      await expect(note).toBeFocused();
+      expect(await dictationStatus(page)).toBe('recording');
+      expect(await dictationTargetKind(page)).toBe('input');
+      await expect(note).toHaveValue(PARTIAL_SHOWN);
+      const payloads = await liveWritePayloads(page);
+      expect(payloads[payloads.length - 1]).toBe('\x7f'.repeat(PARTIAL_SHOWN.length));
+
+      // A stroke with the hold still on keeps it in the note.
+      await send('mouseMoved', 'none', 8, canvas);
+      await send('mousePressed', 'left', 9, canvas);
+      await send('mouseMoved', 'none', 9, { x: canvas.x + 40, y: canvas.y + 40 });
+      await send('mouseReleased', 'left', 8, { x: canvas.x + 40, y: canvas.y + 40 });
+      expect(await dictationTargetKind(page)).toBe('input');
+
+      await send('mouseReleased', 'back', 0, { x: canvas.x + 40, y: canvas.y + 40 });
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+      await expect(note).toHaveValue('This is a test of dictation.');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a stroke during a hold moves it from the terminal to the note', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      await focusTerminal(page);
+      const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
+      if (!box) throw new Error('no drawing canvas');
+      const cdp = await page.context().newCDPSession(page);
+      const send = (type: CdpMouseType, button: CdpMouseButton, buttons: number, offset: number): Promise<unknown> =>
+        cdpMouse(cdp, { x: box.x + box.width / 2 + offset, y: box.y + box.height / 2 + offset }, type, button, buttons);
+      await send('mouseMoved', 'none', 0, 0);
+      await send('mousePressed', 'back', 8, 0);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await dictationTargetKind(page)).toBe('terminal');
+
+      await send('mousePressed', 'left', 9, 0);
+      await send('mouseMoved', 'none', 9, 40);
+      await send('mouseReleased', 'left', 8, 40);
+      expect(await dictationTargetKind(page)).toBe('input');
+      await emitPartial(page, PARTIAL_RAW);
+      await expect(page.locator('[data-testid="browser-note-input"]')).toHaveValue(PARTIAL_SHOWN);
+
+      await send('mouseReleased', 'back', 0, 40);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('the Draw shortcut turns Draw off from the note it put focus on', async () => {
+    const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      const note = page.locator('[data-testid="browser-note-input"]');
+      await expect(note).toBeFocused();
+
+      await page.keyboard.press('Control+D');
+      await expect(page.locator('[data-testid="browser-overlay"]')).toHaveCSS('pointer-events', 'none');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a start overtaken by a second press cancels its own engine session and starts no capture', async () => {
+    // Press, release while `dictation.start` is still pending (the store has no
+    // session yet, so the release resets at once), press again before the first
+    // start resolves. The first start used to resume, find the hold active again,
+    // and begin recording and capturing for its own engine session as well.
+    const page = await launch({ autoSubmit: false });
+    try {
+      await openBrowserPane(page);
+      await page.locator('[data-testid="browser-note-input"]').click();
+      await page.evaluate(() => {
+        (window.electronAPI.dictation as unknown as { __holdStarts: () => void }).__holdStarts();
+      });
+      const heldStartCount = (): Promise<number> => page.evaluate(() =>
+        (window.electronAPI.dictation as unknown as { __heldStarts: unknown[] }).__heldStarts.length);
+      const releaseStart = (index: number, sessionId: string): Promise<void> => page.evaluate(
+        ({ startIndex, id }) => {
+          (window.electronAPI.dictation as unknown as { __releaseStart: (index: number, id: string) => void })
+            .__releaseStart(startIndex, id);
+        },
+        { startIndex: index, id: sessionId },
+      );
+
+      await holdOnly(page);
+      await expect.poll(heldStartCount, { timeout: 10000 }).toBe(1);
+      await release(page);
+      await holdOnly(page);
+      await expect.poll(heldStartCount, { timeout: 10000 }).toBe(2);
+
+      await releaseStart(0, 'first-start');
+      await expect.poll(() => page.evaluate(() =>
+        (window.electronAPI.dictation as unknown as { __cancelCalls: string[] }).__cancelCalls), { timeout: 10000 })
+        .toEqual(['first-start']);
+      // The superseded start touched nothing else: no recording yet.
+      expect(await dictationStatus(page)).not.toBe('recording');
+
+      await releaseStart(1, 'second-start');
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
+      expect(await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { dictation: { getState: () => { dictationSessionId: string | null } } };
+        }).__zustandStores;
+        return stores?.dictation.getState().dictationSessionId ?? null;
+      })).toBe('second-start');
+      // Only the live press's session was ever cancelled.
+      expect(await page.evaluate(() =>
+        (window.electronAPI.dictation as unknown as { __cancelCalls: string[] }).__cancelCalls)).toEqual(['first-start']);
+
+      await release(page);
+      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('a refused hold does not move to the note when Draw starts a stroke', async () => {
+    // A hold begun in a password field writes nowhere. Turning Draw on and
+    // stroking asks the hold to move to the note, and it has to stay refused.
+    const page = await launch({ autoSubmit: false });
+    try {
+      await openBrowserPane(page);
+      await setGuestProbeResult(page, {
+        eligible: false,
+        reason: 'password',
+        rect: { left: 40, top: 40, width: 200, height: 24 },
+      });
+      await focusGuestWebview(page);
+      await pressAndHold(page);
+      const chip = page.locator('[data-testid="dictation-live-chip"]');
+      await expect(chip.getByText('Dictation is off in password fields', { exact: true })).toBeVisible();
+
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      const note = page.locator('[data-testid="browser-note-input"]');
+      // Draw put focus on the note, which is what asks the hold to move.
+      await expect(note).toBeFocused();
+      await strokeOnCanvas(page);
+      await expect(page.getByText('1 stroke')).toBeVisible();
+
+      await emitPartial(page, PARTIAL_RAW);
+      // A fixed budget: nothing becomes true to poll for when a refusal holds.
+      await page.waitForTimeout(500);
+      await expect(note).toHaveValue('');
+      expect(await dictationTargetKind(page)).not.toBe('input');
+      expect(await liveWritePayloads(page)).toEqual([]);
+
+      await release(page);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test('clicking into the note while Draw is on still places the caret there', async () => {
+    const page = await launch({ autoSubmit: false });
+    try {
+      await openBrowserPane(page);
+      const note = page.locator('[data-testid="browser-note-input"]');
+      await note.fill('abcdefghij');
+      await page.locator('[data-testid="browser-draw-toggle"]').click();
+      await expect(note).toBeFocused();
+
+      const box = await note.boundingBox();
+      if (!box) throw new Error('no note input');
+      // The left edge of the input, where the first character sits.
+      await page.mouse.click(box.x + 4, box.y + box.height / 2);
+      await page.keyboard.type('X');
+      await expect(note).toHaveValue('Xabcdefghij');
     } finally {
       await page.context().close();
     }

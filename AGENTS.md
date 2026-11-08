@@ -288,7 +288,7 @@ indexes it and Cursor gets no copy.
 - `derived-detail-ownership.md` - task-detail ownership is a host's COMPLETE mounted set, reconciled, never accumulated.
 - `retained-pane-never-remounts.md` - a window with an open Browser pane is RETAINED across a project switch; hide it with `opacity: 0`.
 - `terminal-arrival-focus.md` - an arriving terminal never decides its own focus; route it through `mayTakeArrivalFocus`.
-- `agent-driven-focus.md` - an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
+- `agent-driven-focus.md` - no agent call shows a window, an agent-driven pane SHOWS its focus move, and the driver never takes guest focus itself.
 - `xterm-unicode11-parity.md` - every xterm `Terminal` activates Unicode 11 widths; hand-rolled parsers use `wcwidthV11`.
 - `xterm-query-replies.md` - a terminal whose `onData` reaches a PTY swallows XTVERSION and keeps the `vtExtensions` replies off, before its first write.
 - `cookie-jar-sharing.md` - jar cookies are copied only through `cookie-seed.ts`, and partitions stay task-keyed.
@@ -296,7 +296,7 @@ indexes it and Cursor gets no copy.
 - `task-process-tag.md` - task PTYs carry `KANGENTIC_TASK_ID`; a terminal transition kills only tagged processes in the task's directories, never shared, visible or tmux ones; env text never leaves a reader.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
 - `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.
-- `ssh-remote.md` - a remote PTY has no pid here (`PtyHandle.pid` is null), a spawn names its host, nothing of this computer reaches a host, only the host proves a path absent, a drop is a state, a quit hands remote sessions to the link.
+- `ssh-remote.md` - a remote PTY has no pid here (`PtyHandle.pid` is null), a spawn names its host, nothing of this computer reaches a host, only the host proves a path absent, a drop is a state, a quit leaves remote agents running and the next launch takes them back.
 - `test-value.md` - what earns a test, which tier it belongs to, and what earns a CI job, against the 20-job and 5-macOS caps.
 - `i18n.md` - UI text goes through Lingui: `.tsx` macros, `msg` plus `i18n._` in `.ts`, translated where it renders, agent text English, one PO file per area.
 

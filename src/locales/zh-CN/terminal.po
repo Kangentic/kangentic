@@ -20,9 +20,29 @@ msgstr "{contextLabel} 上下文窗口"
 msgid "{count, plural, one {Show # more} other {Show # more}}"
 msgstr "{count, plural, other {再显示 # 项}}"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{limit}+ on screen"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{lineCount, plural, one {No matches in the last # line} other {No matches in the last # lines}}"
+msgstr ""
+
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{pct}% context"
 msgstr "上下文 {pct}%"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total}"
+msgstr "第 {position} 项，共 {total} 项"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{position} of {total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{remainingPercent}% remaining"
@@ -31,6 +51,10 @@ msgstr "剩余 {remainingPercent}%"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "{toolName} interrupted"
 msgstr "{toolName} 已中断"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "{total} on screen"
+msgstr ""
 
 #: src/renderer/components/terminal/ContextBarOverflow.tsx
 #, fuzzy
@@ -52,6 +76,10 @@ msgstr "全部"
 #: src/renderer/components/terminal/ProfilePicker.tsx
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "看板配置方案：此任务在各列遵循的智能体、模型和推理强度"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Close find"
+msgstr ""
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
@@ -99,6 +127,19 @@ msgstr "会话已用时间"
 msgid "Expand terminal panel"
 msgstr "展开终端面板"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgctxt "terminal find field"
+msgid "Find"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find in terminal"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Find on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Idle (no activity detected)"
 msgstr "空闲（未检测到活动）"
@@ -120,6 +161,10 @@ msgstr "模型"
 msgid "Model done"
 msgstr "模型完成"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Newer match"
+msgstr ""
+
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "No active sessions. Drag a task into a column that starts an agent."
 msgstr "没有正在运行的会话。将任务拖到会启动智能体的列中。"
@@ -128,6 +173,10 @@ msgstr "没有正在运行的会话。将任务拖到会启动智能体的列中
 msgid "No activity yet for {filteredLabel}..."
 msgstr "{filteredLabel} 暂无活动..."
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "No matches on screen"
+msgstr ""
+
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
 msgid "No tool calls yet"
 msgstr "暂无工具调用"
@@ -135,6 +184,10 @@ msgstr "暂无工具调用"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "Notice"
 msgstr "通知"
+
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Older match"
+msgstr ""
 
 #: src/renderer/components/terminal/QueuedContextBar.tsx
 #, fuzzy

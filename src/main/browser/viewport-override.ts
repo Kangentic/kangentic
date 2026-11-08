@@ -195,6 +195,12 @@ function paneWidgetSize(webContents: WebContents, entry: BrowserPaneEntry): View
   if (entry.widgetSize) return entry.widgetSize;
   const host = BrowserWindow.fromWebContents(webContents.hostWebContents ?? webContents);
   if (!host || host.isDestroyed()) return null;
+  // A minimized window's content size is not its size: measured 1x1 on Windows,
+  // which planned a capture for one pixel and refused the image that came back.
+  if (host.isMinimized()) {
+    const { width, height } = host.getNormalBounds();
+    return { width, height };
+  }
   const [width, height] = host.getContentSize();
   return { width, height };
 }

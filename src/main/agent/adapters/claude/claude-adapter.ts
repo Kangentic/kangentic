@@ -453,9 +453,16 @@ export class ClaudeAdapter implements AgentAdapter {
     return this.commandBuilder.buildClaudeCommand({ cliPath: agentPath, ...rest });
   }
 
-  /** The renderer variables: the user's own, else `CLAUDE_CODE_NO_FLICKER=1` (see `CommandBuilder.rendererEnvironment`). */
+  /**
+   * The renderer variables (`CommandBuilder.rendererEnvironment`) and
+   * `FORCE_HYPERLINK` (`CommandBuilder.hyperlinkEnvironment`).
+   */
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
-    return this.commandBuilder.rendererEnvironment(options);
+    const environment = {
+      ...this.commandBuilder.rendererEnvironment(options),
+      ...this.commandBuilder.hyperlinkEnvironment(options),
+    };
+    return Object.keys(environment).length > 0 ? environment : null;
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -571,6 +578,16 @@ export class ClaudeAdapter implements AgentAdapter {
   consoleCloseIsGraceful(platform: NodeJS.Platform): boolean {
     return platform === 'win32' || platform === 'linux';
   }
+
+  /**
+   * Ctrl+E. Measured on 2.1.319 on Windows, with an Up arrow or a click before the erase: as
+   * the head of one write with the DELs it reaches the end of a wrapped input,
+   * and it leaves an empty prompt and its suggestion alone. End stops at the end
+   * of the visual row, Ctrl+End does nothing, Down works for one row only, and
+   * Ctrl+U destroys a draft. In a multi-line draft it stops at the end of the
+   * cursor's own line, so the words land there and later partials find them.
+   */
+  readonly promptEndKeys = '\x05';
 
   /** The SessionStart hook runs at launch, resumes included, before any prompt. */
   readonly reportsAgentStart = true;

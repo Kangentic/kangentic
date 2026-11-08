@@ -51,7 +51,7 @@ import { translateText } from '../i18n/main-i18n';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../shared/notification-constants';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../../shared/pty-host';
-import type { ActivityReason, ActivityState, NotificationConfig, NotificationInput } from '../../shared/types';
+import type { ActivityReason, ActivityState, NotificationConfig, NotificationEventKey, NotificationInput } from '../../shared/types';
 import type { SessionManager } from '../pty/session-manager';
 
 export interface DesktopNotifierOptions {
@@ -198,7 +198,7 @@ export class DesktopNotifier {
     }
     const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : session.taskId;
 
-    this.notify(`idle:${sessionId}`, title, body, session.projectId, clickTaskId);
+    this.notify(`idle:${sessionId}`, 'onAgentIdle', title, body, session.projectId, clickTaskId);
   }
 
   private readonly onExit = (sessionId: string, exitCode: number, intentional?: boolean): void => {
@@ -234,6 +234,7 @@ export class DesktopNotifier {
       this.lastHostLostNoticeAt = now;
       this.notify(
         'pty-host-lost',
+        'onAgentCrash',
         translateText(msg`Terminals restarted`),
         translateText(msg`Running agents are resuming.`),
         session.projectId,
@@ -249,6 +250,7 @@ export class DesktopNotifier {
 
     this.notify(
       `crash:${sessionId}`,
+      'onAgentCrash',
       translateText(msg`Session crashed: ${{ label }}`),
       this.taskPlace(session.projectId, session.taskId),
       session.projectId,
@@ -275,13 +277,13 @@ export class DesktopNotifier {
     const reason = notice.reason;
     if (notice.kind === 'stalled') {
       if (!config.desktop.onWorkflowStalled) return;
-      this.notify(`stalled:${notice.taskId}`, title, translateText(msg`${{ place }}. Stalled: ${{ reason }}`), notice.projectId, notice.taskId);
+      this.notify(`stalled:${notice.taskId}`, 'onWorkflowStalled', title, translateText(msg`${{ place }}. Stalled: ${{ reason }}`), notice.projectId, notice.taskId);
       return;
     }
     if (!config.desktop.onAgentIdle) return;
     const cooldownKey = `idle:${notice.sessionId ?? notice.taskId}`;
     if (!this.shouldNotify(cooldownKey, notice.projectId)) return;
-    this.notify(cooldownKey, title, translateText(msg`${{ place }}. Waiting on you: ${{ reason }}`), notice.projectId, notice.taskId);
+    this.notify(cooldownKey, 'onAgentIdle', title, translateText(msg`${{ place }}. Waiting on you: ${{ reason }}`), notice.projectId, notice.taskId);
   }
 
   private projectName(projectId: string): string {
@@ -316,12 +318,12 @@ export class DesktopNotifier {
     return true;
   }
 
-  private notify(cooldownKey: string, title: string, body: string, projectId: string, taskId: string): void {
+  private notify(cooldownKey: string, event: NotificationEventKey, title: string, body: string, projectId: string, taskId: string): void {
     if (this.disposed) return;
     // Stamped here (not in shouldNotify) so a focus-suppressed event does not
     // consume the cooldown, matching the renderer's sendNotification.
     this.cooldowns.set(cooldownKey, Date.now());
-    this.options.showNotification({ title, body, projectId, taskId });
+    this.options.showNotification({ title, body, projectId, taskId, event });
     this.options.flashFrame();
   }
 

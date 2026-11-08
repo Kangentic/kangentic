@@ -10,7 +10,9 @@ import { mayAutoSubmit } from '../utils/text-target';
 import { probeGuestField, type GuestFieldProbe } from '../utils/guest-text-target';
 import { startAudioCapture, type AudioCaptureHandle } from '../audio/audio-capture';
 import { effectiveCombo, isMouseCombo, mouseComboToButton } from '../../shared/keybindings';
-import { matchesCombo, matchesMouseRelease } from '../utils/keybindings';
+import { isMouseComboButton, matchesCombo } from '../utils/keybindings';
+import { decidePress, holdEndFromPointer } from '../utils/dictation-hold';
+import type { DictationHoldEndReason } from '../../shared/types';
 import { isRebindCaptureActive } from '../utils/rebind-state';
 import { resolveBrowserNavigationTarget } from '../utils/browser-navigation-registry';
 
@@ -79,11 +81,21 @@ export function toPreviewCase(text: string): string {
  * Bridge so the popup / docked-bar Send / Clear / Cancel buttons reach the
  * single mounted hook instance, which owns the finalize + commit + clear logic.
  * Re-registered on every mount, so resetting on a Fast Refresh is correct.
+ *
+ * `moveToInput` is how a Browser pane hands a running hold to its note when
+ * drawing starts: the target is otherwise fixed at the press.
  */
-export const dictationPopupActions: { commit: () => void; clear: () => void; cancel: () => void } = {
+// hmr-safe: reset on every mount; the useDictation effect fills it again.
+export const dictationPopupActions: {
+  commit: () => void;
+  clear: () => void;
+  cancel: () => void;
+  moveToInput: (element: HTMLInputElement) => void;
+} = {
   commit: () => undefined,
   clear: () => undefined,
   cancel: () => undefined,
+  moveToInput: () => undefined,
 };
 
 /**
@@ -122,8 +134,8 @@ export function useDictation(): void {
   const boundToMouseBack = !!combo && isMouseCombo(combo) && combo.split('+').includes('Mouse:Back');
   const boundToMouseForward = !!combo && isMouseCombo(combo) && combo.split('+').includes('Mouse:Forward');
 
-  // `true` while the push-to-talk input is held. Guards against auto-repeat
-  // keydowns starting a second session and tells the release handler to act.
+  // `true` while the push-to-talk input is held, and what tells the release
+  // handler to act.
   const activeRef = useRef(false);
   const partialUnsubscribeRef = useRef<(() => void) | null>(null);
   const finalUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -159,9 +171,17 @@ export function useDictation(): void {
    *  two seconds when it is not - measured at 2.1s of dead push-to-talk on a
    *  loaded box, which is why this read as "works sometimes". */
   const submittingSessionsRef = useRef<Set<string>>(new Set());
-  // True while the trailing-capture buffer is open (between release and the
-  // actual capture stop). Blocks a new press from starting mid-window.
-  const bufferingRef = useRef(false);
+  // True from a release until its text has gone out: the trailing-capture buffer
+  // and the `stop` round trip, which runs long while a cold refinement model
+  // loads. A press in that span is refused (`decidePress`).
+  const finalizingRef = useRef(false);
+  // Counts starts. A release before `start` returns finds no session to stop,
+  // so the next press may start again while the first start is still awaiting.
+  // `activeRef` is the newer press's by then, so each start keeps its own number
+  // and backs out, touching only what it created, once a newer one has begun.
+  const startGenerationRef = useRef(0);
+  /** `performance.now()` at the press that started this hold, for the trace. */
+  const holdStartedAtRef = useRef<number | null>(null);
   /** When a GUEST-forwarded press landed, in MAIN's `Date.now()` clock.
    *
    *  Separate from `pressedAtRef` because the two are different time origins and
@@ -209,14 +229,14 @@ export function useDictation(): void {
   }, []);
 
   const startDictation = useCallback(async (): Promise<void> => {
-    // Ignore a press while already recording or while the trailing-capture
-    // buffer is open: both mean a capture for THIS press is already in hand.
-    if (activeRef.current || bufferingRef.current) return;
+    // Ignore a press while already recording or finishing. Callers ask
+    // `decidePress` first, and this is the last line behind them.
+    if (activeRef.current || finalizingRef.current) return;
     // Resolved BEFORE the paste guard below, which needs to know the target to
     // decide whether the guard even applies. Still synchronous, and still the
     // first thing after the cheap latches: this runs inside the capture-phase
-    // press handler that preventDefaults, so `document.activeElement` is what
-    // the user was in when they pressed, before the press can move focus.
+    // press handler, before the `mousedown` whose default would move focus, so
+    // `document.activeElement` is what the user was in when they pressed.
     const target = resolveDictationTarget();
     // Only the terminal whose paste is still landing is off limits.
     if (target?.kind === 'terminal' && submittingSessionsRef.current.has(target.sessionId)) {
@@ -233,6 +253,8 @@ export function useDictation(): void {
       return;
     }
     activeRef.current = true;
+    const generation = ++startGenerationRef.current;
+    const superseded = (): boolean => startGenerationRef.current !== generation;
     framesSentRef.current = 0;
     sentenceCaseFinalRef.current = false;
     // Before the sink is built: `cleanupSubscriptions` releases the sink too, so
@@ -274,6 +296,8 @@ export function useDictation(): void {
     let startedSessionId: string | null = null;
     try {
       const permission = await window.electronAPI.dictation.requestMic();
+      // A newer press owns the subscriptions, the sink and the store now.
+      if (superseded()) return;
       if (permission !== 'granted') {
         activeRef.current = false;
         cleanupSubscriptions();
@@ -299,12 +323,21 @@ export function useDictation(): void {
         language: optionsRef.current.language,
       });
       startedSessionId = result.dictationSessionId;
+      if (superseded()) {
+        void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+        return;
+      }
       sentenceCaseFinalRef.current = result.sentenceCaseFinal === true;
-      // Released during the start await: abandon the freshly-created session.
-      if (!activeRef.current) {
+      // The release found no session in the store, since `beginRecording` is
+      // below, so a session it overtook is ours to cancel.
+      const abandonSession = async (): Promise<void> => {
         await window.electronAPI.dictation.cancel(result.dictationSessionId);
         cleanupSubscriptions();
         useDictationStore.getState().reset();
+      };
+      // Released during the start await.
+      if (!activeRef.current) {
+        await abandonSession();
         return;
       }
       // The guest round trip happens HERE, after the mic and engine are up, so
@@ -315,6 +348,15 @@ export function useDictation(): void {
       let guestProbe: GuestFieldProbe | null = null;
       if (target?.kind === 'guest') {
         guestProbe = await probeGuestField(target.webview);
+        if (superseded()) {
+          void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+          return;
+        }
+        // Released during the probe.
+        if (!activeRef.current) {
+          await abandonSession();
+          return;
+        }
         if (guestProbe?.eligible) {
           sinkRef.current = createDictationSink(target, {
             // Never called: a guest field is filled, never submitted, so there is
@@ -382,6 +424,13 @@ export function useDictation(): void {
           pcm,
         });
       });
+      // Released while the audio graph started, and pressed again: this capture
+      // and its session are the old press's, and nothing else will stop them.
+      if (superseded()) {
+        handle.stop();
+        void window.electronAPI.dictation.cancel(result.dictationSessionId).catch(() => undefined);
+        return;
+      }
       captureRef.current = handle;
       // Released while the audio graph was starting: tear it back down. The
       // release handler already finalized; just stop the now-orphaned capture.
@@ -389,6 +438,10 @@ export function useDictation(): void {
         stopCapture();
       }
     } catch (error) {
+      if (superseded()) {
+        if (startedSessionId) void window.electronAPI.dictation.cancel(startedSessionId).catch(() => undefined);
+        return;
+      }
       activeRef.current = false;
       stopCapture();
       // The session may have been created before the throw (mic capture failed
@@ -449,69 +502,130 @@ export function useDictation(): void {
   const finalizeOnRelease = useCallback(async (): Promise<void> => {
     if (!activeRef.current) return;
     activeRef.current = false;
-    // Trailing-capture buffer: keep the mic open a beat so the tail of the last
-    // word (still being voiced as the user releases) is captured instead of
-    // clipped. Frames keep streaming during the window; the drain barrier in
-    // `stop` then decodes the COMPLETE utterance. bufferingRef blocks a new press
-    // from starting mid-window (its live writes would race this capture).
-    const bufferMs = optionsRef.current.releaseBufferMs;
-    if (bufferMs > 0 && captureRef.current) {
-      bufferingRef.current = true;
-      await new Promise<void>((resolve) => setTimeout(resolve, bufferMs));
-      bufferingRef.current = false;
-    }
-    stopCapture();
-    const { dictationSessionId } = useDictationStore.getState();
-    if (!dictationSessionId) {
-      cleanupSubscriptions();
-      useDictationStore.getState().reset();
-      return;
-    }
-    useDictationStore.getState().setFinalizing();
-    let finalText: string;
+    // A press from here until the text has gone out is refused. Starting would
+    // drop this utterance's sink, and the erase with it, and the reset below
+    // would land on the new session.
+    finalizingRef.current = true;
     try {
-      // Pass the sent-frame count so finalize drains the tail before decoding.
-      // With no refinement pass, or one that fell back, the committed text is
-      // the live model's. The Zipformer's is all caps, so main asks for the
-      // preview's casing; `toPreviewCase` leaves a refined final unchanged.
-      const stoppedText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
-      finalText = sentenceCaseFinalRef.current ? toPreviewCase(stoppedText) : stoppedText;
-    } catch (error) {
-      // The dictation engine runs in its own process (DESKTOP-X), so a
-      // native fault there no longer takes the whole app down with it - but
-      // the utterance itself is still lost. Surface it rather than silently
-      // committing nothing, mirroring the mic-permission-denied path above:
-      // cleanup, setError, return (no reset - the error stays visible).
-      cleanupSubscriptions();
-      // The reason is the engine's own text and stays as written.
-      const reason = error instanceof Error ? error.message : null;
-      useDictationStore.getState().setError(
-        reason !== null ? i18n._(msg`Dictation failed: ${{ reason }}`) : i18n._(msg`Dictation failed.`),
-      );
-      return;
-    }
-    useDictationStore.setState({ finalText });
+      // Trailing-capture buffer: keep the mic open a beat so the tail of the last
+      // word (still being voiced as the user releases) is captured instead of
+      // clipped. Frames keep streaming during the window; the drain barrier in
+      // `stop` then decodes the COMPLETE utterance.
+      const bufferMs = optionsRef.current.releaseBufferMs;
+      if (bufferMs > 0 && captureRef.current) {
+        await new Promise<void>((resolve) => setTimeout(resolve, bufferMs));
+      }
+      stopCapture();
+      const { dictationSessionId } = useDictationStore.getState();
+      if (!dictationSessionId) {
+        cleanupSubscriptions();
+        useDictationStore.getState().reset();
+        return;
+      }
+      useDictationStore.getState().setFinalizing();
+      let finalText: string;
+      try {
+        // Pass the sent-frame count so finalize drains the tail before decoding.
+        // With no refinement pass, or one that fell back, the committed text is
+        // the live model's. The Zipformer's is all caps, so main asks for the
+        // preview's casing; `toPreviewCase` leaves a refined final unchanged.
+        const stoppedText = await window.electronAPI.dictation.stop(dictationSessionId, framesSentRef.current);
+        finalText = sentenceCaseFinalRef.current ? toPreviewCase(stoppedText) : stoppedText;
+      } catch (error) {
+        // The dictation engine runs in its own process (DESKTOP-X), so a
+        // native fault there no longer takes the whole app down with it - but
+        // the utterance itself is still lost. Surface it rather than silently
+        // committing nothing, mirroring the mic-permission-denied path above:
+        // cleanup, setError, return (no reset - the error stays visible).
+        cleanupSubscriptions();
+        // The reason is the engine's own text and stays as written.
+        const reason = error instanceof Error ? error.message : null;
+        useDictationStore.getState().setError(
+          reason !== null ? i18n._(msg`Dictation failed: ${{ reason }}`) : i18n._(msg`Dictation failed.`),
+        );
+        return;
+      }
+      useDictationStore.setState({ finalText });
 
-    // Voice command: a standalone "scratch that" / "clear" discards everything.
-    if (isClearCommand(finalText)) {
-      await clearDictation();
-      return;
-    }
+      // Voice command: a standalone "scratch that" / "clear" discards everything.
+      if (isClearCommand(finalText)) {
+        await clearDictation();
+        return;
+      }
 
-    const isLive = optionsRef.current.experience === 'live';
-    if (isLive) {
-      // Replace the live preview with the refined text and, when auto-submit is
-      // on, commit it. What "commit" means is the sink's business: for a terminal
-      // it is the main-process paste engine, which presses Enter as a SEPARATE,
-      // settled, verified keystroke (a \r appended to a liveWrite does not
-      // submit - the TUI reads an Enter in the same write with stale state); for
-      // an input it is an Enter on the field itself.
-      sinkRef.current?.submit(sanitizeInline(finalText), optionsRef.current.autoSubmit);
-      cleanupSubscriptions();
-      useDictationStore.getState().reset();
-      return;
+      const isLive = optionsRef.current.experience === 'live';
+      if (isLive) {
+        // Replace the live preview with the refined text and, when auto-submit is
+        // on, commit it. What "commit" means is the sink's business: for a terminal
+        // it is the main-process paste engine, which presses Enter as a SEPARATE,
+        // settled, verified keystroke (a \r appended to a liveWrite does not
+        // submit - the TUI reads an Enter in the same write with stale state); for
+        // an input it is an Enter on the field itself.
+        sinkRef.current?.submit(sanitizeInline(finalText), optionsRef.current.autoSubmit);
+        cleanupSubscriptions();
+        useDictationStore.getState().reset();
+        return;
+      }
+    } finally {
+      finalizingRef.current = false;
     }
   }, [cleanupSubscriptions, clearDictation, stopCapture]);
+
+  /** Leave a line in the app log for each press and how each hold ended, since
+   *  neither shows up anywhere else a report could be read from. Carries no text. */
+  const traceHold = useCallback((phase: 'press' | 'end' | 'refused', reason: DictationHoldEndReason | null, buttons: number | null): void => {
+    const startedAt = holdStartedAtRef.current;
+    window.electronAPI.dictation.holdTrace({
+      phase,
+      reason,
+      heldMs: phase === 'end' && startedAt !== null ? Math.round(performance.now() - startedAt) : null,
+      buttons,
+      targetKind: phase === 'end' ? useDictationStore.getState().targetKind : null,
+    });
+  }, []);
+
+  /** Every way a hold ends but a navigation tap comes through here, so the end
+   *  is recorded and a later release finds nothing left to read as a tap. */
+  const endHold = useCallback((reason: DictationHoldEndReason, buttons: number | null): void => {
+    if (!activeRef.current) return;
+    pressedAtRef.current = null;
+    guestPressedAtRef.current = null;
+    traceHold('end', reason, buttons);
+    holdStartedAtRef.current = null;
+    void finalizeOnRelease();
+  }, [finalizeOnRelease, traceHold]);
+
+  /**
+   * Move a hold that is already recording to a text field, for a person who
+   * started speaking and then began drawing on a Browser pane: the words belong
+   * with the strokes. What was typed at the old target is erased, and the
+   * current partial is written at the new one.
+   *
+   * Only a hold the engine has started and that has somewhere to write. A start
+   * still in flight builds its target as it finishes, and a refused hold (a
+   * password field) writes nowhere and must not start now.
+   */
+  const moveToInput = useCallback((element: HTMLInputElement): void => {
+    if (!activeRef.current) return;
+    const state = useDictationStore.getState();
+    if (state.status !== 'recording' || state.refusal !== null) return;
+    if (state.targetElement === element) return;
+    sinkRef.current?.clear();
+    sinkRef.current = createDictationSink({ kind: 'input', element }, {
+      // Never called: an input is written in this renderer, with no paste to guard.
+      onSubmitStarted: () => {},
+      onSubmitSettled: () => {},
+    });
+    useDictationStore.setState({
+      targetKind: 'input',
+      targetSessionId: null,
+      targetElement: element,
+      contentEditableElement: null,
+      guestAnchor: null,
+      willSubmit: optionsRef.current.autoSubmit && mayAutoSubmit(element),
+    });
+    if (state.partialText.length > 0) sinkRef.current?.write(sanitizeInline(state.partialText));
+  }, []);
 
   // Wire the surface buttons to this instance.
   useEffect(() => {
@@ -524,12 +638,14 @@ export function useDictation(): void {
     dictationPopupActions.cancel = () => {
       void cancelDictation();
     };
+    dictationPopupActions.moveToInput = moveToInput;
     return () => {
       dictationPopupActions.commit = () => undefined;
       dictationPopupActions.clear = () => undefined;
       dictationPopupActions.cancel = () => undefined;
+      dictationPopupActions.moveToInput = () => undefined;
     };
-  }, [commitFinal, clearDictation, cancelDictation]);
+  }, [commitFinal, clearDictation, cancelDictation, moveToInput]);
 
   // Surface first-use model download progress in the popup. `done` clears it.
   useEffect(() => {
@@ -589,14 +705,40 @@ export function useDictation(): void {
     });
   }, [startDictation]);
 
-  // Press half (keydown / pointerdown) via the central registry.
+  /** A press, from the window or a guest. Reports whether it starts a hold, which
+   *  is the only kind a later release may read as a navigation tap. */
+  const handlePress = useCallback(({ repeat, recoveryReason, buttons }: {
+    /** A keyboard auto-repeat, which never starts or ends a hold. */
+    repeat: boolean;
+    /** How this press ends a hold whose release was missed. */
+    recoveryReason: DictationHoldEndReason;
+    /** The pointer event's bitmask, or null for a key or a guest report. */
+    buttons: number | null;
+  }): boolean => {
+    const decision = decidePress({ active: activeRef.current, finalizing: finalizingRef.current, repeat });
+    if (decision === 'finish') endHold(recoveryReason, buttons);
+    if (decision === 'ignore' && !repeat) traceHold('refused', null, buttons);
+    if (decision !== 'start') return false;
+    holdStartedAtRef.current = performance.now();
+    traceHold('press', null, buttons);
+    return true;
+  }, [endHold, traceHold]);
+
+  // Press half (keydown / pointerdown, or pointermove for a press with another
+  // button down) via the central registry. A mouse press is not canceled: that
+  // would suppress every compat mouse event until the last button lifts, and a
+  // click or stroke during a hold needs them. The bound button's own mouse events
+  // are stopped below instead.
   useKeybinding(
     ACTION_ID,
     (event) => {
+      const repeat = 'repeat' in event && event.repeat;
+      const buttons = 'buttons' in event ? event.buttons : null;
+      if (!handlePress({ repeat, recoveryReason: 'second-press', buttons })) return;
       pressedAtRef.current = event.timeStamp;
       startDictationSafely();
     },
-    { enabled, capture: true, preventDefault: true, stopPropagation: true },
+    { enabled, capture: true, preventDefault: !combo || !isMouseCombo(combo), stopPropagation: true, chordedPress: true },
   );
 
   /**
@@ -618,11 +760,12 @@ export function useDictation(): void {
     if (forward ? !pane.canGoForward() : !pane.canGoBack()) return false;
     // Cancel BEFORE navigating, so the engine session is torn down and the chip
     // dismissed rather than left recording into a page that just changed.
+    traceHold('end', 'navigation-tap', null);
     void cancelDictation();
     if (forward) pane.goForward();
     else pane.goBack();
     return true;
-  }, [cancelDictation]);
+  }, [cancelDictation, traceHold]);
 
   /**
    * Mouse FORWARD navigates the active pane on PRESS, with no threshold - but
@@ -682,6 +825,7 @@ export function useDictation(): void {
 
       if (event.phase === 'down') {
         if (!boundToThisButton) return;
+        if (!handlePress({ repeat: false, recoveryReason: 'guest-second-press', buttons: null })) return;
         guestPressedAtRef.current = event.at;
         startDictationSafely();
         return;
@@ -700,6 +844,9 @@ export function useDictation(): void {
         return;
       }
 
+      // A second press may already have finished this hold, and its release is
+      // not a tap: it must not navigate the page out from under the user.
+      if (!activeRef.current) return;
       const pressedAt = guestPressedAtRef.current;
       guestPressedAtRef.current = null;
       const wasTap = pressedAt !== null && event.at - pressedAt < NAVIGATION_TAP_MS;
@@ -708,15 +855,24 @@ export function useDictation(): void {
         const canNavigate = pane
           && (event.button === 'forward' ? pane.canGoForward() : pane.canGoBack());
         if (canNavigate) {
+          traceHold('end', 'navigation-tap', null);
           void cancelDictation();
           if (event.button === 'forward') pane.goForward();
           else pane.goBack();
           return;
         }
       }
-      void finalizeOnRelease();
+      endHold('guest-up', null);
     });
-  }, [enabled, boundToMouseBack, boundToMouseForward, startDictationSafely, finalizeOnRelease, cancelDictation]);
+  }, [enabled, boundToMouseBack, boundToMouseForward, startDictationSafely, handlePress, endHold, cancelDictation, traceHold]);
+
+  // The OS window lost focus, so a release can land anywhere and tell nobody.
+  // From main, not the DOM: `window` blur also fires when a click moves focus into
+  // a Browser pane guest, which must never end a hold.
+  useEffect(() => {
+    if (!enabled) return;
+    return window.electronAPI.dictation.onWindowBlur(() => endHold('window-blur', null));
+  }, [enabled, endHold]);
 
   // Release half is hand-wired because useKeybinding only fires on the press.
   // This capture-phase paired listener reads the SAME effective combo. This is
@@ -724,30 +880,63 @@ export function useDictation(): void {
   // xterm clipboard and BaseDialog Escape hand-wired handlers).
   useEffect(() => {
     if (!enabled || !combo) return;
-    const eventType: 'keyup' | 'pointerup' = isMouseCombo(combo) ? 'pointerup' : 'keyup';
-    const onRelease = (event: Event): void => {
+    if (isMouseCombo(combo)) {
+      const onPointer = (event: PointerEvent): void => {
+        if (isRebindCaptureActive()) return;
+        if (!activeRef.current) return;
+        const holdEnd = holdEndFromPointer(event, combo);
+        if (!holdEnd) return;
+        // Only the bound button's own lift is kept from the page: anything else
+        // ending the hold is a click or a stroke of the user's that must land.
+        if (holdEnd.consume) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        // A mouse TAP means "navigate the Browser pane", not "dictate". The
+        // direction is read from the BOUND button, not assumed: a chord holding
+        // both resolves to Back, matching what that button means everywhere else.
+        if (holdEnd.mayNavigate
+          && handleNavigationTap(boundToMouseForward && !boundToMouseBack, event.timeStamp)) return;
+        endHold(holdEnd.reason, event.buttons);
+      };
+      const eventTypes = ['pointerup', 'pointermove', 'pointercancel'] as const;
+      for (const eventType of eventTypes) window.addEventListener(eventType, onPointer, true);
+      return () => {
+        for (const eventType of eventTypes) window.removeEventListener(eventType, onPointer, true);
+      };
+    }
+    const onKeyUp = (event: KeyboardEvent): void => {
       if (isRebindCaptureActive()) return;
       if (!activeRef.current) return;
-      const inputEvent = event as KeyboardEvent | PointerEvent;
-      // Mouse: a chord releases when ANY of its buttons lifts (pointerup).
-      // Keyboard: match the combo on keyup.
-      const released = isMouseCombo(combo)
-        ? matchesMouseRelease(inputEvent as PointerEvent, combo)
-        : matchesCombo(inputEvent, combo);
-      if (!released) return;
-      inputEvent.preventDefault();
-      inputEvent.stopPropagation();
-      // A mouse TAP means "navigate the Browser pane", not "dictate". Keyboard
-      // holds never take this path: no browser navigates on a tapped key. The
-      // direction is read from the BOUND button, not assumed: a chord holding
-      // both resolves to Back, matching what that button means everywhere else.
-      if (isMouseCombo(combo)
-        && handleNavigationTap(boundToMouseForward && !boundToMouseBack, inputEvent.timeStamp)) return;
-      void finalizeOnRelease();
+      if (!matchesCombo(event, combo)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      endHold('released', null);
     };
-    window.addEventListener(eventType, onRelease, true);
-    return () => window.removeEventListener(eventType, onRelease, true);
-  }, [enabled, combo, boundToMouseBack, boundToMouseForward, finalizeOnRelease, handleNavigationTap]);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => window.removeEventListener('keyup', onKeyUp, true);
+  }, [enabled, combo, boundToMouseBack, boundToMouseForward, endHold, handleNavigationTap]);
+
+  // The bound button's own mouse events stop here, so it never reaches xterm (a
+  // report to the agent) or moves focus. They are stopped by name rather than by
+  // canceling the press, which would take every other button's with them. The
+  // same keybindings-registry exception as the release half: `useKeybinding` fires
+  // on the press and cannot stop the compat `mousedown` and `mouseup` that follow.
+  useEffect(() => {
+    if (!enabled || !combo || !isMouseCombo(combo)) return;
+    const onMouse = (event: MouseEvent): void => {
+      if (isRebindCaptureActive()) return;
+      if (!isMouseComboButton(event.button, combo)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener('mousedown', onMouse, true);
+    window.addEventListener('mouseup', onMouse, true);
+    return () => {
+      window.removeEventListener('mousedown', onMouse, true);
+      window.removeEventListener('mouseup', onMouse, true);
+    };
+  }, [enabled, combo]);
 
   // Tear down any in-flight session when dictation is turned off.
   useEffect(() => {

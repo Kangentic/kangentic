@@ -209,8 +209,12 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: msg`Spawn stalled`, description: msg`When a task spawn waits too long on the git queue while preparing`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
   // ── Notifications > Delivery ──
-  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: msg`Toast auto-dismiss`, description: msg`How long toasts remain visible`, scope: 'global', section: msg`Toasts`, keywords: ['timeout', 'seconds'] },
-  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: msg`Max visible toasts`, description: msg`Maximum simultaneous toasts on screen`, scope: 'global', section: msg`Toasts`, keywords: ['limit', 'count'] },
+  { id: 'notifications.toasts.durationSeconds', tabId: 'notifications', label: msg`How long toasts appear, in seconds`, description: msg`A toast with a button stays until you close it.`, scope: 'global', section: msg`Toasts`, keywords: ['toast', 'timeout', 'seconds', 'auto-dismiss', 'duration'] },
+  { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: msg`Maximum toasts on screen`, description: msg`Past this, the oldest timed toast makes way for a new one.`, scope: 'global', section: msg`Toasts`, keywords: ['toast', 'limit', 'count', 'stack'] },
+
+  // ── Notifications > Mute and App icon badge ──
+  { id: 'notifications.muted', tabId: 'notifications', label: msg`Mute notifications`, description: msg`Silences all notifications on this machine until turned off.`, scope: 'global', keywords: ['mute', 'silent', 'quiet', 'do not disturb', 'sound', 'toast', 'desktop'] },
+  { id: 'notifications.appBadge', tabId: 'notifications', label: msg`App icon badge`, description: msg`Shows how many agents need you, on the taskbar or dock.`, scope: 'global', keywords: ['badge', 'count', 'taskbar', 'dock', 'overlay', 'waiting'] },
 
   // ── Hotkeys ──
   { id: 'hotkeys', tabId: 'hotkeys', label: msg`Hotkeys`, description: msg`Rebind keyboard hotkeys`, scope: 'global', keywords: ['keyboard', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },

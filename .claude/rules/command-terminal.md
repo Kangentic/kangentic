@@ -353,11 +353,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   (`useTaskSplitResize`, 25 to 75 percent), Browser and Changes on the same side and exclusive,
   Show/Hide and Close browser in the kebab and the row menu (one `CommandTerminalMenuItems`), the
   green `BrowserAliveGlobe` after a Running row's name and on a strip mark's corner, the Monitor
-  row's globe, and pop out. An agent's `open_pane` with the panel hidden opens it through the
-  pending-open flag with every command window stamped agent-opened
-  (`useCommandTerminalBrowserBridge`), so no terminal takes the keyboard. The open can create the
-  window it lands in, and a window's own open clears a stamp, so every window change re-stamps
-  until the panel has shown and settled or the user presses anywhere. The browser ends with
+  row's globe, and pop out. An agent's `open_pane` never shows the panel
+  (`useCommandTerminalBrowserBridge`, [[agent-driven-focus]]): with it hidden the pane mounts out of
+  sight in the host, and the user opening the panel shows it. The browser ends with
   the terminal: main's `command-terminal-browser.ts` listens on `session-removed` and closes the
   pane, its pop-out and any lane, and clears the saved URL and layout. A branch switch and a
   resume in place kill with `{ respawn: true }`, which keeps it while the slot's next start runs;

@@ -1,21 +1,23 @@
 /**
- * UI tests for the focus half of `.claude/rules/agent-driven-focus.md`.
+ * UI tests for what an agent's `kangentic_browser_open_pane` may do to the user's
+ * screen: nothing. See `.claude/rules/agent-driven-focus.md`.
  *
- * `kangentic_browser_open_pane` arrives as an ordinary IPC push and opens (or
- * raises) a task-detail window. That sets `focusedWindowId`, which is what
- * `resolveArrivalFocus` reads to decide which terminal may take the keyboard on
- * mount - so before the fix, an agent opening its pane handed its OWN terminal
- * the keystrokes the user was typing into a different task.
+ * It arrives as an ordinary IPC push. Reported from live use: three agents each
+ * opened their browser while their task windows were closed, and each window came
+ * up on top of the task the user was working in, with the app raised behind it.
+ * The agent needing a browser was fine; Kangentic deciding to show the task was
+ * the bug. So the push mounts the pane in a window born parked, and it never asks
+ * main to open a detail, because main's answer to that is `focusWindowOf`, a
+ * `restore()` plus `focus()` on the app's window.
  *
- * The converse matters just as much and is why the second test exists: a fix
- * that simply stopped arriving terminals from focusing would pass the first test
- * and break the app. A USER opening a task detail must still focus its terminal.
+ * The converse matters just as much, and is why the first test exists: a fix that
+ * simply stopped windows opening would pass the rest and break the app. A USER
+ * opening the same task still raises it and focuses its terminal.
  *
- * Headless notes: `<webview>` is an unknown HTMLElement here, so no guest ever
- * attaches - these assert the RENDERER's focus decisions, which is the half the
- * main-process unit tests cannot see. The real Chromium focus steal (a CDP click
- * moving `document.activeElement` to the guest) has no representation at this
- * tier at all and is covered by the live probe recorded in the rule.
+ * Headless notes: `<webview>` is an unknown HTMLElement here, so a guest is faked
+ * by stubbing it and dispatching `dom-ready`. A hidden guest compositing has no
+ * representation at this tier and is covered by the probe recorded in
+ * `src/main/browser/cdp/guest-capture-hold.ts`.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -32,6 +34,7 @@ const TASK_B = 'task-focus-b';
 const SESSION_A = 'sess-focus-a';
 const SESSION_B = 'sess-focus-b';
 const SEEDED_URL = 'http://localhost:5173/';
+const GUEST_ID = 8141;
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
@@ -90,6 +93,16 @@ async function loadApp(page: Page): Promise<void> {
     window.__mockBrowser?.reset();
     window.__mockBrowser?.seedTaskUrl('task-focus-a', url);
     window.__mockBrowser?.seedTaskUrl('task-focus-b', url);
+    // Everything that asks main to open a detail. Main's handler focuses and
+    // restores the app window on every one, so an agent path must never add to it.
+    const ownership = window.electronAPI.taskDetailOwnership;
+    const requestOpen = ownership.requestOpen;
+    const asked: string[] = [];
+    (window as unknown as { __detailRequests: string[] }).__detailRequests = asked;
+    ownership.requestOpen = (projectId, taskId, host) => {
+      asked.push(taskId);
+      return requestOpen(projectId, taskId, host);
+    };
   }, SEEDED_URL);
 }
 
@@ -104,10 +117,87 @@ async function focusedWindowTitle(page: Page): Promise<string | null> {
   });
 }
 
-/** Open a task detail the way a USER does, and wait for its terminal. */
+interface WindowView {
+  id: string;
+  parked: boolean;
+  zIndex: number;
+}
+
+interface BoardWindows {
+  byTask: Record<string, WindowView>;
+  order: string[];
+  focusedWindowId: string | null;
+  topZIndex: number;
+}
+
+async function boardWindows(page: Page): Promise<BoardWindows> {
+  return page.evaluate(() => {
+    type StoreWindow = { id: string; kind: string; anchor: string; parked?: true; zIndex: number };
+    const stores = (window as unknown as {
+      __zustandStores: {
+        window: { getState: () => { windows: Record<string, StoreWindow>; order: string[]; focusedWindowId: string | null; zCounter: number } };
+      };
+    }).__zustandStores;
+    const state = stores.window.getState();
+    const byTask: BoardWindows['byTask'] = {};
+    for (const candidate of Object.values(state.windows)) {
+      if (candidate.kind === 'task-detail') {
+        byTask[candidate.anchor] = { id: candidate.id, parked: candidate.parked === true, zIndex: candidate.zIndex };
+      }
+    }
+    return { byTask, order: state.order, focusedWindowId: state.focusedWindowId, topZIndex: state.zCounter };
+  });
+}
+
+function detailRequests(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as unknown as { __detailRequests: string[] }).__detailRequests);
+}
+
+function emitAgentOpen(page: Page, taskId: string): Promise<void> {
+  return page.evaluate(
+    ([projectId, target]) => { window.__mockBrowser?.emitPaneOpenRequest(projectId, target); },
+    [PROJECT_ID, taskId],
+  );
+}
+
+/** Open a task detail the way a USER does. */
 async function openTaskByClick(page: Page, title: string): Promise<void> {
   await page.locator('[data-swimlane-name="Code Review"]').locator(`text=${title}`).first().click();
-  await page.locator('[data-testid="task-detail-dialog"]').first().waitFor({ state: 'visible', timeout: 10000 });
+  await expect
+    .poll(() => focusedWindowTitle(page), { timeout: 10000 })
+    .toContain(title);
+}
+
+/** Attach a stub guest to the one pane mounted, and wait for its registration. */
+async function registerGuest(page: Page): Promise<void> {
+  await page.locator('[data-testid="browser-webview"]').waitFor({ state: 'attached', timeout: 10000 });
+  await page.evaluate((guestId) => {
+    const element = document.querySelector('[data-testid="browser-webview"]');
+    if (!element) throw new Error('browser-webview element not found');
+    const stub = element as HTMLElement & { getWebContentsId: () => number; getURL: () => string };
+    stub.getWebContentsId = () => guestId;
+    stub.getURL = () => 'http://localhost:5173/';
+    element.dispatchEvent(new Event('dom-ready'));
+  }, GUEST_ID);
+  await expect
+    .poll(() => paneCalls(page, 'register'), { timeout: 10000 })
+    .toBeGreaterThan(0);
+}
+
+function paneCalls(page: Page, type: 'register' | 'unregister'): Promise<number> {
+  return page.evaluate(({ callType, guestId }) => {
+    const calls = window.__mockBrowser?.getPaneCalls() ?? [];
+    return calls.filter((call) => call.type === callType
+      && (call.type === 'register' ? call.input.webContentsId : call.webContentsId) === guestId).length;
+  }, { callType: type, guestId: GUEST_ID });
+}
+
+async function frameStyle(page: Page, windowId: string): Promise<{ opacity: string; visibility: string; inert: boolean }> {
+  return page.locator(`[data-testid="window-frame-${windowId}"]`).evaluate((element) => ({
+    opacity: getComputedStyle(element).opacity,
+    visibility: getComputedStyle(element).visibility,
+    inert: element.hasAttribute('inert'),
+  }));
 }
 
 test.beforeAll(async () => {
@@ -130,71 +220,85 @@ test.beforeEach(async () => {
   await loadApp(sharedPage);
 });
 
-test.describe('agent-driven window opens and keyboard focus', () => {
+test.describe("an agent's open_pane shows nothing", () => {
   test('a USER opening a task detail still focuses its terminal', async () => {
-    // The converse guard, deliberately FIRST: a "fix" that just stopped arriving
-    // terminals from focusing would pass the agent test below and break the app.
+    // The converse guard, deliberately FIRST: a "fix" that just stopped windows
+    // or terminals taking focus would pass the agent tests and break the app.
     await openTaskByClick(sharedPage, 'Focus Task A');
-
-    await expect
-      .poll(() => focusedWindowTitle(sharedPage), { timeout: 10000 })
-      .toContain('Focus Task A');
+    await expect.poll(() => detailRequests(sharedPage), { timeout: 5000 }).toContain(TASK_A);
   });
 
-  test('an agent open_pane does not move focus out of the terminal the user is in', async () => {
-    // The reported bug: the user is typing in task A, an agent opens its own
-    // pane for task B, and B's arriving terminal takes the keyboard.
+  test('a closed task stays closed, and the task the user is in stays on top', async () => {
     await openTaskByClick(sharedPage, 'Focus Task A');
-    await expect
-      .poll(() => focusedWindowTitle(sharedPage), { timeout: 10000 })
-      .toContain('Focus Task A');
+    const before = await boardWindows(sharedPage);
+    const asked = (await detailRequests(sharedPage)).length;
 
-    await sharedPage.evaluate(
-      ([projectId, taskId]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId),
-      [PROJECT_ID, TASK_B],
-    );
+    await emitAgentOpen(sharedPage, TASK_B);
+    await registerGuest(sharedPage);
 
-    // B's window must actually open - the agent still needs a driveable pane.
-    await expect
-      .poll(async () => sharedPage.locator('[data-testid="task-detail-dialog"]').count(), { timeout: 10000 })
-      .toBe(2);
+    const after = await boardWindows(sharedPage);
+    expect(after.byTask[TASK_B]?.parked).toBe(true);
+    // A keeps everything it had: focus, top of the stack, and the only place in
+    // the order. Any one of these moving is the reported bug.
+    expect(after.focusedWindowId).toBe(before.byTask[TASK_A].id);
+    expect(after.order).toEqual([before.byTask[TASK_A].id]);
+    expect(after.topZIndex).toBe(before.topZIndex);
+    expect(after.byTask[TASK_A].zIndex).toBe(before.byTask[TASK_A].zIndex);
 
-    // Poll for a WHILE rather than asserting once: the steal this guards against
-    // arrives with B's terminal mount and scrollback replay, which lands well
-    // after the window appears. A single immediate assertion would pass against
-    // the unfixed build.
+    // Hidden the retained way, so its guest goes on compositing.
+    expect(await frameStyle(sharedPage, after.byTask[TASK_B].id)).toEqual({ opacity: '0', visibility: 'visible', inert: true });
+
+    // This is what keeps `focusWindowOf` unreachable: main's handler runs it on
+    // every request, so an agent open must not make one.
+    expect((await detailRequests(sharedPage)).length).toBe(asked);
+
+    // Poll for a WHILE rather than asserting once: a steal would arrive with a
+    // terminal's mount and replay, which land well after the window does.
     await expect
       .poll(() => focusedWindowTitle(sharedPage), { timeout: 3000, intervals: [200, 200, 200, 200, 200] })
       .toContain('Focus Task A');
   });
 
-  test('the agent-opened window still raises and shows its pane', async () => {
-    // Denying arrival FOCUS must not degrade into denying the open. The agent
-    // needs the pane rendering to drive it.
-    await sharedPage.evaluate(
-      ([projectId, taskId]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId),
-      [PROJECT_ID, TASK_B],
-    );
+  test('a task with no window at all opens nothing the user can see', async () => {
+    await emitAgentOpen(sharedPage, TASK_B);
+    await registerGuest(sharedPage);
 
-    await sharedPage.locator('[data-testid="task-detail-dialog"]').first().waitFor({ state: 'visible', timeout: 10000 });
-    await sharedPage.locator('[data-testid="browser-pane"]').first().waitFor({ state: 'visible', timeout: 10000 });
+    const after = await boardWindows(sharedPage);
+    expect(after.byTask[TASK_B]?.parked).toBe(true);
+    expect(after.focusedWindowId).toBeNull();
+    expect(after.order).toEqual([]);
+    expect(await detailRequests(sharedPage)).toEqual([]);
   });
 
-  test('the user can still click into the agent-opened window and take focus back', async () => {
-    // `openedByAgent` is cleared by `focusWindow`, i.e. by the user's first
-    // pointer-down on the frame. Without that clear the stamp would be
-    // permanent and that window's terminal could never take focus again.
-    await sharedPage.evaluate(
-      ([projectId, taskId]) => window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId),
-      [PROJECT_ID, TASK_B],
-    );
-    const agentWindow = sharedPage.locator('[data-testid="task-detail-dialog"]').first();
-    await agentWindow.waitFor({ state: 'visible', timeout: 10000 });
+  test('a window already parked stays parked through repeated opens, on the same guest', async () => {
+    // `open_pane` is also how an agent navigates, so the warm path fires this push
+    // over and over. One live report saw three in a second.
+    await emitAgentOpen(sharedPage, TASK_B);
+    await registerGuest(sharedPage);
+    const parked = (await boardWindows(sharedPage)).byTask[TASK_B];
 
-    await agentWindow.locator('[data-testid="task-detail-titlebar"]').click();
+    await emitAgentOpen(sharedPage, TASK_B);
+    await emitAgentOpen(sharedPage, TASK_B);
 
-    await expect
-      .poll(() => focusedWindowTitle(sharedPage), { timeout: 10000 })
-      .toContain('Focus Task B');
+    expect((await boardWindows(sharedPage)).byTask[TASK_B]).toEqual(parked);
+    expect(await detailRequests(sharedPage)).toEqual([]);
+    expect(await paneCalls(sharedPage, 'unregister')).toBe(0);
+    await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
+  });
+
+  test("the user's click on the task raises it, on the same guest, with its terminal focused", async () => {
+    await emitAgentOpen(sharedPage, TASK_B);
+    await registerGuest(sharedPage);
+    const parked = (await boardWindows(sharedPage)).byTask[TASK_B];
+
+    await openTaskByClick(sharedPage, 'Focus Task B');
+
+    const after = await boardWindows(sharedPage);
+    expect(after.byTask[TASK_B]).toMatchObject({ id: parked.id, parked: false });
+    expect(after.focusedWindowId).toBe(parked.id);
+    expect((await frameStyle(sharedPage, parked.id)).opacity).toBe('1');
+    expect(await paneCalls(sharedPage, 'register')).toBe(1);
+    expect(await paneCalls(sharedPage, 'unregister')).toBe(0);
+    await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
   });
 });

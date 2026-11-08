@@ -3872,7 +3872,27 @@ export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends (infer U)[] ? U[] : T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
+/** One notification event: a key shared by `desktop`, `toasts` and `sounds`. */
+export type NotificationEventKey =
+  | 'onAgentIdle'
+  | 'onAgentCrash'
+  | 'onPlanComplete'
+  | 'onWorkflowComplete'
+  | 'onWorkflowStalled'
+  | 'onSpawnStalled';
+
+/** What an event sounds like: `off`, a sound we ship, the OS's own, or the user's file. */
+export type NotificationSound = 'off' | 'chime' | 'rise' | 'fall' | 'tick' | 'system' | 'custom';
+
 export interface NotificationConfig {
+  /** Silences every notification on this machine until turned off. */
+  muted: boolean;
+  /** Show how many agents are waiting on the app icon. */
+  appBadge: boolean;
+  /** Each event's sound, heard when its toast or desktop notification fires. */
+  sounds: Record<NotificationEventKey, NotificationSound>;
+  /** The original name of each event's custom file. The copy we play is in `<configDir>/notification-sounds/`. */
+  customSounds: Partial<Record<NotificationEventKey, string>>;
   desktop: {
     onAgentIdle: boolean;
     onAgentCrash: boolean;
@@ -4061,6 +4081,38 @@ export interface DictationModelProgress {
   modelDownloadedBytes?: number;
   modelTotalBytes?: number;
   error?: string;
+}
+
+/** What ended a push-to-talk hold, as the `[dictation-hold]` log line names it. */
+export type DictationHoldEndReason =
+  /** `pointerup` of the bound button, or the bound key's `keyup`. */
+  | 'released'
+  /** The bound button lifted with another still down, a `pointermove`. */
+  | 'lifted-with-other-button'
+  /** A pointer event showed the bound button up, and no event said it lifted. */
+  | 'missed-release'
+  | 'pointercancel'
+  /** The OS window lost focus, so no release can arrive. */
+  | 'window-blur'
+  /** A press while recording: the release before it was never seen. */
+  | 'second-press'
+  /** A short tap over a pane that could go back. It cancelled and navigated. */
+  | 'navigation-tap'
+  /** A Browser pane guest reported the button up. */
+  | 'guest-up'
+  /** A guest reported a press while recording. */
+  | 'guest-second-press';
+
+/** One push-to-talk press, refused press, or hold end, for the app log. Carries
+ *  no spoken text. `reason`, `heldMs` and `targetKind` are null except on an end,
+ *  since a press comes before its target is known. `buttons` (the pointer event's
+ *  bitmask) is null for a key or a guest report. */
+export interface DictationHoldTrace {
+  phase: 'press' | 'end' | 'refused';
+  reason: DictationHoldEndReason | null;
+  heldMs: number | null;
+  buttons: number | null;
+  targetKind: 'terminal' | 'input' | null;
 }
 
 /** One streamed PCM frame (16 kHz mono Int16, carried as a transferable
@@ -5397,6 +5449,17 @@ export const DEFAULT_CONFIG: AppConfig = {
     showRateLimits: true,
   },
   notifications: {
+    muted: false,
+    appBadge: true,
+    sounds: {
+      onAgentIdle: 'off',
+      onAgentCrash: 'off',
+      onPlanComplete: 'off',
+      onWorkflowComplete: 'off',
+      onWorkflowStalled: 'off',
+      onSpawnStalled: 'off',
+    },
+    customSounds: {},
     desktop: {
       onAgentIdle: true,
       onAgentCrash: true,
@@ -5412,7 +5475,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       onWorkflowComplete: true,
       onWorkflowStalled: true,
       onSpawnStalled: true,
-      durationSeconds: 4,
+      durationSeconds: 5,
       maxCount: 5,
     },
     cooldownSeconds: 10,
@@ -6881,6 +6944,11 @@ export interface AgentParser {
     runProgram: RemoteProgramRunner;
   }): Promise<RemoteTranscriptSnapshot | null>;
   /**
+   * Optional: the keys that move the agent's prompt cursor to the end of the
+   * input, measured on the real CLI. See `AgentAdapter.promptEndKeys`.
+   */
+  readonly promptEndKeys?: string;
+  /**
    * Optional: this agent reports that it started, by its SessionStart hook or
    * its first alt-screen entry, so a session that shows neither did not start.
    * Read at spawn onto the session row. See `AgentAdapter.reportsAgentStart`.
@@ -7936,7 +8004,15 @@ export interface NotificationInput {
   body: string;
   projectId: string;
   taskId: string;
+  /** The event this notice reports, which picks its sound. A Notify me row has none. */
+  event?: NotificationEventKey;
 }
+
+/** The answer to a Custom file choice in the sound picker. */
+export type CustomSoundPick =
+  | { status: 'picked'; fileName: string }
+  | { status: 'cancelled' }
+  | { status: 'refused'; reason: string };
 
 // === Board Configuration (kangentic.json) ===
 
@@ -8704,6 +8780,14 @@ export interface ElectronAPI {
      */
     resetTerminal: (sessionId: string) => Promise<void>;
     list: () => Promise<Session[]>;
+    /**
+     * Which paths a session printed exist on this computer, in request order. Main
+     * resolves each against the session's folder and place, so a path on a host this
+     * computer cannot reach, or on a network share, answers false without being read.
+     */
+    resolveLinkPaths: (sessionId: string, printedPaths: string[]) => Promise<boolean[]>;
+    /** Shows a path the session printed in the file manager. False when nothing is there. */
+    revealLinkPath: (sessionId: string, printedPath: string) => Promise<boolean>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
      * Unscoped map of sessionId -> true for sessions whose agent is on screen
@@ -8914,6 +8998,12 @@ export interface ElectronAPI {
      *  instant (the model load happens ahead of the press, not during it). Pass
      *  `null` to release the warm engines (dictation disabled). Fire-and-forget. */
     prewarm: (config: DictationConfig | null) => void;
+    /** Record a push-to-talk press or how a hold ended in the app log, the
+     *  evidence for a report of a stuck hold. Fire-and-forget. */
+    holdTrace: (trace: DictationHoldTrace) => void;
+    /** The main window lost OS focus. Not DOM `window` blur, which also fires
+     *  when a click moves focus into a Browser pane guest. */
+    onWindowBlur: (callback: () => void) => () => void;
   };
 
   // Config
@@ -9055,6 +9145,12 @@ export interface ElectronAPI {
   notifications: {
     show: (input: NotificationInput) => void;
     onClicked: (callback: (projectId: string, taskId: string) => void) => () => void;
+    /** Choose a custom sound for an event. Main checks it and keeps its own copy. */
+    pickSound: (eventKey: NotificationEventKey) => Promise<CustomSoundPick>;
+    /** The bytes of an event's custom sound, or null when it has none. */
+    readSound: (eventKey: NotificationEventKey) => Promise<ArrayBuffer | null>;
+    /** Main asks the main window to play an event's sound beside a desktop notification. */
+    onPlaySound: (callback: (eventKey: NotificationEventKey) => void) => () => void;
   };
 
   // Window controls
@@ -9737,11 +9833,6 @@ export interface ElectronAPI {
      * unsubscribe closure.
      */
     onAnswerStream: (callback: (event: KnowledgeGraphAnswerStreamPush) => void) => () => void;
-    /**
-     * Earlier conversations semantically near a task, excluding the task's own.
-     * Proactive recall: what have I already figured out about this?
-     */
-    relatedToTask: (taskId: string, projectId?: string | null) => Promise<KnowledgeGraphQueryHit[]>;
   };
 
   // Platform
@@ -9810,14 +9901,23 @@ export interface BrowserCaptureInput {
  *   - `showing`: the pane is visible in an open task window.
  *   - `hidden`: the user hid it with the Browser pill; the guest is kept
  *     mounted behind the terminal and stays driveable.
- *   - `parked`: the user closed the task window; the guest is kept mounted in
- *     the hidden window and stays driveable.
+ *   - `parked`: the task's window is closed, because the user closed it or
+ *     nobody has opened it; the guest is kept mounted in a hidden window and
+ *     stays driveable.
  *   - `offscreen`: a lane, which never has a window.
  * A surface the user CLOSED is not a visibility: its handle is retired with
  * reason `user-closed` and answers `surface-gone`.
  */
 export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
 export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
+/**
+ * How long `kangentic_browser_open_pane` waits for a pushed pane to register a
+ * live guest, covering the window mount, the `<webview>` attach and the guest's
+ * `dom-ready`. In shared code because the renderer's parked-window reaper must
+ * keep a window born parked for at least this long.
+ */
+export const BROWSER_PANE_OPEN_TIMEOUT_MS = 10_000;
 
 /**
  * A Command Terminal slot's Browser layout, saved per project and slot so the
@@ -10109,23 +10209,6 @@ export interface KnowledgeGraphIndexCounts {
 export interface KnowledgeGraphIndexSummary extends KnowledgeGraphIndexCounts {
   /** Bytes every corpus occupies: text plus vectors. */
   storageBytes: number;
-}
-
-/** One conversation a task window's prior work lists. */
-export interface KnowledgeGraphQueryHit {
-  /** `${corpus}::${docId}` - the graph node this hit belongs to, so the canvas
-   *  can light it without the renderer re-deriving the join. */
-  docKey: string;
-  sessionId: string;
-  taskId: string | null;
-  taskTitle: string | null;
-  agentName: string | null;
-  snippet: string;
-  score: number;
-  matchKind: 'lexical' | 'semantic' | 'hybrid';
-  /** How many chunks in this conversation matched. */
-  matchCount: number;
-  turnTs: number | null;
 }
 
 /**

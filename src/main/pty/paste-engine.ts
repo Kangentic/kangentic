@@ -2,6 +2,7 @@ import type { SessionManager } from './session-manager';
 import type { SubmissionVerifier } from '../../shared/types';
 import { waitForOutputSettle, type OutputSettleResult } from './output-settle';
 import { automatedKeysRefusal, waitForAutomatedKeysClearance, waitUntilAutomatedKeysClear } from './automated-keys-guard';
+import { isSlashCommand } from './slash-command';
 
 /**
  * PasteEngine: deterministic paste-and-submit for TUI agents. Private
@@ -23,7 +24,10 @@ import { automatedKeysRefusal, waitForAutomatedKeysClearance, waitUntilAutomated
  *      with an `'activity'` non-idle backstop and a post-`\r` data path
  *      (50-byte cursor-blip floor). The first signal to resolve wins; a
  *      verifier returning false does NOT short-circuit the others. Retry
- *      `\r` once on timeout, hard-error if both windows time out.
+ *      `\r` once on timeout, hard-error if both windows time out. The first
+ *      window drops the data path on an idle session whose agent reports
+ *      every turn (`SessionManager.expectsTurnAfterSubmit`), unless the
+ *      paste is a slash command.
  *
  * Enter must be a separate write: per Ink source, bracketed paste content
  * goes to `usePaste` (not `useInput`), and if `\r` arrives in the same
@@ -226,7 +230,10 @@ function waitForPasteSettle(
   });
 }
 
-type EvidenceResult = 'verifier' | 'activity' | 'data' | 'timeout';
+/** `first-window-data`: neither window saw a turn start or proof, but the first
+ *  window saw output past the floor, so the retry Enter was a no-op after a
+ *  submit whose hook never came. */
+type EvidenceResult = 'verifier' | 'activity' | 'data' | 'first-window-data' | 'timeout';
 
 /**
  * Cursor-blip floor for the post-`\r` data path. After the carriage return
@@ -266,6 +273,7 @@ function waitForSubmissionEvidence(
   verifier: SubmissionVerifier | undefined,
   tWriteEnter: number,
   allowAnyDataFallback: boolean,
+  postEnterOutput?: { bytes: number },
 ): Promise<EvidenceResult> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -300,6 +308,7 @@ function waitForSubmissionEvidence(
       const chunk = args[1];
       if (typeof chunk === 'string') {
         postWriteBytes += chunk.length;
+        if (postEnterOutput) postEnterOutput.bytes = postWriteBytes;
       }
       if (allowAnyDataFallback && postWriteBytes >= POST_ENTER_DATA_FLOOR_BYTES) {
         finish('data');
@@ -446,10 +455,24 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         // so retrying is safe even when the original DID submit and we
         // simply missed the evidence. Two timeouts -> hard failure with a
         // descriptive code so the renderer can prompt the user.
+        //
+        // On an idle session whose agent reports every turn, output is not
+        // proof: the agent can repaint the paste itself after the Enter, and
+        // the first window then took that for a submit and left the text
+        // sitting in the prompt. There the first window waits for the turn
+        // itself. A session mid-turn keeps the data path, because a message
+        // queued behind a running turn starts no turn of its own, and so does
+        // the retry window, so a hook that lands late costs a no-op Enter
+        // rather than a false failure. A slash command keeps it as well: a CLI
+        // can run one itself and start no turn, and the Enter it took would
+        // leave the retry window nothing to read but an empty prompt.
         const evidenceStart = Date.now();
+        const firstWindowTakesData = allowAnyDataFallback
+          && (isSlashCommand(safeText) || !sessionManager.expectsTurnAfterSubmit(sessionId));
+        const firstWindowOutput = { bytes: 0 };
         let evidenceResult = await waitForSubmissionEvidence(
           sessionManager, sessionId, EVIDENCE_FIRST_WAIT_MS, linkedSignal,
-          verifier, tWriteEnter, allowAnyDataFallback,
+          verifier, tWriteEnter, firstWindowTakesData, firstWindowOutput,
         );
         let retried = false;
         if (evidenceResult === 'timeout') {
@@ -471,6 +494,18 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
             sessionManager, sessionId, EVIDENCE_RETRY_WAIT_MS, linkedSignal,
             verifier, tRetryEnter, allowAnyDataFallback,
           );
+          // The first window's output still counts once the retry has gone. A
+          // hooks session whose hooks never fire answers a submit with output
+          // and no turn, and a reply that ended inside the first window leaves
+          // the retry's no-op Enter nothing to show. A repaint still got its
+          // retry Enter, which is what the first window waited for.
+          if (
+            evidenceResult === 'timeout'
+            && allowAnyDataFallback
+            && firstWindowOutput.bytes >= POST_ENTER_DATA_FLOOR_BYTES
+          ) {
+            evidenceResult = 'first-window-data';
+          }
         }
         const evidenceMs = Date.now() - evidenceStart;
 

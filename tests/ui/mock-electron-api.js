@@ -193,9 +193,6 @@
   // A project missing here falls back to knowledgeGraphSnapshot.
   let knowledgeGraphSnapshotsByProject = {};
   let knowledgeGraphAnswerResult = null;
-  // Proactive-recall fixture for task detail; empty means the panel renders
-  // nothing at all, which is the common case and must stay silent.
-  let memoryRelatedToTask = null;
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
   // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
   // ConversationSessionMeta[] the session picker offers. Both seeded via
@@ -388,6 +385,17 @@
       showRateLimits: true,
     },
     notifications: {
+      muted: false,
+      appBadge: true,
+      sounds: {
+        onAgentIdle: 'off',
+        onAgentCrash: 'off',
+        onPlanComplete: 'off',
+        onWorkflowComplete: 'off',
+        onWorkflowStalled: 'off',
+        onSpawnStalled: 'off',
+      },
+      customSounds: {},
       desktop: {
         onAgentIdle: true,
         onAgentCrash: true,
@@ -403,7 +411,7 @@
         onWorkflowComplete: true,
         onWorkflowStalled: true,
         onSpawnStalled: true,
-        durationSeconds: 4,
+        durationSeconds: 5,
         maxCount: 5,
       },
       cooldownSeconds: 10,
@@ -2476,6 +2484,19 @@
         throw new Error('Mock: session spawn not available in UI tests');
       },
       kill: async function () {},
+      // Nothing exists until a spec lists it in window.__mockLinkPaths, so a printed
+      // path in the web demo is plain text. A reveal records to
+      // window.__mockRevealedLinkPaths as { sessionId, printedPath }.
+      resolveLinkPaths: async function (_sessionId, printedPaths) {
+        const known = (typeof window !== 'undefined' && window.__mockLinkPaths) || [];
+        return printedPaths.map(function (printedPath) { return known.includes(printedPath); });
+      },
+      revealLinkPath: async function (sessionId, printedPath) {
+        if (typeof window === 'undefined') return false;
+        if (!window.__mockRevealedLinkPaths) window.__mockRevealedLinkPaths = [];
+        window.__mockRevealedLinkPaths.push({ sessionId: sessionId, printedPath: printedPath });
+        return (window.__mockLinkPaths || []).includes(printedPath);
+      },
       // Suspend and resume record, in call order, the project id each was
       // stamped with to window.__mockSuspendCalls / window.__mockResumeCalls as
       // { taskId, projectId } (`undefined` normalized to null, as backlog.demote
@@ -3423,8 +3444,23 @@
     dictation: {
       // Call logs for test assertions. Reset between tests by truncating length.
       __startCalls: [],
+      // Test hook: after __holdStarts(), each `start` stays pending until
+      // __releaseStart(index, dictationSessionId) resolves it with that id, the
+      // window a slow engine start stretches to. Off by default.
+      __holdStartsOn: false,
+      __heldStarts: [],
+      __holdStarts: function () { window.electronAPI.dictation.__holdStartsOn = true; },
+      __releaseStart: function (index, dictationSessionId) {
+        window.electronAPI.dictation.__heldStarts[index].resolve(dictationSessionId);
+      },
       start: async function (options) {
         window.electronAPI.dictation.__startCalls.push(options);
+        if (window.electronAPI.dictation.__holdStartsOn) {
+          var heldId = await new Promise(function (resolve) {
+            window.electronAPI.dictation.__heldStarts.push({ resolve: resolve });
+          });
+          return { dictationSessionId: heldId, engineId: 'stub', modelId: null, needsDownload: false, sentenceCaseFinal: false };
+        }
         // Test hook: window.__mockDictationSentenceCaseFinal, a boolean, is what
         // main reports when the live model writes all caps and the committed text
         // is its own (the Zipformer with no refinement). The hook recases a final
@@ -3433,8 +3469,22 @@
         return { dictationSessionId: 'mock-dictation-1', engineId: 'stub', modelId: null, needsDownload: false, sentenceCaseFinal: sentenceCaseFinal };
       },
       __stopCalls: [],
+      // Test hook: hold `stop` open, the window a cold refinement model stretches
+      // to seconds. A press in that window has to be refused.
+      __stopGate: null,
+      __blockStop: function () {
+        var release = function () {};
+        window.electronAPI.dictation.__stopGate = new Promise(function (resolve) { release = resolve; });
+        window.electronAPI.dictation.__releaseStop = function () {
+          release();
+          window.electronAPI.dictation.__stopGate = null;
+        };
+      },
+      __releaseStop: function () {},
       stop: async function (dictationSessionId, expectedFrames) {
         window.electronAPI.dictation.__stopCalls.push({ dictationSessionId, expectedFrames });
+        var stopGate = window.electronAPI.dictation.__stopGate;
+        if (stopGate) await stopGate;
         // Test hook: window.__mockDictationStopError, a string, makes stop()
         // reject with an Error carrying that message - so a spec can exercise
         // useDictation's finalizeOnRelease() catch branch (a real engine fault
@@ -3576,6 +3626,26 @@
       __prewarmCalls: [],
       prewarm: function (config) {
         window.electronAPI.dictation.__prewarmCalls.push(config);
+      },
+      __holdTraces: [],
+      holdTrace: function (trace) {
+        window.electronAPI.dictation.__holdTraces.push(trace);
+      },
+      // Main's OS window blur. Tests drive it with window.__emitDictationWindowBlur().
+      onWindowBlur: function (callback) {
+        if (!window.__mockDictationWindowBlurListeners) window.__mockDictationWindowBlurListeners = [];
+        window.__mockDictationWindowBlurListeners.push(callback);
+        if (!window.__emitDictationWindowBlur) {
+          window.__emitDictationWindowBlur = function () {
+            var listeners = (window.__mockDictationWindowBlurListeners || []).slice();
+            for (var listenerIndex = 0; listenerIndex < listeners.length; listenerIndex++) { listeners[listenerIndex](); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDictationWindowBlurListeners || [];
+          var callbackIndex = listeners.indexOf(callback);
+          if (callbackIndex >= 0) listeners.splice(callbackIndex, 1);
+        };
       },
     },
 
@@ -5836,6 +5906,34 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      // A spec sets `window.__mockCustomSoundPick` to answer the Custom file choice.
+      // `window.__mockCustomSoundPickRejects = 'reason'` makes it reject, as main's IPC
+      // does when the file dialog or the copy throws.
+      pickSound: function () {
+        if (window.__mockCustomSoundPickRejects) {
+          return Promise.reject(new Error(String(window.__mockCustomSoundPickRejects)));
+        }
+        return Promise.resolve(window.__mockCustomSoundPick || { status: 'cancelled' });
+      },
+      readSound: function () { return Promise.resolve(null); },
+      onPlaySound: function (callback) {
+        // Main pushes the event key when a desktop notification left its sound to this
+        // window. Tests fire it with `window.__mockFirePlaySound(eventKey)`. A REAL
+        // unsubscribe, like onClicked, so a StrictMode double mount leaves one listener.
+        if (!window.__mockPlaySoundListeners) window.__mockPlaySoundListeners = [];
+        window.__mockPlaySoundListeners.push(callback);
+        if (!window.__mockFirePlaySound) {
+          window.__mockFirePlaySound = function (eventKey) {
+            var listeners = (window.__mockPlaySoundListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](eventKey); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockPlaySoundListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
     },
 
     window: {
@@ -7093,13 +7191,6 @@
         }
         return Promise.resolve(result);
       },
-      relatedToTask: function (taskId, projectId) {
-        if (typeof window !== 'undefined') {
-          if (!window.__mockRelatedToTaskCalls) window.__mockRelatedToTaskCalls = [];
-          window.__mockRelatedToTaskCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
-        }
-        return Promise.resolve(memoryRelatedToTask ? JSON.parse(JSON.stringify(memoryRelatedToTask)) : []);
-      },
       onGraphChanged: function (callback) {
         if (!window.__mockGraphChangedListeners) window.__mockGraphChangedListeners = [];
         window.__mockGraphChangedListeners.push(callback);
@@ -7720,9 +7811,6 @@
     }
     if (result && result.knowledgeGraphAnswerResult && typeof result.knowledgeGraphAnswerResult === 'object') {
       knowledgeGraphAnswerResult = result.knowledgeGraphAnswerResult;
-    }
-    if (result && Array.isArray(result.memoryRelatedToTask)) {
-      memoryRelatedToTask = result.memoryRelatedToTask;
     }
     if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
       Object.assign(transcriptSeeds, result.transcriptSeeds);

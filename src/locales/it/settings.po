@@ -81,6 +81,18 @@ msgstr "{displayName}, {percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}, {sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "{hostname} now presents a different key."
 msgstr ""
@@ -197,6 +209,10 @@ msgstr "Un modello piccolo risponde altrettanto bene e più in fretta, ma invent
 #, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "Di solito basta un modello piccolo e veloce per leggere una risposta e rispondere sì o no."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr ""
 
 #: src/renderer/components/settings/settings-card.tsx
 #, fuzzy
@@ -386,6 +402,10 @@ msgstr "Chiave API (facoltativa)"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "Arresti anomali ed errori dell'app (stack trace con i percorsi specifici della macchina rimossi dal codice dell'app)"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "App launches, platform, and architecture"
@@ -539,12 +559,6 @@ msgstr "Bacheca"
 msgid "Board layout"
 msgstr "Layout della bacheca"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgctxt "notification channel"
-msgid "Both"
-msgstr "Entrambi"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgctxt "shortcut display"
@@ -643,6 +657,11 @@ msgstr "Verifica"
 #, fuzzy
 msgid "Checking..."
 msgstr "Verifica in corso..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 #, fuzzy
@@ -1018,6 +1037,10 @@ msgstr "Comandi personalizzati accessibili dalla finestra di dettaglio dell'atti
 msgid "Custom commands in the task window's header and menu."
 msgstr "Comandi personalizzati nell'intestazione e nel menu dell'attività."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Custom relay address"
@@ -1094,7 +1117,7 @@ msgstr "Descrizione"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "Desktop"
 
@@ -1228,6 +1251,11 @@ msgstr "Inserisci il percorso manualmente"
 msgid "Environment variables that turn telemetry off."
 msgstr "Variabili d'ambiente che disattivano la telemetria."
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
@@ -1270,6 +1298,11 @@ msgstr "Non riuscito"
 #, fuzzy
 msgid "Fair accuracy"
 msgstr "Precisione discreta"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1495,19 +1528,18 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "Quanto tempo un agente ti attende prima che il timer di inattività lo metta in pausa."
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "How long toasts remain visible"
-msgstr "Per quanto tempo le notifiche restano visibili"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "How long toasts stay up and how many stack at once."
-msgstr "Durata dei toast e quanti possono essere impilati insieme."
+msgid "How long toasts appear, in seconds"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
 msgid "How many agents run at once and what happens when idle."
 msgstr "Quanti agenti eseguire insieme e cosa accade in inattività."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -1553,6 +1585,10 @@ msgstr "Come il progetto arresta ciò che un'attività lascia in esecuzione."
 #, fuzzy
 msgid "How to install and pair"
 msgstr "Come installare e associare"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -1833,14 +1869,9 @@ msgid "Max concurrent sessions"
 msgstr "Sessioni simultanee max"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Max visible toasts"
-msgstr "Max notifiche visibili"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Maximum simultaneous toasts on screen"
-msgstr "Numero massimo di notifiche simultanee sullo schermo"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1912,6 +1943,10 @@ msgstr "Sposta..."
 #, fuzzy
 msgid "Moving between task windows and arranging them."
 msgstr "Spostamento tra le finestre attività e loro disposizione."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2065,9 +2100,9 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "Disattivato"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification sound"
 msgid "Off"
 msgstr "Disattivato"
 
@@ -2166,6 +2201,10 @@ msgid "Password for the host"
 msgstr "Password dell'host"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Percorso sul server per le attività di questo progetto. Lascia vuoto per usare la directory predefinita del server"
@@ -2238,6 +2277,10 @@ msgstr "Piano completato"
 #, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "Pianifica ogni workflow. Nulla parte finché non ne scegli uno."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2618,6 +2661,11 @@ msgstr "Revocare \"{revokeTargetName}\" ({revokeTargetFingerprint})? Perderà su
 msgid "Revoke device"
 msgstr "Revoca dispositivo"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2793,10 +2841,18 @@ msgstr "Mostra il pannello del terminale sotto la board"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "Mostra una PR come pronta quando puoi saltare la revisione obbligatoria, mai un controllo non superato."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
 msgstr "Affiancata"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2824,6 +2880,11 @@ msgstr "Dimensione"
 #, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "Manda a capo le righe lunghe invece di scorrere il diff in orizzontale."
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2922,6 +2983,11 @@ msgstr "Riepiloghi scritti"
 #, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "Crea un collegamento simbolico al node_modules radice in ogni albero di lavoro per evitare una nuova installazione; i repository workspace dovrebbero disattivarlo."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
@@ -3152,6 +3218,11 @@ msgstr "Tutti i tasti di scelta rapida torneranno ai valori predefiniti. Le asso
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "Verranno cancellati cookie, localStorage, IndexedDB, service worker e cache HTTP/di autenticazione del riquadro browser integrato in tutte le attività e i progetti. Verrà effettuata la disconnessione da tutti i siti."
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Ticket numbers"
@@ -3164,14 +3235,9 @@ msgstr "Durata della sessione in tempo reale"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "Toast"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Toast auto-dismiss"
-msgstr "Chiusura automatica notifiche"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -3225,6 +3291,10 @@ msgstr ""
 #, fuzzy
 msgid "Try a different search term"
 msgstr "Prova un termine di ricerca diverso"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -3392,11 +3462,6 @@ msgstr "In caso di inattività"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Quando Kangentic sospende gli agenti in attesa di un tuo input."
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "Where each kind of alert shows up."
-msgstr "Dove viene mostrato ciascun tipo di avviso."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy

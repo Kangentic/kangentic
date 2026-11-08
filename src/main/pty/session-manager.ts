@@ -5202,6 +5202,25 @@ export class SessionManager extends EventEmitter {
     return this.registry.getSessionAgentName(sessionId);
   }
 
+  /** The keys that move the session's agent prompt cursor to the end of the input
+   *  (`AgentAdapter.promptEndKeys`), or '' for a shell or an unmeasured agent. */
+  getPromptEndKeys(sessionId: string): string {
+    return this.registry.get(sessionId)?.agentParser?.promptEndKeys ?? '';
+  }
+
+  /**
+   * Whether an Enter on this session should show up as a turn starting: it is
+   * idle, and its agent's activity comes only from hooks, so a submit fires one.
+   * False mid-turn, where a submitted message queues and starts no turn, at a
+   * permission prompt, and for an agent read from the PTY, whose hooks may never
+   * flow. The paste engine reads this to decide whether output alone proves a
+   * submit.
+   */
+  expectsTurnAfterSubmit(sessionId: string): boolean {
+    const activityKind = this.registry.get(sessionId)?.agentParser?.runtime?.activity?.kind;
+    return activityKind === 'hooks' && this.telemetry.getSessionActivity(sessionId) === 'idle';
+  }
+
   /**
    * The folder the session's command was built for, which its agent works in.
    * Differs from `Session.cwd` when the PTY started in the home folder and the
@@ -5214,6 +5233,18 @@ export class SessionManager extends EventEmitter {
   /** Where the session's CLI runs when it is not this machine (a WSL distro), or null. */
   getSessionCliTarget(sessionId: string): StoredCliTarget | null {
     return this.registry.get(sessionId)?.cliTarget ?? null;
+  }
+
+  /** What deciding where the session's printed paths live needs, or null for an unknown session. */
+  getSessionPathContext(sessionId: string): { shell: string; commandCwd: string; cliTarget: StoredCliTarget | null; projectId: string } | null {
+    const session = this.registry.get(sessionId);
+    if (!session) return null;
+    return {
+      shell: session.shell,
+      commandCwd: session.commandCwd,
+      cliTarget: session.cliTarget ?? null,
+      projectId: session.projectId,
+    };
   }
 
   /**

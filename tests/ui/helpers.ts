@@ -50,7 +50,7 @@ export function collectPageErrors(page: Page): () => string[] {
  * This is the only correct way to assert "no toast appeared", and the reason is
  * not obvious: `expect(locator).toHaveCount(0)` AUTO-RETRIES for up to the expect
  * timeout (~5s by default), while a toast auto-dismisses after
- * `notifications.toasts.durationSeconds` (4s in the mock config). So a wrongly
+ * `notifications.toasts.durationSeconds` (5s in the mock config). So a wrongly
  * raised toast disappears on its own INSIDE the retry window and the assertion
  * reports a false pass. The test goes green against the bug it exists to catch.
  *
@@ -302,6 +302,8 @@ export interface TransientTerminalSetup {
   terminalFontSize?: number;
   /** Seeds the user's hotkey overrides before the app mounts, keyed by `KEYBINDINGS` id. */
   hotkeyOverrides?: Record<string, string>;
+  /** Chromium flags for this browser, such as `TERMINAL_TEXT_LAUNCH_ARGS`. */
+  launchArgs?: string[];
 }
 
 /**
@@ -355,7 +357,7 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
   `;
 
   await waitForViteReady();
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: setup.launchArgs });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, ...setup.contextOptions });
   const page = await context.newPage();
   if (setup.hotkeyOverrides) {

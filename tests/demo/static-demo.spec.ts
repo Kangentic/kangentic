@@ -943,6 +943,32 @@ test('Escape in a task window terminal under the pointer closes the window, then
   await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
 });
 
+test('Escape with a terminal find bar open closes the bar, keeps the window, and posts nothing', async ({ page }) => {
+  // boot.js closes a hovered terminal's task window ahead of the renderer, so an open find bar has
+  // to take the key first, as it does on the desktop.
+  const readMessages = await hostFrame(page, 'task');
+  const frame = page.frameLocator('#demo');
+  const detail = frame.locator('[data-testid="task-detail-titlebar"]');
+  await expect(detail).toBeVisible();
+  const terminal = frame.locator('[data-testid^="window-frame-"] .xterm').first();
+  const box = await terminal.boundingBox();
+  expect(box, 'the task window terminal has a box to hover').not.toBeNull();
+  if (!box) return;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect.poll(() => terminal.evaluate((element) => element.parentElement?.matches(':hover') ?? false)).toBe(true);
+  const textarea = frame.locator('[data-testid^="window-frame-"] .xterm-helper-textarea').first();
+  await focusAcrossFrame(textarea);
+
+  await page.keyboard.press('ControlOrMeta+f');
+  await expect(frame.locator('[data-testid="terminal-find-input"]')).toBeFocused();
+  await focusAcrossFrame(textarea);
+
+  await page.keyboard.press('Escape');
+  await expect(frame.locator('[data-testid="terminal-find-bar"]')).toHaveCount(0);
+  await expect(detail).toBeVisible();
+  expect(hasEscape(await readMessages()), 'the find bar takes the first Escape').toBe(false);
+});
+
 test('Escape in a Command Terminal posts, since the desktop never closes that window on Escape', async ({ page }) => {
   // A Command Terminal renders through WindowFrame like a task window, but its layer hides on the
   // panel-close combo, the toggle, or a backdrop click, never on Escape. An open frame alone is

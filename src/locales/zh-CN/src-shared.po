@@ -359,6 +359,10 @@ msgid "Find in conversation"
 msgstr "在对话中查找"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Find on board"
 msgstr "在看板中查找"
 
@@ -919,6 +923,10 @@ msgstr "保存当前打开的表单，与其「保存」「创建」或「完成
 msgctxt "automation field"
 msgid "Script"
 msgstr "脚本"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."

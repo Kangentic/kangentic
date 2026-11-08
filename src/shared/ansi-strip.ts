@@ -31,6 +31,88 @@
  */
 
 /**
+ * An escape sequence cut off at the end of a chunk: a lone ESC, an unterminated
+ * CSI, or a string (OSC, DCS, APC, PM, SOS) still waiting for its terminator. A
+ * reader of a chunked stream holds it for the next chunk, so neither half of a
+ * split sequence is read as text. An OSC 8 hyperlink splits often: it carries a whole
+ * URL, and a stream drawing links is mostly those payloads.
+ */
+export const TRAILING_PARTIAL_ESCAPE = /\x1b(?:\[[\x30-\x3f]*[\x20-\x2f]*|[\]P_^X][^\x07\x1b]*\x1b?|[\x20-\x2f]+)?$/;
+
+/** A carried partial longer than this keeps only its introducer and a trailing ESC. */
+const MAX_CARRY_LENGTH = 4096;
+
+/**
+ * What to hold over from a partial escape. A long one keeps its introducer
+ * (`\x1b]`, `\x1b[`, ...) and a trailing ESC that may start its terminator.
+ * The payload between them never matters to a reader of text, and keeping the
+ * introducer is what makes the rest of the sequence, when it ends in a later chunk,
+ * still read as a sequence. Dropping the whole partial reads that rest as text.
+ */
+export function carryForPartialEscape(partial: string): string {
+  if (partial.length <= MAX_CARRY_LENGTH) return partial;
+  return partial.slice(0, 2) + (partial.endsWith('\x1b') ? '\x1b' : '');
+}
+
+/**
+ * How many leading characters to skip when `data` starts inside a string sequence
+ * (OSC, DCS, APC, PM, SOS) whose opening it does not hold, or 0 when it does not.
+ * A slice of a stream can start there, and a parser that never saw the opening
+ * paints the rest of the payload as text, a hyperlink's URL included.
+ *
+ * It reads the shape alone. Text cannot be told from a payload, but a string
+ * terminator with no opening is never valid, so the first control byte decides: ST
+ * or BEL means this was a payload, and anything else means it was text. A plain line
+ * that ends in a bell reads as a payload and loses that line, at the head of a
+ * slice, which is the accepted cost of BEL being a terminator. An ESC on the slice's
+ * last character reads as text before a new sequence: it starts a CSI as often as ST.
+ */
+export function skipTruncatedStringSequence(data: string): number {
+  const scanLimit = Math.min(data.length, MAX_CARRY_LENGTH);
+  for (let index = 0; index < scanLimit; index += 1) {
+    const code = data.charCodeAt(index);
+    if (code === 0x07) return index + 1;
+    if (code === 0x1b) return data.charCodeAt(index + 1) === 0x5c ? index + 2 : 0;
+    if (code < 0x20) return 0;
+  }
+  return 0;
+}
+
+/** An OSC 8 open or close cut off at a chunk's end, or an ESC that may start one. */
+const TRAILING_PARTIAL_HYPERLINK = /\x1b(?:\](?:8(?:;[^\x07\x1b]*\x1b?)?)?)?$/;
+const HYPERLINK_SEQUENCE = /\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+/** An OSC 8 open, which has a target where a close has none. */
+const HYPERLINK_OPEN = /\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]+)(?:\x07|\x1b\\)/g;
+
+/**
+ * Removes OSC 8 from a chunked stream and keeps the labels, holding a sequence cut at
+ * a chunk's end for the next chunk. For a terminal with no way to open a link: left
+ * in place, xterm's fallback answers a tap with a `confirm()` and a `window.open()`.
+ */
+export function createHyperlinkStripper(): (chunk: string) => string {
+  let carry = '';
+  return (chunk) => {
+    // Most chunks hold no link, and this runs on every chunk a phone watches.
+    if (!carry && !chunk.includes('\x1b]8') && !chunk.endsWith('\x1b') && !chunk.endsWith('\x1b]')) return chunk;
+    const text = carry + chunk;
+    const partial = text.match(TRAILING_PARTIAL_HYPERLINK)?.[0] ?? '';
+    // Past this the bytes are no URL, and holding them would stall the feed.
+    carry = partial.length <= MAX_CARRY_LENGTH ? partial : '';
+    const complete = carry ? text.slice(0, -carry.length) : text;
+    return complete.replace(HYPERLINK_SEQUENCE, '');
+  };
+}
+
+/**
+ * Writes each OSC 8 hyperlink's target into the text beside its label, for a reader
+ * that scrapes URLs. A stripper removes the target with the sequence, which is the
+ * only copy of a URL behind a shortened label, and of a whole URL its label wraps.
+ */
+export function exposeHyperlinkTargets(text: string): string {
+  return text.replace(HYPERLINK_OPEN, '$1 ');
+}
+
+/**
  * The control-code core of `stripAnsiEscapes` (steps 1-5): removes escape
  * sequences and control bytes WITHOUT the whitespace normalization of steps
  * 6-8, so callers that must preserve exact payload bytes (e.g. a JSON blob

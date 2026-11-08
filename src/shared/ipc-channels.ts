@@ -136,6 +136,8 @@ export const IPC = {
   /** The Reset terminal action: clear stuck terminal modes in place. */
   SESSION_RESET_TERMINAL: 'session:resetTerminal',
   SESSION_LIST: 'session:list',
+  SESSION_RESOLVE_LINK_PATHS: 'session:resolveLinkPaths',
+  SESSION_REVEAL_LINK_PATH: 'session:revealLinkPath',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   /**
    * Renderer -> main (send): a renderer asks for its direct port to the pty
@@ -300,6 +302,9 @@ export const IPC = {
   // Notifications
   NOTIFICATION_SHOW: 'notification:show',
   NOTIFICATION_CLICKED: 'notification:clicked',
+  NOTIFICATION_PICK_SOUND: 'notification:pickSound',
+  NOTIFICATION_READ_SOUND: 'notification:readSound',
+  NOTIFICATION_PLAY_SOUND: 'notification:playSound',
 
   // Board Config
   BOARD_CONFIG_EXISTS: 'boardConfig:exists',
@@ -730,9 +735,6 @@ export const IPC = {
    *  Declared in the surface's POP_OUT_SURFACES `channels` too, or a detached
    *  window never sees a word. */
   KNOWLEDGE_GRAPH_ANSWER_STREAM: 'knowledgeGraph:graphAnswerStream',
-  /** Earlier conversations semantically near a task, for proactive recall in
-   *  task detail. The index finding you, rather than waiting to be searched. */
-  KNOWLEDGE_GRAPH_RELATED_TO_TASK: 'knowledgeGraph:relatedToTask',
 
   // Diagnostics (product, all builds): renderer console + window error
   // forwarding to main, where they are persisted to .kangentic/logs/.
@@ -755,6 +757,8 @@ export const IPC = {
   TRANSCRIBE_DOWNLOAD_MODEL: 'transcribe:downloadModel',
   TRANSCRIBE_LIVE_WRITE: 'transcribe:liveWrite',
   TRANSCRIBE_PREWARM: 'transcribe:prewarm',
+  TRANSCRIBE_HOLD_TRACE: 'transcribe:holdTrace',
+  TRANSCRIBE_WINDOW_BLUR: 'transcribe:windowBlur',
 } as const;
 
 /**

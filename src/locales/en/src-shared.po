@@ -358,6 +358,10 @@ msgid "Find in conversation"
 msgstr "Find in conversation"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr "Find in terminal"
+
+#: src/shared/keybindings.ts
 msgid "Find on board"
 msgstr "Find on board"
 
@@ -902,6 +906,10 @@ msgstr "Save the open form, the same as its Save, Create or Done button."
 msgctxt "automation field"
 msgid "Script"
 msgstr "Script"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr "Search the focused terminal's output, taking this key from any program there that reads it."
 
 #: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."

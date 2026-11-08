@@ -237,15 +237,6 @@ describe('withGuest - agent input signalling', () => {
     expect(signalled).toEqual([]);
   });
 
-  it('never signals when the host window is minimized', async () => {
-    // `Once`, not `mockReturnValue`: this block runs before the describes that
-    // assume the default null host, and `vi.clearAllMocks()` clears call records
-    // but NOT implementations, so a sticky return here would fail them instead.
-    vi.mocked(BrowserWindow.fromWebContents).mockReturnValueOnce({ isMinimized: () => true } as never);
-    await withGuest({ selector: { projectId: 'p' }, capability: 'interact', config: config() }, async () => 'ran');
-    expect(signalled).toEqual([]);
-  });
-
   it('serializes two concurrent drives on one guest instead of interleaving them', async () => {
     // The reported bug: three subagents drove one pane at once, interleaving
     // clicks, navigations and screenshots. `withGuest` now holds a per-guest
@@ -425,28 +416,13 @@ describe('withGuest - resolution and attach', () => {
     expect(vi.mocked(attachDebugger)).not.toHaveBeenCalled();
   });
 
-  // A minimized window composites nothing, so Page.captureScreenshot never
-  // resolves and wedges every later command for that guest. Measured on
-  // Electron 41; blurred and occluded windows are unaffected. Refusing up front
-  // is what keeps a popped-out pane safe to minimize.
-  it('refuses when the pane host window is minimized, instead of hanging', async () => {
+  // A closed task window must not cost the agent its browser, and the user
+  // minimizing Kangentic is no reason to stop one either. A capture holds the
+  // guest drawing itself (`guest-capture-hold.ts`), and no drive reads the host.
+  it('runs a drive against a pane whose host window is minimized', async () => {
     browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
     seedGuest(7);
     vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => true } as never);
-    const body = vi.fn(async () => 'ran');
-    const result = await withGuest(
-      { selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() },
-      body,
-    );
-    expect(result).toMatchObject({ ok: false, error: { kind: 'pane-not-rendering' } });
-    expect(body).not.toHaveBeenCalled();
-    expect(vi.mocked(attachDebugger)).not.toHaveBeenCalled();
-  });
-
-  it('runs normally when the host window is present and not minimized', async () => {
-    browserPaneRegistry.register({ handle: 'pane_s', ownerSessionId: 's', taskId: 't', projectId: 'p', webContentsId: 7, url: null });
-    seedGuest(7);
-    vi.mocked(BrowserWindow.fromWebContents).mockReturnValue({ isMinimized: () => false } as never);
     const result = await withGuest(
       { selector: { sessionId: 'pane_s', projectId: 'p' }, capability: 'observe', config: config() },
       async () => 'ok',

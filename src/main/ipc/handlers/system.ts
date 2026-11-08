@@ -28,7 +28,10 @@ import { openPathBounded } from '../helpers/open-path';
 import { resolveShellLaunch } from '../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../shared/child-env';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
+import { desktopSoundPlan, effectiveNotificationConfig, resolveEventSound } from '../../../shared/notification-settings';
+import { pickCustomSound, readCustomSound } from '../../notifications/custom-sound';
 import type {
+  NotificationEventKey,
   NotificationInput,
   AgentCommand,
   AgentDetectionInfo,
@@ -70,16 +73,27 @@ export function notificationIdentity(input: NotificationInput): { id?: string; g
  * (spawn-stall, plan-complete) and the main-process desktop notifier
  * (src/main/notifications/desktop-notifier.ts, idle and crash), which decides
  * to notify without an IPC round-trip and calls this directly.
+ *
+ * Every desktop notice passes here, so this is where Mute stops the ones no
+ * event switch governs: a Notify me row's desktop half. Its phone push is sent
+ * after this returns (`showAutomationNotification`), so a paired phone keeps it.
  */
 export function showDesktopNotification(context: IpcContext, input: NotificationInput): void {
+  const notifications = effectiveNotificationConfig(context.configManager.load().notifications);
+  if (notifications.muted) return;
+
   if (!Notification.isSupported()) {
     console.warn('[NOTIFICATION] Notifications not supported on this system');
     return;
   }
 
+  const sound = input.event ? resolveEventSound(notifications, input.event) : undefined;
+  const soundPlan = desktopSoundPlan(sound, !context.mainWindow.isDestroyed());
+
   const notification = new Notification({
     title: input.title,
     body: input.body,
+    ...(soundPlan.silent === undefined ? {} : { silent: soundPlan.silent }),
     ...notificationIdentity(input),
   });
 
@@ -124,6 +138,11 @@ export function showDesktopNotification(context: IpcContext, input: Notification
   notification.on('close', cleanup);
 
   notification.show();
+
+  // The main window only, never `broadcast`: a pop-out would play it a second time.
+  if (soundPlan.playInWindow) {
+    context.mainWindow.webContents.send(IPC.NOTIFICATION_PLAY_SOUND, input.event);
+  }
 }
 
 interface CaptureRect { x: number; y: number; width: number; height: number }
@@ -218,6 +237,8 @@ export function registerSystemHandlers(context: IpcContext): void {
         relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),
       });
     }
+    // Mute and the App icon badge switch apply at once, not at the next activity.
+    if (config.notifications) context.appBadge.refresh();
     // Bare-signal broadcast so every open pop-out window re-fetches via config:get and
     // stays in theme/settings sync (they subscribe through config.onChanged in
     // usePopOutBootstrap). The main window is a harmless extra recipient: it does not
@@ -766,6 +787,8 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   // === Notifications ===
   ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => showDesktopNotification(context, input));
+  ipcMain.handle(IPC.NOTIFICATION_PICK_SOUND, (_event, eventKey: NotificationEventKey) => pickCustomSound(context.mainWindow, eventKey));
+  ipcMain.handle(IPC.NOTIFICATION_READ_SOUND, (_event, eventKey: NotificationEventKey) => readCustomSound(eventKey));
 
   // === Clipboard ===
   // Read the clipboard image natively in the main process rather than via the web

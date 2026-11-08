@@ -123,6 +123,15 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   },
 }));
 
+// The custom notification sound file work (dialog, copy, read) is custom-sound.ts's own
+// unit tests. Here only the IPC wiring in front of it is under test.
+const pickCustomSoundSpy = vi.fn();
+const readCustomSoundSpy = vi.fn();
+vi.mock('../../src/main/notifications/custom-sound', () => ({
+  pickCustomSound: (...args: unknown[]) => pickCustomSoundSpy(...args),
+  readCustomSound: (...args: unknown[]) => readCustomSoundSpy(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all mocks are registered)
 // ---------------------------------------------------------------------------
@@ -195,6 +204,7 @@ function makeContext(overrides?: {
     currentProjectId: overrides?.currentProjectId ?? null,
     mcpServerHandle: null,
     mobileBridgeService: { reconcile: vi.fn() },
+    appBadge: { refresh: vi.fn() },
   };
 }
 
@@ -460,6 +470,71 @@ describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => 
     invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
 
     expect(context.mobileBridgeService.reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('CONFIG_SET IPC handler - app icon badge refresh wiring', () => {
+  // Mute and the App icon badge switch must apply at once, not at the next
+  // activity, so a write that touches notifications recounts the badge.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('refreshes the badge when the write carries notifications', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { notifications: { muted: true } });
+
+    expect(context.appBadge.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the badge alone when the write has no notifications', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
+
+    expect(context.appBadge.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('notification sound IPC handlers - custom-sound wiring', () => {
+  // The picker's Custom file choice and the player's read of it each ride one channel.
+  // A pick that read instead, or a read that opened the dialog, breaks Custom with no
+  // type error, since ipcMain.handle accepts any return.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    pickCustomSoundSpy.mockReset();
+    readCustomSoundSpy.mockReset();
+  });
+
+  it('opens the pick dialog over the main window for the event, and answers with its result', async () => {
+    const context = makeContext();
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    pickCustomSoundSpy.mockResolvedValue({ status: 'picked', fileName: 'ding.wav' });
+
+    const answer = await invokeHandler(IPC.NOTIFICATION_PICK_SOUND, 'onAgentCrash');
+
+    expect(pickCustomSoundSpy).toHaveBeenCalledWith(context.mainWindow, 'onAgentCrash');
+    expect(readCustomSoundSpy).not.toHaveBeenCalled();
+    expect(answer).toEqual({ status: 'picked', fileName: 'ding.wav' });
+  });
+
+  it('reads the event\'s saved sound without opening a dialog, and answers with its bytes', async () => {
+    const context = makeContext();
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+    const bytes = new ArrayBuffer(4);
+    readCustomSoundSpy.mockResolvedValue(bytes);
+
+    const answer = await invokeHandler(IPC.NOTIFICATION_READ_SOUND, 'onPlanComplete');
+
+    expect(readCustomSoundSpy).toHaveBeenCalledWith('onPlanComplete');
+    expect(pickCustomSoundSpy).not.toHaveBeenCalled();
+    expect(answer).toBe(bytes);
   });
 });
 

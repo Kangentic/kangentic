@@ -7,6 +7,18 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
 
+#: src/main/notifications/app-badge-display.ts
+msgid "{count, plural, one {# agent needs you} other {# agents need you}}"
+msgstr ""
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is {megabytes} MB, over the 2 MB limit"
+msgstr ""
+
+#: src/main/notifications/custom-sound.ts
+msgid "{fileName} is not a wav, mp3, ogg or m4a file"
+msgstr ""
+
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
 msgid "{place}. Stalled: {reason}"
@@ -173,6 +185,10 @@ msgstr "모두 선택"
 #, fuzzy
 msgid "Session crashed: {label}"
 msgstr "세션 충돌: {label}"
+
+#: src/main/notifications/custom-sound.ts
+msgid "Sound files"
+msgstr ""
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy

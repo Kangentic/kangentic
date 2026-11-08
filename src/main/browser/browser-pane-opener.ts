@@ -19,6 +19,7 @@ import type { ResolvedBrowserAutomationConfig } from './browser-automation-confi
 import { openLane, destroyLane, hasLaneForTask } from './browser-lane-manager';
 import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
+import { BROWSER_PANE_OPEN_TIMEOUT_MS } from '../../shared/types';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -85,6 +86,11 @@ export interface BrowserPaneOpenerHost {
    * is no live app window to push to.
    */
   send(channel: string, ...args: unknown[]): boolean;
+  /**
+   * Whether the task's detail is open where the user can see it. Answered from
+   * the ownership registry, which a parked or retained window never joins.
+   */
+  detailIsOpen(projectId: string, taskId: string): boolean;
   /** Whether the task's Browser pane is detached into its own OS window. */
   hasDetachedWindow(projectId: string, taskId: string): boolean;
   /**
@@ -103,10 +109,6 @@ let readHost: () => BrowserPaneOpenerHost | null = () => null;
 export function setBrowserPaneOpenerHost(reader: () => BrowserPaneOpenerHost | null): void {
   readHost = reader;
 }
-
-/** How long to wait for a pushed pane to register a live guest. Covers the
- *  window mount, the `<webview>` attach, and the guest's `dom-ready`. */
-export const PANE_OPEN_TIMEOUT_MS = 10_000;
 
 /** How long to wait for closed panes to unregister. Just an unmount. */
 export const PANE_CLOSE_TIMEOUT_MS = 3_000;
@@ -213,19 +215,21 @@ function paneStatus(sessionId: string): BrowserPaneStatus | null {
 }
 
 /**
- * A live pane may be HIDDEN: held behind the terminal after the user put it
- * away with the Browser pill, or in a window the user closed while the agent
- * was live (parked). The renderer keeps the guest mounted in both cases, which
- * is why the warm path resolves it at all - but the agent asked for its pane
- * to be OPEN, and before parking existed that call put the pane on screen. So
- * the warm path pushes the same request the cold path does: the renderer ends
- * a hold and un-parks a parked window (both style-only on the same guest,
- * never a remount), and treats it as a no-op for a pane already showing.
+ * A live pane may be HELD: put away behind the terminal with the Browser pill,
+ * inside a window the user has open. The agent asked for its pane to be open,
+ * so the warm path pushes the same request the cold path does, and the renderer
+ * ends the hold, a style change on the same guest.
+ *
+ * That is all this reaches. A window the user closed stays closed (parked), and
+ * the agent goes on driving the page in it. Decided by the renderer, not here:
+ * the visibility this process holds arrives after the fact, and gating the push
+ * on it would skip a hold the renderer had not reported yet. A repeat is
+ * harmless, since on a pane already showing the push changes nothing.
  *
  * Best-effort on purpose: the pane is registered and driveable whatever the
  * window does, so a missing window is not a failure of this call.
  */
-function resurfaceLivePane(host: BrowserPaneOpenerHost, projectId: string, taskId: string): void {
+function endHoldOnLivePane(host: BrowserPaneOpenerHost, projectId: string, taskId: string): void {
   host.send(IPC.BROWSER_PANE_OPEN_REQUEST, projectId, taskId);
 }
 
@@ -400,10 +404,10 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     );
   }
 
-  // Gate BEFORE any side effect. Unlike a driving tool, this one opens a window
+  // Gate BEFORE any side effect. Unlike a driving tool, this one mounts a pane
   // and seeds a URL before there is a guest to resolve, so leaving the check to
-  // the `withGuest` call at the end would let a gated-off capability still put a
-  // pane on the user's screen and only refuse afterwards. That also makes the
+  // the `withGuest` call at the end would let a gated-off capability still load
+  // a page and only refuse afterwards. That also makes the
   // documented "turning off Allow navigation disables this tool" true on every
   // return path, including the already-open one that never reaches `withGuest`.
   const gate = capabilityGate(input.capability, config);
@@ -447,12 +451,9 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // renderer registered it, and main backfilled its `projectId` from the
   // session registry.
   //
-  // Visible PANES only. A task whose surface is currently OFFSCREEN is not
-  // "already open" for this tool's purposes: the caller asked for its pane, so
-  // the cold path below mounts the visible one and its registration reclaims
-  // the offscreen form. Handing the offscreen surface back here would report
-  // `opened: false` for a browser the user cannot see, which is exactly the
-  // failure that ended isolated lanes.
+  // PANES only. A task whose surface is currently OFFSCREEN is decided below,
+  // where the open project and an open detail can both be read: with a detail
+  // open a pane reclaims it, and without one it stays offscreen.
   const live = browserPaneRegistry
     .getByTaskId(callerTaskId, projectId)
     .filter((entry) => entry.kind === 'pane')
@@ -467,7 +468,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while opening. Retry.');
     if (pane.url) {
-      resurfaceLivePane(host, projectId, callerTaskId);
+      endHoldOnLivePane(host, projectId, callerTaskId);
       return { ok: true, data: { opened: false, navigated: false, url: pane.url, pane } };
     }
     // A live guest with no URL is a pane sitting on its empty state. Reporting
@@ -491,7 +492,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     if (!navigateResult.ok) return { ok: false, error: navigateResult.error };
     const pane = paneStatus(live.sessionId);
     if (!pane) return failure('pane-destroyed', 'The Browser pane closed while navigating. Retry.');
-    resurfaceLivePane(host, projectId, callerTaskId);
+    endHoldOnLivePane(host, projectId, callerTaskId);
     return { ok: true, data: { opened: false, navigated: true, url: validatedLive.url, pane } };
   }
 
@@ -505,6 +506,18 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // `offscreen: true`, visible to the user on the card globe and the Browser
   // pill, and reclaimed into a real pane the moment one can mount.
   if (host.currentProjectId !== projectId || !host.currentProjectPath) {
+    return openOffscreenSurface({ ...input, callerTaskId });
+  }
+
+  // A live offscreen surface with no detail open stays where it is. Mounting a
+  // pane now would reclaim it into a window nobody can see, reloading the page
+  // under the agent and costing its handle and `sessionStorage` for nothing. An
+  // open detail is the one reason to reclaim: the user is looking at that window.
+  // A Command Terminal has no detail, and main cannot see whether its panel is
+  // showing, so it always reclaims: staying offscreen would strand a panel the
+  // user has open with no pane in it.
+  const commandTerminal = parseCommandTerminalBrowserOwner(callerTaskId);
+  if (!commandTerminal && liveOffscreenSurface(callerTaskId, projectId) && !host.detailIsOpen(projectId, callerTaskId)) {
     return openOffscreenSurface({ ...input, callerTaskId });
   }
   const projectPath = host.currentProjectPath;
@@ -524,7 +537,6 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   // A Command Terminal's owner key names no task row, so it is checked against
   // the session registry instead: the terminal has to be running for its pane
   // to have somewhere to mount.
-  const commandTerminal = parseCommandTerminalBrowserOwner(callerTaskId);
   if (commandTerminal) {
     if (!host.commandTerminalLive(projectId, commandTerminal.slot)) {
       return failure(
@@ -582,19 +594,17 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
 
   const entry = await browserPaneRegistry.waitForLivePane(
     { taskId: callerTaskId, projectId },
-    PANE_OPEN_TIMEOUT_MS,
+    BROWSER_PANE_OPEN_TIMEOUT_MS,
   );
   if (!entry) {
     return failure(
       'pane-open-timeout',
-      `The Browser pane did not come up within ${PANE_OPEN_TIMEOUT_MS / 1000}s. The Kangentic window may be minimized, or the ${commandTerminal ? 'Command Terminal panel' : "task's detail window"} may have failed to open. Ask the user to check, or call kangentic_browser_list_panes to see what is open.`,
+      `The Browser pane did not come up within ${BROWSER_PANE_OPEN_TIMEOUT_MS / 1000}s, so the page may be slow to load. Retry, or call kangentic_browser_list_panes to see what is open.`,
     );
   }
 
   // Resolve through the same chokepoint every driving tool uses, so this returns
-  // only once the pane is genuinely driveable. A minimized window fails here
-  // with `pane-not-rendering`: the pane is left OPEN on purpose, so restoring
-  // the window is all the user has to do.
+  // only once the pane is genuinely driveable.
   const readyResult = await withGuest<BrowserPaneStatus | null>(
     { selector: selectorFor(entry.sessionId), capability: input.capability, config },
     async () => paneStatus(entry.sessionId),

@@ -123,20 +123,13 @@ describe('retrieval queries on main', () => {
     });
   });
 
-  // The worker scopes a ranking to earlier tasks only when it is told the
-  // cutoff, so a request that drops it on the way to the worker ranks the
-  // task window's prior work over the whole board, later tasks included.
-  //
-  // Red-green: drop `priorWorkBefore` from the params `rankRelatedWork` builds
-  // and the first case sees `undefined` where the ISO time was.
-  it('forwards the prior work cutoff to the worker beside the task it leaves out', async () => {
+  it('forwards the task a ranking leaves out to the worker', async () => {
     mockCall.mockResolvedValue({ related: { handed: [] } });
     await rankRelatedWork({
       projectId: 'project-1',
       question: 'Fix the sphere framing',
       keywordText: 'Fix the sphere framing',
       excludeTaskId: 'task-1',
-      priorWorkBefore: '2026-03-01T10:00:00.000Z',
       embedder: embedderAnswering('vectors'),
       vectorTexts: ['Fix the sphere framing'],
       withExtras: false,
@@ -147,22 +140,8 @@ describe('retrieval queries on main', () => {
       projectId: 'project-1',
       keywordText: 'Fix the sphere framing',
       excludeTaskId: 'task-1',
-      priorWorkBefore: '2026-03-01T10:00:00.000Z',
       withExtras: false,
     }));
-  });
-
-  it('sends no cutoff when the request has none, so the ranking stays unscoped', async () => {
-    mockCall.mockResolvedValue({ related: { handed: [] } });
-    await rankRelatedWork({
-      projectId: 'project-1',
-      question: 'How many adapters did we add?',
-      embedder: null,
-      vectorTexts: [],
-      withExtras: true,
-    });
-
-    expect((mockCall.mock.calls[0][1] as { priorWorkBefore?: string }).priorWorkBefore).toBeUndefined();
   });
 
   it('sends a ranking its vectors in the order given, and is null only while the worker is down', async () => {

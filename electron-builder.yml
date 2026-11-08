@@ -198,6 +198,9 @@ linux:
     - rpm
   icon: node_modules/@kangentic/branding/resources/desktop/icon.png
   category: Development
+  # app.setBadgeCount reaches a launcher only when desktopName (package.json) names the
+  # installed .desktop file, and Electron takes its window class from it too.
+  syncDesktopName: true
 
 deb:
   # Pin filename to match the launcher and scripts/release-assets.js. Same reason

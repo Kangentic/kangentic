@@ -440,6 +440,10 @@ msgid "Find in conversation"
 msgstr "In Unterhaltung suchen"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Find on board"
 msgstr "Auf Board suchen"
@@ -1115,6 +1119,10 @@ msgstr "Geöffnetes Formular speichern, wie mit der Schaltfläche „Speichern�
 msgctxt "automation field"
 msgid "Script"
 msgstr "Skript"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

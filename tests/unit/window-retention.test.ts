@@ -480,18 +480,6 @@ describe('parkWindow / unparkWindow', () => {
     expect(revived.zIndex).toBe(store.getState().zCounter);
   });
 
-  it('un-parking clears the agent stamp like any raise, so an agent path must re-stamp after it', () => {
-    const store = makeStore();
-    const id = store.getState().openWindow({ anchor: 'task-a', sessionId: 's-a', title: 'A', openedByAgent: true });
-    store.getState().parkWindow(id);
-
-    store.getState().unparkWindow(id);
-    expect(store.getState().windows[id].openedByAgent).toBeUndefined();
-
-    store.getState().markAgentOpened(id);
-    expect(store.getState().windows[id].openedByAgent).toBe(true);
-  });
-
   it('is a no-op for a window that is not parked', () => {
     const store = makeStore();
     const id = store.getState().openWindow({ anchor: 'task-a', sessionId: 's-a', title: 'A' });

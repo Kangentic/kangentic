@@ -136,7 +136,7 @@ Treating the second as a failure would escalate a command that actually worked i
 Antigravity declares the same `false` for the same measured reason: its slash probe printed `Unknown command` in the TUI and appended nothing to the brain-dir transcript, so absence there is equally ambiguous. Prose auto_commands on Antigravity remain fully verified.
 
 When an adapter returns `null`, the caller falls back to:
-- `'paste'`: activity event or any post-`\r` data byte (within 3s).
+- `'paste'`: an activity event, or at least 50 post-`\r` data bytes (`POST_ENTER_DATA_FLOOR_BYTES`), within the 3s first window. On an idle session whose agent reports only through hooks, data counts at the retry window instead, or as `first-window-data` when the retry window ends with nothing.
 - `'command-injection'`: the handshake chain alone, with an outcome of `unconfirmed`.
 
 An adapter with no verifier cannot reach 100% delivery: with no confirmation signal there is nothing to retry against, and no failure to escalate. Measured on the load rig it reaches ~93% against Claude's 100%, and its safety property still holds absolutely (a delivery may be missed, but a wrong one is never submitted). An adapter closes that gap by implementing `'command-injection'` verification once measurement shows its CLI flushes history on submit.

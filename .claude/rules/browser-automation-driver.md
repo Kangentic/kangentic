@@ -114,8 +114,10 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   (`BROWSER_PANE_UNREGISTER` takes a `webContentsId`), which is what makes an out-of-order unmount
   structurally unable to clobber a newer registration.
 - **A task has exactly ONE browser surface, and no tool argument can create a second.** It is the
-  visible `<webview>` pane, or - when no pane can mount, which is only ever a backgrounded project -
-  the OFFSCREEN form of the same surface. `openLane` refuses a second for a task
+  `<webview>` pane, shown or parked, or - when no pane can mount, which is only ever a backgrounded
+  project - the OFFSCREEN form of the same surface. A live offscreen surface stays one until a detail
+  is open to reclaim it into: reclaiming into a parked window would reload the page for nothing. A
+  Command Terminal's has no detail to wait for, so its `open_pane` always reclaims. `openLane` refuses a second for a task
   (`surface-exists`), so the invariant is structural rather than a convention the callers keep.
 
   `open_pane` had an `isolated: true` argument until 2026-09-21 and it came out. An offscreen
@@ -133,17 +135,27 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   task reclaims it. The reclaim's URL comes from the LIVE guest, never `browserUrlStore` - that
   sidecar is written by the pane on its own `did-navigate`, and main's guest-side bridge is gated on
   `getType() === 'webview'`, so nothing writes it for an offscreen surface.
-- **A capture against a non-composited pane must fail fast, never hang.** Chromium stops
-  compositing a window that is minimized, hidden, or fully occluded, and `Page.captureScreenshot`
-  then never resolves: every later command for that guest queues behind it, wedging the pane for
-  good. Two layers, and only the second is a guarantee:
-  1. `withGuest` refuses up front with `pane-not-rendering` when
-     `BrowserWindow.fromWebContents(guest.hostWebContents)?.isMinimized()`. Minimized is the only
-     case main can observe, so this is a nicety that yields a clearer error, not coverage.
+- **A capture works with Kangentic out of sight, and a capture that cannot must fail fast, never
+  hang.** Chromium stops compositing a window that is minimized, hidden or fully occluded, and
+  `Page.captureScreenshot` then never resolves. Two layers:
+  1. `holdGuestRendering` (`cdp/guest-capture-hold.ts`) runs around every capture of a guest. CDP's
+     own capturer count passes `stay_hidden=true`, which never shows a hidden guest, so overlapping
+     1x1 `capturePage` calls span the capture on BOTH surfaces: the guest with `stayHidden: false`,
+     so it draws, and the host with `stayHidden: true`, so its compositor runs. The real app needs
+     both: with the renderer reporting hidden, the guest's call alone ended in the 5 s bound, though a
+     bare probe window passed on it. Never set the host's to `false`: that works, and flips
+     Kangentic's own `visibilityState` four times inside one capture. Measured on Electron 45 from a
+     live agent on fresh parked panes: covered and minimized captures in under 200 ms, on a plain
+     capture, a full page, png, jpeg and an element, with no visibility change. It must overlap: one
+     call fired first hung every shape but the plain one on a minimized host. It stays off a host
+     hidden outright (`win.hide()`, so the quit path and macOS Cmd+H), where `capturePage` itself never
+     settles and its count would leak. macOS and Linux are unmeasured.
   2. `captureScreenshot` races the command against `SCREENSHOT_TIMEOUT_MS` (`cdp/cdp.ts`). This is
-     the real backstop, because a merely hidden or occluded window is indistinguishable from a
-     visible one through Electron's main-process API (`isVisible()` stays true). Do not remove the
-     bound on the strength of the precondition check.
+     the backstop for whatever the hold does not reach. Do not remove it on the strength of the hold.
+     The hold cannot help a subtree that is not drawn, so nothing that hides a pane uses
+     `visibility: hidden`: the Backlog view hides the board's overlay with `opacity-0` and `inert`.
+  No drive is refused for a minimized host: `withGuest` used to, at every tier, and that stopped
+  `open_pane` itself in a minimized app. Non-pixel tools land there (`MOUSE_MOVE_ACK_TIMEOUT_MS`).
   The same physics is why a retained background pane must be hidden with `opacity: 0` rather than
   `visibility: hidden` or offscreen positioning: those stop compositing, an `opacity: 0` subtree
   does not.
@@ -226,10 +238,10 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
 - **Test (one surface per task):** `tests/unit/browser-lane-manager.test.ts` pins that `openLane`
   refuses a second surface for a task and names the one that exists, that a pane's return reclaims
   it, and that every change announces the offscreen set.
-  `tests/unit/browser-pane-opener.test.ts` pins the routing either side of it: the offscreen
-  fallback is unreachable while the project is open, an existing offscreen surface is returned
-  rather than duplicated, a visible pane outranks it, and the reclaim resolves the LIVE guest's URL
-  over the saved sidecar (red-green: deleting that preference fails the case).
+  `tests/unit/browser-pane-opener.test.ts` pins the routing either side of it: a new offscreen
+  surface never starts while the project is open, an existing one is returned rather than duplicated,
+  stays put with no open detail, gives way to a pane with one, and the reclaim resolves the LIVE
+  guest's URL over the saved sidecar (red-green: deleting that preference fails the case).
   `tests/unit/mcp-server-instructions-browser.test.ts` fails if `isolated: true` reappears in the
   server instructions, where it would send an agent to a zod schema error instead of a browser.
 - **Test (Command Terminal caller):** `tests/unit/mcp-caller-command-terminal.test.ts` pins that a
@@ -241,6 +253,10 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   `tests/unit/browser-pane-opener.test.ts` pins that `close_pane` clears the open flag before it
   closes a window, so the close cannot turn into a dock. `tests/ui/browser-pop-out-pane.spec.ts`
   boots a real Browser pop-out and pins that it mounts and registers its pane.
+- **Test (capture out of sight):** `tests/unit/guest-capture-hold.test.ts` pins that the hold repeats
+  for the length of the capture, ends with it on a timeout too, never asks to stay awake, stays off a
+  host hidden outright, and stops stacking calls that do not settle. No unit tier has a composited
+  guest, so whether Chromium still draws is the probe's to answer: re-run it on an Electron upgrade.
 - **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
   statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
   asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and

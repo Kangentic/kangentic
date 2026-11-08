@@ -44,6 +44,7 @@ export type KeyScope =
   | 'panel' // a maximizable dialog/overlay panel (command terminal or task detail)
   | 'browser-pane' // BrowserPane visible inside a task dialog
   | 'terminal' // xterm-owned combos; display-only
+  | 'terminal-focused' // focus inside one terminal's pane (capture phase, deliberately does NOT overlap 'global' - see terminal.find)
   | 'dialog' // generic dialog-local keys (Escape dismissal, the save key)
   | 'conversation'; // a focused Conversation viewer window (capture phase, deliberately does NOT overlap 'global' - see conversation.find)
 
@@ -727,6 +728,20 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: '',
     rebindable: true,
   },
+  {
+    id: 'terminal.find',
+    label: msg`Find in terminal`,
+    description: msg`Search the focused terminal's output, taking this key from any program there that reads it.`,
+    group: 'Terminal',
+    // Deliberately shares Mod+F with search.plainFind, the way conversation.find
+    // does: 'terminal-focused' is not in scopesOverlap's list with 'global'. Mod+F
+    // from a terminal never reached the board or Quick Find, because xterm's
+    // textarea is an editable target, so this takes the key only from the program
+    // in the terminal. Not terminalUnsafe: that would warn on search.plainFind.
+    scope: 'terminal-focused',
+    defaultCombo: 'Mod+F',
+    rebindable: true,
+  },
 
   // ── Developer ──
   {
@@ -845,6 +860,11 @@ export function scopesOverlap(a: KeyScope, b: KeyScope): boolean {
     // panel.maximize / panel.close and the task window's own keys.
     ['dialog', 'panel'],
     ['dialog', 'task-dialog'],
+    // A focused terminal sits inside a task window or the Command Terminal, whose
+    // keys stay live beside terminal.find, so a rebind onto one of them is a clash.
+    ['terminal-focused', 'task-dialog'],
+    ['terminal-focused', 'panel'],
+    ['terminal-focused', 'command-bar'],
   ];
   return overlapping.some(([first, second]) => (a === first && b === second) || (a === second && b === first));
 }

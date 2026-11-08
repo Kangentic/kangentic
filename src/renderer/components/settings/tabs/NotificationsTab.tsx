@@ -1,53 +1,55 @@
-import { Bell, MessageSquare } from 'lucide-react';
+import { useState } from 'react';
+import { AppWindow, Bell, BellOff, MessageSquare } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
-import type { AppConfig, NotificationConfig } from '../../../../shared/types';
-import { INPUT_CLASS, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardChoiceRow } from '../settings-card';
+import type { AppConfig, NotificationConfig, NotificationEventKey } from '../../../../shared/types';
+import { NumberStepper } from '../../NumberStepper';
+import { ToggleSwitch, useScopedUpdate } from '../shared';
+import { SettingsCard, CardRow, CardTableHeads, CardTableRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { NotificationSoundPicker } from './NotificationSoundPicker';
 
-type NotifyEventKey = 'onAgentIdle' | 'onAgentCrash' | 'onPlanComplete' | 'onWorkflowComplete' | 'onWorkflowStalled' | 'onSpawnStalled';
-
-type NotifyChannel = 'off' | 'desktop' | 'toast' | 'both';
-
-/** Map desktop/toast booleans to a single channel choice. */
-function notifyChannelValue(desktop: boolean, toast: boolean): NotifyChannel {
-  if (desktop && toast) return 'both';
-  if (desktop) return 'desktop';
-  if (toast) return 'toast';
-  return 'off';
-}
-
-/** Reusable row for a notification event, with a segmented Off / Desktop / Toast / Both choice. */
+/** One event: whether its toast and desktop notification fire, and what it sounds like. */
 function NotifyChannelRow({ eventKey, config, searchId }: {
-  eventKey: NotifyEventKey;
+  eventKey: NotificationEventKey;
   config: NotificationConfig;
   searchId: string;
 }) {
   const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
-  const value = notifyChannelValue(config.desktop[eventKey], config.toasts[eventKey]);
+  const [refusal, setRefusal] = useState<string | null>(null);
   const props = settingProps(searchId);
+  const toast = config.toasts[eventKey];
+  const desktop = config.desktop[eventKey];
+  const eventName = props.label;
   return (
-    <CardChoiceRow
+    <CardTableRow
       {...props}
-      options={[
-        { value: 'off', label: t({ message: 'Off', context: 'notification channel' }), testId: `notify-channel-${eventKey}-off` },
-        { value: 'desktop', label: t({ message: 'Desktop', context: 'notification channel' }), testId: `notify-channel-${eventKey}-desktop` },
-        { value: 'toast', label: t({ message: 'Toast', context: 'notification channel' }), testId: `notify-channel-${eventKey}-toast` },
-        { value: 'both', label: t({ message: 'Both', context: 'notification channel' }), testId: `notify-channel-${eventKey}-both` },
+      switches={[
+        <ToggleSwitch
+          key="toast"
+          checked={toast}
+          onChange={(checked) => updateGlobal({ notifications: { toasts: { [eventKey]: checked } } })}
+          ariaLabel={t`${eventName} toast`}
+          testId={`notify-channel-${eventKey}-toast`}
+        />,
+        <ToggleSwitch
+          key="desktop"
+          checked={desktop}
+          onChange={(checked) => updateGlobal({ notifications: { desktop: { [eventKey]: checked } } })}
+          ariaLabel={t`${eventName} desktop notification`}
+          testId={`notify-channel-${eventKey}-desktop`}
+        />,
       ]}
-      value={value}
-      onChange={(selected) => {
-        const desktop = selected === 'both' || selected === 'desktop';
-        const toast = selected === 'both' || selected === 'toast';
-        updateGlobal({
-          notifications: {
-            desktop: { [eventKey]: desktop },
-            toasts: { [eventKey]: toast },
-          },
-        });
-      }}
-      testId={`notify-channel-${eventKey}`}
+      side={(
+        <NotificationSoundPicker
+          eventKey={eventKey}
+          eventName={eventName}
+          config={config}
+          disabled={!toast && !desktop}
+          onRefused={setRefusal}
+        />
+      )}
+      footer={refusal ? <div className="mt-1.5" data-testid={`notify-sound-refusal-${eventKey}`}><SettingTag>{refusal}</SettingTag></div> : undefined}
     />
   );
 }
@@ -55,70 +57,93 @@ function NotifyChannelRow({ eventKey, config, searchId }: {
 export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) {
   const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
+  const notifications = globalConfig.notifications;
   return (
     <div className="space-y-4">
       <SettingsCard
+        icon={<BellOff size={16} />}
+        {...settingProps('notifications.muted')}
+        checked={notifications.muted}
+        onChange={(muted) => updateGlobal({ notifications: { muted } })}
+      />
+
+      <SettingsCard
         icon={<Bell size={16} />}
         label={t`Events`}
-        description={t`Where each kind of alert shows up.`}
+        description={t`How you hear about each event.`}
         searchIds={['notifications.onAgentIdle', 'notifications.onAgentCrash', 'notifications.onPlanComplete', 'notifications.onWorkflowComplete', 'notifications.onWorkflowStalled', 'notifications.onSpawnStalled']}
       >
+        <CardTableHeads
+          label={t({ message: 'Event', context: 'notification table column' })}
+          switchColumns={[
+            t({ message: 'Toast', context: 'notification table column' }),
+            t({ message: 'Desktop', context: 'notification table column' }),
+          ]}
+          side={t({ message: 'Sound', context: 'notification table column' })}
+        />
         <NotifyChannelRow
           eventKey="onAgentIdle"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onAgentIdle"
         />
         <NotifyChannelRow
           eventKey="onAgentCrash"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onAgentCrash"
         />
         <NotifyChannelRow
           eventKey="onPlanComplete"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onPlanComplete"
         />
         <NotifyChannelRow
           eventKey="onWorkflowComplete"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onWorkflowComplete"
         />
         <NotifyChannelRow
           eventKey="onWorkflowStalled"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onWorkflowStalled"
         />
         <NotifyChannelRow
           eventKey="onSpawnStalled"
-          config={globalConfig.notifications}
+          config={notifications}
           searchId="notifications.onSpawnStalled"
         />
       </SettingsCard>
 
       <SettingsCard
+        icon={<AppWindow size={16} />}
+        {...settingProps('notifications.appBadge')}
+        checked={notifications.appBadge}
+        onChange={(appBadge) => updateGlobal({ notifications: { appBadge } })}
+      />
+
+      <SettingsCard
         icon={<MessageSquare size={16} />}
         label={t`Toasts`}
-        description={t`How long toasts stay up and how many stack at once.`}
-        searchIds={['notifications.toasts.durationSeconds', 'notifications.toasts.maxCount']}
+        description={t`How many show at once, and for how long.`}
+        searchIds={['notifications.toasts.maxCount', 'notifications.toasts.durationSeconds']}
       >
-        <CardRow {...settingProps('notifications.toasts.durationSeconds')}>
-          <input
-            type="number"
-            value={globalConfig.notifications.toasts.durationSeconds}
-            onChange={(event) => updateGlobal({ notifications: { toasts: { durationSeconds: Number(event.target.value) } } })}
-            min={1}
-            max={30}
-            className={INPUT_CLASS}
-          />
-        </CardRow>
-        <CardRow {...settingProps('notifications.toasts.maxCount')}>
-          <input
-            type="number"
-            value={globalConfig.notifications.toasts.maxCount}
-            onChange={(event) => updateGlobal({ notifications: { toasts: { maxCount: Number(event.target.value) } } })}
+        <CardRow {...settingProps('notifications.toasts.maxCount')} inline>
+          <NumberStepper
+            value={notifications.toasts.maxCount}
+            onChange={(maxCount) => updateGlobal({ notifications: { toasts: { maxCount } } })}
             min={1}
             max={10}
-            className={INPUT_CLASS}
+            ariaLabel={t`Maximum toasts on screen`}
+            testId="notify-toast-max-count"
+          />
+        </CardRow>
+        <CardRow {...settingProps('notifications.toasts.durationSeconds')} inline>
+          <NumberStepper
+            value={notifications.toasts.durationSeconds}
+            onChange={(durationSeconds) => updateGlobal({ notifications: { toasts: { durationSeconds } } })}
+            min={1}
+            max={30}
+            ariaLabel={t`How long toasts appear, in seconds`}
+            testId="notify-toast-duration"
           />
         </CardRow>
       </SettingsCard>

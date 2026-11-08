@@ -32,7 +32,7 @@ General:
 - **Ctrl+\`** / **Ctrl+Shift+\`** - Open the next / previous project in sidebar order, collapsed groups included. The backtick key is matched by its position, so it is the same key on layouts where it types another character
 - Previous terminal in this project / in any project - Listed in Hotkeys as "Not set" for you to bind. Shift already picks the scope on the Tab keys, and Ctrl+Alt+Tab belongs to the Windows task switcher
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
-- **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board)
+- **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board). While a terminal has focus it opens that terminal's find bar instead (see Terminal)
 - **Mod+N** - New Task on the board
 - **Mod+S** - Save the open form the same way its Save, Create or Done button does: New Task, New Backlog Task, the task edit form, the Column Manager and the dialogs it opens, Rename workflow, the workflow agent prompt and Connect Asana. With one dialog over another, the one on top takes the key. Does nothing while that button is disabled. In the task edit form, a To Do task's window closes and a task with a running session goes back to its terminal
 - **Escape** - Close any open dialog or the search palette. A task edit form with unsaved changes asks to save first
@@ -66,4 +66,7 @@ Terminal:
 - **Mod+C** / **Mod+Shift+C** - Copy selected text, stripping quote-bar decoration from any decorated lines (with no selection, Ctrl+C cancels the running command)
 - **Mod+V** / **Mod+Shift+V** - Paste text or an image into the terminal
 - **Reset terminal** - Clears modes a crashed program left on (mouse tracking, the alternate screen, a scroll region) in the focused terminal and repaints it, while a running agent keeps its screen and input modes. Listed in Hotkeys as "Not set" for you to bind
+- **Mod+F** - Find in the focused terminal, or select the query again if the bar is open. The search icon in a task window, Command Terminal or workflow agent header opens the same bar. Enter goes to the next older match and Shift+Enter to the next newer one. Escape closes the bar and never reaches the terminal
 - Standard OS shortcuts for the rest of terminal editing
+
+Mod+F opens the find bar only while focus is in a terminal, so board search and Quick Find keep their keys everywhere else. On Windows and Linux the program in the terminal no longer gets Ctrl+F: readline's forward-char, paging in less and vim, Claude Code's transcript paging and `agents:find`. Rebind Find in terminal in Hotkeys if you need those. On macOS Cmd+F takes nothing from the terminal.

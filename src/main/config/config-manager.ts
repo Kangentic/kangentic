@@ -328,6 +328,19 @@ export class ConfigManager {
       this.save(this.config);
     }
 
+    // One-time migration: toasts default to 5 seconds, not 4. save() writes the
+    // whole blob, so an install that ran under the old default holds a persisted 4
+    // that a new default never reaches. That 4 cannot be told from a deliberate
+    // choice, so this knowingly moves one made before the change. A file with no
+    // `muted` key predates it, and the save below writes that key, so this runs
+    // once and a 4 set afterwards sticks.
+    const parsedNotifications = parsed?.notifications as Record<string, unknown> | undefined;
+    const parsedToasts = parsedNotifications?.toasts as Record<string, unknown> | undefined;
+    if (parsedNotifications && !('muted' in parsedNotifications) && parsedToasts?.durationSeconds === 4) {
+      this.config.notifications.toasts.durationSeconds = 5;
+      this.save(this.config);
+    }
+
     // One-time migration: adopt the `focused` light-dismiss default. Changing
     // DEFAULT_CONFIG alone reaches fresh installs only, because save() writes the
     // whole blob and load() lets a persisted value beat the default - so every

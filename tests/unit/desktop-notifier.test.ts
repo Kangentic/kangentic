@@ -99,7 +99,7 @@ describe('DesktopNotifier', () => {
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
     expect(showNotification).toHaveBeenCalledTimes(1);
-    expect(shownInputs()[0]).toEqual({ title: 'Agent went idle', body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1' });
+    expect(shownInputs()[0]).toEqual({ title: 'Agent went idle', body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1', event: 'onAgentIdle' });
     expect(flashFrame).toHaveBeenCalledTimes(1);
   });
 
@@ -147,7 +147,7 @@ describe('DesktopNotifier', () => {
         sessionManager.getSession.mockReturnValue(makeSession());
         buildNotifier();
         sessionManager.emit('activity', 'sess-1', state, reason);
-        expect(shownInputs()[0]).toEqual({ title, body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1' });
+        expect(shownInputs()[0]).toEqual({ title, body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1', event: 'onAgentIdle' });
       });
     }
   });
@@ -184,6 +184,7 @@ describe('DesktopNotifier', () => {
       body: 'Build the thing - kangentic: Usage budgets workflow',
       projectId: 'proj-1',
       taskId: 'task-1',
+      event: 'onAgentIdle',
     });
     expect(resolveWorkflowTitle).toHaveBeenCalledWith('proj-1', 'task-1');
   });
@@ -342,6 +343,20 @@ describe('DesktopNotifier', () => {
 
     expect(showNotification).toHaveBeenCalledTimes(2);
     expect(shownInputs()[0].title).toBe('Terminals restarted');
+    expect(shownInputs()[1].title).toContain('Session crashed');
+  });
+
+  it('names the crash event on both crash notices, so the sound and the OS sound plan follow the crash choice', () => {
+    config = makeConfig({ cooldownSeconds: 0 });
+    sessionManager.getSession.mockImplementation((sessionId: string) => makeSession({ id: sessionId }));
+    buildNotifier();
+
+    sessionManager.emit('exit', 'sess-1', PTY_HOST_LOST_EXIT_CODE, false);
+    sessionManager.emit('exit', 'sess-2', 1, false);
+
+    expect(shownInputs()).toHaveLength(2);
+    expect(shownInputs()[0]).toMatchObject({ title: 'Terminals restarted', event: 'onAgentCrash' });
+    expect(shownInputs()[1]).toMatchObject({ event: 'onAgentCrash' });
     expect(shownInputs()[1].title).toContain('Session crashed');
   });
 
@@ -567,6 +582,7 @@ describe('DesktopNotifier', () => {
         body: 'My Project: Usage budgets workflow. Stalled: the step check could not run.',
         projectId: 'proj-1',
         taskId: 'task-1',
+        event: 'onWorkflowStalled',
       });
     });
 

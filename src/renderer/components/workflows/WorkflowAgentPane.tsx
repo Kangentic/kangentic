@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
-import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Settings, X } from 'lucide-react';
+import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Search, Settings, X } from 'lucide-react';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../../shared/workflow-agent-choice';
 import { awaitsFirstAgent } from '../../../shared/workflow-agent-first-open';
@@ -14,7 +14,9 @@ import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
+import { useTerminalFindControl } from '../../utils/terminal-find-registry';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
+import { TerminalFindBar } from '../terminal/TerminalFindBar';
 import { ActivityMark } from '../ActivityMark';
 import { agentActivityMark } from '../board/agent-wait';
 import { Tooltip } from '../Tooltip';
@@ -149,6 +151,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   }, [floating, dragWidth, storedWidth, updateConfig]);
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
+  const terminalFind = useTerminalFindControl(session?.id ?? null);
   const activityReason = useSessionStore((state) => (session ? state.sessionActivityReason[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);
   // The conversation the workflow keeps, which outlives any one session of its agent.
@@ -323,6 +326,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
     : live ? t`Pause session` : t`Resume session`;
   const collapseLabel = t`Collapse agent`;
   const viewConversationLabel = t`View conversation`;
+  const findLabel = t`Find in terminal`;
   const dismissLabel = t`Dismiss`;
 
   const pane = (
@@ -359,6 +363,20 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           </Tooltip>
         )}
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg"><Trans>Workflow agent</Trans></span>
+        {terminalFind.available && (
+          <Tooltip label={findLabel} keys="terminal.find">
+            <button
+              type="button"
+              onClick={terminalFind.toggle}
+              className={`flex-shrink-0 rounded p-1 transition-colors hover:bg-surface-hover ${terminalFind.open ? 'bg-accent/15 text-accent-fg' : 'text-fg-faint hover:text-fg-tertiary'}`}
+              aria-label={findLabel}
+              aria-pressed={terminalFind.open}
+              data-testid="workflow-agent-find"
+            >
+              <Search size={16} />
+            </button>
+          </Tooltip>
+        )}
         {/* Task detail's own Conversation control: the transcript viewer, on the
             conversation the workflow keeps, so it opens with the agent paused too. */}
         <Tooltip label={tipLabel({ disabled: !conversationId, disabledReason: t`No conversation yet`, tip: viewConversationLabel })}>
@@ -581,7 +599,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
     [sessionId],
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, paste } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, paste, find } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -621,6 +639,7 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
     <div className="absolute inset-0 px-1 pt-1" data-testid="workflow-agent-terminal-pane" data-terminal-host data-session-id={sessionId} data-agent-name={agentName ?? undefined}>
       <FileDropOverlay {...fileDrop} />
       <div ref={terminalRef} className="h-full" data-testid="workflow-agent-terminal" />
+      <TerminalFindBar find={find} sessionId={sessionId} terminalRef={terminalRef} />
     </div>
   );
 }

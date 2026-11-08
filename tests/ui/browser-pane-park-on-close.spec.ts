@@ -92,7 +92,7 @@ const preConfig = `
   });
 `;
 
-type ParkedWindowView = { id: string; parked: boolean; openedByAgent: boolean } | null;
+type ParkedWindowView = { id: string; parked: boolean } | null;
 
 let sharedBrowser: Browser;
 let sharedPage: Page;
@@ -124,14 +124,14 @@ test.beforeEach(async () => {
 /** The board's task-detail window for the fixture task, as the store sees it. */
 async function taskWindow(page: Page): Promise<ParkedWindowView> {
   return page.evaluate((taskId: string) => {
-    type StoreWindow = { id: string; kind: string; anchor: string; parked?: true; openedByAgent?: true };
+    type StoreWindow = { id: string; kind: string; anchor: string; parked?: true };
     const stores = (window as unknown as {
       __zustandStores: { window: { getState: () => { windows: Record<string, StoreWindow> } } };
     }).__zustandStores;
     const match = Object.values(stores.window.getState().windows).find(
       (candidate) => candidate.kind === 'task-detail' && candidate.anchor === taskId,
     );
-    return match ? { id: match.id, parked: match.parked === true, openedByAgent: match.openedByAgent === true } : null;
+    return match ? { id: match.id, parked: match.parked === true } : null;
   }, TASK_ID);
 }
 
@@ -198,6 +198,22 @@ async function closeWindowAndWaitForPark(page: Page): Promise<string> {
   return parked.id;
 }
 
+async function showBacklog(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores: { board: { getState: () => { setActiveView: (view: string) => void } } };
+    }).__zustandStores;
+    stores.board.getState().setActiveView('backlog');
+  });
+  await expect(page.locator('[data-testid="window-overlay"]')).toHaveAttribute('inert', '');
+}
+
+async function expectGuestComposites(page: Page): Promise<void> {
+  const guest = page.locator('[data-testid="browser-webview"]');
+  await expect(guest).toHaveCount(1);
+  expect(await guest.evaluate((element) => getComputedStyle(element).visibility)).toBe('visible');
+}
+
 test.describe('park on close', () => {
   test('closing the window parks it: the guest survives, hidden, with no unregister', async () => {
     await openRegisteredPane(sharedPage);
@@ -243,8 +259,22 @@ test.describe('park on close', () => {
     expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
     expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
     await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
-    // A user's click un-parks with no agent stamp.
-    expect((await taskWindow(sharedPage))?.openedByAgent).toBe(false);
+  });
+
+  // The Backlog view hides the board's overlay. `visibility: hidden` stops a guest
+  // compositing, and a live agent's screenshot failed there until its bound, so
+  // the guest has to compute `visible` whichever way the window is hidden.
+  test('a parked pane keeps compositing under the Backlog view', async () => {
+    await openRegisteredPane(sharedPage);
+    await closeWindowAndWaitForPark(sharedPage);
+    await showBacklog(sharedPage);
+    await expectGuestComposites(sharedPage);
+  });
+
+  test('a pane in a window left open keeps compositing under the Backlog view', async () => {
+    await openRegisteredPane(sharedPage);
+    await showBacklog(sharedPage);
+    await expectGuestComposites(sharedPage);
   });
 
   test('a parked window is dropped for real once its session stops running', async () => {
@@ -297,22 +327,20 @@ test.describe('park on close', () => {
     await expect.poll(() => taskWindow(sharedPage), { timeout: 5000 }).toBeNull();
   });
 
-  test("an agent's open_pane un-parks the window and keeps its agent stamp", async () => {
+  test("an agent's open_pane leaves a window the user closed parked", async () => {
     await openRegisteredPane(sharedPage);
     const windowId = await closeWindowAndWaitForPark(sharedPage);
 
-    // Main's push for kangentic_browser_open_pane. The bridge must not treat the
-    // parked window as "already open" (it would set the pane flag and leave the
-    // window hidden); it routes through the detail signal, and the existing-
-    // window branch un-parks and RE-STAMPS after the raise, so the remounting
-    // terminal cannot take the user's keyboard.
-    await sharedPage.evaluate(({ projectId, taskId }) => {
-      window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId);
-    }, { projectId: PROJECT_ID, taskId: TASK_ID });
+    // Main's push for kangentic_browser_open_pane, sent on every warm call. The
+    // user closed this window on purpose, so it stays closed however many times
+    // the agent calls, and the same guest goes on running in it.
+    for (let call = 0; call < 2; call++) {
+      await sharedPage.evaluate(({ projectId, taskId }) => {
+        window.__mockBrowser?.emitPaneOpenRequest(projectId, taskId);
+      }, { projectId: PROJECT_ID, taskId: TASK_ID });
+    }
 
-    await expect.poll(async () => (await taskWindow(sharedPage))?.parked ?? true, { timeout: 5000 }).toBe(false);
-    expect((await taskWindow(sharedPage))?.id).toBe(windowId);
-    expect((await taskWindow(sharedPage))?.openedByAgent).toBe(true);
+    expect(await taskWindow(sharedPage)).toEqual({ id: windowId, parked: true });
     expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
     expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
   });

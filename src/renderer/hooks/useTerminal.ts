@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
+import { SearchAddon } from '@xterm/addon-search';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
@@ -10,6 +11,8 @@ import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { scheduleFontApply, terminalFontMoved } from '../utils/terminal-font-apply';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
+import { createTerminalLinkGesture } from '../utils/terminal-links/link-gesture';
+import { registerTerminalLinks } from '../utils/terminal-links/register-terminal-links';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteScrollLatencyParsed, noteScrollLatencyStage } from '../utils/scroll-latency-probe';
@@ -35,6 +38,7 @@ import { rendererTerminalDefaults } from '../utils/native-terminal-defaults';
 // surface-agnostic and never reads the policy - it only labels its own paths).
 import type { ArrivalFocusSite } from '../utils/terminal-arrival-focus';
 import { activateUnicode11 } from '../../shared/xterm-unicode11';
+import { clearTerminalFind, readTerminalReach, runTerminalFind, TERMINAL_FIND_HIGHLIGHT_LIMIT, type FindResults, type TerminalFind } from '../utils/terminal-find';
 import '@xterm/xterm/css/xterm.css';
 
 /**
@@ -214,9 +218,11 @@ const MAX_REPLAY_WIDTH_REPLAYS = 1;
 /** Live xterm scrollback cap (lines), applied to every session terminal.
  *  Every terminal (re)creation - mount, tab/window switch, resize,
  *  park-then-reveal, ownership handoff - refills the visible buffer from the
- *  main-process 512KB raw-ANSI ring (MAX_SCROLLBACK in pty-buffer-manager.ts)
- *  regardless of this cap, so it only bounds a continuously-mounted,
- *  actively-streaming terminal's in-place scroll depth between replays. */
+ *  pty host: its 512KB raw-ANSI ring (MAX_SCROLLBACK in pty-buffer-manager.ts) for
+ *  a normal-buffer session with one geometry in that ring, or else the parsed
+ *  grid plus SERIALIZED_SCROLLBACK_LINES (500). So this cap only bounds a
+ *  continuously-mounted, actively-streaming terminal's in-place scroll depth
+ *  between replays, and what a search can reach falls with each replay. */
 const TERMINAL_SCROLLBACK_LINES = 5000;
 
 /** Scroll positions saved before xterm dispose, keyed by session ID.
@@ -364,6 +370,24 @@ interface UseTerminalOptions {
    *  `terminalElement` is this terminal's xterm element, so the policy can refuse
    *  a terminal the user cannot see (covered by a dialog or an overlay). */
   mayTakeArrivalFocus?: (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => boolean;
+}
+
+/** Whether the keyboard is in a text field inside this terminal's own pane. */
+function focusIsInFindField(terminal: Terminal): boolean {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLInputElement)) return false;
+  return !!terminal.element?.closest('[data-terminal-host]')?.contains(activeElement);
+}
+
+/** A search addon whose results reach `resultListeners`, which outlive it: closing
+ *  the find bar replaces the addon. */
+function loadSearchAddon(terminal: Terminal, resultListeners: ReadonlySet<(results: FindResults) => void>): SearchAddon {
+  const addon = new SearchAddon({ highlightLimit: TERMINAL_FIND_HIGHLIGHT_LIMIT });
+  terminal.loadAddon(addon);
+  addon.onDidChangeResults((results) => {
+    for (const listener of resultListeners) listener(results);
+  });
+  return addon;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -664,6 +688,9 @@ export function useTerminal(options: UseTerminalOptions) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const findResultListenersRef = useRef(new Set<(results: FindResults) => void>());
+  const findBufferListenersRef = useRef(new Set<() => void>());
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
   /** Monotonic counter to abandon stale scrollback operations when a newer
@@ -1431,6 +1458,10 @@ export function useTerminal(options: UseTerminalOptions) {
     requestAnimationFrame(() => {
       const terminal = xtermRef.current;
       if (!terminal) return;
+      // A reload lands while the user types in this terminal's find bar: a resize
+      // settling, an output catch-up. The arbiter allows a window's own terminal,
+      // so it would pull the keyboard out of the field mid-word.
+      if (focusIsInFindField(terminal)) return;
       if (mayTakeArrivalFocusRef.current?.(site, terminal.element ?? null) === false) return;
       terminal.focus();
     });
@@ -1657,6 +1688,7 @@ export function useTerminal(options: UseTerminalOptions) {
       family: configuredFontFamily,
       size: configuredFontSize,
     };
+    const linkGesture = createTerminalLinkGesture();
     const terminal = new Terminal({
       fontFamily: configuredFontFamily,
       fontSize: configuredFontSize,
@@ -1670,7 +1702,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // "which window is selected" cue for the unfocused panes.
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
-      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),
+      linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url), linkGesture),
       // No color-scheme, kitty keyboard, or win32-input replies into the PTY.
       vtExtensions: TERMINAL_VT_EXTENSIONS,
     });
@@ -1682,11 +1714,20 @@ export function useTerminal(options: UseTerminalOptions) {
     // Before any write: the mount replay re-parses the agent's boot query.
     swallowXtversionQuery(terminal);
 
+    searchAddonRef.current = loadSearchAddon(terminal, findResultListenersRef.current);
+    terminal.buffer.onBufferChange(() => {
+      for (const listener of findBufferListenersRef.current) listener();
+    });
+
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
 
     terminal.open(terminalRef.current);
     constructEndedAt = readClock();
+
+    // Plain URLs and printed paths, behind the OSC 8 provider xterm registers
+    // itself, so a link the app marked wins an overlap. Gone with the terminal.
+    registerTerminalLinks(terminal, linkGesture, options.sessionId ?? null);
 
     // Record this terminal as the last-focused one for dictation injection
     // target resolution. The textarea is xterm's focusable element, so this
@@ -1786,6 +1827,10 @@ export function useTerminal(options: UseTerminalOptions) {
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
       terminal.onData((data) => {
+        // The press and release of a Ctrl or Cmd click on a link are this
+        // terminal's, or a TUI that opens links itself opens it a second time.
+        // Wheel and motion reports carry a lane and still go through.
+        if (linkGesture.isClickingLink() && isMouseReport(data) && mouseReportLane(data) === undefined) return;
         // Arms the repaint nudge. Any REAL input counts:
         // wheel-scroll-then-stop is the primary real-world repro of the
         // missing-rows family, and the keyboard jump (Ctrl+End / Ctrl+Home) is
@@ -2365,6 +2410,7 @@ export function useTerminal(options: UseTerminalOptions) {
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only teardown; adding options.sessionId would dispose and recreate the xterm on every session switch. The scroll-save reads sessionId from the disposing render, which is correct because the component remounts per session (terminal ownership handoff)
   }, []);
@@ -2890,6 +2936,36 @@ export function useTerminal(options: UseTerminalOptions) {
     return { cols: xtermRef.current.cols, rows: xtermRef.current.rows };
   }, []);
 
+  // Reads the refs at each call, because the terminal mounts after this first
+  // render. Listeners stay in sets here for the same reason: a header button can
+  // open the bar before this terminal exists, and every close replaces the addon.
+  const find = useMemo<TerminalFind>(() => ({
+    find: (query, direction) => {
+      const terminal = xtermRef.current;
+      const addon = searchAddonRef.current;
+      if (terminal && addon) runTerminalFind(terminal, addon, query, direction);
+    },
+    clear: () => {
+      const terminal = xtermRef.current;
+      clearTerminalFind(terminal, searchAddonRef.current);
+      searchAddonRef.current = terminal ? loadSearchAddon(terminal, findResultListenersRef.current) : null;
+    },
+    // arrival-focus-ok: closing the find bar is the user's gesture, and it hands the
+    // keyboard back to the terminal they were searching.
+    focusTerminal: () => xtermRef.current?.focus(),
+    readReach: () => readTerminalReach(xtermRef.current),
+    onResults: (listener) => {
+      const listeners = findResultListenersRef.current;
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    onBufferChange: (listener) => {
+      const listeners = findBufferListenersRef.current;
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  }), []);
+
   return {
     terminalRef,
     initTerminal,
@@ -2901,5 +2977,6 @@ export function useTerminal(options: UseTerminalOptions) {
     scrollbackPending: scrollbackPendingRef,
     suppressDataRef,
     getDimensions,
+    find,
   };
 }

@@ -38,6 +38,7 @@ import { stopScriptFailureBody } from './lib/stop-script-toast';
 import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
+import { notificationConfigNow, playEventSound } from './utils/event-sound-player';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shared/pty-host';
 import { bumpHmrGeneration } from './utils/hmr-generation';
@@ -56,7 +57,7 @@ import {
   enqueueReload,
   resetCoalescerForHmr,
 } from './lib/session-update-coalescer';
-import type { AutomationRunStatus } from '../shared/types';
+import type { AutomationRunStatus, NotificationEventKey } from '../shared/types';
 
 /**
  * A Run again result as one sentence naming the automation. One whole message
@@ -409,9 +410,9 @@ export function App() {
       return true;
     }
 
-    function sendNotification(key: string, title: string, body: string, notifyProjectId: string, notifyTaskId: string) {
+    function sendNotification(key: string, event: NotificationEventKey, title: string, body: string, notifyProjectId: string, notifyTaskId: string) {
       notificationCooldowns.set(key, Date.now());
-      window.electronAPI.notifications.show({ title, body, projectId: notifyProjectId, taskId: notifyTaskId });
+      window.electronAPI.notifications.show({ title, body, projectId: notifyProjectId, taskId: notifyTaskId, event });
       window.electronAPI.window.flashFrame(true);
     }
 
@@ -447,7 +448,7 @@ export function App() {
       if (!task) return;
 
       const projectId = useProjectStore.getState().currentProject?.id ?? '';
-      const notifyConfig = useConfigStore.getState().config.notifications;
+      const notifyConfig = notificationConfigNow();
       // The 8s timer arms for any preparing label, so describe the actual cause
       // rather than always claiming a git-queue wait. A git-queue wait is either
       // the bare fallback ("Waiting...", "Waiting (2 ahead)") or the running form
@@ -467,6 +468,7 @@ export function App() {
       const taskTitle = task.title;
 
       if (notifyConfig.toasts.onSpawnStalled) {
+        playEventSound('onSpawnStalled');
         const toastId = useToastStore.getState().addToast({
           title: i18n._(msg`Still preparing`),
           message: isGitQueueWait
@@ -487,6 +489,7 @@ export function App() {
           const project = useProjectStore.getState().projects.find((candidateProject) => candidateProject.id === projectId);
           sendNotification(
             `spawnstall:${taskId}`,
+            'onSpawnStalled',
             i18n._(msg`Still preparing: ${taskTitle}`),
             project?.name ?? i18n._(msg`A project`),
             projectId,
@@ -568,13 +571,14 @@ export function App() {
 
         updateSessionStatus(sessionId, { status: 'exited', exitCode });
 
-        const notifyConfig = useConfigStore.getState().config.notifications;
+        const notifyConfig = notificationConfigNow();
 
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (exitCode === PTY_HOST_LOST_EXIT_CODE) {
           // A machine-level event, not one project's, so no project gate.
           const now = Date.now();
           if (notifyConfig.toasts.onAgentCrash && now - lastHostLostToastAt >= PTY_HOST_LOST_NOTICE_WINDOW_MS) {
+            playEventSound('onAgentCrash');
             useToastStore.getState().addToast({
               title: i18n._(msg`Terminals restarted`),
               message: i18n._(msg`Running agents are resuming.`),
@@ -598,6 +602,7 @@ export function App() {
               exitMessage = i18n._(msg`${sessionIdShort} exited with code ${exitCode}.`);
             }
             const exitProjectId = projectId ?? currentSession?.projectId;
+            playEventSound('onAgentCrash');
             useToastStore.getState().addToast({
               title: i18n._(msg`Session ended`),
               message: exitMessage,
@@ -779,7 +784,7 @@ export function App() {
             const idleToast = resolveIdleToast({
               state,
               previousState,
-              enabled: config.notifications.toasts.onAgentIdle,
+              enabled: notificationConfigNow().toasts.onAgentIdle,
               // Strict, unlike `isCurrentProject` above, which is permissive when
               // either id is missing. Matches the exit and idle-timeout handlers:
               // a toast has to name a task on the board the user is looking at.
@@ -795,6 +800,7 @@ export function App() {
             if (idleToast) {
               const openProjectId = toastSession.projectId;
               const openTaskId = toastSession.taskId;
+              playEventSound('onAgentIdle');
               useToastStore.getState().addToast({
                 title: idleToast.title,
                 message: idleToast.message,
@@ -821,7 +827,8 @@ export function App() {
       cleanups.push(sessions.onIdleTimeout((sessionId, timeoutTaskId, timeoutMinutes, timeoutProjectId) => {
         updateSessionStatus(sessionId, { status: 'suspended' });
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if ((timeoutProjectId ?? '') === activeProjectId) {
+        // This toast has no setting of its own, so only Mute reaches it.
+        if ((timeoutProjectId ?? '') === activeProjectId && !notificationConfigNow().muted) {
           const task = useBoardStore.getState().tasks.find((t) => t.id === timeoutTaskId);
           let pausedMessage: string;
           if (task) {
@@ -859,6 +866,10 @@ export function App() {
 
     // Notification clicked -- switch project and open task detail
     const notifications = window.electronAPI?.notifications;
+    // A desktop notification went out with its sound left to this window.
+    if (notifications?.onPlaySound) {
+      cleanups.push(notifications.onPlaySound(playEventSound));
+    }
     if (notifications?.onClicked) {
       cleanups.push(notifications.onClicked((projectId, taskId) => {
         const alreadyActive = useProjectStore.getState().currentProject?.id === projectId;
@@ -1293,7 +1304,7 @@ export function App() {
           enqueueReload('board', () => useBoardStore.getState().loadBoard());
         }
 
-        const notifyConfig = useConfigStore.getState().config.notifications;
+        const notifyConfig = notificationConfigNow();
         // Active project only, like every other toast (exit, idle, idle-timeout,
         // spawn-stall). An auto-move on a BACKGROUND project used to toast here
         // unconditionally, naming a task on a board the user is not looking at -
@@ -1304,6 +1315,7 @@ export function App() {
           // The board on screen is the move's own, so its columns name the target.
           const columnName = useBoardStore.getState().swimlanes.find((lane) => lane.id === targetSwimlaneId)?.name;
           const movedProjectId = autoMoveProjectId ?? activeProjectId;
+          playEventSound('onPlanComplete');
           useToastStore.getState().addToast({
             title: i18n._(msg`Plan complete`),
             message: columnName !== undefined
@@ -1323,6 +1335,7 @@ export function App() {
             const project = useProjectStore.getState().projects.find((p) => p.id === autoMoveProjectId);
             sendNotification(
               `automove:${autoMovedTaskId}`,
+              'onPlanComplete',
               i18n._(msg`Plan complete: ${taskTitle}`),
               project?.name ?? i18n._(msg`A project`),
               autoMoveProjectId,
@@ -1337,11 +1350,12 @@ export function App() {
     // focus gate and cooldown for one that is not.
     if (tasks?.onWorkflowCompleted) {
       cleanups.push(tasks.onWorkflowCompleted((completed) => {
-        const notifyConfig = useConfigStore.getState().config.notifications;
+        const notifyConfig = notificationConfigNow();
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         const workflowTitle = completed.title;
         if (completed.projectId === activeProjectId && notifyConfig.toasts.onWorkflowComplete) {
           const taskCount = completed.taskCount;
+          playEventSound('onWorkflowComplete');
           useToastStore.getState().addToast({
             title: i18n._(msg`Workflow complete`),
             message: i18n._(msg`${plural(taskCount, {
@@ -1362,6 +1376,7 @@ export function App() {
             // No task: a click on it goes to the workflow's project.
             sendNotification(
               notificationKey,
+              'onWorkflowComplete',
               i18n._(msg`Workflow complete: ${workflowTitle}`),
               project?.name ?? i18n._(msg`A project`),
               completed.projectId,
@@ -1376,9 +1391,10 @@ export function App() {
     // the toast, for the project on screen.
     if (tasks?.onWorkflowStalled) {
       cleanups.push(tasks.onWorkflowStalled((stalled) => {
-        const notifyConfig = useConfigStore.getState().config.notifications;
+        const notifyConfig = notificationConfigNow();
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (stalled.projectId !== activeProjectId || !notifyConfig.toasts.onWorkflowStalled) return;
+        playEventSound('onWorkflowStalled');
         useToastStore.getState().addToast({
           title: i18n._(msg`Workflow stalled`),
           message: stalled.taskTitle ? `"${stalled.taskTitle}": ${stalled.reason}` : stalled.reason,

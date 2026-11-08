@@ -303,6 +303,57 @@ describe('TranscriptWriter class', () => {
     expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'hello-world');
   });
 
+  it.each([
+    ['inside its URL', 15],
+    ['inside its terminator', 44],
+    ['on its introducer', 1],
+  ])('stores a hyperlink split across chunks %s as its label alone', (_label, cut) => {
+    const link = '\x1b]8;id=1;https://example.com/docs/page?q=1\x1b\\label\x1b]8;;\x1b\\';
+    writer.onData(sessionId, `before-${link.slice(0, cut)}`);
+    writer.onData(sessionId, `${link.slice(cut)} after`);
+    writer.finalize(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'before-label after');
+  });
+
+  it('stores a BEL-terminated hyperlink split inside its URL as its label alone', () => {
+    const link = '\x1b]8;id=1;https://example.com/docs/page?q=1\x07label\x1b]8;;\x07';
+    writer.onData(sessionId, `before-${link.slice(0, 20)}`);
+    writer.onData(sessionId, `${link.slice(20)} after`);
+    writer.finalize(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'before-label after');
+  });
+
+  it('still reads the tail of a partial longer than the carry cap as a sequence, not text', () => {
+    const hugeTarget = `https://example.com/${'a'.repeat(5000)}`;
+    writer.onData(sessionId, `before-\x1b]8;id=1;${hugeTarget}`);
+    writer.onData(sessionId, 'more-of-the-url\x1b\\label\x1b]8;;\x1b\\ after');
+    writer.finalize(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'before-label after');
+  });
+
+  it('does not hand a removed session\'s held partial escape to a later session that reuses the id', () => {
+    writer.onData(sessionId, 'old\x1b]8;id=1;https://secret.example/old-path');
+    writer.remove(sessionId);
+    appendChunkSpy.mockClear();
+
+    writer.onData(sessionId, 'fresh output');
+    writer.finalize(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledTimes(1);
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'fresh output');
+  });
+
+  it('carries the hold no further than the sequence it belongs to', () => {
+    writer.onData(sessionId, 'one\x1b]0;title\x07');
+    writer.onData(sessionId, ' two');
+    writer.finalize(sessionId);
+
+    expect(appendChunkSpy).toHaveBeenCalledWith(sessionId, 'one two');
+  });
+
   it('writes each session to its own project, read on its first output, including the flush after it leaves the registry', () => {
     const sinks = new Map([['project-a', { appendChunk: vi.fn() }], ['project-b', { appendChunk: vi.fn() }]]);
     // The registry: which project each session is in, until it is removed.

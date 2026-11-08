@@ -36,6 +36,10 @@ The amber idle indicator replaces the previous auto-focus behavior (which switch
 
 The leftmost tab shows an activity log - structured events from all sessions. This is a plain list (not a terminal) showing tool calls, idle events, and session state changes.
 
+### Links
+
+Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your browser. The same click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and a plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
+
 ### Clipboard Paste
 
 Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary PNG, capped at a 2000px long edge so a 4K or 5K grab does not land on disk at full size. The cap costs no detail - it sits at the point above which the extra pixels are discarded before an agent ever sees them. Saved pastes are pruned by age and count, so the temp directory no longer grows for the life of the install. The saved file's path is then pasted into the terminal the way a native terminal delivers a dropped file: as a bracketed paste when the program in the terminal asked for one, as plain text otherwise. With Claude Code in the foreground, the pasted path becomes an `[Image #1]` chip and the image lands in your next message directly, with no `Read` tool call and no extra model round trip; Claude still knows the file's path on disk. Kangentic's own capture is more reliable than the CLI's clipboard reader, which can silently miss a Windows Snipping Tool image. Gemini CLI and OpenCode attach the pasted capture the same way. Agents that do not attach from a pasted path receive the quoted path as text. At a plain shell prompt the quoted path is inserted as text and nothing runs. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
@@ -131,7 +135,7 @@ Tasks can host an embedded browser inside the task detail dialog. Use it to prev
 
 Settings > Browser turns the pane on or off for a project and holds the project's default URL, which is saved the first time you navigate the pane. Clear browser data is there too.
 
-Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](settings.md#agent-browser) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it, which means it may open that task's detail window on its own if none is open.
+Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](settings.md#agent-browser) settings tab. An agent can also open and close its own task's pane rather than waiting for you to do it. It never shows, raises or focuses a window to do so: with the task's window closed, the pane runs out of sight, and opening the task shows it on the same page.
 
 **Hiding the pane is not the same as closing it.** The Browser pill only hides: the page stays loaded so you get it back exactly as you left it, which also means the agent driving it is never interrupted by you reclaiming the space. Closing the task's window while its agent is still running keeps it the same way. A loaded page costs real memory (roughly 120 MB, more for a heavy app), so when you are genuinely finished with a task's browser, use **Close browser** in the pane's toolbar, or the same item in the task menu when the pane is hidden. That ends the page and frees the memory. The task's URL is remembered either way, so showing the pane again reopens the same address on a fresh page. While a task's browser is loaded, its Browser pill shows a green dot and a green globe appears on the task's card.
 
@@ -141,9 +145,12 @@ Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools
 | Zoom out | **Ctrl+-** (or **Ctrl+wheel down** inside the page) |
 | Reset zoom to 100% | **Ctrl+0** |
 | Reload page | **F5** or **Ctrl+R** (outside the embedded page) |
+| Toggle Draw | **Ctrl+D** (**Cmd+D** on macOS), also while the note field has focus |
 | Send the capture to the agent | **Enter** (with the note field focused) |
 
 Zoom snaps to a Chrome-compatible ladder (25%, 33%, 50%, 67%, 75%, 80%, 90%, 100%, 110%, 125%, 150%, ... up to 500%). Ctrl+wheel zoom inside the webview uses a smoother multiplicative step but stays clamped to the same range. The toolbar shows a zoom pill with the current factor, plus dedicated zoom-out / reset / zoom-in buttons.
+
+While Draw is on, keyboard focus stays in the note field, so what you type or dictate while you annotate is sent with the strokes. Clicking into the terminal still moves focus there.
 
 Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Send is the exception. Its handler is bound on the note field itself rather than on the pane-scoped listener, so Enter sends only while that field has focus.
 

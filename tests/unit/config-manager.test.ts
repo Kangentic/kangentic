@@ -34,6 +34,83 @@ async function createConfigManager() {
   return new ConfigManager();
 }
 
+describe('Config Manager -- toast duration default migration', () => {
+  const savedDuration = () => JSON.parse(fs.readFileSync(configPath, 'utf-8')).notifications.toasts.durationSeconds;
+
+  it('moves a saved 4 from before the change to 5, on disk too', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ notifications: { toasts: { durationSeconds: 4 } } }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.notifications.toasts.durationSeconds).toBe(5);
+    expect(savedDuration()).toBe(5);
+  });
+
+  it('leaves any other saved value alone', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ notifications: { toasts: { durationSeconds: 7 } } }));
+
+    expect((await createConfigManager()).load().notifications.toasts.durationSeconds).toBe(7);
+  });
+
+  it('keeps a 4 set after the change, which a saved muted key marks', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ notifications: { muted: false, toasts: { durationSeconds: 4 } } }));
+
+    expect((await createConfigManager()).load().notifications.toasts.durationSeconds).toBe(4);
+  });
+
+  it('runs once: a 4 chosen after the move survives the next launch', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ notifications: { toasts: { durationSeconds: 4 } } }));
+    const first = await createConfigManager();
+    const migrated = first.load();
+    first.save({ notifications: { ...migrated.notifications, toasts: { ...migrated.notifications.toasts, durationSeconds: 4 } } });
+
+    vi.resetModules();
+    expect((await createConfigManager()).load().notifications.toasts.durationSeconds).toBe(4);
+  });
+
+  it('gives a fresh install the new default', async () => {
+    expect((await createConfigManager()).load().notifications.toasts.durationSeconds).toBe(5);
+  });
+});
+
+describe('Config Manager -- notification keys added after a config file was written', () => {
+  const ALL_EVENT_KEYS = ['onAgentIdle', 'onAgentCrash', 'onPlanComplete', 'onWorkflowComplete', 'onWorkflowStalled', 'onSpawnStalled'];
+
+  it('loads a file holding only desktop and toasts with Mute off, the badge on, no sounds and no custom files', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      notifications: {
+        desktop: { onAgentIdle: false },
+        toasts: { durationSeconds: 7 },
+      },
+    }));
+
+    const { notifications } = (await createConfigManager()).load();
+
+    expect(notifications.muted).toBe(false);
+    expect(notifications.appBadge).toBe(true);
+    expect(Object.keys(notifications.sounds).sort()).toEqual([...ALL_EVENT_KEYS].sort());
+    expect(Object.values(notifications.sounds).every((sound) => sound === 'off')).toBe(true);
+    expect(notifications.customSounds).toEqual({});
+    // What the file did hold survives the merge.
+    expect(notifications.desktop.onAgentIdle).toBe(false);
+    expect(notifications.toasts.durationSeconds).toBe(7);
+  });
+
+  it('keeps the default for each event a partial sounds map leaves out', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      notifications: { muted: true, sounds: { onAgentCrash: 'rise' }, toasts: { durationSeconds: 7 } },
+    }));
+
+    const { notifications } = (await createConfigManager()).load();
+
+    expect(notifications.muted).toBe(true);
+    expect(notifications.sounds.onAgentCrash).toBe('rise');
+    for (const eventKey of ALL_EVENT_KEYS.filter((key) => key !== 'onAgentCrash')) {
+      expect(notifications.sounds[eventKey as keyof typeof notifications.sounds]).toBe('off');
+    }
+  });
+});
+
 describe('Config Manager -- Permission Mode Migration', () => {
   it("migrates 'dangerously-skip' to 'bypassPermissions'", async () => {
     fs.writeFileSync(configPath, JSON.stringify({

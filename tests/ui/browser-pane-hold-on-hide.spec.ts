@@ -328,7 +328,6 @@ test.describe('hold on hide', () => {
     expect(await registersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(1);
     expect(await unregistersFor(sharedPage, MOCK_WEB_CONTENTS_ID)).toBe(0);
     await expect(sharedPage.locator('[data-testid="browser-webview"]')).toHaveCount(1);
-    // The window was open all along, so no agent stamp lands on it.
     expect(await taskWindow(sharedPage)).toMatchObject({ parked: false });
   });
 

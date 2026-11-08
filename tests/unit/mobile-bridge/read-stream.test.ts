@@ -291,6 +291,31 @@ describe('handleReadStream', () => {
       expect(terminalDataSent(session)).toBe('BBCCCC');
     });
 
+    it('drops the rest of a hyperlink the seed barrier cut in half, rather than painting its URL on the phone', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      sessionManager.seedBarrierOffset = 100;
+
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+      const restOfLink = 'ple.com/rest-of-url\x1b\\label';
+      sessionManager.emit('data-tap', 'sess-1', restOfLink, 100 + restOfLink.length);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(terminalDataSent(session)).toBe('label');
+    });
+
+    it('sends a phone the label of a link and not the link, even split across chunks', async () => {
+      const session = fakeSession();
+      const context = { sessionManager } as unknown as IpcContext;
+      await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+
+      sessionManager.emit('data-tap', 'sess-1', 'see \x1b]8;id=1;https://exam');
+      sessionManager.emit('data-tap', 'sess-1', 'ple.com/a\x1b\\label\x1b]8;;\x1b\\ end');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(terminalDataSent(session)).toBe('see label end');
+    });
+
     it('drops pre-barrier bytes a late flush delivers after the seed', async () => {
       const session = fakeSession();
       const context = { sessionManager } as unknown as IpcContext;

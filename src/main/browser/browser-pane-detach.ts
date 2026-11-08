@@ -7,9 +7,10 @@ import {
   type DriverResult,
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
-import { openPaneForCallerTask, PANE_OPEN_TIMEOUT_MS } from './browser-pane-opener';
+import { openPaneForCallerTask } from './browser-pane-opener';
 import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
 import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
+import { BROWSER_PANE_OPEN_TIMEOUT_MS } from '../../shared/types';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
 import {
   applyViewport,
@@ -68,7 +69,7 @@ const DETACH_TIMEOUT_MS = 20_000;
 /** How long a failed detach waits for the in-app pane to come back after it
  *  closes the window. A remount inside the running app window, the same work
  *  an opened pane does, so it takes the open path's bound. */
-const RECOVER_TIMEOUT_MS = PANE_OPEN_TIMEOUT_MS;
+const RECOVER_TIMEOUT_MS = BROWSER_PANE_OPEN_TIMEOUT_MS;
 
 export interface DetachPaneInput {
   projectId: string;
@@ -166,7 +167,7 @@ function describeRecoveredSurface(pane: BrowserPaneStatus): string {
     return `offscreen as ${pane.sessionId}, which the user cannot see`;
   }
   if (pane.visibility === 'hidden') return `back in the task window as ${pane.sessionId}, hidden behind the terminal`;
-  if (pane.visibility === 'parked') return `back in the task window as ${pane.sessionId}, in a window the user closed`;
+  if (pane.visibility === 'parked') return `back in the task window as ${pane.sessionId}, which is closed`;
   return `back in the task window as ${pane.sessionId}`;
 }
 

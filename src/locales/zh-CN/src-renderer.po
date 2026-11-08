@@ -633,6 +633,10 @@ msgstr "无法保存布局"
 msgid "Couldn't save the task"
 msgstr "无法保存任务"
 
+#: src/renderer/utils/terminal-links/register-terminal-links.ts
+msgid "Couldn't show file"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't start the workflow"
 msgstr "无法启动工作流"

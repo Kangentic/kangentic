@@ -483,7 +483,8 @@ npm run test:demo
   veil, and a visitor's own click stops it; `scenes.json` is served and matches the registry, the ready
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
   has nothing of its own to close and stays silent when it does, a task window takes the first
-  Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
+  Escape even with its terminal under the pointer, an open terminal find bar takes the first Escape
+  and leaves its window open, Escape posts from a Command Terminal, from the
   bottom panel's terminal, and after a window parks, `settings-language`'s Restart now switches
   the frame to German in place with no English message left on screen and back again, a frame
   draws no focus outline for its own clicks until a visitor's first key, `embed=1` hides the window

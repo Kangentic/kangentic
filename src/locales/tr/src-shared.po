@@ -440,6 +440,10 @@ msgid "Find in conversation"
 msgstr "Konuşmada bul"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Find on board"
 msgstr "Panoda bul"
@@ -1115,6 +1119,10 @@ msgstr "Açık formu Kaydet, Oluştur veya Bitti düğmesiyle aynı şekilde kay
 msgctxt "automation field"
 msgid "Script"
 msgstr "Betik"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

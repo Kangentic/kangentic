@@ -62,6 +62,10 @@ msgstr "Очистить поиск"
 msgid "Close browser"
 msgstr "Закрыть браузер"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Command Terminal"
@@ -151,6 +155,11 @@ msgstr "Развернуть терминал"
 #, fuzzy
 msgid "Failed to load the Changes panel"
 msgstr "Не удалось загрузить панель «Изменения»"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy

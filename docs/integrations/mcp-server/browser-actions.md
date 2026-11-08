@@ -6,6 +6,7 @@ tags: [mcp, browser, automation]
 sources:
   - resource: src/main/agent/mcp-http/browser-tools.ts
   - resource: src/main/browser/browser-pane-driver.ts
+  - resource: src/main/browser/cdp/guest-capture-hold.ts
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/dev-server-error.ts
   - resource: src/main/agent/mcp-http/browser-capture-file.ts
@@ -21,7 +22,7 @@ Every **driving** tool below takes the same optional target pair. They are liste
 | `sessionId` | string | No | Browser surface handle (`pane_…` / `lane_…`) from `open_pane` / `list_panes`. Names one tab for its lifetime; a gone tab returns `surface-gone` naming the replacement. Must be in your own project. |
 | `taskId` | string | No | Task whose Browser surface to target (visible pane first, then a lane). An alternative to `sessionId`, likewise same-project. |
 
-Omitting both resolves your own task's surface (a caller with no task falls back to the single pane open in the project). Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `surface-gone` (the handle named a tab that no longer exists; the detail names the task's current surface), `multiple-panes` (more than one surface shares the best rank and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `pane-not-rendering`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
+Omitting both resolves your own task's surface (a caller with no task falls back to the single pane open in the project). Alongside the per-tool errors listed below, any driving tool can return the shared refusals raised while resolving and attaching to a pane: `no-pane-open`, `surface-gone` (the handle named a tab that no longer exists; the detail names the task's current surface), `multiple-panes` (more than one surface shares the best rank and neither argument was given; the error carries the candidates), `foreign-project`, `pane-destroyed`, `cdp-attach-failed`, `pane-busy`, and `driver-error`.
 
 ## Drive serialization and capability refusals
 
@@ -70,7 +71,7 @@ The metadata carries `pixelsPerCssPixel`, the number to divide an image coordina
 
 **A pane's screenshot holds no more pixels than the pane has.** That is Chromium, not a setting. A `<webview>` guest cannot grow its view for a capture the way a tab can, and when a capture asks for more pixels than the guest's widget holds, Chromium fills the difference by repeating the widget. The image comes back tiled, the page repeated in a grid of pane-sized blocks. So every capture of a docked or popped-out pane is planned to fit inside `pane width x pane height x display scale`, and a larger request is scaled down rather than tiled: a 1600x1000 viewport in a 740x749 pane on a 100% display comes back 740x463. Should one ever come back larger anyway, the call fails with a `driver-error` naming the pane's size instead of returning the tiled image. An offscreen surface is a real window whose view Chromium can grow, so it is not bounded.
 
-Error modes beyond the shared set: `screenshot-failed` when CDP returns no data. A window that is minimized, hidden or fully occluded composites no frames and cannot be detected as such from the main process, so those captures fail after a 5 s bound (`SCREENSHOT_TIMEOUT_MS`) with a `driver-error`. On Windows a locked screen counts as occluded. The error says a retry will not help until the window is on screen again, and to verify through the tools that need no pixels (`query_dom`, `query_all`, `click`), which keep working against that same backgrounded pane.
+Error modes beyond the shared set: `screenshot-failed` when CDP returns no data. A capture holds the pane's guest and Kangentic's compositor running for its own length (`src/main/browser/cdp/guest-capture-hold.ts`), so a covered, minimized or parked pane still captures, with nothing moving on the user's screen. That is measured on Windows only; macOS and Linux are not. A window hidden outright (macOS Cmd+H) composites nothing the hold can reach, so its captures fail after a 5 s bound (`SCREENSHOT_TIMEOUT_MS`) with a `driver-error`, as would a locked Windows screen if it counts as occluded, which has not been measured with the hold. The error says a retry will not help until the window is on screen again, and to verify through the tools that need no pixels (`query_dom`, `query_all`, `click`), which keep working against that same backgrounded pane. A minimized host plans the capture against its restored bounds, and a pane reports its own size as it registers, so a first capture is not planned for one pixel.
 
 `kangentic_browser_screenshot` additionally returns `dev-server-error` when the dev server is showing
 a build-error overlay. Without it the tool returns a faithful picture of a full-screen red overlay,

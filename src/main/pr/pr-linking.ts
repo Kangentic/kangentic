@@ -1,4 +1,5 @@
 import { IPC } from '../../shared/ipc-channels';
+import { exposeHyperlinkTargets } from '../../shared/ansi-strip';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { readWorktreeHead, hasCommitsAheadOfBase, readRefsPointingAtSha } from '../git/worktree-head';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
@@ -786,7 +787,9 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // state when the URL is unchanged). Merge readiness is left undefined:
         // the same-PR rule below preserves it exactly as the state is preserved
         // here, and nulls it when the scrape names a different PR.
-        const scraped = deps.getScrollback ? detectPR(deps.getScrollback() ?? '') : null;
+        // The targets go in first: a stripper takes them with the sequence, and one
+        // can be the only copy of a URL behind a short label or across wrapped rows.
+        const scraped = deps.getScrollback ? detectPR(exposeHyperlinkTargets(deps.getScrollback() ?? '')) : null;
         if (scraped) {
           next = { url: scraped.url, number: scraped.number, state: scraped.url === task.pr_url ? task.pr_state : null };
         }

@@ -1,3 +1,4 @@
+import { skipTruncatedStringSequence } from '../../../shared/ansi-strip';
 import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
 import { collectPeekLines, PEEK_LINE_COUNT } from './output-peek';
@@ -1589,7 +1590,9 @@ export class PtyBufferManager {
       // TUI happened to re-assert its own modes in the live stream. The folded
       // prefix covers every mode in RESTORABLE_DEC_PRIVATE_MODES, and
       // re-asserting one the addon already emitted is a no-op.
-      const payload = frame + buildDecPrivateModePrefix(state.decPrivateModes) + tail;
+      // The sample lands at a chunk boundary, and a chunk can end inside an OSC 8. The
+      // frame carries no parser state, so the rest of that URL would paint as text.
+      const payload = frame + buildDecPrivateModePrefix(state.decPrivateModes) + tail.slice(skipTruncatedStringSequence(tail));
       traceTerminal(sessionId, 'scrollback-sample', { source: 'parsed-grid', route, bytes: payload.length, tailBytes: tail.length });
       return payload;
     } finally {

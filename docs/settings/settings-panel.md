@@ -35,6 +35,7 @@ System tabs are grouped again into three sidebar tiers (`tier` on each tab): Cor
 - **Knowledge Graph** keeps its own hardware row, named "Model acceleration": it pairs with Search quality as one speed-versus-accuracy decision, and the name keeps it distinct from Performance's Graphics acceleration.
 - **Terminal** (shell, font, cursor style, colors) is global-only, not per-project. Shell in particular was never reliably project-scoped at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever project is currently focused, `src/main/pty/session-manager.ts`), so a background project's spawn or resume could silently pick up the wrong shell.
 - **Theme** is its own tab, not folded into General, so it has a sidebar entry distinct from Project Location.
+- **Notifications** holds the Mute switch, the Events table (a Toast switch, a Desktop switch and a Sound for each event), the App icon badge, and the Toasts card (how many show at once and how long a timed one appears). It is the one tab whose card rows are two tiles wide: the Sound column sits in its own tile, so the gap between tiles runs down the table as a gutter. What each event covers is in [Notifications](../user-guide/settings.md#notifications).
 
 ## Where each project tab saves
 

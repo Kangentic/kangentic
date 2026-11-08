@@ -81,6 +81,18 @@ msgstr "{displayName}、{percent}%"
 msgid "{displayName}, {sizeMb} MB"
 msgstr "{displayName}、{sizeMb} MB"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} desktop notification"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "{eventName} sound: {valueName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "{eventName} toast"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "{hostname} now presents a different key."
 msgstr ""
@@ -197,6 +209,10 @@ msgstr "小型モデルでも同等の回答をより速く返せますが、タ
 #, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
 msgstr "1 つの応答を読んではい/いいえで答えるには、通常は小型で高速なモデルで十分です。"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A toast with a button stays until you close it."
+msgstr ""
 
 #: src/renderer/components/settings/settings-card.tsx
 #, fuzzy
@@ -386,6 +402,10 @@ msgstr "API キー (任意)"
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
 msgstr "アプリのクラッシュとエラー (アプリコード内のマシン固有のパスを除去したスタックトレース)"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "App icon badge"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 #, fuzzy
 msgid "App launches, platform, and architecture"
@@ -539,12 +559,6 @@ msgstr "ボード"
 msgid "Board layout"
 msgstr "ボードのレイアウト"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgctxt "notification channel"
-msgid "Both"
-msgstr "両方"
-
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgctxt "shortcut display"
@@ -643,6 +657,11 @@ msgstr "確認中"
 #, fuzzy
 msgid "Checking..."
 msgstr "確認中..."
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Chime"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
 #, fuzzy
@@ -1018,6 +1037,10 @@ msgstr "タスク詳細ダイアログから使えるカスタムコマンド"
 msgid "Custom commands in the task window's header and menu."
 msgstr "タスクウィンドウのヘッダーとメニューのカスタムコマンド。"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Custom file..."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Custom relay address"
@@ -1094,7 +1117,7 @@ msgstr "説明"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Desktop"
 msgstr "デスクトップ"
 
@@ -1228,6 +1251,11 @@ msgstr "パスを手動で入力"
 msgid "Environment variables that turn telemetry off."
 msgstr "テレメトリーを無効にする環境変数。"
 
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Event"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
@@ -1270,6 +1298,11 @@ msgstr "失敗"
 #, fuzzy
 msgid "Fair accuracy"
 msgstr "精度: 中"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Fall"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -1495,19 +1528,18 @@ msgid "How long an agent waits on you before the idle timer pauses it."
 msgstr "アイドルタイマーで一時停止されるまで、エージェントが応答を待つ時間。"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "How long toasts remain visible"
-msgstr "トーストの表示時間"
-
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "How long toasts stay up and how many stack at once."
-msgstr "トーストの表示時間と同時に表示する最大数。"
+msgid "How long toasts appear, in seconds"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #, fuzzy
 msgid "How many agents run at once and what happens when idle."
 msgstr "同時に実行するエージェント数とアイドル時の動作。"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How many show at once, and for how long."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
@@ -1553,6 +1585,10 @@ msgstr "タスクが実行したまま残したものをプロジェクトで停
 #, fuzzy
 msgid "How to install and pair"
 msgstr "インストールとペアリングの方法"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How you hear about each event."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
@@ -1833,14 +1869,9 @@ msgid "Max concurrent sessions"
 msgstr "最大同時セッション数"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Max visible toasts"
-msgstr "トーストの最大表示数"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Maximum simultaneous toasts on screen"
-msgstr "画面に同時に表示するトーストの最大数"
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Maximum toasts on screen"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1912,6 +1943,10 @@ msgstr "移動..."
 #, fuzzy
 msgid "Moving between task windows and arranging them."
 msgstr "タスク ウィンドウ間の移動と配置。"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mute notifications"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2065,9 +2100,9 @@ msgctxt "close on outside click"
 msgid "Off"
 msgstr "オフ"
 
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification sound"
 msgid "Off"
 msgstr "オフ"
 
@@ -2166,6 +2201,10 @@ msgid "Password for the host"
 msgstr "ホストのパスワード"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Past this, the oldest timed toast makes way for a new one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "このプロジェクトのタスク用のサーバー上のパス。空欄の場合はサーバー独自の既定ディレクトリを使用します"
@@ -2238,6 +2277,10 @@ msgstr "プラン完了"
 #, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
 msgstr "各ワークフローを計画します。選択するまで何も開始しません。"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Play {name}"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2618,6 +2661,11 @@ msgstr "「{revokeTargetName}」({revokeTargetFingerprint}) を取り消しま�
 msgid "Revoke device"
 msgstr "デバイスを取り消す"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Rise"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
@@ -2793,10 +2841,18 @@ msgstr "ボードの下にターミナルパネルを表示"
 msgid "Shows a PR as ready when you can bypass its required review, never past a failing check."
 msgstr "必須レビューをバイパスできる PR を準備完了として表示します。失敗したチェックは越えません。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows how many agents need you, on the taskbar or dock."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgid "Side by side"
 msgstr "左右に並べて表示"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Silences all notifications on this machine until turned off."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -2824,6 +2880,11 @@ msgstr "サイズ"
 #, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
 msgstr "差分を横スクロールする代わりに、長い行を次の行に折り返します。"
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification table column"
+msgid "Sound"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2922,6 +2983,11 @@ msgstr "要約を作成済み"
 #, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
 msgstr "ルートの node_modules を各ワークツリーにシンボリックリンクし、新規インストールを省きます。ワークスペースのリポジトリではオフにしてください。"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "System"
+msgstr ""
 
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
@@ -3152,6 +3218,11 @@ msgstr "すべてのホットキーが既定値に戻ります。カスタムの
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
 msgstr "すべてのタスクとプロジェクトで、埋め込みブラウザーペインの Cookie、localStorage、IndexedDB、Service Worker、HTTP/認証キャッシュを消去します。すべてのサイトからサインアウトされます。"
 
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgctxt "notification sound"
+msgid "Tick"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Ticket numbers"
@@ -3164,14 +3235,9 @@ msgstr "経過中のセッション時間"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
 #, fuzzy
-msgctxt "notification channel"
+msgctxt "notification table column"
 msgid "Toast"
 msgstr "トースト"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Toast auto-dismiss"
-msgstr "トーストの自動非表示"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
@@ -3225,6 +3291,10 @@ msgstr ""
 #, fuzzy
 msgid "Try a different search term"
 msgstr "別の検索語句をお試しください"
+
+#: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
+msgid "Turn on Toast or Desktop to hear a sound"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
@@ -3392,11 +3462,6 @@ msgstr "アイドル時"
 #, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
 msgstr "Kangentic が入力待ちのエージェントを一時停止するタイミング。"
-
-#: src/renderer/components/settings/tabs/NotificationsTab.tsx
-#, fuzzy
-msgid "Where each kind of alert shows up."
-msgstr "各種アラートの表示先。"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy

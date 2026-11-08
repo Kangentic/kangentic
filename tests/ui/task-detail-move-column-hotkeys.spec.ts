@@ -796,7 +796,7 @@ test.describe('Task Detail move-column hotkeys', () => {
     await expect(moveFailure).toBeVisible({ timeout: 5000 });
     await expect(moveFailure.getByTestId('toast-body')).toHaveText('Boom: simulated spawn failure.');
     // An immediate, non-retrying count check, not `await expect(...).toHaveCount(0)`:
-    // toasts auto-dismiss after notifications.toasts.durationSeconds (default 4s -
+    // toasts auto-dismiss after notifications.toasts.durationSeconds (default 5s -
     // see src/shared/types.ts), and toHaveCount's default 5s retry window is long
     // enough that a genuinely-added "Task moved" toast would auto-dismiss DURING the
     // retry and the assertion would pass anyway, masking the very regression this

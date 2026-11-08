@@ -16,7 +16,7 @@ import { SETTINGS_REGISTRY } from '../../../src/renderer/components/settings/set
 import { englishText } from '../../../src/shared/i18n/english';
 import { hasJsxOptOutMarker } from './opt-out-marker';
 
-const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile', 'CardTile'];
+const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile', 'CardTile', 'CardTableRow', 'CardTableHeads'];
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */

@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 import { IPC } from '../../src/shared/ipc-channels';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { RendererErrorContext, Session } from '../../src/shared/types';
 import type { IdentityTreeStop } from '../../src/main/git/zombie-reaper';
 import type { DesktopNotifierOptions } from '../../src/main/notifications/desktop-notifier';
@@ -48,7 +49,7 @@ vi.mock('node:fs', () => ({
 vi.mock('node:crypto', () => ({ randomUUID: vi.fn(() => 'mock-uuid') }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
 vi.mock('../../src/main/db/repositories/project-repository', () => ({
-  ProjectRepository: class { list = vi.fn(() => []); },
+  ProjectRepository: class { list = vi.fn(() => []); getById = vi.fn(() => ({ name: 'Mock Project' })); },
 }));
 vi.mock('../../src/main/db/repositories/project-group-repository', () => ({
   ProjectGroupRepository: class { list = vi.fn(() => []); },
@@ -69,7 +70,16 @@ vi.mock('../../src/main/pty/session-manager', () => {
   const { EventEmitter } = require('node:events');
   return {
     SessionManager: class extends EventEmitter {
-      listSessions = vi.fn(() => []);
+      constructor() {
+        super();
+        // As the real one does: a normal fan-out passes Node's default of 10.
+        this.setMaxListeners(100);
+      }
+      listSessions = vi.fn((): Session[] => []);
+      // The desktop notifier and the app badge read these on an activity event.
+      getSession = vi.fn((_sessionId: string): Session | undefined => undefined);
+      getActivityCache = vi.fn((): Record<string, string> => ({}));
+      getActivityReason = vi.fn(() => undefined);
       spawn = vi.fn();
       kill = vi.fn();
       enableTranscripts = vi.fn();
@@ -111,6 +121,15 @@ const wired = vi.hoisted(() => ({
   desktopNotifierOptions: [] as unknown[],
   leftoverReaperDeps: [] as unknown[],
   stopEndedBackgroundSession: vi.fn(async (_context: unknown, _ended: unknown): Promise<void> => undefined),
+  // What the mocked ConfigManager.load() returns, so a test can save a notifications block.
+  loadedConfig: { value: { agent: { autoResumeSessionsOnRestart: true } } as Record<string, unknown> },
+  showDesktopNotification: vi.fn(),
+  showBadgeCount: vi.fn(),
+}));
+// The desktop notice and the icon badge leave main through these two, so they are the
+// observable end of the notification wiring. Everything before them stays real.
+vi.mock('../../src/main/notifications/app-badge-display', () => ({
+  createAppBadgeDisplay: () => ({ show: wired.showBadgeCount }),
 }));
 vi.mock('../../src/main/notifications/desktop-notifier', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/notifications/desktop-notifier')>();
@@ -162,7 +181,7 @@ vi.mock('../../src/main/config/config-manager', () => ({
   ConfigManager: class {
     getEffectiveConfig = getEffectiveConfigMock;
     // Whether a terminal the host took down comes back reads the restart setting.
-    load = vi.fn(() => ({ agent: { autoResumeSessionsOnRestart: true } }));
+    load = vi.fn(() => wired.loadedConfig.value);
   },
 }));
 vi.mock('../../src/main/config/board-config-manager', () => ({
@@ -285,6 +304,7 @@ vi.mock('../../src/main/ipc/handlers/git-diff', () => ({
 }));
 vi.mock('../../src/main/ipc/handlers/system', () => ({
   registerSystemHandlers: vi.fn(),
+  showDesktopNotification: wired.showDesktopNotification,
 }));
 vi.mock('../../src/main/ipc/handlers/mobile-bridge', () => ({
   registerMobileBridgeHandlers: vi.fn(),
@@ -339,6 +359,7 @@ describe('registerAllIpc idempotency', () => {
     getEffectiveConfigMock.mockClear();
     wired.desktopNotifierOptions.length = 0;
     wired.leftoverReaperDeps.length = 0;
+    wired.loadedConfig.value = { agent: { autoResumeSessionsOnRestart: true } };
     // Reset the module-level `context` singleton between tests
     vi.resetModules();
   });
@@ -419,13 +440,14 @@ describe('registerAllIpc idempotency', () => {
     //             + the workflow agent (1: its idle edge dates its last
     //             reply and restarts it for new read access)
     //             + the turn-end runner (1: an idle edge marks where an
-    //             expired conversation's recap turn ends)              = 4
-    //   exit:     the notifier, the recorder and the workflow agent, plus
-    //             registerMonitorHandlers (1), plus the
+    //             expired conversation's recap turn ends)
+    //             + the app icon badge (1: its count recounts)         = 5
+    //   exit:     the notifier, the recorder, the workflow agent and the
+    //             badge, plus registerMonitorHandlers (1), plus the
     //             workflow engine (1: a session ending frees an agent slot,
     //             so a waiting workflow task may start), plus the
     //             held-messages flush (1: a session ending before its
-    //             first run releases the claim on a ride it carried)     = 6
+    //             first run releases the claim on a ride it carried)     = 7
     //
     // `registerMonitorHandlers` is deliberately NOT mocked below, so its real
     // `sessionManager.on('exit', schedulePush)` attaches here - that is how the
@@ -437,8 +459,8 @@ describe('registerAllIpc idempotency', () => {
     // If this ever needs to change, re-attribute the count explicitly rather
     // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
-    expect(getSessionManager().listenerCount('activity')).toBe(4);
-    expect(getSessionManager().listenerCount('exit')).toBe(6);
+    expect(getSessionManager().listenerCount('activity')).toBe(5);
+    expect(getSessionManager().listenerCount('exit')).toBe(7);
   }, 30000);
 
   it('second call updates mainWindow without re-registering handlers', async () => {
@@ -518,11 +540,11 @@ describe('registerAllIpc idempotency', () => {
     // stops being reused across a second registerAllIpc call.
     //
     // Counts as attributed in the first test: activity is the notifier, the
-    // recorder, the workflow agent and the turn-end runner; exit is the
-    // notifier, the recorder and the workflow agent plus
+    // recorder, the workflow agent, the turn-end runner and the app badge; exit
+    // is the notifier, the recorder, the workflow agent and the badge plus
     // registerMonitorHandlers, the workflow engine and the held-messages flush.
-    expect(getSessionManager().listenerCount('activity')).toBe(4);
-    expect(getSessionManager().listenerCount('exit')).toBe(6);
+    expect(getSessionManager().listenerCount('activity')).toBe(5);
+    expect(getSessionManager().listenerCount('exit')).toBe(7);
   }, 30000);
 
   it('second call preserves existing services', async () => {
@@ -1062,6 +1084,57 @@ describe('registerAllIpc idempotency', () => {
       // The context itself, read when the stop runs, and the terminal as the reaper snapshotted it.
       expect(context === getOptionalIpcContext()).toBe(true);
       expect(stoppedTerminal).toBe(ended);
+    }, 30000);
+  });
+
+  describe('Mute reaches the desktop notice and the icon badge', () => {
+    // The notifier and the badge are handed `notificationConfigNow`, which applies
+    // Mute. Handing them the raw saved block leaves every desktop switch true, so a
+    // muted user still gets the notice, the taskbar flash and the badge.
+    // Red-green: point either `getNotificationConfig` at
+    // `configManager.load().notifications` and the muted test goes red.
+    const flashFrame = vi.fn();
+
+    function savedNotifications(muted: boolean) {
+      return { ...DEFAULT_CONFIG.notifications, muted };
+    }
+
+    async function raiseIdle(muted: boolean) {
+      wired.loadedConfig.value = { agent: { autoResumeSessionsOnRestart: true }, notifications: savedNotifications(muted) };
+      const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+      const window = { id: 1, isDestroyed: () => false, isFocused: () => false, flashFrame, webContents: { send: vi.fn() } };
+      registerAllIpc(window as unknown as import('electron').BrowserWindow);
+      const sessionManager = getSessionManager();
+      const waiting = {
+        id: 'session-waiting', taskId: 'task-1', projectId: 'project-1', status: 'running', transient: true,
+      } as Session;
+      vi.mocked(sessionManager.getSession).mockReturnValue(waiting);
+      vi.mocked(sessionManager.listSessions).mockReturnValue([waiting]);
+      vi.mocked(sessionManager.getActivityCache).mockReturnValue({ 'session-waiting': 'idle' });
+
+      sessionManager.emit('activity', 'session-waiting', 'idle', { kind: 'idle' });
+      // The badge recounts on setImmediate, off the emit stack.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    beforeEach(() => {
+      flashFrame.mockClear();
+    });
+
+    it('raises the notice, the flash and the badge when not muted (the control)', async () => {
+      await raiseIdle(false);
+
+      expect(wired.showDesktopNotification).toHaveBeenCalledTimes(1);
+      expect(flashFrame).toHaveBeenCalledWith(true);
+      expect(wired.showBadgeCount).toHaveBeenCalledWith(1);
+    }, 30000);
+
+    it('raises none of them while muted', async () => {
+      await raiseIdle(true);
+
+      expect(wired.showDesktopNotification).not.toHaveBeenCalled();
+      expect(flashFrame).not.toHaveBeenCalled();
+      expect(wired.showBadgeCount).not.toHaveBeenCalled();
     }, 30000);
   });
 });

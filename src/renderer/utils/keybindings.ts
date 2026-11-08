@@ -42,14 +42,41 @@ function mouseTokenForButton(button: number): string | null {
 }
 
 /**
- * Whether a pointerup event releases a (possibly chord) mouse combo: true when
- * the released button is one of the combo's buttons. Releasing any button of a
- * chord ends the hold, which is the desired push-to-talk semantics.
+ * Whether a pointer event shows a held (possibly chord) mouse combo as let go:
+ * true when `buttons` lacks any of the combo's buttons, so releasing one button
+ * of a chord ends the hold, which is the desired push-to-talk semantics.
+ *
+ * It reads `buttons` rather than `button` because the event that reports a
+ * release depends on the other buttons. `pointerup` fires only when the LAST
+ * button lifts, so Back lifted with Left still down is a `pointermove` with
+ * `button` 3, and the Left `pointerup` after it names no bound button at all.
+ * A press adds a bit and leaves the bound one set, so a left click during a hold
+ * never reads as a release.
+ *
+ * Mouse only: a touch or a pen is another pointer, and its `buttons` say nothing
+ * about the mouse.
  */
 export function matchesMouseRelease(event: PointerEvent, combo: string): boolean {
-  if (!isMouseCombo(combo) || !('button' in event)) return false;
-  const releasedToken = mouseTokenForButton(event.button);
-  return releasedToken !== null && combo.split('+').includes(releasedToken);
+  if (!isMouseCombo(combo) || !('buttons' in event)) return false;
+  if ('pointerType' in event && event.pointerType !== 'mouse') return false;
+  const held = heldMouseTokens(event.buttons);
+  return combo.split('+').some((token) => !held.includes(token));
+}
+
+/**
+ * Whether a `pointermove` is a press of a combo's button that landed while
+ * another button was already down. Chromium reports that as a move, not a
+ * `pointerdown`, with `button` naming the button that changed. Plain moves carry
+ * `button` -1, and a release of the same button lacks its bit in `buttons`.
+ */
+export function matchesMouseChordPress(event: PointerEvent, combo: string): boolean {
+  return event.type === 'pointermove' && isMouseComboButton(event.button, combo) && matchesCombo(event, combo);
+}
+
+/** Whether a `MouseEvent.button` code is one of a mouse combo's buttons. */
+export function isMouseComboButton(button: number, combo: string): boolean {
+  const token = mouseTokenForButton(button);
+  return token !== null && combo.split('+').includes(token);
 }
 
 /** Compare the event's main key against a canonical main-key token. */

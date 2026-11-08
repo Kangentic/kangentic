@@ -1,15 +1,18 @@
 /**
- * Scenario E, standalone: the #542 fix.
+ * Scenario E, standalone: an agent keeps its browser whatever happens to the
+ * window, the #542 fix and the parking that followed it.
  *
  * An agent is driving its task's Browser pane. The USER closes the task-detail
- * window. Does the agent keep a browser?
+ * window, which parks it: the same pane and handle, still driveable. Then the
+ * guest really dies, which a user's close no longer causes, and the page hands
+ * off to an offscreen lane the same caller can drive.
  *
  * Deliberately run on a clean preview with NO other lanes: the implicit-target
  * path is what an agent actually uses, and it refuses with `multiple-panes`
  * when several panes match the task, so leftover lanes from another scenario
  * would make the result unreadable.
  */
-import { evalInPreview, runCommand, McpClient, startPageServer, ok, fail, info, WORKTREE } from './lib.mjs';
+import { evalInPreview, runCommand, McpClient, startPageServer, openTaskWindow, dropTaskWindow, ok, fail, info, WORKTREE } from './lib.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +56,7 @@ try {
   console.log('\n=== E. the user closes the task window while the agent drives ===');
 
   // The first open on a cold preview can exceed the tool's own 10s bound while
-  // the window and its webview mount; a retry finds the pane already up.
+  // the webview mounts; a retry finds the pane already up.
   let opened = await client.call('kangentic_browser_open_pane', { url: pageUrl });
   if (opened.isError) {
     info('first open_pane timed out (cold mount), retrying once');
@@ -65,6 +68,11 @@ try {
   info(`before: ${before.map((p) => `${p.kind}:${p.sessionId.slice(0, 12)}`).join(', ')}`);
   if (!before.some((pane) => pane.kind === 'pane')) throw new Error('no real pane registered');
 
+  const opener = before.find((pane) => pane.kind === 'pane');
+  if (opener.visibility === 'parked') ok('an agent open shows no window: its pane is parked');
+  else fail('an agent open shows no window', `visibility is ${opener.visibility}`);
+
+  await openTaskWindow(taskId);
   const drive = await client.call('kangentic_browser_query_dom', { selector: '#lane' });
   if (drive.isError) throw new Error(`pre-close drive: ${drive.text.slice(0, 200)}`);
   ok('the agent can drive its pane while the window is open');
@@ -89,16 +97,27 @@ try {
   const after = await paneSummary();
   info(`after:  ${after.map((p) => `${p.kind}:${p.sessionId.slice(0, 12)}`).join(', ') || '(none)'}`);
 
-  const realPaneGone = !after.some((pane) => pane.kind === 'pane');
-  if (realPaneGone) ok('the user\'s pane is gone, as they asked');
-  else fail('the user\'s pane is gone', 'a pane is still registered after closing the window');
+  const parked = after.find((pane) => pane.kind === 'pane');
+  if (parked && parked.sessionId === opener.sessionId && parked.visibility === 'parked') {
+    ok('the close parked the window: same pane, same handle');
+  } else {
+    fail('the close parked the window', `after: ${JSON.stringify(after).slice(0, 250)}`);
+  }
 
-  const handoffLane = after.find((pane) => pane.kind === 'lane' && pane.alive);
+  const parkedDrive = await client.call('kangentic_browser_query_dom', { selector: '#lane' });
+  if (!parkedDrive.isError) ok('THE AGENT CAN STILL DRIVE after the user closed the window');
+  else fail('the agent can still drive', parkedDrive.text.slice(0, 250));
+
+  await dropTaskWindow(taskId);
+  const afterDeath = await paneSummary();
+  info(`after the guest died: ${afterDeath.map((p) => `${p.kind}:${p.sessionId.slice(0, 12)}`).join(', ') || '(none)'}`);
+
+  const handoffLane = afterDeath.find((pane) => pane.kind === 'lane' && pane.alive);
   if (handoffLane) ok(`a hand-off lane took over (${handoffLane.sessionId})`);
-  else fail('a hand-off lane took over', 'no live lane for this task after the window closed');
+  else fail('a hand-off lane took over', 'no live lane for this task after the guest died');
 
   const stillDriving = await client.call('kangentic_browser_query_dom', { selector: '#lane' });
-  if (!stillDriving.isError) ok('THE AGENT CAN STILL DRIVE after the user closed the window');
+  if (!stillDriving.isError) ok('THE AGENT CAN STILL DRIVE after its guest died');
   else fail('the agent can still drive', stillDriving.text.slice(0, 250));
 
   const day = new Date().toISOString().slice(0, 10);

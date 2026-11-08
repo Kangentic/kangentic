@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Terminal ownership and clipboard
-description: "How the bottom panel and task-detail windows share one xterm per session (dialogSessionIds, focused union), the mayTakeArrivalFocus keyboard arbiter, and terminal I/O: bracketed paste, image paste and file drop, copy, OSC 52 clipboard writes, OSC 8 links."
+description: "How the bottom panel and task-detail windows share one xterm per session (dialogSessionIds, focused union), the mayTakeArrivalFocus keyboard arbiter, and terminal I/O: bracketed paste, image paste and file drop, copy, OSC 52 clipboard writes, and terminal links (OSC 8, printed URLs and paths, the Ctrl or Cmd click)."
 tags: [terminal, ownership, focus, paste, clipboard]
 sources:
   - resource: src/renderer/utils/terminal-arrival-focus.ts
@@ -10,6 +10,17 @@ sources:
   - resource: src/renderer/utils/focused-sessions.ts
   - resource: src/renderer/utils/terminal-clipboard.ts
   - resource: src/renderer/utils/terminal-link-handler.ts
+  - resource: src/renderer/utils/terminal-links/buffer-line-text.ts
+  - resource: src/renderer/utils/terminal-links/link-gesture.ts
+  - resource: src/renderer/utils/terminal-links/link-path-cache.ts
+  - resource: src/renderer/utils/terminal-links/link-providers.ts
+  - resource: src/renderer/utils/terminal-links/parse-links.ts
+  - resource: src/renderer/utils/terminal-links/register-terminal-links.ts
+  - resource: src/main/terminal-links/resolve-link-path.ts
+  - resource: src/main/terminal-links/link-path-service.ts
+  - resource: src/shared/ansi-strip.ts
+  - resource: src/shared/hyperlink-env.ts
+  - resource: src/shared/terminal-link-limits.ts
   - resource: src/renderer/hooks/useTerminalFileDrop.ts
   - resource: src/main/pty/write-queue.ts
   - resource: src/shared/external-url.ts
@@ -37,11 +48,9 @@ sources:
   First, a terminal the user cannot see is denied outright (`hidden`): the hook passes its xterm
   element, and `isArrivingTerminalVisible` hit-tests a few points of it against the host pane
   (`data-terminal-host`), so a Delete confirm or the Agent Monitor overlay over the bottom panel
-  keeps an arriving panel terminal from taking the keyboard. Then four tiers:
+  keeps an arriving panel terminal from taking the keyboard. Then three tiers:
   a claim recorded by a gesture that named a terminal before it existed (a panel tab click, a panel
-  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else a
-  window an AGENT opened or raised, which denies EVERYONE including its own terminal while it
-  holds focus (`openedByAgent`, see `.claude/rules/agent-driven-focus.md`); else the
+  expand - the panel is not a window, so neither moves any layer's `focusedWindowId`); else the
   terminal-hosting window holding window-layer focus, resolved by ANCHOR across all three layers
   via `resolveFocusedWindowTerminal` in `dictation-target.ts`; else, when nothing owns the user's
   attention, allow unless focus is in a typing surface. A claim is NOT consumed on grant, because
@@ -106,12 +115,105 @@ when a TUI app emits its copy sequence. The copy paths are:
 A TUI app can emit `ESC]8;;<url>ESC\` to mark text as a clickable hyperlink. Like OSC 52, these
 are agent-controlled bytes with no user intent behind them - anything a session prints, `cat`s, or
 echoes can carry one - so activation is gated rather than handed to the OS directly. `useTerminal`
-installs a `linkHandler` (`src/renderer/utils/terminal-link-handler.ts`) that checks the URL
-against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`) from
-`src/shared/external-url.ts` and routes an allowed URL to the OS default browser via
+installs a `linkHandler` (`src/renderer/utils/terminal-link-handler.ts`) that opens on a Ctrl click
+(Cmd alone on a Mac, where Ctrl+click is a right click) only, checks the URL against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`)
+from `src/shared/external-url.ts`, and routes an allowed URL to the OS default browser via
 `shell:openExternal`; anything else is dropped with a warning. Supplying this handler also replaces
 xterm's built-in fallback, which would otherwise show a native `confirm()` dialog and then open the
 URL in a bare, chrome-less `window.open()` window. The handler deliberately leaves
 `allowNonHttpProtocols` unset so xterm's own http(s)-only filter stays live as an independent
 second check; `tests/unit/terminal-link-handler.test.ts` statically scans `src/renderer` to keep it
 that way.
+
+### Terminal links
+
+A terminal has three link sources, in xterm's provider order, and an earlier one wins an overlap:
+OSC 8, printed URLs, then printed paths. All three open on Ctrl or Cmd click, and on a Mac on Cmd
+alone, because Ctrl+click there is a right click and opens the context menu. xterm's Linkifier
+activates on any click, so each `activate` checks the modifier itself.
+
+**Why Claude sessions carry `FORCE_HYPERLINK=1`.** Claude Code emits OSC 8 only when it detects a
+terminal that supports it. On Windows that means `WT_SESSION`, elsewhere a known `TERM_PROGRAM`, and
+Kangentic's terminal has neither. So links appeared in sessions only when Kangentic itself was
+started from a Windows Terminal tab, which passed `WT_SESSION` down, and never in a packaged app.
+Measured on 2.1.319 under a ConPTY: no OSC 8 without the variable, the same OSC 8 with
+`WT_SESSION` or `FORCE_HYPERLINK=1`, and an identical capability log, so it reopens no DECSTBM gate.
+
+It earns its place for what a screen read cannot see: a markdown link whose label differs from its
+URL. OSC 8 also carries the whole target on both rows of a wrapped URL. The variable is set for
+Claude only (`hyperlinkEnvironment`), because another agent's adapter parses that agent's output and
+only Claude was measured.
+
+**Claude does not defer to Kangentic's link handler.** Its docs say it defers in xterm.js terminals,
+but it detects those by `TERM_PROGRAM=vscode` or an XTVERSION reply starting `xterm.js`, and
+Kangentic sends neither (`pty-spawn.ts`, `xterm-query-replies.md`). So on a Ctrl+click its own
+handler would open the link a second time, the double open reported against Windows Terminal.
+`terminal-links/link-gesture.ts` prevents it: a capture-phase `mousedown` claims a Ctrl or Cmd press
+on a hovered link, and `useTerminal`'s `onData` drops that click's press and release reports. It
+reads the DOM event because the mouse protocol cannot encode Cmd, so on a Mac a TUI would read a
+plain click. Text with no link under it is not claimed, so Claude still handles what Kangentic does
+not link.
+
+**OSC 8 does not survive a replay.** `@xterm/addon-serialize` writes no `urlId` (xterm.js#4531, open,
+and the newest beta on 2026-11-07 still drops them), so a mount replay of
+an alt-screen frame has lost its links until the agent repaints those cells. An idle session sends
+no frames, so a reopened window can show them as plain text for as long as it stays idle. The URL
+provider then links what is printed.
+
+**Links work without an agent's cooperation.** Every agent gets the plain URL and path providers and
+the same Ctrl or Cmd click. Most agents draw their own screen, and four of the eight probed at boot
+capture the mouse too (Codex, Copilot, OpenCode, Grok, with Antigravity on the alternate screen
+without it). Those TUIs wrap a long link themselves, indenting the next row, so xterm sees separate
+lines. `continuesOnNextRow` (`buffer-line-text.ts`) reads that shape off the screen: the row's text
+runs close to its edge, its last word holds a path separator, and the next row opens at a small
+indent with a word too long to have fit in the gap. A TUI's border is not text, so the gap is
+measured to it: Copilot's prompt echo wraps seven cells short of its panel border, and Claude's one
+cell short of the grid. The separator keeps two wrapped words of prose from joining, and the gap
+test tells a break inside a long word from a line that ends in a URL. A guess can still be wrong: a
+URL near the edge above a long unrelated word joins it, and that click opens a wrong address on the
+same site. The two rows of a very short tail in a narrow text column can also read as separate, and
+then the URL opens cut short. That is the cost of not asking the agent, and an agent's own OSC 8 link
+wins any overlap.
+
+**Printed paths resolve in main, by session id** (`src/main/terminal-links/`). The renderer sends
+text and never a path to act on, and main resolves it again at the click. A click reveals the file
+in the file manager through `shell.showItemInFolder`, which cannot run anything: `shell.openPath`
+would run a printed `.exe`. `:line` is parsed so the path resolves, and is otherwise unused.
+
+- A hover is one batched `session:resolveLinkPaths` per row at most. `xterm` asks when the pointer
+  enters a row, never from the render path, and a per-terminal cache answers repeats (3 s for a
+  missing path, so a file an agent just wrote links soon, and 60 s for one that exists).
+- `linkPlaceOfSession` fails closed. A session on a remote `executionTarget`, or with a CLI target
+  it does not classify, links nothing. Its switch over `StoredCliTarget['kind']` fails typecheck when
+  an SSH target is added, and must classify it as null, since that host's paths are not on this
+  computer. A project's own remote flag must route there too.
+- **A UNC path never reaches a stat.** Reading `\\host\share\x` from agent text would send this
+  user's Windows credentials to that host on a mouse-over. `\\?\` and `\\.\` are refused with it. The
+  one UNC root allowed is the session's own distro share, and only while `isWslDistroRunning`, since
+  a read would start a stopped distro.
+- A WSL session maps `/mnt/c/...` to the drive and other Linux paths through
+  `\\wsl.localhost\<distro>`. A bare `wsl` shell asks `wsl.exe -l -v` for the default distro.
+
+**What OSC 8 costs a reader of the stream.** A link's URL sits in the raw bytes, and every full
+repaint sends it again, so a read of those bytes has to treat it as a sequence.
+
+- The pty host's headless parser drops OSC 8 with a no-op handler. xterm keeps a marker per row a link
+  is drawn on, and the alternate screen releases none until it exits. A replay of 6,000 scrolling
+  frames reached 72,000 markers and 125 MB, in a parser every session runs. Its serialize output is
+  unchanged, since the addon writes no link.
+- A renderer terminal needs its links and has no public way to release a marker, so it keeps them
+  (about 1.7 KB each, at most one per link per row) until the terminal unmounts. A reopened window
+  starts from a replay with none. Reported as xterm.js#6303.
+- A slice of the stream can start inside a sequence. `findSafeStartIndex` and the replay and phone
+  barriers skip the rest of a cut payload with `skipTruncatedStringSequence`, and `TranscriptWriter`
+  holds a sequence cut at a chunk's end for the next chunk. A parser state read would be exact, and
+  xterm.js#6234 asks for one.
+- The phone's live feed drops OSC 8 and keeps the labels (`createHyperlinkStripper`). The mobile
+  terminal sets no `linkHandler`, so a tap would reach xterm's `confirm()` and `window.open()` fallback
+  in a WebView with no second window, and its seed frame has no links anyway.
+- `pr-linking.ts` calls `exposeHyperlinkTargets` before its fallback scrape, since a stripper takes
+  the only copy of a URL behind a short label.
+
+Two limits are accepted. `ssh` typed by hand in a local shell cannot be detected, so a remote path
+that also exists locally links to the local file. There is no OSC 7 tracking, so a relative path
+printed after a `cd` resolves against the session's starting folder, and usually does not link.

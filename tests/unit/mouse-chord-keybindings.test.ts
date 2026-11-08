@@ -3,6 +3,7 @@ import { isMouseCombo, mouseComboTokens, normalizeCombo } from '../../src/shared
 import {
   heldMouseTokens,
   matchesCombo,
+  matchesMouseChordPress,
   matchesMouseRelease,
   formatComboSegments,
 } from '../../src/renderer/utils/keybindings';
@@ -54,14 +55,44 @@ describe('mouse chord matching', () => {
     expect(matchesCombo(pressBackOnly, 'Mouse:Back')).toBe(true);
   });
 
-  it('matchesMouseRelease (release) fires when any chord button lifts', () => {
-    const releaseBack = { button: 3 } as unknown as PointerEvent; // back
-    const releaseForward = { button: 4 } as unknown as PointerEvent; // forward
-    const releaseMiddle = { button: 1 } as unknown as PointerEvent; // middle
-    expect(matchesMouseRelease(releaseBack, 'Mouse:Back+Mouse:Forward')).toBe(true);
-    expect(matchesMouseRelease(releaseForward, 'Mouse:Back+Mouse:Forward')).toBe(true);
-    expect(matchesMouseRelease(releaseMiddle, 'Mouse:Back+Mouse:Forward')).toBe(false);
-    expect(matchesMouseRelease(releaseBack, 'Mouse:Back')).toBe(true);
+  it('matchesMouseRelease (release) fires when any chord button is up', () => {
+    const backUp = { buttons: 16 } as unknown as PointerEvent; // back lifted, forward held
+    const forwardUp = { buttons: 8 } as unknown as PointerEvent; // forward lifted, back held
+    const middleUp = { buttons: 8 | 16 } as unknown as PointerEvent; // both chord buttons held
+    expect(matchesMouseRelease(backUp, 'Mouse:Back+Mouse:Forward')).toBe(true);
+    expect(matchesMouseRelease(forwardUp, 'Mouse:Back+Mouse:Forward')).toBe(true);
+    expect(matchesMouseRelease(middleUp, 'Mouse:Back+Mouse:Forward')).toBe(false);
+    expect(matchesMouseRelease({ buttons: 0 } as unknown as PointerEvent, 'Mouse:Back')).toBe(true);
+  });
+
+  it('matchesMouseRelease reads the held set, so another button never ends a hold', () => {
+    const leftPressed = { buttons: 8 | 1 } as unknown as PointerEvent;
+    const backLiftedLeftHeld = { button: 3, buttons: 1 } as unknown as PointerEvent;
+    const leftUpAfterBack = { button: 0, buttons: 0 } as unknown as PointerEvent;
+    expect(matchesMouseRelease(leftPressed, 'Mouse:Back')).toBe(false);
+    expect(matchesMouseRelease(backLiftedLeftHeld, 'Mouse:Back')).toBe(true);
+    expect(matchesMouseRelease(leftUpAfterBack, 'Mouse:Back')).toBe(true);
+  });
+
+  it('matchesMouseRelease ignores a pointer that is not the mouse', () => {
+    const touch = { buttons: 1, pointerType: 'touch' } as unknown as PointerEvent;
+    expect(matchesMouseRelease(touch, 'Mouse:Back')).toBe(false);
+  });
+
+  it('matchesMouseChordPress finds a press that landed while another button was down', () => {
+    const backOverLeft = { type: 'pointermove', button: 3, buttons: 8 | 1 } as unknown as PointerEvent;
+    const plainMove = { type: 'pointermove', button: -1, buttons: 8 | 1 } as unknown as PointerEvent;
+    const backLifted = { type: 'pointermove', button: 3, buttons: 1 } as unknown as PointerEvent;
+    const leftOverBack = { type: 'pointermove', button: 0, buttons: 8 | 1 } as unknown as PointerEvent;
+    expect(matchesMouseChordPress(backOverLeft, 'Mouse:Back')).toBe(true);
+    expect(matchesMouseChordPress(plainMove, 'Mouse:Back')).toBe(false);
+    expect(matchesMouseChordPress(backLifted, 'Mouse:Back')).toBe(false);
+    expect(matchesMouseChordPress(leftOverBack, 'Mouse:Back')).toBe(false);
+  });
+
+  it('matchesMouseChordPress completes a chord on its second button', () => {
+    const forwardOverBack = { type: 'pointermove', button: 4, buttons: 8 | 16 } as unknown as PointerEvent;
+    expect(matchesMouseChordPress(forwardOverBack, 'Mouse:Back+Mouse:Forward')).toBe(true);
   });
 });
 

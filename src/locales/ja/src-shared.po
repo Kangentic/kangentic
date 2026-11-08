@@ -440,6 +440,10 @@ msgid "Find in conversation"
 msgstr "会話内を検索"
 
 #: src/shared/keybindings.ts
+msgid "Find in terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Find on board"
 msgstr "ボード内を検索"
@@ -1115,6 +1119,10 @@ msgstr "開いているフォームを保存します ([保存]、[作成]、[�
 msgctxt "automation field"
 msgid "Script"
 msgstr "スクリプト"
+
+#: src/shared/keybindings.ts
+msgid "Search the focused terminal's output, taking this key from any program there that reads it."
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

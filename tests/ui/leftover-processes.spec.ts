@@ -316,6 +316,10 @@ async function launchPageWithToastSeconds(durationSeconds: number): Promise<{ br
     await page.addInitScript(`
       window.__mockConfigOverrides = {
         notifications: {
+          muted: false,
+          appBadge: true,
+          sounds: { onAgentIdle: 'off', onAgentCrash: 'off', onPlanComplete: 'off', onWorkflowComplete: 'off', onWorkflowStalled: 'off', onSpawnStalled: 'off' },
+          customSounds: {},
           desktop: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true },
           toasts: { onAgentIdle: true, onAgentCrash: true, onPlanComplete: true, onSpawnStalled: true, durationSeconds: ${durationSeconds}, maxCount: 5 },
           cooldownSeconds: 10,

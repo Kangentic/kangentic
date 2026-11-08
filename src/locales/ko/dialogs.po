@@ -751,6 +751,10 @@ msgstr "대화 상자 닫기"
 msgid "Close dropdown"
 msgstr "드롭다운 닫기"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close find"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
@@ -1475,6 +1479,10 @@ msgstr "변경된 파일"
 #, fuzzy
 msgid "Filter files..."
 msgstr "파일 필터..."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Find in terminal"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

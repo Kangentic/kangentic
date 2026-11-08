@@ -771,6 +771,10 @@ msgstr "Rozložení se nepodařilo uložit"
 msgid "Couldn't save the task"
 msgstr "Úlohu se nepodařilo uložit"
 
+#: src/renderer/utils/terminal-links/register-terminal-links.ts
+msgid "Couldn't show file"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't start the workflow"

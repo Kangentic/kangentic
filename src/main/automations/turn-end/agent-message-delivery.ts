@@ -6,6 +6,7 @@ import { deliverExitMessage, EXIT_BUDGET_ABORT_REASON } from '../../ipc/helpers/
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { trackMessageDelivery } from './turn-end-passes';
 import { AGENT_READY_CEILING_MS } from '../../pty/lifecycle/agent-output-tracker';
+import { isSlashCommand } from '../../pty/slash-command';
 
 /**
  * How a column's message reaches a live agent: typed as keystrokes, or pasted.
@@ -47,21 +48,7 @@ export function needsPaste(message: string): boolean {
   return message.includes('\n') || message.length > PASTE_THRESHOLD_CHARS;
 }
 
-/**
- * A slash command's first word: `/name` or `/plugin:name`. Never a path, which
- * has a second slash, so a message that is an agent's reply and happens to
- * open with `/src/main/...` is pasted whole rather than typed flat.
- */
-const SLASH_COMMAND_HEAD = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
-
-/**
- * Whether a message runs as a slash command. Text added after one becomes its
- * arguments in some CLIs, and text put before one stops it being a command at
- * all, so a message that rides with one goes on its own instead.
- */
-export function isSlashCommand(message: string): boolean {
-  return SLASH_COMMAND_HEAD.test(message.trimStart());
-}
+export { isSlashCommand };
 
 /** The one decision every delivery path asks. See the module comment. */
 export function shouldPaste(message: string): boolean {
