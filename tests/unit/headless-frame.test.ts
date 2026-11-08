@@ -81,6 +81,18 @@ describe('HeadlessFrameBuffer', () => {
     });
   });
 
+  describe('screenRows', () => {
+    it('returns the visible rows, the last lines written, once the normal buffer has scrolled', async () => {
+      const buffer = new HeadlessFrameBuffer(40, 4);
+      buffer.write(Array.from({ length: 10 }, (_unused, index) => `line ${index + 1}`).join('\r\n'));
+      // Parsing is asynchronous; serialize() waits for xterm's flush barrier.
+      await buffer.serialize();
+
+      expect(buffer.screenRows()).toEqual(['line 7', 'line 8', 'line 9', 'line 10']);
+      buffer.dispose();
+    });
+  });
+
   describe('serialize', () => {
     it('rejects, rather than throwing uncaught, when the serializer throws mid-callback', async () => {
       const buffer = new HeadlessFrameBuffer(80, 24);
