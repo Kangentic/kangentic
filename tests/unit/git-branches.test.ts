@@ -18,6 +18,12 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../src/renderer/stores/project-store', () => ({ useProjectStore: mocks.useProjectStore }));
 
 import { fetchGitBranches, invalidateGitBranchesCache } from '../../src/renderer/utils/git-branches';
+import type { GitBranchChoice } from '../../src/shared/types';
+
+// main's `git:listBranches` rows: origin's branches, then local-only ones.
+const MAIN_ONLY: GitBranchChoice[] = [{ name: 'main', local: false }];
+const MAIN_AND_DEV: GitBranchChoice[] = [{ name: 'main', local: false }, { name: 'dev', local: true }];
+const RELEASE_ONLY: GitBranchChoice[] = [{ name: 'release', local: false }];
 
 function setProject(id: string | null): void {
   mocks.useProjectStore.getState.mockReturnValue({ currentProject: id ? { id } : null });
@@ -39,19 +45,19 @@ afterEach(() => {
 
 describe('fetchGitBranches', () => {
   it('collapses two concurrent calls into a single IPC invocation', async () => {
-    mocks.listBranches.mockResolvedValue(['main', 'dev']);
+    mocks.listBranches.mockResolvedValue(MAIN_AND_DEV);
 
     const first = fetchGitBranches();
     const second = fetchGitBranches(); // concurrent, before the first resolves
 
     const [a, b] = await Promise.all([first, second]);
-    expect(a).toEqual(['main', 'dev']);
-    expect(b).toEqual(['main', 'dev']);
+    expect(a).toEqual(MAIN_AND_DEV);
+    expect(b).toEqual(MAIN_AND_DEV);
     expect(mocks.listBranches).toHaveBeenCalledTimes(1);
   });
 
   it('serves a fresh cache without a second IPC call', async () => {
-    mocks.listBranches.mockResolvedValue(['main']);
+    mocks.listBranches.mockResolvedValue(MAIN_ONLY);
     await fetchGitBranches();
     // Well within the TTL.
     await vi.advanceTimersByTimeAsync(1_000);
@@ -60,7 +66,7 @@ describe('fetchGitBranches', () => {
   });
 
   it('refetches once the cache TTL has elapsed', async () => {
-    mocks.listBranches.mockResolvedValue(['main']);
+    mocks.listBranches.mockResolvedValue(MAIN_ONLY);
     await fetchGitBranches();
     // Past the 15s TTL.
     await vi.advanceTimersByTimeAsync(15_001);
@@ -69,7 +75,7 @@ describe('fetchGitBranches', () => {
   });
 
   it('refetches when the current project changes, even within the TTL', async () => {
-    mocks.listBranches.mockResolvedValue(['main']);
+    mocks.listBranches.mockResolvedValue(MAIN_ONLY);
     await fetchGitBranches();
     expect(mocks.listBranches).toHaveBeenCalledTimes(1);
 
@@ -81,17 +87,17 @@ describe('fetchGitBranches', () => {
   });
 
   it('lists a named project\'s branches by its id, never from the current project\'s cache', async () => {
-    mocks.listBranches.mockImplementation(async (projectId?: string) => (projectId ? ['release'] : ['main']));
-    await expect(fetchGitBranches()).resolves.toEqual(['main']);
+    mocks.listBranches.mockImplementation(async (projectId?: string) => (projectId ? RELEASE_ONLY : MAIN_ONLY));
+    await expect(fetchGitBranches()).resolves.toEqual(MAIN_ONLY);
     // The current project is asked for by omission, as before.
     expect(mocks.listBranches).toHaveBeenLastCalledWith();
 
     // Naming the current project is the current project's cache.
-    await expect(fetchGitBranches('project-1')).resolves.toEqual(['main']);
+    await expect(fetchGitBranches('project-1')).resolves.toEqual(MAIN_ONLY);
     expect(mocks.listBranches).toHaveBeenCalledTimes(1);
 
     // Another project's is its own read, by its id.
-    await expect(fetchGitBranches('project-2')).resolves.toEqual(['release']);
+    await expect(fetchGitBranches('project-2')).resolves.toEqual(RELEASE_ONLY);
     expect(mocks.listBranches).toHaveBeenCalledTimes(2);
     expect(mocks.listBranches).toHaveBeenLastCalledWith('project-2');
   });
@@ -100,8 +106,8 @@ describe('fetchGitBranches', () => {
     mocks.listBranches.mockRejectedValueOnce(new Error('git failed'));
     await expect(fetchGitBranches()).rejects.toThrow('git failed');
 
-    mocks.listBranches.mockResolvedValueOnce(['main']);
-    await expect(fetchGitBranches()).resolves.toEqual(['main']);
+    mocks.listBranches.mockResolvedValueOnce(MAIN_ONLY);
+    await expect(fetchGitBranches()).resolves.toEqual(MAIN_ONLY);
     expect(mocks.listBranches).toHaveBeenCalledTimes(2);
   });
 });
