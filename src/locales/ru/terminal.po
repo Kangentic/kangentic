@@ -176,6 +176,10 @@ msgstr "Простой (ожидание ввода)"
 msgid "Input / output tokens"
 msgstr "Входные / выходные токены"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy

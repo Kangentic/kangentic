@@ -63,6 +63,9 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_KILL',
   'SESSION_RESIZE',
   'SESSION_RESET_TERMINAL',
+  // The find bar's history view types into the session it names, and changes no task row.
+  'SESSION_OPEN_HISTORY_VIEW',
+  'SESSION_CLOSE_HISTORY_VIEW',
   'SESSION_SET_FOCUSED',
   // By-session-id, per-renderer, no project semantics: the whole-set replace
   // of "which sessions have an xterm mounted" that the resting park's held

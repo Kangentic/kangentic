@@ -7,6 +7,7 @@ sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
   - resource: src/main/pty/buffer/backpressure-controller.ts
   - resource: src/main/pty/host/pty-host-core.ts
+  - resource: src/main/pty/host/history-view.ts
   - resource: src/preload/pty-port-client.ts
   - resource: src/shared/pty-port-protocol.ts
   - resource: src/main/pty/host/spawn-worker/spawn-worker-entry.ts
@@ -920,10 +921,36 @@ lines before its terminal first mounted: the mount's first fit moved the PTY off
 grid, so `geometryChangedAtRingIndex` sent the replay down the parsed-grid route, and the terminal
 held 470 lines of the 20,000. That is the common case for a window opened after the work ran. The
 byte ring's route comes back only once the geometry change has aged out of the ring, and an
-alternate-screen session has no history to reach at all. So the find bar never promises a reach: its
-no-matches line reads the lines the buffer holds (`TerminalFind.readReach`), and on the alternate
-screen it says "on screen" instead. A search starts at the newest match and "older" walks up, because
+alternate-screen session has no history to reach, unless its agent can write the conversation out (the
+history view below). So the find bar never promises a reach: its no-matches line reads the lines the
+buffer holds (`TerminalFind.readReach`), and on the alternate screen it says "on screen" instead, for
+an agent with no history view or one whose view did not open. A search starts at the newest match and "older" walks up, because
 the addon counts from the top of the buffer and the newest output is what a user is after.
+
+The history view lifts the alternate screen's limit for an agent that can write its conversation out
+(`AdapterRuntimeStrategy.historyView`; Claude Code's Ctrl+O then `[`, measured in
+`adapters/claude/history-view.ts`). Opening the bar over the alternate screen calls
+`session:openHistoryView`. The pty host types the keys (`host/history-view.ts`) only off the screen it
+parses: Ctrl+O only when transcript mode is not already up, `[` only once it is, and it backs out if
+the agent does not answer. A Ctrl+O that moves the screen into a view the footer check does not know is
+`unrecognized-view`: the host presses it again and main reports it (see the Claude Code page).
+The agent then writes the conversation since its last compaction into the normal buffer, and the bar
+searches all of it. From the first key until the agent is back on the alternate screen, the host keeps
+the session's output from everything that reads output as new: the stored transcript, the agent's
+output parsers, and `outputSeen`, which feeds the activity engine. The host's ring and the renderers
+still get it, since showing it is the point. A close the agent never answers expires after the
+write-out wait, the host drops the mark when the PTY exits or a new PTY takes the session, and it closes
+a view whose window closed or crashed (`forgetRenderer`). A parked or covered terminal keeps its view,
+since its bar is still open. The renderer
+raises the scrollback to `HISTORY_VIEW_SCROLLBACK_LINES` (50,000) and clears nothing until the agent
+leaves the alternate screen, so a session with no history view keeps its lines. At that buffer change
+it empties the normal buffer's scrollback, because Claude clears only its screen before a write-out and
+an earlier one would double every count. Closing the bar types Ctrl+O, and the return to the alternate
+screen empties the scrollback again and sets it back to 5,000. Measured: a long
+compacted Claude Code session wrote out 7,269 lines (about 470 KB) in 2.3 s; a first search over 50,000
+lines took 62 ms and a repeat 9 ms. The view is a snapshot: output during it is not appended, and a
+turn in flight carries on and shows once the bar closes. An agent with no history view keeps the
+on-screen search.
 
 ### Focus catch-up, input pacing and repaint
 

@@ -198,6 +198,14 @@ export class HeadlessFrameBuffer {
     return line ? line.translateToString(true) : '';
   }
 
+  /** Plain text of the visible rows, top first: the screen a TUI is showing. */
+  screenRows(): string[] {
+    const top = this.terminal.buffer.active.baseY;
+    const rows: string[] = [];
+    for (let row = 0; row < this.terminal.rows; row += 1) rows.push(this.lineAt(top + row));
+    return rows;
+  }
+
   /**
    * Where the cursor rests once the Reset terminal action has run: the normal
    * buffer's cursor when the reset leaves the alt screen, else the active one.

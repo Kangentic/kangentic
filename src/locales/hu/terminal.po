@@ -176,6 +176,10 @@ msgstr "Tétlen (bemenetre vár)"
 msgid "Input / output tokens"
 msgstr "Bemeneti / kimeneti tokenek"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy

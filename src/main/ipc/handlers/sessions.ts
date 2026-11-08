@@ -120,6 +120,8 @@ export function registerSessionHandlers(context: IpcContext): void {
   // keystrokes 'user' for the prompt-draft ledger.
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_RESET_TERMINAL, (_, id: string) => context.sessionManager.resetTerminal(id));
+  ipcMain.handle(IPC.SESSION_OPEN_HISTORY_VIEW, (_, id: string) => context.sessionManager.openHistoryView(id));
+  ipcMain.handle(IPC.SESSION_CLOSE_HISTORY_VIEW, (_, id: string) => context.sessionManager.closeHistoryView(id));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
   ipcMain.handle(IPC.SESSION_RESOLVE_LINK_PATHS, (_, sessionId: string, printedPaths: string[]) => {
     const facts = sessionLinkFacts(context, sessionId);

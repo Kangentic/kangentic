@@ -52,6 +52,22 @@ async function settledGrids(page: Page, sessionId: string): Promise<string[]> {
   return grids;
 }
 
+/** Once a session's terminal has stopped arriving (each arrival can take focus), read
+ *  off the dev trace ring's `arrival-focus` and `replay-start` entries. */
+async function arrivalsSettled(page: Page, sessionId: string): Promise<void> {
+  let previousCount = -1;
+  await expect.poll(async () => {
+    const count = await page.evaluate((id) => {
+      const readTrace = (window as unknown as { __kangenticTerminalTrace?: () => Array<{ sessionId: string | null; event: string }> }).__kangenticTerminalTrace;
+      return (readTrace ? readTrace() : [])
+        .filter((entry) => entry.sessionId === id && (entry.event === 'arrival-focus' || entry.event === 'replay-start')).length;
+    }, sessionId);
+    const settled = count > 0 && count === previousCount;
+    previousCount = count;
+    return settled;
+  }, { intervals: [500], timeout: 10_000 }).toBe(true);
+}
+
 async function lastClipboardWrite(page: Page): Promise<string | undefined> {
   return page.evaluate(() => {
     const calls = (window as unknown as {
@@ -209,6 +225,302 @@ test('the alternate screen says the search covers the screen', async () => {
     await fireSessionData(page, sessionId, '\x1b[?1049l');
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Find');
     await expect(findCount(page)).toHaveText('1 of 1');
+  } finally {
+    await browser.close();
+  }
+});
+
+/** Stand in for an agent with a history view (Claude Code's Ctrl+O then `[`): the mock
+ *  writes `conversation` out on open and draws `screen` back on close. */
+async function standInHistoryView(
+  page: Page,
+  sessionId: string,
+  conversation: string,
+  screen: string,
+  answer: { hold?: boolean; result?: string } = {},
+): Promise<void> {
+  await page.evaluate(({ id, conversationText, screenText, extra }) => {
+    const target = window as unknown as { __mockHistoryView?: Record<string, unknown> };
+    target.__mockHistoryView = {
+      ...(target.__mockHistoryView ?? {}),
+      [id]: { conversation: conversationText, screen: screenText, ...extra },
+    };
+  }, { id: sessionId, conversationText: conversation, screenText: screen, extra: answer });
+}
+
+/** Lets the nth held `openHistoryView` answer. */
+async function releaseHistoryView(page: Page, sessionId: string, index: number): Promise<void> {
+  await page.evaluate(({ id, heldIndex }) => {
+    const holds = (window as unknown as { __mockHistoryHolds: Record<string, Array<() => void>> }).__mockHistoryHolds;
+    holds[id][heldIndex]();
+  }, { id: sessionId, heldIndex: index });
+}
+
+/** How many opens are held and waiting for an answer. */
+async function heldHistoryViews(page: Page, sessionId: string): Promise<number> {
+  return page.evaluate((id) => {
+    const holds = (window as unknown as { __mockHistoryHolds?: Record<string, Array<() => void>> }).__mockHistoryHolds;
+    return holds?.[id]?.length ?? 0;
+  }, sessionId);
+}
+
+const ENTER_ALTERNATE_SCREEN = '\x1b[?1049h\x1b[H\x1b[2J';
+const LEAVE_ALTERNATE_SCREEN = '\x1b[?1049l';
+
+const terminalRows = (page: Page) => page.getByTestId('command-terminal-window').locator('.xterm-rows');
+
+async function historyViewCalls(page: Page, sessionId: string): Promise<string[]> {
+  return page.evaluate((id) => {
+    const calls = (window as unknown as {
+      electronAPI: { sessions: { __historyViewCalls: Array<{ sessionId: string; action: string }> } };
+    }).electronAPI.sessions.__historyViewCalls;
+    return calls.filter((call) => call.sessionId === id).map((call) => call.action);
+  }, sessionId);
+}
+
+test('on the alternate screen the bar searches the agent\'s whole conversation, and closing puts the agent back', async () => {
+  const sessionId = `sess-find-history-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    const conversation = 'an old needle from the first turn\r\n'
+      + Array.from({ length: 300 }, (_unused, index) => `line ${index}\r\n`).join('')
+      + 'needle in the middle\r\nthe newest needle\r\n';
+    await standInHistoryView(page, sessionId, conversation, 'the agent screen\r\n');
+    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jthe agent screen\r\n');
+
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle');
+    // All three, the oldest 300 lines up, where the screen alone held none.
+    await expect(findCount(page)).toHaveText('1 of 3');
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find');
+    // Older twice reaches the oldest one, 300 lines above the screen.
+    await page.keyboard.press('Enter');
+    await expect(findCount(page)).toHaveText('2 of 3');
+    await page.keyboard.press('Enter');
+    await expect(findCount(page)).toHaveText('3 of 3');
+    expect(await historyViewCalls(page, sessionId)).toEqual(['open']);
+
+    await page.keyboard.press('Escape');
+    await expect(findBar(page)).toBeHidden();
+    expect(await historyViewCalls(page, sessionId)).toEqual(['open', 'close']);
+    // The agent's own screen is back, with nothing typed into it.
+    await expect(page.getByTestId('command-terminal-window').locator('.xterm-rows')).toContainText('the agent screen');
+    expect(await writtenToSession(page, sessionId)).not.toContain('\x1b');
+
+    // A second search counts each match once. The agent clears only its screen
+    // before it writes out again, so a write-out left in the scrollback would double it.
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 3');
+    expect(await historyViewCalls(page, sessionId)).toEqual(['open', 'close', 'open']);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('leaving the written-out conversation from the pane puts the bar back on the screen', async () => {
+  const sessionId = `sess-find-history-left-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'needle on screen\r\n');
+    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jneedle on screen\r\n');
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 2');
+
+    // The user's own key in the pane returns the agent to its screen.
+    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jneedle on screen\r\n');
+    await expect(findCount(page)).toHaveText('1 of 1 on screen');
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an agent with no history view keeps the normal buffer\'s scrollback across the alternate screen', async () => {
+  const sessionId = `sess-find-history-none-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'kept-needle\r\n').join(''));
+  try {
+    // No stand-in: the mock answers 'unsupported', as an agent with no history view does.
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
+    await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open']);
+    await page.keyboard.press('Escape');
+    await expect(findBar(page)).toHaveCount(0);
+
+    await fireSessionData(page, sessionId, LEAVE_ALTERNATE_SCREEN);
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('kept-needle');
+    await expect(findCount(page)).toHaveText('1 of 200');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('lines already in the normal buffer are not counted beside the agent\'s write-out', async () => {
+  const sessionId = `sess-find-history-drop-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'needle\r\n').join(''));
+  try {
+    await standInHistoryView(page, sessionId, 'needle a\r\nneedle b\r\nneedle c\r\n', 'the agent screen\r\n');
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 3');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a conversation past the normal cap stays whole, and a settings change keeps the cap while the view is open', async () => {
+  const sessionId = `sess-find-history-cap-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    const conversation = 'needle-first\r\n'
+      + Array.from({ length: 6000 }, (_unused, index) => `line ${index}\r\n`).join('')
+      + 'needle-last\r\n';
+    await standInHistoryView(page, sessionId, conversation, 'the agent screen\r\n');
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle-');
+    // The oldest line is 6000 lines up, past the 5000 an ordinary terminal keeps.
+    await expect(findCount(page)).toHaveText('1 of 2');
+
+    // A setting that re-applies the terminal's options, with the view still open.
+    await page.evaluate(async () => {
+      const stores = (window as unknown as {
+        __zustandStores: { config: { getState: () => { updateConfig: (partial: unknown) => Promise<unknown> } } };
+      }).__zustandStores;
+      await stores.config.getState().updateConfig({ terminal: { cursorStyle: 'underline' } });
+    });
+    // A trimmed buffer shows on the next line pushed into it.
+    await fireSessionData(page, sessionId, 'after the change\r\n');
+    await expect(terminalRows(page)).toContainText('after the change');
+    await findInput(page).fill('needle-f');
+    await expect(findCount(page)).toHaveText('1 of 1');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('while the conversation loads the field says so and a screen miss is not reported', async () => {
+  const sessionId = `sess-find-history-loading-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Loading conversation');
+    await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
+
+    // Nothing on the screen matches, and that is not the answer yet.
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('');
+    await expect(page.getByTestId('terminal-find-no-matches')).toHaveCount(0);
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Loading conversation');
+
+    await releaseHistoryView(page, sessionId, 0);
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find');
+    await expect(findCount(page)).toHaveText('1 of 2');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a close before the answer leaves the bar closed, and the next Mod+F opens a working bar', async () => {
+  const sessionId = `sess-find-history-closed-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
+
+    await page.keyboard.press('Escape');
+    await expect(findBar(page)).toHaveCount(0);
+    await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open', 'close']);
+
+    await releaseHistoryView(page, sessionId, 0);
+    // The answer wrote the conversation out; once it is on screen it has been handled.
+    await expect(terminalRows(page)).toContainText('needle two');
+    await expect(findBar(page)).toHaveCount(0);
+
+    // The agent is on its normal screen now, so the bar searches the written-out lines.
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect(findInput(page)).toBeFocused();
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find');
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 2');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an answer to an earlier open does not settle the open that replaced it', async () => {
+  const sessionId = `sess-find-history-stale-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
+    await page.keyboard.press('Escape');
+    await expect(findBar(page)).toHaveCount(0);
+
+    // Close put the agent back on its screen; a second open is now pending too.
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(2);
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Loading conversation');
+
+    await releaseHistoryView(page, sessionId, 0);
+    await expect(terminalRows(page)).toContainText('needle two');
+    // Only the second open's answer ends the loading.
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Loading conversation');
+
+    await releaseHistoryView(page, sessionId, 1);
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('stopping the terminal with the view open closes the agent\'s history view', async () => {
+  const sessionId = `sess-find-history-unmount-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, '');
+  try {
+    await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n');
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 2');
+    expect(await historyViewCalls(page, sessionId)).toEqual(['open']);
+
+    await page.getByTestId('command-terminal-running-stop').click();
+    await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+    await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open', 'close']);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('an agent that does not open the view leaves the bar searching the screen', async () => {
+  const sessionId = `sess-find-history-failed-${RUN_ID}`;
+  const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'older\r\n').join(''));
+  try {
+    await standInHistoryView(page, sessionId, 'needle written out\r\n', 'the agent screen\r\n', { result: 'did-not-open' });
+    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}needle on screen\r\n`);
+    await page.keyboard.press('ControlOrMeta+f');
+    await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open']);
+    await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
+
+    await page.keyboard.type('needle');
+    await expect(findCount(page)).toHaveText('1 of 1 on screen');
+
+    // The view never opened, so leaving the alternate screen must not empty the
+    // normal buffer as a write-out would.
+    await fireSessionData(page, sessionId, LEAVE_ALTERNATE_SCREEN);
+    await findInput(page).fill('older');
+    await expect(findCount(page)).toHaveText('1 of 200');
   } finally {
     await browser.close();
   }
@@ -631,6 +943,11 @@ test('with two terminals on screen, the shortcut and Escape act only on the focu
     await expect(windows.nth(1).locator('.xterm-helper-textarea')).toBeAttached({ timeout: 8000 });
     const first = windows.nth(0);
     const second = windows.nth(1);
+    // The new window is the focused one, so its terminal takes the keyboard each time
+    // it arrives: at its deferred init, its mount replay, and the reload a resize can
+    // send after them. One that landed after the focus below moved the shortcut into
+    // the second pane, so wait for its arrivals to stop.
+    await arrivalsSettled(page, secondSessionId);
 
     // The new window holds window-layer focus, so its terminal takes keyboard focus every time
     // one of its arrivals lands (deferred init, mount replay, the reload after the tiling

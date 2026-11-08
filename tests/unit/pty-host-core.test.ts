@@ -37,6 +37,7 @@ import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransp
 import type { PtyHostCommand, PtyHostEvent, PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import { HostUnavailableError } from '../../src/main/utility-process/off-main-pty';
 import type { AgentParser } from '../../src/shared/types';
+import { CLAUDE_HISTORY_VIEW } from '../../src/main/agent/adapters/claude/history-view';
 import type { FromPtyHostPortMessage } from '../../src/shared/pty-port-protocol';
 import { createFakeRendererPort, type FakeRendererPort } from './helpers/fake-renderer-port';
 
@@ -229,6 +230,229 @@ describe('PtyHostCore', () => {
       const { core, fake } = makeCore();
       expect(() => core.handleCommand({ type: 'resetTerminalModes', sessionId: 'no-such-session', keepInputModes: false })).not.toThrow();
       expect(fake.write).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the find bar\'s history view (an agent writing its whole conversation out)', () => {
+    const PROMPT_FRAME = '\x1b[2J\x1b[H● The last answer\r\n❯ \r\n  ? for shortcuts';
+    const TRANSCRIPT_FRAME = '\x1b[2J\x1b[H● The last answer\r\n  Showing detailed transcript · ctrl+o to toggle';
+    const CONVERSATION = 'conversation line one\r\nconversation line two\r\n';
+
+    /** Claude Code's answers to Ctrl+O and `[`, as the probes measured them, fed back a turn later like real output. */
+    function fakeClaude(options: { writeOutDelayMs?: number } = {}) {
+      const historyAgent = {
+        detectFirstOutput: () => false,
+        runtime: { activity: { kind: 'hooks' }, reportsTurnEnd: true, historyView: CLAUDE_HISTORY_VIEW },
+        removeHooks: () => undefined,
+      } as unknown as AgentParser;
+      const harness = makeCore({ agent: historyAgent });
+      let view: 'prompt' | 'transcript' | 'written-out' = 'prompt';
+      harness.fake.write.mockImplementation((data: string) => {
+        for (const key of data) {
+          if (key === '\x0f') {
+            const fromWrittenOut = view === 'written-out';
+            view = view === 'prompt' ? 'transcript' : 'prompt';
+            const frame = view === 'transcript' ? TRANSCRIPT_FRAME : PROMPT_FRAME;
+            setTimeout(() => harness.fake.feed((fromWrittenOut ? '\x1b[?1049h' : '') + frame), 0);
+          } else if (key === '[' && view === 'transcript') {
+            view = 'written-out';
+            // A slow agent repaints its own screen first (so the history footer is gone), then writes out late.
+            if (options.writeOutDelayMs) setTimeout(() => harness.fake.feed(PROMPT_FRAME), 0);
+            setTimeout(() => harness.fake.feed(`\x1b[?1049l\x1b[2J\x1b[3J\x1b[H${CONVERSATION}  Showing detailed transcript`), options.writeOutDelayMs ?? 0);
+          }
+        }
+      });
+      harness.core.spawn(spawnParams({ agentName: 'claude' }));
+      harness.core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      harness.fake.feed(`\x1b[?1049h${PROMPT_FRAME}`);
+      return harness;
+    }
+
+    const keysTyped = (fake: FakePty) => fake.write.mock.calls.map((call) => call[0] as string);
+
+    it('opens it, shows it to the renderer, keeps it out of the stored transcript, and closes it', async () => {
+      const { core, events, fake, appended } = fakeClaude();
+      await flush();
+
+      const opening = Promise.resolve(core.handleRequest('openHistoryView', { sessionId: 'session-1' }));
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(opening).resolves.toBe('opened');
+      expect(keysTyped(fake)).toEqual(['\x0f', '[']);
+      await flush();
+      const shown = events.map((event) => (event.type === 'data' ? event.data : '')).join('');
+      expect(shown).toContain('conversation line two');
+
+      core.handleCommand({ type: 'closeHistoryView', sessionId: 'session-1' });
+      expect(keysTyped(fake)).toEqual(['\x0f', '[', '\x0f']);
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Back on the agent's screen, its output reaches the transcript again:
+      // leaving the alternate screen for good is ordinary text after an exit.
+      fake.feed('\x1b[?1049lthe agent exited\r\n');
+      fake.exit(0);
+      const stored = appended.map((piece) => piece.chunk).join('');
+      expect(stored).toContain('the agent exited');
+      expect(stored).not.toContain('conversation line');
+    });
+
+    it('sends no activity for the written-out conversation', async () => {
+      const { core, events, fake } = fakeClaude();
+      await flush();
+      const opening = Promise.resolve(core.handleRequest('openHistoryView', { sessionId: 'session-1' }));
+      await vi.advanceTimersByTimeAsync(500);
+      await opening;
+      const outputSeenBefore = events.filter((event) => event.type === 'outputSeen').length;
+
+      fake.feed('more of the written-out conversation\r\n');
+      expect(events.filter((event) => event.type === 'outputSeen')).toHaveLength(outputSeenBefore);
+    });
+
+    it('answers unsupported for an agent that declares no history view, and types nothing', async () => {
+      const { core, fake } = makeCore();
+      core.spawn(spawnParams());
+      fake.feed(`\x1b[?1049h${PROMPT_FRAME}`);
+      await flush();
+      await expect(Promise.resolve(core.handleRequest('openHistoryView', { sessionId: 'session-1' }))).resolves.toBe('unsupported');
+      expect(fake.write).not.toHaveBeenCalled();
+    });
+
+    async function openView(harness: ReturnType<typeof fakeClaude>): Promise<void> {
+      await flush();
+      const opening = Promise.resolve(harness.core.handleRequest('openHistoryView', { sessionId: 'session-1' }));
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(opening).resolves.toBe('opened');
+    }
+
+    const viewIsActive = (core: PtyHostCore): boolean =>
+      (core as unknown as { historyViews: { isActive(sessionId: string): boolean } }).historyViews.isActive('session-1');
+    const outputSeenCount = (events: HostOutput[]) => events.filter((event) => event.type === 'outputSeen').length;
+
+    it('leaves no mark when the agent\'s PTY exits with a view open', async () => {
+      const harness = fakeClaude();
+      await openView(harness);
+      expect(viewIsActive(harness.core)).toBe(true);
+
+      harness.fake.exit(0);
+      expect(viewIsActive(harness.core)).toBe(false);
+    });
+
+    it('clears the mark when a new PTY takes the session, so its output is stored and reported', async () => {
+      const harness = fakeClaude();
+      await openView(harness);
+      expect(viewIsActive(harness.core)).toBe(true);
+
+      const respawned = createFakePty(4343);
+      harness.spawnPty.mockReturnValueOnce(respawned.pty);
+      harness.core.spawn(spawnParams({ ptyId: 2, agentName: 'claude' }));
+      const seenBefore = outputSeenCount(harness.events);
+      // The leading alt-screen exit stands in for what main's removeSession resets: the
+      // transcript writer's own alt-screen tracking is not reset by a spawn.
+      respawned.feed('\x1b[?1049loutput of the new agent\r\n');
+      respawned.exit(0);
+
+      expect(viewIsActive(harness.core)).toBe(false);
+      expect(outputSeenCount(harness.events)).toBeGreaterThan(seenBefore);
+      expect(harness.appended.map((piece) => piece.chunk).join('')).toContain('output of the new agent');
+    });
+
+    it('keeps a write-out that lands after the open gave up (toggle not sent back) out of the transcript and the activity signals, types the toggle, then stores output again', async () => {
+      const harness = fakeClaude({ writeOutDelayMs: 6000 });
+      await flush();
+      const seenBefore = outputSeenCount(harness.events);
+      const opening = Promise.resolve(harness.core.handleRequest('openHistoryView', { sessionId: 'session-1' }));
+      await vi.advanceTimersByTimeAsync(5500);
+      await expect(opening).resolves.toBe('did-not-open');
+      expect(viewIsActive(harness.core)).toBe(true);
+
+      // The late write-out lands now.
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(harness.events.map((event) => (event.type === 'data' ? event.data : '')).join('')).toContain('conversation line two');
+      expect(outputSeenCount(harness.events)).toBe(seenBefore);
+      // The landed write-out had the host type the toggle, once, and the agent's return ends the mark.
+      expect(keysTyped(harness.fake)).toEqual(['\x0f', '[', '\x0f']);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(viewIsActive(harness.core)).toBe(false);
+
+      // Control: with the mark gone, output is stored.
+      // The leading alt-screen exit: the transcript writer never saw the skipped chunks
+      // that left the alternate screen, so it still counts the session as inside it.
+      harness.fake.feed('\x1b[?1049lordinary output after the view\r\n');
+      harness.fake.exit(0);
+      const stored = harness.appended.map((piece) => piece.chunk).join('');
+      expect(stored).toContain('ordinary output after the view');
+      expect(stored).not.toContain('conversation line');
+    });
+
+    it('leaves an open view alone when a renderer\'s focus set drops the session (a parked or covered terminal keeps its bar)', async () => {
+      const harness = fakeClaude();
+      await openView(harness);
+
+      harness.core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: [] });
+      expect(keysTyped(harness.fake)).toEqual(['\x0f', '[']);
+      expect(viewIsActive(harness.core)).toBe(true);
+    });
+
+    it('closes an open view when the only renderer showing the session goes away', async () => {
+      const harness = fakeClaude();
+      await openView(harness);
+
+      harness.core.handleCommand({ type: 'forgetRenderer', rendererId: TEST_RENDERER });
+      expect(keysTyped(harness.fake)).toEqual(['\x0f', '[', '\x0f']);
+    });
+
+    it('types nothing when a renderer goes away while another renderer\'s focus set still holds the session', async () => {
+      const harness = fakeClaude();
+      const otherRenderer = createFakeRendererPort(() => undefined);
+      harness.core.attachRendererPort(2, otherRenderer.port);
+      harness.core.handleCommand({ type: 'setRendererFocus', rendererId: 2, sessionIds: ['session-1'] });
+      await openView(harness);
+
+      harness.core.handleCommand({ type: 'forgetRenderer', rendererId: TEST_RENDERER });
+      expect(keysTyped(harness.fake)).toEqual(['\x0f', '[']);
+      expect(viewIsActive(harness.core)).toBe(true);
+    });
+
+    it('does not let the written-out conversation satisfy the clear-prelude handoff, but a handoff after the view closes does', async () => {
+      const harness = fakeClaude();
+      await flush();
+      const agentOutputCount = () => harness.events.filter((event) => event.type === 'agentOutput').length;
+      expect(agentOutputCount()).toBe(0);
+
+      const opening = Promise.resolve(harness.core.handleRequest('openHistoryView', { sessionId: 'session-1' }));
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(opening).resolves.toBe('opened');
+      await flush();
+      // The write-out carried the clear (\x1b[3J) and then text, as a handoff does.
+      expect(agentOutputCount()).toBe(0);
+
+      harness.core.handleCommand({ type: 'closeHistoryView', sessionId: 'session-1' });
+      await vi.advanceTimersByTimeAsync(50);
+      harness.fake.feed('\x1b[3J');
+      await flush();
+      harness.fake.feed('AGENT TEXT\r\n');
+      await flush();
+      expect(agentOutputCount()).toBe(1);
+    });
+
+    it('keeps the chunk that returns to the alternate screen out of the stored transcript, and stores the next one', async () => {
+      const harness = fakeClaude();
+      await openView(harness);
+      harness.core.handleCommand({ type: 'closeHistoryView', sessionId: 'session-1' });
+
+      const seenBefore = outputSeenCount(harness.events);
+      harness.fake.feed(`conversation tail\r\n\x1b[?1049h${PROMPT_FRAME}`);
+      expect(viewIsActive(harness.core)).toBe(false);
+      // The return chunk is still the conversation's: no activity signal for it.
+      expect(outputSeenCount(harness.events)).toBe(seenBefore);
+      // The leading alt-screen exit: the transcript writer skipped the chunk that left
+      // the alternate screen, so it still counts the session as inside it.
+      harness.fake.feed('\x1b[?1049lthe next chunk\r\n');
+      expect(outputSeenCount(harness.events)).toBe(seenBefore + 1);
+      harness.fake.exit(0);
+
+      const stored = harness.appended.map((piece) => piece.chunk).join('');
+      expect(stored).toContain('the next chunk');
+      expect(stored).not.toContain('conversation tail');
     });
   });
 

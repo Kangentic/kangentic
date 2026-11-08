@@ -29,6 +29,7 @@ import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { AgentOutputTracker } from '../lifecycle/agent-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
+import { HistoryViews } from './history-view';
 import { getEventLoopLagReport, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { armRoundTripProbe, noteRoundTripStage, readRoundTripProbe } from '../../diagnostics/pty-round-trip-probe';
 import { captureThreadCpuProfile } from '../../diagnostics/thread-cpu-profile';
@@ -315,6 +316,23 @@ export class PtyHostCore {
   private readonly spawnService: HostSpawnService;
   private readonly firstOutput = new FirstOutputTracker();
   private readonly agentOutput = new AgentOutputTracker();
+  /** The find bar's history views: an agent's whole conversation written out for a search. */
+  private readonly historyViews = new HistoryViews({
+    viewFor: (sessionId) => {
+      const session = this.sessions.get(sessionId);
+      return session ? this.agentFor(session)?.runtime?.historyView : undefined;
+    },
+    screenRows: (sessionId) => this.bufferManager.getScreenRows(sessionId),
+    inAltScreen: (sessionId) => this.bufferManager.getDimensionState(sessionId)?.inAltScreen === true,
+    write: (sessionId, keys) => {
+      const ptyId = this.sessions.get(sessionId)?.livePtyId;
+      const entry = ptyId === null || ptyId === undefined ? undefined : this.ptys.get(ptyId);
+      if (!entry || entry.exited || entry.userInputSealed) return false;
+      // 'system': the keys are not the user's draft, and do not mark the session used.
+      this.enqueueWrite(entry, keys, 'system');
+      return true;
+    },
+  });
   private readonly resizeManager = new ResizeManager();
   private readonly coalesce = new Map<string, CoalesceState>();
   private readonly bufferManager: PtyBufferManager;
@@ -371,9 +389,11 @@ export class PtyHostCore {
         if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data, endOffset });
       },
       onAltScreenEnter: (sessionId) => {
+        this.historyViews.noteAltScreenEnter(sessionId);
         this.deps.emit({ type: 'altScreen', sessionId, inAltScreen: true });
       },
       onAltScreenExit: (sessionId) => {
+        this.historyViews.noteAltScreenExit(sessionId);
         this.deps.emit({ type: 'altScreen', sessionId, inAltScreen: false });
       },
       // The flush above reaches a renderer only when focused, a phone only when tapped.
@@ -460,6 +480,8 @@ export class PtyHostCore {
       return { ok: false, error: toPtyHostError(error), previousScrollback };
     }
 
+    // A history view belonged to the PTY this one replaces.
+    this.historyViews.remove(params.sessionId);
     this.sessions.set(params.sessionId, {
       sessionId: params.sessionId,
       projectId: params.projectId,
@@ -858,6 +880,8 @@ export class PtyHostCore {
         return this.getRawScrollback((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
       case 'getOutputPeek':
         return this.getOutputPeek((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
+      case 'openHistoryView':
+        return this.historyViews.open((params as PtyHostRequestMap['openHistoryView']['params']).sessionId) as Promise<PtyHostRequestMap[M]['result']>;
       case 'getDiagnostics':
         return this.getDiagnostics() as PtyHostRequestMap[M]['result'];
       case 'ping':
@@ -955,6 +979,9 @@ export class PtyHostCore {
       case 'resetTerminalModes':
         this.bufferManager.resetTerminalModes(command.sessionId, command.keepInputModes);
         return;
+      case 'closeHistoryView':
+        this.historyViews.close(command.sessionId);
+        return;
       case 'kill':
         if (this.killRaw(command.ptyId)) return;
         this.kill(command.ptyId);
@@ -967,6 +994,10 @@ export class PtyHostCore {
       case 'forgetRenderer': {
         this.rendererFocus.delete(command.rendererId);
         this.recomputeFocused();
+        // A window that closed or crashed took its find bar with it and sent no
+        // close. Only here: a parked or covered terminal also leaves the focus set
+        // while it stays mounted, and its bar is still open.
+        this.historyViews.closeUnwatched((sessionId) => this.focused.has(sessionId));
         const port = this.rendererPorts.get(command.rendererId);
         this.rendererPorts.delete(command.rendererId);
         try {
@@ -1442,6 +1473,7 @@ export class PtyHostCore {
 
   private dropSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.historyViews.remove(sessionId);
     this.clearDraft(sessionId);
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter.remove(sessionId);
@@ -1473,8 +1505,9 @@ export class PtyHostCore {
       this.deps.emit({ type: 'firstOutput', sessionId, inAltScreen });
     }
     // Only an agent spawn types the clear prelude this waits for; a bare
-    // shell would scan its output for a handoff that never comes.
-    if (session?.agentName && this.agentOutput.consume(sessionId, data)) {
+    // shell would scan its output for a handoff that never comes. A written-out
+    // history view is old output, never the handoff.
+    if (session?.agentName && !this.historyViews.isActive(sessionId) && this.agentOutput.consume(sessionId, data)) {
       this.deps.emit({ type: 'agentOutput', sessionId });
     }
   }
@@ -1482,6 +1515,9 @@ export class PtyHostCore {
   private onPtyData(entry: PtyEntry, data: string): void {
     const sessionId = entry.sessionId;
     if (__KANGENTIC_DEV__) noteRoundTripStage(sessionId, 'data', data);
+    // Read before the parse: the chunk that returns to the alternate screen ends
+    // the view as it parses, and the conversation's tail rides in that chunk.
+    const historyViewActive = this.historyViews.isActive(sessionId);
     this.bufferManager.onData(sessionId, data);
 
     // A session main removed while its PTY was still exiting (a young
@@ -1491,6 +1527,12 @@ export class PtyHostCore {
     // back after `dropSession` deleted it and never be removed.
     const session = this.sessions.get(sessionId);
     if (!session) return;
+    // The find bar's history view, from the first key to the return: the agent's
+    // answers to the keys and its conversation written out again. The terminal
+    // shows them (the ring and the renderers have them above), but they are not
+    // new output, so the stored transcript, the agent's parsers and the activity
+    // signals never see them.
+    if (historyViewActive) return;
     this.noteOutput(sessionId);
 
     if (!session.transient) this.transcriptWriter.onData(sessionId, data);
@@ -1553,6 +1595,8 @@ export class PtyHostCore {
       // The prompt died with the PTY; a remembered draft would otherwise be
       // reported as discarded by the next session to reuse this id.
       this.clearDraft(entry.sessionId);
+      // So did a history view: the next PTY's output is new output.
+      this.historyViews.remove(entry.sessionId);
     }
     this.backpressure.release(entry.sessionId);
     this.flushCoalesced(entry.sessionId);

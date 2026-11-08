@@ -1631,6 +1631,15 @@ export class PtyBufferManager {
     );
   }
 
+  /**
+   * The session's visible rows, top first, off the parsed grid; empty for an
+   * unknown session. Synchronous and unflushed like the peek, so a caller that
+   * waits for the screen to change polls it.
+   */
+  getScreenRows(sessionId: string): string[] {
+    return this.buffers.get(sessionId)?.headless.screenRows() ?? [];
+  }
+
   removeSession(sessionId: string): void {
     const state = this.buffers.get(sessionId);
     if (state) state.headless.dispose();
