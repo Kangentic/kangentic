@@ -6,6 +6,12 @@
  * It sits inside `data-terminal-host` and outside `.xterm`. Tooltip and
  * `escapeOwnedElsewhere` read a key from `.xterm` as the agent's.
  *
+ * On the alternate screen a terminal holds only the screen. When the session's agent
+ * can write its whole conversation out (Claude Code's Ctrl+O then `[`), opening the
+ * bar asks it to, through main, and the pane shows that written-out conversation
+ * until the bar closes and the agent goes back to its own screen. An agent with no
+ * such keys keeps the on-screen search.
+ *
  * Mod+F is bound in the capture phase on `window`, since xterm stops the keys it
  * takes in its own capture pass on the textarea. Escape is the capture-phase consume
  * in `.claude/rules/keybindings-registry.md`: it has to beat both xterm and the task
@@ -34,28 +40,58 @@ interface TerminalFindBarProps {
   terminalRef: RefObject<HTMLDivElement | null>;
 }
 
+/**
+ * The agent's history view: on the alternate screen the bar asks the agent to write
+ * its whole conversation out, and searches that instead of the screen.
+ * `loading` until the agent answers, `open` while it is written out.
+ */
+type HistoryState = 'none' | 'loading' | 'open';
+
 export function TerminalFindBar({ find, sessionId, terminalRef }: TerminalFindBarProps) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<FindResults | null>(null);
   const [reach, setReach] = useState<TerminalBufferReach>({ alternate: false, lines: 0 });
+  const [history, setHistory] = useState<HistoryState>('none');
   const inputRef = useRef<HTMLInputElement>(null);
+  // Bumped on every open and every close, so an answer that arrives after a close
+  // (or for an earlier open) is dropped.
+  const historyRequestRef = useRef(0);
+  // The bar can go without its terminal (a remount of this component alone), and no
+  // close runs then. `closeHistory` types nothing unless the view is open.
+  const findRef = useRef(find);
+  useLayoutEffect(() => {
+    findRef.current = find;
+  });
+  useEffect(() => () => findRef.current.closeHistory(), []);
 
   const isInThisPane = useCallback((target: EventTarget | null): boolean => (
     target instanceof Node && !!terminalRef.current?.closest('[data-terminal-host]')?.contains(target)
   ), [terminalRef]);
 
   const openBar = useCallback(() => {
-    setReach(find.readReach());
+    const nextReach = find.readReach();
+    setReach(nextReach);
     setOpen(true);
+    if (!nextReach.alternate) return;
+    const request = ++historyRequestRef.current;
+    setHistory('loading');
+    void find.openHistory().then((opened) => {
+      if (historyRequestRef.current !== request) return;
+      setHistory(opened ? 'open' : 'none');
+      setReach(find.readReach());
+    });
   }, [find]);
 
   const closeBar = useCallback(() => {
+    historyRequestRef.current += 1;
+    find.closeHistory();
     find.clear();
     setOpen(false);
     setQuery('');
     setResults(null);
+    setHistory('none');
     // arrival-focus-ok: the user closed the bar, which hands the keyboard back.
     find.focusTerminal();
   }, [find]);
@@ -89,7 +125,13 @@ export function TerminalFindBar({ find, sessionId, terminalRef }: TerminalFindBa
       setResults(next);
       setReach(find.readReach());
     });
-    const stopBuffer = find.onBufferChange(() => setReach(find.readReach()));
+    const stopBuffer = find.onBufferChange(() => {
+      const nextReach = find.readReach();
+      setReach(nextReach);
+      // Back on the alternate screen with the view open: the user left it from the
+      // pane, so the bar searches the screen again.
+      if (nextReach.alternate) setHistory((previous) => (previous === 'open' ? 'none' : previous));
+    });
     return () => {
       stopResults();
       stopBuffer();
@@ -136,7 +178,9 @@ export function TerminalFindBar({ find, sessionId, terminalRef }: TerminalFindBa
   };
 
   const summary: FindSummary = results && query ? summarizeFindResults(results, TERMINAL_FIND_HIGHLIGHT_LIMIT) : { kind: 'none' };
-  const noMatches = query.length > 0 && results !== null && summary.kind === 'none';
+  const loadingHistory = history === 'loading';
+  // While the conversation loads, the screen's count is about to be replaced.
+  const noMatches = query.length > 0 && results !== null && summary.kind === 'none' && !loadingHistory;
   const hasMatches = query.length > 0 && summary.kind !== 'none';
   const lineCount = reach.lines;
 
@@ -168,7 +212,9 @@ export function TerminalFindBar({ find, sessionId, terminalRef }: TerminalFindBa
           value={query}
           onChange={(event) => handleChange(event.target.value)}
           onKeyDown={handleInputKeyDown}
-          placeholder={reach.alternate ? t`Find on screen` : t({ message: 'Find', context: 'terminal find field' })}
+          placeholder={loadingHistory
+            ? t`Loading conversation`
+            : reach.alternate ? t`Find on screen` : t({ message: 'Find', context: 'terminal find field' })}
           aria-label={t`Find in terminal`}
           spellCheck={false}
           autoComplete="off"

@@ -176,6 +176,10 @@ msgstr "Inattivo (in attesa di input)"
 msgid "Input / output tokens"
 msgstr "Token di input / output"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy

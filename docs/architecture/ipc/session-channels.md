@@ -22,6 +22,8 @@ sources:
 | `pty:port` | on | Main's answer: one end of a `MessageChannelMain` whose other end went to the pty host (`attachRendererPort`). Sent again with a new port after a pty host restart |
 | `session:resize` | invoke | Resize PTY (cols/rows) |
 | `session:resetTerminal` | invoke | Clear stuck terminal modes in the session's stream and repaint by resizing, never by writing to the PTY |
+| `session:openHistoryView` | invoke | The find bar's history view: the session's agent writes its whole conversation into the terminal's normal buffer through its own keys (`AgentHistoryView`), typed by the pty host only when the screen shows the view they open. Resolves `HistoryViewOpenResult`; main reports an `unrecognized-view` to Sentry once per agent per launch |
+| `session:closeHistoryView` | invoke | Put the agent back on its own screen. Types nothing unless the view the bar opened is still showing |
 | `session:list` | invoke | Fetch all sessions |
 | `session:resolveLinkPaths` | invoke | Which paths a session printed exist on this computer, in request order. Main resolves each against the session's folder and place, and answers false without a read for a network share or a session on a remote host |
 | `session:revealLinkPath` | invoke | Show a path a session printed in the file manager, resolving it again in main. False when nothing is there |

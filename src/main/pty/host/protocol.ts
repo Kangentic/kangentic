@@ -23,7 +23,7 @@
  */
 
 import type { Profiler } from 'node:inspector';
-import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsagePatch } from '../../../shared/types';
+import type { ActivityState, ExitSequenceStep, HistoryViewOpenResult, SessionEvent, SessionUsagePatch } from '../../../shared/types';
 import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
@@ -154,6 +154,9 @@ export type PtyHostCommand =
    *  stream. `keepInputModes` while a live agent owns the alt screen and input
    *  modes. Reaches the parser and the renderers, never the PTY. */
   | { type: 'resetTerminalModes'; sessionId: string; keepInputModes: boolean }
+  /** Put an agent the find bar's history view wrote out back on its own screen
+   *  (`HistoryViews.close`). Nothing is typed unless that view is still open. */
+  | { type: 'closeHistoryView'; sessionId: string }
   | { type: 'kill'; ptyId: number }
   /** One renderer's visible sessions: their output goes to that renderer's
    *  port. The union of every renderer's set gates the flush. */
@@ -308,6 +311,9 @@ export interface PtyHostRequestMap {
   getSeedFrame: { params: { sessionId: string; settle: boolean; scrollbackLines?: number }; result: SeedFrameResult };
   getRawScrollback: { params: { sessionId: string }; result: string };
   getOutputPeek: { params: { sessionId: string }; result: string[] };
+  /** The find bar's history view (`HistoryViews.open`). A request, so the bar
+   *  learns whether the agent wrote its conversation out. */
+  openHistoryView: { params: { sessionId: string }; result: HistoryViewOpenResult };
   getDiagnostics: { params: Record<string, never>; result: PtyHostDiagnostics };
   ping: { params: Record<string, never>; result: 'pong' };
   /** Close the host's handle on a project's database. A request, not a

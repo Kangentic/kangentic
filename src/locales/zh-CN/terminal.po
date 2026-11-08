@@ -152,6 +152,10 @@ msgstr "空闲（等待输入）"
 msgid "Input / output tokens"
 msgstr "输入/输出 token"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 msgid "Model"

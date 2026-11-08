@@ -60,6 +60,8 @@ import type {
 } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import { DEFAULT_CONFIG, EventType } from '../../shared/types';
+import type { HistoryViewOpenResult } from '../../shared/types';
+import { reportUnrecognizedHistoryView } from './history-view-report';
 import { isActive } from '../../shared/activity-state';
 import type {
   PermissionMode,
@@ -4452,6 +4454,28 @@ export class SessionManager extends EventEmitter {
    */
   getOutputPeek(sessionId: string): Promise<string[]> {
     return this.host.getOutputPeek(sessionId);
+  }
+
+  /**
+   * The find bar's history view: the session's agent writes its whole
+   * conversation into the terminal's normal buffer, through its own keys
+   * (`AgentHistoryView`). The host types them and decides when, off the screen
+   * it parses (`host/history-view.ts`), so a key never lands in the wrong view.
+   */
+  openHistoryView(sessionId: string): Promise<HistoryViewOpenResult> {
+    const session = this.registry.get(sessionId);
+    if (!session || session.status !== 'running' || session.pty === null) return Promise.resolve('not-running');
+    const agentName = session.agentName ?? null;
+    return this.host.openHistoryView(sessionId).then((result) => {
+      if (result === 'unrecognized-view') reportUnrecognizedHistoryView(agentName);
+      return result;
+    });
+  }
+
+  /** Put the agent back on its own screen. Nothing is typed unless the view is still open. */
+  closeHistoryView(sessionId: string): void {
+    if (!this.registry.get(sessionId)?.pty) return;
+    this.host.post({ type: 'closeHistoryView', sessionId });
   }
 
   /**

@@ -225,6 +225,13 @@ const MAX_REPLAY_WIDTH_REPLAYS = 1;
  *  between replays, and what a search can reach falls with each replay. */
 const TERMINAL_SCROLLBACK_LINES = 5000;
 
+/** Scrollback while the find bar's history view is open: the agent's whole
+ *  conversation, written out. A long compacted Claude Code session wrote 7,269
+ *  lines, and a full context about 50,000 by the same rate. At 50,000 lines a
+ *  first search measured 62 ms, a repeat 9 ms, and the heap about 76 MB more.
+ *  Lowering it again when the view closes trims the hidden lines at once. */
+const HISTORY_VIEW_SCROLLBACK_LINES = 50_000;
+
 /** Scroll positions saved before xterm dispose, keyed by session ID.
  *  Preserved across HMR via import.meta.hot.data so terminals restore
  *  the user's viewport position instead of jumping to the bottom. */
@@ -370,6 +377,18 @@ interface UseTerminalOptions {
    *  `terminalElement` is this terminal's xterm element, so the policy can refuse
    *  a terminal the user cannot see (covered by a dialog or an overlay). */
   mayTakeArrivalFocus?: (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => boolean;
+}
+
+/**
+ * Empty the normal buffer's scrollback, then allow `lines` again. Claude Code
+ * clears only the screen before it writes its conversation out, so an earlier
+ * write-out stayed in the scrollback and a second search counted every match
+ * twice. Lowering the cap trims at once (xterm resizes the buffer on the option),
+ * which also frees a closed write-out's memory.
+ */
+function dropHiddenScrollback(terminal: Terminal, lines: number): void {
+  terminal.options.scrollback = 0;
+  terminal.options.scrollback = lines;
 }
 
 /** Whether the keyboard is in a text field inside this terminal's own pane. */
@@ -691,6 +710,10 @@ export function useTerminal(options: UseTerminalOptions) {
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const findResultListenersRef = useRef(new Set<(results: FindResults) => void>());
   const findBufferListenersRef = useRef(new Set<() => void>());
+  /** The find bar asked for the agent's history view and it has not closed yet:
+   *  scrollback stays at HISTORY_VIEW_SCROLLBACK_LINES until the terminal is back
+   *  on the alternate screen. */
+  const historyViewOpenRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
   /** Monotonic counter to abandon stale scrollback operations when a newer
@@ -1716,6 +1739,18 @@ export function useTerminal(options: UseTerminalOptions) {
 
     searchAddonRef.current = loadSearchAddon(terminal, findResultListenersRef.current);
     terminal.buffer.onBufferChange(() => {
+      if (historyViewOpenRef.current) {
+        if (terminal.buffer.active.type === 'alternate') {
+          // Back on the alternate screen: the history view closed, by the bar or by
+          // the user's own key in the pane. Dropping the cap trims the written-out lines.
+          historyViewOpenRef.current = false;
+          dropHiddenScrollback(terminal, TERMINAL_SCROLLBACK_LINES);
+        } else {
+          // The agent is writing its conversation out, and none of it is parsed yet:
+          // what the normal buffer held goes, so the search covers this write-out only.
+          dropHiddenScrollback(terminal, HISTORY_VIEW_SCROLLBACK_LINES);
+        }
+      }
       for (const listener of findBufferListenersRef.current) listener();
     });
 
@@ -2374,6 +2409,12 @@ export function useTerminal(options: UseTerminalOptions) {
       // just before unmount (sessionId change, HMR dispose) aren't dropped.
       writeBatcherRef.current?.flush();
       writeBatcherRef.current = null;
+      // A find bar's history view goes with the terminal that asked for it, so the
+      // agent is not left showing its written-out conversation to nobody.
+      if (historyViewOpenRef.current && options.sessionId) {
+        historyViewOpenRef.current = false;
+        void window.electronAPI.sessions.closeHistoryView(options.sessionId).catch(() => {});
+      }
       // Save scroll position before dispose for HMR restoration.
       // Only save if the user scrolled up; at-bottom is the default.
       if (xtermRef.current && options.sessionId && !isAtBottomRef.current) {
@@ -2508,7 +2549,8 @@ export function useTerminal(options: UseTerminalOptions) {
         // below re-derives it for the new family's metrics.
         fontSize: applied,
         cursorStyle: configuredCursorStyle,
-        scrollback: TERMINAL_SCROLLBACK_LINES,
+        // A settings change while the find bar's history view is open keeps its cap.
+        scrollback: historyViewOpenRef.current ? HISTORY_VIEW_SCROLLBACK_LINES : TERMINAL_SCROLLBACK_LINES,
         theme: buildTerminalTheme({
           background: customBackground,
           foreground: customForeground,
@@ -2954,6 +2996,28 @@ export function useTerminal(options: UseTerminalOptions) {
     // keyboard back to the terminal they were searching.
     focusTerminal: () => xtermRef.current?.focus(),
     readReach: () => readTerminalReach(xtermRef.current),
+    openHistory: async () => {
+      const terminal = xtermRef.current;
+      const sessionId = sessionIdRef.current;
+      if (!terminal || !sessionId || terminal.buffer.active.type !== 'alternate') return false;
+      // Nothing changes yet: an agent with no history view, or one that does not
+      // answer, keeps the normal buffer's lines. If the agent writes out, the buffer
+      // change empties the scrollback and raises the cap before its first line parses.
+      historyViewOpenRef.current = true;
+      const result = await window.electronAPI.sessions.openHistoryView(sessionId).catch(() => 'not-running' as const);
+      if (result === 'opened') return true;
+      if (historyViewOpenRef.current) {
+        historyViewOpenRef.current = false;
+        if (xtermRef.current === terminal) terminal.options.scrollback = TERMINAL_SCROLLBACK_LINES;
+      }
+      return false;
+    },
+    closeHistory: () => {
+      const sessionId = sessionIdRef.current;
+      // The cap comes down when the terminal is back on the alternate screen.
+      if (!historyViewOpenRef.current || !sessionId) return;
+      void window.electronAPI.sessions.closeHistoryView(sessionId).catch(() => {});
+    },
     onResults: (listener) => {
       const listeners = findResultListenersRef.current;
       listeners.add(listener);

@@ -176,6 +176,10 @@ msgstr "アイドル (入力待ち)"
 msgid "Input / output tokens"
 msgstr "入力 / 出力トークン"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy
