@@ -18,6 +18,7 @@ import type { ResolvedBrowserAutomationConfig } from './browser-automation-confi
 import { withGuestDriveLock, GuestBusyError, guestDriveDepth } from './guest-drive-queue';
 import { logDrive } from './drive-telemetry';
 import { touchLane } from './browser-lane-manager';
+import { isLoopbackHost } from './loopback-host';
 
 /**
  * The single chokepoint every `kangentic_browser_*` MCP tool routes through to
@@ -402,21 +403,22 @@ export function validateNavigationUrl(
 }
 
 /**
- * True for loopback, RFC-1918 / link-local private ranges, `.local` / `.localhost`
+ * True for loopback, RFC-1918 / link-local private ranges, `0.0.0.0`, `.local`
  * mDNS names, and single-label intranet hostnames (no dot). Everything with a
- * public-looking FQDN is treated as non-private.
+ * public-looking FQDN is treated as non-private. Loopback itself is
+ * `isLoopbackHost`, so this widens that one definition rather than repeating it.
  */
 function isLoopbackOrPrivateHost(hostname: string): boolean {
+  if (isLoopbackHost(hostname)) return true;
   const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '::1' || host === '0.0.0.0') return true;
+  if (host === '0.0.0.0') return true;
   if (host.endsWith('.local')) return true;
-  // IPv4 private / loopback / link-local ranges.
+  // IPv4 private / link-local ranges (127/8 is loopback, matched above).
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
     const first = Number(ipv4[1]);
     const second = Number(ipv4[2]);
-    if (first === 127 || first === 10) return true;
+    if (first === 10) return true;
     if (first === 192 && second === 168) return true;
     if (first === 172 && second >= 16 && second <= 31) return true;
     if (first === 169 && second === 254) return true;
