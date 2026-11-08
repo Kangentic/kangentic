@@ -211,7 +211,7 @@ test('the alternate screen says the search covers the screen', async () => {
   const sessionId = `sess-find-alternate-${RUN_ID}`;
   const { browser, page } = await terminalWithOutput(sessionId, 'history-only\r\n');
   try {
-    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jneedle on screen\r\nneedle again\r\n');
+    await enterAlternateScreen(page, sessionId, 'needle on screen\r\nneedle again\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
 
@@ -269,6 +269,14 @@ const LEAVE_ALTERNATE_SCREEN = '\x1b[?1049l';
 
 const terminalRows = (page: Page) => page.getByTestId('command-terminal-window').locator('.xterm-rows');
 
+/** Puts the terminal on the alternate screen and waits until it shows `screen`'s first row.
+ *  A write parses a moment after it is fired, and a bar opened before the switch has parsed
+ *  sees the normal buffer, so it asks for no history view and searches the screen after it. */
+async function enterAlternateScreen(page: Page, sessionId: string, screen: string): Promise<void> {
+  await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}${screen}`);
+  await expect(terminalRows(page)).toContainText(screen.split('\r\n')[0]);
+}
+
 async function historyViewCalls(page: Page, sessionId: string): Promise<string[]> {
   return page.evaluate((id) => {
     const calls = (window as unknown as {
@@ -286,7 +294,7 @@ test('on the alternate screen the bar searches the agent\'s whole conversation, 
       + Array.from({ length: 300 }, (_unused, index) => `line ${index}\r\n`).join('')
       + 'needle in the middle\r\nthe newest needle\r\n';
     await standInHistoryView(page, sessionId, conversation, 'the agent screen\r\n');
-    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jthe agent screen\r\n');
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
 
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle');
@@ -323,13 +331,13 @@ test('leaving the written-out conversation from the pane puts the bar back on th
   const { browser, page } = await terminalWithOutput(sessionId, '');
   try {
     await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'needle on screen\r\n');
-    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jneedle on screen\r\n');
+    await enterAlternateScreen(page, sessionId, 'needle on screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle');
     await expect(findCount(page)).toHaveText('1 of 2');
 
     // The user's own key in the pane returns the agent to its screen.
-    await fireSessionData(page, sessionId, '\x1b[?1049h\x1b[H\x1b[2Jneedle on screen\r\n');
+    await enterAlternateScreen(page, sessionId, 'needle on screen\r\n');
     await expect(findCount(page)).toHaveText('1 of 1 on screen');
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
   } finally {
@@ -342,7 +350,7 @@ test('an agent with no history view keeps the normal buffer\'s scrollback across
   const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'kept-needle\r\n').join(''));
   try {
     // No stand-in: the mock answers 'unsupported', as an agent with no history view does.
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
     await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open']);
@@ -363,7 +371,7 @@ test('lines already in the normal buffer are not counted beside the agent\'s wri
   const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'needle\r\n').join(''));
   try {
     await standInHistoryView(page, sessionId, 'needle a\r\nneedle b\r\nneedle c\r\n', 'the agent screen\r\n');
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle');
     await expect(findCount(page)).toHaveText('1 of 3');
@@ -380,7 +388,7 @@ test('a conversation past the normal cap stays whole, and a settings change keep
       + Array.from({ length: 6000 }, (_unused, index) => `line ${index}\r\n`).join('')
       + 'needle-last\r\n';
     await standInHistoryView(page, sessionId, conversation, 'the agent screen\r\n');
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle-');
     // The oldest line is 6000 lines up, past the 5000 an ordinary terminal keeps.
@@ -408,7 +416,7 @@ test('while the conversation loads the field says so and a screen miss is not re
   const { browser, page } = await terminalWithOutput(sessionId, '');
   try {
     await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Loading conversation');
     await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
@@ -432,7 +440,7 @@ test('a close before the answer leaves the bar closed, and the next Mod+F opens 
   const { browser, page } = await terminalWithOutput(sessionId, '');
   try {
     await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
 
@@ -461,7 +469,7 @@ test('an answer to an earlier open does not settle the open that replaced it', a
   const { browser, page } = await terminalWithOutput(sessionId, '');
   try {
     await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n', { hold: true });
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect.poll(() => heldHistoryViews(page, sessionId)).toBe(1);
     await page.keyboard.press('Escape');
@@ -489,7 +497,7 @@ test('stopping the terminal with the view open closes the agent\'s history view'
   const { browser, page } = await terminalWithOutput(sessionId, '');
   try {
     await standInHistoryView(page, sessionId, 'needle one\r\nneedle two\r\n', 'the agent screen\r\n');
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}the agent screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'the agent screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await page.keyboard.type('needle');
     await expect(findCount(page)).toHaveText('1 of 2');
@@ -508,7 +516,7 @@ test('an agent that does not open the view leaves the bar searching the screen',
   const { browser, page } = await terminalWithOutput(sessionId, Array.from({ length: 200 }, () => 'older\r\n').join(''));
   try {
     await standInHistoryView(page, sessionId, 'needle written out\r\n', 'the agent screen\r\n', { result: 'did-not-open' });
-    await fireSessionData(page, sessionId, `${ENTER_ALTERNATE_SCREEN}needle on screen\r\n`);
+    await enterAlternateScreen(page, sessionId, 'needle on screen\r\n');
     await page.keyboard.press('ControlOrMeta+f');
     await expect.poll(() => historyViewCalls(page, sessionId)).toEqual(['open']);
     await expect(findInput(page)).toHaveAttribute('placeholder', 'Find on screen');
