@@ -107,7 +107,7 @@
             "name": "On to Merge",
             "type": "move_to_column",
             "finalLine": "PR: ready to merge",
-            "maxRuns": 1,
+            "maxRuns": 3,
             "targetColumn": "Merge"
           }
         ]
@@ -139,6 +139,13 @@
             "finalLine": "PR: merged",
             "maxRuns": 1,
             "targetColumn": "Done"
+          },
+          {
+            "name": "Back to Testing",
+            "type": "move_to_column",
+            "finalLine": "PR: checks red",
+            "maxRuns": 2,
+            "targetColumn": "Testing"
           }
         ]
       }

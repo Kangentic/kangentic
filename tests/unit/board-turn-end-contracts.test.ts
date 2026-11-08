@@ -16,7 +16,10 @@
  *    row that reads it, and its escalation step's line does not match the row.
  * 3. Executing: the Apply findings message asks for exactly the On to Code Review line.
  * 4. Merge: /merge-pull-request prints the Finish line in its report step and names the row that
- *    reads it.
+ *    reads it, and prints the Back to Testing line in its re-verify step. Back to Testing returns a
+ *    red-CI stop to Testing a limited number of times, and Testing's On to Merge allows one more run
+ *    than that, so every round trip the board allows can come back to Merge. A hold ends on
+ *    `Needs owner:`, which matches neither Merge row.
  *
  * A skill pin reads only the step that prints the line, because each skill also quotes it in its
  * intro and its Outcome line section, where a quote would pass with the printing step gone.
@@ -40,6 +43,7 @@ interface AutomationRow {
   condition?: string;
   targetColumn?: string;
   message?: string;
+  maxRuns?: number;
 }
 
 interface BoardColumn {
@@ -101,6 +105,7 @@ const PINNED_ROWS = new Set([
   'Code Review/On to Testing',
   'Testing/On to Merge',
   'Merge/Finish',
+  'Merge/Back to Testing',
 ]);
 
 const READY_REPORT = { checks: { typecheck: 'pass', hmrVitest: 'pass', scopedTests: 'none' }, findings: [] };
@@ -186,12 +191,44 @@ describe('board turn-end contracts: Executing', () => {
 });
 
 describe('board turn-end contracts: Merge', () => {
+  const skillPath = '.claude/skills/merge-pull-request/SKILL.md';
+  const mergePullRequestSkill = readRepositoryFile(skillPath);
+  const outcomeSection = sectionOf(mergePullRequestSkill, skillPath, '## Outcome line');
+
   it('has /merge-pull-request print the Finish line in Step 5 and name the row that reads it', () => {
-    const skillPath = '.claude/skills/merge-pull-request/SKILL.md';
-    const mergePullRequestSkill = readRepositoryFile(skillPath);
     const reportStep = sectionOf(mergePullRequestSkill, skillPath, '## Step 5 - Report');
     expectTextIn(reportStep, `${skillPath} Step 5`, `\`${finalLineOf('Merge', 'Finish')}\``);
-    expectTextIn(mergePullRequestSkill, skillPath, '"Finish"');
+    expectTextIn(outcomeSection, `${skillPath} Outcome line`, '"Finish"');
+  });
+
+  it('has /merge-pull-request print the Back to Testing line in Step 2 and name the row that reads it', () => {
+    const reverifyStep = sectionOf(mergePullRequestSkill, skillPath, '## Step 2 - Re-verify');
+    expectTextIn(reverifyStep, `${skillPath} Step 2`, `\`${finalLineOf('Merge', 'Back to Testing')}\``);
+    expectTextIn(outcomeSection, `${skillPath} Outcome line`, '"Back to Testing"');
+  });
+
+  // Testing's onEnter already sends /pull-request, so a message here would be a second prompt.
+  it('sends a red-CI stop back to Testing with no message of its own, a limited number of times', () => {
+    const backToTesting = turnEndRow('Merge', 'Back to Testing');
+    expect(backToTesting.targetColumn).toBe('Testing');
+    expect(backToTesting.message).toBeUndefined();
+    expect(backToTesting.maxRuns, 'an unlimited back-route lets a red main bounce a task forever').toBeGreaterThan(0);
+  });
+
+  // Frequency counts across the board's own moves, so with On to Merge spent after the
+  // first trip, the task would go green in Testing and stay there.
+  it('lets every round trip Back to Testing allows come back to Merge', () => {
+    const backToTestingRuns = turnEndRow('Merge', 'Back to Testing').maxRuns ?? Number.POSITIVE_INFINITY;
+    const onToMergeRuns = turnEndRow('Testing', 'On to Merge').maxRuns ?? Number.POSITIVE_INFINITY;
+    expect(onToMergeRuns, 'On to Merge must allow one more run than Back to Testing').toBeGreaterThan(backToTestingRuns);
+  });
+
+  it('leaves a stop only a person can settle in Merge, on the line the app reads', () => {
+    expectTextIn(outcomeSection, `${skillPath} Outcome line`, '`Needs owner: <the question>`');
+    const message = 'The rebase conflicts in src/a.ts.\n\nNeeds owner: keep the new export or the old one?';
+    expect(matchFinalLine(finalLineOf('Merge', 'Finish'), message).met, 'it must not finish').toBe(false);
+    expect(matchFinalLine(finalLineOf('Merge', 'Back to Testing'), message).met, 'it must not go back to Testing').toBe(false);
+    expect(needsOwnerQuestion(message)).toBe('keep the new export or the old one?');
   });
 });
 
