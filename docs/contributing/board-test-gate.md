@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Board test gate
-description: How the Code Review, Testing and Merge columns gate a change on this repo's own board, what each column's skill runs, why a review pass commits in the task's own worktree, and the Ready or Blocked verdict and ledger it leaves.
+description: How the Code Review, Testing and Merge columns gate a change on this repo's own board, what each column's skill runs, how a red check in Merge sends the task back to Testing and the cap on that loop, why a review pass commits in the task's own worktree, and the Ready or Blocked verdict and ledger it leaves.
 tags: [contributing, testing, code-review, ci, board]
 sources:
   - resource: .claude/skills/code-review/SKILL.md
@@ -20,6 +20,19 @@ the code and de-flaking or rewriting tests along the way, then stops without mer
 checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back` stays a direct
 quick-push escape hatch for admins. `/test` is for **manual local runs** only and is not wired to a
 column.
+
+Merge runs one agent at a time (`maxAgents: 1`), so each PR rebases onto the one merged before it,
+and its checks run again on that base. When Merge rebases onto a moved `main` and a check goes red, the task goes back to Testing on
+its own: `/merge-pull-request` ends on `PR: checks red`, the Merge column's "Back to Testing" row
+moves the task, `/pull-request` fixes or de-flakes the check (a flake that came in from `main`
+included), and its `PR: ready to merge` brings the task back to Merge. Leaving Merge frees its slot
+at once. On 2026-11-07 two red stops instead waited in Merge for a person and held that one slot for
+about 30 minutes each, until the idle pause. The back-route runs at most twice on a task, and
+Testing's "On to Merge" row allows one more run than that, since a row's Frequency counts across the
+board's own moves. A third red stop finds the row spent, and the board holds the card in Merge with
+the `agent-stopped` mark, so a `main` that stays red cannot bounce a task forever. A stop that needs
+a person (a rebase conflict that needs judgment, a merge refused for anything but the missing review,
+the realign and main-checkout stops) ends on `Needs owner:` and stays in Merge.
 
 The push to `main` that a merge makes does not run those checks again. `main` requires a PR to be
 up to date and PRs land by rebase, so the push carries the tree the PR's head already passed on, and

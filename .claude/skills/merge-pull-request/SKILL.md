@@ -18,22 +18,25 @@ first; the `--admin` only waives the missing review. (For a deliberate direct qu
 the whole PR gate, use `/merge-back` instead.)
 
 A run that merged and finished ends on the line `PR: merged`, and the Merge column's "Finish"
-turn-end automation (`kangentic.json`) reads that line and moves the task to Done. See "Outcome
-line" below.
+turn-end automation (`kangentic.json`) reads that line and moves the task to Done. A run stopped by
+red CI ends on `PR: checks red`, and the "Back to Testing" automation sends the task back to Testing,
+where `/pull-request` fixes the checks and sends it back here. See "Outcome line" below.
 
 **This skill merges.** By the time a task reaches Merge the decision to ship has been made, and
-this skill executes it. Red or pending CI is the only thing that may stop a run, and even then only
-until the checks resolve. Anything else it finds - a stale doc, a bad comment, a lint nit - it
-**fixes here and then merges**, accepting a second CI round as the price. It never hands the problem
-back to the user, never bounces the task to another column, and never ends with a green PR still
-open. If you are about to stop without merging, you are almost certainly doing the wrong thing.
+this skill executes it. Red CI is the one thing that sends the task away, and it goes back to
+Testing on its own, because fixing and de-flaking checks is `/pull-request`'s job. Anything else it
+finds - a stale doc, a bad comment, a lint nit - it **fixes here and then merges**, accepting a
+second CI round as the price. It never ends with a green PR still open, and it waits for a person
+only when a person has to decide something: then it ends on `Needs owner: <the question>`. If you
+are about to stop with a green PR and no question, you are doing the wrong thing.
 
 **Usage:** `/merge-pull-request`
 
 ## Pre-flight Checks
 
 All git commands run from the **current working directory** - never `cd <path> && git ...`. Use
-`git -C <path>` to target another directory.
+`git -C <path>` to target another directory. A stop in these checks is a hold: report it and end on
+`Needs owner: <what it needs>`.
 
 1. **Detect mode:** worktree mode requires CWD to contain `.kangentic/worktrees/`. If this is the
    main repo (no worktree), stop and tell the user this skill runs from a task worktree (the Merge
@@ -74,7 +77,7 @@ to the head branch only when there is no stored number.
    turn in this conversation recorded one, use the rebase realign: it is this repo's default merge,
    and it aborts cleanly on a conflict.
 4. If no PR resolves either way, stop and report that the Testing column should have created one (run
-   `/pull-request` from the Testing column first). Do not create a PR here.
+   `/pull-request` from the Testing column first), ending on `Needs owner:`. Do not create a PR here.
 
 Every later `gh pr` command (view, checks, merge) targets `<pr>` or `<prHead>`; the local `<branch>`
 is for local git only.
@@ -137,8 +140,10 @@ perfectly able to make.
 ## Step 2 - Re-verify (rebase if main moved, confirm green and mergeable)
 
 1. `git fetch origin <sourceBranch>`.
-2. If `<sourceBranch>` moved since the PR went green, rebase onto it: `git rebase origin/<sourceBranch>`
-   (resolve conflicts the same way `/pull-request` does, or abort and report). If the rebase changed
+2. If `<sourceBranch>` moved since the PR went green, rebase onto it: `git rebase origin/<sourceBranch>`.
+   Resolve conflicts the same way `/pull-request` does. A conflict that needs a person's judgment
+   (two changes that each make sense and cannot both stand) is a hold: `git rebase --abort`, report
+   the files and the choice, and end on `Needs owner: <the choice>`. If the rebase changed
    history, push the local HEAD to the PR's remote head: `git push origin HEAD:<prHead> --force-with-lease`.
 3. Re-read the PR state: `gh pr view <pr> --json mergeable,mergeStateStatus,statusCheckRollup`.
    **Require EVERY check in the rollup to be green (SUCCESS)** - the whole set, not the
@@ -156,12 +161,22 @@ perfectly able to make.
    `<sourceBranch>` and step 2's rebase was skipped or did not catch it, since this repo requires
    branches to be up to date. Both blocks are EXPECTED and both are waived by the `--admin` merge
    in Step 3, which is why the board chip reads `ready` for either. Do not stop on them. But if a
-   CHECK is failing or still pending (not merely the review or a stale base), stop (or wait -
-   step 4); never `--admin` past a red or pending check.
-4. If the rebase (step 2) re-triggered checks and they are pending, wait for them with
-   `gh pr checks <pr> --watch --fail-fast --interval 30` (Bash `timeout` about `2400000` ms). If
-   they go red, stop and report - this should be rare because Testing already drove them green; the
-   user can move the task back to Testing to re-run `/pull-request`.
+   CHECK is failing, pending or missing (not merely the review or a stale base), never `--admin`
+   past it: send a red one back now (item 5), and wait for a pending or missing one (item 4).
+4. Wait when any check is pending or missing, or when the rebase (step 2) or Step 1's doc push
+   re-triggered checks. For a few seconds after a push the rollup is empty or partial while GitHub
+   registers the new head's check suites, so first re-read
+   `gh pr view <pr> --json headRefOid,statusCheckRollup` until the rollup lists checks for the
+   pushed head. Stop after 10 reads: a check that has not registered by then is missing. Then watch
+   the checks with `gh pr checks <pr> --watch --fail-fast --interval 30` (Bash `timeout` about
+   `2400000` ms), and read the rollup again as item 3 says.
+5. **Red CI goes back to Testing.** When any check in the rollup is red, or is still pending or
+   missing after the wait in item 4, do not fix tests here and do not wait for a person. A flaky
+   spec, a flake that came in from main and a real regression are all `/pull-request`'s to fix.
+   Testing sends the task back here once the checks are green. Report each red, pending or missing
+   check with its run ID, and name the failing specs when `gh run view <run-id> --log-failed` shows
+   them. Leave the PR open with no half-finished rebase, and end the message on the line
+   `PR: checks red`, alone. The board, not this skill, counts the round trips (see "Outcome line").
 
 ## Step 3 - Merge the PR
 
@@ -197,9 +212,10 @@ granular history stays preserved in the PR): `gh pr merge <pr> --admin --squash 
 NOT use `--merge`: a merge commit would break the linear-`main` convention this repo maintains.
 Record `<mergeMethod>` (rebase or squash) - it selects the realign below.
 
-**If the merge fails** for any OTHER reason than the expected missing-review block (e.g. the branch
-is behind and needs a rebase first, or a required check actually went red), do NOT force past it -
-report the unmet requirement and stop.
+**If the merge fails** for any OTHER reason than the expected missing-review block, do NOT force
+past it. When the reason is a check that went red, this is Step 2 item 5: report it and end on
+`PR: checks red`. Any other refusal is a hold: report the unmet requirement and end on
+`Needs owner: <what it needs>`.
 
 ### Refresh the board's PR status
 
@@ -221,7 +237,8 @@ realign later needs to stop for a conflict.
 The merge rewrote the PR commits onto `<sourceBranch>` (new SHAs for a rebase merge, or a single new
 squash commit), so the worktree's local branch still holds the pre-merge commits. Left as-is, the
 board's move-to-Done check reports them as "N commits remain only on the local branch" - a false
-positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`:
+positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`. Every "report"
+below is a hold that ends on `Needs owner: <what it needs>`:
 
 1. Confirm the worktree is clean: `git status --porcelain` (empty right after the merge). If it is
    NOT empty, skip the realign and report - never discard uncommitted work.
@@ -280,9 +297,9 @@ is not "ignore and move on": an un-surfaced local commit will keep breaking this
 **Prevention:** the local `main` checkout should only ever fast-forward. Do not commit directly to
 it - use a worktree or feature branch.
 
-A stop in this step prints no outcome line (see "Outcome line" below). When a later turn finishes
-the reconciliation and `git -C <projectRoot> status -sb` no longer reads `behind`, end that turn
-with the Step 5 report and its outcome line.
+A stop in this step is a hold and ends on `Needs owner:` (see "Outcome line" below). When a later
+turn finishes the reconciliation and `git -C <projectRoot> status -sb` no longer reads `behind`, end
+that turn with the Step 5 report and its outcome line.
 
 ## Step 5 - Report
 
@@ -301,10 +318,11 @@ Summarize:
 
 ## Outcome line
 
-The Merge column's "Finish" automation (`kangentic.json`) is a Text match: each time a turn ends
-here, it reads the last line of your final message that still has a word in it, ignoring case,
-punctuation and markdown, and moves the task to Done when that line reads `PR: merged`. Done
-removes the worktree, so the line is a contract. This section and that row change together
+The Merge column's two turn-end automations (`kangentic.json`) are Text matches: each time a turn
+ends here, they read the last line of your final message that still has a word in it, ignoring case,
+punctuation and markdown. "Finish" moves the task to Done when that line reads `PR: merged`, and
+"Back to Testing" moves it to Testing when it reads `PR: checks red`. Done removes the worktree, so
+the lines are a contract. This section and those rows change together
 (`tests/unit/board-turn-end-contracts.test.ts` fails when they drift):
 
 - `PR: merged` comes only from Step 5, and only when all three hold:
@@ -315,12 +333,22 @@ removes the worktree, so the line is a contract. This section and that row chang
     work leaves work that Done's worktree removal destroys. One that aborted on a conflict, or that
     replayed a leftover commit, would archive commits that never landed with nobody told.
   - **Step 4 fast-forwarded the main checkout.** When Step 4 stops to report, or offers to
-    reconcile the ahead case, print no line. The row checks again at every turn end until it runs,
-    so the turn that finishes the reconciliation ends on `PR: merged` instead.
-- Every other stop prints no outcome line, and the card waits in Merge for a person: the pre-flight
-  stops (main repo mode, a detached HEAD, a failed `gh auth status`), no PR resolved in Step 0, a
-  Step 2 rebase that aborted, any check in the rollup that is red, pending or missing, a merge
-  refused for anything but the missing review, and the realign and Step 4 stops above.
+    reconcile the ahead case, end on `Needs owner:` instead. The row checks again at every turn end
+    until it runs, so the turn that finishes the reconciliation ends on `PR: merged`.
+- `PR: checks red` comes only from Step 2 item 5, and the Merge column's "Back to Testing" row
+  reads it and moves the task to Testing. That covers any check in the rollup that is red, or
+  still pending or missing after the wait, and a merge refused because a check went red. The task
+  needs nobody: Testing's `/pull-request` drives the checks green and its `PR: ready to merge`
+  line brings the task back here. The row's Frequency (`maxRuns` in `kangentic.json`) caps how
+  often it runs on a task, so a `<sourceBranch>` that stays red cannot bounce it forever. A red
+  stop after the row is spent leaves the card in Merge, and the board marks it stopped with that
+  reason. This skill counts nothing: print the line every time.
+- Every other stop is a hold, because a person has to decide or act. End it on
+  `Needs owner: <the question>`, which matches neither row, so the card stays in Merge and the
+  board marks it stopped at once. The holds: the pre-flight stops (main repo mode, a detached HEAD,
+  a failed `gh auth status`), no PR resolved in Step 0, a Step 2 rebase conflict that needs
+  judgment, a merge refused for anything but the missing review or a red check, and the realign and
+  Step 4 stops above.
 
 The `PR:` prefix marks a pull request outcome, shared with Testing's `PR: ready to merge`. Code
 Review ends on `Verdict: Ready`.
