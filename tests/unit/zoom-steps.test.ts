@@ -15,7 +15,21 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { stepZoom, ZOOM_STEPS, MIN_ZOOM, MAX_ZOOM } from '../../src/shared/zoom-steps';
+import { stepZoom, wheelZoomTarget, ZOOM_STEPS, MIN_ZOOM, MAX_ZOOM } from '../../src/shared/zoom-steps';
+
+// The guest pane and every pane popup apply Ctrl+wheel through this one function.
+describe('wheelZoomTarget', () => {
+  it('moves about 10% per notch in either direction', () => {
+    expect(wheelZoomTarget(1.0, 'in')).toBeCloseTo(1.1);
+    expect(wheelZoomTarget(1.0, 'out')).toBeCloseTo(1 / 1.1);
+  });
+
+  it('clamps to MIN_ZOOM and MAX_ZOOM', () => {
+    expect(wheelZoomTarget(MAX_ZOOM, 'in')).toBe(MAX_ZOOM);
+    expect(wheelZoomTarget(MIN_ZOOM, 'out')).toBe(MIN_ZOOM);
+    expect(wheelZoomTarget(4.9, 'in')).toBe(MAX_ZOOM);
+  });
+});
 
 describe('ZOOM_STEPS constants', () => {
   it('MIN_ZOOM equals the first rung', () => {

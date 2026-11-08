@@ -7,6 +7,8 @@ import {
 import { translateText } from './i18n/main-i18n';
 import { detectEmbeddedSignInRefusal, type EmbeddedSignInRefusal } from './browser/embedded-signin-refusal';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
+import { isLoopbackHost } from './browser/loopback-host';
+import { stepZoom, wheelZoomTarget } from '../shared/zoom-steps';
 
 /**
  * Builds the `setWindowOpenHandler` callback for non-webview WebContents (the
@@ -67,7 +69,8 @@ export function createExternalWindowOpenHandler(
  *
  *  - The popup is CHROMED and its title is OURS, forced to the live origin. An
  *    OS title bar is the only origin indicator the window has, and a page free
- *    to name itself is exactly the phishing affordance to avoid.
+ *    to name itself is exactly the phishing affordance to avoid. A loopback
+ *    origin drops "Not secure" and adds its last path segment, origin first.
  *  - Its `webPreferences` restate the guest's hardening in full. A child window
  *    inherits NONE of its opener's preferences on Electron 30 and later, so
  *    anything omitted here silently reverts to the framework default.
@@ -123,13 +126,56 @@ export interface WebviewPopupPolicy {
   ) => void;
 }
 
+/** Longest path segment a loopback popup title carries, before it is cut. */
+const MAX_TITLE_SEGMENT_LENGTH = 80;
+
+/**
+ * The last non-empty segment of a URL path, decoded and made safe for a window
+ * title, or null when the path has none (`/`, or a trailing slash).
+ *
+ * A malformed escape makes `decodeURIComponent` throw, so the raw segment is the
+ * fallback. Control and format characters (Cc, Cf) are stripped: a bidi override
+ * such as U+202E would otherwise reorder how the title reads. Line and paragraph
+ * separators (Zl, Zp) go too, and any whitespace run becomes one space, so the
+ * segment stays on one line of the title bar.
+ */
+function lastPathSegmentForTitle(pathname: string): string | null {
+  const segments = pathname.split('/').filter((segment) => segment.length > 0);
+  const rawSegment = segments[segments.length - 1];
+  if (!rawSegment) return null;
+  let decodedSegment: string;
+  try {
+    decodedSegment = decodeURIComponent(rawSegment);
+  } catch {
+    decodedSegment = rawSegment;
+  }
+  const cleanSegment = decodedSegment
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleanSegment.length === 0) return null;
+  // Counted in code points, not UTF-16 units, so the cut never splits an emoji
+  // and leaves a lone surrogate in the title.
+  const codePoints = Array.from(cleanSegment);
+  if (codePoints.length <= MAX_TITLE_SEGMENT_LENGTH) return cleanSegment;
+  return `${codePoints.slice(0, MAX_TITLE_SEGMENT_LENGTH).join('')}...`;
+}
+
 /**
  * The window title the popup carries, which is the ONLY thing telling the user
  * whose sign-in form they are looking at.
  *
- * `URL.host` rather than `hostname`, so a non-default port is visible; an http
+ * `URL.host` rather than `hostname`, so a non-default port is visible. An http
  * origin is labelled as not secure, because a sign-in form served over http is
  * exactly the case a bare hostname would flatter.
+ *
+ * Loopback (`isLoopbackHost`) is the exception on both counts. Chrome does not
+ * mark it "Not secure" (W3C Secure Contexts treat it as potentially
+ * trustworthy), and the pane exists to view dev servers, so the label there was
+ * a false alarm on nearly every popup. A loopback title also names the last path
+ * segment, origin first (`127.0.0.1:8765 - poster.png`), so a truncated title
+ * still shows the origin. Every other origin stays origin-only: there a path like
+ * `/accounts.google.com` would read as a second host.
  */
 export function popupWindowTitleForUrl(rawUrl: string): string {
   let parsed: URL;
@@ -139,9 +185,51 @@ export function popupWindowTitleForUrl(rawUrl: string): string {
     return translateText(msg`Unknown site`);
   }
   const host = parsed.host;
+  const isWebScheme = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  if (isWebScheme && isLoopbackHost(parsed.hostname)) {
+    const segment = lastPathSegmentForTitle(parsed.pathname);
+    return segment ? `${host} - ${segment}` : host;
+  }
   if (parsed.protocol === 'https:') return host;
   if (parsed.protocol === 'http:') return translateText(msg`Not secure - ${{ host }}`);
   return translateText(msg`Unknown site`);
+}
+
+/** A key a pane popup handles itself, since it has no BrowserPane renderer. */
+export type PopupShortcut = 'zoom-in' | 'zoom-out' | 'zoom-reset' | 'reload';
+
+/**
+ * Which popup shortcut, if any, a `before-input-event` input is.
+ *
+ * Mod is `control` or `meta`, read as the guest's own reload handler in
+ * src/main/index.ts reads it. On Windows `meta` is the Windows key, and the OS
+ * takes its chords before the app sees them.
+ *
+ * This is stricter than the guest's handler on purpose, so the two are not kept
+ * in step. Alt must be up, because AltGr arrives as Ctrl+Alt on Windows and an
+ * AltGr character is typing, not a shortcut. A key mid-composition is never a
+ * shortcut: swallowing it would corrupt an IME sequence.
+ */
+export function popupShortcutForInput(
+  input: Pick<Electron.Input, 'type' | 'key' | 'control' | 'meta' | 'alt' | 'isComposing'>,
+): PopupShortcut | null {
+  if (input.type !== 'keyDown' || input.isComposing) return null;
+  if (input.key === 'F5') return 'reload';
+  if (input.alt || !(input.control || input.meta)) return null;
+  switch (input.key) {
+    case '=':
+    case '+':
+      return 'zoom-in';
+    case '-':
+      return 'zoom-out';
+    case '0':
+      return 'zoom-reset';
+    case 'r':
+    case 'R':
+      return 'reload';
+    default:
+      return null;
+  }
 }
 
 /**
@@ -240,6 +328,10 @@ export function createWebviewWindowOpenHandler(
           sandbox: true,
           webSecurity: true,
           webviewTag: false,
+          // Matches the guest's (will-attach-webview). In the default mode a
+          // zoom is stored per ORIGIN in the shared Session, so zooming one popup
+          // would carry into the next popup on that origin, and into the pane.
+          zoomMode: 'isolated',
           session: policy.guestSession,
         },
       },
@@ -296,6 +388,32 @@ export function hardenWebviewPopupWindow(
     if (isAllowedExternalUrl(navigationEvent.url, EMBEDDED_BROWSER_SCHEMES)) return;
     navigationEvent.preventDefault();
     console.warn(`[WINDOW_OPEN] Blocked popup navigation to disallowed URL: ${navigationEvent.url}`);
+  });
+
+  // Zoom and reload. None of the guest's handling reaches a popup: its type is
+  // 'window', so web-contents-created returns before the guest setup, there is no
+  // app menu accelerator for zoom, and the pane's Ctrl+/-/0 live in the
+  // BrowserPane renderer. Ctrl+wheel only REQUESTS a zoom through zoom-changed,
+  // so without a handler it does nothing. Nothing is sent to a renderer: the
+  // BROWSER_ZOOM_CHANGED push syncs a pane toolbar, and a popup has none.
+  popupContents.on('zoom-changed', (_zoomEvent, zoomDirection) => {
+    popupContents.setZoomFactor(wheelZoomTarget(popupContents.getZoomFactor(), zoomDirection));
+  });
+  popupContents.on('before-input-event', (inputEvent, input) => {
+    const shortcut = popupShortcutForInput(input);
+    if (!shortcut) return;
+    inputEvent.preventDefault();
+    if (shortcut === 'reload') {
+      popupContents.reload();
+      return;
+    }
+    const currentFactor = popupContents.getZoomFactor();
+    const targetFactor = shortcut === 'zoom-in'
+      ? stepZoom(currentFactor, 1)
+      : shortcut === 'zoom-out'
+        ? stepZoom(currentFactor, -1)
+        : 1.0;
+    popupContents.setZoomFactor(targetFactor);
   });
 
   // A popup may open one more popup under the identical policy, budget-capped.

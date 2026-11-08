@@ -1,9 +1,13 @@
 // Chrome-compatible zoom step ladder used by the embedded browser pane.
 //
-// Used in two places:
+// Used in three places:
 //   - Renderer (BrowserPane): Ctrl+/-/0 keyboard shortcuts snap to a rung.
-//   - Main (zoom-changed handler): Ctrl+wheel inside the webview uses a
-//     smooth multiplicative step (WHEEL_ZOOM_FACTOR) clamped to MIN/MAX.
+//   - Main (the guest's zoom-changed handler, src/main/index.ts): Ctrl+wheel
+//     inside the webview uses a smooth multiplicative step (WHEEL_ZOOM_STEP)
+//     clamped to MIN/MAX.
+//   - Main (a pane popup, hardenWebviewPopupWindow in window-open-policy.ts):
+//     the same wheel step, plus Ctrl+/-/0 on the ladder, because a popup has no
+//     BrowserPane renderer to handle its keys.
 
 export const ZOOM_STEPS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0,
@@ -12,6 +16,19 @@ export const ZOOM_STEPS = [
 
 export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 5.0;
+
+/** One Ctrl+wheel notch: about 10%, as Chrome does. */
+export const WHEEL_ZOOM_STEP = 1.1;
+
+/**
+ * The zoom factor one Ctrl+wheel notch moves to from `current`, clamped to
+ * MIN_ZOOM..MAX_ZOOM. Electron only REQUESTS a zoom on Ctrl+wheel, through
+ * `zoom-changed`, and the host applies whatever this returns.
+ */
+export function wheelZoomTarget(current: number, direction: 'in' | 'out'): number {
+  const target = direction === 'in' ? current * WHEEL_ZOOM_STEP : current / WHEEL_ZOOM_STEP;
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, target));
+}
 
 /**
  * Return the next zoom level in `direction` (+1 = in, -1 = out) starting
