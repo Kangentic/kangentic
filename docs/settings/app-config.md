@@ -268,7 +268,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 ## browserAutomation.*
 
-Global-only policy (no per-project override) for whether and how an agent may drive the embedded Browser pane via the `kangentic_browser_*` MCP tools. Distinct from `browser.*` (the per-project pane settings); lives below the settings separator in its own **Agent Browser** tab and is read live on each tool call.
+Global-only policy (no per-project override) for whether and how an agent may drive the embedded Browser pane via the `kangentic_browser_*` MCP tools. Distinct from `browser.*` (the per-project pane settings); lives below the settings separator in its own **Browser automation** tab and is read live on each tool call.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

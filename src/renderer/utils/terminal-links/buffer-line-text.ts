@@ -192,3 +192,18 @@ export function cellRangeOf(line: LogicalLine, start: number, end: number): Cell
     end: { x: last.column + last.width, y: last.row + 1 },
   };
 }
+
+/** What the cells of a range show, row by row: an OSC 8 link's text, which xterm does not hand over. */
+export function readRangeText(buffer: TerminalBufferLike, range: CellRange, columns: number): string {
+  let text = '';
+  for (let row = range.start.y; row <= range.end.y; row += 1) {
+    const line = buffer.getLine(row - 1);
+    if (!line) continue;
+    const firstColumn = row === range.start.y ? range.start.x : 1;
+    const lastColumn = row === range.end.y ? range.end.x : columns;
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      text += line.getCell(column - 1)?.getChars() ?? '';
+    }
+  }
+  return text;
+}

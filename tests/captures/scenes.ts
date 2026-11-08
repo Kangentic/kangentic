@@ -1127,7 +1127,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   // Navigation held to localhost and eval allowed. Then the cut, and both off again behind it.
   browserAutomation: {
     ready: '[data-testid="setting-row-browserAutomation.enabled"]',
-    alt: 'Settings on the Agent Browser tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.',
+    alt: 'Settings on the Browser automation tab: one card with the browser automation switch and the actions agents get: interaction, navigation with a localhost restriction under it, and eval.',
     choreography: [
       switchSetting('browserAutomation.restrictNavigationToLocalhost', true, 1400),
       switchSetting('browserAutomation.allowEval', true, 2000),

@@ -11,7 +11,7 @@ sources:
 ---
 # Keyboard shortcuts
 
-Every shortcut is declared in a central registry, and nearly all are **rebindable** under Settings > Hotkeys, where each can be bound to a key chord or a mouse button (middle or side buttons). Hotkeys also flags conflicts and combos already claimed by the OS or another app. The description-editor keys below are the exception: they are **fixed**, because they are the platform conventions for text formatting. Fixed keys are still listed in Hotkeys for reference, just not editable. `Mod` below is Cmd on macOS and Ctrl on every other platform. `Ctrl` is the Control key everywhere, macOS included. The cycle keys use it because macOS keeps Cmd+Tab and Cmd+\` for itself.
+Every shortcut is declared in a central registry, and nearly all are **rebindable** under Settings > Hotkeys, where each can be bound to a key chord or a mouse button (middle or side buttons). The two link clicks bind only to modifier keys held with a click. Hotkeys also flags conflicts and combos already claimed by the OS or another app. The description-editor keys below are the exception: they are **fixed**, because they are the platform conventions for text formatting. Fixed keys are still listed in Hotkeys for reference, just not editable. `Mod` below is Cmd on macOS and Ctrl on every other platform. `Ctrl` is the Control key everywhere, macOS included. The cycle keys use it because macOS keeps Cmd+Tab and Cmd+\` for itself.
 
 The cycle keys work while a terminal has focus, and the agent loses nothing: the terminal sends Ctrl+Tab as a plain Tab, and Claude Code binds neither Ctrl+Tab nor Ctrl+\`. They do nothing while a dialog, Settings, Quick Find, the Agent Monitor, the Knowledge Graph or Usage Stats is open, and a terminal inside one of them, such as an Agent Monitor terminal, never receives them either, so a press there cannot reach the agent as Tab or Shift+Tab. On macOS, the system's automatic window tabbing can claim Ctrl+Tab ("Show Next Tab") before the app sees it. If Ctrl+Tab does nothing there, rebind it in Hotkeys.
 
@@ -26,7 +26,7 @@ General:
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window
-- **Mod+Shift+B** inside the Command Terminal - Show or hide the focused terminal's Browser pane (a separate binding from the task window's, listed under General in Hotkeys, beside Toggle Command Terminal)
+- **Mod+Shift+B** inside the Command Terminal - Show or hide the focused terminal's Kangentic browser (a separate binding from the task window's, listed under General in Hotkeys, beside Toggle Command Terminal)
 - **Ctrl+Tab** - Go to the next terminal in this project: each running agent in the order the bottom panel lists it, then each Command Terminal terminal. A workflow's own agent is skipped, so is an agent whose task window is in the detached Agent Monitor, and so is a project whose Command Terminal is popped out into its own window. From Backlog or Workflows it switches to the board first. It lands on the agent's task window when one is open, and otherwise on its panel tab. With the panel hidden in Settings, or while a paired phone streams that agent, it opens the agent's window
 - **Ctrl+Shift+Tab** - Go to the next terminal in any project, walking projects in sidebar order and switching project when the next terminal is in another
 - **Ctrl+\`** / **Ctrl+Shift+\`** - Open the next / previous project in sidebar order, collapsed groups included. The backtick key is matched by its position, so it is the same key on layouts where it types another character
@@ -41,7 +41,7 @@ Task detail (whichever panel is open):
 
 - **Mod+Shift+M** - Maximize the command terminal, the task detail dialog (view or edit mode), or a create dialog (New Task / New Backlog Task)
 - **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal. A task edit form with unsaved changes asks to save first (see [Task detail](task-detail.md))
-- **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
+- **Mod+Shift+B** - Toggle the Kangentic browser inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
 - **Mod+Shift+K** - Toggle the description panel inside the task detail dialog
 - **Alt+Shift+Left** / **Alt+Shift+Right** - Move the open task one column left / right without closing its window. Stops at the first and last board columns; Done is never a target. Column automations and move confirmations apply exactly as they do for the kebab's "Move to"
@@ -65,6 +65,8 @@ Terminal:
 
 - **Mod+C** / **Mod+Shift+C** - Copy selected text, stripping quote-bar decoration from any decorated lines (with no selection, Ctrl+C cancels the running command)
 - **Mod+V** / **Mod+Shift+V** - Paste text or an image into the terminal
+- **Mod+Click** on a link - Open it in your default browser
+- **Mod+Shift+Click** on a link - Open it in the Kangentic browser beside the terminal. Swap the two in Hotkeys to make a plain Ctrl+click open the Kangentic browser. A terminal with no Kangentic browser beside it (the bottom panel, or a project with it switched off) opens the default browser on either
 - **Reset terminal** - Clears modes a crashed program left on (mouse tracking, the alternate screen, a scroll region) in the focused terminal and repaints it, while a running agent keeps its screen and input modes. Listed in Hotkeys as "Not set" for you to bind
 - **Mod+F** - Find in the focused terminal, or select the query again if the bar is open. The search icon in a task window, Command Terminal or workflow agent header opens the same bar. Enter goes to the next older match and Shift+Enter to the next newer one. Escape closes the bar and never reaches the terminal. In a Claude Code session the bar searches the whole conversation since its last compaction, not just the screen: while it is open the pane shows that conversation as plain text, and closing it puts Claude back
 - Standard OS shortcuts for the rest of terminal editing

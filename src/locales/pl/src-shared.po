@@ -494,6 +494,14 @@ msgid "Headers"
 msgstr "Nagłówki"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Przytrzymaj, aby dyktować; zwolnij, aby wstawić tekst do aktywnego terminala lub pola tekstowego."
@@ -841,6 +849,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Otwórz wyszukiwanie w aktywnym oknie Rozmowa."
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "Otwórz lub zamknij nakładkę terminala poleceń."
@@ -1153,11 +1169,6 @@ msgstr "Pokaż lub ukryj nakładkę debugowania silnika aktywności."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Pokaż lub ukryj panel przeglądarki w oknie szczegółów zadania."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Pokaż lub ukryj panel zmian (diff) w oknie szczegółów zadania."
 
@@ -1167,7 +1178,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Pokaż lub ukryj panel opisu w oknie szczegółów zadania."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1399,11 +1414,6 @@ msgstr "Przełącz między widokiem tablicy a backlogu."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Przełącz panel przeglądarki"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Przełącz panel zmian"
 
@@ -1413,7 +1423,7 @@ msgid "Toggle Command Terminal"
 msgstr "Przełącz terminal poleceń"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1425,6 +1435,10 @@ msgstr "Przełącz nakładkę debugowania"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Przełącz podgląd opisu"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

@@ -317,7 +317,7 @@ test('a state badge with a caveat shows the caveat, and the link text beside it 
     // Off the badge and onto the pill's own text: its tip takes over at once and there is still one.
     await clearTipLog(page);
     await pill.hover({ position: { x: 4, y: 4 } });
-    await expect(tip).toHaveText('Open PR #302 in browser');
+    await expect(tip).toHaveText('Open PR #302 in default browser');
     await expect(tip).toHaveCount(1);
     expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeLessThan(150);
   } finally {
@@ -335,12 +335,12 @@ test('a state badge with no caveat lets the link tip show over it', async () => 
     expect(await badge.evaluate((node) => node.getAttribute('aria-description'))).toBeNull();
 
     await badge.hover();
-    await expect(tip).toHaveText('Open PR #305 in browser');
+    await expect(tip).toHaveText('Open PR #305 in default browser');
     await expect(tip).toHaveCount(1);
 
     // Onto the pill's text: the same tip, still one.
     await pill.hover({ position: { x: 4, y: 4 } });
-    await expect(tip).toHaveText('Open PR #305 in browser');
+    await expect(tip).toHaveText('Open PR #305 in default browser');
     await expect(tip).toHaveCount(1);
   } finally {
     await browser.close();

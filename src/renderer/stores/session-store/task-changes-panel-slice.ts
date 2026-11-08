@@ -14,6 +14,12 @@ export interface CompletedViewRequest {
   conversationTab?: ConversationTabRequest;
 }
 
+/** A URL waiting for a Browser pane; see `browserNavigateRequests`. `id` tells two requests for the same URL apart. */
+export interface BrowserNavigateRequest {
+  url: string;
+  id: number;
+}
+
 export interface TaskChangesPanelSlice {
   /** Task IDs whose Changes panel is open (persists across dialog open/close). */
   changesOpenTasks: Set<string>;
@@ -117,6 +123,17 @@ export interface TaskChangesPanelSlice {
    * found-nothing guards already make safe for an already-mounted pane.
    */
   browserUrlRefreshTokens: Record<string, number>;
+  /**
+   * A link the user asked to open in a Browser pane, keyed by the pane's owner
+   * (a task id, or a Command Terminal's owner key), waiting for that pane to
+   * load it. A user's terminal link click puts one here and shows the pane;
+   * `BrowserPane` loads it (as its first page when it mounts, through its own
+   * `loadURL` when it is already showing one) and clears it. Renderer-only on
+   * purpose: an agent's navigation goes through main's driver and veils the pane,
+   * and a user's click must do neither. Never persisted; a request lost to a
+   * reload or a Fast Refresh is a click the user repeats.
+   */
+  browserNavigateRequests: Record<string, BrowserNavigateRequest>;
   /**
    * Selected commit OID in the Changes panel's history browser, keyed by task
    * ID. `null` (or absent) means "Uncommitted changes" (the default, top-of-list
@@ -224,6 +241,10 @@ export interface TaskChangesPanelSlice {
   loadBrowserOffscreenTasks: () => Promise<void>;
   /** Force `useBrowserUrl` to refetch this task's URLs. See {@link browserUrlRefreshTokens}. */
   refreshBrowserUrl: (taskId: string) => void;
+  /** Ask the owner's Browser pane to load a URL. See {@link browserNavigateRequests}. */
+  requestBrowserNavigate: (ownerKey: string, url: string) => void;
+  /** The pane loaded the request: clear it, only when it is still the one with this id. */
+  clearBrowserNavigate: (ownerKey: string, requestId: number) => void;
   setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
   /** null clears the stored height (double-click-to-reset on the resizer), so
    *  the History section returns to its default height. */
@@ -242,6 +263,9 @@ export interface TaskChangesPanelSlice {
    */
   hydrateDetailViewStateForTasks: (tasks: Task[]) => void;
 }
+
+// hmr-safe: only has to rise; requestBrowserNavigate takes the clock when it is higher.
+let lastBrowserNavigateRequestId = 0;
 
 /** Debounce settle for persisting a task's detail-view-state blob to the DB. */
 const DETAIL_VIEW_SAVE_DEBOUNCE_MS = 500;
@@ -380,6 +404,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserGuestTasks: new Map<string, number>(),
   browserOffscreenTasks: new Set<string>(),
   browserUrlRefreshTokens: {},
+  browserNavigateRequests: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
   changesHistoryCollapsed: {},
@@ -486,6 +511,21 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   refreshBrowserUrl: (taskId) => {
     const tokens = get().browserUrlRefreshTokens;
     set({ browserUrlRefreshTokens: { ...tokens, [taskId]: (tokens[taskId] ?? 0) + 1 } });
+  },
+
+  requestBrowserNavigate: (ownerKey, url) => {
+    // Never reused: a pane remembers the id it mounted on, and a later request
+    // under that id would read as already loaded. The clock keeps it rising
+    // across a Fast Refresh, which resets the counter.
+    lastBrowserNavigateRequestId = Math.max(Date.now(), lastBrowserNavigateRequestId + 1);
+    set({ browserNavigateRequests: { ...get().browserNavigateRequests, [ownerKey]: { url, id: lastBrowserNavigateRequestId } } });
+  },
+
+  clearBrowserNavigate: (ownerKey, requestId) => {
+    const requests = get().browserNavigateRequests;
+    if (requests?.[ownerKey]?.id !== requestId) return;
+    const { [ownerKey]: _cleared, ...rest } = requests;
+    set({ browserNavigateRequests: rest });
   },
 
   setChangesSelectedCommit: (taskId, commitOid) => {

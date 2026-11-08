@@ -115,6 +115,10 @@ msgstr "{releaseBufferMs} 毫秒"
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, other {# 個任務}}"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A browser in task windows for you and your agents."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "A call failed"
 msgstr "呼叫失敗"
@@ -185,10 +189,6 @@ msgstr "代理作用中"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Agent active time"
 msgstr "代理作用時間"
-
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "Agent Browser"
-msgstr "代理瀏覽器"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -435,6 +435,7 @@ msgid "Browser"
 msgstr "瀏覽器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
 msgid "Browser automation"
 msgstr "瀏覽器自動化"
 
@@ -445,10 +446,6 @@ msgstr "瀏覽器資料"
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
 msgid "Browser data cleared"
 msgstr "已清除瀏覽器資料"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Browser pane"
-msgstr "瀏覽器窗格"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Cancel"
@@ -526,6 +523,10 @@ msgstr "CLI 路徑"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "按一下任務視窗外的空白處即可關閉。控制項、任務卡片與執行中的終端機仍會回應第一次按一下。代理會持續執行，重新開啟任務時會重新連結。"
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Click with modifiers"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Click, type and drag. Off is read-only."
@@ -672,8 +673,8 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "所有專案中的對話、任務、提交、摘要與原始碼都會重建。{rebuildAsk, plural, other {以較早模型撰寫的 # 則摘要會重寫}}，背景約需 {rewriteCalls, plural, other {# 次呼叫}}。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Cookies and storage the embedded browser keeps."
-msgstr "內嵌瀏覽器保留的 Cookie 與儲存資料。"
+msgid "Cookies and storage the Kangentic browser keeps."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Copied"
@@ -701,8 +702,8 @@ msgid "Copy pairing link"
 msgstr "複製配對連結"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-msgid "Copy, paste and interrupt inside a terminal."
-msgstr "在終端機內複製、貼上與中斷。"
+msgid "Copy, paste, interrupt and open links in a terminal."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Cost"
@@ -827,13 +828,13 @@ msgstr "預設"
 msgid "Default base branch"
 msgstr "預設基底分支"
 
-#: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Default browser pane URL"
-msgstr "預設瀏覽器窗格 URL"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default diff scope"
 msgstr "預設差異範圍"
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default Kangentic browser URL"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
@@ -941,10 +942,6 @@ msgstr "推理強度"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Elapsed time"
 msgstr "已用時間"
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Embed a Browser pane in task windows that agents can open."
-msgstr "在任務視窗中嵌入代理可開啟的瀏覽器窗格。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Enter path manually"
@@ -1127,6 +1124,18 @@ msgstr "高準確度"
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 msgstr "投入程度越高回答越慢，但有助於跨多個任務的計數；摘要一律使用代理的預設值。"
 
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold a modifier key while you click."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1135,6 +1144,10 @@ msgstr "等待指令碼後再送出提示"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "按住快速鍵說話，即可將語音輸入到終端機或文字欄位。"
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold the modifier keys and click here. Escape to cancel."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
@@ -1281,6 +1294,10 @@ msgstr "安裝 App、配對手機與推播通知。"
 msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "判斷條件與工作流程步驟，並為任務命名。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic 無法寫入設定檔。"
@@ -1314,16 +1331,16 @@ msgid "Keep editing"
 msgstr "繼續編輯"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-msgid "Keys for a task's Browser pane."
-msgstr "任務瀏覽器窗格的快速鍵。"
-
-#: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Keys for an open task window."
 msgstr "已開啟任務視窗的快速鍵。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Keys for the Changes panel and its diff."
 msgstr "變更面板與其差異檢視的快速鍵。"
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1365,8 +1382,8 @@ msgid "Leftover processes"
 msgstr "殘留的處理程序"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Let agents drive the Browser pane."
-msgstr "允許代理操作瀏覽器窗格。"
+msgid "Let agents drive the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
@@ -1785,8 +1802,8 @@ msgid "Project"
 msgstr "專案"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr "任務沒有個別覆寫時使用的專案預設 URL。首次瀏覽瀏覽器窗格時自動儲存。"
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -1924,8 +1941,8 @@ msgid "Release buffer"
 msgstr "放開後緩衝"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "Reload the browser pane to apply."
-msgstr "重新載入瀏覽器窗格以套用。"
+msgid "Reload the Kangentic browser to apply."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remember window size and position between launches"
@@ -2429,8 +2446,8 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "這會將所有快速鍵還原為預設值，並移除你的自訂繫結。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr "這會清除所有任務和專案中內嵌瀏覽器窗格的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。你將登出所有網站。"
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 msgctxt "notification sound"
@@ -2666,8 +2683,8 @@ msgid "Windows"
 msgstr "視窗"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr "清除內嵌瀏覽器的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。已儲存的 URL 會保留。"
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Workflow agent"

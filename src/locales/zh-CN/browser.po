@@ -105,6 +105,10 @@ msgid "Failed to load: {finalUrl}"
 msgstr "加载失败：{finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {url}"
+msgstr ""
+
+#: src/renderer/components/browser/BrowserPane.tsx
 msgid "Forward"
 msgstr "前进"
 
@@ -216,8 +220,8 @@ msgid "Send to agent"
 msgstr "发送给智能体"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-msgid "The browser pane opens it for this project."
-msgstr "浏览器窗格会为此项目打开它。"
+msgid "The Kangentic browser opens it for this project."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "This URL is the project default"

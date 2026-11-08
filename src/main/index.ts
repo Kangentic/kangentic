@@ -704,7 +704,7 @@ app.on('web-contents-created', (_event, contents) => {
         title: translateText(msg`${{ provider }} returned a sign-in error`),
         message: translateText(msg`${{ provider }} would not complete this sign-in.`),
         detail: translateText(msg`${{ provider }} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site.`),
-        buttons: [translateText(msg`Open in my browser`), translateText(msg`Close`)],
+        buttons: [translateText(msg`Open in default browser`), translateText(msg`Close`)],
         defaultId: 0,
         cancelId: 1,
       }).then(({ response }) => {

@@ -304,6 +304,8 @@ export interface TransientTerminalSetup {
   hotkeyOverrides?: Record<string, string>;
   /** Chromium flags for this browser, such as `TERMINAL_TEXT_LAUNCH_ARGS`. */
   launchArgs?: string[];
+  /** Seeds the project's Kangentic browser switch (`browser.enabled`). Absent leaves the default, on. */
+  browserEnabled?: boolean;
 }
 
 /**
@@ -334,9 +336,12 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
         }));
       });
       ${setup.terminalFontSize === undefined ? '' : `state.config.terminal = Object.assign({}, state.config.terminal, { fontSize: ${JSON.stringify(setup.terminalFontSize)} });`}
+      ${setup.browserEnabled === undefined ? '' : `state.projectConfigs[${JSON.stringify(projectPath)}] = { browser: { enabled: ${JSON.stringify(setup.browserEnabled)} } };`}
       return { currentProjectId: ${JSON.stringify(setup.projectId)} };
     });
     window.electronAPI.sessions.spawnTransient = async function (input) {
+      // Main stamps the slot on the row; the slot's Browser pane binds to it.
+      var slot = input.slot || 'slot-1';
       return {
         session: {
           id: ${JSON.stringify(setup.sessionId)},
@@ -350,7 +355,9 @@ export async function launchWithTransientTerminal(setup: TransientTerminalSetup)
           exitCode: null,
           resuming: false,
           transient: true,
+          commandTerminalSlot: slot,
         },
+        slot: slot,
         branch: 'main',
       };
     };

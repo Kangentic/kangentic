@@ -355,6 +355,39 @@ describe('toggleBrowserOpen', () => {
 // setBrowserOffscreenTasks
 // ---------------------------------------------------------------------------
 
+describe('requestBrowserNavigate', () => {
+  it('holds one request per pane, and a newer one replaces it under a new id', () => {
+    const { actions, getState } = createTestStore();
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/');
+    const first = getState().browserNavigateRequests['task-1'];
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/signup');
+    const second = getState().browserNavigateRequests['task-1'];
+    expect(second.url).toBe('http://localhost:5173/signup');
+    expect(second.id).toBeGreaterThan(first.id);
+    expect(getState().browserNavigateRequests['task-2']).toBeUndefined();
+  });
+
+  it('clears only the request the pane loaded, so a newer one is not lost', () => {
+    const { actions, getState } = createTestStore();
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/');
+    const loaded = getState().browserNavigateRequests['task-1'];
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/signup');
+    actions.clearBrowserNavigate('task-1', loaded.id);
+    expect(getState().browserNavigateRequests['task-1']?.url).toBe('http://localhost:5173/signup');
+    actions.clearBrowserNavigate('task-1', getState().browserNavigateRequests['task-1'].id);
+    expect(getState().browserNavigateRequests['task-1']).toBeUndefined();
+  });
+
+  it('never reuses an id after a clear, which a pane would read as the page it mounted on', () => {
+    const { actions, getState } = createTestStore();
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/');
+    const mounted = getState().browserNavigateRequests['task-1'].id;
+    actions.clearBrowserNavigate('task-1', mounted);
+    actions.requestBrowserNavigate('task-1', 'http://localhost:5173/');
+    expect(getState().browserNavigateRequests['task-1'].id).not.toBe(mounted);
+  });
+});
+
 describe('setBrowserOffscreenTasks', () => {
   it('starts with an empty offscreen set', () => {
     const { getState } = createTestStore();

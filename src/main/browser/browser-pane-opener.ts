@@ -639,7 +639,7 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   if (!config.enabled) {
     return failure(
       'automation-disabled',
-      'Agent browser automation is turned off. Enable it in Settings -> Agent Browser.',
+      'Browser automation is turned off. Enable it in Settings -> Browser automation.',
     );
   }
 

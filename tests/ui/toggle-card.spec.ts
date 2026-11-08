@@ -582,7 +582,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 
   test('capability switches are hidden while the master switch is off', async () => {
     await setGlobalConfigAndSync({ browserAutomation: { enabled: false } });
-    await openTab('Agent Browser');
+    await openTab('Browser automation');
 
     const masterSwitch = page.getByRole('switch', { name: 'Browser automation' });
     await expect(masterSwitch).toHaveAttribute('aria-checked', 'false');
@@ -594,7 +594,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 
   test('capability switches show while the master switch is on, with Only localhost under navigation', async () => {
     await setGlobalConfigAndSync({ browserAutomation: { enabled: true, allowNavigation: true } });
-    await openTab('Agent Browser');
+    await openTab('Browser automation');
 
     const masterSwitch = page.getByRole('switch', { name: 'Browser automation' });
     await expect(masterSwitch).toHaveAttribute('aria-checked', 'true');
@@ -610,7 +610,7 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
 
   test('a click on a row\'s label or description flips that row\'s switch only', async () => {
     await setGlobalConfigAndSync({ browserAutomation: { enabled: true, allowNavigation: true, allowEval: false } });
-    await openTab('Agent Browser');
+    await openTab('Browser automation');
 
     const card = page.locator('section[aria-label="Browser automation"]');
     const evalSwitch = page.getByRole('switch', { name: 'Allow eval' });

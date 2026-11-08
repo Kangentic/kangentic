@@ -406,6 +406,14 @@ msgid "Headers"
 msgstr "標頭"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "按住以聽寫；放開後將內容填入焦點所在的終端機或文字欄位。"
 
@@ -690,6 +698,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "在焦點所在的對話視窗中開啟檢視器內搜尋。"
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Open or close the command terminal overlay."
 msgstr "開啟或關閉命令終端機覆蓋層。"
 
@@ -947,10 +963,6 @@ msgid "Show or hide the activity-engine debug overlay."
 msgstr "顯示或隱藏活動引擎的偵錯覆蓋層。"
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "顯示或隱藏任務詳細資料對話方塊中的瀏覽器窗格。"
-
-#: src/shared/keybindings.ts
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "顯示或隱藏任務詳細資料對話方塊中的變更（差異）面板。"
 
@@ -959,7 +971,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "顯示或隱藏任務詳細資料對話方塊中的描述面板。"
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1145,10 +1161,6 @@ msgid "Toggle between the board and the backlog view."
 msgstr "在看板與待辦清單檢視之間切換。"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Browser pane"
-msgstr "切換瀏覽器窗格"
-
-#: src/shared/keybindings.ts
 msgid "Toggle Changes panel"
 msgstr "切換變更面板"
 
@@ -1157,7 +1169,7 @@ msgid "Toggle Command Terminal"
 msgstr "切換命令終端機"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1167,6 +1179,10 @@ msgstr "切換偵錯覆蓋層"
 #: src/shared/keybindings.ts
 msgid "Toggle description peek"
 msgstr "切換描述預覽"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Toggle Knowledge Graph"

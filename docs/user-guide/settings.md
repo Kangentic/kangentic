@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Settings
-description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer)."
+description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer)."
 tags: [settings, tabs, git, notifications, dictation]
 sources:
   - resource: src/renderer/components/settings/settings-tabs.ts
@@ -14,7 +14,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Language through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Browser automation, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Language through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ## Moving a project
 
@@ -180,13 +180,13 @@ Azure DevOps PRs always get their branch policies checked (reviewer minimums, re
 
 ## Browser
 
-Per-project. The Browser tab holds this project's [Browser pane](task-detail.md#browser-pane) settings. What agents may do in the pane is the shared [Agent Browser](#agent-browser) tab.
+Per-project. The Browser tab holds this project's [Kangentic browser](task-detail.md#browser-pane) settings: the browser built into task windows and Command Terminals, beside the terminal. What agents may do in it is the shared [Browser automation](#browser-automation) tab.
 
 | Setting | Description |
 |---------|-------------|
-| Browser pane | Embed a Browser pane in this project's task windows (on by default). Off, task headers show no Browser pill and agents cannot open the pane |
+| Kangentic browser | A browser in this project's task windows for you and your agents (on by default). Off, task headers show no Browser pill, agents cannot open it, and terminal links open in the default browser |
 | Default URL | The page a task's pane opens when the task has no URL of its own. Saved the first time you navigate the pane |
-| Clear browser data | Wipe the embedded browser's cookies, storage, service workers and caches, keeping saved URLs. It clears the browser for every project, not only this one |
+| Clear browser data | Wipe the Kangentic browser's cookies, storage, service workers and caches, keeping saved URLs. It clears the browser for every project, not only this one |
 
 ## Shortcuts
 
@@ -231,7 +231,7 @@ Global-only, like Behavior.
 
 ## Hotkeys
 
-Applies to every project. Settings > Hotkeys lists every shortcut by area. A rebindable one takes a new key chord or mouse button and has its own reset, and **Reset to default** restores them all after asking. The tab flags a combo that clashes with another shortcut or is already claimed by the OS or another app, and counts the conflicts at the top. [Keyboard shortcuts](keyboard-shortcuts.md) lists every default and which ones are fixed.
+Applies to every project. Settings > Hotkeys lists every shortcut by area. A rebindable one takes a new key chord or mouse button and has its own reset (the two terminal link rows take modifier keys held while you click the box), and **Reset to default** restores them all after asking. The tab flags a combo that clashes with another shortcut or is already claimed by the OS or another app, and counts the conflicts at the top. [Keyboard shortcuts](keyboard-shortcuts.md) lists every default and which ones are fixed.
 
 ## Workflows
 
@@ -289,15 +289,15 @@ The MCP Server tab controls the built-in Model Context Protocol server. When ena
 
 If an agent session starts and its tools cannot connect, Kangentic shows one notice per run, "Couldn't reach the MCP server", with the same error and an Open settings button.
 
-## Agent Browser
+## Browser automation
 
-The Agent Browser tab controls whether and how agents may drive the embedded Browser pane via the `kangentic_browser_*` tools (screenshot, click, type, navigate, and more), so an agent can verify a dev server you have loaded. It is a global (per-machine) policy, separate from the per-project Browser tab.
+The Browser automation tab (formerly Agent Browser) controls whether and how agents may drive the Kangentic browser via the `kangentic_browser_*` tools (screenshot, click, type, navigate, and more), so an agent can verify a dev server you have loaded. It is a global (per-machine) policy, separate from the per-project Browser tab.
 
-While it is on, the Browser pane is the only browser agents drive. Every agent is told so, and a Claude Code agent's calls to other browser tools (a Playwright, Puppeteer or Chrome DevTools MCP server, or Claude in Chrome) are denied with a pointer to the pane. Turn it off to let them through again: a running session sees the change on its next call. Details: [Browser panes](../integrations/mcp-server/browser-panes.md).
+While it is on, the Kangentic browser is the only browser agents drive. Every agent is told so, and a Claude Code agent's calls to other browser tools (a Playwright, Puppeteer or Chrome DevTools MCP server, or Claude in Chrome) are denied with a pointer to the pane. Turn it off to let them through again: a running session sees the change on its next call. Details: [Browser panes](../integrations/mcp-server/browser-panes.md).
 
 | Setting | Description |
 |---------|-------------|
-| Enable Browser Automation | Master switch. Turn off to disable all agent browser control. |
+| Browser automation | Master switch. Turn off to disable all agent browser control. |
 | Allow Interaction | Let agents click, type, press keys, and drag. Off is observe-only (screenshots and DOM reads still work). |
 | Allow Navigation | Let agents point the pane at other URLs. Off confines agents to the page you loaded. |
 | Allow Eval | Let agents run arbitrary JavaScript in the loaded page. Off by default. |

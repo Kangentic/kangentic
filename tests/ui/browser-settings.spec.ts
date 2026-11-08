@@ -101,7 +101,7 @@ test.describe('Browser settings tab', () => {
     const successToast = page.getByTestId('toast').filter({ hasText: 'Browser data cleared' });
     await expect(successToast).toBeVisible();
     await expect(successToast.getByTestId('toast-title')).toHaveText('Browser data cleared');
-    await expect(successToast.getByTestId('toast-body')).toHaveText('Reload the browser pane to apply.');
+    await expect(successToast.getByTestId('toast-body')).toHaveText('Reload the Kangentic browser to apply.');
 
     const callCount = await page.evaluate(
       () => (window as unknown as { __browserClearCalls: number }).__browserClearCalls,
@@ -163,7 +163,7 @@ test.describe('Settings -> Browser tab', () => {
   test('Browser pane and Default URL controls render', async () => {
     await openBrowserTab();
 
-    await expect(page.getByText('Browser pane', { exact: true })).toBeVisible();
+    await expect(page.getByText('Kangentic browser', { exact: true })).toBeVisible();
     await expect(page.getByText('Default URL', { exact: true })).toBeVisible();
     await expect(page.locator('input[placeholder="http://localhost:5173"]')).toBeVisible();
 

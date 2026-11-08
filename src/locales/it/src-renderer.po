@@ -482,7 +482,7 @@ msgstr "Cancella tutti i filtri"
 msgid "Clear search"
 msgstr "Cancella ricerca"
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/keybindings.ts
 msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
 msgid "Click"
 msgstr ""
@@ -1272,7 +1272,11 @@ msgid "Open a project first."
 msgstr "Apri prima un progetto."
 
 #: src/renderer/utils/terminal-links/link-tip.ts
-msgid "Open in browser"
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
 msgstr ""
 
 #: src/renderer/pop-out/PopOutButton.tsx
@@ -1281,14 +1285,12 @@ msgid "Open in new window"
 msgstr "Apri in una nuova finestra"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "Apri la PR #{prNumber} nel browser"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "Apri la PR nel browser"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy

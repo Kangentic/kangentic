@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Terminal ownership and clipboard
-description: "How the bottom panel and task-detail windows share one xterm per session (dialogSessionIds, focused union), the mayTakeArrivalFocus keyboard arbiter, and terminal I/O: bracketed paste, image paste and file drop, copy, OSC 52 clipboard writes, and terminal links (OSC 8, printed URLs and paths, the Ctrl or Cmd click)."
+description: "How the bottom panel and task-detail windows share one xterm per session (dialogSessionIds, focused union), the mayTakeArrivalFocus keyboard arbiter, and terminal I/O: bracketed paste, image paste and file drop, copy, OSC 52 clipboard writes, and terminal links (OSC 8, printed URLs and paths, the two link hotkeys for the default and Kangentic browser)."
 tags: [terminal, ownership, focus, paste, clipboard]
 sources:
   - resource: src/renderer/utils/terminal-arrival-focus.ts
@@ -15,6 +15,8 @@ sources:
   - resource: src/renderer/utils/terminal-links/link-path-cache.ts
   - resource: src/renderer/utils/terminal-links/link-providers.ts
   - resource: src/renderer/utils/terminal-links/link-tip.ts
+  - resource: src/renderer/utils/terminal-links/link-actions.ts
+  - resource: src/renderer/utils/terminal-links/link-targets.ts
   - resource: src/renderer/utils/terminal-links/parse-links.ts
   - resource: src/renderer/utils/terminal-links/register-terminal-links.ts
   - resource: src/main/terminal-links/resolve-link-path.ts
@@ -116,10 +118,11 @@ when a TUI app emits its copy sequence. The copy paths are:
 A TUI app can emit `ESC]8;;<url>ESC\` to mark text as a clickable hyperlink. Like OSC 52, these
 are agent-controlled bytes with no user intent behind them - anything a session prints, `cat`s, or
 echoes can carry one - so activation is gated rather than handed to the OS directly. `useTerminal`
-installs a `linkHandler` (`src/renderer/utils/terminal-link-handler.ts`) that opens on a Ctrl click
-(Cmd alone on a Mac, where Ctrl+click is a right click) only, checks the URL against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`)
-from `src/shared/external-url.ts`, and routes an allowed URL to the OS default browser via
-`shell:openExternal`; anything else is dropped with a warning. Supplying this handler also replaces
+installs a `linkHandler` (`src/renderer/utils/terminal-link-handler.ts`) that opens only on a link
+hotkey (Ctrl+click and Ctrl+Shift+click by default, Cmd on a Mac, where Ctrl+click is a right
+click), checks the URL against `TERMINAL_LINK_SCHEMES` (`http:` / `https:` only, no `mailto:`)
+from `src/shared/external-url.ts`, and routes an allowed URL to the browser that hotkey names (see
+Terminal links below); anything else is dropped with a warning. Supplying this handler also replaces
 xterm's built-in fallback, which would otherwise show a native `confirm()` dialog and then open the
 URL in a bare, chrome-less `window.open()` window. The handler deliberately leaves
 `allowNonHttpProtocols` unset so xterm's own http(s)-only filter stays live as an independent
@@ -129,14 +132,39 @@ that way.
 ### Terminal links
 
 A terminal has three link sources, in xterm's provider order, and an earlier one wins an overlap:
-OSC 8, printed URLs, then printed paths. All three open on Ctrl or Cmd click, and on a Mac on Cmd
-alone, because Ctrl+click there is a right click and opens the context menu. xterm's Linkifier
-activates on any click, so each `activate` checks the modifier itself.
+OSC 8, printed URLs, then printed paths. xterm's Linkifier activates on any click, so each
+`activate` checks the modifiers itself. A path shows in its folder on Ctrl or Cmd click (Cmd alone
+on a Mac, because Ctrl+click there is a right click and opens the context menu).
 
-**The hover tip.** A link under the pointer shows "Open in browser" (a URL) or "Show in folder" (a
-path), with the modifier and Click as key chips. `Tooltip` cannot draw it, because it wraps a DOM
+**Which browser.** A URL opens on one of two rebindable hotkeys in the Hotkeys tab's Terminal group,
+whose combos are modifiers held with a left click (`Mod+Mouse:Left`, `KeybindingDefinition.input`
+`'click'`): `terminal.openLinkInDefaultBrowser` (Ctrl+click) opens the OS default browser through
+`shell:openExternal`, and `terminal.openLinkInKangenticBrowser` (Ctrl+Shift+click) opens the
+Kangentic browser beside that terminal. Swapping the two combos swaps which one the plainer click
+does; there is no setting. `terminal-links/link-actions.ts` reads the combos at hover and at click,
+and `link-targets.ts` routes the open. The host decides whether a Kangentic browser is beside the
+terminal (`useTerminal`'s `linkBrowser` option): a task window offers its pane while the pane can
+show, a Command Terminal its slot's pane, and neither does with the project's switch off or the pane
+popped out into a window of its own. The bottom panel and the Workflows pane offer none. With none,
+both hotkeys open the default browser. Opening shows the pane the way its Browser pill does and puts a
+`browserNavigateRequests` entry in the session store: `BrowserPane` takes it as its first page when
+it mounts, or loads it through the webview's own `loadURL` when it already shows one. It is a user's
+navigation, so it never goes through main's driver, which would veil the pane as agent-driven
+(`agent-driven-focus.md`). An agent driving the pane changes nothing.
+
+A link click with Shift held keeps the text the user had selected. xterm reads Shift+click as "extend
+the selection to here", so `register-terminal-links.ts` notes the selection when the gesture claims
+the press and puts it back in the window's bubble phase of the press and the release, after xterm's
+own handlers. The restore is synchronous: Chrome runs queued input ahead of timers, and a restore on
+a timer lost to a Ctrl+Shift+C pressed right after the click.
+
+**The hover tip.** A path shows "Show in folder". A URL shows each hotkey's action, "Open in default
+browser" and "Open in Kangentic browser", the one with fewer modifiers first, each with its key chips;
+with no Kangentic browser beside the terminal it shows the one row. An OSC 8 link whose cells read
+something other than its URL (Claude's status line "canvas" link) adds the URL on a muted line above
+the actions, cut with an ellipsis past 480px, with a rule between. `Tooltip` cannot draw it, because it wraps a DOM
 element and a link is cells xterm paints, reported through `hover` and `leave` from outside React.
-So `terminal-links/link-tip.ts` draws the same label tip into the page body with Tooltip's classes,
+So `terminal-links/link-tip.ts` draws the same tip into the page body with Tooltip's classes,
 dwell, placement and one-tip slot, over the cells of the row under the pointer. A repaint over the
 link's row makes the Linkifier leave the link and hover it again in the same tick, so a leave closes
 the tip only on the next tick, and the same link coming back keeps the tip and its dwell. Without
@@ -160,8 +188,8 @@ only Claude was measured.
 but it detects those by `TERM_PROGRAM=vscode` or an XTVERSION reply starting `xterm.js`, and
 Kangentic sends neither (`pty-spawn.ts`, `xterm-query-replies.md`). So on a Ctrl+click its own
 handler would open the link a second time, the double open reported against Windows Terminal.
-`terminal-links/link-gesture.ts` prevents it: a capture-phase `mousedown` claims a Ctrl or Cmd press
-on a hovered link, and `useTerminal`'s `onData` drops that click's press and release reports. It
+`terminal-links/link-gesture.ts` prevents it: a capture-phase `mousedown` claims a press that opens
+the hovered link (a link hotkey on a URL, Ctrl or Cmd on a path), and `useTerminal`'s `onData` drops that click's press and release reports. It
 reads the DOM event because the mouse protocol cannot encode Cmd, so on a Mac a TUI would read a
 plain click. Text with no link under it is not claimed, so Claude still handles what Kangentic does
 not link.

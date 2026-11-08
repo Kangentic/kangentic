@@ -183,7 +183,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
     await expect(prLink.locator('.lucide-external-link')).toBeVisible();
 
     // Tooltip names the action.
-    await expect(prLink).toHaveAccessibleDescription('Open PR #287 in browser');
+    await expect(prLink).toHaveAccessibleDescription('Open PR #287 in default browser');
   });
 
   test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
@@ -245,7 +245,7 @@ test.describe('PR merge readiness folds into the state chip', () => {
     await expect(chip).toHaveClass(/text-emerald-400/);
     await expect(chip).toHaveAccessibleDescription(/last PR refresh/);
     // The caveat lives on the chip; the pill keeps its own action tooltip.
-    await expect(pillFor('task-readiness-ready')).toHaveAccessibleDescription('Open PR #301 in browser');
+    await expect(pillFor('task-readiness-ready')).toHaveAccessibleDescription('Open PR #301 in default browser');
   });
 
   test('blocked is amber', async () => {

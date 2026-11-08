@@ -139,6 +139,10 @@ msgstr "{releaseBufferMs} ms"
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
 msgstr "{toWrite, plural, one {# feladat} other {# feladat}}"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A browser in task windows for you and your agents."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
 msgid "A call failed"
@@ -225,11 +229,6 @@ msgstr "Ügynök aktív"
 #, fuzzy
 msgid "Agent active time"
 msgstr "Ügynök aktív ideje"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Agent Browser"
-msgstr "Ügynökböngésző"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -533,6 +532,7 @@ msgid "Browser"
 msgstr "Böngésző"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
 #, fuzzy
 msgid "Browser automation"
 msgstr "Böngészőautomatizálás"
@@ -546,11 +546,6 @@ msgstr "Böngészőadatok"
 #, fuzzy
 msgid "Browser data cleared"
 msgstr "Böngészőadatok törölve"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Browser pane"
-msgstr "Böngészőpanel"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -646,6 +641,10 @@ msgstr "CLI elérési útja"
 #, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
 msgstr "Kattintson a feladatablakon kívüli üres területre a bezárásához. A vezérlők, a feladatkártyák és a futó terminálok továbbra is az első kattintásra reagálnak. Az ágens tovább fut, és újracsatlakozik, amikor újra megnyitja a feladatot."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Click with modifiers"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -826,9 +825,8 @@ msgid "Conversations, tasks, commits, summaries and source code are all rebuilt,
 msgstr "A beszélgetések, feladatok, commitok, összefoglalók és a forráskód minden projektben újraépülnek. {rebuildAsk, plural, one {A korábbi modellel írt # összefoglaló újraíródik} other {A korábbi modellel írt # összefoglaló újraíródik}}, a háttérben nagyjából {rewriteCalls, plural, one {# hívással} other {# hívással}}."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Cookies and storage the embedded browser keeps."
-msgstr "A beágyazott böngésző által tárolt sütik és adatok."
+msgid "Cookies and storage the Kangentic browser keeps."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -862,9 +860,8 @@ msgid "Copy pairing link"
 msgstr "Párosítási hivatkozás másolása"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
-msgid "Copy, paste and interrupt inside a terminal."
-msgstr "Másolás, beillesztés és megszakítás a terminálban."
+msgid "Copy, paste, interrupt and open links in a terminal."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1016,15 +1013,14 @@ msgstr "Alapértelmezett"
 msgid "Default base branch"
 msgstr "Alapértelmezett alapág"
 
-#: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Default browser pane URL"
-msgstr "Böngészőpanel alapértelmezett URL-je"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Default diff scope"
 msgstr "Alapértelmezett diff-hatókör"
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default Kangentic browser URL"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1157,11 +1153,6 @@ msgstr "Erőfeszítés"
 #, fuzzy
 msgid "Elapsed time"
 msgstr "Eltelt idő"
-
-#: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Embed a Browser pane in task windows that agents can open."
-msgstr "Ügynökök által nyitható böngészőpanel a feladatablakokban."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
@@ -1382,6 +1373,18 @@ msgstr "Magas pontosság"
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 msgstr "A nagyobb erőfeszítés lassabban válaszol, és segíthet a sok feladatra kiterjedő számlálásban; az összefoglalók mindig az ágens alapértelmezését használják."
 
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold a modifier key while you click."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Cmd, Option or Shift and click the box. Esc to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold Ctrl, Alt or Shift and click the box. Esc to cancel."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold prompt for script"
@@ -1391,6 +1394,10 @@ msgstr "Prompt visszatartása a szkript végéig"
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "A beszédgombot tartva diktálhat terminálba vagy mezőbe."
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Hold the modifier keys and click here. Escape to cancel."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
@@ -1568,6 +1575,10 @@ msgstr "Az alkalmazás telepítése, telefon párosítása és leküldéses ért
 msgid "Judges conditions and workflow steps, and names tasks."
 msgstr "Feltételeket és folyamatlépéseket ítél meg, feladatokat nevez el."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic browser"
+msgstr ""
+
 #: src/renderer/components/settings/AppSettingsPanel.tsx
 #, fuzzy
 msgid "Kangentic could not write its settings file."
@@ -1610,11 +1621,6 @@ msgstr "Szerkesztés folytatása"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
-msgid "Keys for a task's Browser pane."
-msgstr "Billentyűk a feladat Böngésző paneljéhez."
-
-#: src/renderer/components/settings/tabs/HotkeysTab.tsx
-#, fuzzy
 msgid "Keys for an open task window."
 msgstr "Billentyűk a megnyitott feladatablakhoz."
 
@@ -1622,6 +1628,10 @@ msgstr "Billentyűk a megnyitott feladatablakhoz."
 #, fuzzy
 msgid "Keys for the Changes panel and its diff."
 msgstr "Billentyűk a Módosítások panelhez és annak diffjéhez."
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
@@ -1670,9 +1680,8 @@ msgid "Leftover processes"
 msgstr "Visszamaradt folyamatok"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Let agents drive the Browser pane."
-msgstr "Az ágensek vezérelhetik a Böngésző panelt."
+msgid "Let agents drive the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2182,9 +2191,8 @@ msgid "Project"
 msgstr "Projekt"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr "A projekt alapértelmezett URL-je, ha egy feladatnak nincs saját felülbírálása. Automatikusan mentődik, amikor először navigálsz a Böngésző panelen."
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Kangentic browser."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
@@ -2354,9 +2362,8 @@ msgid "Release buffer"
 msgstr "Elengedési puffer"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "Reload the browser pane to apply."
-msgstr "Az alkalmazáshoz töltse újra a böngészőpanelt."
+msgid "Reload the Kangentic browser to apply."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2969,9 +2976,8 @@ msgid "This restores every hotkey to its default. Your custom bindings will be r
 msgstr "Ez minden gyorsbillentyűt visszaállít az alapértelmezettre. Az egyéni hozzárendelések törlődnek."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
-#, fuzzy
-msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr "Ez törli a sütiket, a localStorage-ot, az IndexedDB-t, a service workereket és a HTTP-/hitelesítési gyorsítótárakat a beágyazott böngészőpanelben az összes feladatra és projektre kiterjedően. Minden webhelyről ki lesz jelentkeztetve."
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/NotificationSoundPicker.tsx
 msgctxt "notification sound"
@@ -3260,9 +3266,8 @@ msgid "Windows"
 msgstr "Ablakok"
 
 #: src/renderer/components/settings/settings-registry.ts
-#, fuzzy
-msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr "Törli a beágyazott böngésző cookie-jait, localStorage- és IndexedDB-adatait, service workereit, valamint HTTP- és hitelesítési gyorsítótárait. A mentett URL-ek megmaradnak."
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser. Saved URLs are kept."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

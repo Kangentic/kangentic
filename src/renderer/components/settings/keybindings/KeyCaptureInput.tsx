@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
-import { comboFromEvent, heldMouseTokens, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
+import { clickComboFromEvent, comboFromEvent, heldMouseTokens, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
 import { normalizeCombo } from '../../../../shared/keybindings';
 import { setRebindCaptureActive } from '../../../utils/rebind-state';
 import { KeyCombo } from './KeyCombo';
@@ -42,6 +42,10 @@ interface KeyCaptureInputProps {
   combo: string;
   /** Called with the captured canonical combo when the user binds a new one. */
   onCommit: (combo: string) => void;
+  /** `'click'`: the action is a link click (`KeybindingDefinition.input`), so
+   *  capture takes modifiers held with a left click on the box, and no key or
+   *  other mouse button. */
+  input?: 'click';
 }
 
 /**
@@ -53,8 +57,9 @@ interface KeyCaptureInputProps {
  * clicking away cancels. Listens on its own element so the app's own hotkeys do
  * not fire while capturing.
  */
-export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
+export function KeyCaptureInput({ combo, onCommit, input }: KeyCaptureInputProps) {
   const { t, i18n } = useLingui();
+  const capturesClick = input === 'click';
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -97,6 +102,12 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
         if (boxRef.current && !boxRef.current.contains(event.target as Node)) stopCapturing();
         return;
       }
+      // A link click binds only to a left click, which the box's own click takes.
+      if (capturesClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       // A bindable mouse button: record it as part of the chord and swallow the
       // event so it neither navigates (back / forward) nor fires its binding.
       event.preventDefault();
@@ -124,7 +135,25 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
       document.removeEventListener('pointerup', onPointerUp, true);
       clearTimeout(noKeyTimer);
     };
-  }, [capturing]);
+  }, [capturing, capturesClick]);
+
+  // A link click's capture: the box's own click, with the modifiers it carries.
+  // On its click rather than its press, so the press that commits cannot land a
+  // second click on the Rebind button that replaces the box.
+  const handleClickCapture = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!capturesClick) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const captured = clickComboFromEvent(event.nativeEvent);
+    if (captured === null) {
+      setNoKeyHint(false);
+      setError(t`Hold a modifier key while you click.`);
+      return;
+    }
+    if (!capturingRef.current) return;
+    stopCapturing();
+    onCommit(captured);
+  };
 
   const handleKeyDown = async (event: React.KeyboardEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -135,6 +164,8 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
       return;
     }
     if (MODIFIER_KEY_NAMES.has(native.key)) return;
+    // A link click takes no key: the modifiers are held for the click.
+    if (capturesClick) return;
     const captured = comboFromEvent(native);
     if (!captured) return;
 
@@ -179,20 +210,25 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
   if (capturing) {
     const hint = error
       ? error
-      : noKeyHint
-        ? t`No key detected. It may be reserved by your OS or another app.`
-        : t`Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.`;
+      : capturesClick
+        ? (IS_MAC ? t`Hold Cmd, Option or Shift and click the box. Esc to cancel.` : t`Hold Ctrl, Alt or Shift and click the box. Esc to cancel.`)
+        : noKeyHint
+          ? t`No key detected. It may be reserved by your OS or another app.`
+          : t`Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.`;
     return (
       <div className="flex flex-col items-end gap-1 max-w-[260px]">
         <button
           ref={boxRef}
           type="button"
           onKeyDown={handleKeyDown}
+          onClick={handleClickCapture}
           data-testid="key-capture-box"
-          aria-label={t`Press the new hotkey or mouse button. Escape to cancel.`}
+          aria-label={capturesClick
+            ? t`Hold the modifier keys and click here. Escape to cancel.`
+            : t`Press the new hotkey or mouse button. Escape to cancel.`}
           className="px-2.5 py-1 rounded border border-accent bg-surface text-xs text-fg-secondary ring-1 ring-accent focus:outline-none whitespace-nowrap"
         >
-          {checking ? <Trans>Checking...</Trans> : <Trans>Press a hotkey</Trans>}
+          {checking ? <Trans>Checking...</Trans> : capturesClick ? <Trans>Click with modifiers</Trans> : <Trans>Press a hotkey</Trans>}
         </button>
         <span className={`text-[11px] text-right ${error ? 'text-red-400' : 'text-fg-faint'}`} aria-live="polite">
           {hint}

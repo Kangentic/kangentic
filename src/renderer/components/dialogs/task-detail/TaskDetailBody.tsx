@@ -8,6 +8,7 @@ import { QueuedContextBar } from '../../terminal/QueuedContextBar';
 import { LaunchOverlay } from '../../LaunchOverlay';
 import { CompletedTaskView } from './completed/CompletedTaskView';
 import { BrowserPane } from '../../browser/BrowserPane';
+import type { TerminalLinkBrowser } from '../../../utils/terminal-links/link-targets';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
 import { useTaskDetailHost } from './task-detail-host';
@@ -92,6 +93,9 @@ interface TaskDetailBodyProps {
    *  Only used to tell the pane, and through it the agent, that it is `parked`
    *  rather than merely hidden. */
   parked?: boolean;
+  /** The Kangentic browser the terminal opens a link in, or null where this
+   *  window cannot show one. Absent from a host that has no pane to offer. */
+  linkBrowser?: TerminalLinkBrowser | null;
 }
 
 export function TaskDetailBody({
@@ -122,6 +126,7 @@ export function TaskDetailBody({
   retainedProjectId,
   dormant: dormantProp,
   parked = false,
+  linkBrowser = null,
 }: TaskDetailBodyProps) {
   const { t } = useLingui();
   const retained = retainedProjectId !== undefined;
@@ -509,6 +514,7 @@ export function TaskDetailBody({
                     // The task-detail surface is window-hosted: refit immediately on
                     // the window's resize/snap/maximize/divider dispatch (no 50ms lag).
                     immediatePanelResize={true}
+                    linkBrowser={linkBrowser}
                   />
                 )}
               </div>

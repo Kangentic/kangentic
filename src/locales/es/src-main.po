@@ -151,9 +151,8 @@ msgid "OK"
 msgstr "Aceptar"
 
 #: src/main/index.ts
-#, fuzzy
-msgid "Open in my browser"
-msgstr "Abrir en mi navegador"
+msgid "Open in default browser"
+msgstr ""
 
 #: src/main/index.ts
 #, fuzzy

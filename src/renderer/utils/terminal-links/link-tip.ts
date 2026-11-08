@@ -1,5 +1,11 @@
 /**
- * The tip a terminal link shows on hover: what a Ctrl or Cmd click on it does.
+ * The tip a terminal link shows on hover: what each link hotkey does with it, and
+ * for an OSC 8 link whose text is not its URL, the URL it opens.
+ *
+ * One action is the one-row label tip every control shows. Two actions (the
+ * default browser and the Kangentic browser, `link-actions.ts`) are two rows,
+ * the plainer click first, each with its key chips at the right. A destination
+ * line sits above them, muted and cut short past 480px, with a rule between.
  *
  * `Tooltip` (components/Tooltip.tsx) wraps one DOM element and places itself on that element's
  * box. A terminal link has no element: it is a range of cells xterm paints, and xterm reports the
@@ -13,7 +19,8 @@
 
 import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import { IS_MAC, primaryModifierLabel } from '../keybindings';
+import { CLICK_TOKEN } from '../../../shared/keybindings';
+import { IS_MAC, formatComboSegments } from '../keybindings';
 import {
   KEY_CHIP_CLASS,
   LABEL_TIP_CLASS,
@@ -29,8 +36,9 @@ import {
   type TipAnchor,
 } from '../tooltip';
 import type { CellRange } from './buffer-line-text';
+import type { LinkAction, LinkTarget } from './link-actions';
 
-/** A URL (printed or OSC 8) opens in the browser; a printed path shows in the file manager. */
+/** A URL (printed or OSC 8) opens in a browser; a printed path shows in the file manager. */
 export type TerminalLinkKind = 'url' | 'path';
 
 /** What xterm hands a link's `hover`, plus which kind of link it is. */
@@ -38,6 +46,23 @@ export interface LinkHover {
   event: Pick<MouseEvent, 'clientY'>;
   range: CellRange;
   kind: TerminalLinkKind;
+  /** An OSC 8 link's address, which its cells may not read as. Absent for a printed link. */
+  osc8Uri?: string;
+}
+
+/** One row of the tip: what the click does, and its key chips. */
+export interface LinkTipRow {
+  label: string;
+  keys: string[];
+  /** The browser the row opens, for a URL link. */
+  target?: LinkTarget;
+}
+
+/** Everything the tip says. */
+export interface LinkTipContent {
+  /** The URL an OSC 8 link opens, when its text does not already say it. */
+  destination: string | null;
+  rows: LinkTipRow[];
 }
 
 /** Where the terminal's cells sit on screen, in viewport pixels. */
@@ -75,19 +100,58 @@ export function linkRowAnchor(range: CellRange, grid: CellGrid, pointerClientY: 
   };
 }
 
-const LINK_ACTIONS: Record<TerminalLinkKind, MessageDescriptor> = {
-  url: msg`Open in browser`,
-  path: msg`Show in folder`,
+const TARGET_LABELS: Record<LinkTarget, MessageDescriptor> = {
+  'default-browser': msg`Open in default browser`,
+  'kangentic-browser': msg`Open in Kangentic browser`,
 };
-const CLICK_CHIP = msg({ message: 'Click', context: 'mouse button, drawn as a key chip after Ctrl or Cmd' });
+const SHOW_IN_FOLDER = msg`Show in folder`;
+/** A printed path opens on Ctrl or Cmd click, whatever the link hotkeys are. */
+const PATH_COMBO = `Mod+${CLICK_TOKEN}`;
 
-/** The tip's words: what the click does, then the gesture as key chips. */
-export function linkTipText(kind: TerminalLinkKind, isMac: boolean): { label: string; keys: string[] } {
+function withoutTrailingSlash(text: string): string {
+  return text.endsWith('/') ? text.slice(0, -1) : text;
+}
+
+/**
+ * The URL an OSC 8 link's tip shows above its actions, or null when the cells
+ * already read as that URL (a trailing slash aside). `cellText` is what the link's
+ * cells show.
+ */
+export function osc8Destination(uri: string, cellText: string): string | null {
+  return withoutTrailingSlash(cellText.trim()) === withoutTrailingSlash(uri) ? null : uri;
+}
+
+/**
+ * The tip's words. A path shows in its folder; a URL lists the actions its link
+ * hotkeys offer, in the plan's order. Null when there is nothing to say: a URL
+ * with no link hotkey bound.
+ */
+export function linkTipContent(
+  kind: TerminalLinkKind,
+  actions: readonly LinkAction[],
+  destination: string | null,
+  isMac: boolean = IS_MAC,
+): LinkTipContent | null {
+  if (kind === 'path') {
+    return { destination: null, rows: [{ label: i18n._(SHOW_IN_FOLDER), keys: formatComboSegments(PATH_COMBO, isMac) }] };
+  }
+  if (actions.length === 0) return null;
   return {
-    label: i18n._(LINK_ACTIONS[kind]),
-    keys: [primaryModifierLabel(isMac), i18n._(CLICK_CHIP)],
+    destination,
+    rows: actions.map((action) => ({
+      label: i18n._(TARGET_LABELS[action.target]),
+      keys: formatComboSegments(action.combo, isMac),
+      target: action.target,
+    })),
   };
 }
+
+/** The stacked shape: a destination line, a rule, then the rows. The rule runs edge to edge, so the padding is the parts'. */
+const STACK_TIP_CLASS = 'flex w-max max-w-[min(480px,calc(100vw-16px))] flex-col bg-fg leading-4 text-surface';
+const DESTINATION_CLASS = 'truncate px-2 py-1 text-tooltip-muted';
+const RULE_CLASS = 'h-px shrink-0 bg-tooltip-chip-edge/40';
+const ROWS_CLASS = 'grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-1 px-2 py-1';
+const ROW_KEYS_CLASS = 'flex items-center gap-0.5 justify-self-end';
 
 /** The part of an xterm `Terminal` the tip reads. */
 export interface LinkTipTerminal {
@@ -106,8 +170,10 @@ export interface TerminalLinkTip {
   dispose(): void;
 }
 
+// The address too: an agent can repaint a different OSC 8 link over the same cells.
 function isSameLink(first: LinkHover, second: LinkHover): boolean {
   return first.kind === second.kind
+    && first.osc8Uri === second.osc8Uri
     && first.range.start.x === second.range.start.x
     && first.range.start.y === second.range.start.y
     && first.range.end.x === second.range.end.x
@@ -140,7 +206,10 @@ function gridOf(terminal: LinkTipTerminal, element: HTMLElement): CellGrid | nul
  * repaint and the tip never showed while an agent worked. A cold close (a press, the wheel, Escape)
  * keeps the tip shut for the rest of the visit, as a press on any trigger does.
  */
-export function createTerminalLinkTip(terminal: LinkTipTerminal, isMac: boolean = IS_MAC): TerminalLinkTip {
+export function createTerminalLinkTip(
+  terminal: LinkTipTerminal,
+  describe: (hover: LinkHover) => LinkTipContent | null,
+): TerminalLinkTip {
   let visit: LinkHover | null = null;
   let visitClosed = false;
   let leaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -199,33 +268,69 @@ export function createTerminalLinkTip(terminal: LinkTipTerminal, isMac: boolean 
     const grid = gridOf(terminal, element);
     const anchor = grid === null ? null : linkRowAnchor(hover.range, grid, hover.event.clientY);
     if (anchor === null) return;
+    const content = describe(hover);
+    if (content === null || content.rows.length === 0) return;
     const ownerDocument = element.ownerDocument;
     const ownerWindow = ownerDocument.defaultView ?? window;
 
     claimTip(closeAsReplaced);
-    const { label, keys } = linkTipText(hover.kind, isMac);
     const tip = ownerDocument.createElement('div');
     tip.setAttribute('role', 'tooltip');
     tip.setAttribute('data-tooltip', '');
-    tip.setAttribute('data-shape', 'label');
     tip.setAttribute('data-testid', 'terminal-link-tip');
-    tip.className = `${TIP_BASE_CLASS} ${LABEL_TIP_CLASS}${mode === 'cold' ? ' overlay-popover-in' : ''}`;
-    const row = ownerDocument.createElement('span');
-    row.className = LABEL_TIP_ROW_CLASS;
-    const text = ownerDocument.createElement('span');
-    text.className = LABEL_TIP_TEXT_CLASS;
-    text.textContent = label;
-    const chips = ownerDocument.createElement('span');
-    chips.className = TIP_KEYS_CLASS;
-    chips.setAttribute('data-tooltip-part', 'keys');
-    for (const key of keys) {
-      const chip = ownerDocument.createElement('kbd');
-      chip.className = KEY_CHIP_CLASS;
-      chip.textContent = key;
-      chips.append(chip);
+    const entrance = mode === 'cold' ? ' overlay-popover-in' : '';
+
+    const rowLabel = (entry: LinkTipRow): HTMLSpanElement => {
+      const text = ownerDocument.createElement('span');
+      text.textContent = entry.label;
+      if (entry.target) text.setAttribute('data-link-target', entry.target);
+      return text;
+    };
+
+    const keyChips = (keys: readonly string[], className: string): HTMLSpanElement => {
+      const chips = ownerDocument.createElement('span');
+      chips.className = className;
+      chips.setAttribute('data-tooltip-part', 'keys');
+      for (const key of keys) {
+        const chip = ownerDocument.createElement('kbd');
+        chip.className = KEY_CHIP_CLASS;
+        chip.textContent = key;
+        chips.append(chip);
+      }
+      return chips;
+    };
+
+    if (content.destination === null && content.rows.length === 1) {
+      // One action: the label tip every control shows.
+      const [only] = content.rows;
+      tip.setAttribute('data-shape', 'label');
+      tip.className = `${TIP_BASE_CLASS} ${LABEL_TIP_CLASS}${entrance}`;
+      const row = ownerDocument.createElement('span');
+      row.className = LABEL_TIP_ROW_CLASS;
+      const text = rowLabel(only);
+      text.className = LABEL_TIP_TEXT_CLASS;
+      row.append(text, keyChips(only.keys, TIP_KEYS_CLASS));
+      tip.append(row);
+    } else {
+      tip.setAttribute('data-shape', 'stack');
+      tip.className = `${TIP_BASE_CLASS} ${STACK_TIP_CLASS}${entrance}`;
+      if (content.destination !== null) {
+        const destination = ownerDocument.createElement('div');
+        destination.className = DESTINATION_CLASS;
+        destination.setAttribute('data-tooltip-part', 'destination');
+        destination.textContent = content.destination;
+        const rule = ownerDocument.createElement('div');
+        rule.className = RULE_CLASS;
+        rule.setAttribute('aria-hidden', 'true');
+        tip.append(destination, rule);
+      }
+      const rows = ownerDocument.createElement('div');
+      rows.className = ROWS_CLASS;
+      for (const entry of content.rows) {
+        rows.append(rowLabel(entry), keyChips(entry.keys, ROW_KEYS_CLASS));
+      }
+      tip.append(rows);
     }
-    row.append(text, chips);
-    tip.append(row);
     ownerDocument.body.append(tip);
     tipElement = tip;
 

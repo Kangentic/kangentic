@@ -161,7 +161,7 @@ Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypres
 - **Registration:** the renderer registers each open pane's guest webContents id (`webview.getWebContentsId()`) with the main process on `dom-ready`, via `BROWSER_PANE_REGISTER` / `BROWSER_PANE_UNREGISTER` IPC, and unregisters that same guest id on unmount. The main-process pane registry (`src/main/browser/browser-pane-registry.ts`) mints a surface HANDLE per guest (`pane_<8hex>`; a lane's is `lane_<8hex>`) and records the guest's taskId and owning agent session beside it, so the tools target one tab per handle for that tab's whole life: re-registering the same guest (a `/clear` rotates the owning session) updates the owner in place and keeps the handle, a different guest always gets a new one, and a handle whose guest is gone answers `surface-gone` naming the replacement (see decision 34). Main also tracks the guest's own `destroyed` / `did-navigate` so the registry stays honest across a hard reload. The tracked URL is a fallback, not the reported value: `kangentic_browser_list_panes` reads each pane's URL live from the guest, because `did-navigate` never fires for same-document navigation and a dev server's SPA routing, `pushState`, and fragment changes would otherwise leave the cache reporting a URL the pane had left. The cache is used only when the guest is gone or has no URL to report yet.
 - **Driving (in-process):** the driver (`src/main/browser/browser-pane-driver.ts`) resolves the target, attaches Chrome DevTools Protocol to the guest webContents, and runs the shared CDP helpers in `src/main/browser/cdp/` (the same content-agnostic driver the dev inspection bridge uses through a compat shim). No HTTP bridge, no lockfile: the pane is in the same process as the MCP server. Debuggers detach synchronously on `before-quit`.
 - **Command Terminals:** each one has this pane too, keyed by its owner key `command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`) in every place a task id keys a task's. Its agent's MCP URL names its session, which resolves to its slot (`resolveMcpCaller`), so it drives its own pane and never a task's by default. The pane never renders inside the Command Terminal panel, which unmounts on every hide: `CommandTerminalBrowserHost` keeps it mounted and lays it over the slot the window draws, hiding it at `opacity: 0` while no slot shows it (decision 43). Its layout is saved per project and slot (`command-terminal-browser-store.ts`), and main closes its pane, pop-out and lane when the terminal ends (`ipc/helpers/command-terminal-browser.ts`). See [Command Terminal](../renderer/command-terminal.md#browser-pane).
-- **Gating:** the global **Agent Browser** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) and `.claude/rules/browser-automation-driver.md`.
+- **Gating:** the global **Browser automation** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) and `.claude/rules/browser-automation-driver.md`.
 
 ## Cross-platform notes
 
@@ -189,7 +189,7 @@ The webview is a regular Chromium browser context. WebSocket, ES modules, fetch 
 
 The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes all three. Future additions (per-task draw color, capture history) belong here.
 
-- **Agent Browser** (global, below the separator) - a separate tab (`AppConfig.browserAutomation`) gating the `kangentic_browser_*` agent tools: `enabled` (master), `allowInteraction`, `allowNavigation`, `allowEval` (default off), `restrictNavigationToLocalhost` (default off). This is a cross-project security policy, hence global, whereas the per-project Browser tab is pane workflow.
+- **Browser automation** (global, below the separator) - a separate tab (`AppConfig.browserAutomation`) gating the `kangentic_browser_*` agent tools: `enabled` (master), `allowInteraction`, `allowNavigation`, `allowEval` (default off), `restrictNavigationToLocalhost` (default off). This is a cross-project security policy, hence global, whereas the per-project Browser tab is pane workflow.
 
 ## Limitations and future work
 
@@ -313,7 +313,7 @@ src/main/
   browser/browser-pane-opener.ts            open/close a pane for the caller's task (MCP lifecycle tools)
   browser/browser-pane-driver.ts            withGuest: gate, resolve, CDP attach, focus emulation,
                                             drive signal, error envelope
-  browser/browser-automation-config.ts      resolved Agent Browser policy
+  browser/browser-automation-config.ts      resolved Browser automation policy
   browser/agent-input-signal.ts             refcounted "an agent is driving guest N" burst edges
   browser/embedded-signin-refusal.ts        detects a provider refusing an embedded browser
   browser/webview-download-policy.ts        one will-download handler per guest Session
