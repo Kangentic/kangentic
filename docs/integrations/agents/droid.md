@@ -33,7 +33,7 @@ The cwd, resume and prompt shape was validated against Droid 0.109.1 (see `scrip
 
 - `--settings <path>`: "Path to runtime settings file merged for this process only". The one file Kangentic passes holds its hooks and nothing else (see [Hooks](#hooks)). Model, BYOK `customModels[]` and the rest of the user's `~/.factory/settings.json` stay theirs.
 - `--use-spec` and `--auto <level>`: the column's permission mode (see [Permission Modes](#permission-modes)).
-- `--append-system-prompt <text>`: the Agent Browser policy, passed only while the Agent Browser is on (see [Browser policy](#browser-policy)).
+- `--append-system-prompt <text>`: the browser policy, passed only while Browser automation is on (see [Browser policy](#browser-policy)).
 
 Interactive `droid` 0.218.0 lists no `--model` or `--reasoning-effort` flag; only `droid exec --help` does. So a column's model and effort overrides stay hidden (`supportsModelOverride: false`, `effortLevels` empty), and the user picks the session's model in the TUI (`/model`, Ctrl+N) and its effort with Tab. An effort set for a task another way (the MCP `effortOverride`, which accepts any value for an agent that lists no levels) is not passed on: the interactive command builder has no effort option, so it is dropped. Only the headless runs take `-r` (see [Model list](#model-list)).
 
@@ -118,7 +118,7 @@ Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, 
 
 `src/main/agent/adapters/droid/browser-servers.ts`, `hook-manager.ts`
 
-While the Agent Browser is on it is the only browser an agent drives (see [Browser panes](../mcp-server/browser-panes.md#the-only-browser-an-agent-drives)). Droid gets the same two halves Claude does:
+While Browser automation is on, the Kangentic browser is the only browser an agent drives (see [Browser panes](../mcp-server/browser-panes.md#the-only-browser-an-agent-drives)). Droid gets the same two halves Claude does:
 
 - `--append-system-prompt` with `BROWSER_POLICY_PROMPT`, only while the switch is on. The flag is in 0.218.0's `droid --help`.
 - A PreToolUse hook on every spawn, through `browser-policy-bridge.js`, that denies a third-party browser server's tool. The bridge reads the switch on each call. Factory's hooks reference documents the same deny reply Claude reads (`hookSpecificOutput.permissionDecision: "deny"` with a reason), MCP tool names of the form `mcp__<server>__<tool>`, and case-sensitive regex matchers. `droidBrowserServerNames` finds the browser servers in the user's `~/.factory/mcp.json` and the working directory's `.factory/mcp.json`. Servers from an ancestor folder's `.factory/mcp.json`, a plugin or the org are not read, and the shared name fragments (`playwright`, `puppeteer`, ...) cover the common ones.

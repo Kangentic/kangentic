@@ -26,7 +26,7 @@
 
 ## Browser
 
-* [Browser panes](browser-panes.md) - How agents open, list, close, pop out and resize the embedded Browser pane over MCP: the policy that makes it the only browser an agent drives, surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Command Terminal panes, Agent Browser gating, and set_viewport's zoom-to-fit emulation.
+* [Browser panes](browser-panes.md) - How agents open, list, close, pop out and resize the embedded Browser pane over MCP: the policy that makes it the only browser an agent drives, surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Command Terminal panes, Browser automation gating, and set_viewport's zoom-to-fit emulation.
 * [Browser actions](browser-actions.md) - The kangentic_browser_* tools that act on the loaded page: navigate, screenshot, DOM queries, console, network, click, type, keypress, drag, scroll, file drop, dialogs and eval, with their parameters, capability tiers and error kinds.
 
 ## Development

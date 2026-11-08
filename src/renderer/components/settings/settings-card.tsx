@@ -33,7 +33,7 @@ import type { SegmentedControlOption } from '../SegmentedControl';
  *    while off (Mobile Devices keeps its two docs links).
  *  - Row descriptions live in an info tooltip (`InfoTip`) so a long tab reads
  *    as a list of names. A short card may keep them inline instead
- *    (`CardToggleRow`'s `inlineDescription`), which Agent Browser does.
+ *    (`CardToggleRow`'s `inlineDescription`), which Browser automation does.
  *  - The header keeps its one description line visible: it says what the
  *    whole feature is, which is the thing a reader needs before any row.
  *    Every visible description fits on one line (the rule's character budget).

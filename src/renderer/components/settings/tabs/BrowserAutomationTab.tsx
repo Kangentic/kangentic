@@ -5,8 +5,8 @@ import { SettingsCard, CardToggleRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 /**
- * Global "Agent Browser" settings: the cross-project policy for whether
- * and how agents may drive the embedded Browser pane via the kangentic_browser_*
+ * Global "Browser automation" settings: the cross-project policy for whether
+ * and how agents may drive the Kangentic browser via the kangentic_browser_*
  * MCP tools. One card: the master switch, then the per-capability switches
  * (interaction, navigation, eval) and the localhost restriction under
  * navigation. Read live by the MCP tool layer so a flip applies on the next
