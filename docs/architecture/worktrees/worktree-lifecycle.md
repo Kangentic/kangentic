@@ -7,6 +7,7 @@ sources:
   - resource: src/main/git/worktree-manager.ts
   - resource: src/main/git/task-worktree-folder.ts
   - resource: src/main/git/base-branch.ts
+  - resource: src/main/git/base-ref.ts
   - resource: src/main/git/git-checks.ts
   - resource: src/main/git/git-fetch-scheduler.ts
   - resource: src/main/git/fetch-throttle.ts
@@ -157,6 +158,28 @@ That configured value is then **verified against the repo's actual refs** by
   `resolveWorktreeBase` re-verifies the ref locally after the fetch before accepting it - the
   same re-verification `createWorktree`'s own `verifiedStartPoint` fallback relies on (see
   [Creation Flow](worktree-creation.md#creation-flow)).
+
+### A base is a branch, a tag or a commit
+
+A base is free text: the picker and MCP `baseBranch` both take a branch, a tag or a commit.
+`classifyBaseRef` (`src/main/git/base-ref.ts`) decides which, in one fixed order: `refs/heads/<base>`
+or `refs/remotes/origin/<base>` is a branch, then `refs/tags/<base>` is a tag, then a full or short
+SHA (hex only) that names a commit is a commit. Any other expression git resolves (`HEAD`, `main~1`,
+`origin/main`) is no base at all: it moves under a name that is not a branch, and freezing it to
+today's commit would be wrong. Every reader below asks it, so a branch named like a tag is a branch
+everywhere. Each check peels with `^{commit}`, because a bare
+`rev-parse --verify` exits 0 for any 40-hex string, whether or not the object exists.
+
+| Reader | A branch | A tag or a commit |
+|---|---|---|
+| Worktree creation | Fetched; cut from `origin/<base>` unless the local branch is ahead of it (a merge not pushed yet) | Cut from `refs/tags/<tag>` or the full SHA when it resolves locally, with no fetch. When it does not, the creation fetch runs, and a tag that exists only on origin is fetched as `refs/tags/<tag>` |
+| Update from base | Fetch and fast-forward from `origin/<base>` | `fixed-base`: nothing to update from |
+| Project folder, no worktree | `git checkout <base>` | Refused unless the task names a branch to cut from it, since a checkout would detach the folder's HEAD |
+| Changes panel | `origin/<base>` unless the local base is ahead | The tag ref or the SHA |
+| PR linking, last tier | `refs/heads/<base>` or a remote's `<base>` at the sha is a base tip | `refs/tags/<base>` at the sha, or a commit base that names the sha, is a base tip |
+
+The `/pull-request`, `/merge-pull-request` and `/merge-back` skills read `kangentic.baseBranch`
+for the PR base, and fall back to origin's default branch when it is not a branch on origin.
 
 **Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 and 3 are
 both `defaultBaseBranch` and therefore DO fall through to `main` / `master`. So a project

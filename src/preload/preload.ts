@@ -519,6 +519,7 @@ const api: ElectronAPI = {
   git: {
     detect: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.GIT_DETECT, forceRefresh),
     listBranches: (projectId) => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES, projectId ?? null),
+    resolveRef: (ref, projectId, options) => ipcRenderer.invoke(IPC.GIT_RESOLVE_REF, ref, projectId ?? null, options ?? null),
     diffFiles: (input) => ipcRenderer.invoke(IPC.GIT_DIFF_FILES, input),
     fileContent: (input) => ipcRenderer.invoke(IPC.GIT_FILE_CONTENT, input),
     fileImage: (input) => ipcRenderer.invoke(IPC.GIT_FILE_IMAGE, input),

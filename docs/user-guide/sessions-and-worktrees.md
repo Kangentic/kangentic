@@ -39,6 +39,19 @@ Priority order:
 
 The base is not part of the branch name; the task's worktree records it as `kangentic.baseBranch`.
 
+A task's base can be a branch, a tag or a commit. The base picker lists origin's branches, then
+the local branches origin does not have, marked local. It leaves out the branches Kangentic made
+for its own tasks, since every task leaves one. Type any other ref into the picker's search box:
+when it matches no listed branch, a Use row appears, and Enter or a click checks it with git. A
+ref that names nothing shows git's own error under the box. A tag that exists only on origin is
+fetched first; a commit that exists only on origin is not. An expression such as `HEAD~1` or
+`origin/main` is refused: type the branch, tag or SHA itself.
+
+A branch base is cut from origin's copy, unless your local branch has commits origin does not have
+yet. A tag or a commit is cut from as it is. It does not move, so Update from base is off for that
+task. A tag or commit base in the project folder needs a branch name to cut from it, since
+checking either out there would leave the folder on no branch.
+
 ## Session Queue
 
 When the max concurrent sessions limit is reached, new sessions are queued automatically. Queued tasks show their place in line on their card, such as "Next in line..." or "2 tasks ahead...", and the task window lists the whole line. A task a full column holds back is left out of this line, since it cannot take a free slot. When a running session exits or is suspended, the next queued session promotes automatically (FIFO order). A column can also [run one agent at a time](columns-and-automations.md#running-one-agent-at-a-time), and its tasks then wait in the order they entered it.

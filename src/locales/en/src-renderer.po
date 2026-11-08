@@ -933,6 +933,14 @@ msgstr "Moved \"{taskTitle}\" to the next column."
 msgid "Moving project folder..."
 msgstr "Moving project folder..."
 
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a commit in the project folder"
+msgstr "Name a branch to start from a commit in the project folder"
+
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a tag in the project folder"
+msgstr "Name a branch to start from a tag in the project folder"
+
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"
 msgstr "New conversation"

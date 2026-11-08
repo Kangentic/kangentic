@@ -24,7 +24,9 @@ const {
   mockResolveProjectContext,
   mockProjectGit,
   mockWorktreeGit,
+  mockClassifyBaseRef,
 } = vi.hoisted(() => ({
+  mockClassifyBaseRef: vi.fn(),
   mockFetchIfStale: vi.fn(),
   mockRefResolvesLocally: vi.fn(async () => true),
   mockResolveEffectiveBaseBranch: vi.fn(),
@@ -106,6 +108,13 @@ vi.mock('../../src/main/git/fetch-throttle', () => ({
 
 vi.mock('../../src/main/git/base-branch', () => ({
   refResolvesLocally: mockRefResolvesLocally,
+}));
+
+// The classification is stubbed; `isFixedBase` is the real one, so the
+// handler's branch-or-fixed decision is the one production makes.
+vi.mock('../../src/main/git/base-ref', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/base-ref')>()),
+  classifyBaseRef: mockClassifyBaseRef,
 }));
 
 import fs from 'node:fs';
@@ -192,6 +201,7 @@ describe('TASK_UPDATE_FROM_BASE', () => {
     mockResolveEffectiveBaseBranch.mockReturnValue('main');
     mockGetProjectRepos.mockReturnValue({ tasks: { getById: vi.fn(() => makeTask()) } });
     mockRefResolvesLocally.mockResolvedValue(true);
+    mockClassifyBaseRef.mockResolvedValue({ kind: 'branch', localSha: 'a'.repeat(40), remoteSha: 'a'.repeat(40) });
     mockFindLiveSessionInDirectory.mockReturnValue(undefined);
     fetchSucceeds();
     mockWorktreeGit.status.mockResolvedValue({ files: [] });
@@ -229,6 +239,22 @@ describe('TASK_UPDATE_FROM_BASE', () => {
     mockGetProjectRepos.mockReturnValue({ tasks: { getById: vi.fn(() => makeTask({ worktree_path: null })) } });
 
     await expect(invoke(context)).rejects.toThrow(/no worktree to update/);
+  });
+
+  it.each([
+    ['tag', { kind: 'tag', ref: 'refs/tags/v2.4.0', sha: 'b'.repeat(40) }],
+    ['commit', { kind: 'commit', sha: 'b'.repeat(40) }],
+  ] as const)('returns fixed-base for a %s base, with no fetch and no merge', async (baseKind, classified) => {
+    // Before, the handler fetched `origin/<tag>`, which never resolves, and
+    // reported fetch-failed for a base sitting exactly where the user put it.
+    const context = makeContext();
+    mockResolveEffectiveBaseBranch.mockReturnValue('v2.4.0');
+    mockClassifyBaseRef.mockResolvedValue(classified);
+
+    await expect(invoke(context)).resolves.toEqual({ status: 'fixed-base', baseBranch: 'v2.4.0', baseKind });
+    expect(mockClassifyBaseRef).toHaveBeenCalledWith('/project', 'v2.4.0');
+    expect(mockFetchIfStale).not.toHaveBeenCalled();
+    expect(mockWorktreeGit.raw).not.toHaveBeenCalled();
   });
 
   it('returns no-remote when the fetch reports the repo has no origin', async () => {

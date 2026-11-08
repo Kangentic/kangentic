@@ -4484,10 +4484,38 @@
       // `projectId` lists another project's branches, as main's git:listBranches
       // does: seed them per project with window.__mockGitBranchesByProject =
       // { [projectId]: string[] }. Every other read gets the one fixed list.
+      // Each answer is main's shape, `{ name, local }`. A seed may list plain
+      // names (origin branches) or `{ name, local }` rows; window.__mockGitLocalBranches
+      // appends local-only rows to the default list.
       listBranches: async function (projectId) {
+        var toChoice = function (entry) {
+          return typeof entry === 'string' ? { name: entry, local: false } : { name: entry.name, local: Boolean(entry.local) };
+        };
         var byProject = window.__mockGitBranchesByProject || {};
-        if (projectId && byProject[projectId]) return byProject[projectId].slice();
-        return ['main', 'develop', 'feature/auth', 'feature/dashboard', 'fix/login-bug'];
+        if (projectId && byProject[projectId]) return byProject[projectId].map(toChoice);
+        var localNames = window.__mockGitLocalBranches || [];
+        return ['main', 'develop', 'feature/auth', 'feature/dashboard', 'fix/login-bug'].map(toChoice)
+          .concat(localNames.map(function (name) { return { name: name, local: true }; }));
+      },
+      // What main's git:resolveRef answers for a typed base. A listed branch is a
+      // branch, a 7 to 40 hex string is a commit, and anything else is git's own
+      // miss unless seeded: window.__mockGitRefs = { [ref]: { kind, sha } }, or
+      // { error } to answer with that stderr, or { reason, error } for one of
+      // main's own misses ('not-a-base', 'option-shaped', ...). Every call is
+      // recorded in window.__mockGitResolveRefCalls as { ref, projectId, fetchTag }.
+      resolveRef: async function (ref, projectId, options) {
+        var typed = String(ref || '').trim();
+        window.__mockGitResolveRefCalls = window.__mockGitResolveRefCalls || [];
+        window.__mockGitResolveRefCalls.push({ ref: typed, projectId: projectId || null, fetchTag: Boolean(options && options.fetchTag) });
+        if (!typed) return { ok: false, reason: 'empty', error: 'Type a branch, tag or commit.' };
+        if (typed.charAt(0) === '-') return { ok: false, reason: 'option-shaped', error: "'" + typed + "' starts with a dash, so git would read it as an option." };
+        var seeded = (window.__mockGitRefs || {})[typed];
+        if (seeded && seeded.error) return { ok: false, reason: seeded.reason || 'git', error: seeded.error };
+        if (seeded) return { ok: true, kind: seeded.kind, sha: seeded.sha };
+        var branches = await this.listBranches(projectId);
+        if (branches.some(function (branch) { return branch.name === typed; })) return { ok: true, kind: 'branch', sha: 'a'.repeat(40) };
+        if (/^[0-9a-f]{7,40}$/i.test(typed)) return { ok: true, kind: 'commit', sha: (typed.toLowerCase() + '0'.repeat(40)).slice(0, 40) };
+        return { ok: false, reason: 'git', error: 'fatal: Needed a single revision' };
       },
       diffFiles: async function (request) {
         // Test hook: seed a diff fixture via window.__mockGitDiff = { files: [...] }

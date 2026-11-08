@@ -26,3 +26,17 @@ export function slugify(text: string, maxLen = 20): string {
 export function computeAutoBranchName(slug: string, shortId: string): string {
   return `${slug}-${shortId}`;
 }
+
+/**
+ * Whether a branch name has the shape {@link computeAutoBranchName} gives a
+ * task's own branch: anything ending in a dash and the eight hex digits of a
+ * task id, at least one of them a letter. Every task leaves one behind
+ * (measured: 473 of one repo's 502 local branches), so the base picker leaves
+ * them out of its list. The letter keeps a person's date-stamped branch
+ * (`release-20240115`) listed; the about 2% of task ids whose eight digits are
+ * all numerals list too. A user can still type any of them to base a task on
+ * another task's branch.
+ */
+export function hasAutoBranchShape(name: string): boolean {
+  return /-(?=[0-9]*[a-f])[0-9a-f]{8}$/.test(name);
+}

@@ -21,6 +21,7 @@ import { WorktreeManager, writeWorktreeBaseBranch } from '../../git/worktree-man
 import { WORKTREE_EXCLUDED_DIRECTORY } from '../../git/sparse-exclusion';
 import { fetchIfStale, type FetchFailureReason } from '../../git/fetch-throttle';
 import { refResolvesLocally } from '../../git/base-branch';
+import { classifyBaseRef, isFixedBase } from '../../git/base-ref';
 import { gitAt } from '../../git/git-client';
 import type { IpcContext } from '../ipc-context';
 import type { Task, TaskSwitchBranchInput, TaskUpdateFromBaseInput, TaskUpdateFromBaseResult } from '../../../shared/types';
@@ -260,6 +261,12 @@ export function registerTaskBranchHandlers(context: IpcContext): void {
 
       const baseBranch = resolveEffectiveBaseBranch(context, task, projectPath);
       return WorktreeManager.withGitLock(projectPath, async (): Promise<TaskUpdateFromBaseResult> => {
+        // A tag or a commit does not move. Fetching `origin/<sha>` could only
+        // fail, and report a fetch error for a base that is exactly where the
+        // user put it.
+        const classifiedBase = await classifyBaseRef(projectPath, baseBranch);
+        if (isFixedBase(classifiedBase)) return { status: 'fixed-base', baseBranch, baseKind: classifiedBase.kind };
+
         // A ref object rather than a plain let: closure assignments never
         // widen a let's control-flow narrowing, while property narrowing
         // resets at the await.

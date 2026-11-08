@@ -5,6 +5,7 @@ description: The per-project git queue with USER and BACKGROUND priorities, remo
 tags: [worktrees, git-queue, sparse-checkout, init-script]
 sources:
   - resource: src/main/git/worktree-manager.ts
+  - resource: src/main/git/base-ref.ts
   - resource: src/main/git/worktree-creation-registry.ts
   - resource: src/main/git/run-init-script.ts
   - resource: src/main/git/spawn-with-abort.ts
@@ -66,11 +67,14 @@ The git phase, steps 1 to 9, is one `create-worktree:<id8>` job on the per-proje
    `--no-auto-gc` (this base fetch, the background sweep, and the branch picker's remote-branch
    fetch), so maintenance runs on the next commit, or on a fetch you run yourself. The start point
    is `origin/<baseBranch>` only
-   when the fetch actually lands that ref; otherwise it falls back to the ref
+   when the fetch actually lands that ref, and the local branch is not ahead of it; otherwise it
+   falls back to the ref
    `resolveWorktreeBase` already verified (`verifiedStartPoint`), which may itself be
    `origin/<baseBranch>` for a base that was only ever fetched and never checked out locally.
    A fetch exiting 0 is not proof the ref landed (a narrowed `remote.origin.fetch` refspec, or a
    fetch that only populated `FETCH_HEAD`), so both call sites re-verify before trusting it.
+   A base that is a tag or a commit skips the fetch: it does not move, and the start point is
+   `refs/tags/<tag>` or the full SHA (see [Base Branch Resolution](worktree-lifecycle.md#base-branch-resolution)).
 3. Check if branch already exists (stale branch from failed cleanup, or custom branch)
 4. Clean up the stale worktree directory if it exists on disk. If removal fails because a process holds the directory as its current directory (Windows pinned-CWD) and the leftover is an empty husk, reuse it in place; if it is non-empty or cannot be inspected, fail with an actionable error naming the likely blocker (an open terminal or editor, the `/preview` dev server, or antivirus). (`git worktree prune` itself is NOT part of creation - it only runs on the removal path, `pruneWorktrees()`, and the debounced background prune.)
 5. If branch exists: `git worktree add [--force] <worktreePath> <branchName>`

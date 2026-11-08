@@ -17,6 +17,7 @@ import { MaximizeToggleButton } from '../dialog-maximize';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
+import { shortRefLabel, useBaseRefKind } from '../../../hooks/useBaseRefKind';
 import { useSessionStore } from '../../../stores/session-store';
 import { useTerminalFindControl } from '../../../utils/terminal-find-registry';
 import { openTaskConversation } from './open-task-conversation';
@@ -658,6 +659,15 @@ function TaskDetailKebabItems({
   const [linkingPr, setLinkingPr] = useState(false);
   const [updatingFromBase, setUpdatingFromBase] = useState(false);
   const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
+  // A tag or a commit base does not move, so there is nothing to update from.
+  const taskBase = task.base_branch ?? '';
+  const baseRef = useBaseRefKind(taskBase, hostProjectId || null, Boolean(task.worktree_path) && taskBase.trim() !== '');
+  const shortBase = shortRefLabel(taskBase, baseRef?.kind);
+  const fixedBaseReason = baseRef?.kind === 'tag'
+    ? t`The base is the tag ${shortBase}, which does not move`
+    : baseRef?.kind === 'commit'
+      ? t`The base is the commit ${shortBase}, which does not move`
+      : null;
 
   const handleUpdateFromBase = async () => {
     if (updatingFromBase) return;
@@ -666,6 +676,19 @@ function TaskDetailKebabItems({
       const result = await window.electronAPI.tasks.updateFromBase({ taskId: task.id }, hostProjectId || null);
       const toast = useToastStore.getState();
       switch (result.status) {
+        case 'fixed-base': {
+          // The menu item is disabled for a fixed base, so this is a base that
+          // turned into one after the menu opened (an MCP update).
+          const baseLabel = shortRefLabel(result.baseBranch, result.baseKind);
+          toast.addToast({
+            title: t`Nothing to update from`,
+            message: result.baseKind === 'tag'
+              ? t`The base is the tag ${baseLabel}, which does not move.`
+              : t`The base is the commit ${baseLabel}, which does not move.`,
+            variant: 'info',
+          });
+          break;
+        }
         case 'updated': {
           const baseBranch = result.baseBranch;
           const commitCount = result.commitCount;
@@ -932,7 +955,8 @@ function TaskDetailKebabItems({
           icon={updatingFromBase ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
           label={t`Update from base`}
           onClick={() => { closeAll(); void handleUpdateFromBase(); }}
-          disabled={updatingFromBase || isSessionActive}
+          disabled={updatingFromBase || isSessionActive || fixedBaseReason !== null}
+          disabledReason={fixedBaseReason}
           data-testid="update-from-base-btn"
         />
       )}

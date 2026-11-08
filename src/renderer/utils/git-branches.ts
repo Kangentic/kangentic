@@ -1,4 +1,5 @@
 import { useProjectStore } from '../stores/project-store';
+import type { GitBranchChoice } from '../../shared/types';
 
 /**
  * In-flight de-dupe + short TTL cache for `git:listBranches`.
@@ -15,9 +16,9 @@ import { useProjectStore } from '../stores/project-store';
 const BRANCHES_CACHE_TTL_MS = 15_000;
 
 // hmr-safe: transient short-TTL cache; a reset-on-HMR just triggers a refetch.
-let inFlightRequest: { projectId: string | null; promise: Promise<string[]> } | null = null;
+let inFlightRequest: { projectId: string | null; promise: Promise<GitBranchChoice[]> } | null = null;
 // hmr-safe: see inFlightRequest.
-let cachedResult: { projectId: string | null; branches: string[]; fetchedAtMs: number } | null = null;
+let cachedResult: { projectId: string | null; branches: GitBranchChoice[]; fetchedAtMs: number } | null = null;
 
 /**
  * Fetch a repo's branch list, sharing an in-flight request and a fresh cache
@@ -25,7 +26,7 @@ let cachedResult: { projectId: string | null; branches: string[]; fetchedAtMs: n
  * project (a workflow's planned task on its board); omitted, the current one.
  * Rejections are never cached, so a failed fetch is retried on the next call.
  */
-export function fetchGitBranches(projectId?: string | null): Promise<string[]> {
+export function fetchGitBranches(projectId?: string | null): Promise<GitBranchChoice[]> {
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
   const targetProjectId = projectId ?? currentProjectId;
   // The open project is asked for by omission, so main keeps routing it by

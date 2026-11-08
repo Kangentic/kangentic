@@ -143,6 +143,7 @@ export function TaskBranchRow({
           defaultBranch={defaultBaseBranch || 'main'}
           onChange={setBaseBranch}
           projectId={projectId}
+          acceptsTypedRef
         />
       </div>
       {showWorktree && (

@@ -557,6 +557,14 @@ msgstr "Branch base"
 msgid "Base branch: {displayBranch}"
 msgstr "Branch base: {displayBranch}"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base commit: {baseCommitSha}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base tag: {displayBranch}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Base: {baseBranch}"
@@ -694,6 +702,10 @@ msgstr "Alterações - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "As alterações estão abertas em uma janela própria"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Checking <0>{trimmedQuery}</0>..."
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
@@ -1397,6 +1409,10 @@ msgctxt "process state"
 msgid "Ended"
 msgstr "Encerrado"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Enter"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "call outcome"
@@ -1738,6 +1754,11 @@ msgstr "Carregando branches..."
 msgid "Loading icons"
 msgstr "Carregando ícones"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgctxt "a branch only this machine has"
+msgid "local"
+msgstr ""
+
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 #, fuzzy
 msgid "Locate Folder..."
@@ -2067,6 +2088,10 @@ msgstr "Nenhum"
 msgid "None is available for this repository."
 msgstr "Nenhum está disponível para este repositório."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Not a branch, tag or commit SHA"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "Not image data"
@@ -2123,6 +2148,10 @@ msgstr "Nada é executado quando uma tarefa entra em {columnName}."
 #, fuzzy
 msgid "Nothing to search by"
 msgstr "Nada para pesquisar"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing to update from"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -2701,6 +2730,10 @@ msgstr "Pesquisar ícones..."
 msgid "Search tasks..."
 msgstr "Pesquisar tarefas..."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Search, or type a tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Select a commit to see its changes"
@@ -2948,6 +2981,10 @@ msgstr "Iniciando agente..."
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
 msgstr "Recomeça quando você move a tarefa ou ela sai de Concluído, não quando um agente ou uma automação a move para outro lugar."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Starts with a dash, so git would read it as an option"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgctxt "column header"
@@ -3077,6 +3114,22 @@ msgstr "Correspondência de texto"
 msgid "The agent CLI this task runs on"
 msgstr "A CLI de agente em que esta tarefa é executada"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {shortBase}, which does not move"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {shortBase}, which does not move"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
 msgstr ""
@@ -3159,6 +3212,10 @@ msgstr ""
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "Isso agora é controlado pelas configurações da coluna. Remova para usá-las."
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "This project is not a git repository"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -3289,6 +3346,10 @@ msgstr "Turnos"
 msgid "Type"
 msgstr "Tipo"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Type a branch, tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
@@ -3358,6 +3419,10 @@ msgstr "atualizou a ordem das colunas"
 msgctxt "tab"
 msgid "Usage"
 msgstr "Uso"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Use <0>{trimmedQuery}</0>"
+msgstr ""
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 #, fuzzy

@@ -259,6 +259,7 @@ export const IPC = {
   // Git
   GIT_DETECT: 'git:detect',
   GIT_LIST_BRANCHES: 'git:listBranches',
+  GIT_RESOLVE_REF: 'git:resolveRef',
   GIT_DIFF_FILES: 'git:diffFiles',
   GIT_FILE_CONTENT: 'git:fileContent',
   GIT_FILE_IMAGE: 'git:fileImage',

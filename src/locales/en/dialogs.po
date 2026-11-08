@@ -453,6 +453,14 @@ msgstr "Base branch"
 msgid "Base branch: {displayBranch}"
 msgstr "Base branch: {displayBranch}"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base commit: {baseCommitSha}"
+msgstr "Base commit: {baseCommitSha}"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base tag: {displayBranch}"
+msgstr "Base tag: {displayBranch}"
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Base: {baseBranch}"
 msgstr "Base: {baseBranch}"
@@ -566,6 +574,10 @@ msgstr "Changes - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "Changes are open in their own window"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Checking <0>{trimmedQuery}</0>..."
+msgstr "Checking <0>{trimmedQuery}</0>..."
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
@@ -1141,6 +1153,10 @@ msgctxt "process state"
 msgid "Ended"
 msgstr "Ended"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Enter"
+msgstr "Enter"
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
 msgid "Error"
@@ -1419,6 +1435,11 @@ msgstr "Loading branches..."
 msgid "Loading icons"
 msgstr "Loading icons"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgctxt "a branch only this machine has"
+msgid "local"
+msgstr "local"
+
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Locate Folder..."
 msgstr "Locate Folder..."
@@ -1686,6 +1707,10 @@ msgstr "None"
 msgid "None is available for this repository."
 msgstr "None is available for this repository."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Not a branch, tag or commit SHA"
+msgstr "Not a branch, tag or commit SHA"
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Not image data"
 msgstr "Not image data"
@@ -1731,6 +1756,10 @@ msgstr "Nothing runs when a task enters {columnName}."
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to search by"
 msgstr "Nothing to search by"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing to update from"
+msgstr "Nothing to update from"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgid "On enter"
@@ -2200,6 +2229,10 @@ msgstr "Search icons..."
 msgid "Search tasks..."
 msgstr "Search tasks..."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Search, or type a tag or commit"
+msgstr "Search, or type a tag or commit"
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Select a commit to see its changes"
 msgstr "Select a commit to see its changes"
@@ -2401,6 +2434,10 @@ msgstr "Starting agent..."
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
 msgstr "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Starts with a dash, so git would read it as an option"
+msgstr "Starts with a dash, so git would read it as an option"
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
 msgid "Status"
@@ -2506,6 +2543,22 @@ msgstr "Text match"
 msgid "The agent CLI this task runs on"
 msgstr "The agent CLI this task runs on"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {baseLabel}, which does not move."
+msgstr "The base is the commit {baseLabel}, which does not move."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {shortBase}, which does not move"
+msgstr "The base is the commit {shortBase}, which does not move"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {baseLabel}, which does not move."
+msgstr "The base is the tag {baseLabel}, which does not move."
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {shortBase}, which does not move"
+msgstr "The base is the tag {shortBase}, which does not move"
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
 msgstr "The description is too long to start an agent with."
@@ -2573,6 +2626,10 @@ msgstr "This directory is not on the host."
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "This is handled by the column's settings now. Remove it to use them."
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "This project is not a git repository"
+msgstr "This project is not a git repository"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "This task has no branch, commit or PR number yet."
@@ -2679,6 +2736,10 @@ msgstr "Turns"
 msgid "Type"
 msgstr "Type"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Type a branch, tag or commit"
+msgstr "Type a branch, tag or commit"
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "Under 0.1% of pixels changed"
@@ -2735,6 +2796,10 @@ msgstr "updated the column order"
 msgctxt "tab"
 msgid "Usage"
 msgstr "Usage"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Use <0>{trimmedQuery}</0>"
+msgstr "Use <0>{trimmedQuery}</0>"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 msgid "Version {updateVersion} is ready to install"

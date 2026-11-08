@@ -947,6 +947,14 @@ msgstr "已将「{taskTitle}」移至下一列。"
 msgid "Moving project folder..."
 msgstr "正在移动项目文件夹..."
 
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a commit in the project folder"
+msgstr ""
+
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"
 msgstr "新建对话"

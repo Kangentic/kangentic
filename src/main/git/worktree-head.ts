@@ -2,6 +2,7 @@ import { gitAt } from './git-client';
 import { RemoteGitUnavailableError } from './remote-git';
 import { viaGitRead } from './git-read-queue';
 import { isSafeBranchName } from './push-command';
+import { isOptionShapedRef, TAG_REF_PREFIX } from './base-ref';
 
 /**
  * Read the worktree's live HEAD: the actual branch (preferred over the stored
@@ -186,7 +187,7 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
   // this process's user. A `--` separator cannot fix it (in `rev-list`, `--`
   // separates revisions from pathspecs), so reject an option-shaped ref outright.
   // No legitimate branch name starts with a dash.
-  if (!ref || !sha || ref.startsWith('-')) return null;
+  if (!ref || !sha || isOptionShapedRef(ref)) return null;
   return viaGitRead(async () => {
     try {
       const git = gitAt(repoCwd);
@@ -281,7 +282,8 @@ export interface RefsPointingAtSha {
   remoteBranches: string[];
   /**
    * True when the sha is also a BASE tip: `refs/heads/<base>`, any remote's
-   * `<base>`, or a remote's `HEAD` symref points at it. Callers bail on this,
+   * `<base>`, `refs/tags/<base>`, or a remote's `HEAD` symref points at it, or
+   * the base is a commit and names this sha. Callers bail on this,
    * because a sha that is a base tip belongs to whatever last landed on base,
    * never to the task sitting on it.
    */
@@ -363,21 +365,33 @@ export async function readRefsPointingAtSha(
       const git = gitAt(repoCwd);
       // A sha with no refs pointing at it, or an object gc has already dropped,
       // exits 0 with empty output rather than erroring.
+      // `refs/tags/` is read for the base signal only: a task's base can be a
+      // tag (`base-ref.ts`), and a fresh worktree cut from it sits on the
+      // tag's commit, which may also be some remote branch's tip.
       const output = await git.raw([
         'for-each-ref',
         '--format=%(refname)',
         `--points-at=${sha}`,
         LOCAL_REF_PREFIX,
         REMOTE_REF_PREFIX,
+        TAG_REF_PREFIX,
       ]);
 
       const seen = new Set<string>();
       const remoteBranches: string[] = [];
-      let pointsAtBaseTip = false;
+      // A base that is a commit names the sha itself (full or abbreviated).
+      let pointsAtBaseTip = HEX_SHA_PATTERN.test(baseBranch) && sha.toLowerCase().startsWith(baseBranch.toLowerCase());
 
       for (const line of output.split('\n')) {
         const refname = line.trim();
         if (!refname) continue;
+
+        // Tags are a base signal only, never a candidate: no PR has a tag as
+        // its source branch.
+        if (refname.startsWith(TAG_REF_PREFIX)) {
+          if (refname === `${TAG_REF_PREFIX}${baseBranch}`) pointsAtBaseTip = true;
+          continue;
+        }
 
         // Local refs are a base signal only, never a candidate.
         if (refname.startsWith(LOCAL_REF_PREFIX)) {

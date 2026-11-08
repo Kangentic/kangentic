@@ -160,7 +160,9 @@ vi.mock('node:child_process', () => ({
       return;
     }
     if (commandArgs?.[0] === 'rev-parse' && commandArgs.includes('--quiet')) {
-      const ref = commandArgs[commandArgs.length - 1];
+      // base-ref.ts peels every ref with `^{commit}`, so a bare 40-hex string
+      // cannot "verify"; the branch name is what precedes it.
+      const ref = commandArgs[commandArgs.length - 1].replace(/\^\{commit\}$/, '');
       const branch = ref.startsWith('origin/') ? ref.slice('origin/'.length) : null;
       const alreadyFetched = branch !== null && recordedSpawnCalls.some(
         (call) => call.command === 'git' && call.args[0] === 'fetch' && call.args[call.args.length - 1] === branch,

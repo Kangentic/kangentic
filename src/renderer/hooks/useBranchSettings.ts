@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { fetchGitBranches } from '../utils/git-branches';
+import { shortRefLabel, useBaseRefKind } from './useBaseRefKind';
 import { fetchProjectProbe } from '../utils/project-probe';
 import type { ReactNode } from 'react';
 import { computeBranchHint, resolveWorktreeBlocker, type WorktreeBlocker } from '../utils/worktree-placement';
@@ -67,7 +68,9 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
     if (!active) return;
     let cancelled = false;
     fetchGitBranches(projectId)
-      .then((branches) => { if (!cancelled) setKnownBranches(new Set(branches)); })
+      // Local-only branches count too: a custom name that matches one is checked
+      // out rather than created.
+      .then((branches) => { if (!cancelled) setKnownBranches(new Set(branches.map((branch) => branch.name))); })
       .catch(() => { if (!cancelled) setKnownBranches(new Set()); });
     return () => { cancelled = true; };
   }, [active, projectId]);
@@ -91,12 +94,21 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
     [customBranchName, knownBranches],
   );
 
-  const branchNameError = useMemo(
-    () => customBranchName.trim() && !isValidGitBranchName(customBranchName.trim())
-      ? i18n._(msg`Invalid git branch name`)
-      : '',
-    [customBranchName],
-  );
+  // A tag or commit base in the project folder needs a branch name to cut
+  // from it: checking either out there would detach the folder's HEAD, and
+  // main refuses the start (`ensureTaskBranchCheckout`). Said here, where the
+  // user can still name a branch or pick Worktree.
+  const baseRef = useBaseRefKind(baseBranch, projectId, active && baseBranch.trim() !== '');
+  const runsInProjectFolder = !effectiveWorktree || blocker !== null;
+
+  const branchNameError = useMemo(() => {
+    const trimmedName = customBranchName.trim();
+    if (trimmedName && !isValidGitBranchName(trimmedName)) return i18n._(msg`Invalid git branch name`);
+    if (trimmedName || !runsInProjectFolder || !baseRef || baseRef.kind === 'branch') return '';
+    return baseRef.kind === 'tag'
+      ? i18n._(msg`Name a branch to start from a tag in the project folder`)
+      : i18n._(msg`Name a branch to start from a commit in the project folder`);
+  }, [customBranchName, runsInProjectFolder, baseRef]);
 
   const branchPlaceholder = useMemo(() => {
     if (effectiveWorktree && !blocker) {
@@ -109,11 +121,12 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
     customBranchName,
     branchExists,
     effectiveWorktree,
-    effectiveBaseBranch,
+    // A commit base reads as its short SHA, as git shows one.
+    effectiveBaseBranch: shortRefLabel(effectiveBaseBranch, baseRef?.kind),
     baseBranchPinned: baseBranch.trim() !== '',
     currentBranch: probe?.currentBranch ?? null,
     blocker,
-  }), [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch, baseBranch, probe, blocker]);
+  }), [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch, baseRef, baseBranch, probe, blocker]);
 
   const reset = useCallback((next: BranchSettingsInitial) => {
     setBaseBranch(next.baseBranch);

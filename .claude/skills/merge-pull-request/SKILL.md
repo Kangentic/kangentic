@@ -44,7 +44,12 @@ All git commands run from the **current working directory** - never `cd <path> &
 2. Get the current branch: `git rev-parse --abbrev-ref HEAD`. If `HEAD` (detached), warn and stop.
 3. Derive the project root: two directories above `.kangentic/worktrees/<slug>/` (strip
    `.kangentic/worktrees/<slug>` from the worktree path).
-4. Determine the source branch: `git config kangentic.baseBranch` (fallback: `main`).
+4. Determine the source branch: `git config kangentic.baseBranch` (fallback: `main`). A task based
+   on a tag or a commit has no branch to merge into. When
+   `git show-ref --verify --quiet refs/remotes/origin/<value>` fails, use origin's default branch
+   (`git symbolic-ref --short refs/remotes/origin/HEAD`, minus the `origin/` prefix) and say so in
+   one line. When `origin/HEAD` is not set (`symbolic-ref` fails), use `main`, or `master` when only
+   that one is on origin.
 5. Verify the GitHub CLI is authenticated: `gh auth status`. If it fails, report it and stop.
 
 ## Step 0 - Resolve the PR (by stored number first, head branch as fallback)

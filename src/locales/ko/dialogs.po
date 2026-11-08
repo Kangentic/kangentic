@@ -557,6 +557,14 @@ msgstr "기준 분기"
 msgid "Base branch: {displayBranch}"
 msgstr "기준 분기: {displayBranch}"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base commit: {baseCommitSha}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base tag: {displayBranch}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "Base: {baseBranch}"
@@ -694,6 +702,10 @@ msgstr "변경 사항 - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "변경 사항이 별도 창에 열려 있습니다"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Checking <0>{trimmedQuery}</0>..."
+msgstr ""
 
 #: src/renderer/components/dialogs/AddProjectDialogs.tsx
 msgid "Choose"
@@ -1397,6 +1409,10 @@ msgctxt "process state"
 msgid "Ended"
 msgstr "종료됨"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Enter"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "call outcome"
@@ -1738,6 +1754,11 @@ msgstr "분기 불러오는 중..."
 msgid "Loading icons"
 msgstr "아이콘 불러오는 중"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgctxt "a branch only this machine has"
+msgid "local"
+msgstr ""
+
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 #, fuzzy
 msgid "Locate Folder..."
@@ -2067,6 +2088,10 @@ msgstr "없음"
 msgid "None is available for this repository."
 msgstr "이 리포지토리에 사용할 수 있는 항목이 없습니다."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Not a branch, tag or commit SHA"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "Not image data"
@@ -2123,6 +2148,10 @@ msgstr "작업이 {columnName}에 들어갈 때 실행되는 항목이 없습니
 #, fuzzy
 msgid "Nothing to search by"
 msgstr "검색 기준 없음"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing to update from"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -2701,6 +2730,10 @@ msgstr "아이콘 검색..."
 msgid "Search tasks..."
 msgstr "작업 검색..."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Search, or type a tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Select a commit to see its changes"
@@ -2948,6 +2981,10 @@ msgstr "에이전트 시작 중..."
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
 msgstr "사용자가 작업을 이동하거나 작업이 완료에서 벗어나면 다시 시작되며, 에이전트나 자동화가 다른 곳으로 이동할 때는 다시 시작되지 않습니다."
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Starts with a dash, so git would read it as an option"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
 msgctxt "column header"
@@ -3077,6 +3114,22 @@ msgstr "텍스트 일치"
 msgid "The agent CLI this task runs on"
 msgstr "이 작업을 실행할 에이전트 CLI"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {shortBase}, which does not move"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {shortBase}, which does not move"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
 msgstr ""
@@ -3159,6 +3212,10 @@ msgstr ""
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "이제 열 설정에서 처리됩니다. 열 설정을 사용하려면 이 항목을 제거하세요."
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "This project is not a git repository"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -3289,6 +3346,10 @@ msgstr "턴"
 msgid "Type"
 msgstr "유형"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Type a branch, tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
@@ -3358,6 +3419,10 @@ msgstr "열 순서 업데이트함"
 msgctxt "tab"
 msgid "Usage"
 msgstr "사용량"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Use <0>{trimmedQuery}</0>"
+msgstr ""
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 #, fuzzy

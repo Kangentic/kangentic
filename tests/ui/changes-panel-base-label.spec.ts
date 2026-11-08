@@ -37,6 +37,10 @@ const DEFAULT_BASE_TASK_ID = 'task-base-label-default';
 const CUSTOM_BASE_TASK_ID = 'task-base-label-custom';
 const DEFAULT_BASE_SESSION_ID = 'sess-base-label-default';
 const CUSTOM_BASE_SESSION_ID = 'sess-base-label-custom';
+const TAG_BASE_TASK_ID = 'task-base-label-tag';
+const TAG_BASE_SESSION_ID = 'sess-base-label-tag';
+
+const HEX_TAG_NAME = '202401011200ab';
 
 const preConfig = `
   window.__mockGitDiff = {
@@ -134,6 +138,68 @@ const preConfig = `
       updated_at: ts,
     });
 
+    // A task cut from a tag: main's git:resolveRef answer is seeded.
+    window.__mockGitRefs = { 'v2.4.0': { kind: 'tag', sha: 'b'.repeat(40) } };
+    state.sessions.push({
+      id: '${TAG_BASE_SESSION_ID}',
+      taskId: '${TAG_BASE_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: 9997,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/base-label-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: '${TAG_BASE_TASK_ID}',
+      title: 'Tag Base Task',
+      description: 'Cut from a release tag',
+      swimlane_id: laneIds['Code Review'],
+      position: 2,
+      agent: 'claude',
+      session_id: '${TAG_BASE_SESSION_ID}',
+      worktree_path: '/mock/worktrees/base-label-tag',
+      branch_name: 'feature/base-label-tag',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'v2.4.0',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // A tag whose name is 14 hex characters: only a commit base is shortened.
+    window.__mockGitRefs['${HEX_TAG_NAME}'] = { kind: 'tag', sha: 'c'.repeat(40) };
+    state.sessions.push({
+      id: 'sess-base-label-hex-tag',
+      taskId: 'task-base-label-hex-tag',
+      projectId: '${PROJECT_ID}',
+      pid: 9996,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/base-label-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+    state.tasks.push({
+      id: 'task-base-label-hex-tag',
+      title: 'Hex Tag Base Task',
+      description: 'Cut from a date-stamped tag',
+      swimlane_id: laneIds['Code Review'],
+      position: 3,
+      agent: 'claude',
+      session_id: 'sess-base-label-hex-tag',
+      worktree_path: '/mock/worktrees/base-label-hex-tag',
+      branch_name: 'feature/base-label-hex-tag',
+      pr_number: null,
+      pr_url: null,
+      base_branch: '${HEX_TAG_NAME}',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
     return { currentProjectId: '${PROJECT_ID}' };
   });
 `;
@@ -198,6 +264,59 @@ test.describe('Changes panel: base-branch divergence label', () => {
     // Custom base uses the accent tone - the more surprising case, meant to draw the eye.
     await expect(badge).toHaveClass(/border-accent/);
     await expect(badge).not.toHaveClass(/border-edge-subtle/);
+    // A branch base draws no kind icon.
+    await expect(badge).toHaveAttribute('data-base-kind', 'branch');
+    await expect(badge.locator('svg')).toHaveCount(0);
+
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('marks a base that is a tag with the tag icon', async () => {
+    const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Tag Base Task').first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    const badge = page.locator('[data-testid="changes-base-label"]');
+    await expect(badge).toHaveText('v2.4.0');
+    await expect(badge).toHaveAttribute('data-base-kind', 'tag');
+    await expect(badge.locator('svg')).toHaveCount(1);
+    await expect(badge).toHaveAccessibleDescription('Based on v2.4.0, not the project default');
+
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('shows a tag named with 14 hex characters whole, not cut to a short SHA', async () => {
+    const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Hex Tag Base Task').first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    const badge = page.locator('[data-testid="changes-base-label"]');
+    await expect(badge).toHaveAttribute('data-base-kind', 'tag');
+    await expect(badge).toHaveText(HEX_TAG_NAME);
+
+    // The passive readers never ask main to fetch a tag.
+    const fetchingCalls = await page.evaluate(
+      () => (window as unknown as { __mockGitResolveRefCalls?: Array<{ fetchTag: boolean }> }).__mockGitResolveRefCalls?.filter((call) => call.fetchTag) ?? [],
+    );
+    expect(fetchingCalls).toEqual([]);
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
