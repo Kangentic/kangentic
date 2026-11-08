@@ -64,6 +64,22 @@ async function settleMountFocus(page: Page): Promise<void> {
   }));
 }
 
+/**
+ * The mount fit and the refit after the footer mounts have both reached the PTY.
+ * Each is sent after a 200 ms debounce, so a count taken before they land moves
+ * under the test. Settled is the count holding across one poll interval, the same
+ * fence command-terminal.spec.ts uses before its resize assertions.
+ */
+async function settleMountResizes(page: Page): Promise<void> {
+  let previousCount = -1;
+  await expect.poll(async () => {
+    const count = await resizeCount(page);
+    const settled = count > 0 && count === previousCount;
+    previousCount = count;
+    return settled;
+  }, { intervals: [500], timeout: 10000 }).toBe(true);
+}
+
 async function focusedTerminal(commandWindow: Locator): Promise<Locator> {
   const textarea = commandWindow.locator('.xterm-helper-textarea').first();
   await textarea.focus();
@@ -191,6 +207,7 @@ test('the replay after a reset asks for no resize', async () => {
     const commandWindow = await openTransientCommandTerminal(page, SESSION_ID);
     await focusedTerminal(commandWindow);
     await expect(page.getByTestId('terminal-replay-veil')).toHaveCount(0);
+    await settleMountResizes(page);
     const replaysBefore = await replayCount(page);
     const resizesBefore = await resizeCount(page);
 
