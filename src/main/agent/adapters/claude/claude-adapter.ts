@@ -24,6 +24,7 @@ import {
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
+import { CLAUDE_HISTORY_VIEW } from './history-view';
 import { ensureClaudeSpawnConfig } from './trust-manager';
 import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
 import { cliPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
@@ -531,6 +532,9 @@ export class ClaudeAdapter implements AgentAdapter {
     permissionPrompts: {
       reportRejectedPromptTools: (options) => reportRejectedPromptTools(options),
     },
+    // Fullscreen keeps the conversation on the alternate screen; these keys write
+    // it out for the find bar. See history-view.ts for what was measured.
+    historyView: CLAUDE_HISTORY_VIEW,
   };
 
   removeHooks(directory: string): void {

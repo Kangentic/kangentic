@@ -299,6 +299,12 @@ describe('createWebviewWindowOpenHandler - the popup\'s window options', () => {
     });
   });
 
+  it('runs the popup in the isolated zoom mode, as the guest does', () => {
+    // In the default mode a zoom is stored per origin in the shared Session, so
+    // zooming one popup would carry into the next popup on that origin.
+    expect(optionsFor().webPreferences?.zoomMode).toBe('isolated');
+  });
+
   it('sets no preload at all, absent rather than undefined', () => {
     expect('preload' in (optionsFor().webPreferences ?? {})).toBe(false);
   });
@@ -344,16 +350,83 @@ describe('popupWindowTitleForUrl', () => {
     expect(popupWindowTitleForUrl('https://auth.example.com:8443/login')).toBe('auth.example.com:8443');
   });
 
-  it('marks http as not secure', () => {
+  it('marks a non-loopback http origin as not secure, path-free', () => {
     // A sign-in form served over http is exactly the case a bare hostname would
-    // flatter.
-    expect(popupWindowTitleForUrl('http://localhost:5173/login')).toBe('Not secure - localhost:5173');
+    // flatter. Private LAN ranges are the phishing case the label is for, so
+    // they keep it.
+    expect(popupWindowTitleForUrl('http://192.168.1.5:3000/x')).toBe('Not secure - 192.168.1.5:3000');
+    expect(popupWindowTitleForUrl('http://example.com/login')).toBe('Not secure - example.com');
+  });
+
+  it('never names a non-loopback path, which could read as a second host', () => {
+    expect(popupWindowTitleForUrl('http://192.168.1.5:3000/accounts.google.com')).toBe('Not secure - 192.168.1.5:3000');
+    expect(popupWindowTitleForUrl('https://phish.example/accounts.google.com')).toBe('phish.example');
+  });
+
+  it.each([
+    ['localhost', 'http://localhost:5173/login', 'localhost:5173 - login'],
+    ['127.0.0.1', 'http://127.0.0.1:8765/poster.png', '127.0.0.1:8765 - poster.png'],
+    ['the rest of 127/8', 'http://127.0.0.2:3000/', '127.0.0.2:3000'],
+    ['IPv6 loopback', 'http://[::1]:3000/', '[::1]:3000'],
+    ['a *.localhost subdomain', 'http://app.localhost:5173/x', 'app.localhost:5173 - x'],
+    ['https loopback', 'https://localhost:8443/a.png', 'localhost:8443 - a.png'],
+    ['a numeric form the URL parser normalizes', 'http://2130706433:8000/', '127.0.0.1:8000'],
+  ])('drops "Not secure" on %s and names the last path segment', (_label, url, expected) => {
+    // Chrome treats loopback as potentially trustworthy (W3C Secure Contexts),
+    // and the pane exists to view dev servers.
+    expect(popupWindowTitleForUrl(url)).toBe(expected);
+  });
+
+  it.each([
+    ['a host that only starts with localhost', 'http://localhost.evil.com/'],
+    ['a host that only starts with 127.0.0.1', 'http://127.0.0.1.nip.io/'],
+    ['0.0.0.0, which is not potentially trustworthy', 'http://0.0.0.0:3000/'],
+  ])('still marks %s as not secure', (_label, url) => {
+    expect(popupWindowTitleForUrl(url)).toMatch(/^Not secure - /);
+  });
+
+  it('ignores a trailing slash, the query and the hash', () => {
+    expect(popupWindowTitleForUrl('http://localhost:5173/images/')).toBe('localhost:5173 - images');
+    expect(popupWindowTitleForUrl('http://localhost:5173/a.png?size=large#top')).toBe('localhost:5173 - a.png');
+  });
+
+  it('decodes the segment, and keeps the raw one when the escape is malformed', () => {
+    expect(popupWindowTitleForUrl('http://localhost:5173/img/my%20poster.png')).toBe('localhost:5173 - my poster.png');
+    expect(popupWindowTitleForUrl('http://localhost:5173/bad%E0%A4%A')).toBe('localhost:5173 - bad%E0%A4%A');
+  });
+
+  it('strips control, bidi and line separator characters and tidies whitespace in the segment', () => {
+    // U+202E would otherwise reorder how the title reads.
+    expect(popupWindowTitleForUrl('http://localhost:5173/abc%E2%80%AEgnp.exe')).toBe('localhost:5173 - abcgnp.exe');
+    expect(popupWindowTitleForUrl('http://localhost:5173/%00%09')).toBe('localhost:5173');
+    // U+2028 is a line separator and is stripped.
+    expect(popupWindowTitleForUrl('http://localhost:5173/a%E2%80%A8b.png')).toBe('localhost:5173 - ab.png');
+    // A run of spaces collapses to one.
+    expect(popupWindowTitleForUrl('http://localhost:5173/my%20%20%20poster.png')).toBe('localhost:5173 - my poster.png');
+    // A whitespace-only segment trims to nothing, so there is no suffix.
+    expect(popupWindowTitleForUrl('http://localhost:5173/%20')).toBe('localhost:5173');
+  });
+
+  it('caps a long segment and keeps the origin first', () => {
+    const title = popupWindowTitleForUrl(`http://localhost:5173/${'a'.repeat(200)}`);
+    expect(title.startsWith('localhost:5173 - ')).toBe(true);
+    expect(title.length).toBeLessThan(120);
+    expect(title.endsWith('...')).toBe(true);
+  });
+
+  it('never splits an emoji when it caps the segment', () => {
+    // 79 ASCII characters put the 80-character cut in the middle of a
+    // surrogate pair if it counts UTF-16 units.
+    const title = popupWindowTitleForUrl(`http://localhost:5173/${'a'.repeat(79)}${encodeURIComponent('🎉🎉')}`);
+    expect(title).toBe(`localhost:5173 - ${'a'.repeat(79)}🎉...`);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(title)).toBe(false);
   });
 
   it.each([
     ['an unparseable string', 'not a url'],
     ['an empty string', ''],
     ['a non-web scheme', 'file:///etc/passwd'],
+    ['a non-web scheme on a loopback host', 'ftp://localhost/x'],
   ])('falls back to a neutral label for %s', (_label, url) => {
     expect(popupWindowTitleForUrl(url)).toBe('Unknown site');
   });
@@ -438,12 +511,16 @@ function fakePopupWindow() {
     (store[event] ??= []).push(handler);
   };
   let currentUrl = '';
+  let zoomFactor = 1.0;
   const setTitle = vi.fn();
   const setWindowOpenHandler = vi.fn();
+  const reload = vi.fn();
   return {
     contentsId,
     setTitle,
     setWindowOpenHandler,
+    reload,
+    zoomFactor: () => zoomFactor,
     navigateTo(url: string) { currentUrl = url; },
     /** Fire EVERY listener registered for the event, as Electron would. */
     emitWindow(event: string, ...args: unknown[]) {
@@ -462,6 +539,9 @@ function fakePopupWindow() {
       webContents: {
         id: contentsId,
         getURL: () => currentUrl,
+        getZoomFactor: () => zoomFactor,
+        setZoomFactor: (factor: number) => { zoomFactor = factor; },
+        reload,
         setWindowOpenHandler,
         on: (event: string, handler: (...args: never[]) => void) => record(contentsListeners, event, handler),
       },
@@ -615,6 +695,107 @@ describe('hardenWebviewPopupWindow', () => {
     popup.emitContents('did-navigate');
 
     expect(policy.showSignInRefusalPrompt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A popup's webContents is a plain 'window', so none of the guest's zoom or
+ * reload handling in src/main/index.ts reaches it, and it has no BrowserPane
+ * renderer for keys. Electron only REQUESTS a zoom on Ctrl+wheel; these pin that
+ * the popup applies it, and that its own keys work.
+ */
+describe('hardenWebviewPopupWindow - zoom and reload', () => {
+  const OPENED_URL = 'http://127.0.0.1:8765/poster.png';
+
+  function keyDown(key: string, modifiers: Partial<Electron.Input> = {}): Electron.Input {
+    return {
+      type: 'keyDown',
+      key,
+      code: '',
+      isAutoRepeat: false,
+      isComposing: false,
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      location: 0,
+      modifiers: [],
+      ...modifiers,
+    } as Electron.Input;
+  }
+
+  function hardenedPopup() {
+    const popup = fakePopupWindow();
+    hardenWebviewPopupWindow(popup.asWindow, OPENED_URL, popupPolicy());
+    return popup;
+  }
+
+  it('applies a Ctrl+wheel zoom request, one wheel step at a time', () => {
+    const popup = hardenedPopup();
+    popup.emitContents('zoom-changed', {}, 'in');
+    expect(popup.zoomFactor()).toBeCloseTo(1.1);
+    popup.emitContents('zoom-changed', {}, 'out');
+    expect(popup.zoomFactor()).toBeCloseTo(1.0);
+  });
+
+  it.each([
+    ['Ctrl+=', keyDown('=', { control: true }), 1.1],
+    ['Ctrl+Shift+= (+)', keyDown('+', { control: true, shift: true }), 1.1],
+    ['Cmd+=', keyDown('=', { meta: true }), 1.1],
+    ['Ctrl+-', keyDown('-', { control: true }), 0.9],
+  ])('steps the zoom on %s and keeps the key from the page', (_label, input, expected) => {
+    const popup = hardenedPopup();
+    const preventDefault = vi.fn();
+    popup.emitContents('before-input-event', { preventDefault }, input);
+    expect(popup.zoomFactor()).toBe(expected);
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it('resets the zoom to 100% on Ctrl+0', () => {
+    const popup = hardenedPopup();
+    popup.emitContents('zoom-changed', {}, 'in');
+    popup.emitContents('zoom-changed', {}, 'in');
+    popup.emitContents('before-input-event', { preventDefault: vi.fn() }, keyDown('0', { control: true }));
+    expect(popup.zoomFactor()).toBe(1.0);
+  });
+
+  it.each([
+    ['F5', keyDown('F5')],
+    ['Ctrl+R', keyDown('r', { control: true })],
+    ['Ctrl+Shift+R', keyDown('R', { control: true, shift: true })],
+    ['Cmd+R', keyDown('r', { meta: true })],
+  ])('reloads on %s', (_label, input) => {
+    const popup = hardenedPopup();
+    const preventDefault = vi.fn();
+    popup.emitContents('before-input-event', { preventDefault }, input);
+    expect(popup.reload).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a plain =', keyDown('=')],
+    ['a keyUp of Ctrl+=', { ...keyDown('=', { control: true }), type: 'keyUp' } as Electron.Input],
+    ['Ctrl+Alt+0 (AltGr)', keyDown('0', { control: true, alt: true })],
+    ['Ctrl+= mid-composition', keyDown('=', { control: true, isComposing: true })],
+  ])('leaves %s to the page', (_label, input) => {
+    const popup = hardenedPopup();
+    const preventDefault = vi.fn();
+    popup.emitContents('before-input-event', { preventDefault }, input);
+    expect(popup.zoomFactor()).toBe(1.0);
+    expect(popup.reload).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('gives a NESTED popup the same zoom and keys', () => {
+    const parentPopup = hardenedPopup();
+    const childPopup = fakePopupWindow();
+    parentPopup.emitContents('did-create-window', childPopup.asWindow, { url: 'http://127.0.0.1:8765/large.png' });
+
+    childPopup.emitContents('zoom-changed', {}, 'in');
+    childPopup.emitContents('before-input-event', { preventDefault: vi.fn() }, keyDown('=', { control: true }));
+
+    expect(childPopup.zoomFactor()).toBe(1.25);
+    expect(parentPopup.zoomFactor()).toBe(1.0);
   });
 });
 

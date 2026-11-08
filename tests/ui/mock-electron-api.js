@@ -2628,6 +2628,38 @@
         // Off unless a spec sets it: main rejects when the session went away.
         if (window.__mockResetTerminalReject) throw new Error('Session not found');
       },
+      // The find bar's history view. No agent here declares one, so a session
+      // answers 'unsupported' unless a spec stands in for the agent through
+      // window.__mockHistoryView[sessionId] = { conversation, screen }: open
+      // leaves the alternate screen and writes `conversation`, close returns to
+      // it and draws `screen`, as Claude Code's Ctrl+O and `[` do. Two optional
+      // fields shape the answer. `result` (anything but 'opened') answers that
+      // and writes nothing, as an agent that could not open the view does.
+      // `hold: true` keeps the answer pending until the spec calls
+      // window.__mockHistoryHolds[sessionId][n]() for the nth held open, so it
+      // can observe loading, or close the bar before the answer lands.
+      __historyViewCalls: [],
+      openHistoryView: async function (sessionId) {
+        window.electronAPI.sessions.__historyViewCalls.push({ sessionId: sessionId, action: 'open' });
+        var standIn = (window.__mockHistoryView || {})[sessionId];
+        if (!standIn) return 'unsupported';
+        if (standIn.hold) {
+          await new Promise(function (resolve) {
+            window.__mockHistoryHolds = window.__mockHistoryHolds || {};
+            (window.__mockHistoryHolds[sessionId] = window.__mockHistoryHolds[sessionId] || []).push(resolve);
+          });
+        }
+        if (standIn.result && standIn.result !== 'opened') return standIn.result;
+        // A screen clear only, as Claude Code writes it: the scrollback keeps
+        // whatever an earlier write-out left there.
+        if (window.__mockFireSessionData) window.__mockFireSessionData(sessionId, '\x1b[?1049l\x1b[2J\x1b[H' + standIn.conversation);
+        return 'opened';
+      },
+      closeHistoryView: async function (sessionId) {
+        window.electronAPI.sessions.__historyViewCalls.push({ sessionId: sessionId, action: 'close' });
+        var standIn = (window.__mockHistoryView || {})[sessionId];
+        if (standIn && window.__mockFireSessionData) window.__mockFireSessionData(sessionId, '\x1b[?1049h\x1b[2J\x1b[H' + standIn.screen);
+      },
       list: async function () {
         return sessions;
       },

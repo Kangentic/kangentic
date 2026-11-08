@@ -176,6 +176,10 @@ msgstr "Nečinný (čeká na vstup)"
 msgid "Input / output tokens"
 msgstr "Vstupní / výstupní tokeny"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy

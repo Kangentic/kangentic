@@ -7,7 +7,8 @@
  * "1 of 14", and each step older counts up.
  *
  * Reach is what this xterm holds. On the alternate screen that is the screen, since
- * `baseY` is 0 there.
+ * `baseY` is 0 there, unless the agent can write its conversation out
+ * (`TerminalFind.openHistory`): then the bar searches that, on the normal buffer.
  */
 
 import type { ISearchOptions, SearchAddon } from '@xterm/addon-search';
@@ -91,6 +92,14 @@ export interface TerminalFind {
   // arrival-focus-ok: the find bar's close, a user gesture and never an arrival.
   focusTerminal(): void;
   readReach(): TerminalBufferReach;
+  /**
+   * On the alternate screen, ask the agent to write its whole conversation into
+   * the normal buffer (`sessions.openHistoryView`), with room for it. True once it
+   * has; false when the agent has no such keys or did not answer them.
+   */
+  openHistory(): Promise<boolean>;
+  /** Put the agent back on its own screen, if `openHistory` opened its view. */
+  closeHistory(): void;
   /** Called on every result change, including the catch-up after output pauses. */
   onResults(listener: (results: FindResults) => void): () => void;
   /** Called when the terminal enters or leaves the alternate screen. */

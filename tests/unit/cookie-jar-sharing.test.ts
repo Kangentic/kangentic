@@ -82,6 +82,15 @@ describe('cookie-jar-sharing rule', () => {
     expect((seed.match(/isLocalCookieDomain\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it('isLocalCookieDomain delegates to the one loopback definition, not a copy of it', () => {
+    // The popup title reads isLoopbackHost too, so a private loopback rule
+    // inlined here again would let the two disagree about what loopback is.
+    const seed = fs.readFileSync(path.join(SRC_ROOT, 'main', 'browser', 'cookie-seed.ts'), 'utf-8');
+    expect(seed).toMatch(/import \{ isLoopbackHost \} from '\.\/loopback-host'/);
+    const body = /export function isLocalCookieDomain\([^)]*\): boolean \{([\s\S]*?)\n\}/.exec(seed)?.[1] ?? '';
+    expect(body).toMatch(/isLoopbackHost\(/);
+  });
+
   it('the jar-seeder write-back excludes localhost via the shared check', () => {
     const seeder = fs.readFileSync(path.join(SRC_ROOT, 'main', 'browser', 'jar-seeder.ts'), 'utf-8');
     expect(seeder).toMatch(/isLocalCookieDomain\(/);

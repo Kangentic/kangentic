@@ -16,6 +16,11 @@ It **never merges**. A green run ends on the line `PR: ready to merge`, and the 
 turn-end automation reads that line and moves the task Testing -> Merge, where `/merge-pull-request`
 merges it and pulls the result back into the local `main` checkout. See "Outcome line" below.
 
+**A task can come back from Merge.** When `/merge-pull-request` rebases onto a moved `main` and a
+check goes red, it ends on `PR: checks red` and the board moves the task back here. The PR is open
+and already rebased, so run the steps as usual: Step 5 finds the existing PR, and Step 6 picks up
+the red checks. A flake that came in from `main` is this run's to fix like any other (Step 7).
+
 **Usage:** `/pull-request [commit message]`
 
 - `/pull-request` - auto-generates a commit message from the diff
@@ -457,7 +462,7 @@ line is a contract, and this section and that row change together
   Step 3 rebase-conflict question, a push the lease rejects, and a fork head the contributor moved. Main repo mode, the `/merge-back`
   fallback, prints none either. It opens no PR, so Merge would have nothing to merge.
 
-The `PR:` prefix marks a pull request outcome, shared with Merge's `PR: merged`. Code Review ends
+The `PR:` prefix marks a pull request outcome, shared with Merge's `PR: merged` and `PR: checks red`. Code Review ends
 on `Verdict: Ready`, and a separate token keeps each column's Text match readable on its own.
 
 ## Rules

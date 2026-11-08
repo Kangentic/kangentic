@@ -305,6 +305,8 @@ const api: ElectronAPI = {
     },
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
     resetTerminal: (id) => ipcRenderer.invoke(IPC.SESSION_RESET_TERMINAL, id),
+    openHistoryView: (id) => ipcRenderer.invoke(IPC.SESSION_OPEN_HISTORY_VIEW, id),
+    closeHistoryView: (id) => ipcRenderer.invoke(IPC.SESSION_CLOSE_HISTORY_VIEW, id),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
     resolveLinkPaths: (id, printedPaths) => ipcRenderer.invoke(IPC.SESSION_RESOLVE_LINK_PATHS, id, printedPaths),
     revealLinkPath: (id, printedPath) => ipcRenderer.invoke(IPC.SESSION_REVEAL_LINK_PATH, id, printedPath),

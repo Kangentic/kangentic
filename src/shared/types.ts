@@ -6860,6 +6860,37 @@ export interface RemoteResumeSeed {
   target: string;
 }
 
+/**
+ * `AdapterRuntimeStrategy.historyView`: the agent's own keys for showing its whole
+ * conversation as ordinary terminal text. Measured per agent: a key typed into the
+ * wrong view lands in the prompt.
+ */
+export interface AgentHistoryView {
+  /** Enters the agent's own history view, and leaves it, including once it is written out. */
+  readonly toggleKeys: string;
+  /** From the history view, writes the conversation into the terminal's normal buffer. */
+  readonly writeOutKeys: string;
+  /** Whether the screen shows the history view. `screenRows` are the visible rows, top first. */
+  isShowing(screenRows: readonly string[]): boolean;
+}
+
+/** What `sessions.openHistoryView` did. Only `'opened'` changed the terminal. */
+export type HistoryViewOpenResult =
+  | 'opened'
+  /** The session's agent declares no history view. */
+  | 'unsupported'
+  /** The session is not on the alternate screen, so a search already reaches its history. */
+  | 'not-fullscreen'
+  | 'not-running'
+  /** The keys went out and the agent did not answer them in time. Nothing is left open. */
+  | 'did-not-open'
+  /**
+   * The toggle changed the screen, but `isShowing` never recognized the history
+   * view: most likely the agent changed how that view looks. The toggle went out
+   * again to put the agent back, and main reports it so the change gets noticed.
+   */
+  | 'unrecognized-view';
+
 /** Minimal parsing interface for agent-specific runtime behavior. */
 export interface AgentParser {
   /**
@@ -7183,6 +7214,17 @@ export interface AdapterRuntimeStrategy {
      */
     readonly suppressesPtyFallback?: boolean;
   };
+
+  /**
+   * How the terminal find bar reaches a conversation the agent draws on the
+   * alternate screen, where a terminal holds only what is on screen. The
+   * agent's own keys write the conversation into the terminal's normal buffer
+   * while the bar is open, and the bar searches all of it. Omit for an agent
+   * with no such keys: its bar searches the screen. While the view is up the
+   * pty host keeps the session's output from `outputSeen`, so an agent whose
+   * activity comes from its output alone (no hooks) reads as quiet meanwhile.
+   */
+  readonly historyView?: AgentHistoryView;
 
   /**
    * How the agent's hook-based status/events files are parsed for
@@ -8779,6 +8821,14 @@ export interface ElectronAPI {
      * after it.
      */
     resetTerminal: (sessionId: string) => Promise<void>;
+    /**
+     * Show the session's whole conversation as ordinary terminal text, through
+     * its agent's own keys (`AgentHistoryView`), for the find bar. Resolves once
+     * the terminal has left the alternate screen, or with why it did not.
+     */
+    openHistoryView: (sessionId: string) => Promise<HistoryViewOpenResult>;
+    /** Put the agent back on its own screen, if a history view is open. */
+    closeHistoryView: (sessionId: string) => Promise<void>;
     list: () => Promise<Session[]>;
     /**
      * Which paths a session printed exist on this computer, in request order. Main

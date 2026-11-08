@@ -15,6 +15,8 @@ sources:
   - resource: src/main/agent/adapters/claude/model-picker-probe.ts
   - resource: src/main/agent/adapters/claude/model-list-handshake.ts
   - resource: src/main/agent/adapters/claude/subscription-fallback.ts
+  - resource: src/main/agent/adapters/claude/history-view.ts
+  - resource: src/main/pty/history-view-report.ts
   - resource: src/main/agent/shared/hook-utils.ts
   - resource: src/main/agent/shared/npm-shim-target.ts
 ---
@@ -296,3 +298,23 @@ The key lives only in `~/.claude.json` (the same key list as `theme` and `diffTo
 - Atomic (temp file + rename, no backup copy), and an unreadable file is left untouched rather than replaced, since the file holds the user's auth and MCP state.
 - The CLI applies the value it read at startup: a session spawned with the key `false` stays closed even if another session flips the key to `true` later (verified with a completed turn at 210 columns), so the write covers the session's whole lifetime.
 - `/diff` inside a session still opens the panel for that session (that path checks only the git cwd and `columns >= 110`), so it is the per-session opt-in. Turning fullscreen off (`tui: "default"`) would also remove the panel but reintroduces the scrollback duplication fullscreen exists to fix, so it is not used.
+
+## Find bar history view
+
+Fullscreen keeps the conversation on the alternate screen, so a terminal holds only what is on screen and the find bar would search nothing else. The adapter declares `runtime.historyView` (`history-view.ts`): Ctrl+O opens Claude's transcript mode, and `[` there writes the whole conversation since the last compaction into the terminal's normal buffer, which is Claude's own documented way to hand the conversation back to a terminal's search. The find bar does that for the user when it opens, and Ctrl+O puts Claude back when it closes ([output-streaming](../../architecture/sessions/output-streaming.md) has the host and renderer side).
+
+The bar types Claude's own documented keys and adds no layer over them. Claude's transcript navigation (`/`, `n`, `{`) asks a user to learn a second set of keys, and the bar gives Claude sessions the same search and next and previous as every other terminal.
+
+Measured on 2.1.319 on Windows through ConPTY: the keys worked idle, with a draft typed (the draft was kept), with a permission prompt open (the prompt was still there after), and mid-turn (the turn carried on). The footer in transcript mode reads "Showing detailed transcript" at 160 columns and at 60, and the prompt view's never does. `isShowing` reads only the screen's last row with text, since a conversation can quote the footer. Claude clears only its screen before a write-out, not the scrollback.
+
+The footer is the one part Claude does not document, so it is the part an update can break. If Ctrl+O moves the screen and the footer never shows, the host presses Ctrl+O again so Claude is not left in a view nothing recognizes, answers `unrecognized-view`, and main reports it to Sentry once per agent per launch (`src/main/pty/history-view-report.ts`). The bar then keeps the on-screen search. A Ctrl+O that moves nothing (a dialog that ignores it) is `did-not-open` and is not reported.
+
+Known limits:
+
+- Measured on Windows only. The keys and the footer are Claude's own on every platform, but macOS and Linux have not been run.
+- The pane shows a snapshot while the bar is open. A permission prompt that opens meanwhile shows only as "dialog waiting" in Claude's footer; the card shows the waiting state as usual.
+- A resize or a window change while the bar is open reloads the terminal from what the pty host kept (its 512 KB ring, or the parsed grid and 500 lines), so part of the written-out conversation can drop out until the bar is opened again. The no-matches line reports the real line count.
+- The bar asks for the view when it opens over the alternate screen. One opened before the agent enters it (a shell that starts Claude while the bar is up) searches the screen until the bar is closed and opened again.
+- The reach is Claude's: the conversation since its last compaction. Anything older is in the Conversation viewer.
+- A paired phone streaming the session sees the written-out conversation while the bar is open, since its stream carries every byte.
+- A page reload with the bar open sends no close, so the pane keeps the written-out conversation until Ctrl+O in the pane puts Claude back. A closed or crashed window does close it.

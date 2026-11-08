@@ -9,7 +9,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import type { AgentParser } from '../../../shared/types';
+import type { AgentParser, HistoryViewOpenResult } from '../../../shared/types';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../../shared/pty-host';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { HostUnavailableError, type OffMainPty, type OffMainPtyOptions } from '../../utility-process/off-main-pty';
@@ -596,6 +596,11 @@ export class PtyHostClient {
 
   getOutputPeek(sessionId: string): Promise<string[]> {
     return this.transport.request('getOutputPeek', { sessionId });
+  }
+
+  /** The find bar's history view (`HistoryViews.open` in the host). */
+  openHistoryView(sessionId: string): Promise<HistoryViewOpenResult> {
+    return this.transport.request('openHistoryView', { sessionId });
   }
 
   /**

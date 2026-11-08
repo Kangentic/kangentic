@@ -24,7 +24,9 @@ per-task keying prevents; and a second, ad-hoc cookie-copy path would let that i
 - **`isLocalCookieDomain` (in `cookie-seed.ts`) is the SINGLE localhost exclusion.** Every copy and
   every write-back excludes it (`copyCookies` defaults `excludeLocal` true; the jar-seeder
   write-back skips it). Do not add a second definition of "is this localhost", and do not copy a
-  cookie without passing it through this check.
+  cookie without passing it through this check. It strips a cookie domain's leading dot and
+  delegates to `isLoopbackHost` (`src/main/browser/loopback-host.ts`: `localhost`, `*.localhost`,
+  `127.0.0.0/8`, `::1`), the one loopback definition, which the popup title reads too.
 - **The sanctioned cookie-API users are exactly three files:** `cookie-seed.ts` (the primitive),
   `src/main/browser/jar-seeder.ts` (the load-boundary sync + one-way identity write-back), and
   `src/devtools/main/cookie-jar-routes.ts` (the dev-only rig). A new file that needs to touch jar
@@ -53,7 +55,8 @@ per-task keying prevents; and a second, ad-hoc cookie-copy path would let that i
   `includes`, so one marker anywhere waived every cookie call in that file and a marker with no
   reason waived it just as well. It also asserts that
   `cookie-seed.ts` defines `isLocalCookieDomain` and that both `copyCookies` and the jar-seeder
-  write-back reference it, so the localhost exclusion cannot be silently removed. Runs in CI via
+  write-back reference it, so the localhost exclusion cannot be silently removed, and that its
+  body calls `isLoopbackHost`, so a private copy of the loopback rule cannot come back. Runs in CI via
   `npm run test:unit`.
 - **Review:** `/code-review` flags a new cookie-copy path or a partition keyed by anything other
   than task identity.

@@ -150,6 +150,10 @@ msgstr "Idle (waiting for input)"
 msgid "Input / output tokens"
 msgstr "Input / output tokens"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr "Loading conversation"
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 msgid "Model"

@@ -36,6 +36,8 @@ sources:
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/jar-seeder.ts
   - resource: src/main/browser/cookie-seed.ts
+  - resource: src/main/browser/loopback-host.ts
+  - resource: src/shared/zoom-steps.ts
   - resource: src/main/browser/browser-automation-config.ts
   - resource: src/main/browser/dev-server-error.ts
   - resource: src/main/browser/command-terminal-browser-store.ts
@@ -72,6 +74,10 @@ The webview is hardened in `src/main/index.ts`:
     bot (decision 41). The offscreen lane calls it too.
   - `setWindowOpenHandler` allows an http(s) `window.open` / `target=_blank` into a chromed popup
     window on the guest's own session, and denies every other scheme. See decisions 10 to 12.
+    The popup is a plain `'window'`, so this handler's guest setup never reaches it.
+    `hardenWebviewPopupWindow` gives it its own `zoom-changed` handler (the guest's wheel step,
+    `wheelZoomTarget` in `src/shared/zoom-steps.ts`), Ctrl/Cmd `=` `-` `0` and F5 / Ctrl+R, and
+    `zoomMode: 'isolated'` like the guest.
   - `installEmbeddedBrowserSessionPolicy` (`browser/guest-session-policy.ts`) sets
     `setPermissionRequestHandler` AND `setPermissionCheckHandler`, both reading
     `isEmbeddedBrowserPermissionAllowed` (decision 14), and installs the `will-download` policy
@@ -94,7 +100,7 @@ The webview is hardened in `src/main/index.ts`:
 
 The webview runs in its own renderer process. The host renderer cannot reach into it; the only channel is `webview.executeJavaScript()` (used by the inspector) and the navigation/capture APIs.
 
-**Cookie isolation:** the webview partition is keyed PER TASK via `browserPartitionForTask(projectId, taskId)` in `src/shared/browser-partition.ts` (returns `persist:kng-<projectId>-<taskId>`, ids hyphen-stripped). Keyed by the TASK, not the worktree path, so the jar follows the task through any relocate/rename/Done round-trip - the path can change, the id cannot. Browser cookies are scoped to HOST not port, so two tasks running dev servers on `localhost:4200` and `:4300` would clobber each other's `localhost` session under one shared jar - therefore each task gets its own persistent jar for localhost, while a per-project identity jar (`persist:kng-<projectId>-identity`) shares the non-localhost (IdP) login across tasks (decision 33). The names are self-describing so the sweep and the clear-storage pass parse a jar back to its project + task. The renderer (`<webview partition>`) and the main process (lane, seeder, clear-storage) derive the same name from the same ids. The legacy single jar `BROWSER_PARTITION` (`persist:kangentic-browser`) remains for the no-project fallback and is also wiped by **Clear browser data**. A project's Command Terminals share one jar, `persist:kng-<projectId>-terminals` (decision 43): every jar consumer asks `browserPartitionForOwner(projectId, ownerKey)`, which maps a Command Terminal owner key to it and a task id to the task's own.
+**Cookie isolation:** the webview partition is keyed PER TASK via `browserPartitionForTask(projectId, taskId)` in `src/shared/browser-partition.ts` (returns `persist:kng-<projectId>-<taskId>`, ids hyphen-stripped). Keyed by the TASK, not the worktree path, so the jar follows the task through any relocate/rename/Done round-trip - the path can change, the id cannot. Browser cookies are scoped to HOST not port, so two tasks running dev servers on `localhost:4200` and `:4300` would clobber each other's `localhost` session under one shared jar - therefore each task gets its own persistent jar for loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`), while a per-project identity jar (`persist:kng-<projectId>-identity`) shares the non-loopback (IdP) login across tasks (decision 33). The names are self-describing so the sweep and the clear-storage pass parse a jar back to its project + task. The renderer (`<webview partition>`) and the main process (lane, seeder, clear-storage) derive the same name from the same ids. The legacy single jar `BROWSER_PARTITION` (`persist:kangentic-browser`) remains for the no-project fallback and is also wiped by **Clear browser data**. A project's Command Terminals share one jar, `persist:kng-<projectId>-terminals` (decision 43): every jar consumer asks `browserPartitionForOwner(projectId, ownerKey)`, which maps a Command Terminal owner key to it and a task id to the task's own.
 
 ### Capture and prompt payload
 
@@ -192,7 +198,7 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 | Per-adapter submission verification (replace heuristic data-byte fallback) | Done | `getSubmissionVerifier(contextType)` declared on every adapter; engine consumes via `PasteOptions.verifier` |
 | Clear browser data action in settings | Done | `IPC.BROWSER_CLEAR_STORAGE`; see Settings above |
 | Orphaned cookie jars from deleted tasks and projects | Done | reclaimed by a startup sweep over `<userData>/Partitions`; see decision 32 |
-| Carrying an IdP login across a project's tasks so sign-in is not repeated | Done | non-localhost (IdP) cookies shared project-wide via the identity jar, localhost isolated; empirically confirmed a copied Google session authenticates; see decision 33 |
+| Carrying an IdP login across a project's tasks so sign-in is not repeated | Done | non-loopback (IdP) cookies shared project-wide via the identity jar, loopback hosts isolated; empirically confirmed a copied Google session authenticates; see decision 33 |
 | Pop-out window for second-monitor workflow | Done | child `BrowserWindow` via the pop-out surface registry; see decision 7 |
 | DOM tree picker (vs free-form `getSelection()`) | Future | nice-to-have |
 | File downloads from embedded webview | Done | saved to the OS Downloads folder with a toast; see decision 13 |
@@ -294,7 +300,8 @@ src/main/
   index.ts                                  webview hardening, webviewTag, user agent + popup +
                                             permission + download wiring, mid-drive keystroke
                                             interception
-  window-open-policy.ts                     app-window deny handler + webview popup allow handler
+  window-open-policy.ts                     app-window deny handler + webview popup allow handler,
+                                            popup title, zoom and reload keys
   permission-policy.ts                      first-party and embedded-browser permission predicates
   browser/guest-session-policy.ts           permission + download policy for a pane or lane session
   ipc/handlers/browser.ts                   BROWSER_CAPTURE_SEND, URL persistence
@@ -323,6 +330,7 @@ src/main/
   browser/dev-server-error.ts               reads a Vite error overlay as a real dev-server-error
   browser/browser-partition-cleanup.ts      enumerate (clear-storage) + sweep orphaned task jars (decision 32)
   browser/cookie-seed.ts                    shared cookie-copy primitive (rig + seeding)
+  browser/loopback-host.ts                  the one loopback definition (cookie exclusion, popup title)
   browser/jar-seeder.ts                     share IdP login across a project's tasks, isolate localhost (decision 33)
   browser/cdp/                              the single shared CDP driver (+ bounded screenshot)
   browser/command-terminal-browser-store.ts a Command Terminal slot's saved layout (open, split)

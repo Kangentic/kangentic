@@ -176,6 +176,10 @@ msgstr "Bezczynny (oczekiwanie na dane wejściowe)"
 msgid "Input / output tokens"
 msgstr "Tokeny wejściowe / wyjściowe"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy

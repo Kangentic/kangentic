@@ -34,6 +34,13 @@ describe('PtyBufferManager', () => {
     return { manager, onFlush, onDrain };
   }
 
+  describe('getScreenRows', () => {
+    it('answers an empty list for a session it does not know', () => {
+      const { manager } = createManager();
+      expect(manager.getScreenRows('no-such-session')).toEqual([]);
+    });
+  });
+
   describe('getScrollback drains pending buffer', () => {
     it('prevents stale flush after scrollback is consumed', () => {
       vi.useFakeTimers();

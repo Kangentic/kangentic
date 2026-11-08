@@ -34,6 +34,8 @@ export const COMMAND_ROUTES = {
   markResized: 'by-session',
   // Resets the session's own terminal buffer, which for a session on a host is the host's.
   resetTerminalModes: 'by-session',
+  // Closes the agent's history view in the session's own terminal, which for a session on a host is the host's.
+  closeHistoryView: 'by-session',
   setActivity: 'by-session',
   setAgentSessionIdKnown: 'by-session',
   finalizeTranscript: 'by-session',
@@ -73,6 +75,8 @@ export const REQUEST_ROUTES = {
   getSeedFrame: 'by-session',
   getRawScrollback: 'by-session',
   getOutputPeek: 'by-session',
+  // Types the agent's history keys into the session's terminal, so it asks the host that holds the session.
+  openHistoryView: 'by-session',
   getDiagnostics: 'core',
   ping: 'core',
   remote: 'router',

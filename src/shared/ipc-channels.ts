@@ -135,6 +135,9 @@ export const IPC = {
   SESSION_RESIZE: 'session:resize',
   /** The Reset terminal action: clear stuck terminal modes in place. */
   SESSION_RESET_TERMINAL: 'session:resetTerminal',
+  /** The find bar's history view: an agent's whole conversation as terminal text, and back. */
+  SESSION_OPEN_HISTORY_VIEW: 'session:openHistoryView',
+  SESSION_CLOSE_HISTORY_VIEW: 'session:closeHistoryView',
   SESSION_LIST: 'session:list',
   SESSION_RESOLVE_LINK_PATHS: 'session:resolveLinkPaths',
   SESSION_REVEAL_LINK_PATH: 'session:revealLinkPath',

@@ -105,7 +105,7 @@ import { writeClipboardImage } from './ipc/helpers/clipboard-image';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { EXTERNAL_OPEN_SCHEMES, isAllowedExternalUrl } from '../shared/external-url';
-import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
+import { wheelZoomTarget } from '../shared/zoom-steps';
 import { defaultDeveloperFlag, type DeveloperFlagKey } from '../shared/developer-flag-defaults';
 import {
   createExternalWindowOpenHandler,
@@ -830,14 +830,10 @@ app.on('web-contents-created', (_event, contents) => {
   // is documented on WebContents, NOT on the <webview> DOM tag, so a
   // renderer-side listener never fires). We respond with a smooth ~10% step
   // (Chrome-like), clamp to MIN_ZOOM..MAX_ZOOM, and notify the renderer so
-  // the toolbar % stays in sync.
-  const WHEEL_ZOOM_STEP = 1.1;
+  // the toolbar % stays in sync. A pane's popups apply the same step in
+  // hardenWebviewPopupWindow (window-open-policy.ts).
   contents.on('zoom-changed', (_zoomEvent, zoomDirection) => {
-    const currentFactor = contents.getZoomFactor();
-    const targetFactor = zoomDirection === 'in'
-      ? currentFactor * WHEEL_ZOOM_STEP
-      : currentFactor / WHEEL_ZOOM_STEP;
-    const clampedFactor = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetFactor));
+    const clampedFactor = wheelZoomTarget(contents.getZoomFactor(), zoomDirection);
     contents.setZoomFactor(clampedFactor);
     // Route the zoom readout to the window that actually HOSTS this webview guest - the
     // main window for the in-app pane, or a pop-out window for a detached Browser pane -

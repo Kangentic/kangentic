@@ -176,6 +176,10 @@ msgstr "유휴(입력 대기 중)"
 msgid "Input / output tokens"
 msgstr "입력 / 출력 토큰"
 
+#: src/renderer/components/terminal/TerminalFindBar.tsx
+msgid "Loading conversation"
+msgstr ""
+
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #, fuzzy
