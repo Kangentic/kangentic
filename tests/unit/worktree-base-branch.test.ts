@@ -215,7 +215,7 @@ describe('WorktreeManager.ensureWorktree - base branch resolution', () => {
     const task = makeTask({ id: 'task-cccccccc', base_branch: 'release-2.0' });
 
     await expect(worktreeManager.ensureWorktree(task, baseGitConfig({ defaultBaseBranch: 'main' })))
-      .rejects.toThrow(/base branch 'release-2\.0' does not exist/);
+      .rejects.toThrow(/base 'release-2\.0' is not a branch, tag or commit/);
   });
 
   // Explicit 20s timeout (default is 5s): this test does TWO full `ensureWorktree` calls
@@ -429,7 +429,9 @@ describe('resolveWorktreeBase - candidate order', () => {
 
     const resolution = await resolveWorktreeBase(repo, null, 'develop');
 
-    expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'develop', startPoint: 'develop' });
+    // The full local ref: git reads a bare name tag-first, so a tag named
+    // 'develop' would otherwise take the cut.
+    expect(resolution).toMatchObject({ kind: 'resolved', baseBranch: 'develop', startPoint: 'refs/heads/develop' });
   });
 
   it('falls through to a later default-chain candidate resolved only via the fetch pass', async () => {
@@ -462,6 +464,124 @@ describe('resolveWorktreeBase - candidate order', () => {
     // A clone plus two live fetches: 1.5s alone, but 6.6s in a full unit run under
     // contention, past the default 5s. The same 20s as the real-git tests above.
   }, 20000);
+});
+
+/**
+ * A base can be a tag or a commit as well as a branch (`base-ref.ts`). Each case
+ * checks the commit the worktree was actually cut at, since that is what the
+ * agent works on.
+ */
+describe('WorktreeManager.ensureWorktree - a tag or commit base', () => {
+  function headOf(worktreePath: string): string {
+    return run(worktreePath, ['rev-parse', 'HEAD']).trim();
+  }
+
+  it('cuts from a local tag, not the branch tip past it', async () => {
+    const repo = tempRepoPath('tag-base');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    run(repo, ['tag', '-a', 'v1.0.0', '-m', 'release']);
+    const tagged = run(repo, ['rev-parse', 'v1.0.0^{commit}']).trim();
+    commit(repo, 'after the release');
+
+    const result = await new WorktreeManager(repo).ensureWorktree(
+      makeTask({ id: 'task-t1t1t1t1', base_branch: 'v1.0.0' }),
+      baseGitConfig(),
+    );
+
+    expect(result).toHaveProperty('worktreePath');
+    expect(headOf(result!.worktreePath)).toBe(tagged);
+    expect(run(result!.worktreePath, ['config', 'kangentic.baseBranch']).trim()).toBe('v1.0.0');
+  });
+
+  it('cuts from a tag that exists only on origin, fetching it as a tag', async () => {
+    const origin = tempRepoPath('origin-tag-origin');
+    initRepo(origin, 'main');
+    commit(origin, 'init');
+    const clonePath = tempRepoPath('origin-tag-clone');
+    execFileSync('git', ['clone', origin, clonePath], { windowsHide: true });
+    // Tagged AFTER the clone, so the clone has never seen it.
+    commit(origin, 'release commit');
+    run(origin, ['tag', '-a', 'v2.0.0', '-m', 'release']);
+    const tagged = run(origin, ['rev-parse', 'v2.0.0^{commit}']).trim();
+
+    const result = await new WorktreeManager(clonePath).ensureWorktree(
+      makeTask({ id: 'task-t2t2t2t2', base_branch: 'v2.0.0' }),
+      baseGitConfig(),
+    );
+
+    expect(headOf(result!.worktreePath)).toBe(tagged);
+    expect(run(clonePath, ['rev-parse', 'refs/tags/v2.0.0^{commit}']).trim()).toBe(tagged);
+  });
+
+  it.each([
+    ['a full SHA', (sha: string) => sha],
+    ['a short SHA', (sha: string) => sha.slice(0, 7)],
+  ])('cuts from %s', async (_label, nameSha) => {
+    const repo = tempRepoPath('sha-base');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    const first = run(repo, ['rev-parse', 'HEAD']).trim();
+    commit(repo, 'second');
+
+    const result = await new WorktreeManager(repo).ensureWorktree(
+      makeTask({ id: 'task-s1s1s1s1', base_branch: nameSha(first) }),
+      baseGitConfig(),
+    );
+
+    expect(headOf(result!.worktreePath)).toBe(first);
+  });
+
+  it('refuses a SHA-shaped base no object has, with the written reason, instead of a raw git failure', async () => {
+    const repo = tempRepoPath('missing-sha-base');
+    initRepo(repo, 'main');
+    commit(repo, 'init');
+    const missing = '0123456789abcdef0123456789abcdef01234567';
+
+    await expect(new WorktreeManager(repo).ensureWorktree(
+      makeTask({ id: 'task-s2s2s2s2', base_branch: missing }),
+      baseGitConfig(),
+    )).rejects.toThrow(/is not a branch, tag or commit/);
+  });
+});
+
+describe('WorktreeManager.ensureWorktree - origin unless local is ahead', () => {
+  function cloneOf(label: string): { origin: string; clonePath: string } {
+    const origin = tempRepoPath(`${label}-origin`);
+    initRepo(origin, 'main');
+    commit(origin, 'init');
+    const clonePath = tempRepoPath(`${label}-clone`);
+    execFileSync('git', ['clone', origin, clonePath], { windowsHide: true });
+    run(clonePath, ['config', 'user.email', 'dev@example.com']);
+    run(clonePath, ['config', 'user.name', 'Dev']);
+    return { origin, clonePath };
+  }
+
+  it('cuts from the local base when it holds a merge not pushed yet', async () => {
+    const { clonePath } = cloneOf('local-ahead');
+    commit(clonePath, 'merged locally, not pushed');
+    const localTip = run(clonePath, ['rev-parse', 'main']).trim();
+
+    const result = await new WorktreeManager(clonePath).ensureWorktree(
+      makeTask({ id: 'task-l1l1l1l1', base_branch: 'main' }),
+      baseGitConfig(),
+    );
+
+    expect(run(result!.worktreePath, ['rev-parse', 'HEAD']).trim()).toBe(localTip);
+  });
+
+  it('cuts from origin when the local base is behind it', async () => {
+    const { origin, clonePath } = cloneOf('local-behind');
+    commit(origin, 'teammate pushed');
+    const originTip = run(origin, ['rev-parse', 'main']).trim();
+
+    const result = await new WorktreeManager(clonePath).ensureWorktree(
+      makeTask({ id: 'task-l2l2l2l2', base_branch: 'main' }),
+      baseGitConfig(),
+    );
+
+    expect(run(result!.worktreePath, ['rev-parse', 'HEAD']).trim()).toBe(originTip);
+  });
 });
 
 describe('resolveWorktreeBase - listBranches truncation (MAX_LISTED_BRANCHES)', () => {
@@ -564,8 +684,8 @@ describe('describeUnresolvableBase - message formatting', () => {
       availableBranches: ['main', 'develop'],
     } satisfies Extract<WorktreeBaseResolution, { kind: 'unresolvable' }>);
 
-    expect(message).toContain("this task's base branch 'release-2.0' does not exist");
-    expect(message).toContain('Pick a different base branch for the task');
+    expect(message).toContain("this task's base 'release-2.0' is not a branch, tag or commit");
+    expect(message).toContain('Pick a different base for the task');
     expect(message).toContain('Branches found: main, develop.');
   });
 

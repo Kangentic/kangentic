@@ -453,15 +453,42 @@ describe('readRefsPointingAtSha', () => {
     expect(result.pointsAtBaseTip).toBe(false);
   });
 
-  it('asks for full refnames over both refs/heads/ and refs/remotes/ in one call', async () => {
+  it('asks for full refnames over refs/heads/, refs/remotes/ and refs/tags/ in one call', async () => {
     mockGit.raw.mockResolvedValue('');
 
     await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
 
     expect(mockGit.raw).toHaveBeenCalledTimes(1);
     expect(mockGit.raw).toHaveBeenCalledWith(
-      ['for-each-ref', '--format=%(refname)', `--points-at=${SHA}`, 'refs/heads/', 'refs/remotes/'],
+      ['for-each-ref', '--format=%(refname)', `--points-at=${SHA}`, 'refs/heads/', 'refs/remotes/', 'refs/tags/'],
     );
+  });
+
+  it('signals a base tip when the base is a tag that points at the sha, and never offers the tag as a candidate', async () => {
+    // A worktree cut from tag v2.4.0 sits on its commit, which release/2.4 may
+    // also have as its tip. Without the tag read, release/2.4's PR is linked.
+    mockGit.raw.mockResolvedValue(output('refs/tags/v2.4.0', 'refs/remotes/origin/release/2.4'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'v2.4.0');
+
+    expect(result.pointsAtBaseTip).toBe(true);
+    expect(result.remoteBranches).toEqual(['release/2.4']);
+  });
+
+  it('signals a base tip when the base is the sha itself, full or abbreviated', async () => {
+    mockGit.raw.mockResolvedValue(output('refs/remotes/origin/release/2.4'));
+
+    expect((await readRefsPointingAtSha('/mock/repo', SHA, SHA)).pointsAtBaseTip).toBe(true);
+    expect((await readRefsPointingAtSha('/mock/repo', SHA, SHA.slice(0, 7).toUpperCase())).pointsAtBaseTip).toBe(true);
+    expect((await readRefsPointingAtSha('/mock/repo', SHA, 'abc9999')).pointsAtBaseTip).toBe(false);
+  });
+
+  it('reads another tag on the sha as no signal at all', async () => {
+    mockGit.raw.mockResolvedValue(output('refs/tags/v9.9.9', 'refs/remotes/origin/feature/x'));
+
+    const result = await readRefsPointingAtSha('/mock/repo', SHA, 'develop');
+
+    expect(result).toEqual({ remoteBranches: ['feature/x'], pointsAtBaseTip: false });
   });
 
   it('never promotes a LOCAL branch to a candidate (a sibling worktree slug is not a PR source)', async () => {

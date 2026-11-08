@@ -16,6 +16,14 @@ const mockGit = {
   raw: vi.fn(),
 };
 
+/** Base names the execFile mock answers as a tag rather than a branch, and the commit every ref peels to. */
+const { tagOnlyNames, refShaOverrides, TAGGED_SHA } = vi.hoisted(() => ({
+  tagOnlyNames: new Set<string>(),
+  /** Full ref (`refs/heads/develop`) to the sha its rev-parse answers, instead of TAGGED_SHA. */
+  refShaOverrides: new Map<string, string>(),
+  TAGGED_SHA: 'abc1234abc1234abc1234abc1234abc1234abcd',
+}));
+
 vi.mock('../../src/main/git/git-client', () => ({
   gitAt: vi.fn(() => mockGit),
 }));
@@ -35,12 +43,26 @@ vi.mock('node:child_process', () => ({
   // MUST invoke its callback. git-checks promisifies execFile (`hasCommits`), and
   // `ensureTaskBranchCheckout` awaits it before doing any branch work - a bare `vi.fn()`
   // never settles that promise, so every test reaching it hangs until the 5s timeout
-  // rather than failing with a readable assertion. Resolving empty means "this repo has
-  // commits", which is what every test below assumes.
+  // rather than failing with a readable assertion. Resolving means "this repo has
+  // commits", which is what every test below assumes. A `rev-parse` answers with a
+  // sha, because base-ref.ts reads the commit a ref peels to rather than the exit
+  // code alone: every ref then resolves, as a branch on both sides that agree.
   execFile: vi.fn((...args: unknown[]) => {
     const callback = args.find((arg) => typeof arg === 'function') as
       | ((error: Error | null, result: { stdout: string; stderr: string }) => void)
       | undefined;
+    const commandArgs = args.find((arg): arg is readonly string[] => Array.isArray(arg));
+    if (commandArgs?.[0] === 'rev-parse') {
+      // A name in `tagOnlyNames` has no branch ref, so base-ref.ts reads it as a tag.
+      const ref = commandArgs[commandArgs.length - 1].replace(/\^\{commit\}$/, '');
+      const branchRefName = ref.replace(/^refs\/(heads|remotes\/origin)\//, '');
+      if (branchRefName !== ref && tagOnlyNames.has(branchRefName)) {
+        callback?.(new Error('fatal: Needed a single revision'), { stdout: '', stderr: '' });
+        return;
+      }
+      callback?.(null, { stdout: `${refShaOverrides.get(ref) ?? TAGGED_SHA}\n`, stderr: '' });
+      return;
+    }
     callback?.(null, { stdout: '', stderr: '' });
   }),
   execFileSync: vi.fn(),
@@ -415,6 +437,21 @@ describe('ensureTaskBranchCheckout', () => {
     await expect(ensureTaskBranchCheckout(idleContext, task, '/project')).resolves.toBeUndefined();
     expect(mockGit.checkout).toHaveBeenCalledWith('develop');
   });
+
+  it('refuses a tag base with no branch name, instead of detaching the project folder\'s HEAD', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    tagOnlyNames.add('v2.4.0');
+    try {
+      const task = makeTask({ base_branch: 'v2.4.0' });
+
+      await expect(ensureTaskBranchCheckout(idleContext, task, '/project'))
+        .rejects.toThrow("Cannot check out 'v2.4.0' in the project folder: it is a tag, not a branch.");
+      expect(mockGit.checkout).not.toHaveBeenCalled();
+      expect(mockRunGitWithTimeout).not.toHaveBeenCalled();
+    } finally {
+      tagOnlyNames.clear();
+    }
+  });
 });
 
 // ── Custom branch checkout tests ──────────────────────────────────────────
@@ -435,6 +472,26 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     mockRunGitWithTimeout.mockResolvedValue({ stdout: '', stderr: '' });
     mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: 'main' } });
     mockGetDefaultBaseBranchForPath.mockReturnValue(undefined);
+  });
+
+  it('cuts a new custom branch from a tag base as it is, with no fetch of the tag', async () => {
+    setupCheckoutMocks();
+    tagOnlyNames.add('v2.4.0');
+    try {
+      mockGit.raw.mockImplementation((args: string[]) => (
+        args[0] === 'rev-parse' ? Promise.reject(new Error('not found')) : Promise.resolve('')
+      ));
+
+      const task = makeTask({ branch_name: 'hotfix/export', base_branch: 'v2.4.0' });
+      await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+      expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/export', 'refs/tags/v2.4.0']);
+      // The branch's own fetch runs; the tag is never fetched as if it were a branch.
+      const fetchedNames = mockRunGitWithTimeout.mock.calls.map((call) => (call as unknown as [string, string[]])[1].at(-1));
+      expect(fetchedNames).toEqual(['hotfix/export']);
+    } finally {
+      tagOnlyNames.clear();
+    }
   });
 
   it('fetches from origin before checking branch existence', async () => {
@@ -524,6 +581,27 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
   });
 
+  it('cuts from the local base by its full ref when the fetch landed but the local base is ahead of origin', async () => {
+    setupCheckoutMocks();
+    // Distinct tips; the merge-base --is-ancestor probe (execFile mock) succeeds,
+    // so origin's tip is an ancestor of the local one: local holds unpushed work.
+    refShaOverrides.set('refs/heads/develop', 'f'.repeat(40));
+    refShaOverrides.set('refs/remotes/origin/develop', 'e'.repeat(40));
+    try {
+      mockGit.raw.mockImplementation((args: string[]) => (
+        args[0] === 'rev-parse' ? Promise.reject(new Error('not found')) : Promise.resolve('')
+      ));
+
+      const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
+      await ensureTaskBranchCheckout(idleContext, task, '/project');
+
+      expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'refs/heads/develop']);
+      expect(mockGit.raw).not.toHaveBeenCalledWith(['branch', 'maint/59294', 'origin/develop']);
+    } finally {
+      refShaOverrides.clear();
+    }
+  });
+
   it('falls back to the local base ref for the cut when the base fetch fails', async () => {
     setupCheckoutMocks();
     // Every fetch (the branch's and the base's) fails: offline.
@@ -537,7 +615,9 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     const task = makeTask({ branch_name: 'maint/59294', base_branch: 'develop' });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'develop']);
+    // The local base by its full ref: git reads a bare name tag-first, so a
+    // tag named 'develop' would otherwise take the cut.
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'maint/59294', 'refs/heads/develop']);
     expect(mockGit.checkout).toHaveBeenCalledWith('maint/59294');
   });
 
@@ -579,7 +659,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
   it('defaults to main when neither a board nor a config default is set', async () => {
     setupCheckoutMocks();
     mockGetEffectiveConfig.mockReturnValue({ git: { defaultBaseBranch: '' } });
-    // The base fetch fails here so the assertion pins the bare fallback name,
+    // The base fetch fails here so the assertion pins the local fallback ref,
     // not the origin-prefixed form.
     mockRunGitWithTimeout.mockRejectedValue(new Error('no remote'));
     mockGit.raw.mockImplementation((args: string[]) => {
@@ -591,7 +671,7 @@ describe('ensureTaskBranchCheckout - custom branch name', () => {
     const task = makeTask({ branch_name: 'hotfix/urgent', base_branch: null });
     await ensureTaskBranchCheckout(idleContext, task, '/project');
 
-    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'main']);
+    expect(mockGit.raw).toHaveBeenCalledWith(['branch', 'hotfix/urgent', 'refs/heads/main']);
   });
 
   it('fetch failure is silent and does not block checkout', async () => {

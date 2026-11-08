@@ -1,6 +1,7 @@
 import { gitAt, type GitClient } from './git-client';
 import { DiffService, EMPTY_TREE_HASH } from './diff-service';
 import { parseCommitGraphLog } from './commit-graph';
+import { chooseBranchForm, classifyBaseRefWith } from './base-ref';
 import type {
   GitCommitGraphCommit,
   GitDiffFileEntry,
@@ -113,12 +114,21 @@ interface BaseRefs {
 }
 
 async function resolveBaseRefs(git: GitClient, baseBranch: string): Promise<BaseRefs> {
-  const remoteRef = `refs/remotes/origin/${baseBranch}`;
-  const localRef = `refs/heads/${baseBranch}`;
-  const [remoteSha, localSha] = await Promise.all([resolveCommit(git, remoteRef), resolveCommit(git, localRef)]);
+  // A base can be a tag or a commit as well as a branch (`base-ref.ts`). A
+  // fixed base is the one ref it names: there is no origin copy to prefer.
+  const baseRef = await classifyBaseRefWith((ref) => resolveCommit(git, ref), baseBranch);
+  if (baseRef.kind === 'tag') return { primary: baseRef.ref, all: [baseRef.ref] };
+  if (baseRef.kind === 'commit') return { primary: baseRef.sha, all: [baseRef.sha] };
+  if (baseRef.kind === 'unresolved') return { primary: null, all: [] };
+
+  const trimmedBase = baseBranch.trim();
+  const remoteRef = `refs/remotes/origin/${trimmedBase}`;
+  const localRef = `refs/heads/${trimmedBase}`;
+  const { remoteSha, localSha } = baseRef;
   const all = [remoteSha ? remoteRef : null, localSha ? localRef : null].filter((ref): ref is string => ref !== null);
-  const localAhead = remoteSha !== null && localSha !== null && remoteSha !== localSha && await isAncestor(git, remoteSha, localSha);
-  return { primary: localAhead ? localRef : (all[0] ?? null), all };
+  // The same origin-unless-local-is-ahead rule every cut uses.
+  const form = await chooseBranchForm(localSha, remoteSha, (ancestor, descendant) => isAncestor(git, ancestor, descendant));
+  return { primary: form === 'local' ? localRef : form === 'remote' ? remoteRef : null, all };
 }
 
 async function isOnBase(git: GitClient, sha: string, baseRefs: BaseRefs): Promise<boolean> {

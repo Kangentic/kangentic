@@ -5,6 +5,8 @@ import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcu
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
+import { resolveRefForDisplay } from '../../git/base-ref';
+import type { GitResolveRefResult } from '../../../shared/types';
 import { gitFetchScheduler } from '../../git/git-fetch-scheduler';
 import { isGitRepo } from '../../git/git-checks';
 import { deepMergeConfig } from '../../../shared/object-utils';
@@ -686,15 +688,33 @@ export function registerSystemHandlers(context: IpcContext): void {
 
   // The open project's branches, or another registered project's for a
   // workflow's planned task on its board (an unknown one has none).
-  ipcMain.handle(IPC.GIT_LIST_BRANCHES, async (_event, projectId?: string | null) => {
-    const projectPath = projectId && projectId !== context.currentProjectId
+  const MAX_TYPED_REF_LENGTH = 1024;
+  const branchProjectPath = (projectId?: unknown): string | null => (
+    typeof projectId === 'string' && projectId && projectId !== context.currentProjectId
       ? context.projectRepo.getById(projectId)?.path ?? null
-      : context.currentProjectPath;
+      : context.currentProjectPath
+  );
+  ipcMain.handle(IPC.GIT_LIST_BRANCHES, async (_event, projectId?: string | null) => {
+    const projectPath = branchProjectPath(projectId);
     if (!projectPath || !isGitRepo(projectPath)) return [];
     try {
       const worktreeManager = new WorktreeManager(projectPath);
-      return await worktreeManager.listRemoteBranches();
+      return await worktreeManager.listBranchChoices();
     } catch { return []; }
+  });
+
+  // A ref typed into the base picker: what it names, or why it names nothing.
+  // `fetchTag` (the picker's typed Use row only) may fetch a tag from origin,
+  // which writes a ref, so it runs in the project's git queue.
+  ipcMain.handle(IPC.GIT_RESOLVE_REF, async (_event, ref: unknown, projectId?: unknown, options?: unknown): Promise<GitResolveRefResult> => {
+    if (typeof ref !== 'string' || !ref.trim()) return { ok: false, reason: 'empty', error: 'Type a branch, tag or commit.' };
+    // No branch, tag or SHA is this long; refuse it before it reaches git's argv.
+    if (ref.length > MAX_TYPED_REF_LENGTH) return { ok: false, reason: 'not-a-base', error: 'Not a branch, tag or commit SHA.' };
+    const projectPath = branchProjectPath(projectId);
+    if (!projectPath || !isGitRepo(projectPath)) return { ok: false, reason: 'not-a-repo', error: 'This project is not a git repository.' };
+    const fetchTag = typeof options === 'object' && options !== null && (options as { fetchTag?: unknown }).fetchTag === true;
+    if (!fetchTag) return resolveRefForDisplay(projectPath, ref);
+    return WorktreeManager.withGitLock(projectPath, () => resolveRefForDisplay(projectPath, ref, { fetchTag: true }));
   });
 
   // === Dialog ===

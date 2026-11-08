@@ -1,7 +1,8 @@
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { gitAt } from './git-client';
 import { hasCommits } from './git-checks';
-import { fetchIfStale } from './fetch-throttle';
+import { fetchIfStale, type FetchFailureReason } from './fetch-throttle';
+import { classifyBaseRef, fetchTagFromOrigin, fixedBaseStartPoint, peelToCommit, preferredBranchStartPoint } from './base-ref';
 
 
 /**
@@ -11,6 +12,9 @@ import { fetchIfStale } from './fetch-throttle';
  * inventory.
  */
 const MAX_LISTED_BRANCHES = 10;
+
+/** A branch fetch that failed this way never reached origin, so a tag fetch would not either. */
+const ORIGIN_UNREACHABLE: ReadonlySet<FetchFailureReason> = new Set(['no-remote', 'network', 'timeout', 'auth', 'abort']);
 
 /**
  * Outcome of resolving a task's worktree base branch against a repo's actual
@@ -34,16 +38,28 @@ export type WorktreeBaseResolution =
   | { kind: 'resolved'; baseBranch: string; startPoint: string }
   | { kind: 'unresolvable'; attempted: string[]; explicit: boolean; availableBranches: string[] };
 
-/** True if `ref` resolves to a commit in `projectPath`, without touching the network. */
+/**
+ * True if `ref` resolves to a commit in `projectPath`, without touching the
+ * network. Peels with `^{commit}`: a bare `rev-parse --verify` exits 0 for
+ * any 40-hex string, whether or not the object exists.
+ */
 export async function refResolvesLocally(projectPath: string, ref: string): Promise<boolean> {
-  try {
-    await execFileAsync('git', ['rev-parse', '--verify', '--quiet', ref], {
-      cwd: projectPath,
-      windowsHide: true,
-    });
-    return true;
-  } catch {
-    return false;
+  return (await peelToCommit(projectPath, ref)) !== null;
+}
+
+/**
+ * The start point `base` resolves to here with no network, or null. A branch
+ * cuts from `origin/<base>` unless the local branch is ahead of it; a tag cuts
+ * from its full ref (so a branch of the same name cannot shadow it); a commit
+ * from its full SHA.
+ */
+async function localStartPoint(projectPath: string, base: string): Promise<string | null> {
+  const baseRef = await classifyBaseRef(projectPath, base);
+  switch (baseRef.kind) {
+    case 'branch': return preferredBranchStartPoint(projectPath, base, baseRef);
+    case 'tag':
+    case 'commit': return fixedBaseStartPoint(baseRef);
+    case 'unresolved': return null;
   }
 }
 
@@ -110,14 +126,13 @@ export async function resolveWorktreeBase(
     : dedupe([defaultBaseBranch, 'main', 'master']);
 
   // Local pass: no network, and this is the common case (the base branch
-  // exists and was already fetched or created locally).
+  // exists and was already fetched or created locally). A base is a branch, a
+  // tag or a commit (`base-ref.ts`), classified in that order. A branch cuts
+  // from origin unless the local branch is ahead; a tag or commit is its own
+  // start point.
   for (const candidate of candidates) {
-    if (await refResolvesLocally(projectPath, candidate)) {
-      return { kind: 'resolved', baseBranch: candidate, startPoint: candidate };
-    }
-    if (await refResolvesLocally(projectPath, `origin/${candidate}`)) {
-      return { kind: 'resolved', baseBranch: candidate, startPoint: `origin/${candidate}` };
-    }
+    const startPoint = await localStartPoint(projectPath, candidate);
+    if (startPoint) return { kind: 'resolved', baseBranch: candidate, startPoint };
   }
 
   // Fetch pass: every candidate missed locally. A base that exists only on
@@ -130,7 +145,13 @@ export async function resolveWorktreeBase(
     // remote could otherwise hold a cancelled task move for the full chain. Forwarding
     // the caller's signal lets an abort cut the chain short rather than run it out.
     options?.signal?.throwIfAborted();
-    const fetched = await fetchIfStale(git, projectPath, candidate, { signal: options?.signal });
+    // A ref object rather than a plain let: an assignment inside the callback
+    // never widens the let's narrowing to null.
+    const fetchFailure: { reason: FetchFailureReason | null } = { reason: null };
+    const fetched = await fetchIfStale(git, projectPath, candidate, {
+      signal: options?.signal,
+      onOutcome: (outcome) => { fetchFailure.reason = outcome.kind === 'failed' ? outcome.reason : null; },
+    });
     // Don't trust fetchIfStale's return string alone: it reports `origin/<branch>` on fetch
     // PROCESS success, which is not the same as the ref actually landing in
     // refs/remotes/origin/<branch> (a non-default remote.origin.fetch refspec, or a fetch that
@@ -139,6 +160,19 @@ export async function resolveWorktreeBase(
     if (fetched === `origin/${candidate}` && await refResolvesLocally(projectPath, fetched)) {
       return { kind: 'resolved', baseBranch: candidate, startPoint: fetched };
     }
+    // Not a branch on origin. A tag that exists only on origin needs its own
+    // refspec: `git fetch origin <tag>` above writes FETCH_HEAD and nothing else.
+    // Only a task's own base is tried as a tag (a project default is a branch),
+    // and never after a fetch that could not reach origin at all: a second
+    // 15-second wait on a dead remote would only delay the same error.
+    const originReachable = fetchFailure.reason === null || !ORIGIN_UNREACHABLE.has(fetchFailure.reason);
+    if (explicit && originReachable && await fetchTagFromOrigin(projectPath, candidate, { signal: options?.signal })) {
+      return { kind: 'resolved', baseBranch: candidate, startPoint: `refs/tags/${candidate}` };
+    }
+    // A full SHA the fetch above brought in (a server that serves a reachable
+    // commit by id) now resolves locally as a commit.
+    const fetchedStartPoint = await localStartPoint(projectPath, candidate);
+    if (fetchedStartPoint) return { kind: 'resolved', baseBranch: candidate, startPoint: fetchedStartPoint };
   }
 
   return {
@@ -170,8 +204,8 @@ export function describeUnresolvableBase(
     : '';
 
   if (failure.explicit) {
-    return `Cannot create worktree: this task's base branch '${failure.attempted[0]}' does not `
-      + `exist, locally or on origin. Pick a different base branch for the task, or create the `
+    return `Cannot create worktree: this task's base '${failure.attempted[0]}' is not a branch, `
+      + `tag or commit, locally or on origin. Pick a different base for the task, or create the `
       + `branch.${branchesClause}`;
   }
 

@@ -49,7 +49,7 @@ test.describe('BranchPicker', () => {
     await chip.click();
 
     // Wait for the dropdown to appear with the search input
-    const searchInput = page.locator('input[placeholder="Search branches..."]');
+    const searchInput = page.locator('[data-testid="branch-picker-search"]');
     await expect(searchInput).toBeVisible();
 
     // Verify branches from mock are listed
@@ -75,7 +75,7 @@ test.describe('BranchPicker', () => {
     await developBtn.click();
 
     // Dropdown should close
-    await expect(page.locator('input[placeholder="Search branches..."]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="branch-picker-search"]')).not.toBeVisible();
 
     // Chip should now show the selected branch
     await expect(chip).toContainText('develop');
@@ -90,11 +90,11 @@ test.describe('BranchPicker', () => {
     await chip.click();
 
     // Dropdown is open
-    await expect(page.locator('input[placeholder="Search branches..."]')).toBeVisible();
+    await expect(page.locator('[data-testid="branch-picker-search"]')).toBeVisible();
 
     // Press Escape -- should close dropdown only
     await page.keyboard.press('Escape');
-    await expect(page.locator('input[placeholder="Search branches..."]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="branch-picker-search"]')).not.toBeVisible();
 
     // Parent dialog should still be open
     await expect(page.locator('input[placeholder="Task title"]')).toBeVisible();

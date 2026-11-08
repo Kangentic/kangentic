@@ -8,7 +8,7 @@
  *   2. Disablement - it is disabled while the task's session is active
  *      (isSessionActive, a superset of the handler's own running/queued
  *      guard), so a paused/suspended task keeps the item enabled.
- *   3. Toast mapping - each of the six TaskUpdateFromBaseResult statuses maps
+ *   3. Toast mapping - each of the seven TaskUpdateFromBaseResult statuses maps
  *      to its own toast message and tone, composed entirely in the renderer
  *      (main returns only the structured result).
  *
@@ -49,6 +49,12 @@ const RUNNING_SESSION_ID = `sess-running-${RUN_ID}`;
 const NO_WORKTREE_TASK_ID = `task-no-worktree-${RUN_ID}`;
 const NO_WORKTREE_TASK_TITLE = `No Worktree Task ${RUN_ID}`;
 const NO_WORKTREE_SESSION_ID = `sess-no-worktree-${RUN_ID}`;
+
+const TAG_BASE_TASK_ID = `task-tag-base-${RUN_ID}`;
+const COMMIT_BASE_TASK_ID = `task-commit-base-${RUN_ID}`;
+const COMMIT_BASE_SHA = '3f9c2a1e8b04d7c6a5f1e2d3c4b5a69788d0e1f2';
+const HEX_TAG_TASK_ID = `task-hex-tag-${RUN_ID}`;
+const HEX_TAG_NAME = '202401011200ab';
 
 const ARCHIVED_TASK_ID = `task-archived-worktree-${RUN_ID}`;
 const ARCHIVED_TASK_TITLE = `Archived Worktree Task ${RUN_ID}`;
@@ -162,6 +168,41 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
       state.sessions.push(makeSession({
         id: '${NO_WORKTREE_SESSION_ID}',
         taskId: '${NO_WORKTREE_TASK_ID}',
+      }));
+
+      // Worktree task based on a tag: nothing to update from, so the item is
+      // disabled with the reason. main's git:resolveRef answer is seeded.
+      window.__mockGitRefs = { 'v2.4.0': { kind: 'tag', sha: 'b'.repeat(40) } };
+      state.tasks.push(makeTask({
+        id: '${TAG_BASE_TASK_ID}',
+        title: 'Tag Base Task ${RUN_ID}',
+        swimlane_id: 'lane-update-from-base-executing-${RUN_ID}',
+        session_id: null,
+        base_branch: 'v2.4.0',
+        worktree_path: '/mock/update-from-base-${RUN_ID}/.kangentic/worktrees/tag-base-task',
+      }));
+
+      // Worktree task based on a commit: a 40-hex base answers kind 'commit' in
+      // the mock, and the item names its 7-character short SHA.
+      state.tasks.push(makeTask({
+        id: '${COMMIT_BASE_TASK_ID}',
+        title: 'Commit Base Task ${RUN_ID}',
+        swimlane_id: 'lane-update-from-base-executing-${RUN_ID}',
+        session_id: null,
+        base_branch: '${COMMIT_BASE_SHA}',
+        worktree_path: '/mock/update-from-base-${RUN_ID}/.kangentic/worktrees/commit-base-task',
+      }));
+
+      // Worktree task based on a tag named with 14 hex characters: kind 'tag',
+      // so the name is shown whole, never cut to 7.
+      window.__mockGitRefs['${HEX_TAG_NAME}'] = { kind: 'tag', sha: 'c'.repeat(40) };
+      state.tasks.push(makeTask({
+        id: '${HEX_TAG_TASK_ID}',
+        title: 'Hex Tag Task ${RUN_ID}',
+        swimlane_id: 'lane-update-from-base-executing-${RUN_ID}',
+        session_id: null,
+        base_branch: '${HEX_TAG_NAME}',
+        worktree_path: '/mock/update-from-base-${RUN_ID}/.kangentic/worktrees/hex-tag-task',
       }));
 
       // Archived, but (unusually) still carrying a worktree_path: pins the
@@ -283,6 +324,50 @@ test.describe('Task detail kebab: Update from base', () => {
     await closeDetailWindow(page, archivedWindowId);
   });
 
+  test('a task based on a tag has the item disabled, with the reason as its description', async () => {
+    const tagWindowId = await openDetailWindow(page, TAG_BASE_TASK_ID);
+    await openKebab(page, tagWindowId);
+
+    const item = page.locator('[data-testid="update-from-base-btn"]');
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAccessibleDescription('The base is the tag v2.4.0, which does not move');
+
+    await closeKebab(page, tagWindowId);
+    await closeDetailWindow(page, tagWindowId);
+  });
+
+  test('a task based on a commit has the item disabled, naming the 7-character short SHA', async () => {
+    const commitWindowId = await openDetailWindow(page, COMMIT_BASE_TASK_ID);
+    await openKebab(page, commitWindowId);
+
+    const item = page.locator('[data-testid="update-from-base-btn"]');
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAccessibleDescription('The base is the commit 3f9c2a1, which does not move');
+
+    await closeKebab(page, commitWindowId);
+    await closeDetailWindow(page, commitWindowId);
+  });
+
+  test('a tag named with 14 hex characters is shown whole in the disabled reason', async () => {
+    const hexWindowId = await openDetailWindow(page, HEX_TAG_TASK_ID);
+    await openKebab(page, hexWindowId);
+
+    const item = page.locator('[data-testid="update-from-base-btn"]');
+    await expect(item).toBeDisabled();
+    await expect(item).toHaveAccessibleDescription('The base is the tag 202401011200ab, which does not move');
+
+    await closeKebab(page, hexWindowId);
+    await closeDetailWindow(page, hexWindowId);
+  });
+
+  test('the passive base lookup never asks main to fetch a tag', async () => {
+    const calls = await page.evaluate(
+      () => (window as unknown as { __mockGitResolveRefCalls?: Array<{ ref: string; fetchTag: boolean }> }).__mockGitResolveRefCalls ?? [],
+    );
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((call) => call.fetchTag)).toEqual([]);
+  });
+
   test('maps each TaskUpdateFromBaseResult status to its own toast', async () => {
     const worktreeWindowId = await openDetailWindow(page, WORKTREE_TASK_ID);
 
@@ -331,6 +416,21 @@ test.describe('Task detail kebab: Update from base', () => {
         result: { status: 'no-remote', baseBranch: 'main' },
         expectedTitle: 'No origin remote',
         expectedBody: 'There is no remote to fetch main from.',
+      },
+      {
+        // A base that became a tag after the menu opened (an MCP update): the
+        // item was enabled for a branch, and main answers that nothing moves.
+        name: 'fixed-base',
+        result: { status: 'fixed-base', baseBranch: 'v2.4.0', baseKind: 'tag' },
+        expectedTitle: 'Nothing to update from',
+        expectedBody: 'The base is the tag v2.4.0, which does not move.',
+      },
+      {
+        // A base that became a commit after the menu opened: named by its short SHA.
+        name: 'fixed-base, commit',
+        result: { status: 'fixed-base', baseBranch: COMMIT_BASE_SHA, baseKind: 'commit' },
+        expectedTitle: 'Nothing to update from',
+        expectedBody: 'The base is the commit 3f9c2a1, which does not move.',
       },
     ];
 

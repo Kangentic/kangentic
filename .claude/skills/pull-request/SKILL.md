@@ -42,7 +42,12 @@ All git commands below run from the **current working directory** - never use `c
    project root is two directories above `.kangentic/worktrees/<slug>/` (strip
    `.kangentic/worktrees/<slug>` from the worktree path).
 4. Determine the source branch:
-   - **Worktree mode:** `git config kangentic.baseBranch` (fallback: `main`).
+   - **Worktree mode:** `git config kangentic.baseBranch` (fallback: `main`). A task can be based
+     on a tag or a commit, which cannot be a PR base or a rebase target. When
+     `git show-ref --verify --quiet refs/remotes/origin/<value>` fails, the source branch is
+     origin's default branch instead (`git symbolic-ref --short refs/remotes/origin/HEAD`, minus
+     the `origin/` prefix), and the report says so in one line. When `origin/HEAD` is not set
+     (`symbolic-ref` fails), use `main`, or `master` when only that one is on origin.
    - **Main repo mode:** the current branch.
 5. Run `git status --porcelain` to check for uncommitted changes.
 6. Verify the GitHub CLI is authenticated: `gh auth status`. If it fails, report it and stop -

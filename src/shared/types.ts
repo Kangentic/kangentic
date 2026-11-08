@@ -5938,6 +5938,27 @@ export interface TaskSwitchBranchInput {
   enableWorktree?: boolean;
 }
 
+/** One row of the base picker's list. `local` marks a branch origin does not have. */
+export interface GitBranchChoice {
+  name: string;
+  local: boolean;
+}
+
+/**
+ * Why a typed base resolved to nothing. `git` means `error` is git's own
+ * stderr, shown as written; the others are worded by the renderer, and
+ * `error` holds the same in English.
+ */
+export type GitResolveRefFailure = 'empty' | 'option-shaped' | 'not-a-repo' | 'not-a-base' | 'git';
+
+/**
+ * The answer to `git.resolveRef`: a typed base is a branch, a tag or a commit
+ * (`src/main/git/base-ref.ts`), or it resolves to nothing and `reason` says why.
+ */
+export type GitResolveRefResult =
+  | { ok: true; kind: 'branch' | 'tag' | 'commit'; sha: string }
+  | { ok: false; reason: GitResolveRefFailure; error: string };
+
 export interface TaskUpdateFromBaseInput {
   taskId: string;
 }
@@ -5948,9 +5969,12 @@ export interface TaskUpdateFromBaseInput {
  * This action is the only thing that MOVES a reused worktree - spawn-time
  * freshening deliberately never fast-forwards an existing tree, it only
  * surfaces drift. `cannot-ff` is a normal outcome, not an error: a branch
- * carrying its own commits legitimately stays where it is.
+ * carrying its own commits legitimately stays where it is. `fixed-base` is a
+ * base that is a tag or a commit: it does not move, so there is nothing to
+ * update from.
  */
 export type TaskUpdateFromBaseResult =
+  | { status: 'fixed-base'; baseBranch: string; baseKind: 'tag' | 'commit' }
   | { status: 'updated'; baseBranch: string; commitCount: number }
   | { status: 'already-up-to-date'; baseBranch: string }
   | { status: 'cannot-ff'; baseBranch: string; ahead: number; behind: number }
@@ -8846,8 +8870,19 @@ export interface ElectronAPI {
   // Git
   git: {
     detect: (forceRefresh?: boolean) => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
-    /** The repository's branches. `projectId` lists another project's; omitted, the open project's. */
-    listBranches: (projectId?: string | null) => Promise<string[]>;
+    /**
+     * The repository's branches: origin's, then local-only ones (not a task's
+     * own). `projectId` lists another project's; omitted, the open project's.
+     */
+    listBranches: (projectId?: string | null) => Promise<GitBranchChoice[]>;
+    /**
+     * What a ref typed into the base picker names: a branch, tag or commit and
+     * the commit it peels to, or why it names none. Reads local refs only,
+     * unless `fetchTag` is set (the picker's typed Use row): then a value that
+     * resolves to nothing is first fetched from origin as a tag. `projectId`
+     * as for `listBranches`.
+     */
+    resolveRef: (ref: string, projectId?: string | null, options?: { fetchTag?: boolean }) => Promise<GitResolveRefResult>;
     diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
     fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
     fileImage: (input: GitFileImageInput) => Promise<GitImageContentResult>;

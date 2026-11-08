@@ -377,8 +377,8 @@ async function readMenuGeometry(
 async function seedBranches(page: Page, count: number): Promise<string[]> {
   const branchNames = Array.from({ length: count }, (_unused, index) => `feature/branch-${String(index).padStart(2, '0')}`);
   await page.evaluate((names) => {
-    (window as unknown as { electronAPI: { git: { listBranches: () => Promise<string[]> } } })
-      .electronAPI.git.listBranches = async () => names;
+    (window as unknown as { electronAPI: { git: { listBranches: () => Promise<Array<{ name: string; local: boolean }>> } } })
+      .electronAPI.git.listBranches = async () => names.map((name) => ({ name, local: false }));
   }, branchNames);
   return branchNames;
 }
