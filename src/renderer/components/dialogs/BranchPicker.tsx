@@ -329,7 +329,7 @@ export function BranchPicker({
 
   // The Use row: dimmed while git checks, plain after a miss, and highlighted
   // while Enter takes it.
-  const useRowTone = isChecking
+  const typedRowTone = isChecking
     ? 'text-fg-muted'
     : refFailure
       ? 'text-fg-tertiary hover:bg-surface-hover hover:text-fg'
@@ -418,7 +418,7 @@ export function BranchPicker({
           type="button"
           onClick={() => void commitTypedRef()}
           disabled={isChecking}
-          className={`flex w-full shrink-0 items-center gap-2 border-t border-edge px-3 py-2 text-left text-xs transition-colors ${useRowTone}`}
+          className={`flex w-full shrink-0 items-center gap-2 border-t border-edge px-3 py-2 text-left text-xs transition-colors ${typedRowTone}`}
           data-testid="branch-picker-use-typed"
         >
           {isChecking
