@@ -106,6 +106,79 @@ test.describe('Hotkeys settings tab', () => {
     await closeSettings();
   });
 
+  test('a link click row records modifiers held with a click on its box, and never a key or a plain click', async () => {
+    await openHotkeys();
+    const id = 'terminal.openLinkInDefaultBrowser';
+    const row = page.getByTestId(`hotkey-row-${id}`);
+    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Click']);
+    // A click is never an OS shortcut, so the availability probe flags nothing here.
+    await expect(page.getByTestId(`hotkey-taken-${id}`)).toHaveCount(0);
+
+    await row.getByTestId('key-capture-input').click();
+    const box = page.getByTestId('key-capture-box');
+    await box.waitFor({ state: 'visible', timeout: 2000 });
+    await box.focus();
+    await page.keyboard.press('G');
+    await box.click();
+    await expect(row.getByText('Hold a modifier key while you click.')).toBeVisible();
+    await expect(box).toBeVisible();
+
+    await page.keyboard.down('Control');
+    await page.keyboard.down('Alt');
+    await box.click();
+    await page.keyboard.up('Alt');
+    await page.keyboard.up('Control');
+
+    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Alt', 'Click']);
+    await expect(row.getByText('Custom')).toBeVisible();
+    await page.getByTestId(`hotkey-reset-${id}`).click();
+    await expect(row.getByText('Custom')).toHaveCount(0);
+    await closeSettings();
+  });
+
+  test('a link click row\'s box ignores a middle-button press, and a bare click only asks for a modifier', async () => {
+    await openHotkeys();
+    const id = 'terminal.openLinkInDefaultBrowser';
+    const row = page.getByTestId(`hotkey-row-${id}`);
+    await row.getByTestId('key-capture-input').click();
+    const box = page.getByTestId('key-capture-box');
+    await box.waitFor({ state: 'visible', timeout: 2000 });
+
+    await box.click({ button: 'middle' });
+    // A mouse-button capture would commit on release and swap the box for the Rebind button.
+    await expect(box).toBeVisible();
+    await expect(row.getByText('Custom')).toHaveCount(0);
+
+    await box.click();
+    await expect(row.getByText('Hold a modifier key while you click.')).toBeVisible();
+    await expect(box).toBeVisible();
+    await expect(row.getByText('Custom')).toHaveCount(0);
+
+    await box.focus();
+    await page.keyboard.press('Escape');
+    await expect(row.getByTestId('key-capture-input')).toBeVisible();
+    await expect(row.getByTestId('key-combo').locator('kbd')).toHaveText(['Ctrl', 'Click']);
+    await closeSettings();
+  });
+
+  test('putting both link clicks on one click flags a conflict on both', async () => {
+    await openHotkeys();
+    const kangentic = 'terminal.openLinkInKangenticBrowser';
+    const row = page.getByTestId(`hotkey-row-${kangentic}`);
+    await row.getByTestId('key-capture-input').click();
+    const box = page.getByTestId('key-capture-box');
+    await box.waitFor({ state: 'visible', timeout: 2000 });
+    await page.keyboard.down('Control');
+    await box.click();
+    await page.keyboard.up('Control');
+
+    await expect(page.getByTestId(`hotkey-conflict-${kangentic}`)).toBeVisible();
+    await expect(page.getByTestId('hotkey-conflict-terminal.openLinkInDefaultBrowser')).toBeVisible();
+    await page.getByTestId(`hotkey-reset-${kangentic}`).click();
+    await expect(page.getByTestId(`hotkey-conflict-${kangentic}`)).toHaveCount(0);
+    await closeSettings();
+  });
+
   test('binding two same-scope actions to one combo flags a conflict on both', async () => {
     await openHotkeys();
     // commandBar.toggle defaults to Mod+Shift+P (global). Rebind view.toggleSidebar

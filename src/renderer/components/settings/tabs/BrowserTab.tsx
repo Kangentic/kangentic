@@ -25,7 +25,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
       await window.electronAPI.browser.clearStorage();
       useToastStore.getState().addToast({
         title: t`Browser data cleared`,
-        message: t`Reload the browser pane to apply.`,
+        message: t`Reload the Kangentic browser to apply.`,
         variant: 'success',
       });
     } catch (error) {
@@ -62,7 +62,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
               }}
               // i18n-ok: an example URL
               placeholder="http://localhost:5173"
-              ariaLabel={t`Default browser pane URL`}
+              ariaLabel={t`Default Kangentic browser URL`}
               className="placeholder-fg-faint"
             />
           </CardRow>
@@ -75,7 +75,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
       <SettingsCard
         icon={<Eraser size={16} />}
         label={t`Browser data`}
-        description={t`Cookies and storage the embedded browser keeps.`}
+        description={t`Cookies and storage the Kangentic browser keeps.`}
         searchIds={['browser.clearStorage']}
       >
         <CardRow {...settingProps('browser.clearStorage')}>
@@ -101,7 +101,7 @@ export function BrowserTab({ config }: { config: AppConfig }) {
           confirmLabel={t`Clear data`}
           message={
             <>
-              <p><Trans>This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites.</Trans></p>
+              <p><Trans>This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the Kangentic browser across all tasks and projects. You will be signed out of any sites.</Trans></p>
               <p><Trans>Saved URLs (per-task overrides and the project default) are kept.</Trans></p>
             </>
           }

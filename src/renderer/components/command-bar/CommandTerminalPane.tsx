@@ -37,6 +37,7 @@ import { TerminalFindBar } from '../terminal/TerminalFindBar';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
+import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 
 /** The terminal's current grid, published by the pane so a caller (a branch
  *  respawn) can seed the new PTY at the size the user is already looking at
@@ -55,9 +56,11 @@ interface CommandTerminalPaneProps {
   /** Parent-owned ref this pane publishes its live `getDimensions` into on
    *  mount, and clears on unmount. See `TerminalGridGetter`. */
   gridGetterRef: RefObject<TerminalGridGetter | null>;
+  /** This slot's Kangentic browser, which a link's hotkey opens it in; null when it cannot show. */
+  linkBrowser?: TerminalLinkBrowser | null;
 }
 
-export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel, gridGetterRef }: CommandTerminalPaneProps) {
+export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel, gridGetterRef, linkBrowser = null }: CommandTerminalPaneProps) {
   const config = useConfigStore((s) => s.config);
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
   // Adapter-declared image-paste capability (which extensions this agent attaches
@@ -90,6 +93,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
     shellName: commandTerminalShell ?? undefined,
     pasteImageCapability,
     mayTakeArrivalFocus: mayFocusOnArrival,
+    linkBrowser,
   });
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, paste, commandTerminalShell ?? undefined, pasteImageCapability);

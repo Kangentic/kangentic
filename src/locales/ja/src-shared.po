@@ -494,6 +494,14 @@ msgid "Headers"
 msgstr "ヘッダー"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "押し続けて音声入力し、離すとフォーカス中のターミナルまたはテキスト フィールドに入力されます。"
@@ -841,6 +849,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "フォーカス中の会話ウィンドウ内で検索を開きます。"
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "コマンドターミナルのオーバーレイを開閉します。"
@@ -1153,11 +1169,6 @@ msgstr "アクティビティエンジンのデバッグオーバーレイを表
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "タスク詳細ダイアログ内のブラウザーペインを表示/非表示にします。"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "タスク詳細ダイアログ内の変更 (差分) パネルを表示または非表示にします。"
 
@@ -1167,7 +1178,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "タスク詳細ダイアログ内の説明パネルを表示または非表示にします。"
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1399,11 +1414,6 @@ msgstr "ボードとバックログ ビューを切り替えます。"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "ブラウザー ペインの切り替え"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "変更パネルの切り替え"
 
@@ -1413,7 +1423,7 @@ msgid "Toggle Command Terminal"
 msgstr "コマンド ターミナルの切り替え"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1425,6 +1435,10 @@ msgstr "デバッグ オーバーレイの切り替え"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "説明のプレビューの切り替え"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

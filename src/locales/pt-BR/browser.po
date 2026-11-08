@@ -129,6 +129,10 @@ msgid "Failed to load: {finalUrl}"
 msgstr "Falha ao carregar: {finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {url}"
+msgstr ""
+
+#: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy
 msgid "Forward"
 msgstr "Avançar"
@@ -267,9 +271,8 @@ msgid "Send to agent"
 msgstr "Enviar ao agente"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
-msgid "The browser pane opens it for this project."
-msgstr "O painel do navegador a abre para este projeto."
+msgid "The Kangentic browser opens it for this project."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 #, fuzzy

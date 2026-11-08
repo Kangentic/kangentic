@@ -494,6 +494,14 @@ msgid "Headers"
 msgstr "Hlavičky"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Podržením diktujete; uvolněním vložíte text do aktivního terminálu nebo textového pole."
@@ -841,6 +849,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Otevřít vyhledávání v prohlížeči uvnitř aktivního okna konverzace."
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "Otevřít nebo zavřít překryvný příkazový terminál."
@@ -1153,11 +1169,6 @@ msgstr "Zobrazit nebo skrýt ladicí překryv modulu aktivit."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Zobrazit nebo skrýt panel prohlížeče v dialogu podrobností úlohy."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel změn (diff) v dialogu s podrobnostmi úkolu."
 
@@ -1167,7 +1178,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel popisu v dialogu s podrobnostmi úkolu."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1399,11 +1414,6 @@ msgstr "Přepíná mezi nástěnkou a zobrazením backlogu."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Přepnout panel prohlížeče"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Přepnout panel změn"
 
@@ -1413,7 +1423,7 @@ msgid "Toggle Command Terminal"
 msgstr "Přepnout příkazový terminál"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1425,6 +1435,10 @@ msgstr "Přepnout ladicí překryv"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Přepnout náhled popisu"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

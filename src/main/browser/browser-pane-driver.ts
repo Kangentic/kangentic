@@ -45,7 +45,7 @@ export interface DriverError {
 
 export type DriverResult<T> = { ok: true; data: T } | { ok: false; error: DriverError };
 
-const SETTINGS_HINT = 'Settings -> Agent Browser';
+const SETTINGS_HINT = 'Settings -> Browser automation';
 
 /** The refusal for a key the pane would not have received (`keyboard-focus.ts`). */
 const PANE_NOT_FOCUSED_DETAIL =
@@ -84,7 +84,7 @@ export function capabilityGate(
   if (!config.enabled) {
     return {
       kind: 'automation-disabled',
-      detail: `Agent browser automation is turned off. Enable it in ${SETTINGS_HINT}.`,
+      detail: `Browser automation is turned off. Enable it in ${SETTINGS_HINT}.`,
     };
   }
   if (capability === 'interact' && !config.allowInteraction) {

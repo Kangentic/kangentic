@@ -400,7 +400,7 @@ msgstr "清除所有筛选"
 msgid "Clear search"
 msgstr "清除搜索"
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/keybindings.ts
 msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
 msgid "Click"
 msgstr ""
@@ -1038,7 +1038,11 @@ msgid "Open a project first."
 msgstr "请先打开一个项目。"
 
 #: src/renderer/utils/terminal-links/link-tip.ts
-msgid "Open in browser"
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
 msgstr ""
 
 #: src/renderer/pop-out/PopOutButton.tsx
@@ -1046,12 +1050,12 @@ msgid "Open in new window"
 msgstr "在新窗口中打开"
 
 #: src/renderer/components/PrLink.tsx
-msgid "Open PR #{prNumber} in browser"
-msgstr "在浏览器中打开拉取请求 #{prNumber}"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-msgid "Open PR in browser"
-msgstr "在浏览器中打开拉取请求"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 msgid "Open settings"

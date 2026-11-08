@@ -68,7 +68,7 @@ export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, cla
   // bare "PR" label rather than rendering the literal string "PR #null". A
   // string, so `Pill` trims it to its cap height like any bare text child.
   const prLabel = prNumber != null ? t`PR #${prNumber}` : t`PR`;
-  const openTip = prNumber != null ? t`Open PR #${prNumber} in browser` : t`Open PR in browser`;
+  const openTip = prNumber != null ? t`Open PR #${prNumber} in default browser` : t`Open PR in default browser`;
   return (
     <Tooltip label={openTip}>
       <Pill

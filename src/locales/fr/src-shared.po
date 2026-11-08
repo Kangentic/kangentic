@@ -494,6 +494,14 @@ msgid "Headers"
 msgstr "En-têtes"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Maintenez pour dicter ; relâchez pour remplir le terminal ou le champ de texte actif."
@@ -841,6 +849,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Ouvrir la recherche intégrée dans la fenêtre Conversation active."
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "Ouvrir ou fermer la superposition du terminal de commandes."
@@ -1153,11 +1169,6 @@ msgstr "Afficher ou masquer la superposition de débogage du moteur d'activité.
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Afficher ou masquer le volet du navigateur dans la boîte de dialogue de détail de la tâche."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Affiche ou masque le panneau des modifications (diff) dans la boîte de dialogue des détails de la tâche."
 
@@ -1167,7 +1178,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Affiche ou masque le panneau de description dans la boîte de dialogue des détails de la tâche."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1399,11 +1414,6 @@ msgstr "Bascule entre la vue tableau et la vue backlog."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Afficher/masquer le volet Navigateur"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Afficher/masquer le panneau Modifications"
 
@@ -1413,7 +1423,7 @@ msgid "Toggle Command Terminal"
 msgstr "Afficher/masquer le terminal de commandes"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1425,6 +1435,10 @@ msgstr "Afficher/masquer la superposition de débogage"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Afficher/masquer l'aperçu de la description"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

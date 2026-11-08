@@ -11,6 +11,7 @@ import { useTerminalOverlay } from '../../utils/task-progress';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
+import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 
 const FIT_DELAY_MS = 100;
 
@@ -34,9 +35,13 @@ interface TerminalTabProps {
    *  `deferContainerResize`, the ResizeObserver stays ON, so container-only size
    *  changes (opening the Changes / Browser pane) still refit. */
   immediatePanelResize?: boolean;
+  /** The Kangentic browser beside this terminal, which a link's hotkey opens it
+   *  in. The task window passes its pane; the bottom panel has none, so its links
+   *  open in the default browser. */
+  linkBrowser?: TerminalLinkBrowser | null;
 }
 
-export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointerOutside, deferContainerResize, immediatePanelResize }: TerminalTabProps) {
+export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointerOutside, deferContainerResize, immediatePanelResize, linkBrowser = null }: TerminalTabProps) {
   const config = useConfigStore((s) => s.config);
   const hasAgentOnScreen = useSessionStore((s) => !!s.sessionFirstOutput[sessionId]);
 
@@ -128,6 +133,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     pasteImageCapability,
     onScrollbackSettled: handleScrollbackSettled,
     mayTakeArrivalFocus: mayFocusOnArrival,
+    linkBrowser,
   });
 
   // Sync suppressDataRef with overlay state: suppress all PTY data while the

@@ -494,6 +494,14 @@ msgid "Headers"
 msgstr "Üst bilgiler"
 
 #: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in the browser beside that terminal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold these keys and click a link in a terminal to open it in your default browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "Dikte etmek için basılı tutun; odaktaki terminale veya metin alanına aktarmak için bırakın."
@@ -841,6 +849,14 @@ msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "Odaklanılan Konuşma penceresinde görüntüleyici içi aramayı açar."
 
 #: src/shared/keybindings.ts
+msgid "Open link in default browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open link in Kangentic browser"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "Komut terminali katmanını açar veya kapatır."
@@ -1153,11 +1169,6 @@ msgstr "Etkinlik motoru hata ayıklama katmanını gösterir veya gizler."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "Görev ayrıntısı iletişim kutusundaki tarayıcı bölmesini gösterir veya gizler."
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "Görev ayrıntısı penceresindeki değişiklikler (diff) panelini gösterin veya gizleyin."
 
@@ -1167,7 +1178,11 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Görev ayrıntısı penceresindeki açıklama panelini gösterin veya gizleyin."
 
 #: src/shared/keybindings.ts
-msgid "Show or hide the focused Command Terminal's browser pane."
+msgid "Show or hide the focused Command Terminal's Kangentic browser."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the Kangentic browser in the task window."
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1399,11 +1414,6 @@ msgstr "Pano ile bekleyen işler görünümü arasında geçiş yapın."
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Toggle Browser pane"
-msgstr "Tarayıcı bölmesini aç/kapat"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "Değişiklikler panelini aç/kapat"
 
@@ -1413,7 +1423,7 @@ msgid "Toggle Command Terminal"
 msgstr "Komut Terminali'ni aç/kapat"
 
 #: src/shared/keybindings.ts
-msgid "Toggle Command Terminal Browser pane"
+msgid "Toggle Command Terminal browser"
 msgstr ""
 
 #: src/shared/keybindings.ts
@@ -1425,6 +1435,10 @@ msgstr "Hata ayıklama katmanını aç/kapat"
 #, fuzzy
 msgid "Toggle description peek"
 msgstr "Açıklama önizlemesini aç/kapat"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Kangentic browser"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

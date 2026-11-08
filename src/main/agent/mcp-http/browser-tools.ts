@@ -1209,7 +1209,7 @@ export function registerBrowserTools(
   server.registerTool(
     'kangentic_browser_eval',
     {
-      description: "Evaluate a JavaScript expression in the task's Browser pane (the loaded page's origin) and return its value. Off by default - enable in Settings -> Agent Browser -> Allow eval. With saveToFile, a string value (page HTML, CSS) is written as it is and anything else as JSON.",
+      description: "Evaluate a JavaScript expression in the task's Browser pane (the loaded page's origin) and return its value. Off by default - enable in Settings -> Browser automation -> Allow eval. With saveToFile, a string value (page HTML, CSS) is written as it is and anything else as JSON.",
       inputSchema: z.object({
         ...TARGET_SHAPE,
         expression: z.string().describe('JavaScript expression to evaluate. The resolved value is returned.'),

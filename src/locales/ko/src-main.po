@@ -151,9 +151,8 @@ msgid "OK"
 msgstr "확인"
 
 #: src/main/index.ts
-#, fuzzy
-msgid "Open in my browser"
-msgstr "내 브라우저에서 열기"
+msgid "Open in default browser"
+msgstr ""
 
 #: src/main/index.ts
 #, fuzzy

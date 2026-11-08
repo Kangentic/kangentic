@@ -29,6 +29,9 @@ import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel'
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { useSessionStore } from '../../stores/session-store';
+import { usePopOutStore } from '../../stores/pop-out-store';
+import { popOutInstanceKey } from '../../../shared/pop-out';
+import type { TerminalLinkBrowser } from '../../utils/terminal-links/link-targets';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
 import { useConfigStore } from '../../stores/config-store';
@@ -590,6 +593,27 @@ export function TaskDetailWindow({
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
     && taskDetailSurfaceFor(sessionState.displayState.kind, laneRole) === 'terminal';
+
+  // The Kangentic browser this window's terminal opens a link in, on its link
+  // hotkey (`terminal-links/link-actions.ts`): shown the way the Browser pill
+  // shows it, with the other right-side views put away, then loaded. Null while
+  // the pane cannot show, or lives in a window of its own, whose renderer keeps
+  // its own store: that click opens the default browser instead.
+  const browserPoppedOut = usePopOutStore((state) =>
+    browserProjectId != null && state.openInstanceKeys[popOutInstanceKey('browser', { projectId: browserProjectId, taskId: task.id })] === true);
+  const linkBrowser = useMemo<TerminalLinkBrowser | null>(() => {
+    if (!canShowBrowser || browserPoppedOut) return null;
+    return {
+      open: (url) => {
+        const session = useSessionStore.getState();
+        // Closed (or held): the pill's own open, which puts the other views away.
+        if (!session.browserOpenTasks.has(task.id)) handleToggleBrowser();
+        // Optional call: a dev store pinned across a Fast Refresh from before this
+        // action existed lacks it until a reload, and the click must not throw there.
+        session.requestBrowserNavigate?.(task.id, url);
+      },
+    };
+  }, [canShowBrowser, browserPoppedOut, handleToggleBrowser, task.id]);
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>
@@ -1036,6 +1060,7 @@ export function TaskDetailWindow({
               retainedProjectId={retainedProjectId}
               dormant={dormant}
               parked={parked === true}
+              linkBrowser={linkBrowser}
             />
           )}
         </div>

@@ -132,8 +132,8 @@ msgid "OK"
 msgstr "確定"
 
 #: src/main/index.ts
-msgid "Open in my browser"
-msgstr "在我的瀏覽器中開啟"
+msgid "Open in default browser"
+msgstr ""
 
 #: src/main/index.ts
 msgid "Paste"

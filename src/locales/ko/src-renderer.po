@@ -482,7 +482,7 @@ msgstr "모든 필터 지우기"
 msgid "Clear search"
 msgstr "검색 지우기"
 
-#: src/renderer/utils/terminal-links/link-tip.ts
+#: src/renderer/utils/keybindings.ts
 msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
 msgid "Click"
 msgstr ""
@@ -1272,7 +1272,11 @@ msgid "Open a project first."
 msgstr "먼저 프로젝트를 여세요."
 
 #: src/renderer/utils/terminal-links/link-tip.ts
-msgid "Open in browser"
+msgid "Open in default browser"
+msgstr ""
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in Kangentic browser"
 msgstr ""
 
 #: src/renderer/pop-out/PopOutButton.tsx
@@ -1281,14 +1285,12 @@ msgid "Open in new window"
 msgstr "새 창에서 열기"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR #{prNumber} in browser"
-msgstr "브라우저에서 PR #{prNumber} 열기"
+msgid "Open PR #{prNumber} in default browser"
+msgstr ""
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
-msgid "Open PR in browser"
-msgstr "브라우저에서 PR 열기"
+msgid "Open PR in default browser"
+msgstr ""
 
 #: src/renderer/App.tsx
 #, fuzzy

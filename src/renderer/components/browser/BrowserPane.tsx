@@ -13,6 +13,7 @@ import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
 import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionStore } from '../../stores/session-store';
+import type { BrowserNavigateRequest } from '../../stores/session-store/task-changes-panel-slice';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { dictationPopupActions } from '../../hooks/useDictation';
 import { useAgentInputFocusGuard } from '../../utils/agent-input-focus-guard';
@@ -88,6 +89,18 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 's
     recordNavigation,
   } = useBrowserUrl(taskId, projectId, urlRefreshToken);
 
+  // A link the user clicked in this pane's terminal. With no page yet it takes
+  // the empty state's own path, the URL saved for the task, so the pane mounts
+  // on it; a showing page loads it through the webview (`BrowserPaneActive`).
+  // Optional read: the session store is pinned across a Fast Refresh, so a running
+  // dev app that predates this field holds a store without it until a reload.
+  const navigateRequest = useSessionStore((state) => state.browserNavigateRequests?.[taskId] ?? null);
+  useEffect(() => {
+    if (urlLoading || effectiveUrl || navigateRequest === null) return;
+    recordNavigation(navigateRequest.url);
+    useSessionStore.getState().clearBrowserNavigate(taskId, navigateRequest.id);
+  }, [urlLoading, effectiveUrl, navigateRequest, recordNavigation, taskId]);
+
   // Sync this task's cookie jar with the project identity jar BEFORE the guest
   // attaches, so the pane opens already signed into shared non-localhost (IdP)
   // sessions. A load boundary: it runs on each mount, so a reopened task picks up
@@ -155,6 +168,7 @@ export function BrowserPane({ sessionId, taskId, cwd, projectId, visibility = 's
       projectId={projectId}
       visibility={visibility}
       effectiveUrl={effectiveUrl}
+      navigateRequest={navigateRequest}
       projectDefault={projectDefault}
       saveForProject={saveForProject}
       recordNavigation={recordNavigation}
@@ -169,6 +183,8 @@ interface BrowserPaneActiveProps {
   projectId: string | null;
   visibility: BrowserPaneVisibility;
   effectiveUrl: string;
+  /** A link the user clicked in this pane's terminal, waiting to load. */
+  navigateRequest: BrowserNavigateRequest | null;
   projectDefault: string | null;
   saveForProject: (url: string) => Promise<void>;
   recordNavigation: (url: string) => void;
@@ -181,17 +197,22 @@ function BrowserPaneActive({
   projectId,
   visibility,
   effectiveUrl,
+  navigateRequest,
   projectDefault,
   saveForProject,
   recordNavigation,
 }: BrowserPaneActiveProps) {
-  const [urlInput, setUrlInput] = useState(effectiveUrl);
-  const [currentUrl, setCurrentUrl] = useState(effectiveUrl);
+  // A link clicked while the pane was closed is its first page.
+  const [firstUrl] = useState(() => navigateRequest?.url ?? effectiveUrl);
+  const [urlInput, setUrlInput] = useState(firstUrl);
+  const [currentUrl, setCurrentUrl] = useState(firstUrl);
   // Lock the initial `src` on first mount. Subsequent navigations go through
   // webview.loadURL() so the webview's internal history is preserved -
   // re-binding the `src` attribute on every render can collapse history to
   // a single step in some webview revisions.
-  const [initialSrc] = useState(effectiveUrl);
+  const [initialSrc] = useState(firstUrl);
+  // The request the mount took as its first page, so the effect below does not load it again.
+  const [mountRequestId] = useState(() => navigateRequest?.id ?? null);
   // Per-task persistent cookie jar, locked on mount (an Electron webview
   // partition cannot change after attach). Keyed by task identity so it follows
   // the task through any worktree path change; the identity jar shares the IdP
@@ -475,6 +496,24 @@ function BrowserPaneActive({
     });
   }, []);
 
+  // A link clicked in this pane's terminal: load it once the page can take a
+  // loadURL (from its first paint on), through the webview like the address bar,
+  // so the webview keeps its history and the address bar follows the navigation.
+  // The terminal only hands over an http(s) URL, so there is nothing to check
+  // here. The request the mount took as its first page only needs clearing.
+  useEffect(() => {
+    if (navigateRequest === null) return;
+    if (navigateRequest.id !== mountRequestId) {
+      // Kept until the first paint, when the page can take it.
+      if (!pageReady) return;
+      const url = navigateRequest.url;
+      webviewRef.current?.loadURL(url).catch(() => {
+        setError(i18n._(msg`Failed to load: ${url}`));
+      });
+    }
+    useSessionStore.getState().clearBrowserNavigate(taskId, navigateRequest.id);
+  }, [navigateRequest, mountRequestId, pageReady, taskId]);
+
   const handleUrlSubmit = useCallback((event: React.FormEvent) => {
     event.preventDefault();
     navigate(urlInput);
@@ -490,7 +529,7 @@ function BrowserPaneActive({
       await saveForProject(target);
       useToastStore.getState().addToast({
         title: i18n._(msg`Default URL saved`),
-        message: i18n._(msg`The browser pane opens it for this project.`),
+        message: i18n._(msg`The Kangentic browser opens it for this project.`),
         variant: 'success',
       });
     } catch (caught) {

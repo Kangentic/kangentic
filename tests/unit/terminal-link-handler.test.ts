@@ -1,39 +1,62 @@
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createTerminalLinkHandler } from '../../src/renderer/utils/terminal-link-handler';
 
-const fakeEvent = { ctrlKey: true, metaKey: false } as MouseEvent;
+// link-targets reads the hotkey overrides from the config store; every test here
+// hands in its combos instead, so the store only has to import.
+vi.mock('../../src/renderer/stores/config-store', () => ({ useConfigStore: { getState: () => ({}) } }));
+
+import { createTerminalLinkHandler } from '../../src/renderer/utils/terminal-link-handler';
+import { createTerminalLinkTargets, type TerminalLinkBrowser } from '../../src/renderer/utils/terminal-links/link-targets';
+
+const DEFAULT_COMBOS = { 'default-browser': 'Mod+Mouse:Left', 'kangentic-browser': 'Mod+Shift+Mouse:Left' };
+const ctrlClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
+const ctrlShiftClick = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: true } as MouseEvent;
+const plainClick = { ctrlKey: false, metaKey: false, altKey: false, shiftKey: false } as MouseEvent;
 const fakeRange = {} as never;
 
+function targets(openExternal: (url: string) => void, browser: TerminalLinkBrowser | null = null) {
+  return createTerminalLinkTargets({ getBrowser: () => browser, openExternal, readCombos: () => DEFAULT_COMBOS });
+}
+
 describe('createTerminalLinkHandler', () => {
-  it('opens on Ctrl or Cmd, and a plain click stays the TUI\'s', () => {
+  it('opens on the link hotkey, and a plain click stays the TUI\'s', () => {
     const openExternal = vi.fn();
-    const handler = createTerminalLinkHandler(openExternal);
-    handler.activate({ ctrlKey: false, metaKey: false } as MouseEvent, 'https://kangentic.com', fakeRange);
+    const handler = createTerminalLinkHandler(targets(openExternal));
+    handler.activate(plainClick, 'https://kangentic.com', fakeRange);
     expect(openExternal).not.toHaveBeenCalled();
-    handler.activate({ ctrlKey: false, metaKey: true } as MouseEvent, 'https://kangentic.com', fakeRange);
+    handler.activate(ctrlClick, 'https://kangentic.com', fakeRange);
     expect(openExternal).toHaveBeenCalledTimes(1);
   });
 
-  it('tells the gesture about a hover, so an OSC 8 click does not also reach the TUI', () => {
+  it('opens in the Kangentic browser on its hotkey, and in the default browser where the terminal has none', () => {
+    const openExternal = vi.fn();
+    const browser = { open: vi.fn() };
+    createTerminalLinkHandler(targets(openExternal, browser)).activate(ctrlShiftClick, 'http://localhost:5173/', fakeRange);
+    expect(browser.open).toHaveBeenCalledWith('http://localhost:5173/');
+    expect(openExternal).not.toHaveBeenCalled();
+
+    createTerminalLinkHandler(targets(openExternal)).activate(ctrlShiftClick, 'http://localhost:5173/', fakeRange);
+    expect(openExternal).toHaveBeenCalledWith('http://localhost:5173/');
+  });
+
+  it('tells the gesture about a hover with the link\'s URI, so the tip can say where it goes', () => {
     const gesture = { noteLinkHover: vi.fn(), noteLinkLeave: vi.fn() };
-    const handler = createTerminalLinkHandler(vi.fn(), gesture);
-    handler.hover?.(fakeEvent, 'https://kangentic.com', fakeRange);
-    handler.leave?.(fakeEvent, 'https://kangentic.com', fakeRange);
+    const handler = createTerminalLinkHandler(targets(vi.fn()), gesture);
+    handler.hover?.(ctrlClick, 'https://kangentic.com', fakeRange);
+    handler.leave?.(ctrlClick, 'https://kangentic.com', fakeRange);
     expect(gesture.noteLinkHover).toHaveBeenCalledTimes(1);
-    // An OSC 8 link opens in the browser, so its tip says so.
-    expect(gesture.noteLinkHover).toHaveBeenCalledWith({ event: fakeEvent, range: fakeRange, kind: 'url' });
+    expect(gesture.noteLinkHover).toHaveBeenCalledWith({ event: ctrlClick, range: fakeRange, kind: 'url', osc8Uri: 'https://kangentic.com' });
     expect(gesture.noteLinkLeave).toHaveBeenCalledTimes(1);
   });
 
   it.each([
     ['http', 'http://localhost:3000'],
     ['https', 'https://kangentic.com/docs'],
-  ])('opens %s links via the injected openExternal', (_label, url) => {
+  ])('opens %s links', (_label, url) => {
     const openExternal = vi.fn();
-    const handler = createTerminalLinkHandler(openExternal);
-    handler.activate(fakeEvent, url, fakeRange);
+    const handler = createTerminalLinkHandler(targets(openExternal));
+    handler.activate(ctrlClick, url, fakeRange);
     expect(openExternal).toHaveBeenCalledWith(url);
   });
 
@@ -43,24 +66,26 @@ describe('createTerminalLinkHandler', () => {
     ['data', 'data:text/html,<script>alert(1)</script>'],
     ['mailto', 'mailto:someone@example.com'],
     ['unparseable', 'not a url'],
-  ])('does not open %s links', (_label, url) => {
+  ])('does not open %s links, in either browser', (_label, url) => {
     const openExternal = vi.fn();
-    const handler = createTerminalLinkHandler(openExternal);
-    handler.activate(fakeEvent, url, fakeRange);
+    const browser = { open: vi.fn() };
+    const handler = createTerminalLinkHandler(targets(openExternal, browser));
+    handler.activate(ctrlClick, url, fakeRange);
+    handler.activate(ctrlShiftClick, url, fakeRange);
     expect(openExternal).not.toHaveBeenCalled();
+    expect(browser.open).not.toHaveBeenCalled();
   });
 
   it('does not set allowNonHttpProtocols', () => {
-    const handler = createTerminalLinkHandler(vi.fn());
+    const handler = createTerminalLinkHandler(targets(vi.fn()));
     expect(handler.allowNonHttpProtocols).toBeUndefined();
   });
 
   it('warns with the [terminal-link-handler] prefix for a blocked link', () => {
-    const openExternal = vi.fn();
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const handler = createTerminalLinkHandler(openExternal);
+    const handler = createTerminalLinkHandler(targets(vi.fn()));
 
-    handler.activate(fakeEvent, 'javascript:alert(1)', fakeRange);
+    handler.activate(ctrlClick, 'javascript:alert(1)', fakeRange);
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('[terminal-link-handler] Blocked link with disallowed scheme: javascript:alert(1)'),

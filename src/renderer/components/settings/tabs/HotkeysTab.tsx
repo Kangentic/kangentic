@@ -36,8 +36,8 @@ const HOTKEY_GROUP_CARDS = {
   'Task Detail': { label: msg`Task detail`, description: msg`Keys for an open task window.`, icon: <PanelTop size={16} /> },
   'Git Changes': { label: msg`Git changes`, description: msg`Keys for the Changes panel and its diff.`, icon: <FileDiff size={16} /> },
   'Windows': { label: msg({ message: 'Windows', context: 'task windows' }), description: msg`Moving between task windows and arranging them.`, icon: <AppWindow size={16} /> },
-  'Browser': { label: msg`Browser`, description: msg`Keys for a task's Browser pane.`, icon: <Globe size={16} /> },
-  'Terminal': { label: msg`Terminal`, description: msg`Copy, paste and interrupt inside a terminal.`, icon: <SquareTerminal size={16} /> },
+  'Browser': { label: msg`Browser`, description: msg`Keys for the Kangentic browser.`, icon: <Globe size={16} /> },
+  'Terminal': { label: msg`Terminal`, description: msg`Copy, paste, interrupt and open links in a terminal.`, icon: <SquareTerminal size={16} /> },
   'Developer': { label: msg`Developer`, description: msg`Debug tools in development builds.`, icon: <Bug size={16} /> },
 } satisfies Record<KeyGroup, { label: MessageDescriptor; description: MessageDescriptor; icon: React.ReactNode }>;
 
