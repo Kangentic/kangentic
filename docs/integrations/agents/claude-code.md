@@ -314,6 +314,7 @@ Known limits:
 - Measured on Windows only. The keys and the footer are Claude's own on every platform, but macOS and Linux have not been run.
 - The pane shows a snapshot while the bar is open. A permission prompt that opens meanwhile shows only as "dialog waiting" in Claude's footer; the card shows the waiting state as usual.
 - A resize or a window change while the bar is open reloads the terminal from what the pty host kept (its 512 KB ring, or the parsed grid and 500 lines), so part of the written-out conversation can drop out until the bar is opened again. The no-matches line reports the real line count.
+- The bar asks for the view when it opens over the alternate screen. One opened before the agent enters it (a shell that starts Claude while the bar is up) searches the screen until the bar is closed and opened again.
 - The reach is Claude's: the conversation since its last compaction. Anything older is in the Conversation viewer.
 - A paired phone streaming the session sees the written-out conversation while the bar is open, since its stream carries every byte.
 - A page reload with the bar open sends no close, so the pane keeps the written-out conversation until Ctrl+O in the pane puts Claude back. A closed or crashed window does close it.
