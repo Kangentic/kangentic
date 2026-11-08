@@ -254,15 +254,15 @@ describe('notifySpawnBlocked - every failure reaches the user', () => {
       makeTask(),
       'worktree',
       new Error(
-        "Cannot create worktree: this task's base branch 'nope' does not exist, locally or on origin. "
-        + `Pick a different base branch for the task, or create the branch. Branches found: ${branches}`,
+        "Cannot create worktree: this task's base 'nope' is not a branch, tag or commit, locally or on origin. "
+        + `Pick a different base for the task, or create the branch. Branches found: ${branches}`,
       ),
       'explicit-project',
     );
 
     const message = sentMessage(send);
     // The remediation sentence survives whole...
-    expect(message).toContain('Pick a different base branch for the task, or create the branch.');
+    expect(message).toContain('Pick a different base for the task, or create the branch.');
     // ...and the list is dropped cleanly rather than left as "Branches found:..."
     // (which promises a list and then shows nothing) or a half-printed name.
     expect(message).not.toContain('Branches found');

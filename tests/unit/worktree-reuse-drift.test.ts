@@ -14,7 +14,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
 
-const { mockEnsureWorktree, mockFetchIfStale, mockRunGitWithTimeout, mockRefResolvesLocally, mockIsInsideWorktree } = vi.hoisted(() => ({
+const { mockEnsureWorktree, mockFetchIfStale, mockRunGitWithTimeout, mockRefResolvesLocally, mockIsInsideWorktree, mockClassifyBaseRef } = vi.hoisted(() => ({
+  mockClassifyBaseRef: vi.fn(async (): Promise<{ kind: string; ref?: string; sha?: string }> => ({ kind: 'unresolved' })),
   mockEnsureWorktree: vi.fn(),
   mockFetchIfStale: vi.fn(),
   mockRunGitWithTimeout: vi.fn(),
@@ -50,6 +51,12 @@ vi.mock('../../src/main/git/git-checks', () => ({
 
 vi.mock('../../src/main/git/fetch-throttle', () => ({
   fetchIfStale: mockFetchIfStale,
+}));
+
+// Only the git-touching classifier is stubbed; the pure helpers stay real.
+vi.mock('../../src/main/git/base-ref', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/base-ref')>()),
+  classifyBaseRef: mockClassifyBaseRef,
 }));
 
 vi.mock('../../src/main/git/base-branch', () => ({
@@ -157,8 +164,41 @@ describe('worktree reuse drift probe', () => {
     mockEnsureWorktree.mockResolvedValue(REUSED);
     mockRefResolvesLocally.mockResolvedValue(true);
     mockIsInsideWorktree.mockReturnValue(true);
+    mockClassifyBaseRef.mockResolvedValue({ kind: 'branch' });
     fetchSucceeds();
     revListReturns(0, 0);
+  });
+
+  it.each([
+    ['tag', { kind: 'tag', ref: 'refs/tags/v2.4.0', sha: 'a'.repeat(40) }, 'v2.4.0'],
+    ['commit', { kind: 'commit', sha: 'b'.repeat(40) }, 'b'.repeat(40)],
+  ] as const)('a %s base runs no base fetch and sets no stale note', async (_label, classified, base) => {
+    const { context, window, send } = makeContext();
+    const task = makeTask({ base_branch: base });
+    emitSpawnProgress(window, task.id, 'starting-agent');
+    mockClassifyBaseRef.mockResolvedValue({ ...classified });
+    // Would pin "base 3 behind" and a fetch failure if the probe ran on.
+    revListReturns(3, 0);
+    mockFetchIfStale.mockImplementation(async (
+      _git: unknown, _path: string, branch: string,
+      options?: { onOutcome?: (outcome: FetchIfStaleOutcome) => void },
+    ) => {
+      options?.onOutcome?.({ kind: 'failed', reason: 'network', message: 'fatal: Could not resolve host: github.com' });
+      return branch;
+    });
+
+    await ensureTaskWorktree(context, task, stubTasksRepo, '/project');
+
+    // Anchor on the probe having reached its classification, then let it settle.
+    await vi.waitFor(() => {
+      expect(mockClassifyBaseRef).toHaveBeenCalledWith('/project', base);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(mockFetchIfStale).not.toHaveBeenCalled();
+    expect(mockRunGitWithTimeout).not.toHaveBeenCalled();
+    expect(getInFlightSpawnProgress()[task.id]).toBe('Starting agent...');
+    expect(send.mock.calls.filter((call) => call[0] === IPC.TASK_SPAWN_WARNING)).toHaveLength(0);
   });
 
   it('a behind worktree pins a "base N behind" note on the in-flight spawn label', async () => {
