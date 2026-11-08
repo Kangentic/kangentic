@@ -482,6 +482,11 @@ msgstr "Összes szűrő törlése"
 msgid "Clear search"
 msgstr "Keresés törlése"
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1266,6 +1271,10 @@ msgstr "nyitott"
 msgid "Open a project first."
 msgstr "Először nyisson meg egy projektet."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
@@ -1548,6 +1557,10 @@ msgstr "A beállítási szkript sikertelen volt"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "A Shift+kattintás másodlagos rendezést ad hozzá"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

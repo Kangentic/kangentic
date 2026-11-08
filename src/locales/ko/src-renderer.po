@@ -482,6 +482,11 @@ msgstr "모든 필터 지우기"
 msgid "Clear search"
 msgstr "검색 지우기"
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgctxt "mouse button, drawn as a key chip after Ctrl or Cmd"
+msgid "Click"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1266,6 +1271,10 @@ msgstr "열림"
 msgid "Open a project first."
 msgstr "먼저 프로젝트를 여세요."
 
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Open in browser"
+msgstr ""
+
 #: src/renderer/pop-out/PopOutButton.tsx
 #, fuzzy
 msgid "Open in new window"
@@ -1548,6 +1557,10 @@ msgstr "설정 스크립트 실패"
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"
 msgstr "Shift+클릭으로 보조 정렬 추가"
+
+#: src/renderer/utils/terminal-links/link-tip.ts
+msgid "Show in folder"
+msgstr ""
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

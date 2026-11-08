@@ -38,7 +38,7 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 ### Links
 
-Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your browser. The same click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and a plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
+Hold **Ctrl** (**Cmd** on macOS, where Ctrl+click is a right click) and click a URL in a terminal to open it in your browser. The same click on a file path that exists shows it in your file manager, with `:line` read and ignored. A link underlines under the pointer, and after a moment a tip shows what the click does. A plain click never opens one, so clicks in an agent's screen keep working. Paths in a session on a remote host do not link, and neither do network shares.
 
 ### Clipboard Paste
 

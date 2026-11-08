@@ -210,6 +210,11 @@ export function formatComboSegments(combo: string): string[] {
   return [...modifierSegments, mainSegment];
 }
 
+/** The key chip for `Mod`: the Command glyph on a Mac, Ctrl elsewhere. */
+export function primaryModifierLabel(isMac: boolean = IS_MAC): string {
+  return (isMac ? MAC_GLYPHS : OTHER_LABELS).Mod;
+}
+
 /** Flat display string for a combo (e.g. tooltips, aria-labels). */
 export function formatCombo(combo: string): string {
   const segments = formatComboSegments(combo);

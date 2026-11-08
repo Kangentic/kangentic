@@ -82,6 +82,8 @@ describe('createUrlLinkProvider', () => {
     link.hover?.(plainClick, link.text);
     link.leave?.(plainClick, link.text);
     expect(noteLinkHover).toHaveBeenCalledTimes(1);
+    // The tip reads where the link is and what a click on it does.
+    expect(noteLinkHover).toHaveBeenCalledWith({ event: plainClick, range: link.range, kind: 'url' });
     expect(noteLinkLeave).toHaveBeenCalledTimes(1);
   });
 });
@@ -114,6 +116,7 @@ describe('createPathLinkProvider', () => {
     expect(noteLinkHover).not.toHaveBeenCalled();
     link.hover?.(plainClick, link.text);
     expect(noteLinkHover).toHaveBeenCalledTimes(1);
+    expect(noteLinkHover).toHaveBeenCalledWith({ event: plainClick, range: link.range, kind: 'path' });
     expect(noteLinkLeave).not.toHaveBeenCalled();
     link.leave?.(plainClick, link.text);
     expect(noteLinkLeave).toHaveBeenCalledTimes(1);
@@ -271,5 +274,16 @@ describe('createTerminalLinkGesture', () => {
     gesture.noteLinkLeave();
     press({});
     expect(gesture.isClickingLink()).toBe(false);
+  });
+
+  it('hands a hovered link to the tip, and tells it when the pointer leaves', () => {
+    const gesture = createTerminalLinkGesture({ addEventListener: () => {} } as Pick<Window, 'addEventListener'>);
+    const tip = { show: vi.fn(), leave: vi.fn(), dispose: vi.fn() };
+    gesture.attach({ addEventListener: () => {} } as unknown as HTMLElement, tip);
+    const hover = { event: plainClick, range: { start: { x: 1, y: 1 }, end: { x: 9, y: 1 } }, kind: 'url' as const };
+    gesture.noteLinkHover(hover);
+    expect(tip.show).toHaveBeenCalledWith(hover);
+    gesture.noteLinkLeave();
+    expect(tip.leave).toHaveBeenCalledTimes(1);
   });
 });

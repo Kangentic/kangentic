@@ -5,6 +5,7 @@ import { useToastStore } from '../../stores/toast-store';
 import type { TerminalLinkGesture } from './link-gesture';
 import { createLinkPathCache } from './link-path-cache';
 import { createPathLinkProvider, createUrlLinkProvider } from './link-providers';
+import { createTerminalLinkTip } from './link-tip';
 
 function showPathGone(printedPath: string): void {
   useToastStore.getState().addToast({
@@ -15,12 +16,18 @@ function showPathGone(printedPath: string): void {
 }
 
 /**
- * Plain URLs and printed paths, in that order, behind xterm's own OSC 8 provider.
- * Registered once per terminal, and disposed with it. A session-less pane has no
- * working folder to resolve a path against, so it links URLs only.
+ * Plain URLs and printed paths, in that order, behind xterm's own OSC 8 provider,
+ * and the tip every link shows on hover. Registered once per terminal, and disposed
+ * with it. A session-less pane has no working folder to resolve a path against, so
+ * it links URLs only.
  */
 export function registerTerminalLinks(terminal: Terminal, gesture: TerminalLinkGesture, sessionId: string | null): void {
-  if (terminal.element) gesture.attach(terminal.element);
+  if (terminal.element) {
+    const tip = createTerminalLinkTip(terminal);
+    gesture.attach(terminal.element, tip);
+    // Disposed with the terminal, so a window closed under the pointer leaves no tip behind.
+    terminal.loadAddon({ activate: () => {}, dispose: () => tip.dispose() });
+  }
   terminal.registerLinkProvider(createUrlLinkProvider(
     terminal,
     gesture,

@@ -34,8 +34,8 @@ export function createUrlLinkProvider(
         links.push({
           range,
           text: parsed.url,
-          hover: gesture.noteLinkHover,
-          leave: gesture.noteLinkLeave,
+          hover: (event) => gesture.noteLinkHover({ event, range, kind: 'url' }),
+          leave: () => gesture.noteLinkLeave(),
           activate: (event, url) => {
             if (!isLinkOpenGesture(event)) return;
             if (isAllowedExternalUrl(url, TERMINAL_LINK_SCHEMES)) openExternal(url);
@@ -77,8 +77,8 @@ export function createPathLinkProvider(
           links.push({
             range,
             text: line.text.slice(parsed.start, parsed.end),
-            hover: gesture.noteLinkHover,
-            leave: gesture.noteLinkLeave,
+            hover: (event) => gesture.noteLinkHover({ event, range, kind: 'path' }),
+            leave: () => gesture.noteLinkLeave(),
             activate: (event) => {
               if (isLinkOpenGesture(event)) revealPath(printedPath);
             },

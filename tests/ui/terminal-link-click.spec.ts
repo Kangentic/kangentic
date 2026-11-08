@@ -149,6 +149,84 @@ test('a printed path links only when it exists, and a Ctrl+click reveals the pri
 });
 
 /**
+ * A link's tip says what a Ctrl or Cmd click on it does. It is drawn outside React, in
+ * the page body, from xterm's own hover and leave, so only a browser shows it.
+ */
+test('hovering a URL shows what a Ctrl+click does, and the click closes the tip', async () => {
+  const { browser, page } = await launch();
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    const tip = page.getByTestId('terminal-link-tip');
+    await expect(tip).toBeVisible({ timeout: 5000 });
+    await expect(tip).toHaveText(/Open in browser/u);
+    await expect(tip.locator('kbd')).toHaveText([/^(Ctrl|⌘)$/u, 'Click']);
+    // It sits beside the row it points at, never over the pointer.
+    const screen = (await terminalScreen(page).boundingBox())!;
+    const tipBox = (await tip.boundingBox())!;
+    const pointerY = screen.y + 6;
+    expect(tipBox.y + tipBox.height <= pointerY || tipBox.y >= pointerY).toBe(true);
+
+    await ctrlClick(page);
+
+    await expect(tip).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []))
+      .toEqual([URL_TEXT]);
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
+ * A busy agent repaints its screen many times a second. Each repaint over the link's
+ * row makes xterm's Linkifier leave the link and hover it again in the same tick, so a
+ * tip that restarts its dwell on every hover would never show while the agent works.
+ */
+test('a link\'s tip still shows while the agent keeps repainting its row', async () => {
+  const { browser, page } = await launch();
+  try {
+    await drawFirstRow(page, URL_TEXT);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    await page.evaluate(({ sessionId, row }) => {
+      const fire = (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData;
+      (window as unknown as { __repaintTimer: number }).__repaintTimer = window.setInterval(() => fire(sessionId, row), 100);
+    }, { sessionId: SESSION_ID, row: `\x1b[1;1H${URL_TEXT}` });
+    try {
+      await expect(page.getByTestId('terminal-link-tip')).toBeVisible({ timeout: 3000 });
+    } finally {
+      await page.evaluate(() => window.clearInterval((window as unknown as { __repaintTimer: number }).__repaintTimer));
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a path link\'s tip says it shows the file, and moving off the link closes it', async () => {
+  const { browser, page } = await launch();
+  try {
+    await page.evaluate(() => { (window as unknown as { __mockLinkPaths: string[] }).__mockLinkPaths = ['src/app.ts']; });
+    await drawFirstRow(page, PATH_TEXT);
+    await pointAtFirstRow(page);
+    await waitForLinkUnderPointer(page);
+
+    const tip = page.getByTestId('terminal-link-tip');
+    await expect(tip).toBeVisible({ timeout: 5000 });
+    await expect(tip).toHaveText(/Show in folder/u);
+
+    const screen = (await terminalScreen(page).boundingBox())!;
+    await page.mouse.move(screen.x + 300, screen.y + 100);
+
+    await expect(tip).toBeHidden();
+  } finally {
+    await browser.close();
+  }
+});
+
+/**
  * Only the press and release of a claimed click are swallowed. Whatever else the
  * terminal reports or types while the button is held still has to reach the TUI.
  */

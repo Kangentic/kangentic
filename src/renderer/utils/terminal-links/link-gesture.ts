@@ -14,6 +14,7 @@
  */
 
 import { IS_MAC } from '../keybindings';
+import type { LinkHover, TerminalLinkTip } from './link-tip';
 
 /**
  * Cmd, or Ctrl off a Mac. A plain click in a terminal selects or belongs to the TUI,
@@ -24,10 +25,14 @@ export function isLinkOpenGesture(event: Pick<MouseEvent, 'ctrlKey' | 'metaKey'>
 }
 
 export interface TerminalLinkGesture {
-  noteLinkHover(): void;
+  /** `hover` says where the link is, for its tip. Without it only the click claim follows the hover. */
+  noteLinkHover(hover?: LinkHover): void;
   noteLinkLeave(): void;
-  /** Starts watching presses on the terminal's element, which takes the listener with it on dispose. */
-  attach(element: HTMLElement): void;
+  /**
+   * Starts watching presses on the terminal's element, which takes the listener with it on
+   * dispose, and shows `tip` for each hovered link.
+   */
+  attach(element: HTMLElement, tip?: TerminalLinkTip): void;
   /** True from a Ctrl or Cmd press on a link until that press has been released. */
   isClickingLink(): boolean;
 }
@@ -35,6 +40,7 @@ export interface TerminalLinkGesture {
 export function createTerminalLinkGesture(eventTarget: Pick<Window, 'addEventListener'> = window): TerminalLinkGesture {
   let hoveringLink = false;
   let clickingLink = false;
+  let linkTip: TerminalLinkTip | null = null;
 
   const release = (): void => {
     // After this dispatch, so the report xterm's own mouseup listener makes on
@@ -45,13 +51,16 @@ export function createTerminalLinkGesture(eventTarget: Pick<Window, 'addEventLis
   };
 
   return {
-    noteLinkHover: () => {
+    noteLinkHover: (hover) => {
       hoveringLink = true;
+      if (hover) linkTip?.show(hover);
     },
     noteLinkLeave: () => {
       hoveringLink = false;
+      linkTip?.leave();
     },
-    attach: (element) => {
+    attach: (element, tip) => {
+      linkTip = tip ?? null;
       // Capture phase, ahead of xterm's listeners on the same subtree, because
       // xterm reports the press synchronously from its own.
       element.addEventListener('mousedown', (event) => {

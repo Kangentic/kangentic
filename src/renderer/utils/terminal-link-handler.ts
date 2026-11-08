@@ -31,7 +31,7 @@ export function createTerminalLinkHandler(
       }
       openExternal(uri);
     },
-    hover: () => gesture?.noteLinkHover(),
+    hover: (event, _text, range) => gesture?.noteLinkHover({ event, range, kind: 'url' }),
     leave: () => gesture?.noteLinkLeave(),
   };
 }

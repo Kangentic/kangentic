@@ -22,6 +22,8 @@ describe('createTerminalLinkHandler', () => {
     handler.hover?.(fakeEvent, 'https://kangentic.com', fakeRange);
     handler.leave?.(fakeEvent, 'https://kangentic.com', fakeRange);
     expect(gesture.noteLinkHover).toHaveBeenCalledTimes(1);
+    // An OSC 8 link opens in the browser, so its tip says so.
+    expect(gesture.noteLinkHover).toHaveBeenCalledWith({ event: fakeEvent, range: fakeRange, kind: 'url' });
     expect(gesture.noteLinkLeave).toHaveBeenCalledTimes(1);
   });
 

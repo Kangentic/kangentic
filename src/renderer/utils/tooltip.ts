@@ -1,9 +1,19 @@
 /**
  * The pure half of `Tooltip` (components/Tooltip.tsx): its timing, where it sits, what a
- * screen reader hears, and the one-tip-at-a-time state every instance shares.
+ * screen reader hears, its classes, and the one-tip-at-a-time state every instance shares.
  *
  * No DOM imports, so the unit tier and the UI spec read the same numbers the component runs on.
  */
+
+/** Every tip: fixed above everything, never hit by the pointer. Positioned imperatively. */
+export const TIP_BASE_CLASS = 'pointer-events-none fixed left-0 top-0 z-[2147483646] rounded-md text-xs shadow-tooltip';
+/** The label shape: inverted, wrapping at 280px (or the window, if narrower). */
+export const LABEL_TIP_CLASS = 'w-max max-w-[min(280px,calc(100vw-16px))] bg-fg px-2 py-1 leading-4 text-surface';
+/** The label shape's row: the optional icon, the text, then the key chips. */
+export const LABEL_TIP_ROW_CLASS = 'flex items-start gap-1.5';
+export const LABEL_TIP_TEXT_CLASS = 'min-w-0 whitespace-pre-line break-words';
+export const TIP_KEYS_CLASS = 'ml-1 flex shrink-0 items-center gap-0.5 self-center';
+export const KEY_CHIP_CLASS = 'inline-flex h-4 min-w-4 items-center justify-center rounded-[3px] border border-tooltip-chip-edge bg-tooltip-chip px-1 font-sans text-[11px] font-medium leading-none text-surface';
 
 /** Hover dwell before a cold tip opens. Long enough that sweeping across a row of icons shows nothing. */
 export const TOOLTIP_DWELL_MS = 400;

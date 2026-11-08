@@ -10,7 +10,7 @@
  * has gone that does nothing and says nothing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ILink, ILinkProvider, Terminal as XtermTerminal } from '@xterm/xterm';
+import type { ILink, ILinkProvider, ITerminalAddon, Terminal as XtermTerminal } from '@xterm/xterm';
 import { Terminal } from '@xterm/headless';
 import { activateUnicode11 } from '../../src/shared/xterm-unicode11';
 
@@ -34,6 +34,7 @@ const ctrlClick = { ctrlKey: true, metaKey: false } as MouseEvent;
 interface Harness {
   stub: XtermTerminal;
   providers: ILinkProvider[];
+  addons: ITerminalAddon[];
   gesture: TerminalLinkGesture;
   attach: ReturnType<typeof vi.fn>;
 }
@@ -43,11 +44,14 @@ async function harness(text: string, element: HTMLElement | undefined): Promise<
   activateUnicode11(headless);
   await new Promise<void>((resolve) => headless.write(text, resolve));
   const providers: ILinkProvider[] = [];
+  const addons: ITerminalAddon[] = [];
   const stub = {
     get cols() { return headless.cols; },
+    get rows() { return headless.rows; },
     get buffer() { return headless.buffer; },
     element,
     registerLinkProvider: (provider: ILinkProvider) => { providers.push(provider); return { dispose: () => {} }; },
+    loadAddon: (addon: ITerminalAddon) => { addons.push(addon); },
   } as unknown as XtermTerminal;
   const attach = vi.fn();
   const gesture: TerminalLinkGesture = {
@@ -56,7 +60,12 @@ async function harness(text: string, element: HTMLElement | undefined): Promise<
     attach,
     isClickingLink: () => false,
   };
-  return { stub, providers, gesture, attach };
+  return { stub, providers, addons, gesture, attach };
+}
+
+/** An element that takes the listeners the link tip adds, and nothing else. */
+function stubElement(): HTMLElement {
+  return { addEventListener: vi.fn() } as unknown as HTMLElement;
 }
 
 function linksFrom(provider: ILinkProvider, row: number): Promise<ILink[] | undefined> {
@@ -124,18 +133,29 @@ describe('registerTerminalLinks providers', () => {
 });
 
 describe('registerTerminalLinks gesture', () => {
-  it('attaches the gesture to the terminal element when it exists', async () => {
-    const element = {} as HTMLElement;
+  it('attaches the gesture to the terminal element when it exists, with the link tip', async () => {
+    const element = stubElement();
     const { stub, gesture, attach } = await harness('', element);
     registerTerminalLinks(stub, gesture, SESSION_ID);
     expect(attach).toHaveBeenCalledTimes(1);
-    expect(attach).toHaveBeenCalledWith(element);
+    expect(attach).toHaveBeenCalledWith(element, expect.objectContaining({ show: expect.any(Function) }));
+  });
+
+  it('disposes the link tip with the terminal, so a closed window leaves no tip in the page', async () => {
+    const { stub, addons, gesture, attach } = await harness('', stubElement());
+    registerTerminalLinks(stub, gesture, SESSION_ID);
+    const tip = attach.mock.calls[0][1] as { dispose: () => void };
+    const dispose = vi.spyOn(tip, 'dispose');
+    expect(addons).toHaveLength(1);
+    addons[0].dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('attaches nothing while the terminal has no element yet', async () => {
-    const { stub, gesture, attach } = await harness('', undefined);
+    const { stub, addons, gesture, attach } = await harness('', undefined);
     registerTerminalLinks(stub, gesture, SESSION_ID);
     expect(attach).not.toHaveBeenCalled();
+    expect(addons).toEqual([]);
   });
 });
 

@@ -14,6 +14,7 @@ sources:
   - resource: src/renderer/utils/terminal-links/link-gesture.ts
   - resource: src/renderer/utils/terminal-links/link-path-cache.ts
   - resource: src/renderer/utils/terminal-links/link-providers.ts
+  - resource: src/renderer/utils/terminal-links/link-tip.ts
   - resource: src/renderer/utils/terminal-links/parse-links.ts
   - resource: src/renderer/utils/terminal-links/register-terminal-links.ts
   - resource: src/main/terminal-links/resolve-link-path.ts
@@ -131,6 +132,17 @@ A terminal has three link sources, in xterm's provider order, and an earlier one
 OSC 8, printed URLs, then printed paths. All three open on Ctrl or Cmd click, and on a Mac on Cmd
 alone, because Ctrl+click there is a right click and opens the context menu. xterm's Linkifier
 activates on any click, so each `activate` checks the modifier itself.
+
+**The hover tip.** A link under the pointer shows "Open in browser" (a URL) or "Show in folder" (a
+path), with the modifier and Click as key chips. `Tooltip` cannot draw it, because it wraps a DOM
+element and a link is cells xterm paints, reported through `hover` and `leave` from outside React.
+So `terminal-links/link-tip.ts` draws the same label tip into the page body with Tooltip's classes,
+dwell, placement and one-tip slot, over the cells of the row under the pointer. A repaint over the
+link's row makes the Linkifier leave the link and hover it again in the same tick, so a leave closes
+the tip only on the next tick, and the same link coming back keeps the tip and its dwell. Without
+that, a busy agent restarted the dwell on every frame and the tip never showed. A press, the wheel,
+Escape (which it lets through to the agent) or the terminal's disposal closes it at once, and a
+press keeps it shut until the pointer leaves the link.
 
 **Why Claude sessions carry `FORCE_HYPERLINK=1`.** Claude Code emits OSC 8 only when it detects a
 terminal that supports it. On Windows that means `WT_SESSION`, elsewhere a known `TERM_PROGRAM`, and
