@@ -21,6 +21,8 @@ import { escapeOwnedElsewhere } from '../../../../utils/escape-ownership';
 import { openChangesFileWindow } from './open-file-window';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { MousePointerClick } from 'lucide-react';
+import { shortRefLabel, useBaseRefKind } from '../../../../hooks/useBaseRefKind';
+import { BaseKindIcon } from './BaseKindIcon';
 import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileHistoryCommit, GitTaskChangesResult, Task } from '../../../../../shared/types';
 import { DiffContentCache, EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, type DiffContent, type DiffContentScope } from './diff-content';
 
@@ -788,7 +790,11 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // selected: the top bar does not change with the selection.
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const isCustomBase = !!task?.base_branch && task.base_branch !== (defaultBaseBranch || 'main');
-  const baseLabel = baseBranch;
+  // A custom base can be a tag or a commit: the badge draws its icon, and a
+  // commit reads as its short SHA. The default base is always a branch.
+  const baseRef = useBaseRefKind(isCustomBase ? baseBranch : '', filePopOutParams?.projectId ?? null, isCustomBase);
+  const baseLabelKind = baseRef?.kind ?? 'branch';
+  const baseLabel = shortRefLabel(baseBranch, baseRef?.kind);
 
   // The top bar's branch context. A completed task's is its result's branch,
   // with no ahead/behind: there is no checkout for those to describe.
@@ -963,11 +969,13 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       {baseLabel && (
         <Tooltip label={isCustomBase ? t`Based on ${baseLabel}, not the project default` : t`Based on ${baseLabel}, the project default`}>
           <span
-            className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${
+            className={`inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-px text-[11px] font-medium leading-none ${
               isCustomBase ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
             }`}
             data-testid="changes-base-label"
+            data-base-kind={baseLabelKind}
           >
+            <BaseKindIcon kind={baseLabelKind} />
             {baseLabel}
           </span>
         </Tooltip>
@@ -1062,6 +1070,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               selection={selectionBar}
               baseLabel={baseLabel}
               baseLabelCustom={isCustomBase}
+              baseLabelKind={baseLabelKind}
               loaded={loaded}
               // A completed task's files are history, maybe nowhere on disk:
               // no open / reveal, and no per-file history over a checkout.

@@ -35,7 +35,12 @@ All git commands below run from the **current working directory** - never use `c
    - If `HEAD` (detached) → warn the user and stop.
 3. **Worktree mode only:** Derive the project root by walking up from the worktree path - the project root is two directories above `.kangentic/worktrees/<slug>/` (i.e., strip `.kangentic/worktrees/<slug>` from the worktree path).
 4. Determine the source branch:
-   - **Worktree mode:** `git config kangentic.baseBranch` (fallback: `main`)
+   - **Worktree mode:** `git config kangentic.baseBranch` (fallback: `main`). A task based on a
+     tag or a commit has no branch to push to. When
+     `git show-ref --verify --quiet refs/remotes/origin/<value>` fails, use origin's default branch
+     (`git symbolic-ref --short refs/remotes/origin/HEAD`, minus the `origin/` prefix) and say so
+     in one line. When `origin/HEAD` is not set (`symbolic-ref` fails), use `main`, or `master`
+     when only that one is on origin.
    - **Main repo mode:** same as the current branch (push to own remote tracking branch)
 5. Run `git status --porcelain` to check for uncommitted changes.
 

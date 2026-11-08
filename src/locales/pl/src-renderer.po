@@ -1157,6 +1157,14 @@ msgstr "Przeniesiono „{taskTitle}” do następnej kolumny."
 msgid "Moving project folder..."
 msgstr "Przenoszenie folderu projektu..."
 
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a commit in the project folder"
+msgstr ""
+
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy
 msgid "New conversation"

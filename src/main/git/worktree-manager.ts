@@ -1,8 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { slugify, computeAutoBranchName } from '../../shared/slugify';
-import type { WorktreeSkipReason } from '../../shared/types';
+import { slugify, computeAutoBranchName, hasAutoBranchShape } from '../../shared/slugify';
+import type { GitBranchChoice, WorktreeSkipReason } from '../../shared/types';
 import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { GitUserStateError, StaleWorktreeDirectoryError, isRepositoryStateRefusal } from './worktree-errors';
@@ -10,6 +10,7 @@ import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './
 import { abortWorktreeSetup, isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
+import { classifyBaseRef, fixedBaseStartPoint, isFixedBase, preferredBranchStartPoint } from './base-ref';
 import { linkNodeModules } from './node-modules-link';
 import { clearMovedWorktreeLinks, clearWorktreeLinks, linkWorktreeFolders } from './worktree-links';
 import { hasGlobMagic, isClaudePath, linkedFoldersOf, normalizeEntry } from './worktree-copy/entry-path';
@@ -1106,6 +1107,16 @@ export class WorktreeManager {
     options?: { signal?: AbortSignal; verifiedStartPoint?: string; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
   ): Promise<string> {
     const fetchStartedAt = Date.now();
+    // A tag or a commit does not move, so there is nothing to fetch: `git fetch
+    // origin <sha>` would only report a failure (and pin a stale-base note on
+    // the spawn) for a base that is exactly where the user put it. The tag's
+    // full ref, not its bare name, so a branch of the same name cannot shadow it.
+    const baseRef = await classifyBaseRef(this.projectPath, baseBranch);
+    if (isFixedBase(baseRef)) {
+      logCreateStep('fetch', fetchStartedAt, ` (skipped: ${baseRef.kind} base)`);
+      options?.signal?.throwIfAborted();
+      return fixedBaseStartPoint(baseRef);
+    }
     const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
       signal: options?.signal,
       onOutcome: options?.onFetchOutcome,
@@ -1117,8 +1128,13 @@ export class WorktreeManager {
     // success it reports the fetch PROCESS exit code, which is not the same as the ref landing
     // in refs/remotes/origin/ (a narrowed remote.origin.fetch refspec, or a fetch that only
     // populated FETCH_HEAD, both exit 0). resolveWorktreeBase re-verifies for the same reason.
+    //
+    // A landed fetch still yields to a local base that is AHEAD of origin (a
+    // merge not pushed yet): origin unless local is ahead, the rule
+    // `preferredBranchStartPoint` holds for every cut.
     const startPoint = fetched === `origin/${baseBranch}` && await refResolvesLocally(this.projectPath, fetched)
-      ? fetched
+      // The fetch can move origin, never the local branch, so its sha is reused.
+      ? (await preferredBranchStartPoint(this.projectPath, baseBranch, { localSha: baseRef.kind === 'branch' ? baseRef.localSha : null }) ?? fetched)
       : (options?.verifiedStartPoint ?? fetched);
     logCreateStep('fetch', fetchStartedAt);
     options?.signal?.throwIfAborted();
@@ -1760,6 +1776,31 @@ export class WorktreeManager {
     try {
       await runGitWithTimeout(this.projectPath, ['branch', '-D', branchName], GIT_REMOVAL_TIMEOUT_MS);
     } catch { /* branch may not exist, or git hung and was killed */ }
+  }
+
+  /**
+   * The base picker's list: origin's branches newest first, then the local
+   * branches origin does not have, newest first and marked `local`. A local
+   * branch shaped like a task's own (`hasAutoBranchShape`) is left out: every
+   * task leaves one, and they would bury the rest. Any of them can still be
+   * typed into the picker.
+   */
+  async listBranchChoices(): Promise<GitBranchChoice[]> {
+    // `lstrip=2`, not `short`: a short name is disambiguated, so a branch that
+    // shares its name with a tag would list as `heads/<name>`.
+    const [remote, localRaw] = await Promise.all([
+      this.listRemoteBranches(),
+      this.git.raw(['for-each-ref', '--sort=-committerdate', '--format=%(refname:lstrip=2)', 'refs/heads/'])
+        .catch(() => ''), // no local list, origin's alone
+    ]);
+    const remoteNames = new Set(remote);
+    const localOnly = localRaw.split('\n')
+      .map((line) => line.trim())
+      .filter((name) => name && !remoteNames.has(name) && !hasAutoBranchShape(name));
+    return [
+      ...remote.map((name) => ({ name, local: false })),
+      ...localOnly.map((name) => ({ name, local: true })),
+    ];
   }
 
   /**

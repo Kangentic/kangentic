@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
+import { BaseKindIcon } from './BaseKindIcon';
 import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
@@ -59,6 +60,8 @@ interface FileTreePanelProps {
    *  more surprising case, rendered with a stronger accent tone than the
    *  default-base case so it actually draws the eye. */
   baseLabelCustom?: boolean;
+  /** What the base names: a tag or a commit draws its icon in the badge. */
+  baseLabelKind?: 'branch' | 'tag' | 'commit';
   /** Whether the first file-list fetch has settled. Before it has, an empty
    *  list renders skeleton rows rather than the settled "0 files" empty shape
    *  (which would otherwise flash a false negative during the initial load).
@@ -849,10 +852,12 @@ function BranchHeader({
   branchSummary,
   baseLabel,
   baseLabelCustom,
+  baseLabelKind = 'branch',
 }: {
   branchSummary?: GitBranchSummaryResult | null;
   baseLabel?: string;
   baseLabelCustom?: boolean;
+  baseLabelKind?: 'branch' | 'tag' | 'commit';
 }) {
   const { t } = useLingui();
   const branch = branchSummary?.currentBranch;
@@ -875,11 +880,13 @@ function BranchHeader({
         {baseLabel && (
           <Tooltip label={baseLabelCustom ? t`Based on ${baseLabel}, not the project default` : t`Based on ${baseLabel}, the project default`}>
             <span
-              className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
+              className={`inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
                 baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
               }`}
               data-testid="changes-base-label"
+              data-base-kind={baseLabelKind}
             >
+              <BaseKindIcon kind={baseLabelKind} />
               {baseLabel}
             </span>
           </Tooltip>
@@ -925,6 +932,7 @@ export function FileTreePanel({
   onScopeChange,
   baseLabel,
   baseLabelCustom,
+  baseLabelKind,
   selection,
   loaded = true,
   worktreePath,
@@ -1020,7 +1028,7 @@ export function FileTreePanel({
       {/* Branch context + refresh. Suppressed in the task-detail embed, where the
           shared surface header owns this context (see showBranchHeader). */}
       {showBranchHeader && (
-        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
+        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} baseLabelKind={baseLabelKind} />
       )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control

@@ -436,6 +436,14 @@ msgstr "基础分支"
 msgid "Base branch: {displayBranch}"
 msgstr "基础分支：{displayBranch}"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base commit: {baseCommitSha}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base tag: {displayBranch}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "Base: {baseBranch}"
 msgstr "基础分支：{baseBranch}"
@@ -544,6 +552,10 @@ msgstr "更改 - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "更改已在单独的窗口中打开"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Checking <0>{trimmedQuery}</0>..."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Choose icon"
@@ -1101,6 +1113,10 @@ msgctxt "process state"
 msgid "Ended"
 msgstr "已结束"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Enter"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
 msgid "Error"
@@ -1375,6 +1391,11 @@ msgstr "正在加载分支…"
 msgid "Loading icons"
 msgstr "正在加载图标"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgctxt "a branch only this machine has"
+msgid "local"
+msgstr ""
+
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "Locate Folder..."
 msgstr "查找文件夹…"
@@ -1639,6 +1660,10 @@ msgstr "无"
 msgid "None is available for this repository."
 msgstr "此仓库没有可用的 PR 解析器。"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Not a branch, tag or commit SHA"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Not image data"
 msgstr "非图像数据"
@@ -1684,6 +1709,10 @@ msgstr "任务进入 {columnName} 时不运行任何操作。"
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Nothing to search by"
 msgstr "没有可供搜索的依据"
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing to update from"
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgid "On enter"
@@ -2146,6 +2175,10 @@ msgstr "搜索图标…"
 msgid "Search tasks..."
 msgstr "搜索任务…"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Search, or type a tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Select a commit to see its changes"
 msgstr "选择一个提交以查看其更改"
@@ -2348,6 +2381,10 @@ msgstr "正在启动智能体..."
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
 msgstr "当你移动任务或任务离开「已完成」时重新计数；由智能体或自动化将其移到别处时不会重新计数。"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Starts with a dash, so git would read it as an option"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
 msgid "Status"
@@ -2449,6 +2486,22 @@ msgstr "文本匹配"
 msgid "The agent CLI this task runs on"
 msgstr "此任务运行所用的智能体 CLI"
 
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the commit {shortBase}, which does not move"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {baseLabel}, which does not move."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The base is the tag {shortBase}, which does not move"
+msgstr ""
+
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 msgid "The description is too long to start an agent with."
 msgstr ""
@@ -2508,6 +2561,10 @@ msgstr "此提交未更改任何文件"
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "此项现由列的设置处理。移除此项即可使用列设置。"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "This project is not a git repository"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "This task has no branch, commit or PR number yet."
@@ -2614,6 +2671,10 @@ msgstr "轮次"
 msgid "Type"
 msgstr "类型"
 
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Type a branch, tag or commit"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "更改的像素不足 0.1%"
@@ -2667,6 +2728,10 @@ msgstr "更新了列顺序"
 msgctxt "tab"
 msgid "Usage"
 msgstr "用量"
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Use <0>{trimmedQuery}</0>"
+msgstr ""
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
 msgid "Version {updateVersion} is ready to install"

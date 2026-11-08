@@ -1157,6 +1157,14 @@ msgstr "Se movió \"{taskTitle}\" a la siguiente columna."
 msgid "Moving project folder..."
 msgstr "Moviendo la carpeta del proyecto..."
 
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a commit in the project folder"
+msgstr ""
+
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Name a branch to start from a tag in the project folder"
+msgstr ""
+
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy
 msgid "New conversation"

@@ -131,6 +131,29 @@ describe('resolveTaskChanges', () => {
     expect(result.files.map((file) => file.path).sort()).toEqual(['src/app.ts', 'src/feature.ts']);
   });
 
+  // A base can be a tag or a commit (base-ref.ts). Before, only refs/heads/<base>
+  // and refs/remotes/origin/<base> were tried, so either read as no base at all
+  // and the panel said the task had no commits.
+  it.each([
+    ['a tag', (tagged: string) => { run(['tag', '-a', 'v1.2.0', '-m', 'release', tagged]); return 'v1.2.0'; }],
+    ['a full commit SHA', (tagged: string) => tagged],
+    ['a short commit SHA', (tagged: string) => tagged.slice(0, 7)],
+  ])('an unmerged branch cut from %s is the range from that commit to its tip', async (_label, nameBase) => {
+    const baseCommit = run(['rev-parse', 'HEAD']);
+    const baseBranch = nameBase(baseCommit);
+    commit('main moves on', { 'src/main-only.ts': 'm\n' });
+    run(['checkout', '-q', '-b', 'task-branch', baseCommit]);
+    commit('task: one', { 'src/app.ts': 'one\nedited\n' });
+    const tip = commit('task: two', { 'src/feature.ts': 'f\n' });
+    run(['checkout', '-q', 'main']);
+
+    const result = await resolveTaskChanges(input({ baseBranch, branchName: 'task-branch' }));
+
+    expect(result.emptyReason).toBeNull();
+    expect(result.range).toEqual({ base: baseCommit, head: tip });
+    expect(result.files.map((file) => file.path).sort()).toEqual(['src/app.ts', 'src/feature.ts']);
+  });
+
   it('the branch\'s reflog creation point beats a merge-base a base rewrite moved back', async () => {
     commit('shared history', { 'src/shared.ts': 's\n' });
     const mergeBaseAfterRewrite = run(['rev-parse', 'HEAD~1']);

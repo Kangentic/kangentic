@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const harness = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   worktreeManagerPaths: [] as string[],
+  lockedPaths: [] as string[],
 }));
 
 vi.mock('electron', () => ({
@@ -57,11 +58,17 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
       harness.worktreeManagerPaths.push(projectPath);
     }
 
-    async listRemoteBranches(): Promise<string[]> {
-      return ['main'];
+    async listBranchChoices(): Promise<Array<{ name: string; local: boolean }>> {
+      return [{ name: 'main', local: false }];
+    }
+
+    static async withGitLock<T>(projectPath: string, operation: () => Promise<T>): Promise<T> {
+      harness.lockedPaths.push(projectPath);
+      return operation();
     }
   },
 }));
+vi.mock('../../src/main/git/base-ref', () => ({ resolveRefForDisplay: vi.fn() }));
 vi.mock('../../src/main/git/git-checks', () => ({ isGitRepo: vi.fn(() => true) }));
 vi.mock('../../src/main/git/git-fetch-scheduler', () => ({ gitFetchScheduler: { startForProject: vi.fn(), stop: vi.fn() } }));
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn() }));
@@ -79,6 +86,7 @@ vi.mock('../../src/main/retrieval/retrieval-service', () => ({
 import { registerBoardHandlers } from '../../src/main/ipc/handlers/board';
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
 import { getProjectRepos } from '../../src/main/ipc/helpers';
+import { resolveRefForDisplay } from '../../src/main/git/base-ref';
 import { IPC } from '../../src/shared/ipc-channels';
 
 const PROJECTS = [
@@ -167,11 +175,63 @@ describe('the read channels a planned task on another board reads through', () =
   });
 
   it('git:listBranches lists the open repository by default and another project\'s by its path', async () => {
-    await expect(invoke(IPC.GIT_LIST_BRANCHES, null)).resolves.toEqual(['main']);
-    await expect(invoke(IPC.GIT_LIST_BRANCHES, 'other')).resolves.toEqual(['main']);
+    await expect(invoke(IPC.GIT_LIST_BRANCHES, null)).resolves.toEqual([{ name: 'main', local: false }]);
+    await expect(invoke(IPC.GIT_LIST_BRANCHES, 'other')).resolves.toEqual([{ name: 'main', local: false }]);
     expect(harness.worktreeManagerPaths).toEqual(['/repo/current', '/repo/other']);
 
     await expect(invoke(IPC.GIT_LIST_BRANCHES, 'unregistered')).resolves.toEqual([]);
     expect(harness.worktreeManagerPaths).toHaveLength(2);
+  });
+
+  describe('git:resolveRef', () => {
+    const resolved = { ok: true, kind: 'tag', sha: 'abc1234' } as const;
+
+    beforeEach(() => {
+      harness.lockedPaths.length = 0;
+      vi.mocked(resolveRefForDisplay).mockReset();
+      vi.mocked(resolveRefForDisplay).mockResolvedValue(resolved);
+    });
+
+    it('resolves against the open project when no project id is given', async () => {
+      await expect(invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', null)).resolves.toEqual(resolved);
+      expect(resolveRefForDisplay).toHaveBeenCalledWith('/repo/current', 'v1.0.0');
+    });
+
+    it('resolves against another registered project\'s path by its id', async () => {
+      await invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'other');
+      expect(resolveRefForDisplay).toHaveBeenCalledWith('/repo/other', 'v1.0.0');
+    });
+
+    it('answers not-a-repo for an unregistered project without resolving anything', async () => {
+      await expect(invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'unregistered')).resolves.toMatchObject({ ok: false, reason: 'not-a-repo' });
+      expect(resolveRefForDisplay).not.toHaveBeenCalled();
+    });
+
+    it('answers empty for a non-string or blank ref', async () => {
+      await expect(invoke(IPC.GIT_RESOLVE_REF, 42, null)).resolves.toMatchObject({ ok: false, reason: 'empty' });
+      await expect(invoke(IPC.GIT_RESOLVE_REF, '   ', null)).resolves.toMatchObject({ ok: false, reason: 'empty' });
+      expect(resolveRefForDisplay).not.toHaveBeenCalled();
+    });
+
+    it('answers not-a-base for a ref longer than any real branch, tag or SHA', async () => {
+      await expect(invoke(IPC.GIT_RESOLVE_REF, 'a'.repeat(1025), null)).resolves.toMatchObject({ ok: false, reason: 'not-a-base' });
+      expect(resolveRefForDisplay).not.toHaveBeenCalled();
+    });
+
+    it('passes fetchTag through under the git lock only when the caller set it to true', async () => {
+      await invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'other', { fetchTag: true });
+      expect(resolveRefForDisplay).toHaveBeenLastCalledWith('/repo/other', 'v1.0.0', { fetchTag: true });
+      expect(harness.lockedPaths).toEqual(['/repo/other']);
+
+      await invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'other', {});
+      await invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'other', { fetchTag: 'yes' });
+      await invoke(IPC.GIT_RESOLVE_REF, 'v1.0.0', 'other');
+      expect(vi.mocked(resolveRefForDisplay).mock.calls.slice(1)).toEqual([
+        ['/repo/other', 'v1.0.0'],
+        ['/repo/other', 'v1.0.0'],
+        ['/repo/other', 'v1.0.0'],
+      ]);
+      expect(harness.lockedPaths).toEqual(['/repo/other']);
+    });
   });
 });
