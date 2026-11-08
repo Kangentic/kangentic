@@ -301,6 +301,56 @@ describe('HistoryViews.open, concurrent and unanswered', () => {
   });
 });
 
+describe('HistoryViews.open, a bar that closes and reopens while the first open is under way', () => {
+  it('cancels the close the first bar asked for, so the view the second bar opened stays open', async () => {
+    const agent = standInAgent();
+    const views = new HistoryViews(agent.dependencies(), FAST);
+
+    const first = views.open('session-1');
+    views.close('session-1');
+    const second = views.open('session-1');
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['opened', 'opened']);
+    // No third key: the second bar wants the written-out conversation, so the agent stays in it.
+    expect(agent.state.writes).toEqual(['\x0f', '[']);
+    expect(agent.state.view).toBe('written-out');
+    expect(views.isActive('session-1')).toBe(true);
+  });
+
+  it('answers opened without typing again when the view is already open', async () => {
+    const agent = standInAgent();
+    const views = new HistoryViews(agent.dependencies(), FAST);
+    await views.open('session-1');
+
+    await expect(views.open('session-1')).resolves.toBe('opened');
+    expect(agent.state.writes).toEqual(['\x0f', '[']);
+  });
+});
+
+describe('HistoryViews.open, when a key cannot be typed', () => {
+  it('answers not-running and leaves no mark when the toggle cannot be typed', async () => {
+    const agent = standInAgent();
+    agent.state.live = false;
+    const views = new HistoryViews(agent.dependencies(), FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('not-running');
+    expect(agent.state.writes).toEqual([]);
+    expect(views.isActive('session-1')).toBe(false);
+  });
+
+  it('answers not-running and leaves no mark when the write-out key cannot be typed', async () => {
+    const agent = standInAgent();
+    const dependencies = agent.dependencies();
+    const typeKeys = dependencies.write;
+    // The PTY goes after the toggle: only the write-out key fails.
+    dependencies.write = (sessionId: string, keys: string) => (keys === '[' ? false : typeKeys(sessionId, keys));
+    const views = new HistoryViews(dependencies, FAST);
+
+    await expect(views.open('session-1')).resolves.toBe('not-running');
+    expect(views.isActive('session-1')).toBe(false);
+  });
+});
+
 describe('CLAUDE_HISTORY_VIEW.isShowing', () => {
   it('reads transcript mode off the footer, at 160 columns and cut at 60', () => {
     expect(CLAUDE_HISTORY_VIEW.isShowing(TRANSCRIPT_SCREEN)).toBe(true);

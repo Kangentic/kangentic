@@ -218,6 +218,24 @@ describe('ClaudeAdapter.runtime.permissionPrompts (task #640)', () => {
 });
 
 /**
+ * Pins that the Claude adapter declares its history view. The find bar's
+ * whole-conversation search reads `runtime.historyView` off the session's adapter
+ * (pty-host-core.ts, `viewFor`), and pty-host-core.test.ts drives a stand-in agent
+ * that declares it by hand, so dropping the field from the adapter would turn the
+ * feature off for Claude with no test failing.
+ */
+describe('ClaudeAdapter.runtime.historyView', () => {
+  it('declares Ctrl+O to open transcript mode and `[` to write the conversation out', () => {
+    const view = new ClaudeAdapter().runtime.historyView;
+    expect(view).toBeDefined();
+    expect(view?.toggleKeys).toBe('\x0f');
+    expect(view?.writeOutKeys).toBe('[');
+    expect(view?.isShowing(['', '  Showing detailed transcript · ctrl+o to toggle'])).toBe(true);
+    expect(view?.isShowing(['', '  ? for shortcuts'])).toBe(false);
+  });
+});
+
+/**
  * Pins that `ClaudeAdapter.parseTranscriptWindow` FORWARDS the caller's
  * usage-attribution carry to the parser.
  *
