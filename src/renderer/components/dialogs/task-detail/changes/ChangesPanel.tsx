@@ -18,7 +18,6 @@ import { ChangesChecksSection, checksSectionVisible } from './ChangesChecksSecti
 import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
 import { PrLink } from '../../../PrLink';
 import { usePrChecks } from '../../../../hooks/usePrChecks';
-import { useProjectStore } from '../../../../stores/project-store';
 import { useToastStore } from '../../../../stores/toast-store';
 import { CommitSelectionBar } from './CommitSelectionBar';
 import { CommitGraphPanel, type StaticCommitHistory } from '../graph/CommitGraphPanel';
@@ -870,8 +869,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const handleSendChecks = useCallback(() => {
     if (!task) return;
     setSendingChecks(true);
-    const projectId = checksProjectId ?? useProjectStore.getState().currentProject?.id ?? null;
-    window.electronAPI.tasks.sendPrChecks(task.id, projectId).then(
+    // The host's project id, passed down as popOutParams / filePopOutParams.
+    // The surface never reads the open board's project itself.
+    window.electronAPI.tasks.sendPrChecks(task.id, checksProjectId).then(
       (result) => {
         // Sent to a running agent: the message appearing in its terminal is
         // the confirmation, so no toast (toast-shape.md). Held is out of sight.
