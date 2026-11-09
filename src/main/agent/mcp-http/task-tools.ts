@@ -862,7 +862,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review"). The role columns (To Do, Done) can be renamed and restyled here like any other; their role itself is structural and not settable.'),
         name: z.string().max(100).optional().describe('New column name.'),
-        description: z.string().max(1000).nullable().optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json. Null to clear.'),
+        description: z.string().max(1000).nullable().optional().describe('What the column does and which work needs it, in a sentence or two. Shown as a header tooltip and shared with the team via kangentic.json. A workflow\'s planning agent reads it as the column\'s purpose when it chooses each task\'s route, and kangentic_list_columns prints it. Null to clear.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a").'),
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
@@ -911,7 +911,7 @@ export function registerTaskTools(
       description: 'Add a new swimlane (column) to the Kangentic board. By default it lands just before Done, which is where a new workflow stage almost always belongs. Column names must be unique (case-insensitive). Roles are structural and cannot be set: To Do and Done already exist on every board. A column that reviews, tests, or otherwise checks the work of an earlier column wants sessionTarget: "isolated", or its agent is the same one that did that work. Pass `project` to add a column to a different project.',
       inputSchema: z.object({
         name: z.string().max(100).describe('Column name, unique on this board (case-insensitive).'),
-        description: z.string().max(1000).optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json.'),
+        description: z.string().max(1000).optional().describe('What the column does and which work needs it, in a sentence or two. Shown as a header tooltip and shared with the team via kangentic.json. A workflow\'s planning agent reads it as the column\'s purpose when it chooses each task\'s route, and kangentic_list_columns prints it.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a"). Defaults to blue.'),
         icon: z.string().optional().describe('Lucide icon name.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent. Defaults to true.'),

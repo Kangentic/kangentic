@@ -150,7 +150,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `description` | string \| null | null | Free-form description of the column's purpose. Shown as a header tooltip and round-trips through `kangentic.json`. |
+| `description` | string \| null | null | What the column does and which work needs it. Shown as a header tooltip and round-trips through `kangentic.json`. A workflow's planning agent reads it as the column's purpose when it chooses a route. |
 | `permission_mode` | PermissionMode \| null | null | Permission mode override for this column |
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | RETIRED. The column's message to its agent is a `send_message` automation now, in `column_automations`. The migration moved every existing value into one and nulled this field; nothing reads it. See [Column automations](#column-automations). |
