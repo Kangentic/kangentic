@@ -802,9 +802,8 @@ msgid "On task exit"
 msgstr "Görev çıktığında"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Yapılacaklar ile Tamamlandı arasındaki her sütun için bir satır: ne çalıştırdığı ve son görevlerin ondan nasıl geçtiği."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

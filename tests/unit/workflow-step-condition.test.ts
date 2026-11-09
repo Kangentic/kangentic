@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
+  columnExitRows,
   describeStepRoute,
   isSendBackOnly,
   stepExitVerdict,
@@ -15,7 +16,7 @@ import {
   workflowStepCondition,
   type StepExitRow,
 } from '../../src/main/workflows/workflow-step-condition';
-import type { Swimlane, Task } from '../../src/shared/types';
+import type { ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 
 type BoardColumn = Pick<Swimlane, 'id' | 'name' | 'position' | 'role' | 'is_archived' | 'is_ghost' | 'description'>;
 type RouteTask = Pick<Task, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'>;
@@ -342,5 +343,105 @@ describe('stepExitVerdict', () => {
     const verdict = stepExitVerdict(codeReview, REVIEW_ROWS, 'x'.repeat(300));
     expect(verdict).toMatchObject({ accepted: false });
     expect(verdict && !verdict.accepted ? verdict.reason : '').toContain(`"${'x'.repeat(120)}...",`);
+  });
+});
+
+/**
+ * Which of a column's turn-end rows are exits, and where each sends the task.
+ * Full Swimlane rows, since resolving a target reads the whole board.
+ */
+describe('columnExitRows', () => {
+  function lane(id: string, name: string, position: number, overrides: Partial<Swimlane> = {}): Swimlane {
+    return {
+      id,
+      name,
+      description: null,
+      role: null,
+      position,
+      color: '#888888',
+      icon: null,
+      is_archived: false,
+      is_ghost: false,
+      permission_mode: null,
+      auto_spawn: true,
+      auto_command: null,
+      auto_command_mode: 'immediate',
+      plan_exit_target_id: null,
+      plan_approval: 'manual',
+      agent_override: null,
+      model_override: null,
+      effort_override: null,
+      handoff_context: false,
+      session_target: 'main',
+      session_spawn_strategy: 'create_or_resume',
+      max_agents: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  const FULL_BOARD: Swimlane[] = [
+    lane('todo', 'To Do', 0, { role: 'todo' }),
+    lane('executing', 'Executing', 1),
+    lane('review', 'Code Review', 2),
+    lane('testing', 'Testing', 3),
+    lane('done', 'Done', 4, { role: 'done', is_archived: true }),
+  ];
+  const REVIEW = FULL_BOARD[2];
+
+  function row(overrides: Partial<ColumnAutomation>): ColumnAutomation {
+    return {
+      id: 'row',
+      swimlane_id: 'review',
+      name: 'Row',
+      type: 'move_to_column',
+      trigger: 'turn_end',
+      position: 0,
+      enabled: true,
+      config: { targetColumn: 'Testing' },
+      condition: null,
+      final_line: 'Verdict: Ready',
+      max_runs: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('keeps a move row with a final line, resolved to the board column it names', () => {
+    expect(columnExitRows([row({})], FULL_BOARD, REVIEW, null)).toEqual([
+      { finalLine: 'Verdict: Ready', target: FULL_BOARD[3] },
+    ]);
+  });
+
+  it('drops a move row with no final line, since it moves on every turn end', () => {
+    expect(columnExitRows([row({ final_line: null }), row({ final_line: '   ' })], FULL_BOARD, REVIEW, null)).toEqual([]);
+  });
+
+  it('drops a row that does not move the task, even with a final line', () => {
+    const notAMove = row({ type: 'send_message', config: { message: 'Review done' } });
+    expect(columnExitRows([notAMove], FULL_BOARD, REVIEW, null)).toEqual([]);
+  });
+
+  it('records a null target for a row whose column name matches no column', () => {
+    const dangling = row({ config: { targetColumn: 'Nowhere' } });
+    expect(columnExitRows([dangling], FULL_BOARD, REVIEW, null)).toEqual([
+      { finalLine: 'Verdict: Ready', target: null },
+    ]);
+  });
+
+  it('sends a forward row to Done instead when the route skips the column it names', () => {
+    // Testing is the last column before Done and the route skips it, so the
+    // route's next column after Code Review is Done (resolveMoveTarget).
+    const skippingTesting = { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: ['testing'] };
+    const [exit] = columnExitRows([row({})], FULL_BOARD, REVIEW, skippingTesting);
+    expect(exit.target?.id).toBe('done');
+  });
+
+  it('keeps a send-back row on the column it names even when the route skips that column', () => {
+    const skippingExecuting = { route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: ['executing'] };
+    const sendBack = row({ final_line: 'Verdict: Blocked', config: { targetColumn: 'Executing' } });
+    const [exit] = columnExitRows([sendBack], FULL_BOARD, REVIEW, skippingExecuting);
+    expect(exit.target?.id).toBe('executing');
   });
 });

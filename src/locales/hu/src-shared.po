@@ -802,9 +802,8 @@ msgid "On task exit"
 msgstr "Feladat távozásakor"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
-msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "Soronként egy oszlop a Teendő és a Kész között: mit futtat, és hogyan haladtak át rajta a legutóbbi feladatok."
+msgid "One line per column between To Do and Done: what it runs, its purpose, any sign-off gate, and recent use."
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
