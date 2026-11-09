@@ -134,6 +134,19 @@ describe('Non-Mac helpers (IS_MAC = false)', () => {
       const event = makeEvent({ key: 'n', ctrlKey: true, altKey: true });
       expect(matchesCombo(event, 'Mod+Alt+N')).toBe(true);
     });
+
+    it('with Alt in the combo a letter also matches by position, for a composed character', () => {
+      // Option+Shift+D types another character on macOS; AltGr does on many Windows layouts.
+      const composed = makeEvent({ key: 'Î', code: 'KeyD', ctrlKey: true, altKey: true, shiftKey: true });
+      expect(matchesCombo(composed, 'Mod+Alt+Shift+D')).toBe(true);
+      const otherKey = makeEvent({ key: 'Î', code: 'KeyE', ctrlKey: true, altKey: true, shiftKey: true });
+      expect(matchesCombo(otherKey, 'Mod+Alt+Shift+D')).toBe(false);
+    });
+
+    it('without Alt in the combo the position is never used', () => {
+      const event = makeEvent({ key: 'x', code: 'KeyD', ctrlKey: true, shiftKey: true });
+      expect(matchesCombo(event, 'Mod+Shift+D')).toBe(false);
+    });
   });
 
   // ── comboFromEvent ────────────────────────────────────────────────────────

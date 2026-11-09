@@ -1567,7 +1567,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'browser',
     reach: 'state',
     description: 'The task window with the Browser pane open on the project\'s dev URL, its agent finished and waiting. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it fills the narrow pane (the comment above) with the conversation as the matrix recorded it just before a note from this pane went in (send-sess-cw-middleware.json), so the loop\'s Send plays that recording on: the payload pasted, the agent reading the screenshot, and the cut taking it back.',
-    alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, and Draw, Inspect, and a note field for the agent below.',
+    alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, a bar to mark the page, and a note field below.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
     // Finished, so the session rests on the frame its recorded Send starts from (demo-dataset.ts,

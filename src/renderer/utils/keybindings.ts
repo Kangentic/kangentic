@@ -80,13 +80,17 @@ export function isMouseComboButton(button: number, combo: string): boolean {
 }
 
 /** Compare the event's main key against a canonical main-key token. */
-function keyMatches(event: KeyboardEvent, mainKey: string): boolean {
+function keyMatches(event: KeyboardEvent, mainKey: string, withAlt: boolean): boolean {
   // The key left of 1 types a different character on each layout (`, ^, ², a
   // dead key), and Shift changes it again, so it is matched by position.
   if (mainKey === 'Backquote') return event.code === 'Backquote';
   // Letters: case-insensitive (Shift changes event.key casing).
   if (mainKey.length === 1 && /[a-z]/i.test(mainKey)) {
-    return event.key.toLowerCase() === mainKey.toLowerCase();
+    if (event.key.toLowerCase() === mainKey.toLowerCase()) return true;
+    // Alt composes a character on macOS (Option+Shift+D types another letter)
+    // and is AltGr with Ctrl on many Windows layouts, so event.key never names
+    // the letter there. With Alt held the letter is also matched by position.
+    return withAlt && event.code === `Key${mainKey.toUpperCase()}`;
   }
   // Zoom-in: treat '=' and '+' as equivalent (layout-dependent event.key).
   if (mainKey === '=') return event.key === '=' || event.key === '+';
@@ -145,7 +149,7 @@ export function matchesCombo(event: KeyboardEvent | PointerEvent, combo: string)
     return false;
   }
 
-  return keyMatches(event, mainKey);
+  return keyMatches(event, mainKey, wantAlt);
 }
 
 const MAC_GLYPHS: Record<string, string> = {
