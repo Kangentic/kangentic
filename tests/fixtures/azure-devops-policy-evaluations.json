@@ -1,0 +1,157 @@
+{
+  "count": 5,
+  "value": [
+    {
+      "configuration": {
+        "type": {
+          "id": "0609b952-1397-4640-95ec-e00a01b2c241",
+          "url": "https://dev.azure.com/my-org/00000000-0000-4000-8000-000000000001/_apis/policy/types/0609b952-1397-4640-95ec-e00a01b2c241",
+          "displayName": "Build"
+        },
+        "revision": 1,
+        "isEnabled": true,
+        "isBlocking": true,
+        "isDeleted": false,
+        "settings": {
+          "buildDefinitionId": 12,
+          "queueOnSourceUpdateOnly": true,
+          "manualQueueOnly": false,
+          "displayName": null,
+          "validDuration": 720,
+          "scope": [
+            { "refName": "refs/heads/develop", "matchKind": "Exact", "repositoryId": "00000000-0000-4000-8000-0000000000a1" }
+          ]
+        },
+        "isEnterpriseManaged": false,
+        "id": 41
+      },
+      "artifactId": "vstfs:///CodeReview/CodeReviewId/00000000-0000-4000-8000-000000000001/12",
+      "evaluationId": "6a1e0a7c-4d0e-4e57-9a52-0f0c6f1b0001",
+      "startedDate": "2026-10-22T16:43:25.4130000Z",
+      "completedDate": "2026-10-22T16:44:27.1830000Z",
+      "status": "rejected",
+      "context": {
+        "buildId": 711,
+        "buildDefinitionId": 12,
+        "buildDefinitionName": "Web - CI",
+        "buildIsNotCurrent": false,
+        "validUntil": "2026-10-23T04:43:25.4130000Z",
+        "isExpired": false
+      }
+    },
+    {
+      "configuration": {
+        "type": {
+          "id": "cbdc66da-9728-4af8-aada-9a5a32e4a226",
+          "url": "https://dev.azure.com/my-org/00000000-0000-4000-8000-000000000001/_apis/policy/types/cbdc66da-9728-4af8-aada-9a5a32e4a226",
+          "displayName": "Status"
+        },
+        "revision": 1,
+        "isEnabled": true,
+        "isBlocking": false,
+        "isDeleted": false,
+        "settings": {
+          "statusName": "quality-gate",
+          "statusGenre": "sonar",
+          "authorId": null,
+          "invalidateOnSourceUpdate": true,
+          "policyApplicability": 0,
+          "scope": [
+            { "refName": "refs/heads/develop", "matchKind": "Exact", "repositoryId": "00000000-0000-4000-8000-0000000000a1" }
+          ]
+        },
+        "isEnterpriseManaged": false,
+        "id": 42
+      },
+      "artifactId": "vstfs:///CodeReview/CodeReviewId/00000000-0000-4000-8000-000000000001/12",
+      "evaluationId": "6a1e0a7c-4d0e-4e57-9a52-0f0c6f1b0002",
+      "startedDate": "2026-10-22T16:43:26.0000000Z",
+      "completedDate": null,
+      "status": "running",
+      "context": null
+    },
+    {
+      "configuration": {
+        "type": {
+          "id": "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd",
+          "url": "https://dev.azure.com/my-org/00000000-0000-4000-8000-000000000001/_apis/policy/types/fa4e907d-c16b-4a4c-9dfa-4906e5d171dd",
+          "displayName": "Minimum number of reviewers"
+        },
+        "revision": 1,
+        "isEnabled": true,
+        "isBlocking": true,
+        "isDeleted": false,
+        "settings": {
+          "minimumApproverCount": 1,
+          "creatorVoteCounts": false,
+          "allowDownvotes": false,
+          "resetOnSourcePush": false,
+          "requireVoteOnLastIteration": false,
+          "scope": [
+            { "refName": "refs/heads/develop", "matchKind": "Exact", "repositoryId": "00000000-0000-4000-8000-0000000000a1" }
+          ]
+        },
+        "isEnterpriseManaged": false,
+        "id": 43
+      },
+      "artifactId": "vstfs:///CodeReview/CodeReviewId/00000000-0000-4000-8000-000000000001/12",
+      "evaluationId": "6a1e0a7c-4d0e-4e57-9a52-0f0c6f1b0003",
+      "startedDate": "2026-10-22T16:43:25.0000000Z",
+      "completedDate": null,
+      "status": "queued",
+      "context": { "currentVoteCount": 0 }
+    },
+    {
+      "configuration": {
+        "type": {
+          "id": "0609b952-1397-4640-95ec-e00a01b2c241",
+          "url": "https://dev.azure.com/my-org/00000000-0000-4000-8000-000000000001/_apis/policy/types/0609b952-1397-4640-95ec-e00a01b2c241",
+          "displayName": "Build"
+        },
+        "revision": 3,
+        "isEnabled": true,
+        "isBlocking": true,
+        "isDeleted": true,
+        "settings": {
+          "buildDefinitionId": 7,
+          "displayName": "Retired build",
+          "scope": []
+        },
+        "isEnterpriseManaged": false,
+        "id": 30
+      },
+      "artifactId": "vstfs:///CodeReview/CodeReviewId/00000000-0000-4000-8000-000000000001/12",
+      "evaluationId": "6a1e0a7c-4d0e-4e57-9a52-0f0c6f1b0004",
+      "startedDate": "2026-10-22T16:43:25.0000000Z",
+      "completedDate": "2026-10-22T16:43:25.0000000Z",
+      "status": "approved",
+      "context": { "buildId": 640, "buildDefinitionId": 7, "buildDefinitionName": "Retired build" }
+    },
+    {
+      "configuration": {
+        "type": {
+          "id": "0609b952-1397-4640-95ec-e00a01b2c241",
+          "url": "https://dev.azure.com/my-org/00000000-0000-4000-8000-000000000001/_apis/policy/types/0609b952-1397-4640-95ec-e00a01b2c241",
+          "displayName": "Build"
+        },
+        "revision": 1,
+        "isEnabled": true,
+        "isBlocking": true,
+        "isDeleted": false,
+        "settings": {
+          "buildDefinitionId": 15,
+          "displayName": "Docs build",
+          "scope": []
+        },
+        "isEnterpriseManaged": false,
+        "id": 44
+      },
+      "artifactId": "vstfs:///CodeReview/CodeReviewId/00000000-0000-4000-8000-000000000001/12",
+      "evaluationId": "6a1e0a7c-4d0e-4e57-9a52-0f0c6f1b0005",
+      "startedDate": "2026-10-22T16:43:25.0000000Z",
+      "completedDate": null,
+      "status": "queued",
+      "context": null
+    }
+  ]
+}
