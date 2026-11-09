@@ -886,7 +886,7 @@ test.describe('per-task automations switch: the Agent Monitor marks a held task'
   function monitorRowsScript(): string {
     const base = {
       projectId: PROJECT_ID, projectName: PROJECT_NAME, outputPeek: [],
-      columnName: 'Executing', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+      columnName: 'Executing', commandTerminalBranch: null, priority: 0, labels: [], prUrl: null, prNumber: null, prState: null,
       agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
       startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
       status: 'running', activity: 'thinking', activityReason: null,

@@ -12,6 +12,7 @@ sources:
   - resource: src/main/git/worktree-head.ts
   - resource: src/main/agent/mcp-project-context.ts
   - resource: src/main/agent/commands/types.ts
+  - resource: src/main/agent/mcp-http/label-priority-schema.ts
   - resource: src/main/agent/commands/task-ordering.ts
   - resource: src/main/agent/commands/move-message-limit.ts
   - resource: src/main/pr/pr-readiness-note.ts
@@ -29,8 +30,8 @@ The done-role column is refused. A task created there would be archived off the 
 | `title` | string | Yes | Task title (max 200 chars) |
 | `description` | string | No | Task description, supports markdown (max 27500 chars for a board task; a backlog item is capped at 10000 and an over-cap backlog description is rejected) |
 | `column` | string | No | Target column name (case-insensitive). Defaults to To Do. Pass `"Backlog"` to route to the backlog staging area instead of the board. |
-| `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items. |
-| `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. Call [kangentic_board_summary](task-read-tools.md#kangentic_board_summary) first to see the board's existing label vocabulary. Subject to the large-description drop; see the Labels with a long description note below. |
+| `priority` | number | No | Priority, default 0: an index into the project's priority scale, which a person can rename, reorder and extend in the Priorities popover. 0 is the bottom entry and shows nothing on a card. A number past the end of the scale is refused with the scale listed. Applies to both board tasks and backlog items. |
+| `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object. The tool description names the label palette (the colors the Labels editor offers, from `src/shared/label-palette.ts`); a plain string leaves a new label uncolored and keeps an existing label's color. Applies to both board tasks and backlog items. Call [kangentic_board_summary](task-read-tools.md#kangentic_board_summary) first to see the board's existing label vocabulary. Subject to the large-description drop; see the Labels with a long description note below. |
 | `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. Recorded on the task and checked out when its worktree is created. Rejected if the branch is already checked out anywhere; see the Branch conflict guard note below. |
 | `baseBranch` | string | No | What the task's branch is cut from: a branch, a tag or a commit SHA (see [Base Branch Resolution](../../architecture/worktrees/worktree-lifecycle.md#a-base-is-a-branch-a-tag-or-a-commit)). A tag or commit needs a worktree or a `branchName` to start from. Board tasks only. |
 | `useWorktree` | boolean | No | Whether to use a git worktree. Omit to get one whenever the project allows worktrees. `false` means nothing is checked out at all - see the Working in the project directory note below. Ignored while the project has worktrees turned off (Settings > Git). Board tasks only. |
@@ -91,8 +92,8 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`). This is what links the task to a PR; a URL written into `description` does not. |
 | `prNumber` | number | No | Pull request number. The field the linker anchors on (Tier 1); derived from `prUrl` when omitted, so a URL-only write can never strand the previous PR's number. A number-only write leaves `pr_url` pointing at the previous PR until the immediate link-time resolve re-points it, which is harmless: the resolve follows the number you gave. |
 | `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Rejected if it is not a registered agent. Empty string clears. |
-| `priority` | number | No | Task priority 0-4 (0=none, 4=highest) |
-| `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. Call [kangentic_board_summary](task-read-tools.md#kangentic_board_summary) to see the board's existing label vocabulary. Subject to the same large-description drop as [kangentic_create_task](#kangentic_create_task), and the response carries the same `[Labels not received]` advisory when it happens. |
+| `priority` | number | No | Task priority: an index into the project's priority scale, checked against it |
+| `labels` | array | No | Replace the task's label list, as plain names or `{ name, color }` objects, the same shape [kangentic_create_task](#kangentic_create_task) takes. Pass `[]` to clear. Call [kangentic_board_summary](task-read-tools.md#kangentic_board_summary) to see the board's existing label vocabulary. Subject to the same large-description drop as [kangentic_create_task](#kangentic_create_task), and the response carries the same `[Labels not received]` advisory when it happens. |
 | `baseBranch` | string | No | What the task's worktree branches from: a branch (e.g. `"main"`), a tag or a commit SHA |
 | `useWorktree` | boolean | No | Whether the task uses an isolated git worktree. `false` means nothing is checked out - the agent runs in the project directory on whatever branch the repo currently has out. `true` is ignored while the project has worktrees turned off (Settings > Git). |
 | `model` | string | No | Model override for this task (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"` / `"Opus"`). The same friendly-name handling (a name with a space converts, `"Opus"` is stored as written), then the same call-time validation [kangentic_create_task](#kangentic_create_task) applies. Pass empty string to clear. |

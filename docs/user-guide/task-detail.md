@@ -59,7 +59,7 @@ Drag the panel divider to resize. The terminal resizes to match. Resize events a
 Click a task card to open the detail dialog. From here you can:
 
 - View the task's **display ID** (e.g., `#42`) in the header - click it to copy to clipboard
-- See the **priority badge** next to the display ID when a priority is set
+- See the task's **priority** as the first pill in the row under the description, ahead of its labels, when a priority is set. The board card shows the same row, and the header carries no priority badge
 - View **Markdown-rendered descriptions** with full GitHub Flavored Markdown support (tables, task lists, strikethrough, links)
 - Edit the task title, description, priority, and labels (type `@` in the description field for file path autocomplete)
 - View and manage attachments of any file type (drag-and-drop files onto the dialog, or paste from clipboard)

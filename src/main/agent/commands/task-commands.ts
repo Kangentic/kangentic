@@ -28,6 +28,7 @@ import {
 } from './task-ordering';
 import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './running-work-guard';
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
+import { isLabelListOrAbsent, LABELS_NOT_A_LIST, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
 import { prReadinessNote } from '../../pr/pr-readiness-note';
@@ -236,7 +237,8 @@ export const handleCreateTask: CommandHandler = async (
   const useWorktree = params.useWorktree as boolean | null;
   const attachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
   const priority = params.priority as number | null;
-  const rawLabels = params.labels as Array<string | { name: string; color?: string }> | null;
+  const rawLabels = params.labels;
+  if (!isLabelListOrAbsent(rawLabels)) return { success: false, error: LABELS_NOT_A_LIST };
   const agentOverride = params.agentOverride as string | null;
   const modelOverride = params.modelOverride as string | null;
   const effortOverride = params.effortOverride as string | null;
@@ -288,24 +290,12 @@ export const handleCreateTask: CommandHandler = async (
   const descriptionRefusal = taskDescriptionRefusal(description, null);
   if (descriptionRefusal !== null) return { success: false, error: descriptionRefusal };
 
-  // Normalize labels: extract names for DB storage and colors for config
-  const labelNames: string[] = [];
-  const labelColorMap: Record<string, string> = {};
-  if (rawLabels) {
-    for (const entry of rawLabels) {
-      if (typeof entry === 'string') {
-        labelNames.push(entry);
-      } else if (entry && typeof entry === 'object' && entry.name) {
-        labelNames.push(entry.name);
-        if (entry.color) {
-          labelColorMap[entry.name] = entry.color;
-        }
-      }
-    }
-  }
+  // Names go to the row, colors to the project's label colors.
+  const { names: labelNames, colors: labelColorMap } = splitLabelEntries(rawLabels);
 
-  if (priority !== null && priority !== undefined && (priority < 0 || priority > 4)) {
-    return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
+  if (priority !== null && priority !== undefined) {
+    const priorityRefusal = priorityScaleError(priority, priorityScaleOf(context));
+    if (priorityRefusal !== null) return { success: false, error: priorityRefusal };
   }
 
   // Resolved BEFORE the row is written: a typoed profile name must fail the
@@ -442,7 +432,11 @@ export const handleUpdateTask: CommandHandler = (
   const newPrNumber = (params.prNumber as number | null | undefined) ?? null;
   const newAgent = (params.agent as string | null | undefined) ?? null;
   const newPriority = (params.priority as number | null | undefined) ?? null;
-  const newLabels = (params.labels as string[] | null | undefined) ?? null;
+  const rawNewLabels = params.labels ?? null;
+  if (!isLabelListOrAbsent(rawNewLabels)) return { success: false, error: LABELS_NOT_A_LIST };
+  // The colors are saved after the row is written (below), so a refused update colors nothing.
+  const splitNewLabels = rawNewLabels === null ? null : splitLabelEntries(rawNewLabels);
+  const newLabels = splitNewLabels?.names ?? null;
   const newBaseBranch = (params.baseBranch as string | null | undefined) ?? null;
   const newUseWorktree = (params.useWorktree as boolean | null | undefined) ?? null;
   const newModel = params.model as string | null | undefined;
@@ -484,6 +478,11 @@ export const handleUpdateTask: CommandHandler = (
   if (newAutomationsDisabled === true) {
     const refusal = taskHoldRefusal(task, context.projectId);
     if (refusal) return { success: false, error: `${refusal} The task was not updated.` };
+  }
+
+  if (newPriority !== null) {
+    const priorityRefusal = priorityScaleError(newPriority, priorityScaleOf(context));
+    if (priorityRefusal !== null) return { success: false, error: `${priorityRefusal} The task was not updated.` };
   }
 
   const updates: Record<string, unknown> = { id: task.id };
@@ -635,6 +634,11 @@ export const handleUpdateTask: CommandHandler = (
     return attachmentsRequested > 0
       ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.` }
       : { success: false, error: 'No fields provided to update' };
+  }
+
+  // After the row is written, as on create: a refused update saves no color.
+  if (splitNewLabels && Object.keys(splitNewLabels.colors).length > 0) {
+    context.onLabelColorsChanged(splitNewLabels.colors);
   }
 
   context.onTaskUpdated(updated);

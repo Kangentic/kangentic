@@ -3,12 +3,10 @@ import { Palette } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import { HexColorPicker } from 'react-colorful';
 import { Tooltip } from '../../Tooltip';
+import { LABEL_PALETTE } from '../../../../shared/label-palette';
 
-export const PRESET_COLORS = [
-  '#6b7280', '#ef4444', '#f43f5e', '#f97316',
-  '#f59e0b', '#10b981', '#06b6d4', '#3b82f6',
-  '#8b5cf6', '#ec4899', '#78716c',
-];
+/** The label palette's swatches, shared with the MCP label tools (`shared/label-palette.ts`). */
+export const PRESET_COLORS: string[] = LABEL_PALETTE.map((entry) => entry.hex);
 
 /**
  * Fixed-position color picker popover. Anchors to `triggerRef`, falls

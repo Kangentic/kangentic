@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { listActiveSwimlanes } from './column-resolver';
-import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
+import { priorityName, priorityScaleOf } from './label-and-priority';
 import type { Task, BacklogTask } from '../../../shared/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -179,6 +179,7 @@ export const handleSearchTasks: CommandHandler = (
   if (includeBacklog) {
     const backlogRepo = new BacklogRepository(db);
     const allItems = backlogRepo.list();
+    const scale = priorityScaleOf(context);
     for (const item of allItems) {
       const titleHit = item.title.toLowerCase().includes(query);
       const descriptionHit = item.description.toLowerCase().includes(query);
@@ -189,7 +190,7 @@ export const handleSearchTasks: CommandHandler = (
           title: item.title,
           description: item.description,
           priority: item.priority,
-          priorityLabel: BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None',
+          priorityLabel: priorityName(item.priority, scale),
           labels: item.labels,
         });
       }
@@ -252,6 +253,7 @@ export const handleFindTask: CommandHandler = async (
   });
 
   const backlogMatches = findBacklogMatchesForFindTask(db, taskId, titleQuery);
+  const scale = priorityScaleOf(context);
 
   if (taskMatches.length === 0 && backlogMatches.length === 0) {
     const criteria: string[] = [];
@@ -290,7 +292,7 @@ export const handleFindTask: CommandHandler = async (
   if (backlogMatches.length > 0) {
     if (taskMatches.length > 0) sections.push(`\nBacklog (${backlogMatches.length}):`);
     const lines = backlogMatches.map((item) => {
-      const priorityLabel = BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None';
+      const priorityLabel = priorityName(item.priority, scale);
       const labelString = item.labels.length > 0 ? ` [${item.labels.join(', ')}]` : '';
       return `- "${item.title}" (${priorityLabel})${labelString} (id: ${item.id})`;
     });
@@ -323,7 +325,7 @@ export const handleFindTask: CommandHandler = async (
         title: item.title,
         description: item.description,
         priority: item.priority,
-        priorityLabel: BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None',
+        priorityLabel: priorityName(item.priority, scale),
         labels: item.labels,
       })),
     },

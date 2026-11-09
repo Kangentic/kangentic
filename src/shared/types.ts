@@ -4121,6 +4121,8 @@ export interface MonitorSessionRow {
   startBlockedReason: StartBlockedReason | null;
   /** A browser is running for this task in any state (showing, hidden, parked, popped out, or offscreen), for the card's globe. */
   browserRunning: boolean;
+  /** Index into the project's priority scale; 0 (the bottom entry) draws no pill. Always 0 for a Command Terminal. */
+  priority: number;
   labels: string[];
   prUrl: string | null;
   prNumber: number | null;
@@ -5435,17 +5437,6 @@ export interface GpuGraphicsStatus {
 }
 
 // === Backlog ===
-
-export type BacklogPriority = 0 | 1 | 2 | 3 | 4;
-// 0=none, 1=low, 2=medium, 3=high, 4=urgent
-
-export const BACKLOG_PRIORITY_LABELS: Record<number, string> = {
-  0: 'None',
-  1: 'Low',
-  2: 'Medium',
-  3: 'High',
-  4: 'Urgent',
-};
 
 export const DEFAULT_PRIORITY_CONFIG: Array<{ label: string; color: string }> = [
   { label: 'None', color: '#6b7280' },

@@ -719,12 +719,10 @@ test.describe('Task Detail description peek', () => {
     await dialog.locator('[aria-label="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
 
-    // Toggle it open: the panel renders the priority badge ("High"), not any
-    // description text, since task.description is empty. The task-detail
-    // TITLE BAR also always shows a PriorityBadge (unconditionally, not
-    // gated on the peek), so a bare "High" text locator resolves to two
-    // elements - scope to the description-peek side panel specifically to
-    // target only the panel's copy.
+    // Toggle it open: the panel renders the priority pill ("High"), not any
+    // description text, since task.description is empty. Scoped to the
+    // description-peek side panel so the board card's own "High" pill behind
+    // the dialog cannot satisfy it.
     const descriptionContainer = dialog.locator('[data-testid="task-detail-description-panel"]');
     await page.locator('text=Show description').click();
     await expect(descriptionContainer.getByText('High', { exact: true })).toBeVisible({ timeout: 8000 });

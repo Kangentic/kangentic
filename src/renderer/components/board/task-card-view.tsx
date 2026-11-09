@@ -16,7 +16,7 @@ import { requiresUserInteraction, isActive } from '../../../shared/activity-stat
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
 import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
-import { LabelPills } from '../Pill';
+import { TaskPills, taskHasPills } from '../backlog/TaskPills';
 import { PrLink } from '../PrLink';
 import type {
   ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, StartBlockedReason, Task,
@@ -248,7 +248,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
 
   // Label display config. Wrap the `?? {}` / `?? []` fallbacks in useMemo so
   // they return a stable reference; otherwise a fresh empty object/array each
-  // render defeats LabelPills' React.memo for label-less / archived cards.
+  // render defeats TaskPills' React.memo for label-less / archived cards.
   const labelColorsRaw = useConfigStore((state) => state.config.backlog?.labelColors);
   const labelColors = useMemo(() => labelColorsRaw ?? {}, [labelColorsRaw]);
   const taskLabels = useMemo(() => task.labels ?? [], [task.labels]);
@@ -484,8 +484,9 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
   // The rule above the footer closes what sits over it, and the agent's output
   // well already closes itself with its own edge. Labels and a plain
   // description (a paused card, or the card preview turned off) keep it, or
-  // the description's grey runs straight into the footer's.
-  const footerDivider = !(view.shownTrail && view.trailMode && view.taskLabels.length === 0);
+  // the description's grey runs straight into the footer's. A priority pill is
+  // in the labels' row, so it keeps the rule as a label does.
+  const footerDivider = !(view.shownTrail && view.trailMode && !taskHasPills(task.priority ?? 0, view.taskLabels));
   return (
     <>
       {!canTaskRunAutomations(task).ok && <AutomationsDisabledStrip density={density} />}
@@ -604,7 +605,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
       ) : null}
 
       <div className={isCompactDensity ? 'mt-1' : 'mt-1.5'}>
-        <LabelPills labels={view.taskLabels} labelColors={view.labelColors} />
+        <TaskPills priority={task.priority ?? 0} labels={view.taskLabels} labelColors={view.labelColors} />
       </div>
 
       {!isCompactDensity && task.attachment_count > 0 && displayState.kind === 'none' && !idleFooter && (
@@ -722,7 +723,7 @@ export function TaskCardCompactBody({ task, view, trailing }: { task: Task; view
         </div>
       ) : null}
       <div className="mt-1">
-        <LabelPills labels={view.taskLabels} labelColors={view.labelColors} />
+        <TaskPills priority={task.priority ?? 0} labels={view.taskLabels} labelColors={view.labelColors} />
       </div>
       {task.archived_at && (
         <div className="mt-0.5">

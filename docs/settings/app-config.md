@@ -248,7 +248,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `backlog.priorities` | Array<{ label: string; color: string }> | See below | Priority levels for backlog items. Default: None (#6b7280), Low (#3b82f6), Medium (#eab308), High (#f97316), Urgent (#ef4444). |
+| `backlog.priorities` | Array<{ label: string; color: string }> | See below | The priority scale for backlog items and board tasks, bottom entry first (index 0 shows no pill on a card). Default: None (#6b7280), Low (#3b82f6), Medium (#eab308), High (#f97316), Urgent (#ef4444). |
 | `backlog.labelColors` | Record<string, string> | `{}` | Mapping of label names to hex colors for backlog item labels. Empty by default; colors are assigned as labels are created. |
 
 ## sidebar.*

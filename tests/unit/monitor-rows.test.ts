@@ -75,6 +75,7 @@ function makeRow(sessionId: string, overrides: Partial<MonitorSessionRow> = {}):
     },
     modelReported: true,
     browserRunning: false,
+    priority: 0,
     labels: ['bug', 'pty'],
     prUrl: 'https://github.com/owner/repo/pull/7',
     prNumber: 7,
