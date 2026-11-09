@@ -309,6 +309,29 @@ describe('autoSpawnTasks: the spawn re-checks its task under the task lock', () 
     expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 
+  // The launch report's command_head tag reads the CLI path off the session row,
+  // so a startup respawn that drops it loses the tag for every recovered task.
+  //
+  // Red-green: drop `agentCliPath: input.agentCliPath` from the fresh spawn call
+  // in auto-spawn.ts and this fails.
+  it('hands spawn the CLI path the command was built with', async () => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      const prepared = preparedSpawn('task-lost');
+      return { ...prepared, data: { ...prepared.data, agentCliVersion: '2.1.0', agentCliPath: '/opt/bin/claude' } } as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(
+      [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }],
+      new Set(['task-lost']),
+      new Set(['session-lost']),
+    );
+
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      agentCliVersion: '2.1.0',
+      agentCliPath: '/opt/bin/claude',
+    }));
+  });
+
   it('does not spawn over a session the user started while the agent was being prepared', async () => {
     const registry: RegistryRow[] = [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
     mockPrepareAgentSpawn.mockImplementationOnce(async () => {
