@@ -594,6 +594,27 @@ describe('performSpawn - the start path on the session row', () => {
   });
 });
 
+describe('performSpawn - the agent CLI path on the session row', () => {
+  // The launch report and the start bound read the path off the row.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('copies the CLI path the caller launched with onto the registry row', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-cli-path-0000-000000000000', agentCliPath: '/opt/claude' }), context);
+
+    expect(context.registry.get('session-cli-path-0000-000000000000')?.agentCliPath).toBe('/opt/claude');
+  });
+
+  it('records null when the caller named none', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({ id: 'session-no-cli-path-000-000000000000' }), context);
+
+    expect(context.registry.get('session-no-cli-path-000-000000000000')?.agentCliPath).toBeNull();
+  });
+});
+
 describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
   // Every process a task's agent starts inherits this tag, which is how a
   // terminal transition finds what the task left running (process-tag/).

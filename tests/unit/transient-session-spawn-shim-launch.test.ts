@@ -226,6 +226,15 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 
+  it('spawns the PTY with the resolved head as agentCliPath', async () => {
+    resolveShimLaunchMock.mockResolvedValueOnce({ agentPath: PS1_SIBLING, prompt: undefined, strategy: 'ps1-sibling' });
+
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    const spawnInput = vi.mocked(context.sessionManager.spawn).mock.calls[0][0] as { agentCliPath?: string };
+    expect(spawnInput.agentCliPath).toBe(PS1_SIBLING);
+  });
+
   it('hands the builder the terminal\'s own process tag, the task id its PTY is spawned with', async () => {
     await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
 

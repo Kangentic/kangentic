@@ -55,3 +55,23 @@ describe('PtyHostClient.getSeedFrame', () => {
     expect(params.scrollbackLines).toBeUndefined();
   });
 });
+
+describe('PtyHostClient.getOwnRawOutput', () => {
+  // Red-green: drop `ownOutputOnly: true` from the request and this fails; the
+  // host would then answer with the ring a respawn carried over.
+  it('asks for the raw scrollback with ownOutputOnly set, and returns the host answer', async () => {
+    const request = vi.fn(async () => 'zsh: no such file or directory: /opt/claude\r\n');
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: 1234,
+      shutdown: () => undefined,
+    };
+
+    const output = await new PtyHostClient(transport).getOwnRawOutput('sess-1');
+
+    expect(request).toHaveBeenCalledWith('getRawScrollback', { sessionId: 'sess-1', ownOutputOnly: true });
+    expect(output).toBe('zsh: no such file or directory: /opt/claude\r\n');
+  });
+});
