@@ -34,6 +34,49 @@ describe('PtyBufferManager', () => {
     return { manager, onFlush, onDrain };
   }
 
+  describe('getRawScrollback with ownOutputOnly (a launch read apart from its predecessor)', () => {
+    // A retry or resume opens with the ring it replaced. The launch report and
+    // the agent-absence start bound read only this PTY's own bytes, or the last
+    // launch's failure line would classify this one (DESKTOP-2E follow-up).
+    const CARRIED_FAILURE = '$ claude\r\nzsh: no such file or directory: /opt/claude\r\n$ ';
+
+    it('leaves out the carried-over ring and keeps it in the whole read', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, CARRIED_FAILURE, 80);
+      manager.onData(SESSION, 'PS C:\\project> ');
+
+      expect(manager.getRawScrollback(SESSION, true)).toBe('PS C:\\project> ');
+      expect(manager.getRawScrollback(SESSION)).toBe(CARRIED_FAILURE + 'PS C:\\project> ');
+    });
+
+    it('reads the whole ring for a fresh spawn, which carried nothing', () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80);
+      manager.onData(SESSION, 'zsh: no such file or directory: /opt/claude\r\n');
+
+      expect(manager.getRawScrollback(SESSION, true)).toBe(manager.getRawScrollback(SESSION));
+    });
+
+    it('moves the boundary with a trim, and reads the whole ring once a trim passes it', () => {
+      const kilobyte = 1024;
+      const ownChunk = 'o'.repeat(300 * kilobyte);
+      const shortCarry = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      shortCarry.initSession(SESSION, 'c'.repeat(600 * kilobyte), 80);
+      shortCarry.onData(SESSION, ownChunk);
+      // 900 KB is past the trim threshold (768 KB), so the ring was cut to its
+      // last bytes, part of the carried run included.
+      expect(shortCarry.getRawScrollback(SESSION).length).toBeLessThan(900 * kilobyte);
+      expect(shortCarry.getRawScrollback(SESSION).startsWith('c')).toBe(true);
+      expect(shortCarry.getRawScrollback(SESSION, true)).toBe(ownChunk);
+
+      const passed = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      passed.initSession(SESSION, 'c'.repeat(100 * kilobyte), 80);
+      passed.onData(SESSION, 'o'.repeat(800 * kilobyte));
+      expect(passed.getRawScrollback(SESSION).length).toBeLessThan(900 * kilobyte);
+      expect(passed.getRawScrollback(SESSION, true)).toBe(passed.getRawScrollback(SESSION));
+    });
+  });
+
   describe('getScreenRows', () => {
     it('answers an empty list for a session it does not know', () => {
       const { manager } = createManager();

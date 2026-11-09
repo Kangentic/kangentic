@@ -514,6 +514,11 @@ export class PtyHostClient {
     return this.transport.request('getRawScrollback', { sessionId }, timeoutMs === undefined ? undefined : { timeoutMs });
   }
 
+  /** The bytes this session's PTY produced, without the ring a respawn carried over. */
+  getOwnRawOutput(sessionId: string): Promise<string> {
+    return this.transport.request('getRawScrollback', { sessionId, ownOutputOnly: true });
+  }
+
   getOutputPeek(sessionId: string): Promise<string[]> {
     return this.transport.request('getOutputPeek', { sessionId });
   }

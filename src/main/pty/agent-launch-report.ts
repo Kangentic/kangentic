@@ -23,6 +23,7 @@
  */
 
 import fs from 'node:fs';
+import path from 'node:path';
 import { trackEvent } from '../analytics/analytics';
 import { reportHandledError } from '../analytics/error-reporting';
 import { isShuttingDown } from '../shutdown-state';
@@ -33,6 +34,7 @@ import { shellProgramName } from '../../shared/shell-quote';
 import { finalLinesOf } from '../agent/shared/user-setup-failure';
 import type { AgentParser, LaunchStartPath } from '../../shared/types';
 import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
+import { parseWslShellSpec } from './process-tag/task-process-tag';
 import type { ManagedSession } from './session-registry';
 
 /** Where a launch died. */
@@ -66,7 +68,10 @@ const LAUNCH_ERROR_NAMES: Readonly<Record<Exclude<LaunchStage, 'pty_spawn'>, str
 export type LaunchOutputClass =
   | 'command_not_found'
   | 'permission_denied'
+  /** The command's own path does not exist. */
   | 'no_such_file'
+  /** The command exists, and the interpreter its shebang names does not. */
+  | 'bad_interpreter'
   | 'unknown_option'
   /** cmd refused a line past its limit. The same line gets the same answer, so it is never retried. */
   | 'line_too_long'
@@ -142,6 +147,31 @@ function launcherTag(session: ManagedSession): string {
 }
 
 /**
+ * Whether the command's head, the CLI path the builder was handed, exists now.
+ * `no_such_file` names either that path or one the CLI runs, and this tells
+ * them apart. `unknown` when there is no path to check: none was recorded, a
+ * bare name the shell looks up on its PATH, or a WSL shell, whose paths live in
+ * the distro.
+ *
+ * Off Windows the builder runs the very path detection probed:
+ * `resolveShimLaunch` changes nothing there, and detection keeps `which`'s
+ * answer without resolving links. What can differ is the moment. One shape this
+ * tag would show: a head that links to a versioned install whose target was
+ * removed after detection ran. `existsSync` follows the link, so a dangling one
+ * reads `missing`. Sentry DESKTOP-2H (zsh, `no_such_file`, seconds after
+ * detection) could not say which file was missing; this tag is what will.
+ */
+function commandHeadTag(session: ManagedSession): string {
+  const cliPath = session.agentCliPath;
+  if (!cliPath || !path.isAbsolute(cliPath) || parseWslShellSpec(session.shell) !== null) return 'unknown';
+  try {
+    return fs.existsSync(cliPath) ? 'present' : 'missing';
+  } catch {
+    return 'missing';
+  }
+}
+
+/**
  * Whether the shell printed, and on which side of the typed line. A plain yes
  * would nearly always read yes, since the shell echoes the line it is typed.
  */
@@ -169,6 +199,7 @@ export function launchTagsOf(session: ManagedSession, now: number = Date.now()):
     shell: shellLabelOf(session.shell),
     attempt: attemptOf(session.startPath),
     launcher: launcherTag(session),
+    command_head: commandHeadTag(session),
     shell_printed: shellPrintedTag(session),
     first_output_s: typeof firstOutputAt === 'number' ? secondsBucket(firstOutputAt - startedAtMs) : 'none',
     session_age_s: secondsBucket(now - startedAtMs),
@@ -251,11 +282,20 @@ const OUTPUT_SHAPES: ReadonlyArray<{ outputClass: LaunchOutputClass; shapes: rea
     ],
   },
   {
+    // Ahead of `no_such_file`: the line holds that phrase too, after the
+    // interpreter's path. bash: `bash: /opt/claude: /usr/bin/node: bad
+    // interpreter: No such file or directory`; zsh: `zsh: /opt/claude: bad
+    // interpreter: /usr/bin/node: no such file or directory`.
+    outputClass: 'bad_interpreter',
+    shapes: [
+      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:[^:]+:\s)?bad interpreter\b/,
+    ],
+  },
+  {
     outputClass: 'no_such_file',
     shapes: [
       /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:\d+:\s)?no such file or directory:/,
-      // A shebang names a second path: `bash: /opt/claude: /usr/bin/node: bad interpreter: ...`
-      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:[^:]+:\s)?(?:No such file or directory|bad interpreter)/,
+      /^(?:[\w./-]*\/)?[a-z]*sh:\s(?:line \d+:\s)?(?:\d+:\s)?[^:]+:\s(?:[^:]+:\s)?No such file or directory/,
       /^The system cannot find the (?:path|file) specified/,
     ],
   },
@@ -311,6 +351,16 @@ export function classifyLaunchOutput(
     }
   }
   return 'other';
+}
+
+/**
+ * Classify a session's output the one way both readers do: the launch report,
+ * and the agent-absence sweep's check for a launch whose output already names
+ * its cause (`SessionManager.checkPendingLaunchOutput`). A resuming launch asks
+ * its adapter about the conversation it resumed.
+ */
+export function classifySessionOutput(session: ManagedSession, rawScrollback: string): LaunchOutputClass {
+  return classifyLaunchOutput(rawScrollback, session.agentParser, session.resuming ? session.agentSessionId : null);
 }
 
 /** True for a class that names a cause, which is evidence for any adapter. */
@@ -540,7 +590,7 @@ export function reportSessionLaunchFailure(failure: SessionLaunchFailure): void 
     return;
   }
   session.launchOutputRead = readOutput().then(
-    (rawScrollback) => send(classifyLaunchOutput(rawScrollback, session.agentParser, session.resuming ? session.agentSessionId : null)),
+    (rawScrollback) => send(classifySessionOutput(session, rawScrollback)),
     () => send('unreadable'),
   );
 }

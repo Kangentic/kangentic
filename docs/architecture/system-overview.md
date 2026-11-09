@@ -309,6 +309,10 @@ Shell-specific adaptations:
 | COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | How long after a Command Terminal ends its leftover reap starts: a backstop for a root the agent-exit wait holds no ledger for (a WSL shell, the in-process core), past Claude's longest measured exit after a close (`src/main/ipc/helpers/command-terminal-leftovers.ts`) |
 | YOUNG_AFTER_ALT_SCREEN_MS | 12000 ms | A session is young this long after its first alt-screen frame (Claude's 10 s boot-canary window plus margin) |
 | YOUNG_SINCE_SPAWN_MS | 60000 ms | A session with no alt-screen frame yet is young this long after spawn |
+| AGENT_SPAWN_GRACE_MS | 30000 ms | The agent-absence sweep judges no launch before this. Past it, a launch with no sign its agent ran waits for `AGENT_START_CEILING_MS` unless its output names a cause (`src/main/pty/session-manager.ts`) |
+| AGENT_START_CEILING_MS | 120000 ms | How long such a launch waits, past the grace, before the sweep judges it, and how long the typed-line detector keeps scanning (`src/main/pty/lifecycle/agent-output-tracker.ts`) |
+| AGENT_READY_CEILING_MS | 15000 ms | The launch overlay's backstop when no evidence the agent is on screen arrives (`src/main/pty/lifecycle/agent-output-tracker.ts`) |
+| LAUNCH_OUTPUT_CHECK_INTERVAL_MS | 2000 ms | The shortest wait before the start bound reads a pending launch's own output again; it grows to half the time spent past the grace (`src/main/pty/session-manager.ts`) |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
 
 Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/activity-engine/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity watchdog](activity/watchdog.md#3-stale-thinking-watchdog-180s).

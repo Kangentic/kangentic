@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { AgentOutputTracker, AGENT_READY_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
+import { AgentOutputTracker, AGENT_READY_CEILING_MS, AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
 
 /**
  * Byte shapes taken from real Command Terminal boots (Claude Code 2.1.308 in a
@@ -186,10 +186,24 @@ describe('AgentOutputTracker', () => {
     });
   });
 
-  describe('the AGENT_READY_CEILING_MS bound', () => {
+  describe('the AGENT_START_CEILING_MS bound', () => {
     // Date is faked along with the timers, which is what the tracker reads.
     afterEach(() => {
       vi.useRealTimers();
+    });
+
+    it('still fires for a handoff past the overlay ceiling, as a slow shell runs its line late', () => {
+      // Measured on Windows PowerShell 5.1 held 20 s before its prompt: the line
+      // ran at 23.4 s, and a scan that stopped at the overlay's 15 s missed it,
+      // so the launch reported no typed_line_ran and read before_launch (DESKTOP-2E).
+      vi.useFakeTimers();
+      const tracker = new AgentOutputTracker();
+      expect(tracker.consume('s1', CONPTY_INIT)).toBe(false);
+
+      vi.advanceTimersByTime(23_400);
+      expect(AGENT_READY_CEILING_MS).toBeLessThan(23_400);
+      expect(feed(tracker, [POWERSHELL_PROMPT, POWERSHELL_ECHO, CLEAR_HOST, CLAUDE_SETUP, CLAUDE_FRAME]))
+        .toEqual([false, false, false, false, true]);
     });
 
     it('never fires for a session whose first chunk is older than the ceiling, even on a full handoff after it', () => {
@@ -197,8 +211,8 @@ describe('AgentOutputTracker', () => {
       const tracker = new AgentOutputTracker();
       expect(tracker.consume('s1', POWERSHELL_PROMPT)).toBe(false);
 
-      vi.advanceTimersByTime(AGENT_READY_CEILING_MS + 1);
-      // Past the ceiling the overlay has lifted whatever the stream shows, so
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS + 1);
+      // Past the ceiling the launch is judged whatever the stream shows, so
       // the clear and the agent text that follow must not fire the latch.
       expect(tracker.consume('s1', CLEAR_HOST)).toBe(false);
       expect(tracker.consume('s1', 'AGENT READY')).toBe(false);
@@ -210,7 +224,7 @@ describe('AgentOutputTracker', () => {
       const tracker = new AgentOutputTracker();
       expect(tracker.consume('s1', POWERSHELL_PROMPT)).toBe(false);
 
-      vi.advanceTimersByTime(AGENT_READY_CEILING_MS + 1);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS + 1);
       // s1 is past its ceiling. s2 first spoke just now, so it is inside its own.
       expect(tracker.consume('s1', CLEAR_HOST + 'AGENT READY')).toBe(false);
       expect(tracker.consume('s2', POWERSHELL_PROMPT + CLEAR_HOST + 'AGENT READY')).toBe(true);
@@ -225,7 +239,7 @@ describe('AgentOutputTracker', () => {
       const tracker = new AgentOutputTracker();
       expect(tracker.consume('s1', POWERSHELL_PROMPT)).toBe(false);
 
-      vi.advanceTimersByTime(AGENT_READY_CEILING_MS - 1);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS - 1);
       expect(tracker.consume('s1', CLEAR_HOST)).toBe(false);
       expect(tracker.consume('s1', 'AGENT READY')).toBe(true);
     });

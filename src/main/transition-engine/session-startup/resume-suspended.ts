@@ -619,6 +619,7 @@ export async function resumeSuspendedSessions(
           cwd: input.cwd,
           startPath: 'startup_recovery',
           agentCliVersion: input.agentCliVersion,
+          agentCliPath: input.agentCliPath,
           env: input.extraEnv ?? undefined,
           statusOutputPath: input.statusOutputPath,
           eventsOutputPath: input.eventsOutputPath,

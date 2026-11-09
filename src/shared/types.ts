@@ -7574,6 +7574,11 @@ export interface SpawnSessionInput {
    * `launchVersionTag` vets it before it reaches an event.
    */
   agentCliVersion?: string | null;
+  /**
+   * The CLI path the command builder was handed (after `resolveShimLaunch`).
+   * Main keeps it; a launch report sends only whether it exists.
+   */
+  agentCliPath?: string | null;
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)

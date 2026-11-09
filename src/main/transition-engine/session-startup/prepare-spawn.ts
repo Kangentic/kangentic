@@ -86,6 +86,8 @@ export interface PreparedSpawn {
   inputInAlternateScreen: boolean;
   /** The agent CLI's version as detection read it (`SpawnSessionInput.agentCliVersion`). */
   agentCliVersion: string | null;
+  /** The CLI path the command was built with (`SpawnSessionInput.agentCliPath`). */
+  agentCliPath: string;
 }
 
 export type PrepareResult =
@@ -425,6 +427,7 @@ export async function prepareAgentSpawn(input: {
       expiredLastActiveAt,
       inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
       agentCliVersion: detection.version,
+      agentCliPath: launch.agentPath,
     },
   };
 }

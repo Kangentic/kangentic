@@ -440,6 +440,12 @@ interface BufferState {
    *  one sample's duration. */
   replaySamplesInFlight: number;
   scrollback: string;
+  /** Where this PTY's own bytes begin in `scrollback`: the length of the
+   *  carried-over ring at spawn (0 on a fresh spawn), shifted down by every
+   *  trim and held at 0 once a trim passes it. `getRawScrollback`'s
+   *  `ownOutputOnly` reads from here, so a launch's output is never classified
+   *  by its predecessor's last lines. */
+  ownOutputStartIndex: number;
   lastCols: number;
   /** The row count the bytes currently in the scrollback were drawn for,
    *  mirroring lastCols. Feeds onResize's row-change detection, which arms the
@@ -622,6 +628,7 @@ export class PtyBufferManager {
       flushScheduled: false,
       replaySamplesInFlight: 0,
       scrollback: previousScrollback,
+      ownOutputStartIndex: previousScrollback.length,
       lastCols: initialCols,
       lastRows: initialRows,
       pendingRepaintAt: null,
@@ -772,6 +779,8 @@ export class PtyBufferManager {
       if (safeStart > 0) {
         state.scrollback = state.scrollback.slice(safeStart);
       }
+      // The carried-over boundary moves with the bytes it marks.
+      state.ownOutputStartIndex = Math.max(0, state.ownOutputStartIndex - (lengthBeforeTrim - state.scrollback.length));
       // Shift the post-resize scan offset by the trimmed prefix so a
       // repaint-settle wait in flight keeps scanning the right region.
       if (state.pendingRepaintScrollbackLength !== null) {
@@ -1407,9 +1416,15 @@ export class PtyBufferManager {
    *    \x1b[2J for clean terminal replay), this preserves agent startup
    *    headers. Codex prints "session id: <uuid>" BEFORE entering its
    *    TUI alt-screen, so the header would otherwise be sliced away.
+   *
+   * With `ownOutputOnly`, only the bytes this PTY produced, without the ring a
+   * respawn carried over: what a launch's own failure is read from
+   * (`SessionManager.getLaunchOutput`).
    */
-  getRawScrollback(sessionId: string): string {
-    return this.buffers.get(sessionId)?.scrollback || '';
+  getRawScrollback(sessionId: string, ownOutputOnly = false): string {
+    const state = this.buffers.get(sessionId);
+    if (!state) return '';
+    return ownOutputOnly ? state.scrollback.slice(state.ownOutputStartIndex) : state.scrollback;
   }
 
   /**

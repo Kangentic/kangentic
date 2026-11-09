@@ -439,16 +439,20 @@ in one Sentry org, one triage surface.
 
   An event carries `stage`, `cause`, `platform`, `agent`, `agent_cli_version`, `start_path` (`board`,
   `resume`, `command_terminal`, `workflow`, `phone`, `startup_recovery`, `retry`, `open`), `shell`, `attempt`,
-  `launcher` (`none`, `present`, `missing`), `shell_printed` (`none`, `before_launch`,
+  `launcher` (`none`, `present`, `missing`), `command_head` (`present`, `missing`, or `unknown`
+  for no recorded path, a bare command name or a WSL shell: whether the CLI path the command builder
+  was handed exists at report time, never the path), `shell_printed` (`none`, `before_launch`,
   `after_launch`, around the spawn's clear), `first_output_s`, `session_age_s` (both buckets),
   `typed_line_bytes` and `overlay_ceiling`. A report on a session adds `output_class`
-  (`command_not_found`, `permission_denied`, `no_such_file`, `unknown_option`, `line_too_long`,
+  (`command_not_found`, `permission_denied`, `no_such_file` (the command's own path),
+  `bad_interpreter` (the command exists and its shebang's interpreter does not), `unknown_option`, `line_too_long`,
   `conversation_missing`, `login_required`, `bad_configuration`, `other`, `not_read`, `unreadable`), and an ending adds `exit_code`, `exit_signal` and, for `abandoned`, `ended_by`
   (`pause`, `kill`, `quit`). `never_started` adds `judge` (`sweep`, `timer`). A preflight report
   adds `error_type` and `errno` when the error has them.
 
   Every value is fixed. A command holds the task's prompt and scrollback can hold secrets, so the
-  last output is classified in main and only the class leaves. The classifier anchors on how a shell
+  last output is classified in main and only the class leaves. It is the launch's own output, never
+  the ring a retry or resume carried over from the session it replaced (`getLaunchOutput`). The classifier anchors on how a shell
   words a failure, so text the shell echoed, such as a task titled "fix permission denied", cannot
   match. Detection keeps whatever a CLI printed, so `agent_cli_version` must look like a version or
   it reads `unknown`. The launcher's path stays in main, and only whether it still exists leaves.

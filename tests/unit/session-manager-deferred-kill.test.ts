@@ -942,6 +942,10 @@ describe('retireAgentlessSession on a young session', () => {
     // adapter - presence is what matters, not the contents (mirrors
     // session-manager-agent-absence.test.ts's seedSession).
     row.agentParser = {} as unknown as ManagedSession['agentParser'];
+    // An agent that ran (a hook landed) and then exited young. Without a sign
+    // it ran, the start bound would hold a launch this young until the
+    // 2-minute start ceiling, long past the young window.
+    row.agentHookObservedAt = Date.now();
 
     // Clear the 30 s agent-spawn grace (AGENT_SPAWN_GRACE_MS in
     // session-manager.ts, module-private - mirrored here as in

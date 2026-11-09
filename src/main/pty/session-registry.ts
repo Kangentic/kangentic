@@ -150,6 +150,19 @@ export interface ManagedSession {
   startPath?: LaunchStartPath;
   /** The agent CLI's version as detection read it; `launchVersionTag` vets it. */
   agentCliVersion?: string | null;
+  /**
+   * The CLI path the command builder was handed, the typed command's head.
+   * Main-side only, like `launcherPath`: a report sends whether it exists, never the path.
+   */
+  agentCliPath?: string | null;
+  /**
+   * Epoch ms the output of a launch that has not shown its agent ran was found
+   * to name its cause (`isIdentifiedFailureClass`), read by
+   * `SessionManager.checkPendingLaunchOutput`. Until then, or until
+   * `AGENT_START_CEILING_MS`, the agent-absence sweep does not judge such a
+   * launch: a shell still starting it looks the same as one whose agent left.
+   */
+  launchFailureIdentifiedAt?: number | null;
   /** Epoch ms of the first output of any kind, the shell's own included. */
   firstOutputAt?: number | null;
   /**

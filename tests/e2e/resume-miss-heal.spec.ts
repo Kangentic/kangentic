@@ -8,8 +8,11 @@
  * process tree, the pause, the mark once the output read lands, and the retry going
  * through the real engine to a fresh start with the first launch's prompt.
  *
- * Slow on purpose: the sweep runs on its 60 s cadence and confirms over two cycles,
- * and no hook can hurry it, since a CLI that signalled its end would have shown it ran.
+ * It also proves the start bound's fast path: the miss is a class the output names,
+ * so the start bound reads the ring at the 30 s grace and asks the sweep to look
+ * (`checkPendingLaunchOutput`), rather than leaving the launch to the 2-minute start
+ * ceiling. No hook can hurry it, since a CLI that signalled its end would have shown
+ * it ran. Measured at 47 s for the whole test.
  */
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
