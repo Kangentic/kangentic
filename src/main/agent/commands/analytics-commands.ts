@@ -17,6 +17,8 @@ import { resolveTask } from './task-resolver';
 import { legDeltas } from '../../../shared/leg-deltas';
 import type { SessionSummary, SubagentUsageTotals, Task, TaskFanOut } from '../../../shared/types';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import { describePriorityScale, labelColorsOf, priorityScaleOf } from './label-and-priority';
+import { describeLabelPalette } from '../../../shared/label-palette';
 
 /** Fan-out rows printed before collapsing the tail into a "+N more" line. The
  *  rows are heaviest-first, so the cap keeps the expensive ones. */
@@ -237,7 +239,7 @@ export const handleGetTaskStats: CommandHandler = async (
 const BOARD_SUMMARY_LABEL_LIMIT = 30;
 
 /** Soft wrap width for the label list, so a wide vocabulary stays readable. */
-const BOARD_SUMMARY_LABEL_WRAP_COLUMNS = 96;
+export const BOARD_SUMMARY_LABEL_WRAP_COLUMNS = 96;
 
 /**
  * Tally label usage across every item that can carry one: active board tasks,
@@ -284,11 +286,14 @@ function sortLabelEntries(counts: Map<string, number>): Array<[string, number]> 
 
 /**
  * Render the label vocabulary block for the board summary: most-used first,
- * ties broken alphabetically so the output is stable across calls.
+ * ties broken alphabetically so the output is stable across calls. A label with
+ * a color prints it (`regression #f97316 (4)`), so an agent reusing a label can
+ * see which ones are colored and which colors are taken.
  */
 export function formatLabelVocabulary(
   counts: Map<string, number>,
   labelledItems: number,
+  labelColors: Record<string, string> = {},
 ): string[] {
   if (counts.size === 0) {
     return ['Labels in use: none yet.'];
@@ -301,7 +306,8 @@ export function formatLabelVocabulary(
   let currentLine = '';
   for (let index = 0; index < shown.length; index++) {
     const [name, count] = shown[index];
-    const entry = `${name} (${count})${index < shown.length - 1 ? ',' : ''}`;
+    const color = labelColors[name];
+    const entry = `${name}${color ? ` ${color}` : ''} (${count})${index < shown.length - 1 ? ',' : ''}`;
     if (currentLine && `${currentLine} ${entry}`.length > BOARD_SUMMARY_LABEL_WRAP_COLUMNS) {
       lines.push(`  ${currentLine}`);
       currentLine = entry;
@@ -381,6 +387,8 @@ export const handleBoardSummary: CommandHandler = async (
   }
 
   const { counts: labelCounts, labelledItems } = tallyLabelUsage(labelLists);
+  const labelColors = labelColorsOf(context);
+  const priorityScale = priorityScaleOf(context);
 
   const lines = [
     `Board Summary:`,
@@ -388,7 +396,9 @@ export const handleBoardSummary: CommandHandler = async (
     `Columns:`,
     ...columnLines,
     ``,
-    ...formatLabelVocabulary(labelCounts, labelledItems),
+    ...formatLabelVocabulary(labelCounts, labelledItems, labelColors),
+    `Label palette (pick one to color a label): ${describeLabelPalette()}`,
+    `Priorities: ${describePriorityScale(priorityScale)} (0 shows nothing on a card)`,
     ``,
     `Active tasks: ${totalActiveTasks}`,
     `Backlog tasks: ${backlogTasks.length}`,
@@ -406,7 +416,8 @@ export const handleBoardSummary: CommandHandler = async (
     message: lines.join('\n'),
     data: {
       columns: columnData,
-      labels: sortLabelEntries(labelCounts).map(([name, count]) => ({ name, count })),
+      labels: sortLabelEntries(labelCounts).map(([name, count]) => ({ name, count, color: labelColors[name] ?? null })),
+      priorities: priorityScale.map((entry, index) => ({ index, name: entry.label })),
       totalActiveTasks,
       backlogTasks: backlogTasks.length,
       completedTasks: archivedTasks.length,

@@ -116,8 +116,8 @@ function monitorPreConfig(): string {
     window.__mockMonitorRows = [
       {
         // The one labelled row in the fixture. Every other row here has
-        // labels: [], so the conditional LabelPills block
-        // (row.labels.length > 0 && ...) went unexercised without it. It also
+        // labels: [] and priority 0, so the conditional TaskPills block
+        // (labels or a priority) went unexercised without it. It also
         // gives the density test a labelled card to compare against an
         // unlabelled one, which is what proves the well no longer sizes itself
         // off label presence. Put on sess-working rather than a new row. A new
@@ -126,7 +126,7 @@ function monitorPreConfig(): string {
         // existing row changes nothing any other test checks.
         sessionId: 'sess-working', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: ['npm run typecheck', 'no errors'], displayId: 142,
-        columnName: 'Testing', commandTerminalBranch: null, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
+        columnName: 'Testing', commandTerminalBranch: null, priority: 0, labels: ['bug'], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'xhigh', permissionMode: 'plan',
         startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -145,7 +145,7 @@ function monitorPreConfig(): string {
       {
         sessionId: 'sess-other-project', projectId: '${PROJECT_B}', projectName: 'Monitor Beta',
         taskId: 'task-b', taskTitle: 'Landing copy pass', outputPeek: [], displayId: 7,
-        columnName: 'Doing', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+        columnName: 'Doing', commandTerminalBranch: null, priority: 0, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Sonnet 5', effort: 'medium', permissionMode: 'auto',
         startedAt: '2026-01-01T00:02:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -156,7 +156,7 @@ function monitorPreConfig(): string {
       {
         sessionId: 'sess-paused', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-c', taskTitle: 'Paused work', outputPeek: [], displayId: 9,
-        columnName: 'To Do', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+        columnName: 'To Do', commandTerminalBranch: null, priority: 0, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: null, effort: null, permissionMode: null,
         startedAt: '2026-01-01T00:03:00.000Z', exitedAt: null,
         status: 'suspended', activity: null, activityReason: null,
@@ -169,7 +169,7 @@ function monitorPreConfig(): string {
         sessionId: 'sess-command-terminal', projectId: '${PROJECT_B}', projectName: 'Monitor Beta',
         taskId: 'transient-1', taskTitle: 'Command Terminal 2',
         outputPeek: ['git status', 'nothing to commit'], displayId: null,
-        columnName: '', commandTerminalBranch: 'main', labels: [], prUrl: null, prNumber: null, prState: null,
+        columnName: '', commandTerminalBranch: 'main', priority: 0, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: null, permissionMode: null,
         startedAt: '2026-01-01T00:04:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -253,7 +253,7 @@ function singleProjectMonitorPreConfig(): string {
       {
         sessionId: 'sess-single-a', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
         taskId: 'task-single-a', taskTitle: 'Solo project task', outputPeek: [], displayId: 501,
-        columnName: 'To Do', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+        columnName: 'To Do', commandTerminalBranch: null, priority: 0, labels: [], prUrl: null, prNumber: null, prState: null,
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
         startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
@@ -2024,7 +2024,7 @@ test.describe('agent monitor', () => {
           // working count at 0, which is the state under test.
           sessionId: 'sess-idle-only', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
           taskId: 'task-a', taskTitle: 'Fix PTY capture race', outputPeek: [], displayId: 142,
-          columnName: 'Testing', commandTerminalBranch: null, labels: [], prUrl: null,
+          columnName: 'Testing', commandTerminalBranch: null, priority: 0, labels: [], prUrl: null,
           prNumber: null, prState: null, agentName: 'claude', modelDisplayName: 'Opus 5',
           effort: 'xhigh', permissionMode: 'plan', startedAt: '2026-01-01T00:00:00.000Z',
           exitedAt: null, status: 'running', activity: 'idle',

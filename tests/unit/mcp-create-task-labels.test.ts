@@ -184,6 +184,81 @@ describe('handleUpdateTask - labels survive a large description (round-trip guar
 });
 
 // ---------------------------------------------------------------------------
+// handleUpdateTask - a label color on update (it took plain strings only, so an
+// agent could color a label on create but never on update)
+// ---------------------------------------------------------------------------
+
+describe('handleUpdateTask - { name, color } labels', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockTaskRepoGetById.mockReturnValue({ id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: [] });
+    mockTaskRepoUpdate.mockImplementation((input: Record<string, unknown>) => ({
+      id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: input.labels ?? [],
+    }));
+  });
+
+  it('stores the names and saves the color', () => {
+    const result = handleUpdateTask(
+      { taskId: 'task-uuid-1', labels: ['ui', { name: 'regression', color: '#f97316' }] },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledWith(expect.objectContaining({ labels: ['ui', 'regression'] }));
+    expect(context.onLabelColorsChanged).toHaveBeenCalledWith({ regression: '#f97316' });
+  });
+
+  it('saves no color for plain names', () => {
+    handleUpdateTask({ taskId: 'task-uuid-1', labels: ['ui'] }, context);
+    expect(context.onLabelColorsChanged).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Priority is an index into the PROJECT's scale, which the Priorities popover
+// lets a person extend past the five seeded levels.
+// ---------------------------------------------------------------------------
+
+const SIX_LEVEL_SCALE = [
+  { label: 'None', color: '#6b7280' },
+  { label: 'Low', color: '#3b82f6' },
+  { label: 'Medium', color: '#eab308' },
+  { label: 'High', color: '#f97316' },
+  { label: 'Urgent', color: '#ef4444' },
+  { label: 'P0', color: '#ec4899' },
+];
+
+describe('priority checked against the project scale', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'To Do' } });
+    mockTaskRepoCreate.mockImplementation((input: { title: string }) => ({ id: 'task-uuid-1', display_id: 1, title: input.title }));
+    mockTaskRepoGetById.mockReturnValue({ id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: [] });
+    mockTaskRepoUpdate.mockImplementation(() => ({ id: 'task-uuid-1', display_id: 1, title: 'Existing', labels: [] }));
+  });
+
+  it('accepts the sixth level of a six-level scale on create and update', async () => {
+    const context = makeContext({ getBacklogDisplayConfig: () => ({ priorities: SIX_LEVEL_SCALE, labelColors: {} }) });
+    expect((await handleCreateTask({ title: 'Top', priority: 5 }, context)).success).toBe(true);
+    expect(handleUpdateTask({ taskId: 'task-uuid-1', priority: 5 }, context).success).toBe(true);
+  });
+
+  it('refuses a level past the seeded scale and lists the scale', async () => {
+    const context = makeContext();
+    const created = await handleCreateTask({ title: 'Too high', priority: 5 }, context);
+    expect(created).toMatchObject({ success: false, error: expect.stringContaining('0 None, 1 Low, 2 Medium, 3 High, 4 Urgent') });
+    expect(mockTaskRepoCreate).not.toHaveBeenCalled();
+
+    const updated = handleUpdateTask({ taskId: 'task-uuid-1', priority: 5 }, context);
+    expect(updated).toMatchObject({ success: false, error: expect.stringContaining('Priority must be 0-4') });
+    expect(mockTaskRepoUpdate).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TASK_DESCRIPTION_MAX_LENGTH is above the backlog's 10,000 cap - a description
 // between the two must survive both the handleCreateTask (board path) and
 // handleUpdateTask (full-replace) slices in full, not get cut down to it.

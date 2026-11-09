@@ -754,7 +754,7 @@ test.describe('Chrome rows at the 900x600 floor', () => {
 
   /**
    * The board branch: the Board / Backlog / Workflows switcher (nothing runs in this seed, so
-   * Workflows has no live-state tip to keep), Labels, Priorities, Filter and Add column.
+   * Workflows has no live-state tip to keep), Priorities, Labels, Filter and Add column.
    */
   test('on the board, a toolbar control shows its name as a tip only while its label is hidden', async () => {
     // Intentional: every negative hover waits out the 400ms dwell on the page's clock, one control
@@ -768,7 +768,7 @@ test.describe('Chrome rows at the 900x600 floor', () => {
     }
   });
 
-  /** The backlog branch: Labels, Priorities, Filter, New Task and Import Tasks. */
+  /** The backlog branch: Priorities, Labels, Filter, New Task and Import Tasks. */
   test('on the backlog, a toolbar control shows its name as a tip only while its label is hidden', async () => {
     // Same reason as the board branch above.
     test.slow();

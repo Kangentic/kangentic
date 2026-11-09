@@ -38,7 +38,6 @@ import { useConfigStore } from '../../stores/config-store';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { taskDescriptionOverage } from '../../../shared/task-description-limit';
 import { useKeybinding } from '../../hooks/useKeybinding';
-import { PriorityBadge } from '../../components/backlog/PriorityBadge';
 import { ConfirmDialog } from '../../components/dialogs/ConfirmDialog';
 import { SendToBacklogDialog } from '../../components/board/SendToBacklogDialog';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
@@ -915,7 +914,6 @@ export function TaskDetailWindow({
             #{task.display_id}
           </button>
         </Tooltip>
-        <PriorityBadge priority={task.priority ?? 0} />
       </h3>
       <div className="flex-1" />
       {/* A To Do task opens here, in the form, and that is when its workflow

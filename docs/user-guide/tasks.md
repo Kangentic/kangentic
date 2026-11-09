@@ -97,6 +97,7 @@ conversation and sends the task once more.
 - **Terminal panel** at the bottom shows the active session's terminal output
 - **Activity tab** shows structured events (tool calls, idle state) instead of raw terminal output
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
+- **Priority and labels** share one row of pills on the card, priority first with a flag, then the labels. The bottom entry of the priority scale ("None" unless renamed) shows nothing. The same row shows in the Done list, on a Workflows card, on an Agent Monitor card and in the task detail under the description
 - **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
   - An amber mark when the agent is waiting on you, shaped by why: an envelope when it finished its turn, a pennant when it finished and the board has stopped until you act, a speech bubble when it asked you a question (or did not say what it waits for), and a quartered shield when it wants a tool or a plan approved. Hover it for how long ("Asking you a question for 2m"); the pennant has no tip, so open the task to read why. The sidebar keeps one amber count for all four

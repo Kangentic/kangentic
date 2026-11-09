@@ -113,7 +113,9 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 Each planned task takes `key` (unique in the plan), `title`, `description` (max 27500 chars: it
 rides the agent's command line), and optionally
 `project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
-one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`.
+one), `routeStart`, `routeLast`, `skip` (column names), `labels` (plain names or `{ name, color }`, as
+[kangentic_create_task](task-tools.md#kangentic_create_task) takes them) and `priority` (an index
+into the project's priority scale; a task on this board is checked against it).
 
 It also takes `planApproval`: `automatic` has Kangentic approve the task's plan, so it moves on by
 itself (a question the agent asks the user still waits), and `manual` waits for the user. Omitted or

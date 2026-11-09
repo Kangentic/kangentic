@@ -2,7 +2,7 @@
  * Display names for the seeded priority labels.
  *
  * A priority's label is persisted data: it is saved to the project config, shared
- * through `kangentic.json` and read by MCP (`BACKLOG_PRIORITY_LABELS`), so it
+ * through `kangentic.json` and read by MCP (`agent/commands/label-and-priority.ts`), so it
  * stays English however the UI is translated. These helpers translate it on
  * DISPLAY only, and only when the stored text is exactly one of the English names
  * Kangentic seeds ("None", "Low", "Medium", "High", "Urgent") or the "Priority N"

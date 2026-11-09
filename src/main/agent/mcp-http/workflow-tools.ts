@@ -6,6 +6,7 @@ import type { RequestResolver } from './project-resolver';
 import { TASK_DESCRIPTION_MAX_LENGTH } from '../../../shared/task-description-limit';
 import { PERMISSION_MODES, RUN_MODES } from '../../../shared/workflow-run-settings';
 import { MAX_WORKFLOW_TASKS } from '../../workflows/workflow-limits';
+import { LABEL_ENTRY_GUIDE, LABEL_ENTRY_SCHEMA, PRIORITY_GUIDE, PRIORITY_SCHEMA } from './label-priority-schema';
 
 /**
  * The workflow tools (#732): a workflow is a set of linked tasks that run
@@ -62,8 +63,8 @@ const PLANNED_TASK_SCHEMA = z.object({
   routeStart: z.string().optional().describe(`The first column it visits. ${COLUMN_NAME_DESCRIPTION} Omit to start in the first column after To Do.`),
   routeLast: z.string().optional().describe(`The last column it visits before Done. ${COLUMN_NAME_DESCRIPTION} Omit to visit through the column before Done.`),
   skip: z.array(z.string()).optional().describe('Columns inside its route it skips, such as one that only plans the work, for a small, well-understood task. Never skip a column the user\'s process depends on without asking.'),
-  labels: z.array(z.string()).optional(),
-  priority: z.number().int().min(0).max(4).optional(),
+  labels: z.array(LABEL_ENTRY_SCHEMA).optional().describe(`The task's labels. ${LABEL_ENTRY_GUIDE}`),
+  priority: PRIORITY_SCHEMA.optional().describe(`The task's priority. ${PRIORITY_GUIDE} A task on another project's board takes that board's scale.`),
   ...RUN_SETTINGS_SHAPE,
   ...TASK_PLAN_APPROVAL_SHAPE,
 });

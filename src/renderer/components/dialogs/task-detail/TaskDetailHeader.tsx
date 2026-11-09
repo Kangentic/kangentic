@@ -14,7 +14,6 @@ import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandSearchList } from './CommandSearchList';
 import { useHeaderPillOverflow, type HeaderPillSpec } from './useHeaderPillOverflow';
 import { MaximizeToggleButton } from '../dialog-maximize';
-import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { shortRefLabel, useBaseRefKind } from '../../../hooks/useBaseRefKind';
@@ -272,8 +271,9 @@ export function TaskDetailHeader({
 
   return (
     <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] min-w-0">
-      {/* Leading cluster: pause / id / priority. flex-shrink-0 so the priority
-          badge never compresses, and so it measures as one unit for the overflow calc. */}
+      {/* Leading cluster: pause / id. flex-shrink-0 so it never compresses, and
+          so it measures as one unit for the overflow calc. Priority is not here:
+          it shows in the description's pill row, ahead of the labels, as on the card. */}
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
@@ -320,9 +320,6 @@ export function TaskDetailHeader({
           #{task.display_id}
         </button>
       </Tooltip>
-
-      {/* Priority badge (hidden when priority is 0) */}
-      <PriorityBadge priority={task.priority ?? 0} />
       </div>
 
       {/* Title - the overflow calc reserves only a ~50ch floor (not the full

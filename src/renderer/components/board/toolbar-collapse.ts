@@ -12,7 +12,7 @@
  * The ladder, widest to floor:
  *
  *   step 0       everything at full, search up to its 21rem cap
- *   step 1       Labels, Priorities, Filter and Import Tasks go icon-only
+ *   step 1       Priorities, Labels, Filter and Import Tasks go icon-only
  *   step 2       Board / Backlog / Workflows go icon-only, keeping their counts
  *   step 3       Add column / New Task go icon-only, and the two dividers
  *                become gaps
@@ -109,7 +109,7 @@ export function chooseCollapseStep(
   return Math.max(0, costs.length - 1);
 }
 
-/** Whether Labels, Priorities, Filter and Import Tasks are icon-only at `step`. */
+/** Whether Priorities, Labels, Filter and Import Tasks are icon-only at `step`. */
 export function filtersCollapsed(step: number): boolean {
   return step >= 1;
 }
@@ -250,7 +250,7 @@ export interface ToolbarControlCollapse {
 
 /** Everything one branch of the toolbar needs to run the ladder. */
 export interface ToolbarCollapseClasses {
-  /** Labels, Priorities, Filter, and Import Tasks. Collapse at step 1. */
+  /** Priorities, Labels, Filter, and Import Tasks. Collapse at step 1. */
   filterControl: ToolbarControlCollapse;
   /** Board / Backlog / Workflows. Collapse at step 2. */
   viewSwitcherLabel: string;

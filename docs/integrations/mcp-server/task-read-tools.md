@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Task read tools
-description: "Read-only MCP tools for tasks and board totals: list_tasks ordinal positions, find_task by display ID, branch or PR number with Knowledge Graph lines, get_task_report's route, commits and per-file changes, get_current_task from a worktree, board_summary label vocabulary, and get_task_stats and get_usage_stats cost, token and subagent fan-out figures."
+description: "Read-only MCP tools for tasks and board totals: list_tasks ordinal positions, find_task by display ID, branch or PR number with Knowledge Graph lines, get_task_report's route, commits and per-file changes, get_current_task from a worktree, board_summary label vocabulary, palette and priority scale, and get_task_stats and get_usage_stats cost, token and subagent fan-out figures."
 tags: [mcp, tasks, stats, usage]
 sources:
   - resource: src/main/agent/mcp-http/task-tools.ts
@@ -9,6 +9,8 @@ sources:
   - resource: src/main/agent/mcp-http/usage-tools.ts
   - resource: src/main/agent/commands/inventory-commands.ts
   - resource: src/main/agent/commands/search-commands.ts
+  - resource: src/main/agent/commands/label-and-priority.ts
+  - resource: src/shared/label-palette.ts
   - resource: src/main/agent/commands/task-report-commands.ts
   - resource: src/main/agent/commands/analytics-commands.ts
   - resource: src/main/agent/commands/usage-commands.ts
@@ -99,7 +101,7 @@ At least one parameter is required. The message is what the agent reads, so a si
 
 ## kangentic_board_summary
 
-Get a high-level board overview: task counts per column, the board's label vocabulary, active sessions, completed tasks, and aggregate cost/token metrics.
+Get a high-level board overview: task counts per column, the board's label vocabulary with each label's color, the label palette, the project's priority scale, active sessions, completed tasks, and aggregate cost/token metrics.
 
 No parameters.
 
@@ -120,13 +122,24 @@ vocabulary, while `M labelled items` counts items carrying at least one label. T
 are label *uses*, so a task with three labels contributes to three of them and they sum to more
 than `M`.
 
-The list is capped at 30 entries with a `... and N more` tail. Label colors are deliberately not
-reported: passing an existing label back as a plain string preserves the color it already has, so a
-caller never needs one.
+The list is capped at 30 entries with a `... and N more` tail. A label with a color prints it after
+its name (`regression #f97316 (4)`), so a caller can see which labels are colored and which colors
+are taken. Passing an existing label back as a plain string still keeps its color.
 
-`data.labels` carries the same tally as `{ name, count }` entries in the same most-used-first order,
-and is **not** capped the way the printed list is, so a caller that needs the whole vocabulary can
-read it there.
+**Label palette.** A `Label palette` line names the colors the Labels editor offers
+(`src/shared/label-palette.ts`), the same list the label tools' descriptions carry, so an agent that
+colors a new label picks a color a person could have picked. Nothing is colored for it: a plain name
+stays uncolored.
+
+**Priorities.** A `Priorities` line lists the project's scale by number (`0 None, 1 Low, ...`). The
+scale is the project's own: a person can rename, reorder and extend it in the Priorities popover, so
+the priority tools check a number against it and name levels from it rather than from the five
+Kangentic seeds.
+
+`data.labels` carries the same tally as `{ name, count, color }` entries (`color` null when the
+label has none) in the same most-used-first order, and is **not** capped the way the printed list
+is, so a caller that needs the whole vocabulary can read it there. `data.priorities` carries the
+scale as `{ index, name }` entries.
 
 ## kangentic_get_usage_stats
 

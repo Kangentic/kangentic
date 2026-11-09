@@ -187,10 +187,36 @@ describe('handleBoardSummary - label vocabulary wiring', () => {
 
     const result = await handleBoardSummary({}, makeContext());
 
-    expect((result.data as { labels: Array<{ name: string; count: number }> }).labels).toEqual([
-      { name: 'mcp', count: 2 },
-      { name: 'ui', count: 1 },
+    expect((result.data as { labels: Array<{ name: string; count: number; color: string | null }> }).labels).toEqual([
+      { name: 'mcp', count: 2, color: null },
+      { name: 'ui', count: 1, color: null },
     ]);
+  });
+
+  it('prints each label color, the palette, and the project priority scale', async () => {
+    // An agent had no way to see which labels were colored or what colors to
+    // pick, so every label it made was grey; and it was told a fixed 0-4 scale
+    // the user can rename and extend.
+    mockTaskList.mockReturnValue([{ id: 't1', session_id: null, labels: ['regression', 'ui'] }]);
+    mockTaskListArchived.mockReturnValue([]);
+    mockBacklogList.mockReturnValue([]);
+    const context = {
+      ...makeContext(),
+      getBacklogDisplayConfig: () => ({
+        priorities: [{ label: 'None', color: '#6b7280' }, { label: 'P1', color: '#ef4444' }],
+        labelColors: { regression: '#f97316' },
+      }),
+    } as unknown as CommandContext;
+
+    const result = await handleBoardSummary({}, context);
+
+    expect(result.message).toContain('regression #f97316 (1)');
+    expect(result.message).toContain('ui (1)');
+    expect(result.message).toMatch(/Label palette \(pick one to color a label\): #6b7280 gray, #ef4444 red,/);
+    expect(result.message).toContain('Priorities: 0 None, 1 P1');
+    const data = result.data as { labels: Array<{ name: string; color: string | null }>; priorities: Array<{ index: number; name: string }> };
+    expect(data.labels.find((entry) => entry.name === 'regression')?.color).toBe('#f97316');
+    expect(data.priorities).toEqual([{ index: 0, name: 'None' }, { index: 1, name: 'P1' }]);
   });
 
   it('still reports the pre-existing column and task counts', async () => {

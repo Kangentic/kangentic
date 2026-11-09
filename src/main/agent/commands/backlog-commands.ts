@@ -4,8 +4,8 @@ import { BacklogRepository } from '../../db/repositories/backlog-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
-import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import { resolveColumn } from './column-resolver';
+import { isLabelListOrAbsent, LABELS_NOT_A_LIST, priorityName, priorityScaleError, priorityScaleOf, splitLabelEntries } from './label-and-priority';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { BacklogTaskUpdateInput } from '../../../shared/types';
 
@@ -45,8 +45,9 @@ export const handleListBacklog: CommandHandler = (
     return { success: true, message: `No backlog tasks found${filterNote}.`, data: [] };
   }
 
+  const scale = priorityScaleOf(context);
   const lines = items.map((item) => {
-    const priorityLabel = BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None';
+    const priorityLabel = priorityName(item.priority, scale);
     const labelString = item.labels.length > 0 ? ` [${item.labels.join(', ')}]` : '';
     return `- ${item.title} (${priorityLabel})${labelString} (id: ${item.id})`;
   });
@@ -59,7 +60,7 @@ export const handleListBacklog: CommandHandler = (
       title: item.title,
       description: item.description,
       priority: item.priority,
-      priorityLabel: BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None',
+      priorityLabel: priorityName(item.priority, scale),
       labels: item.labels,
       createdAt: item.created_at,
     })),
@@ -72,8 +73,7 @@ export const handleCreateBacklogTask: CommandHandler = (
 ): CommandResponse => {
   const title = String(params.title ?? '').slice(0, 200);
   const description = String(params.description ?? '').slice(0, BACKLOG_DESCRIPTION_MAX_LENGTH);
-  const priority = (params.priority as number) ?? 0;
-  const rawLabels = (params.labels as Array<string | { name: string; color: string }>) ?? [];
+  const priority = (params.priority as number | null | undefined) ?? 0;
   const attachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
@@ -84,27 +84,18 @@ export const handleCreateBacklogTask: CommandHandler = (
     labels: params.labels ?? null,
   });
 
-  // Normalize labels: extract names for DB storage and colors for config
-  const labelNames: string[] = [];
-  const labelColorMap: Record<string, string> = {};
-  for (const entry of rawLabels) {
-    if (typeof entry === 'string') {
-      labelNames.push(entry);
-    } else if (entry && typeof entry === 'object' && entry.name) {
-      labelNames.push(entry.name);
-      if (entry.color) {
-        labelColorMap[entry.name] = entry.color;
-      }
-    }
-  }
+  // Names go to the row, colors to the project's label colors.
+  const rawLabels = params.labels;
+  if (!isLabelListOrAbsent(rawLabels)) return { success: false, error: LABELS_NOT_A_LIST };
+  const { names: labelNames, colors: labelColorMap } = splitLabelEntries(rawLabels);
 
   if (!title.trim()) {
     return { success: false, error: 'Title is required' };
   }
 
-  if (priority < 0 || priority > 4) {
-    return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
-  }
+  const scale = priorityScaleOf(context);
+  const priorityRefusal = priorityScaleError(priority, scale);
+  if (priorityRefusal !== null) return { success: false, error: priorityRefusal };
 
   const db = context.getProjectDb();
   const backlogRepo = new BacklogRepository(db);
@@ -137,7 +128,7 @@ export const handleCreateBacklogTask: CommandHandler = (
 
   context.onBacklogChanged();
 
-  const priorityLabel = BACKLOG_PRIORITY_LABELS[item.priority] ?? 'None';
+  const priorityLabel = priorityName(item.priority, scale);
   return {
     success: true,
     data: { id: item.id, title: item.title, priority: priorityLabel, labels: item.labels },
@@ -153,7 +144,8 @@ export const handleUpdateBacklogItem: CommandHandler = (
   const newTitle = (params.title ?? null) as string | null;
   const newDescription = (params.description ?? null) as string | null;
   const newPriority = (params.priority ?? null) as number | null;
-  const rawLabels = (params.labels ?? null) as Array<string | { name: string; color: string }> | null;
+  const rawLabels = params.labels ?? null;
+  if (!isLabelListOrAbsent(rawLabels)) return { success: false, error: LABELS_NOT_A_LIST };
   const newAttachments = (params.attachments ?? null) as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
@@ -167,8 +159,10 @@ export const handleUpdateBacklogItem: CommandHandler = (
     return { success: false, error: 'itemId is required' };
   }
 
-  if (newPriority !== null && (newPriority < 0 || newPriority > 4)) {
-    return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
+  const scale = priorityScaleOf(context);
+  if (newPriority !== null) {
+    const priorityRefusal = priorityScaleError(newPriority, scale);
+    if (priorityRefusal !== null) return { success: false, error: priorityRefusal };
   }
 
   const db = context.getProjectDb();
@@ -198,20 +192,11 @@ export const handleUpdateBacklogItem: CommandHandler = (
     changedFields.push('priority');
   }
 
-  const labelColorMap: Record<string, string> = {};
+  let labelColorMap: Record<string, string> = {};
   if (rawLabels !== null) {
-    const labelNames: string[] = [];
-    for (const entry of rawLabels) {
-      if (typeof entry === 'string') {
-        labelNames.push(entry);
-      } else if (entry && typeof entry === 'object' && entry.name) {
-        labelNames.push(entry.name);
-        if (entry.color) {
-          labelColorMap[entry.name] = entry.color;
-        }
-      }
-    }
-    updates.labels = labelNames;
+    const split = splitLabelEntries(rawLabels);
+    labelColorMap = split.colors;
+    updates.labels = split.names;
     changedFields.push('labels');
   }
 
@@ -256,7 +241,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
 
   context.onBacklogChanged();
 
-  const priorityLabel = BACKLOG_PRIORITY_LABELS[updated.priority] ?? 'None';
+  const priorityLabel = priorityName(updated.priority, scale);
   return {
     success: true,
     message: `Updated ${changedFields.join(', ')} for "${updated.title}".`,

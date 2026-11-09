@@ -186,13 +186,13 @@ describe('handleUpdateBacklogItem', () => {
 
     expect(result).toEqual({
       success: false,
-      error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)',
+      error: 'Priority must be 0-4 on this project\'s scale: 0 None, 1 Low, 2 Medium, 3 High, 4 Urgent.',
     });
     expect(mockBacklogRepoGetById).not.toHaveBeenCalled();
     expect(context.onBacklogChanged).not.toHaveBeenCalled();
   });
 
-  it('returns structured error when priority is above 4', () => {
+  it('returns structured error when priority is past the end of the seeded scale', () => {
     const result = handleUpdateBacklogItem(
       { itemId: 'item-001', priority: 5 },
       context,
@@ -200,7 +200,7 @@ describe('handleUpdateBacklogItem', () => {
 
     expect(result).toEqual({
       success: false,
-      error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)',
+      error: 'Priority must be 0-4 on this project\'s scale: 0 None, 1 Low, 2 Medium, 3 High, 4 Urgent.',
     });
     expect(context.onBacklogChanged).not.toHaveBeenCalled();
   });

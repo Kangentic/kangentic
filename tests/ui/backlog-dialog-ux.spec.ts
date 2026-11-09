@@ -331,22 +331,23 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     await expect(editDialog).not.toBeVisible();
   });
 
-  test('header priority badge tracks the live Priority select and hides at None', async () => {
+  test('header carries no priority badge: the Priority field below shows it', async () => {
     await openBacklogView(page);
     await openNewBacklogDialog(page);
     const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     const headerTitle = dialog.locator('h3');
 
-    // No priority selected yet - the badge self-hides (PriorityBadge returns
-    // null at priority 0 with no showLabel), so the header carries only the
-    // dialog title.
     await expect(headerTitle).toHaveText('New Backlog Task');
 
+    // A set priority used to draw a badge beside the title, repeating the
+    // field right under it. Removed for #1053, as in Edit Task's title bar.
     await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'Medium' });
-    await expect(headerTitle).toContainText('Medium');
-
-    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'None' });
     await expect(headerTitle).toHaveText('New Backlog Task');
+    await expect(headerTitle.locator('[data-testid="priority-pill"]')).toHaveCount(0);
+
+    // Back to None so the form is clean again and Escape closes without a
+    // discard confirm.
+    await dialog.locator('[data-testid="backlog-task-priority"]').selectOption({ label: 'None' });
 
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();

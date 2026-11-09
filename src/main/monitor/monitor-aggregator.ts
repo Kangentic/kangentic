@@ -266,6 +266,7 @@ export async function buildMonitorSnapshot(context: IpcContext, sources: Monitor
       browserRunning: isCommandTerminal
         ? !!managed.commandTerminalSlot && browserTaskIds.has(commandTerminalBrowserOwner(managed.projectId, managed.commandTerminalSlot))
         : browserTaskIds.has(managed.taskId),
+      priority: task?.priority ?? 0,
       labels: task?.labels ?? [],
       prUrl: task?.pr_url ?? null,
       prNumber: task?.pr_number ?? null,

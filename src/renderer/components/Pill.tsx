@@ -123,16 +123,19 @@ export const TINTED_PILL_FILL = 'color-mix(in srgb, currentColor 14%, transparen
 export const TINTED_PILL_EDGE = 'color-mix(in srgb, currentColor 35%, transparent)';
 
 /**
+ * The label pills with no row around them. `TaskPills` puts them in one wrap run
+ * after the priority, so the two wrap as one row rather than the labels wrapping
+ * as a block.
+ *
  * A label pill is tinted from its own colour: a wash of it behind, a stronger line around it, the
  * colour itself as text. A configured label used to get a flat `surface-hover/60` behind coloured
  * text, which measured 1.22 against the card it sits on, so the pill was invisible and the label
  * read as a stray coloured word. An UNCONFIGURED label keeps the flat treatment, because it has no
  * colour to tint with and its brighter muted text carries the shape on its own.
  */
-export const LabelPills = React.memo(function LabelPills({ labels, labelColors }: { labels: string[]; labelColors: Record<string, string> }) {
-  if (labels.length === 0) return null;
+export function LabelPillItems({ labels, labelColors }: { labels: string[]; labelColors: Record<string, string> }) {
   return (
-    <div className="flex flex-wrap gap-1">
+    <>
       {labels.map((label) => {
         const color = labelColors[label];
         return (
@@ -146,6 +149,6 @@ export const LabelPills = React.memo(function LabelPills({ labels, labelColors }
           </Pill>
         );
       })}
-    </div>
+    </>
   );
-});
+}
