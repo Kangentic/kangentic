@@ -114,6 +114,19 @@ export interface AzurePolicyEvaluation {
   isBlocking: boolean;
   isEnabled: boolean;
   isDeleted: boolean;
+  /** `evaluationId`, stable for one policy on one PR. */
+  evaluationId?: string | null;
+  /** The policy type's own name ("Build", "Status", "Minimum number of reviewers"). */
+  typeName?: string | null;
+  /** A build or status policy's display name, when its author gave one (`settings.displayName`). */
+  displayName?: string | null;
+  /** A status policy's genre and name (`settings.statusGenre` / `settings.statusName`). */
+  statusGenre?: string | null;
+  statusName?: string | null;
+  /** The build a build policy ran (`context.buildId`); null before it queues one. */
+  buildId?: number | null;
+  /** The pipeline a build policy runs (`context.buildDefinitionName`). */
+  buildDefinitionName?: string | null;
 }
 
 /**
@@ -180,6 +193,19 @@ interface AzurePolicyEvaluationRaw {
   isBlocking?: unknown;
   isEnabled?: unknown;
   isDeleted?: unknown;
+  evaluationId?: unknown;
+  typeName?: unknown;
+  displayName?: unknown;
+  statusGenre?: unknown;
+  statusName?: unknown;
+  buildId?: unknown;
+  buildDefinitionName?: unknown;
+}
+
+/** A failed step of a build: its name and the id of its log (`log.id`). */
+export interface AzureFailedBuildStep {
+  name: string;
+  logId: number;
 }
 
 /** `az` is missing, unauthenticated, or lacks the azure-devops extension. */
@@ -305,7 +331,18 @@ const AZ_PR_FIELDS_NO_FORK =
  * normalizer only has to type-check them.
  */
 const AZ_POLICY_EVALUATION_FIELDS =
-  '{status:status,typeId:configuration.type.id,isBlocking:configuration.isBlocking,isEnabled:configuration.isEnabled,isDeleted:configuration.isDeleted}';
+  '{status:status,typeId:configuration.type.id,isBlocking:configuration.isBlocking,isEnabled:configuration.isEnabled,isDeleted:configuration.isDeleted,'
+  + 'evaluationId:evaluationId,typeName:configuration.type.displayName,displayName:configuration.settings.displayName,'
+  + 'statusGenre:configuration.settings.statusGenre,statusName:configuration.settings.statusName,'
+  + 'buildId:context.buildId,buildDefinitionName:context.buildDefinitionName}';
+
+/** The build timeline and log calls: stable 7.1 (Microsoft Learn, Build Timeline Get / Get Build Log). */
+const BUILD_API_VERSION = '7.1';
+
+/** A failed step's log runs to a few hundred KB; 64 MB bounds an unusual one. */
+const BUILD_LOG_MAX_BUFFER = 64 * 1024 * 1024;
+
+const optionalString = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
 
 /**
  * Pinned separately from the `7.0` the other calls use: the evaluations API
@@ -328,6 +365,13 @@ function normalizeAzurePolicyEvaluation(raw: AzurePolicyEvaluationRaw): AzurePol
     isBlocking: raw.isBlocking === true,
     isEnabled: raw.isEnabled === true,
     isDeleted: raw.isDeleted === true,
+    evaluationId: optionalString(raw.evaluationId),
+    typeName: optionalString(raw.typeName),
+    displayName: optionalString(raw.displayName),
+    statusGenre: optionalString(raw.statusGenre),
+    statusName: optionalString(raw.statusName),
+    buildId: typeof raw.buildId === 'number' && Number.isInteger(raw.buildId) ? raw.buildId : null,
+    buildDefinitionName: optionalString(raw.buildDefinitionName),
   };
 }
 
@@ -721,6 +765,79 @@ export class AzureDevOpsImporter {
         .filter((evaluation): evaluation is AzurePolicyEvaluation => evaluation !== null);
     } catch (error) {
       warnPolicyEvaluationOnce(prNumber, describeAzFailure(error));
+      return null;
+    }
+  }
+
+  /**
+   * The failed STEPS of build `buildId`, from its timeline
+   * (`_apis/build/builds/{id}/timeline`). Only `Task` records: a failed task
+   * also fails its Job, Phase and Stage records, and those logs are the
+   * runner's bookkeeping, not the error (measured on a real failed build: four
+   * failed records, one of them the Task with the compiler output). Throws like
+   * the PR reads, so a missing `az` surfaces; null when Azure gave no readable
+   * answer.
+   */
+  async resolveFailedBuildSteps(organization: string, projectId: string, buildId: number): Promise<AzureFailedBuildStep[] | null> {
+    if (!AZURE_GUID_PATTERN.test(projectId) || !Number.isInteger(buildId) || buildId <= 0) return null;
+    // On Windows `execAz` runs through cmd.exe, and Node quotes an argument
+    // only when it holds a space. The spaces around `&&` are what quote this
+    // query, so cmd reads the `&&` as text: never write it without them.
+    const stdout = await this.buildApiGet(organization, projectId, `${buildId}/timeline`, PR_MAX_BUFFER, [
+      '--output', 'json',
+      '--query', "records[?result=='failed' && type=='Task'].{name:name,logId:log.id}",
+    ]);
+    if (stdout === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(parsed)) return null;
+    return parsed.flatMap((record: { name?: unknown; logId?: unknown }) =>
+      typeof record.name === 'string' && typeof record.logId === 'number' ? [{ name: record.name, logId: record.logId }] : [],
+    );
+  }
+
+  /**
+   * One build log (`_apis/build/builds/{id}/logs/{logId}`), raw. Azure answers
+   * plain text, which `az rest` prints as is (with a "Not a json response"
+   * warning on stderr), one `<ISO timestamp> <text>` line each. Null when it
+   * cannot be read.
+   */
+  async fetchBuildLog(organization: string, projectId: string, buildId: number, logId: number): Promise<string | null> {
+    if (!AZURE_GUID_PATTERN.test(projectId) || !Number.isInteger(buildId) || !Number.isInteger(logId)) return null;
+    return this.buildApiGet(organization, projectId, `${buildId}/logs/${logId}`, BUILD_LOG_MAX_BUFFER, []);
+  }
+
+  /**
+   * One `az rest` GET under `{project}/_apis/build/builds/`, at the build API
+   * version. Throws the az-unavailable errors so a missing `az` surfaces; null
+   * on any other failure. The caller validates the ids it puts in `path`.
+   */
+  private async buildApiGet(
+    organization: string,
+    projectId: string,
+    path: string,
+    maxBuffer: number,
+    extraArgs: string[],
+  ): Promise<string | null> {
+    try {
+      const { stdout } = await execAz(
+        [
+          'rest', '--method', 'get',
+          '--url', `${azureOrgUrl(organization)}/${projectId}/_apis/build/builds/${path}`,
+          '--resource', AZURE_DEVOPS_RESOURCE_ID,
+          '--url-parameters', `api-version=${BUILD_API_VERSION}`,
+          ...extraArgs,
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer },
+      );
+      return stdout;
+    } catch (error) {
+      const toThrow = azErrorToThrow(error);
+      if (toThrow) throw toThrow;
       return null;
     }
   }

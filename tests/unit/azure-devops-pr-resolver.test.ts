@@ -97,6 +97,9 @@ const PROJECT_GUID = '00000000-0000-4000-8000-000000000001';
 const MIN_REVIEWERS_TYPE = 'fa4e907d-c16b-4a4c-9dfa-4906e5d171dd';
 const REQUIRED_REVIEWERS_TYPE = 'fd2167ab-b0be-447a-8ec8-39368250530e';
 const BUILD_TYPE = '0609b952-1397-4640-95ec-e00a01b2c241';
+const STATUS_TYPE = 'cbdc66da-9728-4af8-aada-9a5a32e4a226';
+/** "Comment requirements": a policy that waits on people, never a runner. */
+const COMMENT_REQUIREMENTS_TYPE = 'c6a1889d-b943-4856-b76f-9e46bb6b0df2';
 
 /** A projected PR row as the `--query` in the client produces it. */
 function row(overrides: Record<string, unknown> = {}) {
@@ -114,6 +117,11 @@ function row(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+/** The Checks list's fields, absent from a record: each normalizes to null. */
+const NO_CHECK_FIELDS = {
+  evaluationId: null, typeName: null, displayName: null, statusGenre: null, statusName: null, buildId: null, buildDefinitionName: null,
+};
 
 /** A projected policy evaluation record as `resolvePolicyEvaluations`'s `--query` produces it. */
 function evaluation(overrides: Record<string, unknown> = {}) {
@@ -289,8 +297,22 @@ describe('AzureDevOpsImporter PR resolvers (mocked az)', () => {
       ]);
       expect(state.azArgs[state.azArgs.indexOf('--query') + 1]).toContain('typeId:configuration.type.id');
       expect(evaluations).toEqual([
-        { status: 'approved', typeId: BUILD_TYPE, isBlocking: true, isEnabled: true, isDeleted: false },
+        { ...NO_CHECK_FIELDS, status: 'approved', typeId: BUILD_TYPE, isBlocking: true, isEnabled: true, isDeleted: false },
       ]);
+    });
+
+    it('projects what the Checks list names and links a build policy by', async () => {
+      state.azStdout = JSON.stringify([evaluation({
+        evaluationId: 'eval-1', typeName: 'Build', displayName: 'PR build', buildId: 711, buildDefinitionName: 'Web - CI',
+      })]);
+      const evaluations = await importer().resolvePolicyEvaluations(ORG, PROJECT_GUID, 1343);
+      const query = state.azArgs[state.azArgs.indexOf('--query') + 1];
+      for (const path of ['evaluationId:evaluationId', 'displayName:configuration.settings.displayName', 'buildId:context.buildId']) {
+        expect(query).toContain(path);
+      }
+      expect(evaluations).toEqual([expect.objectContaining({
+        evaluationId: 'eval-1', typeName: 'Build', displayName: 'PR build', buildId: 711, buildDefinitionName: 'Web - CI',
+      })]);
     });
 
     it('keeps "no policies" and "no readable answer" distinct: [] stays [], a non-array is null', async () => {
@@ -309,7 +331,7 @@ describe('AzureDevOpsImporter PR resolvers (mocked az)', () => {
         evaluation({ status: 'running', isBlocking: null, isEnabled: 'yes', isDeleted: undefined, typeId: 7 }),
       ]);
       await expect(importer().resolvePolicyEvaluations(ORG, PROJECT_GUID, 1343)).resolves.toEqual([
-        { status: 'running', typeId: '', isBlocking: false, isEnabled: false, isDeleted: false },
+        { ...NO_CHECK_FIELDS, status: 'running', typeId: '', isBlocking: false, isEnabled: false, isDeleted: false },
       ]);
     });
 
@@ -735,9 +757,13 @@ describe('azureDevOpsPRConnector mapping and disambiguation', () => {
     ['a disabled blocking rejection', [evaluation({ status: 'rejected', isEnabled: false })], 'ready'],
     ['a deleted blocking rejection', [evaluation({ status: 'rejected', isDeleted: true })], 'ready'],
     ['notApplicable only', [evaluation({ status: 'notApplicable' })], 'ready'],
-    ['a blocking rejection', [evaluation(), evaluation({ status: 'rejected' })], 'blocked'],
-    ['a broken blocking policy', [evaluation({ status: 'broken' })], 'blocked'],
-    ['a rejection beside a running build', [evaluation({ status: 'rejected' }), evaluation({ status: 'running' })], 'blocked'],
+    ['a blocking build rejection', [evaluation(), evaluation({ status: 'rejected' })], 'failing'],
+    ['a broken blocking build policy', [evaluation({ status: 'broken' })], 'failing'],
+    ['a build rejection beside a running build', [evaluation({ status: 'rejected' }), evaluation({ status: 'running' })], 'failing'],
+    ['a rejected status policy', [evaluation({ status: 'rejected', typeId: STATUS_TYPE })], 'failing'],
+    ['a build rejection beside a rejected reviewer policy', [evaluation({ status: 'rejected' }), evaluation({ status: 'rejected', typeId: MIN_REVIEWERS_TYPE })], 'failing'],
+    ['a rejected reviewer policy alone', [evaluation(), evaluation({ status: 'rejected', typeId: MIN_REVIEWERS_TYPE })], 'blocked'],
+    ['a rejected policy that is not a check (comment resolution)', [evaluation(), evaluation({ status: 'rejected', typeId: COMMENT_REQUIREMENTS_TYPE })], 'blocked'],
     ['a queued build', [evaluation({ status: 'queued' })], 'queued'],
     ['a running build', [evaluation({ status: 'running' })], 'running'],
     ['a queued and a running build', [evaluation({ status: 'queued' }), evaluation({ status: 'running' })], 'running'],

@@ -332,6 +332,7 @@ describe('the announced list covers every renderer-driven task mutation', () => 
   /** Mutations deliberately not announced, each with the reason the module gives. */
   const NOT_ANNOUNCED: Record<string, string> = {
     TASK_SET_DETAIL_VIEW_STATE: 'a layout blob the board never shows, saved on a debounce while a pane resizes',
+    TASK_PR_SEND_CHECKS: 'writes no task row: it pastes into the agent or holds a message the next spawn claims',
   };
 
   it('equals the project-scoped mutation set, minus SESSION_* and the named exemptions', () => {

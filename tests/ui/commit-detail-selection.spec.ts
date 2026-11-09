@@ -24,6 +24,8 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
 
+  // History starts closed; this spec stands in for a user who opened it (the choice is remembered).
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { changesHistoryOpen: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
 
@@ -295,6 +297,10 @@ test.describe('Changes panel: restored commit selection', () => {
   });
 
   test('a commit selection restored from detail_view_state names the commit with History collapsed', async () => {
+    // History's fold is one remembered choice for every task: this case wants it closed.
+    await restorePage.evaluate(() => (window as unknown as {
+      __zustandStores: { config: { getState: () => { updateConfig: (partial: { changesHistoryOpen: boolean }) => Promise<void> } } };
+    }).__zustandStores.config.getState().updateConfig({ changesHistoryOpen: false }));
     const card = restorePage.locator('[data-swimlane-name="Code Review"]').locator('text=Commit Detail Restore Task').first();
     await card.click();
 
@@ -302,7 +308,7 @@ test.describe('Changes panel: restored commit selection', () => {
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     await restorePage.locator('[data-testid="changes-toggle"]').click();
-    // The blob also collapsed History, which makes this the sharper case: the
+    // History is collapsed, which makes this the sharper case: the
     // selection must be legible without the list on screen, and the subject
     // can only come from the commits the hidden graph reported up.
     await restorePage.locator('[data-testid="changes-history-section"]').waitFor({ state: 'visible', timeout: 10000 });

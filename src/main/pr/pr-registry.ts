@@ -20,7 +20,7 @@
  * changing them.
  */
 
-import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions } from './shared/pr-connector';
+import type { PRConnector, DetectedPR, ResolvedPR, PRResolveOptions, PRCheck, PRChecks } from './shared/pr-connector';
 import { dispatchResolve, selectOwningConnectors, type ResolveKind } from './shared/pr-dispatch';
 import { readRemoteUrls } from '../git/git-remotes';
 import { gitHubPRConnector } from './adapters/github/github-connector';
@@ -173,6 +173,47 @@ export async function commitWebLinks(repoCwd: string): Promise<CommitWebLinks | 
   if (!owner?.commitWebUrl) return null;
   const build = owner.commitWebUrl.bind(owner);
   return { providerName: owner.name, url: (sha) => build(primary, sha) };
+}
+
+/**
+ * The connector that lists checks for the repository at `repoCwd`: the owner of
+ * its PRIMARY remote (`origin` first) that implements `listChecks`, or null.
+ * Checks are read where the PR lives, so a secondary remote is never consulted,
+ * same as {@link commitWebLinks}. NEVER THROWS.
+ */
+async function checksConnector(repoCwd: string): Promise<PRConnector | null> {
+  const remoteUrls = await readRemoteUrls(repoCwd);
+  if (!remoteUrls || remoteUrls.length === 0) return null;
+  return selectOwningConnectors(connectors, remoteUrls.slice(0, 1), { allowSecondaryFallback: false })
+    .find((connector) => connector.listChecks) ?? null;
+}
+
+/**
+ * The CI checks of PR `prNumber`, from the connector that owns this repo's
+ * primary remote. Null when no owner lists checks or the PR is gone; a missing
+ * method means "no checks to show", never an error. Throws the connector's
+ * resolver errors when its CLI is unavailable.
+ */
+export async function listPRChecks(repoCwd: string, prNumber: number): Promise<PRChecks | null> {
+  const connector = await checksConnector(repoCwd);
+  if (!connector?.listChecks) return null;
+  return connector.listChecks(repoCwd, prNumber);
+}
+
+/**
+ * One listed check's log tail for the agent (see `PRConnector.fetchCheckLog`).
+ * Null when the owner cannot read logs or the check has none.
+ */
+export async function fetchPRCheckLog(
+  repoCwd: string,
+  prNumber: number,
+  check: PRCheck,
+  maxChars: number,
+): Promise<string | null> {
+  if (!check.hasLog) return null;
+  const connector = await checksConnector(repoCwd);
+  if (!connector?.fetchCheckLog) return null;
+  return connector.fetchCheckLog(repoCwd, prNumber, check, maxChars);
 }
 
 /** Resolve the PR associated with a commit SHA via the connectors that own this repo's remote. */

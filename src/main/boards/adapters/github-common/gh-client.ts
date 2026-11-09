@@ -73,8 +73,25 @@ export type GhStatusState = 'EXPECTED' | 'ERROR' | 'FAILURE' | 'PENDING' | 'SUCC
  * has a required review outstanding.
  */
 export type GhStatusCheckRollupItem =
-  | { __typename: 'CheckRun'; name: string; status: GhCheckRunStatus; conclusion: GhCheckRunConclusion | null }
-  | { __typename: 'StatusContext'; context: string; state: GhStatusState };
+  | {
+    __typename: 'CheckRun';
+    name: string;
+    status: GhCheckRunStatus;
+    conclusion: GhCheckRunConclusion | null;
+    /** The check's page; for an Actions job, `.../actions/runs/<run>/job/<job id>`. */
+    detailsUrl?: string;
+    /** The Actions workflow the job belongs to ("CI"); empty for a non-Actions check app. */
+    workflowName?: string;
+    /** When this run started; a re-run of the same check carries a later one. */
+    startedAt?: string;
+  }
+  | { __typename: 'StatusContext'; context: string; state: GhStatusState; targetUrl?: string; startedAt?: string };
+
+/** `gh pr view <n> --json url,statusCheckRollup`: the PR's checks and its page. */
+export interface GhPrChecks {
+  url: string;
+  statusCheckRollup?: GhStatusCheckRollupItem[];
+}
 
 /**
  * Raw PR shape from `gh pr list --json` with `PR_JSON_FIELDS`. `state` is
@@ -129,6 +146,11 @@ const PR_JSON_FIELDS =
 
 /** With the check rollup in the projection a busy branch can pass Node's 1 MB default; matches the Azure client's cap. */
 const PR_MAX_BUFFER = 10 * 1024 * 1024;
+
+/** A failed job's log downloads in a few seconds; a long job's can take longer. */
+const JOB_LOG_TIMEOUT = 60_000;
+/** A failed job's whole log can come back (gh's UNKNOWN STEP fallback); 64 MB bounds it. */
+const JOB_LOG_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * The two fields neither `gh pr list --json` nor `gh pr view --json` can
@@ -618,6 +640,57 @@ export class GitHubImporter {
         { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
       );
       return JSON.parse(stdout) as GhPrListItem;
+    } catch (error: unknown) {
+      const toThrow = ghErrorToThrow(error);
+      if (toThrow) throw toThrow;
+      return null;
+    }
+  }
+
+  /**
+   * PR `prNumber`'s page and full check rollup, for the Checks list. Raw GitHub
+   * vocabulary; the PR connector normalizes it. Throws like `resolvePRByNumber`;
+   * null when the number no longer resolves.
+   */
+  async viewPullRequestChecks(cwd: string, prNumber: number): Promise<GhPrChecks | null> {
+    const ghPath = await this.detect();
+    if (!ghPath) {
+      throw new GhUnavailableError('gh CLI not found. Install it from https://cli.github.com');
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        ['pr', 'view', String(prNumber), '--json', 'url,statusCheckRollup'],
+        { cwd, timeout: COMMAND_TIMEOUT, maxBuffer: PR_MAX_BUFFER },
+      );
+      return JSON.parse(stdout) as GhPrChecks;
+    } catch (error: unknown) {
+      const toThrow = ghErrorToThrow(error);
+      if (toThrow) throw toThrow;
+      return null;
+    }
+  }
+
+  /**
+   * The log of an Actions job's failed steps (`gh run view --job <id>
+   * --log-failed`), raw. Each line is `<job>\t<step>\t<timestamp> <text>`, and gh
+   * documents that it may name the step `UNKNOWN STEP` and return the whole job
+   * log, so the caller keys on error markers, never step names. A failed job's
+   * log runs to about 100 KB; the buffer and timeout leave room for far more.
+   * Null when gh cannot read it (expired logs, a job it cannot find).
+   */
+  async viewJobFailedLog(cwd: string, jobId: string): Promise<string | null> {
+    const ghPath = await this.detect();
+    if (!ghPath) {
+      throw new GhUnavailableError('gh CLI not found. Install it from https://cli.github.com');
+    }
+    try {
+      const { stdout } = await execFileAsync(
+        ghPath,
+        ['run', 'view', '--job', jobId, '--log-failed'],
+        { cwd, timeout: JOB_LOG_TIMEOUT, maxBuffer: JOB_LOG_MAX_BUFFER },
+      );
+      return stdout;
     } catch (error: unknown) {
       const toThrow = ghErrorToThrow(error);
       if (toThrow) throw toThrow;

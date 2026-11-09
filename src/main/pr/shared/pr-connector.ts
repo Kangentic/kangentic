@@ -11,9 +11,9 @@
  *   refresh* - bulk re-link across a project (see pr-refresh.ts)
  */
 
-import type { PRState, PRMergeReadiness } from '../../../shared/types';
+import type { PRState, PRMergeReadiness, PRCheck, PRChecks } from '../../../shared/types';
 
-export type { PRState, PRMergeReadiness };
+export type { PRState, PRMergeReadiness, PRCheck, PRChecks };
 
 export interface DetectedPR {
   url: string;
@@ -172,4 +172,21 @@ export interface PRConnector {
    * a platform without it simply shows no commit links.
    */
   commitWebUrl?(remoteUrls: readonly string[], sha: string): string | null;
+
+  /**
+   * The CI checks of PR `prNumber`, normalized: one row per check (a superseded
+   * run of the same check dropped), each with its own web page. Run from inside
+   * the repo at `repoCwd`. Returns null when the PR no longer exists; throws
+   * `PRResolverUnavailableError` / `PRResolverTransientError` like the resolvers.
+   * Optional: a host without it shows no Checks section.
+   */
+  listChecks?(repoCwd: string, prNumber: number): Promise<PRChecks | null>;
+
+  /**
+   * The log of one failed check this connector listed (`check.hasLog`), cut to
+   * the part an agent needs: up to the last error line, at most `maxChars`, ANSI
+   * free (`tailToLastError`). Null when the check has no readable log. Throws the
+   * resolver errors when the CLI is unavailable.
+   */
+  fetchCheckLog?(repoCwd: string, prNumber: number, check: PRCheck, maxChars: number): Promise<string | null>;
 }

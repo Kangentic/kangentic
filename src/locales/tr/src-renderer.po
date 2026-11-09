@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {# çalışma ağacından {failedCount} tane
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} Yapılacaklar sütununda kalıyor. {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Dikkat"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "Değişiklik diske kaydedilmedi"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Ekranı kapla"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Son PR yenilemesine göre incelemeler, denetimler veya dal kuralları birleştirmeyi engelliyor"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

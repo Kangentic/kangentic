@@ -13,6 +13,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { isUserSetupFailureClass, lineTooLongSentence, reportPtyPortFailure } from '../../pty/agent-launch-report';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
+import { listTaskPrChecks, sendFailedPrChecks } from '../../pr/failed-checks-delivery';
 import { planExitTargetFor } from '../helpers/plan-exit-target';
 import { markResumeMiss } from '../helpers/resume-miss';
 import { readTaskLastMessage, readTaskReport, readTaskRoute } from '../helpers/task-report';
@@ -36,7 +37,7 @@ import { resumeTaskOnOpen } from './session-resume-on-open';
 import { pauseTaskSession } from './session-pause';
 import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
-import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, StartBlockedReason, TaskResolvePrResult } from '../../../shared/types';
+import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, StartBlockedReason, TaskResolvePrResult, PRChecks, PrChecksSendResult } from '../../../shared/types';
 import type { AgentStartRefusedError } from '../../pty/spawn/pty-spawn';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
@@ -1144,6 +1145,19 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       // itself. A second emit beside onLinked's costs a phone one more re-read.
       announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [taskId] });
     }
+  });
+
+  // The Changes panel's Checks section: the linked PR's CI checks, read live
+  // from its connector. A read, so no announce.
+  ipcMain.handle(IPC.TASK_PR_CHECKS, async (_event, taskId: string, projectId?: string | null): Promise<PRChecks | null> => {
+    return listTaskPrChecks(context, taskId, projectId);
+  });
+
+  // "Send to agent": the failed checks' log tails and any conflict, pasted into
+  // the task's running agent or held for its next one. Writes no task row, so
+  // nothing to announce; a held message is its own row the next spawn claims.
+  ipcMain.handle(IPC.TASK_PR_SEND_CHECKS, async (_event, taskId: string, projectId?: string | null): Promise<PrChecksSendResult> => {
+    return sendFailedPrChecks(context, taskId, projectId);
   });
 
   // Auto-move task once the user APPROVES the plan (ExitPlanMode completes).

@@ -295,53 +295,34 @@ test('Escape closes a tip but keeps going to a hotkey rebind capture', async () 
   }
 });
 
-/** The PR link pill on a board card, and the state badge nested inside it. */
-function prLinkOf(page: Page, taskId: string): { pill: Locator; badge: Locator } {
-  const pill = page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"]`);
-  return { pill, badge: pill.locator('[data-testid="pr-state-badge"]') };
+/** The compact PR pill on a board card. It nests no state badge: its tip carries the state. */
+function prLinkOf(page: Page, taskId: string): Locator {
+  return page.locator(`[data-task-id="${taskId}"] [data-testid="task-card-pr-link"]`);
 }
 
-test('a state badge with a caveat shows the caveat, and the link text beside it shows the link tip', async () => {
+test('the PR pill shows one tip: the action, with the readiness caveat as its detail', async () => {
   const { browser, page } = await launchSeeded();
   try {
-    const { pill, badge } = prLinkOf(page, BLOCKED_TASK_ID);
+    const pill = prLinkOf(page, BLOCKED_TASK_ID);
     const tip = page.locator(TIP);
-    await expect(badge).toHaveText('blocked');
-    const caveat = await badge.evaluate((node) => node.getAttribute('aria-description') ?? '');
-    expect(caveat).toMatch(/^Merge blocked/);
-
-    await badge.hover();
-    await expect(tip).toHaveCount(1);
-    await expect(tip).toHaveText(caveat);
-
-    // Off the badge and onto the pill's own text: its tip takes over at once and there is still one.
-    await clearTipLog(page);
     await pill.hover({ position: { x: 4, y: 4 } });
-    await expect(tip).toHaveText('Open PR #302 in default browser');
     await expect(tip).toHaveCount(1);
-    expect(delayBeforeOpen(await readTipLog(page), 'over')).toBeLessThan(150);
+    await expect(tip).toContainText('Open PR #302 in default browser');
+    await expect(tip).toContainText(/Merge blocked/);
   } finally {
     await browser.close();
   }
 });
 
-test('a state badge with no caveat lets the link tip show over it', async () => {
+test('a PR with no verdict names its state in the tip instead', async () => {
   const { browser, page } = await launchSeeded();
   try {
-    const { pill, badge } = prLinkOf(page, MERGED_TASK_ID);
+    const pill = prLinkOf(page, MERGED_TASK_ID);
     const tip = page.locator(TIP);
-    await expect(badge).toHaveText('merged');
-    // Nothing to say, so the badge claims no tip of its own.
-    expect(await badge.evaluate((node) => node.getAttribute('aria-description'))).toBeNull();
-
-    await badge.hover();
-    await expect(tip).toHaveText('Open PR #305 in default browser');
-    await expect(tip).toHaveCount(1);
-
-    // Onto the pill's text: the same tip, still one.
     await pill.hover({ position: { x: 4, y: 4 } });
-    await expect(tip).toHaveText('Open PR #305 in default browser');
     await expect(tip).toHaveCount(1);
+    await expect(tip).toContainText('Open PR #305 in default browser');
+    await expect(tip).toContainText('merged');
   } finally {
     await browser.close();
   }
@@ -433,49 +414,50 @@ test('a trigger whose menu is open shows no tip, and shows it again once the men
   }
 });
 
-/** Write one task's merge readiness through the board store, the way a PR refresh does. */
-async function setMergeReadiness(page: Page, taskId: string, readiness: string): Promise<void> {
-  await page.evaluate(([id, value]) => {
-    interface BoardTask { id: string; pr_merge_readiness?: string | null }
+/** Mark a column a ghost (removed from team config) or not, as a board reload would. */
+async function setLaneGhost(page: Page, laneName: string, ghost: boolean): Promise<void> {
+  await page.evaluate(([name, value]) => {
+    interface BoardLane { name: string; is_ghost?: boolean }
     const stores = (window as unknown as {
-      __zustandStores?: { board: { setState: (update: (state: { tasks: BoardTask[] }) => { tasks: BoardTask[] }) => void } };
+      __zustandStores?: { board: { setState: (update: (state: { swimlanes: BoardLane[] }) => { swimlanes: BoardLane[] }) => void } };
     }).__zustandStores;
     stores?.board.setState((state) => ({
-      tasks: state.tasks.map((task) => (task.id === id ? { ...task, pr_merge_readiness: value } : task)),
+      swimlanes: state.swimlanes.map((lane) => (lane.name === name ? { ...lane, is_ghost: value } : lane)),
     }));
-  }, [taskId, readiness]);
+  }, [laneName, ghost] as const);
 }
 
 test('a tip that goes from shut to open under a resting pointer opens on the next move', async () => {
   const { browser, page } = await launchSeeded();
   try {
-    const { badge } = prLinkOf(page, BLOCKED_TASK_ID);
+    // A column's tip has text only while the column is a ghost, so its label goes between
+    // empty and text with board state, under a pointer that never moves.
+    const lane = page.locator('[data-testid="swimlane"][data-swimlane-name="Testing"]');
     const tip = page.locator(TIP);
-    await expect(badge).toHaveText('blocked');
-    await badge.evaluate((node) => node.setAttribute('data-test-tag', 'same-node'));
+    await lane.evaluate((node) => node.setAttribute('data-test-tag', 'same-node'));
+    const box = await lane.boundingBox();
+    if (!box) throw new Error('no lane box');
+    const restAt = { x: box.x + box.width / 2, y: box.y + box.height - 20 };
 
-    await badge.hover();
-    await expect(tip).toHaveText(/^Merge blocked/);
+    await setLaneGhost(page, 'Testing', true);
+    await page.mouse.move(restAt.x, restAt.y);
+    await expect(tip).toHaveText(/^Removed from team config/);
 
-    // A PR refresh finds no verdict: the badge has nothing to say and the tip goes with it.
-    await setMergeReadiness(page, BLOCKED_TASK_ID, 'unknown');
-    await expect(badge).toHaveText('open');
+    // The column is back in the team config: nothing to say, and the tip goes with it.
+    await setLaneGhost(page, 'Testing', false);
     await expect(tip).toHaveCount(0);
 
-    // The verdict returns. The pointer has not moved, so nothing re-opens until it does.
-    await setMergeReadiness(page, BLOCKED_TASK_ID, 'blocked');
-    await expect(badge).toHaveText('blocked');
-    await expect(badge).toHaveAttribute('aria-description', /^Merge blocked/);
+    // It is removed again. The pointer has not moved, so nothing re-opens until it does.
+    await setLaneGhost(page, 'Testing', true);
     await clearTipLog(page);
     await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
     await expectNoTipOpened(page);
-    const box = await badge.boundingBox();
-    if (!box) throw new Error('no badge box');
-    await page.mouse.move(box.x + box.width / 2 + 1, box.y + box.height / 2);
-    await expect(tip).toHaveText(/^Merge blocked/);
+    await page.mouse.move(restAt.x + 1, restAt.y);
+    await expect(tip).toHaveText(/^Removed from team config/);
 
     // Nothing remounted, so the refs that decide this were the same ones all along.
-    await expect(badge).toHaveAttribute('data-test-tag', 'same-node');
+    await expect(lane).toHaveAttribute('data-test-tag', 'same-node');
+    await setLaneGhost(page, 'Testing', false);
   } finally {
     await browser.close();
   }

@@ -12,7 +12,14 @@ import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer, type DiffLinkedFiles } from './DiffViewer';
 import { DiffViewOptionsMenu } from './DiffViewOptionsMenu';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
-import { ChangesHistorySection, HISTORY_SECTION_HEADER_PX } from './ChangesHistorySection';
+import { ChangesHistorySection } from './ChangesHistorySection';
+import { RAIL_SECTION_HEADER_PX } from './ChangesRailSection';
+import { ChangesChecksSection, checksSectionVisible } from './ChangesChecksSection';
+import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
+import { PrLink } from '../../../PrLink';
+import { usePrChecks } from '../../../../hooks/usePrChecks';
+import { useProjectStore } from '../../../../stores/project-store';
+import { useToastStore } from '../../../../stores/toast-store';
 import { CommitSelectionBar } from './CommitSelectionBar';
 import { CommitGraphPanel, type StaticCommitHistory } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
@@ -839,17 +846,55 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     return () => clearTimeout(timer);
   }, [changesSelectedCommit]);
 
-  // History section state: the collapsed flag (per task, persisted only when
-  // collapsed - open is the default) and the open body's height, both mirroring
-  // the file-tree width pattern above. The section lives at the BOTTOM of the
+  // History and Checks open state: one remembered choice each for every task
+  // (AppConfig), closed by default, because open together they push the file
+  // list out of the rail and rail height is the same on every task. A new
+  // failure never opens Checks: its badge and the Changes button's count say so.
+  // History's open body height stays per task and lives at the BOTTOM of the
   // rail column, so the drag math measures up from the rail's bottom edge.
-  const historyOpen = useSessionStore((state) => !state.changesHistoryCollapsed[entityId]);
-  const setChangesHistoryOpen = useSessionStore((state) => state.setChangesHistoryOpen);
+  const historyOpen = useConfigStore((state) => state.config.changesHistoryOpen);
+  const checksOpen = useConfigStore((state) => state.config.changesChecksOpen);
   const handleHistoryToggle = useCallback(() => {
-    // A toggle: a collapsed section opens, an open one collapses.
-    const isCollapsed = Boolean(useSessionStore.getState().changesHistoryCollapsed[entityId]);
-    setChangesHistoryOpen(entityId, isCollapsed);
-  }, [entityId, setChangesHistoryOpen]);
+    void updateConfig({ changesHistoryOpen: !useConfigStore.getState().config.changesHistoryOpen });
+  }, [updateConfig]);
+  const handleChecksToggle = useCallback(() => {
+    void updateConfig({ changesChecksOpen: !useConfigStore.getState().config.changesChecksOpen });
+  }, [updateConfig]);
+
+  // The linked PR's checks (a live task only: a completed task's PR is done).
+  // Shared with the task window header's count through the hook's read cache.
+  const checksProjectId = popOutParams?.projectId ?? filePopOutParams?.projectId ?? null;
+  const prChecks = usePrChecks(completed ? null : task, checksProjectId);
+  const refreshPrChecks = prChecks.refresh;
+  const [sendingChecks, setSendingChecks] = useState(false);
+  const handleSendChecks = useCallback(() => {
+    if (!task) return;
+    setSendingChecks(true);
+    const projectId = checksProjectId ?? useProjectStore.getState().currentProject?.id ?? null;
+    window.electronAPI.tasks.sendPrChecks(task.id, projectId).then(
+      (result) => {
+        // Sent to a running agent: the message appearing in its terminal is
+        // the confirmation, so no toast (toast-shape.md). Held is out of sight.
+        if (result.outcome === 'held') {
+          useToastStore.getState().addToast({
+            title: t`Held for the next agent`,
+            message: t`The next agent on this task gets the failed checks in its first message.`,
+            variant: 'info',
+          });
+        }
+      },
+      (caught: unknown) => {
+        useToastStore.getState().addToast({
+          title: t`Couldn't send the failed checks`,
+          message: asSentence(describeIpcError(caught)),
+          variant: 'error',
+        });
+      },
+    ).finally(() => {
+      setSendingChecks(false);
+      refreshPrChecks();
+    });
+  }, [task, checksProjectId, t, refreshPrChecks]);
   // Commit count for the section header, reported by the (possibly hidden)
   // graph panel so the collapsed header stays informative.
   const [historyCommitCount, setHistoryCommitCount] = useState<number | null>(null);
@@ -900,7 +945,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // the tree region above.
       const next = Math.max(
         HISTORY_DRAG_MIN,
-        Math.min(rect.height - TREE_REGION_DRAG_MIN, rect.bottom - moveEvent.clientY - HISTORY_SECTION_HEADER_PX),
+        Math.min(rect.height - TREE_REGION_DRAG_MIN, rect.bottom - moveEvent.clientY - RAIL_SECTION_HEADER_PX),
       );
       setLiveHistoryHeight(next);
       historyHeightRef.current = next;
@@ -928,9 +973,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // first row, above the commit-history region. It also OWNS the branch context
   // (branch + base badge + ahead/behind) that the file-tree's BranchHeader shows
   // in the other embeds - the embed passes showBranchHeader=false to that so the
-  // row is not duplicated. No PR link and no last commit, in any host: the PR
-  // opens from the task window's menu, the cards and a completed task's strip,
-  // and the commits are History's. Panel-level actions (expand-full) and the
+  // row is not duplicated. A live task's linked PR shows as the compact PR pill
+  // after ahead/behind (the same pill as the board card), and opens the PR; no
+  // last commit, which is History's. Panel-level actions (expand-full) and the
   // pop-out control sit on the right - the one predictable home for pop-out
   // across every surface. Diff/git tools stay in the diff toolbar below.
   const fileCount = files.length;
@@ -954,6 +999,18 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         {viewedCount}/{files.length}
       </span>
     </Tooltip>
+  ) : null;
+  // The PR pill, for a live task with a linked PR. Shared by both header
+  // variants (this surface header and FileTreePanel's BranchHeader).
+  const headerPrPill = task && !completed && task.pr_url ? (
+    <PrLink
+      prUrl={task.pr_url}
+      prNumber={task.pr_number}
+      prState={task.pr_state}
+      prMergeReadiness={task.pr_merge_readiness}
+      testId="changes-pr-pill"
+      className="flex-shrink-0"
+    />
   ) : null;
   const surfaceHeader = popOutParams ? (
     <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={<>{surfaceHeaderViewed}{expandCollapseControl}</>}>
@@ -992,6 +1049,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           </span>
         </Tooltip>
       )}
+      {headerPrPill}
     </DetachableSurfaceHeader>
   ) : null;
 
@@ -1061,6 +1119,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               // The top bar does not change with the selection.
               branchSummary={headerSummary}
               showBranchHeader={!popOutParams}
+              branchHeaderAccessory={popOutParams ? undefined : headerPrPill}
               viewedFiles={viewedFiles}
               onToggleViewed={handleToggleViewed}
               // A completed task has no scope control; a live one hides it while
@@ -1080,6 +1139,20 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               onOpenInNewWindow={filePopOutParams && task && !noRangeRest ? handleOpenFileWindow : undefined}
             />
           </div>
+
+          {/* Checks: the linked PR's CI checks and any conflict, above History.
+              Shown for a live task whose PR has a check or a conflict; a PR
+              whose host runs no checks gets the header pill only. */}
+          {task && !completed && task.pr_url && checksSectionVisible(task, prChecks.checks) && (
+            <ChangesChecksSection
+              task={task}
+              checks={prChecks.checks}
+              open={checksOpen}
+              onToggle={handleChecksToggle}
+              sending={sendingChecks}
+              onSend={handleSendChecks}
+            />
+          )}
 
           {/* Drag handle: resize the History body vs. the tree region above.
               Rendered only while the section is open (a collapsed header is not

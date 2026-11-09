@@ -12,6 +12,11 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
 
 ## The rule
 
+- **A toast reports what the user cannot otherwise see.** When an action's result already shows
+  where the user is looking, the screen is the confirmation and no success toast follows: a message
+  sent to a running agent appears in its terminal, so it gets no "Sent" toast. A toast is for an
+  outcome that happens out of sight (a message held for an agent that is not running yet, work in
+  another project or a closed window) and for every failure.
 - **Every toast has a `title` and a body (`message`).** The title says what happened in a few
   words (a translated title that runs past the 380px card wraps to a second line instead of
   being cut off); the body gives the task, the place or the detail, as one sentence that fits one line at
@@ -51,7 +56,8 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
   `tests/ui/toast-click-through.spec.ts` pins that a card that opens nothing never eats a click on
   what is under it.
 - **Review:** the copy (one sentence, one line, "Couldn't") is judgment; `/code-review` checks it
-  against [[writing-style]].
+  against [[writing-style]]. Whether a success is already visible on screen is judgment too, so a
+  new success toast is review-only: `/code-review` asks where the result shows without it.
 
 ## Scope
 

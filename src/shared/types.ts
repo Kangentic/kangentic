@@ -468,9 +468,12 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
 /**
  * Normalized, platform-agnostic merge readiness: would clicking Merge right now
  * succeed? Orthogonal to `PRState`, which stays the gate for the terminal
- * short-circuits. `ready` means a Merge click would succeed; `blocked` means no
- * conflicts but a failed check, a rejected or waiting review, a policy, or a
- * stale base stops it; `conflicting` means merge conflicts; `queued` and
+ * short-circuits. `ready` means a Merge click would succeed; `failing` means a
+ * check or build policy failed, which an agent can fix (it outranks a waiting
+ * review, and GitHub `UNSTABLE` with a failed non-required check reads
+ * `failing` too, though GitHub would let it merge); `blocked` means no
+ * conflicts and no failed check, but a rejected or waiting review, a policy, or
+ * a stale base stops it; `conflicting` means merge conflicts; `queued` and
  * `running` mean a blocking check or policy has not finished (queued for a
  * runner, or running), so the merge would not succeed yet but nothing has
  * failed, and an in-flight check outranks a waiting review so the chip tracks
@@ -486,8 +489,41 @@ export type PRState = 'open' | 'draft' | 'merged' | 'closed';
  * `tests/unit/pr-connector-gate.test.ts` can assert membership over the real
  * connector registry; the type is derived from it.
  */
-export const PR_MERGE_READINESS_VALUES = ['ready', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
+export const PR_MERGE_READINESS_VALUES = ['ready', 'failing', 'blocked', 'conflicting', 'queued', 'running', 'unknown'] as const;
 export type PRMergeReadiness = (typeof PR_MERGE_READINESS_VALUES)[number];
+
+/**
+ * One CI check on a task's PR, normalized by its connector. `id` is opaque to
+ * everything but the connector that made it (a GitHub job id, an Azure policy
+ * evaluation id). `group` is the workflow or pipeline the check belongs to, when
+ * the platform has one. `pending` covers queued and running alike. `skipped`
+ * checks count toward neither number of the Checks badge. `hasLog` says the
+ * connector can fetch this check's log for the agent.
+ */
+export interface PRCheck {
+  id: string;
+  name: string;
+  group: string | null;
+  url: string;
+  status: 'passed' | 'failed' | 'pending' | 'skipped';
+  hasLog: boolean;
+}
+
+/** A PR's checks, with the page that lists them all (opened by "N passed"). */
+export interface PRChecks {
+  checks: PRCheck[];
+  checksPageUrl: string;
+}
+
+/**
+ * What `tasks.sendPrChecks` did. `sent` pasted into the task's running agent;
+ * `held` queued the message for the task's next agent (no agent was running).
+ * `count` is the failed checks sent, plus one for a conflict.
+ */
+export interface PrChecksSendResult {
+  outcome: 'sent' | 'held';
+  count: number;
+}
 
 /**
  * Outcome of an on-demand PR resolve. `linked`/`unchanged` mean a PR is associated;
@@ -795,13 +831,10 @@ export interface TaskDetailViewState {
   changesSelectedCommit?: string;
   /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
   changesHistoryHeight?: number;
-  /**
-   * History section collapsed in the Changes rail. Written only when true;
-   * absent means open, the default. (Blobs written before #881 carry
-   * `changesHistoryOpen` instead, when History was collapsed by default; it is
-   * ignored, so those tasks open History once and keep a collapse from then.)
-   */
-  changesHistoryCollapsed?: true;
+  // History's open state is no longer per task: `AppConfig.changesHistoryOpen`
+  // is one remembered choice for every task. Blobs written before carry
+  // `changesHistoryCollapsed` (or, before #881, `changesHistoryOpen`); both
+  // are ignored on hydrate.
 }
 
 export interface TaskAttachment {
@@ -4377,6 +4410,11 @@ export interface AppConfig {
   diffUseInlineWhenNarrow: boolean; // render a narrow diff pane inline even when Side by side is selected
   diffFileSort: 'name' | 'status' | 'size' | 'ext'; // Changes panel file ordering
   diffFlatList: boolean; // Changes panel file list: flat full-path list vs nested directory tree
+  /** Changes rail sections the user opened. One choice each for every task (folding is about rail
+   *  height, which every task shares), both closed by default: open together they push the file
+   *  list out of the rail. Pure UI state, written from the section toggles, not a Settings row. */
+  changesChecksOpen: boolean;
+  changesHistoryOpen: boolean;
 
   /** Persisted Agent Monitor view. Global-only: the monitor spans every project, so a
    *  per-project override would be meaningless. Written debounced on every change (not
@@ -5182,6 +5220,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   diffUseInlineWhenNarrow: true,
   diffFileSort: 'name',
   diffFlatList: false,
+  changesChecksOpen: false,
+  changesHistoryOpen: false,
   monitor: {
     layout: 'cards',
     // Grouped by PROJECT out of the box. This view exists because agents are
@@ -8316,6 +8356,12 @@ export interface ElectronAPI {
     setRuntimeOverride: (input: TaskSetRuntimeOverrideInput, projectId?: string | null) => Promise<TaskSetRuntimeOverrideResult>;
     /** On-demand authoritative branch->PR resolve + link for a task (works without a live session). */
     resolvePr: (taskId: string, projectId?: string | null) => Promise<TaskResolvePrResult>;
+    /** The CI checks of a task's linked PR, from its connector. Null when the task has no PR or
+     *  its host has no check listing. Throws the connector's error (gh or az unavailable). */
+    listPrChecks: (taskId: string, projectId?: string | null) => Promise<PRChecks | null>;
+    /** Send the PR's failed checks (with log tails) and any conflict to the task's agent: pasted
+     *  into a running agent, else held for its next one. Throws when there is nothing to send. */
+    sendPrChecks: (taskId: string, projectId?: string | null) => Promise<PrChecksSendResult>;
     /** Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. */
     setDetailViewState: (taskId: string, state: TaskDetailViewState | null, projectId?: string | null) => Promise<void>;
     onAutoMoved: (callback: (taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) => void) => () => void;

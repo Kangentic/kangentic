@@ -329,9 +329,10 @@ export interface BoardTaskWire {
   pr_url: string | null;
   pr_state: string | null;
   /**
-   * Normalized merge readiness of the linked PR: `ready` / `blocked` /
-   * `conflicting` / `queued` / `running` / `unknown`, or null when never
-   * judged. `queued` and `running` mean a blocking check is still in flight.
+   * Normalized merge readiness of the linked PR: `ready` / `failing` /
+   * `blocked` / `conflicting` / `queued` / `running` / `unknown`, or null when
+   * never judged. `failing` means a check or build policy failed; `queued` and
+   * `running` mean a blocking check is still in flight.
    * Absent from desktops that predate it, which the parser reads as null; a
    * value a client does not know should render as plain open.
    *

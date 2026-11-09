@@ -339,6 +339,8 @@
     diffUseInlineWhenNarrow: true,
     diffFileSort: 'name',
     diffFlatList: false,
+    changesChecksOpen: false,
+    changesHistoryOpen: false,
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',
@@ -2160,6 +2162,34 @@
         tasks[idx] = Object.assign({}, tasks[idx], patch, { updated_at: now() });
         var mode = tasks[idx].session_id ? 'restart' : 'persisted';
         return { ok: true, mode: mode };
+      },
+      // The Changes panel's Checks section. Specs and the web demo seed
+      // `window.__mockPrChecks[taskId]` with a PRChecks object; an unseeded task
+      // has no checks (null), like a PR whose host lists none.
+      listPrChecks: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          window.__mockListPrChecksCalls = window.__mockListPrChecksCalls || [];
+          window.__mockListPrChecksCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+          var seeded = window.__mockPrChecks && window.__mockPrChecks[taskId];
+          if (seeded) return JSON.parse(JSON.stringify(seeded));
+        }
+        return null;
+      },
+      // "Send to agent". `window.__mockSendPrChecksResult` (an object, or a
+      // function of (taskId, projectId) that may throw) overrides; the default
+      // counts the seeded failed checks and reports them sent to a running agent.
+      sendPrChecks: async function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          window.__mockSendPrChecksCalls = window.__mockSendPrChecksCalls || [];
+          window.__mockSendPrChecksCalls.push({ taskId: taskId, projectId: projectId === undefined ? null : projectId });
+          var override = window.__mockSendPrChecksResult;
+          if (typeof override === 'function') return override(taskId, projectId);
+          if (override) return override;
+          var seededChecks = window.__mockPrChecks && window.__mockPrChecks[taskId];
+          var failed = seededChecks ? seededChecks.checks.filter(function (check) { return check.status === 'failed'; }).length : 0;
+          return { outcome: 'sent', count: failed };
+        }
+        return { outcome: 'sent', count: 0 };
       },
       resolvePr: async function (taskId, projectId) {
         // Test hook: spec can override the response by setting

@@ -74,6 +74,8 @@ async function launchWithHistory(): Promise<{ browser: Browser; page: Page }> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
+  // History starts closed; this spec stands in for a user who opened it (the choice is remembered).
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { changesHistoryOpen: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig);
   await gotoVite(page, VITE_URL);

@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, other {# 件中 {failedCount} 件のワークツ
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} は To Do のままです。{reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "注意"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "変更がディスクに保存されていません"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "前回の PR 更新時点で、レビュー、チェック、またはブランチ ルールによりマージがブロックされています"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy

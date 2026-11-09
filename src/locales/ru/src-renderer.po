@@ -344,6 +344,10 @@ msgstr "{worktreeCount, plural, one {Не удалось очистить {faile
 msgid "#{displayId} stays in To Do. {reason}"
 msgstr "#{displayId} остаётся в «К выполнению». {reason}"
 
+#: src/renderer/lib/pr-state.ts
+msgid "A check or build failed as of the last PR refresh"
+msgstr ""
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -455,6 +459,10 @@ msgstr "Осторожно"
 #, fuzzy
 msgid "Change not saved to disk"
 msgstr "Изменение не сохранено на диск"
+
+#: src/renderer/lib/pr-state.ts
+msgid "checks failing"
+msgstr ""
 
 #: src/renderer/hooks/useAddProject.ts
 #, fuzzy
@@ -1093,9 +1101,8 @@ msgid "Maximize"
 msgstr "Развернуть"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
-msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "Слияние заблокировано ревью, проверками или правилами ветви на момент последнего обновления PR"
+msgid "Merge blocked by reviews or branch rules as of the last PR refresh"
+msgstr ""
 
 #: src/renderer/lib/pr-state.ts
 #, fuzzy
