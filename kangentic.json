@@ -5,16 +5,16 @@
       "id": "e6350e8a-77fa-43a2-815b-6447820adf40",
       "name": "To Do",
       "role": "todo",
+      "description": "Holds tasks that have not started. No agent runs here.",
       "icon": "layers",
-      "color": "#6b7280",
-      "description": "Holds tasks that have not started. No agent runs here."
+      "color": "#6b7280"
     },
     {
       "id": "3c7e9a52-1f4b-4d8e-9a6c-5b2d0e8f7a14",
       "name": "Design",
+      "description": "Draws a design canvas and revises it until the owner signs it off. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
       "icon": "brush",
       "color": "#ec4899",
-      "description": "Draws a design canvas and revises it until the owner signs it off. For work whose result someone looks at: app UI, a demo frame, a docs figure. Only a person moves a card out of it.",
       "autoSpawn": true,
       "permissionMode": "auto",
       "modelOverride": "opus",
@@ -197,12 +197,11 @@
       "id": "64f9ef9a-c05d-44f8-a846-329a8f15e69f",
       "name": "Done",
       "role": "done",
+      "description": "Holds finished tasks. A move here suspends the task's agent.",
       "icon": "circle-check-big",
-      "color": "#10b981",
-      "description": "Holds finished tasks. A move here suspends the task's agent."
+      "color": "#10b981"
     }
   ],
-  "_modifiedBy": "7ef4fd0cb484",
   "profiles": [
     {
       "id": "d8761252-7e15-4777-ba74-0c300650dc91",
@@ -215,5 +214,6 @@
         }
       }
     }
-  ]
+  ],
+  "_modifiedBy": "7ef4fd0cb484"
 }
