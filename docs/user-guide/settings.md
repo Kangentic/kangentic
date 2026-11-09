@@ -262,6 +262,8 @@ Applies to every project (Settings > Dictation, not a per-project override). Voi
 
 Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Dictation](../architecture/dictation.md#dictation) lists the models behind each Mode.
 
+A model whose files fail to load is deleted and downloaded again, with the usual progress, at most once per model per launch. The press that hit it shows its error once.
+
 ## Knowledge Graph
 
 Applies to every project. The **Index** card decides what Quick Find and the Knowledge Graph search, and the **Knowledge Graph** card turns on finding by meaning and answering questions.

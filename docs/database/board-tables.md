@@ -355,6 +355,12 @@ can show the check's model and tokens. One batched check answers several rows, s
 share an id. No foreign key: the call record outlives the run's 200-row prune, and a run from before
 calls were recorded has none.
 
+`AutomationRun.check` (`AutomationRunCheck` in `src/shared/types.ts`) is not a column. The run log
+reads it from the `background_calls` row `background_call_id` names: `callId`, `agent`, `model`,
+`modelReported`, `effort`, `inputTokens`, `cacheCreationInputTokens`, `cacheReadInputTokens`,
+`outputTokens`, `costUsd`, `durationMs`, `outcome`, and `rowsAnswered`. It is null when the row has
+no Condition or the call's record is gone.
+
 **What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
 Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
 `skipped` row, including a Condition that answered no or a Text match that missed, is not a run, so
