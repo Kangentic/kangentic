@@ -234,6 +234,8 @@ export const TASK_SCHEMA = 'task-cw-done-schema';
 export const TASK_LOGGING = 'task-cw-done-logging';
 export const TASK_RATE_LIMIT = 'task-cw-rate-limit';
 export const TASK_API_ERRORS = 'task-cw-api-errors';
+// The Integration test coverage card, whose PR the sample install has failing (DEMO_PR_CHECKS).
+export const TASK_INTEGRATION = 'task-cw-integration';
 export const SESSION_WEBSOCKET = 'sess-cw-websocket';
 export const SESSION_MIDDLEWARE = 'sess-cw-middleware';
 export const SESSION_API_CLIENT = 'sess-cw-api-client';
@@ -887,7 +889,7 @@ export const DEMO_DICTATION_INFO = buildDictationInfo(
  * them.
  */
 export const DEMO_PR_CHECKS: Record<string, { checks: Array<{ id: string; name: string; group: string | null; url: string; status: 'passed' | 'failed' | 'pending' | 'skipped'; hasLog: boolean }>; checksPageUrl: string }> = {
-  'task-cw-integration': {
+  [TASK_INTEGRATION]: {
     checksPageUrl: 'https://github.com/contoso/contoso-web/pull/38/checks',
     checks: [
       { id: '61840239511', name: 'Lint', group: 'CI', url: 'https://github.com/contoso/contoso-web/actions/runs/22918350142/job/61840239511', status: 'passed', hasLog: true },
