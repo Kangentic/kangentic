@@ -9008,6 +9008,12 @@ export interface ElectronAPI {
   // App
   app: {
     getVersion: () => Promise<string>;
+    /** Dev only: restart Kangentic through the normal quit. Under `npm start`
+     *  that rebuilds main, preload and the workers first, so the restart loads
+     *  the code a merge changed. Every running agent is suspended and resumes on
+     *  the restart. The promise may never settle: the app quits. Rejects in a
+     *  production build, where main registers no handler. */
+    restart: () => Promise<void>;
   };
 
   // Updater

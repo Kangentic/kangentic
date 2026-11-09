@@ -1,36 +1,24 @@
 /**
  * Unit tests for src/renderer/stores/session-store.ts's `cancelSync()` /
- * `syncController` contract (Pattern A, layered under the Pattern E instance pin -
- * see .claude/rules/hmr-patterns.md).
+ * `syncController` contract (module state shared under the Pattern E pin and
+ * refresh - see .claude/rules/hmr-patterns.md).
  *
- * session-store's module docblock makes a specific, narrow claim about what
- * survives HMR once the store instance itself is pinned: `syncController` (an
- * AbortController) is MODULE state, not STORE state, so it is re-declared on
- * every module evaluation and can only be recovered from the
- * `import.meta.hot.dispose` stash - never from the pinned store instance, which
- * (once pinned) skips re-running the initializer entirely. The docblock calls
- * this out as the ONE value that is still genuinely "live" under the pin:
+ * `syncController` (an AbortController) is MODULE state, not STORE state. It
+ * lives in `sessionModuleState`, one object every evaluation of the module reads
+ * through `import.meta.hot.data`, so a sync an old evaluation started can still
+ * be cancelled by the refreshed actions and `cancelSync()` of the new one.
  *
- *   "its one LIVE consumer is `syncController` ... that is module state, not
- *   store state, so it is re-declared on every module evaluation and read back
- *   at eval time - the stash is its only carrier, on every path. Without it a
- *   re-eval breaks an in-flight project switch."
- *
- * If that recovery broke, an in-flight `syncSessions()` call started just before
- * a Fast Refresh (e.g. saving an unrelated file while a project switch's sync is
- * still in flight) could no longer be cancelled by code that runs after the
- * refresh - the classic "stale closure racing a switch" bug this preservation
- * exists to prevent.
+ * If that broke, an in-flight `syncSessions()` call started just before a Fast
+ * Refresh (e.g. saving an unrelated file while a project switch's sync is still
+ * in flight) could no longer be cancelled by code that runs after the refresh -
+ * the classic "stale closure racing a switch" bug.
  *
  * `import.meta.hot` is undefined under vitest (no Vite HMR runtime), so the
- * actual dispose-then-restore round trip cannot be triggered directly - the same
- * limitation documented in board-store-hmr.test.ts and toast-store-hmr.test.ts.
- * What CAN be verified directly, with no production code changes, is the
- * mechanism itself: does the exported `cancelSync()` actually abort whatever
- * AbortController `syncSessions()` is currently holding, and does `syncSessions()`
- * then bail without mutating store state? That is exactly the operation the
- * dispose stash exists to keep working ACROSS a re-eval, so proving it holds
- * within one module instance is the closest verifiable proxy available here.
+ * actual re-eval cannot be triggered directly - the same limitation documented
+ * in board-store-hmr.test.ts and toast-store-hmr.test.ts. What CAN be verified
+ * directly is the mechanism itself: does the exported `cancelSync()` actually
+ * abort whatever AbortController `syncSessions()` is currently holding, and does
+ * `syncSessions()` then bail without mutating store state?
  *
  * This was previously untested: no test in the suite (including
  * session-store-cache-reconcile.test.ts, which otherwise covers syncSessions()

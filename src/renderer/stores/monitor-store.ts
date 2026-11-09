@@ -16,7 +16,8 @@
  *     the other two this stream is subscribe-gated, because it is the only one
  *     with a standing cost in main; see useMonitorPeekSubscription.
  */
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import type {
   MonitorSessionRow,
   MonitorSnapshot,
@@ -72,257 +73,262 @@ interface MonitorState {
   hydrateView: (view: Partial<MonitorView> | undefined) => void;
 }
 
-function createMonitorStore() {
-  // Module-scope mutable state, preserved across HMR (Pattern A). Without this a
-  // Fast Refresh mid-flight would drop the in-flight guard and the pending save.
-  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-  let inFlight: Promise<void> | null = import.meta.hot?.data?.monitorInFlight ?? null;
-  // @ts-expect-error -- Vite handles import.meta.hot
-  let persistTimer: ReturnType<typeof setTimeout> | null = import.meta.hot?.data?.monitorPersistTimer ?? null;
+/**
+ * This module's mutable state, one object every evaluation of the module shares
+ * (`sharedModuleState`). The pin refreshes the store's actions on a re-eval
+ * (Pattern E), so an old action still in flight and its replacement read and
+ * write the same guard, timer and ordinal.
+ */
+interface MonitorModuleState {
+  /** The snapshot fetch in flight, so a second loadSnapshot joins it. */
+  inFlight: Promise<void> | null;
+  /** The pending debounced save of the view. */
+  persistTimer: ReturnType<typeof setTimeout> | null;
   /** Orders the two fetch-and-apply paths (attach's subscribe, loadSnapshot's
    *  getSnapshot), which are NOT deduped against each other - attach must always
    *  reach main to register the subscription. A reply applies only while it is
    *  still the newest fetch, so an older reply cannot overwrite a newer snapshot
    *  or double-bump `snapshotGeneration`. Pushes bypass this deliberately: they
    *  carry the newest build, and the next push heals any transient skew. */
-  // @ts-expect-error -- Vite handles import.meta.hot
-  let fetchOrdinal: number = import.meta.hot?.data?.monitorFetchOrdinal ?? 0;
+  fetchOrdinal: number;
+}
 
-  // @ts-expect-error -- Vite handles import.meta.hot
-  import.meta.hot?.dispose((data: Record<string, unknown>) => {
-    data.monitorInFlight = inFlight;
-    data.monitorPersistTimer = persistTimer;
-    data.monitorFetchOrdinal = fetchOrdinal;
-  });
+const monitorModuleState = sharedModuleState<MonitorModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'monitorModuleState',
+  () => ({ inFlight: null, persistTimer: null, fetchOrdinal: 0 }),
+);
 
-  const store = create<MonitorState>((set, get) => ({
-    monitorOpen: false,
-    rows: [],
-    snapshotGeneration: 0,
-    loading: false,
-    loaded: false,
-    view: DEFAULT_CONFIG.monitor,
+const monitorStoreInitializer: StateCreator<MonitorState> = (set, get) => ({
+  monitorOpen: false,
+  rows: [],
+  snapshotGeneration: 0,
+  loading: false,
+  loaded: false,
+  view: DEFAULT_CONFIG.monitor,
 
-    open: () => {
-      set({ monitorOpen: true });
-      // Adoption signal; main dedups to once per day (fire-and-forget).
-      window.electronAPI?.analytics?.trackFeatureUsed('agent_monitor');
-      void get().attach();
-    },
-    close: () => {
-      set({ monitorOpen: false });
-      get().detach();
-    },
-    toggle: () => (get().monitorOpen ? get().close() : get().open()),
+  open: () => {
+    set({ monitorOpen: true });
+    // Adoption signal; main dedups to once per day (fire-and-forget).
+    window.electronAPI?.analytics?.trackFeatureUsed('agent_monitor');
+    void get().attach();
+  },
+  close: () => {
+    set({ monitorOpen: false });
+    get().detach();
+  },
+  toggle: () => (get().monitorOpen ? get().close() : get().open()),
 
-    attach: async () => {
-      const monitorApi = window.electronAPI?.monitor;
-      if (!monitorApi?.subscribe) return;
-      const ordinal = ++fetchOrdinal;
-      if (!get().loaded) set({ loading: true });
+  attach: async () => {
+    const monitorApi = window.electronAPI?.monitor;
+    if (!monitorApi?.subscribe) return;
+    const ordinal = ++monitorModuleState.fetchOrdinal;
+    if (!get().loaded) set({ loading: true });
+    try {
+      const snapshot = await monitorApi.subscribe();
+      if (ordinal === monitorModuleState.fetchOrdinal) get().applySnapshot(snapshot);
+    } catch (error) {
+      // Sticky by design: pushes are gated on the subscription, so no
+      // MONITOR_CHANGED arrives to self-heal a failed handshake - closing and
+      // reopening the monitor re-runs it. Not worth a retry loop for a local
+      // ipcRenderer.invoke that only fails once the app is tearing down.
+      console.error('[monitor] Failed to subscribe:', error);
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  detach: () => {
+    void window.electronAPI?.monitor?.unsubscribe?.().catch((error) => {
+      console.error('[monitor] Failed to unsubscribe:', error);
+    });
+  },
+
+  loadSnapshot: async () => {
+    // Dedupe concurrent loadSnapshot callers (a board-change refetch and an
+    // HMR resync arriving together) onto one round trip. attach() deliberately
+    // does NOT route through this gate - it must always reach main to register
+    // the subscription - so `fetchOrdinal` orders the two paths instead.
+    if (monitorModuleState.inFlight) return monitorModuleState.inFlight;
+    const monitorApi = window.electronAPI?.monitor;
+    if (!monitorApi) return;
+
+    const ordinal = ++monitorModuleState.fetchOrdinal;
+    if (!get().loaded) set({ loading: true });
+    const request = (async () => {
       try {
-        const snapshot = await monitorApi.subscribe();
-        if (ordinal === fetchOrdinal) get().applySnapshot(snapshot);
+        const snapshot = await monitorApi.getSnapshot();
+        if (ordinal === monitorModuleState.fetchOrdinal) get().applySnapshot(snapshot);
       } catch (error) {
-        // Sticky by design: pushes are gated on the subscription, so no
-        // MONITOR_CHANGED arrives to self-heal a failed handshake - closing and
-        // reopening the monitor re-runs it. Not worth a retry loop for a local
-        // ipcRenderer.invoke that only fails once the app is tearing down.
-        console.error('[monitor] Failed to subscribe:', error);
+        console.error('[monitor] Failed to load snapshot:', error);
       } finally {
         set({ loading: false });
+        monitorModuleState.inFlight = null;
       }
-    },
+    })();
+    monitorModuleState.inFlight = request;
+    return request;
+  },
 
-    detach: () => {
-      void window.electronAPI?.monitor?.unsubscribe?.().catch((error) => {
-        console.error('[monitor] Failed to unsubscribe:', error);
-      });
-    },
+  /**
+   * Merge rather than assign. Every row arrives as a fresh object (structured
+   * clone across IPC) even when nothing changed, and the push is unconditional,
+   * so assigning would re-render every card on a 250ms cadence for as long as
+   * session events flow. `reconcileMonitorRows` hands back the previous array
+   * when the snapshot is equivalent; returning `state` untouched then makes this
+   * a genuine no-op, since zustand skips the notify when the updater returns the
+   * same state object.
+   */
+  applySnapshot: (snapshot) => {
+    set((state) => {
+      const rows = reconcileMonitorRows(state.rows, snapshot.rows);
+      if (rows === state.rows && state.loaded) return state;
+      return { rows, loaded: true, snapshotGeneration: state.snapshotGeneration + 1 };
+    });
 
-    loadSnapshot: async () => {
-      // Dedupe concurrent loadSnapshot callers (a board-change refetch and an
-      // HMR resync arriving together) onto one round trip. attach() deliberately
-      // does NOT route through this gate - it must always reach main to register
-      // the subscription - so `fetchOrdinal` orders the two paths instead.
-      if (inFlight) return inFlight;
-      const monitorApi = window.electronAPI?.monitor;
-      if (!monitorApi) return;
+    // Reconcile the project filter against what the snapshot actually carries:
+    // drop ids whose project has no session in these rows, THROUGH setView so
+    // the trim persists and every host converges. This keeps the guarantee the
+    // old hydrate-time wipe existed for - every persisted filter id is one the
+    // toolbar's Projects dropdown (whose options derive from these same rows)
+    // can still represent and undo. Runs even when the merge above was a
+    // no-op, because that is what catches a filter seeded by hydrateView
+    // before any rows existed; the common case (an empty filter) costs one
+    // length check per push. Skipped for an EMPTY snapshot - a session-less
+    // morning must not erase the preference. Accepted consequence: a scoped
+    // project whose last session leaves a non-empty snapshot is dropped from
+    // the filter, persistently.
+    const { rows, view } = get();
+    if (view.projectFilter.length === 0 || rows.length === 0) return;
+    const presentProjects = new Set(rows.map((row) => row.projectId));
+    const retainedFilter = view.projectFilter.filter((projectId) => presentProjects.has(projectId));
+    if (retainedFilter.length === view.projectFilter.length) return;
+    get().setView({ projectFilter: retainedFilter });
+  },
 
-      const ordinal = ++fetchOrdinal;
-      if (!get().loaded) set({ loading: true });
-      const request = (async () => {
-        try {
-          const snapshot = await monitorApi.getSnapshot();
-          if (ordinal === fetchOrdinal) get().applySnapshot(snapshot);
-        } catch (error) {
-          console.error('[monitor] Failed to load snapshot:', error);
-        } finally {
-          set({ loading: false });
-          inFlight = null;
-        }
-      })();
-      inFlight = request;
-      return request;
-    },
+  /**
+   * Patch one row's live state without a refetch. The snapshot is the authority
+   * on WHICH sessions exist; an activity push for a session we have not seen yet
+   * is dropped rather than synthesizing a half-populated row (the next snapshot
+   * will carry it complete).
+   */
+  applyActivity: (sessionId, activity, reason) => set((state) => {
+    const index = state.rows.findIndex((row) => row.sessionId === sessionId);
+    if (index === -1) return state;
+    const next = [...state.rows];
+    next[index] = { ...next[index], activity, activityReason: reason };
+    return { rows: next };
+  }),
 
-    /**
-     * Merge rather than assign. Every row arrives as a fresh object (structured
-     * clone across IPC) even when nothing changed, and the push is unconditional,
-     * so assigning would re-render every card on a 250ms cadence for as long as
-     * session events flow. `reconcileMonitorRows` hands back the previous array
-     * when the snapshot is equivalent; returning `state` untouched then makes this
-     * a genuine no-op, since zustand skips the notify when the updater returns the
-     * same state object.
-     */
-    applySnapshot: (snapshot) => {
-      set((state) => {
-        const rows = reconcileMonitorRows(state.rows, snapshot.rows);
-        if (rows === state.rows && state.loaded) return state;
-        return { rows, loaded: true, snapshotGeneration: state.snapshotGeneration + 1 };
-      });
-
-      // Reconcile the project filter against what the snapshot actually carries:
-      // drop ids whose project has no session in these rows, THROUGH setView so
-      // the trim persists and every host converges. This keeps the guarantee the
-      // old hydrate-time wipe existed for - every persisted filter id is one the
-      // toolbar's Projects dropdown (whose options derive from these same rows)
-      // can still represent and undo. Runs even when the merge above was a
-      // no-op, because that is what catches a filter seeded by hydrateView
-      // before any rows existed; the common case (an empty filter) costs one
-      // length check per push. Skipped for an EMPTY snapshot - a session-less
-      // morning must not erase the preference. Accepted consequence: a scoped
-      // project whose last session leaves a non-empty snapshot is dropped from
-      // the filter, persistently.
-      const { rows, view } = get();
-      if (view.projectFilter.length === 0 || rows.length === 0) return;
-      const presentProjects = new Set(rows.map((row) => row.projectId));
-      const retainedFilter = view.projectFilter.filter((projectId) => presentProjects.has(projectId));
-      if (retainedFilter.length === view.projectFilter.length) return;
-      get().setView({ projectFilter: retainedFilter });
-    },
-
-    /**
-     * Patch one row's live state without a refetch. The snapshot is the authority
-     * on WHICH sessions exist; an activity push for a session we have not seen yet
-     * is dropped rather than synthesizing a half-populated row (the next snapshot
-     * will carry it complete).
-     */
-    applyActivity: (sessionId, activity, reason) => set((state) => {
+  /**
+   * Patch live output peeks onto their rows, same contract as `applyActivity`:
+   * the snapshot decides WHICH sessions exist, so a peek for an unknown session
+   * is dropped rather than synthesizing a row.
+   *
+   * Arrives as a batch because main coalesces a sampling tick into one push.
+   * Returning `state` untouched when nothing matched keeps a push for
+   * sessions this renderer does not show (main broadcasts to every subscribed
+   * monitor) from re-rendering the list.
+   */
+  applyPeeks: (peeks) => set((state) => {
+    let next: MonitorSessionRow[] | null = null;
+    for (const [sessionId, lines] of Object.entries(peeks)) {
       const index = state.rows.findIndex((row) => row.sessionId === sessionId);
-      if (index === -1) return state;
-      const next = [...state.rows];
-      next[index] = { ...next[index], activity, activityReason: reason };
-      return { rows: next };
-    }),
+      if (index === -1) continue;
+      const current = next ? next[index] : state.rows[index];
+      // Skip a push that says nothing new. Main change-gates per TRACKER, not
+      // per renderer, so a second monitor window receives the other's
+      // subscribe-time seed as a full re-send of text it already has. Without
+      // this every one of those rows gets a new object identity, which defeats
+      // `React.memo` on the cards and re-runs the filter/sort/group memo for a
+      // frame that renders identically.
+      if (peekTextEqual(current.outputPeek, lines)) continue;
+      if (!next) next = [...state.rows];
+      next[index] = { ...next[index], outputPeek: lines };
+    }
+    return next ? { rows: next } : state;
+  }),
 
-    /**
-     * Patch live output peeks onto their rows, same contract as `applyActivity`:
-     * the snapshot decides WHICH sessions exist, so a peek for an unknown session
-     * is dropped rather than synthesizing a row.
-     *
-     * Arrives as a batch because main coalesces a sampling tick into one push.
-     * Returning `state` untouched when nothing matched keeps a push for
-     * sessions this renderer does not show (main broadcasts to every subscribed
-     * monitor) from re-rendering the list.
-     */
-    applyPeeks: (peeks) => set((state) => {
-      let next: MonitorSessionRow[] | null = null;
-      for (const [sessionId, lines] of Object.entries(peeks)) {
-        const index = state.rows.findIndex((row) => row.sessionId === sessionId);
-        if (index === -1) continue;
-        const current = next ? next[index] : state.rows[index];
-        // Skip a push that says nothing new. Main change-gates per TRACKER, not
-        // per renderer, so a second monitor window receives the other's
-        // subscribe-time seed as a full re-send of text it already has. Without
-        // this every one of those rows gets a new object identity, which defeats
-        // `React.memo` on the cards and re-runs the filter/sort/group memo for a
-        // frame that renders identically.
-        if (peekTextEqual(current.outputPeek, lines)) continue;
-        if (!next) next = [...state.rows];
-        next[index] = { ...next[index], outputPeek: lines };
-      }
-      return next ? { rows: next } : state;
-    }),
+  /**
+   * The single write path for the view preference, so persistence can never be
+   * forgotten per-control. Writes are debounced and go through the GLOBAL config
+   * merge, which is also what makes the preference survive a quit or crash
+   * rather than only an orderly close.
+   */
+  setView: (patch) => {
+    const view = { ...get().view, ...patch };
+    set({ view });
 
-    /**
-     * The single write path for the view preference, so persistence can never be
-     * forgotten per-control. Writes are debounced and go through the GLOBAL config
-     * merge, which is also what makes the preference survive a quit or crash
-     * rather than only an orderly close.
-     */
-    setView: (patch) => {
-      const view = { ...get().view, ...patch };
-      set({ view });
-
-      if (persistTimer) clearTimeout(persistTimer);
-      persistTimer = setTimeout(() => {
-        persistTimer = null;
-        void window.electronAPI?.config?.set({ monitor: view }).catch((error) => {
-          console.error('[monitor] Failed to persist view:', error);
-        });
-      }, VIEW_PERSIST_DEBOUNCE_MS);
-    },
-
-    /**
-     * Seed from persisted config on boot, filling any key the stored blob lacks
-     * and discarding values that are no longer valid.
-     *
-     * The sanitize pass matters because the option sets can shrink between
-     * versions (sorting BY project was removed once it proved to duplicate
-     * grouping by project). A stale value merged in blindly leaves the control
-     * with nothing selected and the list ordered by the fallback - looking broken
-     * rather than migrated.
-     *
-     * `stateFilter` gets the harshest treatment: it is CLEARED, not sanitized.
-     * No control writes it (Live only covers the case users actually asked for),
-     * so a value an older build persisted would hide rows with nothing in the UI
-     * able to bring them back. An unreachable filter is worse than a stale enum,
-     * which at least falls back to a working default.
-     *
-     * `projectFilter` IS kept - the toolbar's Projects dropdown writes it now -
-     * only sanitized to a deduped string array. Ids naming a project with no
-     * current session cannot be validated here: the main window hydrates before
-     * any snapshot exists, and the pop-out re-hydrates on every config change.
-     * That reconcile lives in applySnapshot, where the rows are.
-     */
-    hydrateView: (view) => {
-      // Legacy shapes, migrated rather than discarded: silently resetting a
-      // remembered preference on upgrade is worse than a few lines of mapping.
-      //   layout 'compact' -> 'list'      (renamed to name a form, not a density)
-      //   hideIdle         -> liveOnly    (same boolean, honest name)
-      //   groupBy 'flat'   -> default      (no longer selectable)
-      //   sort 'attention' -> default      (now structural, via Status grouping)
-      // `legacy` is the RAW persisted blob, deliberately read before the defaults
-      // are merged in. `merged.liveOnly` is never undefined (the default supplies
-      // `false`), so a `merged.liveOnly ?? legacy.hideIdle` chain would short-
-      // circuit on the default and the migration below would never run.
-      const legacy = (view ?? {}) as Partial<MonitorView> & { hideIdle?: boolean };
-      const merged = { ...DEFAULT_CONFIG.monitor, ...(view ?? {}) };
-      const valid = <T extends string>(value: T, allowed: readonly T[], fallback: T): T =>
-        (allowed.includes(value) ? value : fallback);
-
-      set({
-        view: {
-          ...merged,
-          layout: valid(
-            (merged.layout as string) === 'compact' ? 'list' : merged.layout,
-            ['cards', 'table', 'list'],
-            'cards',
-          ),
-          groupBy: valid(merged.groupBy, ['state', 'project'], DEFAULT_CONFIG.monitor.groupBy),
-          sort: valid(merged.sort, ['longest-running', 'recently-started'], 'longest-running'),
-          liveOnly: legacy.liveOnly ?? legacy.hideIdle ?? DEFAULT_CONFIG.monitor.liveOnly,
-          projectFilter: Array.isArray(merged.projectFilter)
-            ? [...new Set(merged.projectFilter.filter((projectId) => typeof projectId === 'string'))]
-            : [],
-          stateFilter: [],
-        },
+    if (monitorModuleState.persistTimer) clearTimeout(monitorModuleState.persistTimer);
+    monitorModuleState.persistTimer = setTimeout(() => {
+      monitorModuleState.persistTimer = null;
+      void window.electronAPI?.config?.set({ monitor: view }).catch((error) => {
+        console.error('[monitor] Failed to persist view:', error);
       });
-    },
-  }));
+    }, VIEW_PERSIST_DEBOUNCE_MS);
+  },
 
-  return store;
+  /**
+   * Seed from persisted config on boot, filling any key the stored blob lacks
+   * and discarding values that are no longer valid.
+   *
+   * The sanitize pass matters because the option sets can shrink between
+   * versions (sorting BY project was removed once it proved to duplicate
+   * grouping by project). A stale value merged in blindly leaves the control
+   * with nothing selected and the list ordered by the fallback - looking broken
+   * rather than migrated.
+   *
+   * `stateFilter` gets the harshest treatment: it is CLEARED, not sanitized.
+   * No control writes it (Live only covers the case users actually asked for),
+   * so a value an older build persisted would hide rows with nothing in the UI
+   * able to bring them back. An unreachable filter is worse than a stale enum,
+   * which at least falls back to a working default.
+   *
+   * `projectFilter` IS kept - the toolbar's Projects dropdown writes it now -
+   * only sanitized to a deduped string array. Ids naming a project with no
+   * current session cannot be validated here: the main window hydrates before
+   * any snapshot exists, and the pop-out re-hydrates on every config change.
+   * That reconcile lives in applySnapshot, where the rows are.
+   */
+  hydrateView: (view) => {
+    // Legacy shapes, migrated rather than discarded: silently resetting a
+    // remembered preference on upgrade is worse than a few lines of mapping.
+    //   layout 'compact' -> 'list'      (renamed to name a form, not a density)
+    //   hideIdle         -> liveOnly    (same boolean, honest name)
+    //   groupBy 'flat'   -> default      (no longer selectable)
+    //   sort 'attention' -> default      (now structural, via Status grouping)
+    // `legacy` is the RAW persisted blob, deliberately read before the defaults
+    // are merged in. `merged.liveOnly` is never undefined (the default supplies
+    // `false`), so a `merged.liveOnly ?? legacy.hideIdle` chain would short-
+    // circuit on the default and the migration below would never run.
+    const legacy = (view ?? {}) as Partial<MonitorView> & { hideIdle?: boolean };
+    const merged = { ...DEFAULT_CONFIG.monitor, ...(view ?? {}) };
+    const valid = <T extends string>(value: T, allowed: readonly T[], fallback: T): T =>
+      (allowed.includes(value) ? value : fallback);
+
+    set({
+      view: {
+        ...merged,
+        layout: valid(
+          (merged.layout as string) === 'compact' ? 'list' : merged.layout,
+          ['cards', 'table', 'list'],
+          'cards',
+        ),
+        groupBy: valid(merged.groupBy, ['state', 'project'], DEFAULT_CONFIG.monitor.groupBy),
+        sort: valid(merged.sort, ['longest-running', 'recently-started'], 'longest-running'),
+        liveOnly: legacy.liveOnly ?? legacy.hideIdle ?? DEFAULT_CONFIG.monitor.liveOnly,
+        projectFilter: Array.isArray(merged.projectFilter)
+          ? [...new Set(merged.projectFilter.filter((projectId) => typeof projectId === 'string'))]
+          : [],
+        stateFilter: [],
+      },
+    });
+  },
+});
+
+function createMonitorStore() {
+  return create<MonitorState>(monitorStoreInitializer);
 }
 
 // HMR instance pinning (Pattern E): this module's only runtime export is the
@@ -330,6 +336,7 @@ function createMonitorStore() {
 // re-eval could hand a second store to part of the tree.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedMonitorStore: ReturnType<typeof createMonitorStore> | undefined = import.meta.hot?.data?.monitorStore;
+if (preservedMonitorStore) refreshPinnedStore(preservedMonitorStore, monitorStoreInitializer);
 
 export const useMonitorStore = preservedMonitorStore ?? createMonitorStore();
 

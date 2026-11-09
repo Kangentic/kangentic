@@ -43,6 +43,10 @@ msgstr "{queued, plural, other {# 个排队中}}"
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
 msgstr "{unreadAnnouncements, plural, other {# 条未读}}"
 
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "{workingAgentCount, plural, one {# agent is working. It pauses for the restart and resumes after, but its current turn stops.} other {# agents are working. They pause for the restart and resume after, but their current turns stop.}}"
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
 msgstr "<0>已找到</0><1>{gitFact}</1><2>和</2><3><4>{agentFact}</4></3>"
@@ -210,6 +214,15 @@ msgstr "读取项目的环境配置"
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Refresh"
 msgstr "刷新"
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgctxt "Action"
+msgid "Restart"
+msgstr ""
+
+#: src/renderer/components/layout/DevRestartController.tsx
+msgid "Restart Kangentic?"
+msgstr ""
 
 #: src/renderer/components/layout/TitleBar.tsx
 msgid "Resuming terminals..."

@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore } from './hmr-store-pin';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { UpdateDownloadedInfo } from '../../shared/types';
@@ -46,7 +47,7 @@ interface UpdaterState {
   closeWhatsNew: () => void;
 }
 
-const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
+const updaterStoreInitializer: StateCreator<UpdaterState> = (set, get) => ({
   pendingUpdate: null,
   isModalOpen: false,
   autoOpened: false,
@@ -117,7 +118,9 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
   closeWhatsNew: () => {
     set({ whatsNewOpen: false, whatsNewAutoOpened: false });
   },
-}));
+});
+
+const createUpdaterStore = () => create<UpdaterState>(updaterStoreInitializer);
 
 // HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
 // module's only runtime export is the non-component `useUpdaterStore`, so it
@@ -126,6 +129,7 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
 // title bar while the release-notes modal stays subscribed to the first.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedUpdaterStore: ReturnType<typeof createUpdaterStore> | undefined = import.meta.hot?.data?.updaterStore;
+if (preservedUpdaterStore) refreshPinnedStore(preservedUpdaterStore, updaterStoreInitializer);
 
 export const useUpdaterStore = preservedUpdaterStore ?? createUpdaterStore();
 
@@ -133,9 +137,9 @@ export const useUpdaterStore = preservedUpdaterStore ?? createUpdaterStore();
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.updaterStore = useUpdaterStore;
-  // Editing this module's OWN code would leave the pinned instance running
-  // stale closures; force a clean full reload instead. Rare; prod is
-  // unaffected (import.meta.hot is undefined there, so this block is dropped).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

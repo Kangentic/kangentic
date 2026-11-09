@@ -452,7 +452,7 @@ ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION, (_event, enabled: unknown): void
   if (!configManager.save({ graphicsAccelerationEnabled: enabled, graphicsAccelerationOffBy: enabled ? null : 'user' })) {
     throw new Error('Graphics acceleration could not be saved');
   }
-  relaunchForSavedSetting();
+  restartApp();
 });
 
 // The display language's two calls. Registered here beside Graphics acceleration
@@ -467,11 +467,22 @@ ipcMain.handle(IPC.LANGUAGE_GET_INFO, (): LanguageInfo => readLanguageInfo({
 
 ipcMain.handle(IPC.LANGUAGE_SET_AND_RESTART, (_event, locale: unknown): void => {
   saveLanguageForRestart(getOptionalIpcContext()?.configManager ?? windowConfigManager, locale);
-  relaunchForSavedSetting();
+  restartApp();
 });
 
-/** Restart after a setting that only applies at startup was saved. */
-function relaunchForSavedSetting(): void {
+// Dev only: the restart the renderer offers when main, preload or a worker on
+// disk no longer matches the build running (the Restart notice and the root error
+// screen). Under `npm start` scripts/dev.js rebuilds before it launches again.
+// Registered only in a dev build, where `npm start` is the only way to run.
+if (__KANGENTIC_DEV__) {
+  ipcMain.handle(IPC.APP_RESTART, (): void => {
+    restartApp();
+  });
+}
+
+/** Restart Kangentic: after a setting that only applies at startup was saved, or
+ *  when a dev build asks for its rebuilt code. */
+function restartApp(): void {
   relaunchApp({
     isTest: process.env.NODE_ENV === 'test',
     devRestartFile: __KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null,

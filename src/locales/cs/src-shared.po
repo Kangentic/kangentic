@@ -1014,6 +1014,10 @@ msgstr "Ve frontě..."
 msgid "Quick Find"
 msgstr "Rychlé hledání"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 #, fuzzy
 msgid "Relay address cannot contain a backslash."
@@ -1053,6 +1057,10 @@ msgstr "Resetovat terminál"
 #, fuzzy
 msgid "Reset zoom"
 msgstr "Obnovit přiblížení"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

@@ -67,7 +67,8 @@ scripts/          # Build and dev scripts
 
 ## Commands
 
-- `npm start` - Start in development mode (Vite HMR + esbuild watch)
+- `npm start` - Start in development mode (Vite HMR for the renderer; main, preload and the
+  workers build at boot and again on an in-app restart, so a change there needs a restart)
 - `npm run build` - Production build to `.vite/build/`
 - `npm test` - Run all Playwright E2E tests
 

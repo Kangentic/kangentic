@@ -663,6 +663,7 @@ const api: ElectronAPI = {
 
   app: {
     getVersion: () => ipcRenderer.invoke(IPC.APP_GET_VERSION),
+    restart: () => ipcRenderer.invoke(IPC.APP_RESTART),
   },
 
   updater: {

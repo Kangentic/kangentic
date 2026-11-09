@@ -838,6 +838,10 @@ msgstr "排队中..."
 msgid "Quick Find"
 msgstr "快速查找"
 
+#: src/shared/keybindings.ts
+msgid "Rebuild main and preload, then restart. Agents pause and resume."
+msgstr ""
+
 #: src/shared/relay.ts
 msgid "Relay address cannot contain a backslash."
 msgstr "中继地址不能包含反斜杠。"
@@ -870,6 +874,10 @@ msgstr "重置终端"
 #: src/shared/keybindings.ts
 msgid "Reset zoom"
 msgstr "重置缩放"
+
+#: src/shared/keybindings.ts
+msgid "Restart Kangentic"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "Review the latest changes and fix any issues you find"

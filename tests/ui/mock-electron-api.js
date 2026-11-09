@@ -4432,6 +4432,11 @@
       getVersion: async function () {
         return '0.1.0';
       },
+      // The dev restart. A page cannot restart, so the mock counts the calls a
+      // UI test reads (`__mockAppRestartCalls`) and stays up.
+      restart: async function () {
+        window.__mockAppRestartCalls = (window.__mockAppRestartCalls || 0) + 1;
+      },
     },
 
     shell: {

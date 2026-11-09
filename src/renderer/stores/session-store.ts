@@ -12,6 +12,7 @@ import { planTransientRecovery } from './session-store/transient-recovery';
 import { registerSessionLifecycleHooks } from './session-lifecycle-hooks';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -171,11 +172,23 @@ async function safeFetch<T>(
   }
 }
 
-/** Aborts in-flight syncSessions() calls when the project switches.
- *  Persisted across HMR via import.meta.hot.data so cancelSync() can
- *  still abort an in-flight sync after a module replacement. */
-// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
-let syncController: AbortController | null = import.meta.hot?.data?.syncController ?? null;
+/** This module's mutable state, ONE object shared by every evaluation of the
+ *  module through `import.meta.hot.data` (see .claude/rules/hmr-patterns.md,
+ *  Pattern E). The pin refreshes the store's actions on a re-eval, so an old
+ *  action still in flight and its new replacement must read and write the same
+ *  object, never two copies of a `let`.
+ *
+ *  `syncController` aborts an in-flight syncSessions() when the project
+ *  switches, including one a previous evaluation started. */
+interface SessionModuleState {
+  syncController: AbortController | null;
+}
+const sessionModuleState = sharedModuleState<SessionModuleState>(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'sessionModuleState',
+  () => ({ syncController: null }),
+);
 
 /** Transient session state preserved across HMR. Without this, the
  *  transientSessions map resets to {} on module re-evaluation, orphaning
@@ -210,7 +223,6 @@ const preservedPendingTuiAnchor: PendingTuiAnchor | null = import.meta.hot?.data
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose((data: Record<string, unknown>) => {
-    data.syncController = syncController;
     const state = useSessionStore.getState();
     data.transientState = {
       transientSessions: state.transientSessions,
@@ -225,8 +237,8 @@ if (import.meta.hot) {
 
 /** Cancel any in-flight syncSessions() call. Called on project switch. */
 export function cancelSync(): void {
-  syncController?.abort();
-  syncController = null;
+  sessionModuleState.syncController?.abort();
+  sessionModuleState.syncController = null;
 }
 
 /**
@@ -244,20 +256,17 @@ export function cancelSync(): void {
  * Electron `<webview>` guest dies with its DOM node, so the agent lost the
  * browser it was driving. Measured with `scripts/hmr-guest-probe.mjs`.
  *
- * The FALLBACK layer is the `import.meta.hot.dispose` stash above. Under the pin
- * its one LIVE consumer is `syncController` (an AbortController): that is module
- * state, not store state, so it is re-declared on every module evaluation and
- * read back at eval time - the stash is its only carrier, on every path. Without
- * it a re-eval breaks an in-flight project switch.
+ * The pin also REFRESHES the preserved store (`refreshPinnedStore`): a re-eval
+ * runs this initializer once more and copies only its new or changed actions and
+ * any key the live store lacks. The live data is never touched, so the values
+ * the initializer reads back from the stash above only matter on the first
+ * evaluation after a cold boot or a full reload. Module state that actions share
+ * lives in `sessionModuleState`, never in a `let`.
  *
- * The stash's other values (the transient-session pointers, spawnProgress,
- * pendingCommandLabel, the conversation-viewer nav signals) are read back only
- * INSIDE the initializer, and the pin means the initializer no longer re-runs
- * while `hot.data` survives: `hot.data.sessionStore` is written during the same
- * evaluation that runs the initializer, so any path that runs it again is one
- * where `hot.data` is itself fresh and the stash is empty too. They are the
- * pre-pin protection, kept rather than ripped out in the same change that
- * introduced the pin, but nothing reads them now - do not add a new value here
+ * The FALLBACK layer is the `import.meta.hot.dispose` stash above: the
+ * transient-session pointers, spawnProgress, pendingCommandLabel and the
+ * conversation-viewer nav signals. It is the pre-pin protection, kept for a
+ * path with no pinned instance to inherit. Do not add a new value here
  * expecting it to survive a re-eval. Pin it instead.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
@@ -306,9 +315,9 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
   syncSessions: async () => {
     // Abort any prior in-flight sync (e.g. user switched projects quickly)
-    syncController?.abort();
+    sessionModuleState.syncController?.abort();
     const controller = new AbortController();
-    syncController = controller;
+    sessionModuleState.syncController = controller;
     const { signal } = controller;
 
     const currentProjectId = useProjectStore.getState().currentProject?.id;
@@ -958,6 +967,9 @@ const createSessionStore = () => create<SessionStore>(sessionStoreInitializer);
 // a hand-off lane.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedSessionStore: ReturnType<typeof createSessionStore> | undefined = import.meta.hot?.data?.sessionStore;
+// The pinned instance takes this evaluation's new and changed actions, so an
+// action a merge adds arrives with no reload (the #1052 gap).
+if (preservedSessionStore) refreshPinnedStore(preservedSessionStore, sessionStoreInitializer);
 
 export const useSessionStore = preservedSessionStore ?? createSessionStore();
 
@@ -988,7 +1000,7 @@ if (import.meta.hot) {
   // imports back. Vite answers an `invalidate()` from inside a cycle with
   //     page reload src/renderer/stores/session-store.ts (circular import invalidate)
   // and a full page reload destroys every live Browser pane <webview> guest, which
-  // is the exact bug the pin above exists to prevent. Stale closures after editing
-  // THIS file (recoverable with a manual reload) are the cheaper failure.
-  // Measured both ways with `scripts/hmr-guest-probe.mjs`.
+  // is the exact bug the pin above exists to prevent. The refresh above is what
+  // keeps an edit to this file from leaving stale actions; the re-eval reaches it
+  // through the importers either way. Measured with `scripts/hmr-guest-probe.mjs`.
 }

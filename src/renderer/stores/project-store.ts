@@ -1,4 +1,5 @@
 import { create, type StateCreator } from 'zustand';
+import { refreshPinnedStore, sharedModuleState } from './hmr-store-pin';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
@@ -24,12 +25,16 @@ import { dropProject as dropProjectCache } from './project-cache';
 export type OpenProjectOutcome = 'opened' | 'missing-path' | 'not-found' | 'failed';
 
 // Hydration gate: tracks whether both loadProjects() and loadCurrent() have
-// resolved at least once. Module-scoped so they don't pollute the store
-// interface. The store instance is pinned across HMR (Pattern E, below), and the
-// vite:afterUpdate handler in App.tsx re-calls both methods after every reload,
-// so these gates stay correct for the pinned instance's closures.
-let projectsReady = false;
-let currentReady = false;
+// resolved at least once. Kept out of the store interface, in one object every
+// evaluation of this module shares (`sharedModuleState`), so the pin's refreshed
+// actions read the gates the earlier ones set. The vite:afterUpdate handler in
+// App.tsx also re-calls both methods after every reload.
+const projectModuleState = sharedModuleState(
+  // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+  import.meta.hot?.data,
+  'projectModuleState',
+  () => ({ projectsReady: false, currentReady: false }),
+);
 
 interface ProjectStore {
   projects: Project[];
@@ -122,8 +127,8 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     } catch (error) {
       console.error('[project-store] Failed to load projects:', describeIpcError(error));
     }
-    projectsReady = true;
-    set({ projects, loading: false, hydrated: projectsReady && currentReady });
+    projectModuleState.projectsReady = true;
+    set({ projects, loading: false, hydrated: projectModuleState.projectsReady && projectModuleState.currentReady });
   },
 
   createProject: async (input) => {
@@ -390,8 +395,8 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     } catch (error) {
       console.error('[project-store] Failed to load the current project:', describeIpcError(error));
     }
-    currentReady = true;
-    set({ currentProject: project, hydrated: projectsReady && currentReady });
+    projectModuleState.currentReady = true;
+    set({ currentProject: project, hydrated: projectModuleState.projectsReady && projectModuleState.currentReady });
   },
 
   // Group actions
@@ -477,6 +482,7 @@ const createProjectStore = () => create<ProjectStore>(projectStoreInitializer);
 // instance while the mounted sidebar stays subscribed to the first.
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const preservedProjectStore: ReturnType<typeof createProjectStore> | undefined = import.meta.hot?.data?.projectStore;
+if (preservedProjectStore) refreshPinnedStore(preservedProjectStore, projectStoreInitializer);
 
 export const useProjectStore = preservedProjectStore ?? createProjectStore();
 
@@ -484,8 +490,9 @@ export const useProjectStore = preservedProjectStore ?? createProjectStore();
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.data.projectStore = useProjectStore;
-  // Editing this module's OWN code would leave the pinned instance running stale
-  // closures; force a clean full reload instead (rare; prod drops this block).
+  // An edit to this module's own code re-runs it (the refresh above takes its
+  // new actions), then invalidate() hands the update on to the importers. It
+  // does not reload the page. Prod drops this block.
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

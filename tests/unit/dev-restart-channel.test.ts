@@ -66,19 +66,81 @@ describe('scripts/dev.js restart channel', () => {
     // `awaitingElectronExit`: a Ctrl+C or closed terminal during a pending
     // restart must stop the dev server, not bring the app back.
     const restartCheckIndex = spawnBody.indexOf('if (!cleaningUp && !awaitingElectronExit && consumeRestartRequest())');
-    const respawnIndex = spawnBody.indexOf('spawnElectron(electronArgs, spawnEnv);', restartCheckIndex);
+    const respawnIndex = spawnBody.indexOf('restartElectron(electronArgs, spawnEnv);', restartCheckIndex);
     const returnIndex = spawnBody.indexOf('return;', respawnIndex);
     const cleanupIndex = spawnBody.indexOf('cleanup(code || 0)');
     expect(restartCheckIndex, 'the close handler must check for a restart request').toBeGreaterThan(-1);
-    expect(respawnIndex, 'a restart request must spawn Electron again').toBeGreaterThan(restartCheckIndex);
+    expect(respawnIndex, 'a restart request must rebuild and spawn Electron again').toBeGreaterThan(restartCheckIndex);
     expect(returnIndex, 'and return, so cleanup() never runs for a restart').toBeGreaterThan(respawnIndex);
     expect(cleanupIndex, 'cleanup() must come after the restart branch').toBeGreaterThan(returnIndex);
+  });
+
+  // Without the rebuild a restart came back on the build `npm start` made at
+  // boot, so a merge that changed main or preload stayed out of reach and the
+  // renderer kept calling a preload method that did not exist.
+  it('rebuilds main, preload and the workers before it launches Electron again, and lets a stop during the rebuild win', () => {
+    const restartBody = extractFunctionBody(DEV_JS_CODE, 'restartElectron');
+    const rebuildIndex = restartBody.indexOf('await buildMainBundles();');
+    const scriptsIndex = restartBody.indexOf('copyExternalScripts(projectDir);');
+    const catalogsIndex = restartBody.indexOf('await compileCatalogsForMainInBackground(projectDir);');
+    const stopCheckIndex = restartBody.indexOf('if (cleaningUp || awaitingElectronExit)');
+    const spawnIndex = restartBody.indexOf('spawnElectron(electronArgs, spawnEnv);');
+    expect(rebuildIndex, 'the restart must rebuild the bundles').toBeGreaterThan(-1);
+    expect(scriptsIndex, 'and copy the external scripts, as a boot does').toBeGreaterThan(-1);
+    expect(catalogsIndex, 'and compile main\'s catalogs, as a boot does').toBeGreaterThan(-1);
+    expect(stopCheckIndex, 'a stop that landed during the awaits must be checked after them').toBeGreaterThan(Math.max(rebuildIndex, catalogsIndex));
+    expect(spawnIndex, 'Electron starts only after the rebuild and the stop check').toBeGreaterThan(stopCheckIndex);
+  });
+
+  it('clears the stale notice only after a rebuild that landed', () => {
+    const restartBody = extractFunctionBody(DEV_JS_CODE, 'restartElectron');
+    expect(restartBody).toContain('if (rebuilt) mainStaleness.markCurrent();');
+    const rebuiltAssignment = restartBody.indexOf('rebuilt = true;');
+    expect(rebuiltAssignment, 'rebuilt is set after the build and its hashes, inside the try').toBeGreaterThan(restartBody.indexOf('await buildMainBundles();'));
+    expect(rebuiltAssignment).toBeLessThan(restartBody.indexOf('catch (buildError)'));
+  });
+
+  it('checks staleness with an in-memory build, never by writing over the bundles a live app loads', () => {
+    expect(DEV_JS_CODE).toContain('buildFreshHashes: () => buildMainBundles({ write: false })');
   });
 
   it('launches Electron only through spawnElectron, so every child gets the restart argument and handler', () => {
     const spawnCalls = [...DEV_JS_CODE.matchAll(/spawn\(electronExe/g)];
     expect(spawnCalls.length).toBe(1);
     expect(extractFunctionBody(DEV_JS_CODE, 'spawnElectron')).toContain('spawn(electronExe');
+  });
+});
+
+describe('scripts/dev.js main-stale notice wiring', () => {
+  const DEV_RESTART_TS = fs.readFileSync(path.join(REPO_ROOT, 'src/renderer/utils/dev-restart.ts'), 'utf-8');
+
+  it('names the two Vite events the same on both sides of the channel', () => {
+    for (const eventName of ['kangentic:main-stale', 'kangentic:main-stale-query']) {
+      expect(DEV_JS_CODE, `scripts/dev.js must carry '${eventName}'`).toContain(`'${eventName}'`);
+      expect(DEV_RESTART_TS, `dev-restart.ts must carry '${eventName}'`).toContain(`'${eventName}'`);
+    }
+  });
+
+  it('answers the renderer query with the current answer and feeds source changes to the checker', () => {
+    const watchBody = extractFunctionBody(DEV_JS_CODE, 'watchMainSources');
+    expect(watchBody).toMatch(/ws\.on\(\s*MAIN_STALE_QUERY_EVENT/);
+    expect(watchBody).toMatch(/client\.send\(\s*MAIN_STALE_EVENT,[^)]*mainStaleness\.current\(\)/);
+    expect(watchBody).toMatch(/fs\.watch\([^)]*\)?[^;]*mainStaleness\.noteSourceChange\(\)/);
+  });
+
+  it('hashes the running build only after the external scripts are copied, on a restart and at boot', () => {
+    const restartBody = extractFunctionBody(DEV_JS_CODE, 'restartElectron');
+    const restartCopyIndex = restartBody.indexOf('copyExternalScripts(projectDir);');
+    const restartHashIndex = restartBody.indexOf('runningBundleHashes = hashRunningBuild();');
+    expect(restartCopyIndex).toBeGreaterThan(-1);
+    expect(restartHashIndex, 'a restart must hash after its copy').toBeGreaterThan(restartCopyIndex);
+
+    const bootCopyLogIndex = DEV_JS_CODE.indexOf("console.log('[dev] Copied external scripts");
+    expect(bootCopyLogIndex).toBeGreaterThan(-1);
+    const bootCopyCallIndex = DEV_JS_CODE.lastIndexOf('copyExternalScripts(projectDir);', bootCopyLogIndex);
+    const bootHashIndex = DEV_JS_CODE.indexOf('runningBundleHashes = hashRunningBuild();', bootCopyLogIndex);
+    expect(bootCopyCallIndex, 'the boot copy call sits before its log line').toBeGreaterThan(-1);
+    expect(bootHashIndex, 'the boot hash comes after the boot copy').toBeGreaterThan(bootCopyCallIndex);
   });
 });
 
