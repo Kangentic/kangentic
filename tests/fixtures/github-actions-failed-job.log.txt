@@ -1,0 +1,53 @@
+UI Test (10/11)	UNKNOWN STEP	﻿2026-11-08T01:51:45.8816840Z Current runner version: '2.338.2'
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3796060Z       367 |     await page.keyboard.press('ControlOrMeta+f');
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3796541Z       368 |     await page.keyboard.type('needle');
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3797067Z     > 369 |     await expect(findCount(page)).toHaveText('1 of 3');
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3797520Z           |                                   ^
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3797863Z       370 |   } finally {
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3798184Z       371 |     await browser.close();
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3798515Z       372 |   }
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3799916Z         at /home/runner/work/kangentic/kangentic/tests/ui/terminal-find-bar.spec.ts:369:35
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3800377Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3800948Z     Error Context: test-results/terminal-find-bar-lines-al-70536-eside-the-agent-s-write-out-ui/error-context.md
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3801878Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3803081Z   2) [ui] › tests/ui/terminal-find-bar.spec.ts:375:1 › a conversation past the normal cap stays whole, and a settings change keeps the cap while the view is open 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3804187Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3804498Z     Error: expect(locator).toHaveText(expected) failed
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3804988Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3805265Z     Locator:  getByTestId('terminal-find-count')
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3805796Z     Expected: "1 of 2"
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3806207Z     Received: ""
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3806563Z     Timeout:  5000ms
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3806836Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3807009Z     Call log:
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3807802Z       - Expect "toHaveText" getByTestId('terminal-find-count') with timeout 5000ms
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3809095Z       - waiting for getByTestId('terminal-find-count')
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3810301Z         13 × locator resolved to <span aria-live="polite" data-testid="terminal-find-count" class="mx-1 whitespace-nowrap text-xs text-fg-muted empty:hidden"></span>
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3811135Z            - unexpected value ""
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3811337Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3811343Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3811526Z       385 |     await page.keyboard.type('needle-');
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3812089Z       386 |     // The oldest line is 6000 lines up, past the 5000 an ordinary terminal keeps.
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3812688Z     > 387 |     await expect(findCount(page)).toHaveText('1 of 2');
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3813106Z           |                                   ^
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3813416Z       388 |
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3813866Z       389 |     // A setting that re-applies the terminal's options, with the view still open.
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3814417Z       390 |     await page.evaluate(async () => {
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3814983Z         at /home/runner/work/kangentic/kangentic/tests/ui/terminal-find-bar.spec.ts:387:35
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3815358Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3815815Z     Error Context: test-results/terminal-find-bar-a-conver-5f72b--cap-while-the-view-is-open-ui/error-context.md
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3816300Z 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3816392Z   2 flaky
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3817084Z     [ui] › tests/ui/terminal-find-bar.spec.ts:361:1 › lines already in the normal buffer are not counted beside the agent's write-out 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3818242Z     [ui] › tests/ui/terminal-find-bar.spec.ts:375:1 › a conversation past the normal cap stays whole, and a settings change keeps the cap while the view is open 
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.3819196Z   284 passed (8.3m)
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.4309486Z ##[error]Process completed with exit code 1.
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.4447452Z Post job cleanup.
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5381372Z [command]/usr/bin/git version
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5430913Z git version 2.56.0
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5474796Z Temporarily overriding HOME='/home/runner/work/_temp/500dd7d5-5f50-447c-807a-ff1312af062b' before making global git config changes
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5477276Z Adding repository directory to the temporary git global config as a safe directory
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5480813Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/kangentic/kangentic
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5516275Z Removing SSH command configuration
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5523848Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+UI Test (10/11)	UNKNOWN STEP	2026-11-08T02:00:23.5569681Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"

@@ -1,0 +1,11 @@
+2026-10-22T16:44:00.1002345Z ##[section]Starting: Build
+2026-10-22T16:44:00.1180001Z ==============================================================================
+2026-10-22T16:44:00.1180540Z Task         : .NET Core
+2026-10-22T16:44:00.1180912Z Description  : Build, test, package, or publish a dotnet application
+2026-10-22T16:44:00.1181288Z ==============================================================================
+2026-10-22T16:44:02.4402176Z [command]/usr/bin/dotnet build /agent/_work/1/s/App.sln --configuration Release
+2026-10-22T16:44:13.6402176Z tests/App.Tests/ServiceTests.cs(884,31): error CS1501: No overload for method 'Run' takes 3 arguments [/agent/_work/1/s/tests/App.Tests/App.Tests.csproj]
+2026-10-22T16:44:13.6469175Z ##[error]tests/App.Tests/ServiceTests.cs(884,31): Error CS1501: No overload for method 'Run' takes 3 arguments
+2026-10-22T16:44:25.4653079Z Build FAILED.
+2026-10-22T16:44:25.5456379Z ##[error]Dotnet command failed with non-zero exit code on the following projects : /agent/_work/1/s/App.sln
+2026-10-22T16:44:25.5553624Z ##[section]Finishing: Build

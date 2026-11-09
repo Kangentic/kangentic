@@ -147,8 +147,9 @@ async function openDialogWithChangesPanel(taskLocatorText: string, swimlaneName:
 
 /** Close the Changes panel and the dialog, leaving no commit selected and the
  *  History section OPEN so the next test's dialog reopen starts from the same
- *  known state (both persisted per-task in the session store:
- *  changesOpenTasks / changesSelectedCommit / changesHistoryCollapsed). */
+ *  known state (the panel and the selected commit persist per task in the
+ *  session store, changesOpenTasks / changesSelectedCommit; History's open
+ *  state is the global AppConfig `changesHistoryOpen`). */
 async function closeChangesPanelAndDialog(dialog: Locator): Promise<void> {
   const deselect = page.locator('[data-testid="commit-selection-close"]');
   if (await deselect.isVisible()) {
