@@ -449,6 +449,7 @@ export async function startCommandTerminal(
       cwd: projectRoot,
       startPath: commandTerminalStartPath(input, restore),
       agentCliVersion: detection.version,
+      agentCliPath: launch.agentPath,
       env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,

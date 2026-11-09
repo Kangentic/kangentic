@@ -812,8 +812,8 @@ export class PtyHostCore {
     };
   }
 
-  getRawScrollback(sessionId: string): string {
-    return this.bufferManager.getRawScrollback(sessionId);
+  getRawScrollback(sessionId: string, ownOutputOnly = false): string {
+    return this.bufferManager.getRawScrollback(sessionId, ownOutputOnly);
   }
 
   getOutputPeek(sessionId: string): string[] {
@@ -876,8 +876,10 @@ export class PtyHostCore {
         const { sessionId, settle, scrollbackLines } = params as PtyHostRequestMap['getSeedFrame']['params'];
         return this.getSeedFrame(sessionId, settle, scrollbackLines) as Promise<PtyHostRequestMap[M]['result']>;
       }
-      case 'getRawScrollback':
-        return this.getRawScrollback((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
+      case 'getRawScrollback': {
+        const { sessionId, ownOutputOnly } = params as PtyHostRequestMap['getRawScrollback']['params'];
+        return this.getRawScrollback(sessionId, ownOutputOnly === true) as PtyHostRequestMap[M]['result'];
+      }
       case 'getOutputPeek':
         return this.getOutputPeek((params as { sessionId: string }).sessionId) as PtyHostRequestMap[M]['result'];
       case 'openHistoryView':

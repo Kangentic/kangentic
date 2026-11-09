@@ -742,6 +742,7 @@ async function startWorkflowAgent(
     cwd: projectRoot,
     startPath: 'workflow',
     agentCliVersion: detection.version,
+    agentCliPath: launch.agentPath,
     env: extraEnv ?? undefined,
     statusOutputPath,
     eventsOutputPath,

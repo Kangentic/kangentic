@@ -171,6 +171,24 @@ describe('launchTagsOf', () => {
     expect(launchTagsOf(session(), NOW).launcher).toBe('none');
   });
 
+  it('says whether the command\'s head path exists, never what it is', () => {
+    const agentCliPath = '/Users/dev/.local/bin/claude';
+    existsSync.mockReturnValue(true);
+    expect(launchTagsOf(session({ agentCliPath }), NOW).command_head).toBe('present');
+    existsSync.mockReturnValue(false);
+    expect(launchTagsOf(session({ agentCliPath }), NOW).command_head).toBe('missing');
+    expect(JSON.stringify(launchTagsOf(session({ agentCliPath }), NOW))).not.toContain('/Users/dev');
+  });
+
+  it.each([
+    { label: 'no path', overrides: {} },
+    { label: 'a bare command name the shell looks up', overrides: { agentCliPath: 'claude' } },
+    { label: 'a WSL shell, whose paths this process cannot read', overrides: { agentCliPath: '/home/dev/.local/bin/claude', shell: 'wsl -d Ubuntu' } },
+  ])('reads the head as unknown with $label', ({ overrides }) => {
+    existsSync.mockReturnValue(false);
+    expect(launchTagsOf(session(overrides), NOW).command_head).toBe('unknown');
+  });
+
   it('marks an overlay that gave up waiting', () => {
     expect(launchTagsOf(session(), NOW).overlay_ceiling).toBe('no');
     expect(launchTagsOf(session({ readyCeilingAt: NOW }), NOW).overlay_ceiling).toBe('tripped');
@@ -203,8 +221,14 @@ describe('classifyLaunchOutput', () => {
     ['bash: /usr/local/bin/claude: Permission denied', 'permission_denied'],
     ['zsh: no such file or directory: /opt/claude', 'no_such_file'],
     ['bash: /opt/claude: No such file or directory', 'no_such_file'],
-    ['bash: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'no_such_file'],
+    ['/bin/bash: line 1: /opt/claude: No such file or directory', 'no_such_file'],
     ['The system cannot find the path specified.', 'no_such_file'],
+    // A shebang names a second path, and the line holds both phrases: the
+    // command exists, its interpreter does not.
+    ['bash: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'bad_interpreter'],
+    ['zsh: /opt/claude: bad interpreter: /usr/bin/node: no such file or directory', 'bad_interpreter'],
+    ['/bin/bash: line 1: /opt/claude: /usr/bin/node: bad interpreter: No such file or directory', 'bad_interpreter'],
+    ['bash: /opt/claude: /usr/bin/node: bad interpreter: Permission denied', 'bad_interpreter'],
     ["error: unknown option '--session-id'", 'unknown_option'],
     ["error: unexpected argument '--foo' found", 'unknown_option'],
   ])('reads %j as %s', (line, outputClass) => {

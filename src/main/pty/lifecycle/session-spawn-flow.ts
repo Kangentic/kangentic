@@ -582,6 +582,7 @@ export async function performSpawn(
     launcherPath: typedLaunch?.launcher?.filePath ?? null,
     startPath: input.startPath,
     agentCliVersion: input.agentCliVersion ?? null,
+    agentCliPath: input.agentCliPath ?? null,
   };
 
   context.registry.set(id, session);

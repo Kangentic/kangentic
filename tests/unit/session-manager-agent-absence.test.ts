@@ -91,6 +91,8 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
     get hasAgentAbsenceSweep(): boolean {
       return sweep.available;
     }
+    // The host's `outputSeen` marks the engine; the start bound reads the output after.
+    readonly activityEngine = { markPtyChunk: (): void => {}, markPtyOutput: (): void => {} };
     removeSession(): void {}
     // SessionManager.dispose() disposes its telemetry first.
     dispose(): void {}
@@ -106,12 +108,17 @@ vi.mock('../../src/main/activity-engine/session-telemetry', () => {
 
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { resetLaunchReports } from '../../src/main/pty/agent-launch-report';
+import { AGENT_START_CEILING_MS } from '../../src/main/pty/lifecycle/agent-output-tracker';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
+import type { AgentParser } from '../../src/shared/types';
 
 /** Mirrors AGENT_SPAWN_GRACE_MS in session-manager.ts (module-private). */
 const SPAWN_GRACE_MS = 30_000;
-/** Mirrors COMMAND_TERMINAL_AGENT_START_CEILING_MS in session-manager.ts. */
-const START_CEILING_MS = 120_000;
+/**
+ * Past the grace, short of the start ceiling: where the sweep judged install
+ * A's launches before the start bound (DESKTOP-2E).
+ */
+const insideStartBound = (): string => new Date(Date.now() - (SPAWN_GRACE_MS + 4_000)).toISOString();
 /** Mirrors COMMAND_TERMINAL_AGENT_END_SETTLE_MS in session-manager.ts. */
 const END_SETTLE_MS = 5_000;
 
@@ -154,8 +161,10 @@ describe('SessionManager agent-absence wiring', () => {
    * used: it needs a real PTY, and the fields under test (transient,
    * agentParser, startedAt) are exactly what a fixture must vary.
    *
-   * The defaults describe a healthy, judgeable task agent: running, non-transient,
-   * with an adapter, a live PTY, and well past its spawn grace.
+   * The defaults describe a judgeable task agent: running, non-transient, with
+   * an adapter, a live PTY, and past the start ceiling, so the sweep judges it
+   * whether or not it ever showed its agent ran. Inside the ceiling a launch with
+   * no such sign is judged only once its output names a cause (the start bound).
    */
   function seedSession(overrides: Partial<ManagedSession> = {}): ManagedSession {
     const registry = (manager as unknown as {
@@ -169,7 +178,7 @@ describe('SessionManager agent-absence wiring', () => {
       status: 'running',
       shell: 'pwsh',
       cwd: '/mock/project-cwd',
-      startedAt: new Date(Date.now() - (SPAWN_GRACE_MS + 5_000)).toISOString(),
+      startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 5_000)).toISOString(),
       exitCode: null,
       resuming: false,
       transient: false,
@@ -547,7 +556,7 @@ describe('SessionManager agent-absence wiring', () => {
       manager.on('agent-never-started', neverStarted);
       seedSession({ reportsAgentStart: true });
       armCheck();
-      vi.advanceTimersByTime(START_CEILING_MS);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
       expect(reportHandledError).toHaveBeenCalledTimes(1);
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ stage: 'never_started', judge: 'timer' });
       expect(neverStarted).not.toHaveBeenCalled();
@@ -556,7 +565,7 @@ describe('SessionManager agent-absence wiring', () => {
     it('reports a WSL shell, which the sweep never judges', () => {
       seedSession({ reportsAgentStart: true, shell: 'wsl -d Ubuntu' });
       armCheck();
-      vi.advanceTimersByTime(START_CEILING_MS);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
       expect(reportHandledError.mock.calls[0][1]).toMatchObject({ judge: 'timer', shell: 'other' });
     });
 
@@ -565,7 +574,7 @@ describe('SessionManager agent-absence wiring', () => {
       const session = seedSession({ reportsAgentStart: true });
       armCheck();
       session.agentStartObservedAt = Date.now();
-      vi.advanceTimersByTime(START_CEILING_MS);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
@@ -579,14 +588,14 @@ describe('SessionManager agent-absence wiring', () => {
       const session = seedSession({ reportsAgentStart: true });
       armCheck();
       undo(session);
-      vi.advanceTimersByTime(START_CEILING_MS);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
       expect(reportHandledError).not.toHaveBeenCalled();
     });
 
     it('arms nothing where the sweep can judge', () => {
       seedSession({ reportsAgentStart: true });
       armCheck();
-      vi.advanceTimersByTime(START_CEILING_MS);
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS);
       expect(reportHandledError).not.toHaveBeenCalled();
     });
   });
@@ -598,7 +607,7 @@ describe('SessionManager agent-absence wiring', () => {
 
     it('reports a shell\'s own failure for an adapter that reports no start, and retires as usual', async () => {
       const session = seedSession({ firstOutputAt: Date.now() });
-      vi.spyOn(manager, 'getRawScrollback').mockResolvedValue('$ aider\r\nzsh: command not found: aider\r\n$ ');
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('$ aider\r\nzsh: command not found: aider\r\n$ ');
       const neverStarted = vi.fn();
       manager.on('agent-never-started', neverStarted);
       retire();
@@ -619,7 +628,7 @@ describe('SessionManager agent-absence wiring', () => {
       seedSession({
         transient: true,
         reportsAgentStart: true,
-        startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString(),
+        startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 1)).toISOString(),
       });
       retire();
       expect(reportHandledError).toHaveBeenCalledTimes(1);
@@ -690,7 +699,7 @@ describe('SessionManager agent-absence wiring', () => {
       seedSession({
         transient: true,
         reportsAgentStart: true,
-        startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString(),
+        startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 1)).toISOString(),
       });
 
       retire();
@@ -711,16 +720,198 @@ describe('SessionManager agent-absence wiring', () => {
     });
   });
 
+  describe('a board launch\'s start bound (DESKTOP-2E)', () => {
+    const namesMiss = {
+      namesMissingConversation: (output: string, id: string) => output.includes(`No conversation found with session ID: ${id}`),
+    } as unknown as AgentParser;
+
+    function outputSeen(sessionId = 'session-1'): void {
+      (manager as unknown as { handleHostEvent(event: { type: 'outputSeen'; sessionId: string; chunks: number }): void })
+        .handleHostEvent({ type: 'outputSeen', sessionId, chunks: 1 });
+    }
+
+    function armStartBound(sessionId = 'session-1'): void {
+      (manager as unknown as { armLaunchStartBound(id: string): void }).armLaunchStartBound(sessionId);
+    }
+
+    beforeEach(() => {
+      reportHandledError.mockClear();
+    });
+
+    it('does not judge a task whose shell is still starting its agent, past the grace and short of the ceiling', () => {
+      // Install A: a Windows PowerShell whose profile ran past 30 s. The line
+      // ran once the shell got to it (measured late, never lost), but the sweep
+      // had already paused the task and spent its retry.
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      const session = seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000) });
+
+      expect(isCandidate()).toBe(false);
+      retire();
+
+      expect(neverStarted).not.toHaveBeenCalled();
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(session.status).toBe('running');
+      expect(killedPtys).toEqual([]);
+    });
+
+    it('judges the same launch once the start ceiling has passed, as before', () => {
+      const neverStarted = vi.fn();
+      manager.on('agent-never-started', neverStarted);
+      seedSession({ reportsAgentStart: true, startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 1)).toISOString() });
+
+      expect(isCandidate()).toBe(true);
+      retire();
+
+      expect(neverStarted).toHaveBeenCalledTimes(1);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      { outputClass: 'no_such_file', output: '$ claude\r\nzsh: no such file or directory: /opt/claude\r\n$ ', overrides: {} },
+      { outputClass: 'line_too_long', output: 'C:\\project>cls & claude\r\nThe input line is too long.\r\n', overrides: {} },
+      {
+        outputClass: 'conversation_missing',
+        output: 'No conversation found with session ID: conversation-1\r\nPS C:\\project> ',
+        overrides: { agentParser: namesMiss, resuming: true, agentSessionId: 'conversation-1' },
+      },
+    ])('judges a launch whose output names $outputClass at the grace, and asks the sweep to look now', async ({ output, overrides }) => {
+      const session = seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000), ...overrides });
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue(output);
+
+      outputSeen();
+
+      await vi.waitFor(() => expect(isCandidate()).toBe(true));
+      expect(requestAgentAbsenceCheck).toHaveBeenCalledWith('session-1');
+      // A look, not a report: the sweep reports once, when it judges.
+      expect(reportHandledError).not.toHaveBeenCalled();
+      expect(session.launchFailureNoted).toBeUndefined();
+    });
+
+    it('keeps waiting on output that names no cause', async () => {
+      seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000) });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('Loading personal and system profiles took 31204ms.\r\nPS C:\\project> ');
+
+      outputSeen();
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(isCandidate()).toBe(false);
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+
+    it('reads one output at a time, and reads again for output that landed during a read', async () => {
+      vi.useFakeTimers();
+      seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000) });
+      const answers: Array<(text: string) => void> = [];
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockImplementation(() => new Promise((resolve) => { answers.push(resolve); }));
+
+      outputSeen();
+      outputSeen();
+      outputSeen();
+      expect(read).toHaveBeenCalledTimes(1);
+
+      answers[0]('PS C:\\project> ');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(read).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads nothing inside the grace, where the agent has not had its chance', () => {
+      seedSession({ reportsAgentStart: true, startedAt: new Date(Date.now() - 2_000).toISOString(), firstOutputAt: Date.now() - 1_900 });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('zsh: no such file or directory: /opt/claude\r\n');
+
+      outputSeen();
+
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it('reads nothing for a launch whose agent already showed it ran', () => {
+      seedSession({ reportsAgentStart: true, startedAt: insideStartBound(), firstOutputAt: Date.now() - (SPAWN_GRACE_MS + 3_000), agentStartObservedAt: Date.now() - 30_000 });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('zsh: no such file or directory: /opt/claude\r\n');
+
+      outputSeen();
+
+      expect(read).not.toHaveBeenCalled();
+    });
+
+    it('reads the output at the grace, and asks the sweep to look at the ceiling, for a launch that shows nothing', async () => {
+      vi.useFakeTimers();
+      seedSession({ reportsAgentStart: true, startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('PS C:\\project> ');
+
+      armStartBound();
+      await vi.advanceTimersByTimeAsync(SPAWN_GRACE_MS - 1);
+      expect(read).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(AGENT_START_CEILING_MS - SPAWN_GRACE_MS);
+      expect(requestAgentAbsenceCheck).toHaveBeenCalledWith('session-1');
+      expect(isCandidate()).toBe(true);
+    });
+
+    it('still reads at the grace when its timer fires before the clock reaches it', async () => {
+      // Node starts a timer from the loop's cached time, so it can fire with
+      // Date.now() a few ms short of its target. This read is the only one
+      // that sees failure output printed early and never followed by more.
+      vi.useFakeTimers();
+      seedSession({ reportsAgentStart: true, startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('zsh: no such file or directory: /opt/claude\r\n');
+
+      armStartBound();
+      // Set the clock back without firing anything, so the timer fires 5 ms early.
+      vi.setSystemTime(Date.now() - 5);
+      await vi.advanceTimersByTimeAsync(SPAWN_GRACE_MS);
+      await vi.advanceTimersByTimeAsync(5);
+
+      expect(read).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(isCandidate()).toBe(true));
+    });
+
+    it('asks nothing at the ceiling for a launch whose agent ran', async () => {
+      vi.useFakeTimers();
+      const session = seedSession({ reportsAgentStart: true, startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+      vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('PS C:\\project> ');
+
+      armStartBound();
+      await vi.advanceTimersByTimeAsync(10_000);
+      session.agentStartObservedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(AGENT_START_CEILING_MS);
+
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+
+    it('arms nothing where the sweep cannot judge, which the unjudged-launch timer covers', async () => {
+      vi.useFakeTimers();
+      seedSession({ reportsAgentStart: true, shell: 'wsl -d Ubuntu', startedAt: new Date().toISOString(), firstOutputAt: Date.now() });
+      const read = vi.spyOn(manager, 'getLaunchOutput').mockResolvedValue('zsh: no such file or directory: /opt/claude\r\n');
+
+      armStartBound();
+      await vi.advanceTimersByTimeAsync(AGENT_START_CEILING_MS);
+
+      expect(read).not.toHaveBeenCalled();
+      expect(requestAgentAbsenceCheck).not.toHaveBeenCalled();
+    });
+  });
+
   describe('isAgentAbsenceCandidate', () => {
-    it('accepts a running, non-transient task agent past its spawn grace', () => {
+    it('accepts a running, non-transient task agent past its spawn grace once its agent ran', () => {
+      seedSession({ startedAt: insideStartBound(), agentStartObservedAt: Date.now() - 20_000 });
+      expect(isCandidate()).toBe(true);
+    });
+
+    it('accepts a task agent with no sign it ran once the start ceiling has passed', () => {
       seedSession();
       expect(isCandidate()).toBe(true);
     });
 
-    it('judges a workflow\'s own agent like a task\'s: past its grace, with no Command Terminal start evidence to wait for', () => {
-      // Transient too, but no Command Terminal: the start-evidence gate and
-      // its ceiling are a terminal's, and this agent keeps a task's plain grace.
-      seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1' });
+    it('judges a workflow\'s own agent like a task\'s: past its grace once a hook shows it ran', () => {
+      // Transient too, but no Command Terminal. The start bound covers every
+      // launch, so a hook is what lets it be judged short of the ceiling.
+      seedSession({ transient: true, workflowId: 'workflow-1', taskId: 'workflow-1', startedAt: insideStartBound(), agentHookObservedAt: Date.now() });
       expect(isCandidate()).toBe(true);
     });
 
@@ -728,7 +919,7 @@ describe('SessionManager agent-absence wiring', () => {
       // A Command Terminal types the project's agent CLI into its shell, the
       // same shape as a task session, so an empty tree means its agent is gone
       // and only a bare shell is left.
-      seedSession({ transient: true, agentStartObservedAt: Date.now() - 20_000 });
+      seedSession({ transient: true, startedAt: insideStartBound(), agentStartObservedAt: Date.now() - 20_000 });
       expect(isCandidate()).toBe(true);
     });
 
@@ -742,27 +933,29 @@ describe('SessionManager agent-absence wiring', () => {
       // same empty tree as an agent that exited. A task would keep a resumable
       // row; a terminal would be ended outright, losing nothing yet but the
       // agent the user is waiting for.
-      seedSession({ transient: true });
+      seedSession({ transient: true, startedAt: insideStartBound() });
       expect(isCandidate()).toBe(false);
     });
 
     it('takes the agent\'s first alt-screen entry as evidence it started, which no shell emits', () => {
-      seedSession({ transient: true, altScreenEnteredAt: Date.now() - 20_000 });
+      seedSession({ transient: true, startedAt: insideStartBound(), altScreenEnteredAt: Date.now() - 20_000 });
       expect(isCandidate()).toBe(true);
     });
 
     it('judges a Command Terminal with no evidence once the start ceiling has passed', () => {
       // A launch that failed (the CLI missing) and a PTY-only adapter both
       // report nothing; without the ceiling either would stay a bare shell.
-      seedSession({ transient: true, startedAt: new Date(Date.now() - (START_CEILING_MS + 1)).toISOString() });
+      seedSession({ transient: true, startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS + 1)).toISOString() });
       expect(isCandidate()).toBe(true);
     });
 
-    it('still refuses a Command Terminal with no evidence just short of the start ceiling', () => {
-      // The lower side of the ceiling: START_CEILING_MS is hand-mirrored in this
-      // file, so a test that only checks past it cannot notice the real ceiling
-      // being lowered. The 1 s margin keeps real timers from flaking the check.
-      seedSession({ transient: true, startedAt: new Date(Date.now() - (START_CEILING_MS - 1_000)).toISOString() });
+    it.each([
+      { label: 'a Command Terminal', overrides: { transient: true } },
+      { label: 'a task', overrides: {} },
+    ])('still refuses $label with no evidence just short of the start ceiling', ({ overrides }) => {
+      // The lower side of the ceiling. The 1 s margin keeps real timers from
+      // flaking the check.
+      seedSession({ ...overrides, startedAt: new Date(Date.now() - (AGENT_START_CEILING_MS - 1_000)).toISOString() });
       expect(isCandidate()).toBe(false);
     });
 
@@ -831,9 +1024,10 @@ describe('SessionManager agent-absence wiring', () => {
       expect(isCandidate()).toBe(false);
     });
 
-    it('accepts once the grace has elapsed', () => {
+    it('accepts once the grace has elapsed, for an agent that showed it ran', () => {
       seedSession({
         startedAt: new Date(Date.now() - (SPAWN_GRACE_MS + 1)).toISOString(),
+        agentIdReportedAt: Date.now(),
       });
       expect(isCandidate()).toBe(true);
     });
@@ -1073,7 +1267,7 @@ describe('SessionManager agent-absence wiring', () => {
       // timers both Date.now() reads usually share a millisecond, and a stamp
       // that was overwritten instead of kept would still compare equal.
       vi.useFakeTimers();
-      const session = seedSession({ transient: true });
+      const session = seedSession({ transient: true, startedAt: insideStartBound() });
       expect(isCandidate()).toBe(false);
 
       sendAgentEvent('session_start');
@@ -1089,7 +1283,7 @@ describe('SessionManager agent-absence wiring', () => {
       expect(session.agentStartObservedAt).toBe(firstStart);
     });
 
-    it('stamps start evidence on a task session too, which leaves its plain grace as it was', () => {
+    it('stamps start evidence on a task session too, and the grace still holds it', () => {
       const session = seedSession({ startedAt: new Date(Date.now() - 1_000).toISOString() });
 
       sendAgentEvent('session_start');

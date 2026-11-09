@@ -1692,6 +1692,21 @@ describe('PtyHostCore', () => {
     expect(core.getRawScrollback('old-session')).toBe('');
   });
 
+  it('answers a launch\'s own output apart from the ring it carried over, when asked', async () => {
+    // What the launch report and the agent-absence start bound read: the old
+    // session's failure line must not classify the retry that replaced it.
+    const { core, fake } = makeCore();
+    core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'zsh: no such file or directory: /opt/claude\r\n', cols: 120 });
+    core.spawn(spawnParams({ carryoverFromSessionId: 'old-session' }));
+    fake.feed('PS C:\\project> ');
+    await flush();
+
+    await expect(Promise.resolve(core.handleRequest('getRawScrollback', { sessionId: 'session-1', ownOutputOnly: true })))
+      .resolves.toBe('PS C:\\project> ');
+    await expect(Promise.resolve(core.handleRequest('getRawScrollback', { sessionId: 'session-1' })))
+      .resolves.toBe('zsh: no such file or directory: /opt/claude\r\nPS C:\\project> ');
+  });
+
   it('hands the carry-over back when the spawn throws, so main can show it with the diagnostic', () => {
     const events: PtyHostEvent[] = [];
     const core = new PtyHostCore({

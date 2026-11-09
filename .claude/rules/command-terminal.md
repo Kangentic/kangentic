@@ -206,10 +206,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   Command Terminals too.
 - **The agent-absence sweep judges Command Terminals, and the SessionEnd hook fast-paths it.** Do
   not reintroduce a transient exclusion in `isAgentAbsenceCandidate`. The sweep judges a terminal
-  only once its agent showed it started (its first SessionStart, or its first alt-screen entry) or
-  the start ceiling has passed, so a slow shell is not ended before its agent runs. Where the tree
-  cannot judge (`canTreeJudgeAgent`: a WSL shell, or the background-shell watcher off), a
-  SessionEnd with no SessionStart inside the end settle ends the terminal instead. Known gap: an
+  only once its agent showed it ran (`hasAgentRunEvidence`), its output named a cause, or the start
+  ceiling has passed, so a slow shell is not ended before its agent runs. A task's launch waits the
+  same way. Where the tree cannot judge (`canTreeJudgeAgent`: a WSL shell, or the background-shell
+  watcher off), a SessionEnd with no SessionStart inside the end settle ends the terminal instead. Known gap: an
   agent with no SessionEnd hook, under WSL or with the watcher off, outlives its agent until its
   PTY exits.
 - **The launch overlay lifts on evidence the agent is on screen, never on first output or

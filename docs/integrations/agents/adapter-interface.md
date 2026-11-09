@@ -8,6 +8,8 @@ sources:
     title: AgentAdapter required members
   - resource: src/main/agent/agent-registry.ts
   - resource: src/main/transition-engine/agent-resolver.ts
+  - resource: src/main/pty/lifecycle/agent-output-tracker.ts
+    title: AGENT_START_CEILING_MS
 ---
 # Agent adapter interface
 
@@ -217,8 +219,10 @@ map. It fires once, on the first of:
   fits. One known case: a terminfo whose clear is `\x1b[H\x1b[J` (TERM=screen, so a dev build
   launched from GNU screen) sends neither erase the handoff test matches. That pair is left out on
   purpose: it is plain cursor-home plus erase-below, and no shell's redraws before the typed
-  command runs were measured free of it. The pty host stops scanning a session's output at the
-  same 15 s mark.
+  command runs were measured free of it. The pty host keeps scanning past it, to
+  `AGENT_START_CEILING_MS` (2 minutes), because the same `agentOutput` is how the launch report
+  knows the shell ran the typed line, and a slow Windows PowerShell profile runs it after 15 s
+  ([Agent absence sweep](../../architecture/sessions/agent-absence-sweep.md#a-board-launchs-start-bound)).
 
 A session with no agent keeps its raw first output: its shell is the output. Usage is not
 evidence either way. The spawn seeds it with the model name from `--model`
