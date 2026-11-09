@@ -30,8 +30,9 @@
  * completed-task report reaches main's assembler, whose import chain is Node-safe and side-effect
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
-import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SAMPLE_INSTALL_RAIL_WIDTH_PX, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
+import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_COMMAND_TERMINAL_EARLIER, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SAMPLE_INSTALL_RAIL_WIDTH_PX, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_INTEGRATION, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_CHANGES, DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
+import { DEMO_BROWSER_ANNOTATION_DRAFT } from './helpers/demo-browser-annotations';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -297,6 +298,9 @@ function taskWindowWorkspace(taskId: string, title: string, state: 'floating' | 
 
 /** The maximized placement: the floating rect kept as `restoreGeometry`, as `maximizeWindow` keeps it. */
 const MAXIMIZED_PLACEMENT: TaskWindowPlacement = { geometry: MIDDLEWARE_FLOATING_GEOMETRY, restoreGeometry: MIDDLEWARE_FLOATING_GEOMETRY };
+
+/** The middleware task's row with its Browser pane open beside the terminal, shared by the Browser scenes. */
+const MIDDLEWARE_BROWSER_OPEN_TASKS = [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }];
 
 /** The middleware task's window. A floating one is fitted to its session's recording (FITTED_FLOATING_GEOMETRY). */
 function middlewareWindowWorkspace(state: 'floating' | 'maximized') {
@@ -923,7 +927,7 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
   // the project's config as the desktop's does. Then the cut, and both written back behind it.
   git: {
     ready: '[data-testid="setting-row-git.worktreesEnabled"]',
-    alt: 'Settings on the Git tab in three cards: Branches with the default base branch and auto-fetch, Worktrees with its switch, cleanup, node_modules linking, and files and a script for each new worktree, and Pull requests with auto-refresh and merge bypass.',
+    alt: 'Settings on the Git tab: Branches with the default base branch and auto-fetch, Worktrees with its switch, cleanup, node_modules linking, folders to link, files and folders to copy and a setup script, and the Leftover processes card below.',
     choreography: [
       { click: BRANCH_PICKER, waitFor: branchOption(2), ms: 700 },
       { hover: branchOption(2), ms: 500 },
@@ -1545,6 +1549,31 @@ export const SCENES: Record<string, SceneDefinition> = {
     ready: '[data-testid="task-title-text"]',
     motion: 'The terminal replays its working session\'s recording.',
   },
+  'terminal-find': {
+    name: 'terminal-find',
+    reach: 'boot',
+    description: 'The task window with the terminal find bar opened from its header icon and "auth" typed in, over the working middleware session. It searches what xterm holds, the screen and its scrollback; the whole-conversation view for an alternate-screen CLI needs a recorded transcript write-out (__mockHistoryView), and this recording is not on the alternate screen. At the opening frame "auth" matches three times, all on screen, so the count reads 1 of 3; as the recording plays the count grows. The bar sits over the terminal, so opening and closing it never resizes the grid.',
+    alt: 'A task window with the find bar open over Claude Code\'s terminal: auth typed into the search field, the match count beside it reading 1 of 3, older and newer match buttons, and a close button.',
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('floating') } },
+    // Exists only once the pose's steps opened the bar and typed the query, so it also fails if
+    // the header ever folds the find icon into its menu.
+    ready: '[data-testid="terminal-find-count"]',
+    // The bar opened from the header and the query typed, which is the poster. Then the matches
+    // stepped through, the field cleared, and the bar closed, which hands the keyboard back to the
+    // terminal. The cycle's steps before the pose open and type again. Never an exact count in a
+    // wait: it grows as the recording plays.
+    choreography: [
+      { click: '[data-testid="terminal-find-toggle"]', waitFor: '[data-testid="terminal-find-input"]', ms: 600 },
+      { type: { into: '[data-testid="terminal-find-input"]', text: 'auth' }, waitFor: '[data-testid="terminal-find-older"]:not(:disabled)', ms: 1400 },
+      { pose: true },
+      { click: '[data-testid="terminal-find-older"]', ms: 1200 },
+      { click: '[data-testid="terminal-find-older"]', ms: 1200 },
+      { click: '[data-testid="terminal-find-newer"]', ms: 1200 },
+      { click: '[data-testid="terminal-find-newer"]', ms: 1600 },
+      { type: { into: '[data-testid="terminal-find-input"]', text: '' }, ms: 700 },
+      { click: '[data-testid="terminal-find-close"]', waitFor: gone('[data-testid="terminal-find-bar"]'), ms: 1200 },
+    ],
+  },
   'windows-tiled': {
     name: 'windows-tiled',
     reach: 'state',
@@ -1569,7 +1598,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     description: 'The task window with the Browser pane open on the project\'s dev URL, its agent finished and waiting. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it fills the narrow pane (the comment above) with the conversation as the matrix recorded it just before a note from this pane went in (send-sess-cw-middleware.json), so the loop\'s Send plays that recording on: the payload pasted, the agent reading the screenshot, and the cut taking it back.',
     alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, a bar to mark the page, and a note field below.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
-    tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
+    tasks: MIDDLEWARE_BROWSER_OPEN_TASKS,
     // Finished, so the session rests on the frame its recorded Send starts from (demo-dataset.ts,
     // sendRests) and Send continues from what the visitor sees.
     sessions: { [SESSION_MIDDLEWARE]: { activity: 'idle' } },
@@ -1586,6 +1615,29 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="browser-send"]', waitFor: 'button[aria-label="Pause session"] [data-mark="control-pause-working"]', ms: 4000 },
       { cut: true },
       { click: '[data-testid="browser-webview"] iframe' },
+    ],
+  },
+  'browser-annotations': {
+    name: 'browser-annotations',
+    reach: 'state',
+    description: 'The Browser pane with a saved annotation draft open (DEMO_BROWSER_ANNOTATION_DRAFT, served by browser.loadAnnotations from __mockBrowserAnnotationDrafts): three numbered badges on the guest page, the Select element, Draw and Undo bar, and one composer row per annotation above Send. The badges are the renderer\'s own annotation layer, which the shim\'s executeJavaScript runs in the guest as Electron runs it. The session stays working: an idle one would load the browser scene\'s send frame. Send is never pressed, since the one recorded Send carries a note and no annotations.',
+    alt: 'A task window with the Browser pane beside the agent\'s terminal: numbered badges 1 to 3 on the page\'s Cancel button, renewal date and Due invoice, the Select element, Draw and Undo bar over the page, and a note row for each annotation above Send.',
+    config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
+    tasks: MIDDLEWARE_BROWSER_OPEN_TASKS,
+    seeds: { __mockBrowserAnnotationDrafts: { [TASK_MIDDLEWARE]: DEMO_BROWSER_ANNOTATION_DRAFT } },
+    ready: '[data-testid="annotation-row-3"]',
+    // Looking around the draft: two rows hovered (the page shows that annotation's badge alone),
+    // the first made active, Draw switched on and off, and the third active again, as it opened. A
+    // row's number focuses its note, so the last click is on the page, which leaves no field
+    // focused, as the frame opened.
+    choreography: [
+      { hover: '[data-testid="annotation-row-1"]', ms: 1400 },
+      { hover: '[data-testid="annotation-row-2"]', ms: 1400 },
+      { click: '[data-testid="annotation-number-1"]', waitFor: '[data-testid="annotation-row-1"][data-active="true"]', ms: 1600 },
+      { click: '[data-testid="browser-draw-toggle"]', waitFor: '[data-testid="browser-draw-toggle"][aria-pressed="true"]', ms: 1400 },
+      { click: '[data-testid="browser-draw-toggle"]', waitFor: '[data-testid="browser-draw-toggle"][aria-pressed="false"]', ms: 900 },
+      { click: '[data-testid="annotation-number-3"]', waitFor: '[data-testid="annotation-row-3"][data-active="true"]', ms: 1200 },
+      { click: '[data-testid="browser-webview"] iframe', ms: 1200 },
     ],
   },
   // An agent calling Kangentic's own MCP tools, for the landing page's MCP tools tab. The task is a
@@ -1772,6 +1824,25 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: '[data-testid="diff-blame-toggle"]', waitFor: '[data-testid="diff-blame-toggle"][aria-checked="true"]' },
     ],
     motion: 'The terminal beside the panel replays its working session\'s recording.',
+  },
+  'changes-checks': {
+    name: 'changes-checks',
+    reach: 'state',
+    description: 'The Integration test coverage task, whose PR #38 reads failing, maximized with the Changes panel open and its Checks section expanded. The checks are the sample install\'s (DEMO_PR_CHECKS, served by tasks.listPrChecks): one CI job and codecov/patch failed, the rest passed. Checks opens through changesChecksOpen, the one app-wide choice the section remembers, so the frame needs no click. Send to agent is hovered and never pressed: no recording carries a checks message reaching the Cursor session.',
+    alt: 'A maximized task window with the Changes panel\'s Checks section open for its pull request: the failed Integration tests (auth) job and codecov/patch check, a Send to agent button under them, and a line for the checks that passed.',
+    config: {
+      workspaceByProject: { [PROJECT_CONTOSO]: taskWindowWorkspace(TASK_INTEGRATION, 'Integration test coverage', 'maximized', MAXIMIZED_PLACEMENT) },
+      changesChecksOpen: true,
+    },
+    tasks: [{ id: TASK_INTEGRATION, detail_view_state: JSON.stringify({ changesOpen: true, changesViewMode: 'split', changesScope: 'branch', dividerRatio: 0.42 }) }],
+    ready: '[data-testid="changes-checks-toggle"][aria-expanded="true"] ~ div [data-testid="changes-checks-row"][data-check-status="failed"]',
+    // The pointer reads the failed checks, rests on Send to agent, and moves on to the passed line.
+    // Every row opens its check in a browser and Send reaches the agent, so nothing is pressed.
+    choreography: [
+      { hover: '[data-testid="changes-checks-row"][data-check-status="failed"]', ms: 1600 },
+      { hover: '[data-testid="changes-checks-send"]', ms: 2200 },
+      { hover: '[data-testid="changes-checks-passed"]', ms: 1400 },
+    ],
   },
 
   // ---------------------------------------------------------------- the Agent Monitor

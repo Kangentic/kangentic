@@ -31,6 +31,7 @@ import {
   DEMO_SCENE_TASKS, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET,
 } from '../captures/helpers/demo-dataset';
 import { DEMO_COMPLETED_TASK_REPORT, DEMO_COMPLETED_TASK_SUMMARY } from '../captures/helpers/demo-task-report';
+import { DEMO_BROWSER_ANNOTATION_ELEMENTS } from '../captures/helpers/demo-browser-annotations';
 import { formatCost, formatSpan } from '../../src/renderer/utils/format-session';
 
 const DIST_DIR = path.resolve(__dirname, '..', '..', 'dist', 'demo');
@@ -208,6 +209,37 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   },
   task: async (page) => {
     await expect(page.locator('[data-testid="task-title-text"]')).toHaveText('Extract auth middleware');
+  },
+  'browser-annotations': async (page) => {
+    // A row's on-page flag reads true before the layer has answered, so the badges are checked in
+    // the guest itself: the layer installed, its host drawn and not swept as an extension's node,
+    // and every seeded element still one element on the page (the layer finds it by selector).
+    // The badges sit in a closed shadow root, which nothing outside the layer can count.
+    await expect(page.locator('[data-testid^="annotation-row-"]')).toHaveCount(DEMO_BROWSER_ANNOTATION_ELEMENTS.length);
+    const selectors = DEMO_BROWSER_ANNOTATION_ELEMENTS.map((element) => element.selector);
+    await expect.poll(async () => {
+      const guest = page.frames().find((frame) => frame.url().includes('contoso-web'));
+      if (!guest) return 'no guest frame';
+      return guest.evaluate((elementSelectors) => {
+        const layerWindow = window as Window & { __kangenticAnnotations?: unknown };
+        if (!layerWindow.__kangenticAnnotations) return 'layer not installed';
+        const host = document.querySelector('[data-kangentic-annotations]');
+        if (!host) return 'no layer host';
+        if (host.hasAttribute('data-demo-foreign')) return 'layer host swept';
+        if (getComputedStyle(host).display === 'none') return 'layer host hidden';
+        const unmatched = elementSelectors.filter((selector) => document.querySelectorAll(selector).length !== 1);
+        return unmatched.length === 0 ? 'drawn' : `not one element: ${unmatched.join(', ')}`;
+      }, selectors);
+    }).toBe('drawn');
+    for (let number = 1; number <= DEMO_BROWSER_ANNOTATION_ELEMENTS.length; number++) {
+      await expect(page.locator(`[data-testid="annotation-row-${number}"]`)).toHaveAttribute('data-on-page', 'true');
+    }
+    await expect(page.locator('[data-testid="annotation-row-3"]')).toHaveAttribute('data-active', 'true');
+  },
+  'terminal-find': async (page) => {
+    await expect(page.locator('[data-testid="terminal-find-input"]')).toHaveValue('auth');
+    // The opening frame holds three matches on screen, and the newest is the active one.
+    await expect(page.locator('[data-testid="terminal-find-count"]')).toHaveText(/^1 of \d+/);
   },
   changes: async (page) => {
     const branchScope = page.locator('[data-testid="changes-scope-branch"]');
@@ -667,6 +699,52 @@ test('an extension\'s node in the Browser pane\'s guest page is hidden', async (
   })()`);
   await expect(guest.locator('#probe-guest-widget')).toHaveAttribute('data-demo-foreign', '');
   await expect(guest.locator('#probe-guest-widget')).toBeHidden();
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('the webview shim runs scripts in the guest, answers a reload\'s pending call, and the layer is redrawn unswept', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'browser-annotations', embed: '1' });
+  const guestFrame = () => page.frames().find((frame) => frame.url().includes('contoso-web'));
+  await expect.poll(async () => guestFrame()?.evaluate(() => document.querySelector('[data-kangentic-annotations]') !== null) ?? false).toBe(true);
+  // Stamp the first guest document so a reload is observable as the stamp going away.
+  await guestFrame()!.evaluate(() => { (window as unknown as { __guestStamp?: boolean }).__guestStamp = true; });
+
+  const results = await page.evaluate(async () => {
+    const host = document.querySelector('[data-testid="browser-webview"]');
+    const webview = (host?.tagName === 'WEBVIEW' ? host : host?.querySelector('webview')) as (HTMLElement & {
+      executeJavaScript(code: string): Promise<unknown>;
+      reload(): void;
+    }) | null;
+    if (!webview) throw new Error('no webview element under [data-testid="browser-webview"]');
+    const sum = await webview.executeJavaScript('1 + 1');
+    const awaited = await webview.executeJavaScript('Promise.resolve(5)');
+    let thrown: string | null = null;
+    try { await webview.executeJavaScript('throw new Error("boom")'); } catch (error) { thrown = (error as Error).message; }
+    // A call whose promise never settles, then a reload: the call must answer undefined. A
+    // regression leaves it pending, so the race against a timer turns a hang into a failure.
+    const never = webview.executeJavaScript('new Promise(function () {})');
+    webview.reload();
+    const afterReload = await Promise.race([
+      never.then((value) => ({ settled: true, value })),
+      new Promise<{ settled: boolean; value?: unknown }>((resolve) => setTimeout(() => resolve({ settled: false }), 3000)),
+    ]);
+    return { sum, awaited, thrown, afterReload };
+  });
+  expect(results.sum).toBe(2);
+  expect(results.awaited).toBe(5);
+  expect(results.thrown).toBe('boom');
+  expect(results.afterReload.settled, 'a call pending at reload never settled').toBe(true);
+  expect(results.afterReload.value).toBeUndefined();
+
+  // The reload made a new guest document, and the layer drew itself into it with its host not swept.
+  await expect.poll(async () => guestFrame()?.evaluate(() => {
+    const stamped = (window as unknown as { __guestStamp?: boolean }).__guestStamp === true;
+    const host = document.querySelector('[data-kangentic-annotations]');
+    if (stamped) return 'still the first document';
+    if (!host) return 'no layer host';
+    return host.hasAttribute('data-demo-foreign') ? 'layer host swept' : 'drawn';
+  }) ?? 'no guest frame').toBe('drawn');
   expect(getUnexpectedErrors()).toEqual([]);
 });
 
@@ -2012,6 +2090,7 @@ function naturalGrid(page: Page, sessionId: string): Promise<Grid | null> {
 const FITTED_WINDOW_SCENES = [
   { view: 'task', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware' },
   { view: 'command-terminal', sessionId: SESSION_CONTOSO_TERMINAL, fileStem: 'contoso-web-claude-terminal' },
+  { view: 'terminal-find', sessionId: SESSION_MIDDLEWARE, fileStem: 'contoso-web-claude-middleware' },
 ] as const;
 
 /**
@@ -2519,7 +2598,7 @@ for (const deviceScaleFactor of [1, 1.25, 2]) {
 // the Changes scene 300px below at 125. A still fills too, since the posters are stills, shot at
 // twice scale; this runner's Liberation Mono is the face whose heights round unevenly, the case
 // the renderer's conform used to stop short on.
-const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'changes', 'command-terminal', 'command-terminal-tiled', 'board', 'task-mcp'] as const;
+const TERMINAL_SCENES = ['task', 'windows-tiled', 'browser', 'browser-annotations', 'changes', 'command-terminal', 'command-terminal-tiled', 'board', 'task-mcp', 'terminal-find'] as const;
 for (const [deviceScaleFactor, still] of [[1, false], [1.25, false], [2, false], [2, true]] as const) {
   test(`every terminal scene fills its panes at device scale ${deviceScaleFactor}${still ? ', as a still' : ''}`, async ({ browser }) => {
     test.setTimeout(180_000);
