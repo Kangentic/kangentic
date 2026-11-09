@@ -562,6 +562,22 @@ describe('SessionManager agent-absence wiring', () => {
       expect(neverStarted).not.toHaveBeenCalled();
     });
 
+    // A shell that is merely slow to reach its agent is not a failed launch. The
+    // timer waits the start ceiling, not the 30 s grace, so a profile that runs
+    // for a minute does not read as a launch that never started.
+    //
+    // Red-green: arm the timer at the spawn grace instead of AGENT_START_CEILING_MS
+    // in armUnjudgedLaunchCheck and this fails.
+    it('reports nothing until the ceiling, then reports', () => {
+      sweep.available = false;
+      seedSession({ reportsAgentStart: true });
+      armCheck();
+      vi.advanceTimersByTime(AGENT_START_CEILING_MS - 1);
+      expect(reportHandledError).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(reportHandledError).toHaveBeenCalledTimes(1);
+    });
+
     it('reports a WSL shell, which the sweep never judges', () => {
       seedSession({ reportsAgentStart: true, shell: 'wsl -d Ubuntu' });
       armCheck();
