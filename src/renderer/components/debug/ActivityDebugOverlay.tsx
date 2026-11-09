@@ -15,7 +15,7 @@ const POLL_INTERVAL_MS = 2_000;
 /**
  * Module-scoped position cache. Survives close+reopen within the same
  * JS context (HMR included) so the user does not have to re-drag on
- * every Ctrl+Shift+D toggle. `null` until the user drags - on first
+ * every Ctrl+Alt+Shift+D toggle. `null` until the user drags - on first
  * open the overlay defaults to a centered position. Resets only on
  * full page reload.
  *
@@ -44,7 +44,7 @@ export function ActivityDebugOverlay() {
   });
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
-  // Default Ctrl/Cmd+Shift+D toggles the overlay (combo from the central
+  // Default Ctrl/Cmd+Alt+Shift+D toggles the overlay (combo from the central
   // keybinding registry). Power-user-only, not exposed in any in-app UI besides
   // the Developer settings. Truly global: no INPUT/TEXTAREA target filter (would
   // block the shortcut whenever xterm's hidden textarea has focus, which is the
@@ -508,7 +508,7 @@ function ActivityDebugOverlayContent() {
 
   // Track the currently-active native pointer listeners so unmount
   // cleanup can remove them. Without this, toggling the overlay off
-  // (Ctrl+Shift+D, project switch, etc.) MID-DRAG would leak window
+  // (Ctrl+Alt+Shift+D, project switch, etc.) MID-DRAG would leak window
   // listeners until the next pointer-up - and a later pointer-up for
   // an unrelated drag could match the captured pointerId.
   const activeDragListenersRef = useRef<{
@@ -698,7 +698,7 @@ function ActivityDebugOverlayContent() {
           data-overlay-button
           onClick={handleClose}
           className="text-fg-faint hover:text-fg-tertiary"
-          title="Close (Ctrl+Shift+D)"
+          title="Close (Ctrl+Alt+Shift+D)"
         >
           <X size={12} />
         </button>

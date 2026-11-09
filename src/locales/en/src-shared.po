@@ -284,8 +284,8 @@ msgid "Done"
 msgstr "Done"
 
 #: src/shared/keybindings.ts
-msgid "Draw / annotate"
-msgstr "Draw / annotate"
+msgid "Draw on the page"
+msgstr "Draw on the page"
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -419,10 +419,6 @@ msgstr "Hold to dictate; release to populate the focused terminal or text field.
 #: src/shared/keybindings.ts
 msgid "Insert newline"
 msgstr "Insert newline"
-
-#: src/shared/keybindings.ts
-msgid "Inspect element"
-msgstr "Inspect element"
 
 #: src/shared/embedding-runtime.ts
 msgid "Intel Macs"
@@ -924,12 +920,20 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr "Search the focused terminal's output, taking this key from any program there that reads it."
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr "Select element"
+
+#: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."
 msgstr "Select the next file in the Changes panel."
 
 #: src/shared/keybindings.ts
 msgid "Select the previous file in the Changes panel."
 msgstr "Select the previous file in the Changes panel."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr "Send every annotation"
 
 #: src/shared/automation-manifest.ts
 msgid "Send message to agent"
@@ -1210,6 +1214,10 @@ msgstr "Turkish"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "Ukrainian"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr "Undo the last mark"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

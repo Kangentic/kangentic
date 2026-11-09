@@ -25,6 +25,7 @@ import { commandTerminalBrowserOwner } from '../../../shared/browser-owner';
 import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { destroyLanesForTask } from '../../browser/browser-lane-manager';
 import { browserUrlStore } from '../../browser/browser-url-store';
+import { discardAnnotationDraft } from '../../browser/annotation-drafts';
 import { commandTerminalBrowserStore } from '../../browser/command-terminal-browser-store';
 import { releaseViewportOverridesForSession } from '../../browser/viewport-override';
 import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
@@ -179,11 +180,14 @@ function endCommandTerminalBrowser(context: IpcContext, projectId: string, slot:
     console.warn(`[browser-viewport] Could not reset viewports for session ${sessionId.slice(0, 8)}:`, error);
   });
 
-  // The next terminal in this slot starts on no page and with its pane closed,
-  // not on this one's.
+  // The next terminal in this slot starts on no page, with its pane closed and
+  // no annotations, not on this one's.
   const { projectPath } = resolveProjectContext(context, projectId);
   if (projectPath) {
     browserUrlStore.clear(projectPath, ownerKey);
     commandTerminalBrowserStore.clear(projectPath, slot);
+    void discardAnnotationDraft(projectPath, ownerKey, { retire: true }).catch((error: Error) => {
+      console.warn(`[command-terminal] Failed to remove annotation draft for ${slot}: ${error.message}`);
+    });
   }
 }

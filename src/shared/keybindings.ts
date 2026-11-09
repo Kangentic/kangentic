@@ -613,21 +613,45 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // pane toolbar, so listing them here adds only clutter.
   {
     id: 'browser.inspect',
-    label: msg`Inspect element`,
-    // Picks an element from the embedded page.
+    label: msg`Select element`,
+    // Select element mode: each click on the page adds that element to the
+    // active annotation. Chrome DevTools' own key for its element picker.
     group: 'Browser',
     scope: 'browser-pane',
-    defaultCombo: 'Mod+I',
+    defaultCombo: 'Mod+Shift+C',
     rebindable: false,
     hidden: true,
   },
   {
     id: 'browser.draw',
-    label: msg`Draw / annotate`,
-    // Toggles free-draw annotation on the embedded page.
+    label: msg`Draw on the page`,
+    // Draw mode: each stroke joins the active annotation.
     group: 'Browser',
     scope: 'browser-pane',
-    defaultCombo: 'Mod+D',
+    defaultCombo: 'Mod+Shift+D',
+    rebindable: false,
+    hidden: true,
+  },
+  {
+    id: 'browser.undoMark',
+    label: msg`Undo the last mark`,
+    // Removes the active annotation's last element or stroke. Only while its
+    // note is empty or focus is on the page: a note with text keeps its own
+    // text undo.
+    group: 'Browser',
+    scope: 'browser-pane',
+    defaultCombo: 'Mod+Z',
+    rebindable: false,
+    hidden: true,
+  },
+  {
+    id: 'browser.sendAnnotations',
+    label: msg`Send every annotation`,
+    // From any annotation's note. A plain Enter there starts the next
+    // annotation instead, and the page keeps its own Enter.
+    group: 'Browser',
+    scope: 'browser-pane',
+    defaultCombo: 'Mod+Enter',
     rebindable: false,
     hidden: true,
   },
@@ -782,7 +806,8 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     description: msg`Show or hide the activity-engine debug overlay.`,
     group: 'Developer',
     scope: 'global',
-    defaultCombo: 'Mod+Shift+D',
+    // Not Mod+Shift+D, which is the Browser pane's Draw.
+    defaultCombo: 'Mod+Alt+Shift+D',
     rebindable: true,
     devOnly: true,
   },

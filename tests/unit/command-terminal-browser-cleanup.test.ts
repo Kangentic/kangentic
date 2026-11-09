@@ -17,6 +17,7 @@ vi.mock('../../src/main/browser/browser-pane-registry', () => ({
 vi.mock('../../src/main/browser/browser-lane-manager', () => ({ destroyLanesForTask: vi.fn(() => 0) }));
 vi.mock('../../src/main/browser/browser-url-store', () => ({ browserUrlStore: { clear: vi.fn() } }));
 vi.mock('../../src/main/browser/command-terminal-browser-store', () => ({ commandTerminalBrowserStore: { clear: vi.fn() } }));
+vi.mock('../../src/main/browser/annotation-drafts', () => ({ discardAnnotationDraft: vi.fn(async () => undefined) }));
 vi.mock('../../src/main/browser/viewport-override', () => ({ releaseViewportOverridesForSession: vi.fn(async () => undefined) }));
 vi.mock('../../src/main/pop-out/pop-out-window-manager', () => ({
   popOutWindowManager: { has: vi.fn(() => false), close: vi.fn() },
@@ -30,6 +31,7 @@ import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registr
 import { destroyLanesForTask } from '../../src/main/browser/browser-lane-manager';
 import { browserUrlStore } from '../../src/main/browser/browser-url-store';
 import { commandTerminalBrowserStore } from '../../src/main/browser/command-terminal-browser-store';
+import { discardAnnotationDraft } from '../../src/main/browser/annotation-drafts';
 import { popOutWindowManager } from '../../src/main/pop-out/pop-out-window-manager';
 import { broadcast } from '../../src/main/pop-out/window-broadcast';
 import {
@@ -75,7 +77,7 @@ describe('installCommandTerminalBrowserCleanup', () => {
     installCommandTerminalBrowserCleanup(context);
   });
 
-  it("ends the slot's page, lanes, Browser window, saved URL and layout when the terminal ends", () => {
+  it("ends the slot's page, lanes, Browser window, saved URL, layout and annotations when the terminal ends", () => {
     vi.mocked(popOutWindowManager.has).mockReturnValue(true);
     vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([{ sessionId: 'pane_12345678', kind: 'pane' }] as never);
 
@@ -87,6 +89,7 @@ describe('installCommandTerminalBrowserCleanup', () => {
     expect(destroyLanesForTask).toHaveBeenCalledWith(OWNER);
     expect(browserUrlStore.clear).toHaveBeenCalledWith('/projects/app', OWNER);
     expect(commandTerminalBrowserStore.clear).toHaveBeenCalledWith('/projects/app', 'slot-2');
+    expect(discardAnnotationDraft).toHaveBeenCalledWith('/projects/app', OWNER, { retire: true });
   });
 
   it('keeps everything through a respawn of the slot (a branch switch or a resume in place)', () => {

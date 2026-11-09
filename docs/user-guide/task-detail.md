@@ -145,14 +145,29 @@ Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools
 | Zoom out | **Ctrl+-** (or **Ctrl+wheel down** inside the page) |
 | Reset zoom to 100% | **Ctrl+0** |
 | Reload page | **F5** or **Ctrl+R** (outside the embedded page) |
-| Toggle Draw | **Ctrl+D** (**Cmd+D** on macOS), also while the note field has focus |
-| Send the capture to the agent | **Enter** (with the note field focused) |
+| Select element | **Ctrl+Shift+C** (**Cmd+Shift+C** on macOS), also while a note has focus |
+| Draw on the page | **Ctrl+Shift+D** (**Cmd+Shift+D** on macOS), also while a note has focus |
+| End Select element or Draw | **Esc** |
+| Undo the last mark | **Ctrl+Z** in an empty note, or with focus outside the notes |
+| Start the next annotation | **Enter** in an annotation's note |
+| Send every annotation | **Ctrl+Enter** in any note |
+| Send the capture to the agent | **Enter** in the note field, while nothing is annotated |
 
 Zoom snaps to a Chrome-compatible ladder (25%, 33%, 50%, 67%, 75%, 80%, 90%, 100%, 110%, 125%, 150%, ... up to 500%). Ctrl+wheel zoom inside the webview uses a smoother multiplicative step but stays clamped to the same range. The toolbar shows a zoom pill with the current factor, plus dedicated zoom-out / reset / zoom-in buttons.
 
-While Draw is on, keyboard focus stays in the note field, so what you type or dictate while you annotate is sent with the strokes. Clicking into the terminal still moves focus there.
+#### Annotations
 
-Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Send is the exception. Its handler is bound on the note field itself rather than on the pane-scoped listener, so Enter sends only while that field has focus.
+To point the agent at several things at once, annotate the page. A small bar floats over it with **Select element**, **Draw** and **Undo**; drag it by its grip to any corner, and the corner is kept for the project. A mode stays on until you press Esc or its button again.
+
+An annotation is one note and everything it points at: any number of selected elements and drawings. Every element you select and every stroke you draw goes into the active annotation, and a number badge marks each one on the page. Selecting an element the annotation already holds takes it out again. Strokes that touch, such as an arrow's shaft and head, are one drawing with one badge.
+
+The first mark turns the note row into a list of annotations, and anything you had typed becomes the first one's note. Write or dictate the note for each annotation, then press Enter or click **New annotation** to start the next. Click a row, or a badge on the page, to go back to an annotation. A row's summary opens what it holds, so one element or drawing can be removed while the rest stay. The header folds the list. You can make up to 20 annotations per send.
+
+**Send** sends every annotation in one prompt, numbered to match the badges, with a screenshot. An annotation that has scrolled out of view, or that you made on another page, goes with a picture taken when you made it. Annotations are saved as you work, so a failed send, a page load or a restart loses nothing; a send that lands clears them.
+
+While Draw is on, keyboard focus stays in the note you are writing, so what you type or dictate while you annotate goes with the marks. Clicking into the terminal still moves focus there.
+
+Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is over the pane or focus is inside it, so Ctrl+0 from elsewhere in the app does not interfere with anything else. Enter and Ctrl+Enter act only inside a note, so the page keeps its own Enter.
 
 ## Completed task view
 

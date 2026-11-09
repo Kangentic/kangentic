@@ -349,9 +349,8 @@ msgid "Done"
 msgstr "Completada"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "Dibujar / anotar"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -510,11 +509,6 @@ msgstr "Mantenga presionado para dictar; suelte para rellenar el terminal o el c
 #, fuzzy
 msgid "Insert newline"
 msgstr "Insertar nueva línea"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "Inspeccionar elemento"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -1123,6 +1117,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "Seleccionar el archivo siguiente en el panel Cambios."
@@ -1131,6 +1129,10 @@ msgstr "Seleccionar el archivo siguiente en el panel Cambios."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "Seleccionar el archivo anterior en el panel Cambios."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1476,6 +1478,10 @@ msgstr "Turco"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "Ucraniano"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

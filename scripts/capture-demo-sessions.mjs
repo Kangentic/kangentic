@@ -256,7 +256,7 @@ async function prepareBrowserSend(entry, cwd) {
     const payloadModule = await importTsModule(path.join(repoRoot, 'src', 'main', 'ipc', 'handlers', 'browser-payload.ts'));
     const relativePngPath = path.relative(cwd, pngPath);
     const payload = payloadModule.buildPromptPayload(
-      { sessionId: entry.captureSessionId, taskId: entry.sessionId, cwd, url: entry.url, pngBase64: '', pickedElement: null, selectedText: '', note: entry.note },
+      { sessionId: entry.captureSessionId, taskId: entry.sessionId, cwd, url: entry.url, pngBase64: '', annotations: [], viewport: null, selectedText: '', note: entry.note },
       relativePngPath,
     );
     fs.writeFileSync(payloadPath, payload);

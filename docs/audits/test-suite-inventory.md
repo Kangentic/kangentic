@@ -688,7 +688,6 @@ red test can still guard an expensive miss.
 | unit/asana-url-parser.test.ts | 12 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/aspire-host-death.test.ts | 2 | 0 | 5 | 0/0/0 | task-process-tag | keep | named as a rule enforcement |
 | unit/assert-vendor-chunks-lazy.test.ts | 20 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
-| unit/attachment-chips.test.ts | 11 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/attachment-filename.test.ts | 10 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/attachment-open-helper.test.ts | 14 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/attachment-open-with-toast.test.ts | 4 | 0 | 2 | 0/0/0 |  | keep | no signal against it |

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CircleStop, Crosshair, Eraser, Loader2, Monitor, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CircleStop, Loader2, Monitor, Pin, RotateCcw, Send, ZoomIn, ZoomOut } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
@@ -8,9 +8,11 @@ import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
 import { BrowserEmptyState } from './BrowserEmptyState';
 import { useBrowserUrl } from './useBrowserUrl';
-import { notePlaceholderKind } from './browser-url-resolution';
-import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
-import { AttachmentChips } from './AttachmentChips';
+import { INSPECT_SCRIPT } from './inspectScript';
+import { useBrowserAnnotations } from './annotations/useBrowserAnnotations';
+import { AnnotationComposer, ANNOTATION_NOTE_ATTRIBUTE, annotationRowsMaxHeight } from './annotations/AnnotationComposer';
+import { AnnotationBar, readBarCorner, writeBarCorner, type AnnotationBarCorner } from './annotations/AnnotationBar';
+import { MAX_ANNOTATIONS, canStartNext, canUndoLastMark } from './annotations/annotation-model';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionStore } from '../../stores/session-store';
 import type { BrowserNavigateRequest } from '../../stores/session-store/task-changes-panel-slice';
@@ -27,14 +29,16 @@ import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { browserPartitionForOwner } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
+import type { AnnotationLayerState } from './annotations/annotationLayerScript';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 import { asSentence, describeIpcError } from '../../lib/ipc-error';
 
-// Side-pane in the task-detail window that hosts an Electron <webview>, a
-// free-draw annotation overlay, and a "Send to agent" button which composites
-// the capture, grabs DOM HTML + selected text, and injects a text prompt
-// (with @-mention to the saved PNG) into the task's running PTY.
+// Side-pane in the task-detail window that hosts an Electron <webview> and the
+// user's numbered annotations: elements selected on the page and drawings,
+// each with a note, drawn into the page itself (`annotations/`). Send captures
+// the page, then injects one prompt (with @-mentions to the saved PNGs) into
+// the task's running PTY.
 
 /**
  * How long the pane's measured widget size waits to settle before it is
@@ -225,8 +229,16 @@ function BrowserPaneActive({
   const [pinning, setPinning] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
+  // Select element mode: on until Esc or the button again, and every click on
+  // the page adds that element to the active annotation.
   const [inspectActive, setInspectActive] = useState(false);
-  const [pickedElement, setPickedElement] = useState<BrowserPickedElement | null>(null);
+  const inspectActiveRef = useRef(false);
+  const [barCorner, setBarCorner] = useState<AnnotationBarCorner>(() => readBarCorner(projectId));
+  const [strokeActive, setStrokeActive] = useState(false);
+  // The pane's height, so the annotation list gives way before the page does
+  // (`annotationRowsMaxHeight`). Zero until measured.
+  const [paneHeight, setPaneHeight] = useState(0);
+  const barRef = useRef<HTMLDivElement | null>(null);
   // Gate a dark loading cover over the webview until its first paint. The
   // <webview> shows a white default surface before the page loads, which
   // flashed in as the pane slid open. We cover it with the app's surface color
@@ -256,18 +268,122 @@ function BrowserPaneActive({
   // annotate goes with the strokes. Keyboard focus says where dictation lands, and
   // a stroke gives no other sign of it. A hold that started before the drawing
   // moves to the note too.
+  //
+  // With annotations under way the note is the ACTIVE annotation's.
   const focusNote = useCallback(() => {
-    const noteInput = noteInputRef.current;
+    const activeNote = paneRef.current?.querySelector<HTMLInputElement>(`[data-active="true"] [${ANNOTATION_NOTE_ATTRIBUTE}]`);
+    const noteInput = activeNote ?? noteInputRef.current;
     if (!noteInput) return;
     // Already there: a Fast Refresh re-runs the Draw effect below, and a second
     // pane in Draw must not pull focus back to itself.
     if (document.activeElement !== noteInput) noteInput.focus({ preventScroll: true });
     dictationPopupActions.moveToInput(noteInput);
   }, []);
-  const { canvasRef, strokes, handlers, clear, undo } = useDrawingOverlay({ enabled: drawMode, onStrokeStart: focusNote });
+
+  // The SHAPED signal, not the router's. See `useAgentDriveVeil`: the raw one
+  // is up for about half a second on a single click, which paints and vanishes
+  // before it can be read. `stopped` distinguishes a run the user ENDED from
+  // one that wound down, which is the whole of the difference between the two
+  // exit speeds below.
+  const {
+    visible: agentDriving,
+    blocking: driveBlocking,
+    stopped: driveStopped,
+  } = useAgentDriveVeil(sessionId);
+
+  // The pane's height, which decides how tall the annotation list may grow.
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height ?? 0;
+      if (height > 0) setPaneHeight(Math.round(height));
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
+  // The floating bar's rect in the pane's own px, which a drawing's badge keeps
+  // clear of; the annotations hook maps it to page px. Stable: it reads refs at
+  // call time.
+  const getBarRect = useCallback((): AnnotationLayerState['barRect'] => {
+    const bar = barRef.current;
+    const container = overlayContainerRef.current;
+    if (!bar || !container) return null;
+    const barBounds = bar.getBoundingClientRect();
+    const containerBounds = container.getBoundingClientRect();
+    return {
+      x: barBounds.left - containerBounds.left,
+      y: barBounds.top - containerBounds.top,
+      width: barBounds.width,
+      height: barBounds.height,
+    };
+  }, []);
+
+  const annotations = useBrowserAnnotations({
+    taskId,
+    projectId,
+    webviewRef,
+    currentUrl,
+    zoomFactor,
+    // The layer hides on the RAW block, the earliest signal there is: an
+    // agent's screenshot or DOM lookup should not find the user's badges.
+    hidden: driveBlocking,
+    getBarRect,
+  });
+  const {
+    addOverlayStroke: addAnnotationStroke,
+    addElement: addElementToAnnotation,
+    undo: undoAnnotationMark,
+    clearSent: clearSentAnnotations,
+    currentAnnotationIds,
+    hasAnnotations,
+    sendableCount: sendableAnnotationCount,
+    refreshStatus: refreshAnnotationStatus,
+    sendInputs: annotationSendInputs,
+    viewportOf: annotationViewportOf,
+  } = annotations;
+
+  // The single row's text becomes annotation 1's note with the first mark, so
+  // the row empties: it would otherwise come back holding it after a Clear.
+  //
+  // A push-to-talk hold writing into that row is taken off it first, so its
+  // spoken words are not carried as typed text. They follow the hold into
+  // annotation 1's note once it takes focus (`handOffHoldRef`), so nothing is
+  // lost and nothing is written twice.
+  const handOffHoldRef = useRef(false);
+  const takeSingleRowNote = useCallback((): string => {
+    const input = noteInputRef.current;
+    if (!input) return '';
+    if (dictationPopupActions.detachInput(input)) handOffHoldRef.current = true;
+    return input.value;
+  }, []);
+  const addAnnotationElement = useCallback((element: BrowserPickedElement) => {
+    addElementToAnnotation(element, takeSingleRowNote());
+    setNote('');
+  }, [addElementToAnnotation, takeSingleRowNote]);
+  const addOverlayStroke = useCallback(async (stroke: { x: number; y: number }[]) => {
+    await addAnnotationStroke(stroke, takeSingleRowNote);
+    setNote('');
+  }, [addAnnotationStroke, takeSingleRowNote]);
+  // The active annotation's note took focus: a hold handed off above lands there.
+  const onActiveNoteFocused = useCallback((input: HTMLInputElement) => {
+    if (!handOffHoldRef.current) return;
+    handOffHoldRef.current = false;
+    dictationPopupActions.moveToInput(input);
+  }, []);
+
+  const onStrokeStart = useCallback(() => {
+    setStrokeActive(true);
+    focusNote();
+  }, [focusNote]);
+  const onStrokeEnd = useCallback(async (stroke: { x: number; y: number }[]) => {
+    setStrokeActive(false);
+    await addOverlayStroke(stroke);
+  }, [addOverlayStroke]);
+  const { canvasRef, strokes, handlers } = useDrawingOverlay({ enabled: drawMode, onStrokeStart, onStrokeEnd });
   useEffect(() => {
     if (drawMode) focusNote();
-  }, [drawMode, focusNote]);
+  }, [drawMode, focusNote, hasAnnotations]);
 
   useEffect(() => {
     const webview = webviewRef.current;
@@ -286,18 +402,12 @@ function BrowserPaneActive({
         /* webview not yet attached */
       }
     };
-    // A picked element is page-specific - its selector is meaningless after
-    // a full navigation. Drop it on did-navigate (full document) but keep
-    // it on did-navigate-in-page (hash/SPA route changes leave the DOM
-    // intact, so the persistent overlay is still pointing at a valid node).
-    const onFullNav = () => {
-      onUrlChanged();
-      setPickedElement(null);
-    };
-    webview.addEventListener('did-navigate', onFullNav);
+    // A page load keeps the annotations: each one is redrawn where its
+    // selector still finds its element, and reads Not on page otherwise.
+    webview.addEventListener('did-navigate', onUrlChanged);
     webview.addEventListener('did-navigate-in-page', onUrlChanged);
     return () => {
-      webview.removeEventListener('did-navigate', onFullNav);
+      webview.removeEventListener('did-navigate', onUrlChanged);
       webview.removeEventListener('did-navigate-in-page', onUrlChanged);
     };
   }, [recordNavigation]);
@@ -545,6 +655,112 @@ function BrowserPaneActive({
 
   const matchesProjectDefault = !!projectDefault && currentUrl === projectDefault;
 
+  // Each Select element loop's own number. A loop acts only while it is still
+  // the current run, so turning the mode off and on again fast cannot let the
+  // old loop's late answer add an element or switch the new loop off.
+  const inspectRunRef = useRef(0);
+
+  const cancelInspect = useCallback(() => {
+    // Unconditionally reset state - no closure check on inspectActive,
+    // which avoided the case where a stale closure would early-return
+    // and leave the React button stuck in the active style.
+    inspectRunRef.current += 1;
+    inspectActiveRef.current = false;
+    setInspectActive(false);
+    // Forcibly clean up the webview side: drop the active flag, remove
+    // any leftover hover overlay, and dispatch Escape so any in-flight
+    // inspect script promise resolves with null.
+    webviewRef.current
+      ?.executeJavaScript(`
+        (function () {
+          window.__kangenticInspectActive = false;
+          window.__kangenticInspectMode = false;
+          var overlay = document.querySelector('[data-kangentic-inspector]');
+          if (overlay) overlay.remove();
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        })();
+      `)
+      .catch(() => undefined);
+  }, []);
+
+  // Select element mode: stays on, so every click on the page adds an element
+  // to the active annotation, until Esc or the button again. The guest can
+  // only answer through the script's return value, so the pick script is
+  // injected again after each answer. Mutually exclusive with Draw.
+  const startInspect = useCallback(async () => {
+    const webview = webviewRef.current;
+    if (!webview || inspectActiveRef.current) return;
+    const run = inspectRunRef.current + 1;
+    inspectRunRef.current = run;
+    const isCurrent = () => inspectRunRef.current === run;
+    inspectActiveRef.current = true;
+    setInspectActive(true);
+    setDrawMode(false);
+    try {
+      while (isCurrent()) {
+        const result = await webview.executeJavaScript<BrowserPickedElement | null>(INSPECT_SCRIPT);
+        // Null is Esc in the page, or the mode turned off from here.
+        if (!result || !isCurrent()) break;
+        addAnnotationElement(result);
+      }
+    } catch (caught) {
+      // A navigation ends the page the script was waiting in; that is not an error.
+      if (isCurrent()) {
+        setError(caught instanceof Error ? caught.message : i18n._(msg`Inspect failed`));
+      }
+    } finally {
+      if (isCurrent()) {
+        inspectRunRef.current += 1;
+        inspectActiveRef.current = false;
+        setInspectActive(false);
+        // The loop ended on its own (Esc in the page, or an error): the page's
+        // presses go back to it.
+        try {
+          void webview.executeJavaScript('window.__kangenticInspectMode = false;').catch(() => undefined);
+        } catch {
+          // A guest that is gone has no guard left to clear.
+        }
+      }
+    }
+  }, [addAnnotationElement]);
+
+  const toggleInspect = useCallback(() => {
+    if (inspectActiveRef.current) cancelInspect();
+    else void startInspect();
+  }, [cancelInspect, startInspect]);
+
+  const toggleDraw = useCallback(() => {
+    setDrawMode((previous) => {
+      // Drawing and inspecting both want pointer events; only one at a time.
+      // Aborting Inspect's loop is what actually stops the script from
+      // intercepting clicks in the webview.
+      if (!previous) cancelInspect();
+      return !previous;
+    });
+  }, [cancelInspect]);
+
+  // Esc ends Select element or Draw. Kept as a hand-written CAPTURE-phase
+  // listener (not a registry binding) because it must run BEFORE the parent
+  // TaskDetailWindow's bubble-phase Esc-closes-window handler and call
+  // stopImmediatePropagation so the window does not also close on the same Esc.
+  // Escape is not rebindable.
+  useEffect(() => {
+    if (!inspectActive && !drawMode) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      const pane = paneRef.current;
+      // Only this pane's mode: another pane, or a dialog, keeps its Escape.
+      if (!pane || !(hoveredRef.current || pane.contains(document.activeElement))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (inspectActive) cancelInspect();
+      setDrawMode(false);
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [cancelInspect, inspectActive, drawMode]);
+
   const handleSend = useCallback(async () => {
     const webview = webviewRef.current;
     const overlay = canvasRef.current;
@@ -566,20 +782,31 @@ function BrowserPaneActive({
         try { return webview.getURL(); } catch { return currentUrl; }
       })();
 
+      // The layer was drawn into the page for the screenshot above; its answer
+      // says which annotations that screenshot shows and which go with their
+      // own capture.
+      const status = await refreshAnnotationStatus();
+      // What this Send carries. Marks made while it is on its way stay.
+      const sentIds = currentAnnotationIds();
       await window.electronAPI.browser.captureAndSend({
         sessionId,
         taskId,
+        projectId,
         cwd,
         url,
         pngBase64,
-        pickedElement,
+        annotations: annotationSendInputs(status),
+        viewport: annotationViewportOf(status),
         selectedText: selectedText || '',
-        note,
+        note: hasAnnotations ? '' : note,
       });
+      // Landed: back to the single row, unless marks were made meanwhile. A
+      // failure above keeps every annotation, note and badge, so Send can
+      // simply be pressed again.
       setNote('');
-      clear();
-      setPickedElement(null);
-      webview.executeJavaScript(CLEAR_PICK_SCRIPT).catch(() => undefined);
+      clearSentAnnotations(sentIds);
+      if (inspectActiveRef.current) cancelInspect();
+      setDrawMode(false);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(message);
@@ -594,72 +821,8 @@ function BrowserPaneActive({
     } finally {
       setSending(false);
     }
-  }, [canvasRef, clear, currentUrl, cwd, note, pickedElement, sessionId, strokes, taskId]);
-
-  // One-shot inspect: enters inspect mode, captures the next click, exits.
-  // Esc inside the webview cancels and resolves null. Subsequent clicks
-  // need another button press to re-enter. Mutually exclusive with Draw.
-  const startInspect = useCallback(async () => {
-    const webview = webviewRef.current;
-    if (!webview) return;
-    setInspectActive(true);
-    if (drawMode) setDrawMode(false);
-    try {
-      const result = await webview.executeJavaScript<BrowserPickedElement | null>(INSPECT_SCRIPT);
-      if (result) {
-        setPickedElement(result);
-        // Focus the note input so the user can start typing about the
-        // selection without an extra click.
-        noteInputRef.current?.focus();
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : i18n._(msg`Inspect failed`));
-    } finally {
-      setInspectActive(false);
-    }
-  }, [drawMode]);
-
-  const cancelInspect = useCallback(() => {
-    // Unconditionally reset state - no closure check on inspectActive,
-    // which avoided the case where a stale closure would early-return
-    // and leave the React button stuck in the active style.
-    setInspectActive(false);
-    // Forcibly clean up the webview side: drop the active flag, remove
-    // any leftover hover overlay, and dispatch Escape so any in-flight
-    // inspect script promise resolves with null.
-    webviewRef.current
-      ?.executeJavaScript(`
-        (function () {
-          window.__kangenticInspectActive = false;
-          var overlay = document.querySelector('[data-kangentic-inspector]');
-          if (overlay) overlay.remove();
-          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-        })();
-      `)
-      .catch(() => undefined);
-  }, []);
-
-  const clearPicked = useCallback(() => {
-    setPickedElement(null);
-    webviewRef.current?.executeJavaScript(CLEAR_PICK_SCRIPT).catch(() => undefined);
-  }, []);
-
-  // Esc cancels Inspect mode. Kept as a hand-written CAPTURE-phase listener (not
-  // a registry binding) because it must run BEFORE the parent TaskDetailWindow's
-  // bubble-phase Esc-closes-window handler and call stopImmediatePropagation so
-  // the window does not also close on the same Esc. Escape is not rebindable.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && inspectActive) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        cancelInspect();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [cancelInspect, inspectActive]);
+  }, [canvasRef, clearSentAnnotations, currentAnnotationIds, currentUrl, cwd, hasAnnotations, note, projectId, sessionId,
+    strokes, taskId, refreshAnnotationStatus, annotationSendInputs, annotationViewportOf, cancelInspect]);
 
   // Browser-pane shortcuts from the central keybinding registry. Document +
   // capture phase, preventDefault only (no stopPropagation), and skipped when a
@@ -683,15 +846,39 @@ function BrowserPaneActive({
     return hoveredRef.current || focusInside;
   };
   const browserKeyOptions = { target: 'document', capture: true, stopPropagation: false } as const;
-  useKeybinding('browser.inspect', () => void startInspect(), { ...browserKeyOptions, when: paneActive });
-  // Draw answers in the note too: drawing puts focus there, and the key that
-  // turned Draw on has to turn it off. It carries a modifier, so it types nothing.
-  useKeybinding('browser.draw', () => setDrawMode((previous) => {
-    if (!previous) cancelInspect();
-    return !previous;
-  }), {
+  // A note of this pane: the single row's, or any annotation's.
+  const isPaneNote = (event: KeyboardEvent | PointerEvent): boolean => {
+    const target = event.target as HTMLElement | null;
+    if (!target || !paneRef.current?.contains(target)) return false;
+    return target === noteInputRef.current || target.hasAttribute(ANNOTATION_NOTE_ATTRIBUTE);
+  };
+  // Select element and Draw answer in a note too: marking puts focus there, and
+  // the key that turned a mode on has to turn it off. Both carry modifiers, so
+  // they type nothing.
+  useKeybinding('browser.inspect', () => toggleInspect(), {
     ...browserKeyOptions,
-    when: (event) => event.target === noteInputRef.current || paneActive(event),
+    when: (event) => isPaneNote(event) || paneActive(event),
+  });
+  useKeybinding('browser.draw', () => toggleDraw(), {
+    ...browserKeyOptions,
+    when: (event) => isPaneNote(event) || paneActive(event),
+  });
+  // Undo takes the last mark only from an EMPTY note or from outside any field:
+  // a note with text keeps its own text undo.
+  useKeybinding('browser.undoMark', () => undoAnnotationMark(), {
+    ...browserKeyOptions,
+    enabled: hasAnnotations,
+    when: (event) => {
+      const target = event.target as HTMLInputElement | null;
+      if (isPaneNote(event)) return !!target && target.value === '';
+      return paneActive(event);
+    },
+  });
+  useKeybinding('browser.sendAnnotations', () => void handleSend(), {
+    ...browserKeyOptions,
+    // As the Send button: nothing goes out while no annotation holds a note or a mark.
+    enabled: sendableAnnotationCount > 0 && !sending,
+    when: isPaneNote,
   });
   useKeybinding('browser.zoomIn', () => zoomIn(), { ...browserKeyOptions, when: paneActive });
   useKeybinding('browser.zoomOut', () => zoomOut(), { ...browserKeyOptions, when: paneActive });
@@ -719,17 +906,6 @@ function BrowserPaneActive({
   // guest. Inert while no agent is driving. See
   // `.claude/rules/agent-driven-focus.md`.
   useAgentInputFocusGuard({ paneRef, guestWebContentsIdRef: registeredWebContentsIdRef });
-
-  // The SHAPED signal, not the router's. See `useAgentDriveVeil`: the raw one
-  // is up for about half a second on a single click, which paints and vanishes
-  // before it can be read. `stopped` distinguishes a run the user ENDED from
-  // one that wound down, which is the whole of the difference between the two
-  // exit speeds below.
-  const {
-    visible: agentDriving,
-    blocking: driveBlocking,
-    stopped: driveStopped,
-  } = useAgentDriveVeil(sessionId);
 
   // Publish the drive as VISIBLE state, keyed by session.
   //
@@ -836,14 +1012,12 @@ function BrowserPaneActive({
 
   const atMinZoom = zoomFactor <= MIN_ZOOM + 1e-6;
   const atMaxZoom = zoomFactor >= MAX_ZOOM - 1e-6;
-  const nothingDrawn = strokes.length === 0;
   // Named for the messages that carry them. The pane's text resolves through
   // `i18n._` rather than `useLingui()`: a hook added here changes this
   // component's Fast Refresh signature, and a remount destroys the guest.
   const zoomPercent = Math.round(zoomFactor * 100);
   const viewportWidth = viewportOverride?.measured.width ?? 0;
   const viewportHeight = viewportOverride?.measured.height ?? 0;
-  const nothingDrawnReason = i18n._(msg`Nothing drawn yet`);
   const ctrlScrollDetail = i18n._(msg`Or Ctrl+scroll wheel`);
   const reloadLabel = i18n._(msg({ message: 'Reload', context: 'Action' }));
   const projectDefaultLabel = i18n._(msg`This URL is the project default`);
@@ -1162,7 +1336,7 @@ function BrowserPaneActive({
       </form>
 
       {/* Webview + canvas overlay */}
-      <div ref={overlayContainerRef} className="relative flex-1 min-h-0 bg-white">
+      <div ref={overlayContainerRef} className="relative flex-1 min-h-0 bg-white" data-annotation-bar-bounds="">
         {/* `webview` is an Electron-only intrinsic; the typing in webview-types.ts adds it to JSX.
          *  pointer-events:none while drawing - Electron's <webview> is a guest process that
          *  doesn't always honor normal CSS stacking, so we explicitly turn off its event
@@ -1214,6 +1388,24 @@ function BrowserPaneActive({
             cursor: drawMode ? 'crosshair' : 'default',
           }}
           data-testid="browser-overlay"
+        />
+        {/* Select element, Draw and Undo, floating over the page. Always
+            mounted, and AFTER the webview, which stays child 0: anything added
+            before it would remount the guest. */}
+        <AnnotationBar
+          ref={barRef}
+          corner={barCorner}
+          onCornerChange={(corner) => {
+            setBarCorner(corner);
+            writeBarCorner(projectId, corner);
+          }}
+          selectActive={inspectActive}
+          drawActive={drawMode}
+          canUndo={canUndoLastMark(annotations.session)}
+          faded={strokeActive}
+          onToggleSelect={toggleInspect}
+          onToggleDraw={toggleDraw}
+          onUndo={undoAnnotationMark}
         />
         {!pageReady && (
           <div
@@ -1332,119 +1524,73 @@ function BrowserPaneActive({
         </div>
       </div>
 
-      <AttachmentChips
-        strokeCount={strokes.length}
-        pickedElement={pickedElement}
-        onClearStrokes={clear}
-        onClearPicked={clearPicked}
-      />
-
-      {/* Toolbar: capture zone (left) | flex spacer | compose zone (right) */}
+      {/* Below the page: the annotations composer once something is marked,
+          otherwise today's single note row. Both sit AFTER the page container,
+          so neither can shift the webview's place in the tree. While Draw is
+          on, a press on their chrome leaves focus in the note being written;
+          clicks still land, only the focus move is stopped. */}
       <div
-        className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0"
-        // While Draw is on, Undo, Clear, Send and the gaps between them leave focus
-        // on the note. Their clicks still land: only the focus move is stopped.
+        className="flex flex-col flex-shrink-0"
         {...(drawMode ? { [KEEPS_PANE_FOCUS_ATTRIBUTE]: '' } : {})}
         onMouseDown={(event) => {
-          if (drawMode && event.target !== noteInputRef.current) event.preventDefault();
+          if (drawMode && !(event.target instanceof HTMLInputElement)) event.preventDefault();
         }}
       >
-        {/* Capture zone: Draw + its stroke sub-actions, then Inspect. */}
-        <Tooltip label={i18n._(msg`Toggle draw mode`)} keys="browser.draw">
-          <button
-            type="button"
-            onClick={() => {
-              setDrawMode((previous) => {
-                // Drawing and inspecting both want pointer events; only one
-                // at a time. Aborting Inspect's loop is what actually stops
-                // the script from intercepting clicks in the webview.
-                if (!previous) cancelInspect();
-                return !previous;
-              });
-            }}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-              drawMode
-                ? 'bg-accent/20 text-accent-fg border border-accent/40'
-                : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
-            }`}
-            data-testid="browser-draw-toggle"
-          >
-            <Pencil size={12} />
-            <Trans>Draw</Trans>
-          </button>
-        </Tooltip>
-        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: nothingDrawnReason, tip: i18n._(msg`Undo last stroke`) })}>
-          <button
-            type="button"
-            onClick={undo}
-            disabled={nothingDrawn}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <Undo2 size={12} />
-            <Trans>Undo</Trans>
-          </button>
-        </Tooltip>
-        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: nothingDrawnReason, tip: i18n._(msg`Clear all strokes`) })}>
-          <button
-            type="button"
-            onClick={clear}
-            disabled={nothingDrawn}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <Eraser size={12} />
-            <Trans context="Action">Clear</Trans>
-          </button>
-        </Tooltip>
-        <div className="w-px h-4 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-        <Tooltip label={i18n._(msg`Click elements to capture their identity`)} keys="browser.inspect" detail={i18n._(msg`Esc stops inspecting`)}>
-          <button
-            type="button"
-            onClick={() => void startInspect()}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-              inspectActive
-                ? 'bg-accent/20 text-accent-fg border border-accent/40'
-                : 'text-fg-muted hover:text-fg hover:bg-surface-hover border border-transparent'
-            }`}
-            data-testid="browser-inspect-toggle"
-          >
-            <Crosshair size={12} />
-            <Trans>Inspect</Trans>
-          </button>
-        </Tooltip>
-
-        {/* Compose zone. A bare Enter sends, and the absent modifier check is
-            deliberate: `submitTextTarget` commits a dictation target by
-            dispatching a plain Enter on the field, so requiring Ctrl/Cmd here
-            would leave push-to-talk unable to send a note at all. Ctrl/Cmd+Enter
-            falls through the same guard and sends too, which is why the button's
-            tooltip names the short form only. */}
-        <input
-          ref={noteInputRef}
-          type="text"
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || sending) return;
-            event.preventDefault();
-            handleSend();
-          }}
-          placeholder={notePlaceholder(strokes.length, pickedElement ? 1 : 0)}
-          className="flex-1 ml-2 bg-surface-input text-fg text-xs px-2 py-1 rounded border border-edge-input focus:outline-none focus:border-accent min-w-0"
-          spellCheck={true}
-          data-testid="browser-note-input"
-        />
-        <Tooltip label={i18n._(msg`Send to agent`)} detail={i18n._(msg`Enter in the note also sends`)}>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={sending}
-            className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
-            data-testid="browser-send"
-          >
-            {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            <Trans>Send</Trans>
-          </button>
-        </Tooltip>
+        {hasAnnotations ? (
+          <AnnotationComposer
+            rows={annotations.rows}
+            canStartNext={canStartNext(annotations.session)}
+            atCap={annotations.session.annotations.length >= MAX_ANNOTATIONS}
+            modeActive={inspectActive || drawMode}
+            rowsMaxHeight={annotationRowsMaxHeight(paneHeight)}
+            sending={sending}
+            sendableCount={annotations.sendableCount}
+            onSelect={annotations.select}
+            onNoteChange={annotations.changeNote}
+            onNext={annotations.next}
+            onRemove={annotations.remove}
+            onRemoveItem={annotations.removeOne}
+            onHoverAnnotation={annotations.setHoveredAnnotationId}
+            onHoverItem={annotations.setHoveredItemId}
+            onClear={annotations.clearAll}
+            onSend={() => void handleSend()}
+            onActiveNoteFocused={onActiveNoteFocused}
+          />
+        ) : (
+          <div className="flex items-center gap-2 px-2 py-1.5 border-t border-edge">
+            {/* A bare Enter sends, and the absent modifier check is deliberate:
+                `submitTextTarget` commits a dictation target by dispatching a
+                plain Enter on the field, so requiring Ctrl/Cmd here would leave
+                push-to-talk unable to send a note at all. */}
+            <input
+              ref={noteInputRef}
+              type="text"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || event.shiftKey || sending) return;
+                event.preventDefault();
+                void handleSend();
+              }}
+              placeholder={i18n._(msg`What should the agent do with this?`)}
+              className="flex-1 bg-surface-input text-fg text-xs px-2 py-1 rounded border border-edge-input focus:outline-none focus:border-accent min-w-0"
+              spellCheck={true}
+              data-testid="browser-note-input"
+            />
+            <Tooltip label={i18n._(msg`Send to agent`)} detail={i18n._(msg`Enter in the note also sends`)}>
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={sending}
+                className="flex items-center gap-1 px-3 py-1 text-xs text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors disabled:opacity-50"
+                data-testid="browser-send"
+              >
+                {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                <Trans>Send</Trans>
+              </button>
+            </Tooltip>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -1457,18 +1603,5 @@ function BrowserPaneActive({
       )}
     </div>
   );
-}
-
-/**
- * Rotate placeholder copy based on what's queued so the user sees a
- * concrete example of a useful note.
- */
-function notePlaceholder(strokeCount: number, pickedCount: number): string {
-  switch (notePlaceholderKind(strokeCount, pickedCount)) {
-    case 'marked': return i18n._(msg`e.g. "Explain what I marked"`);
-    case 'picked': return i18n._(msg`e.g. "Why is this misaligned?"`);
-    case 'strokes': return i18n._(msg`e.g. "Match the circled spacing"`);
-    case 'none': return i18n._(msg`What should the agent do with this?`);
-  }
 }
 

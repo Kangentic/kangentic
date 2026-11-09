@@ -29,12 +29,3 @@ export function resolveBrowserUrl(
   return { effectiveUrl, source };
 }
 
-/** Which note-field hint the pane shows, from what is queued on the page. */
-export type NotePlaceholderKind = 'marked' | 'picked' | 'strokes' | 'none';
-
-export function notePlaceholderKind(strokeCount: number, pickedCount: number): NotePlaceholderKind {
-  if (pickedCount > 0 && strokeCount > 0) return 'marked';
-  if (pickedCount > 0) return 'picked';
-  if (strokeCount > 0) return 'strokes';
-  return 'none';
-}
