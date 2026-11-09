@@ -1540,6 +1540,17 @@ export class SessionTelemetry {
     this.usage.restoreRunTotals(sessionId, toolBreakdown, compactionCount);
   }
 
+  /**
+   * The model a run was showing before this process took it over, for a session that has reported none
+   * since. An agent a host kept running writes nothing until it next acts, and a context bar and a card
+   * footer with no model say "Resuming agent..." for as long as it stays quiet. Never replaces a model the
+   * agent has reported, so a status line that was read a moment earlier wins.
+   */
+  seedModelIfUnreported(sessionId: string, model: { id: string; displayName: string }): void {
+    if (this.usage.getSessionUsage(sessionId)?.model.displayName) return;
+    this.setSessionUsage(sessionId, { model });
+  }
+
   /** This run's per-tool rows only, for the same reason as `getToolCallCount`. */
   getToolBreakdown(sessionId: string): PerToolStat[] {
     return this.usage.getToolBreakdown(sessionId);

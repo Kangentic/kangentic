@@ -222,6 +222,8 @@ export type RemoteSessionAdoption = SpawnSessionInput & {
   id: string;
   remote: SpawnRemote;
   runSoFar?: { toolBreakdown: PerToolStat[]; compactionCount: number };
+  /** The model the record last saw the agent report, shown until the agent reports one again. */
+  modelSoFar?: { id: string; displayName: string };
 };
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
@@ -2844,7 +2846,7 @@ export class SessionManager extends EventEmitter {
     return adoption;
   }
 
-  private async takeBackRemoteSession({ runSoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
+  private async takeBackRemoteSession({ runSoFar, modelSoFar, ...input }: RemoteSessionAdoption): Promise<Session | null> {
     const grid = input.restoredGrid ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS };
     const adopted = await this.host.adoptRemoteSessions(input.remote.hostId, [{ sessionId: input.id, cols: grid.cols, rows: grid.rows }]);
     const pty = adopted.get(input.id);
@@ -2852,12 +2854,29 @@ export class SessionManager extends EventEmitter {
     try {
       const session = await this.doSpawn({ ...input, command: '', resuming: true, seedIdle: true }, { pty });
       if (runSoFar) this.telemetry.restoreRunTotals(session.id, runSoFar.toolBreakdown, runSoFar.compactionCount);
+      if (modelSoFar) this.telemetry.seedModelIfUnreported(session.id, modelSoFar);
+      this.markTakenBackAgentRunning(session.id);
       return session;
     } catch (error) {
       // The agent keeps running; only this handle, which nothing will use, is dropped.
       this.host.forgetRemoteHandle(pty);
       throw error;
     }
+  }
+
+  /**
+   * A taken-back agent is on screen the moment it is registered: it ran before the quit and is running
+   * now. Nothing else says so. The launch overlay lifts on the agent's first output, the ready ceiling or
+   * its start hook, and an idle agent writes none of them, so the terminal stayed on "Resuming agent..."
+   * for as long as the agent had nothing to say (a Cursor task the user was not watching). The same
+   * evidence keeps the launch reports from judging a session that never launched here as one whose agent
+   * never started.
+   */
+  private markTakenBackAgentRunning(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session) return;
+    session.agentStartObservedAt ??= Date.now();
+    this.markAgentReady(sessionId);
   }
 
   private async doSpawn(input: SpawnSessionInput, rejoin?: RejoinSpawn): Promise<Session> {

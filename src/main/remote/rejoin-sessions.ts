@@ -118,6 +118,8 @@ export function createRecordAdopter(context: RecordAdopterContext): (record: Ses
       remote: launch.remote,
       // The same run goes on in the same record, whose counts are this run's.
       runSoFar: { toolBreakdown: parseToolBreakdown(record.tool_breakdown), compactionCount: record.compaction_count ?? 0 },
+      // What the agent last reported, so its card and context bar open with a model and not a spinner.
+      ...(record.model_id ? { modelSoFar: { id: record.model_id, displayName: record.model_display_name || record.model_id } } : {}),
       ...(restoredGrid ? { restoredGrid } : {}),
     };
     return context.sessionManager.adoptRemoteSession(input);

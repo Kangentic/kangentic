@@ -173,6 +173,23 @@ describe('createRecordAdopter', () => {
     expect(String(input.eventsOutputPath).replace(/\\/g, '/')).toBe('/shell/.kangentic/sessions/rec-1/events.jsonl');
   });
 
+  it('passes the model the record last saw, and none when it saw none', async () => {
+    setRemoteLaunchResolver({ resolve: async () => ({ place, remote }) } as never);
+    const adoptRemoteSession = vi.fn(async () => null);
+    const sessionType = agentRegistry.get('claude')!.sessionType;
+    const adopt = createRecordAdopter({ sessionManager: { adoptRemoteSession } as never, projectId: 'proj-1', projectPath: '/shell' });
+
+    await adopt(record('rec-1', { session_type: sessionType, model_id: 'composer-2', model_display_name: 'Composer 2' }));
+    await adopt(record('rec-2', { session_type: sessionType, model_id: 'composer-2', model_display_name: null }));
+    await adopt(record('rec-3', { session_type: sessionType, model_id: null, model_display_name: null }));
+
+    const inputs = adoptRemoteSession.mock.calls.map((call) => (call as unknown[])[0] as Record<string, unknown>);
+    expect(inputs[0].modelSoFar).toEqual({ id: 'composer-2', displayName: 'Composer 2' });
+    // A name the record never kept reads as the id, never as blank.
+    expect(inputs[1].modelSoFar).toEqual({ id: 'composer-2', displayName: 'composer-2' });
+    expect(inputs[2]).not.toHaveProperty('modelSoFar');
+  });
+
   it('takes nothing back for an agent this build does not know', async () => {
     setRemoteLaunchResolver({ resolve: async () => ({ place, remote }) } as never);
     const adoptRemoteSession = vi.fn();

@@ -25,6 +25,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { SpawnSessionInput } from '../../src/shared/types';
 import { AgentCommandTooLongError } from '../../src/main/pty/spawn/pty-spawn';
 import type { AgentParser } from '../../src/shared/types';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
@@ -511,6 +512,52 @@ describe('taking back an agent a host kept running while the app was closed', ()
 
     await waitFor(() => fs.readFileSync(second.eventsPath, 'utf8').includes('"idle"'));
     expect(fs.readFileSync(second.eventsPath, 'utf8')).toContain('"before":"the quit"');
+  });
+
+  describe('an agent that stays quiet after it is taken back', () => {
+    it('is on screen at once, so its terminal is not left on the launch overlay waiting for output', async () => {
+      const { second } = await relaunch();
+      const lifted: string[] = [];
+      second.manager.on('first-output', (sessionId: string) => lifted.push(sessionId));
+
+      await second.manager.adoptRemoteSession(adoptInput(second));
+
+      // The fake agent writes nothing, as an idle one does. Only the take itself can say it is there.
+      expect(lifted).toEqual(['s1']);
+      expect(await second.manager.awaitAgentReady('s1', 20)).toBe(true);
+    });
+
+    it('has run, for a launch report that reads "never started" off an agent that shows no evidence', async () => {
+      const { second } = await relaunch();
+      // An adapter that reports its own start: its silence is what reads as a launch that never began.
+      const agentParser = { reportsAgentStart: true } as unknown as SpawnSessionInput['agentParser'];
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), agentParser, agentName: 'stand-in' });
+
+      expect(second.manager.agentStartPending('s1')).toBe(false);
+    });
+
+    it('opens with the model its record last saw, so its card and context bar show a model and not a spinner', async () => {
+      const { second } = await relaunch();
+      const usages: Array<{ id: string; model: string }> = [];
+      second.manager.on('usage', (sessionId: string, usage: { model: { displayName: string } }) => {
+        usages.push({ id: sessionId, model: usage.model.displayName });
+      });
+
+      await second.manager.adoptRemoteSession({ ...adoptInput(second), modelSoFar: { id: 'composer-2', displayName: 'Composer 2' } });
+
+      expect(usages.some((entry) => entry.id === 's1' && entry.model === 'Composer 2')).toBe(true);
+    });
+
+    it('adds no model when its record saw none', async () => {
+      const { second } = await relaunch();
+      const usages: string[] = [];
+      second.manager.on('usage', (sessionId: string) => usages.push(sessionId));
+
+      await second.manager.adoptRemoteSession(adoptInput(second));
+
+      expect(usages).not.toContain('s1');
+    });
   });
 
   it('ends the session when the rejoined agent exits, as any session ends', async () => {
