@@ -56,7 +56,7 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
   const agentExecution = useConfigStore((state) => state.config.agent.execution);
   const browserEnabled = useConfigStore((state) => state.config.browser?.enabled);
 
-  // Memoized so `LabelPills`' own React.memo is not defeated by a fresh object
+  // Memoized so `TaskPills`' own React.memo is not defeated by a fresh object
   // identity every render (the trap TaskCard documents).
   const config = useMemo(() => ({
     labelColors: labelColors ?? {},

@@ -220,8 +220,12 @@ describe('kangentic_save_workflow refuses a wrong-typed planned task field', () 
     { field: 'description', value: { text: 'x' }, error: 'Task 1 ("api"): description must be text.' },
     { field: 'routeStart', value: 3, error: 'Task 1 ("api"): routeStart must be text.' },
     { field: 'skip', value: 'Planning', error: 'Task 1 ("api"): skip must be a list of names.' },
-    { field: 'labels', value: ['ui', 7], error: 'Task 1 ("api"): labels must be a list of names.' },
-    { field: 'priority', value: 'high', error: 'Task 1 ("api"): priority must be a number.' },
+    { field: 'labels', value: ['ui', 7], error: 'Task 1 ("api"): labels must be a list of names or { name, color } entries.' },
+    { field: 'labels', value: [{ color: '#f97316' }], error: 'Task 1 ("api"): labels must be a list of names or { name, color } entries.' },
+    { field: 'labels', value: [{ name: 'ui', color: 'orange' }], error: 'Task 1 ("api"): labels must be a list of names or { name, color } entries.' },
+    { field: 'priority', value: 'high', error: 'Task 1 ("api"): priority must be a whole number from 0.' },
+    { field: 'priority', value: -1, error: 'Task 1 ("api"): priority must be a whole number from 0.' },
+    { field: 'priority', value: 1.5, error: 'Task 1 ("api"): priority must be a whole number from 0.' },
   ];
   for (const testCase of cases) {
     it(`${testCase.field}: ${JSON.stringify(testCase.value)}`, async () => {
