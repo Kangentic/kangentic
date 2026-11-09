@@ -7,7 +7,7 @@
  * third tier.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveBrowserUrl, notePlaceholderKind } from '../../src/renderer/components/browser/browser-url-resolution';
+import { resolveBrowserUrl } from '../../src/renderer/components/browser/browser-url-resolution';
 
 describe('resolveBrowserUrl (taskOverride > projectDefault > null)', () => {
   it('taskOverride wins when both are set', () => {
@@ -36,24 +36,5 @@ describe('resolveBrowserUrl (taskOverride > projectDefault > null)', () => {
       source: 'project',
     });
     expect(resolveBrowserUrl('', null)).toEqual({ effectiveUrl: '', source: 'none' });
-  });
-});
-
-describe('notePlaceholderKind (BrowserPane toolbar)', () => {
-  it('default state has no strokes and no picked element', () => {
-    expect(notePlaceholderKind(0, 0)).toBe('none');
-  });
-
-  it('strokes only uses the drawing-specific prompt', () => {
-    expect(notePlaceholderKind(3, 0)).toBe('strokes');
-    expect(notePlaceholderKind(10, 0)).toBe('strokes');
-  });
-
-  it('picked element only uses the alignment-specific prompt', () => {
-    expect(notePlaceholderKind(0, 1)).toBe('picked');
-  });
-
-  it('both strokes and a picked element use the marked prompt', () => {
-    expect(notePlaceholderKind(2, 1)).toBe('marked');
   });
 });

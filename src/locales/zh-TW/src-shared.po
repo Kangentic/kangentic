@@ -285,8 +285,8 @@ msgid "Done"
 msgstr "已完成"
 
 #: src/shared/keybindings.ts
-msgid "Draw / annotate"
-msgstr "繪製 / 註解"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 msgctxt "spoken language"
@@ -420,10 +420,6 @@ msgstr "按住以聽寫；放開後將內容填入焦點所在的終端機或文
 #: src/shared/keybindings.ts
 msgid "Insert newline"
 msgstr "插入換行"
-
-#: src/shared/keybindings.ts
-msgid "Inspect element"
-msgstr "檢查元素"
 
 #: src/shared/embedding-runtime.ts
 msgid "Intel Macs"
@@ -927,12 +923,20 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Select the next file in the Changes panel."
 msgstr "選取變更面板中的下一個檔案。"
 
 #: src/shared/keybindings.ts
 msgid "Select the previous file in the Changes panel."
 msgstr "選取變更面板中的上一個檔案。"
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgid "Send message to agent"
@@ -1213,6 +1217,10 @@ msgstr "土耳其文"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "烏克蘭文"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

@@ -158,6 +158,7 @@ open):
 - `worktrees/<slug>/` - git worktree checkouts
 - `removed-worktrees/<folder>-<timestamp>-<random>/` - worktrees a Done move set aside, deleted in the background
   while no Post-Worktree Script runs
+- `browser-annotations/<taskId>/` - a Browser pane's unsent annotations (`draft.json`) and their page captures
 - `project-owner.json` - the marker that says which per-project database owns this folder
 - `set-aside/<worktrees|tasks>/<name>-<timestamp>-<random>/` - orphans the sweep moved aside, kept 14 days
 

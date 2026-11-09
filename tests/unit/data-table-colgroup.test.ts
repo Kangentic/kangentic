@@ -20,7 +20,7 @@
  * would render, without one.
  *
  * `react-dom/server`, no jsdom: same rationale and pattern as
- * `attachment-chips.test.ts` and `worktree-placement.test.ts`. `data: []`
+ * `worktree-placement.test.ts`. `data: []`
  * means no `SortableRow` ever mounts (the empty-state row renders instead),
  * so `useSortable` never runs and no `DndContext` is needed even with
  * `sortableEnabled: true`. `useVirtualizer` runs safely with a null

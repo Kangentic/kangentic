@@ -9297,6 +9297,18 @@ export interface ElectronAPI {
   browser: {
     captureAndSend: (input: BrowserCaptureInput) => Promise<{ filePath: string }>;
     /**
+     * The task's saved annotation draft, or null. Annotations are saved as they
+     * change so a restart or crash loses none of them. `projectId` is the
+     * TASK's project, as for the URL calls below.
+     */
+    loadAnnotations: (taskId: string, projectId?: string | null) => Promise<BrowserAnnotationDraft | null>;
+    /** Replace the task's saved draft. Captures it no longer names are deleted. */
+    saveAnnotations: (taskId: string, draft: BrowserAnnotationDraft, projectId?: string | null) => Promise<void>;
+    /** Save one capture of the visible page for the task's draft; resolves its id. */
+    saveAnnotationCapture: (taskId: string, pngBase64: string, projectId?: string | null) => Promise<string>;
+    /** Delete the task's draft and its captures (Clear, or a Send that landed). */
+    discardAnnotations: (taskId: string, projectId?: string | null) => Promise<void>;
+    /**
      * Per-task Browser pane URLs. `projectId` is the project of the TASK, not
      * the open board's: a popped-out pane outlives a project switch, so
      * resolving these against the ambient current project wrote one project's
@@ -9605,9 +9617,80 @@ export interface BrowserCaptureInput {
   cwd: string;
   url: string;
   pngBase64: string;
-  pickedElement: BrowserPickedElement | null;
+  /**
+   * The project the pane's TASK belongs to (`retainedProjectId ?? projectId`),
+   * so a pane in a backgrounded project writes its captures into its own
+   * project. Null falls back to the open project.
+   */
+  projectId?: string | null;
+  /**
+   * The user's numbered annotations, in order. Empty when nothing was marked:
+   * the prompt is then today's note, screenshot and selection.
+   */
+  annotations: BrowserAnnotationSendInput[];
+  /** The page's viewport in CSS px and its scroll offset when the screenshot was taken. */
+  viewport: BrowserAnnotationViewport | null;
   selectedText: string;
   note: string;
+}
+
+/** One point of a drawn stroke, in CSS px of the whole page (document coordinates). */
+export interface BrowserAnnotationPoint {
+  x: number;
+  y: number;
+}
+
+export type BrowserAnnotationStroke = BrowserAnnotationPoint[];
+
+/**
+ * One thing an annotation points at: an element the user selected, or a
+ * drawing (one or more strokes that touch). Element rects are page
+ * coordinates too, captured when the element was selected.
+ */
+export type BrowserAnnotationItem =
+  | { id: string; kind: 'element'; element: BrowserPickedElement }
+  | { id: string; kind: 'drawing'; strokes: BrowserAnnotationStroke[] };
+
+/** One annotation: a note and everything it points at. */
+export interface BrowserAnnotation {
+  id: string;
+  note: string;
+  /** The page the annotation's first item was made on. */
+  url: string;
+  items: BrowserAnnotationItem[];
+  /**
+   * The latest capture of the visible page taken while an item joined this
+   * annotation, sent when the annotation is out of view at Send time.
+   */
+  captureId: string | null;
+}
+
+/** An annotation session saved per task, so a restart or crash loses nothing. */
+export interface BrowserAnnotationDraft {
+  version: 1;
+  annotations: BrowserAnnotation[];
+  activeId: string | null;
+}
+
+export interface BrowserAnnotationViewport {
+  width: number;
+  height: number;
+  scrollX: number;
+  scrollY: number;
+}
+
+/** An annotation as Send hands it to main, numbered and with its page state. */
+export interface BrowserAnnotationSendInput {
+  number: number;
+  note: string;
+  url: string;
+  /** False when none of its elements could be found on the page at Send time. */
+  onPage: boolean;
+  /** True when one of its items is inside the screenshot Send takes. */
+  inViewport: boolean;
+  items: BrowserAnnotationItem[];
+  /** The capture to send for an annotation that is not in the screenshot. */
+  captureId: string | null;
 }
 
 /**

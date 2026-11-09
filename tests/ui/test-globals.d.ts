@@ -16,6 +16,15 @@ declare global {
     __mockBrowser?: {
       reset: () => void;
       getCaptureCalls: () => unknown[];
+      /** Make every later Send reject with this message, until set to null. */
+      failCaptureWith: (message: string | null) => void;
+      /** Make every later Send log its call and then wait, until releaseCapture(). */
+      holdCaptureUntilReleased: () => void;
+      /** Let a held Send land and stop holding. */
+      releaseCapture: () => void;
+      /** The task's saved annotation draft, as main would read it back. */
+      getAnnotationDraft: (taskId: string) => { annotations: Array<{ note: string; items: unknown[] }> } | null;
+      seedAnnotationDraft: (taskId: string, draft: unknown) => void;
       getPaneCalls: () => Array<
         | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null; visibility?: string } }
         | { type: 'unregister'; webContentsId: number }

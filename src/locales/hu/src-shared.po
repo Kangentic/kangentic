@@ -349,9 +349,8 @@ msgid "Done"
 msgstr "Kész"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "Rajzolás / jegyzetelés"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -510,11 +509,6 @@ msgstr "Tartsa lenyomva a diktáláshoz; felengedéskor a szöveg a fókuszban l
 #, fuzzy
 msgid "Insert newline"
 msgstr "Új sor beszúrása"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "Elem vizsgálata"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -1123,6 +1117,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "A következő fájl kijelölése a Módosítások panelen."
@@ -1131,6 +1129,10 @@ msgstr "A következő fájl kijelölése a Módosítások panelen."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "Az előző fájl kijelölése a Módosítások panelen."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1476,6 +1478,10 @@ msgstr "török"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "ukrán"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

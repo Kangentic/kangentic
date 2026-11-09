@@ -349,9 +349,8 @@ msgid "Done"
 msgstr "완료"
 
 #: src/shared/keybindings.ts
-#, fuzzy
-msgid "Draw / annotate"
-msgstr "그리기/주석"
+msgid "Draw on the page"
+msgstr ""
 
 #: src/shared/dictation-languages.ts
 #, fuzzy
@@ -510,11 +509,6 @@ msgstr "누르고 있는 동안 받아쓰고, 놓으면 포커스된 터미널�
 #, fuzzy
 msgid "Insert newline"
 msgstr "줄 바꿈 삽입"
-
-#: src/shared/keybindings.ts
-#, fuzzy
-msgid "Inspect element"
-msgstr "요소 검사"
 
 #: src/shared/embedding-runtime.ts
 #, fuzzy
@@ -1123,6 +1117,10 @@ msgid "Search the focused terminal's output, taking this key from any program th
 msgstr ""
 
 #: src/shared/keybindings.ts
+msgid "Select element"
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Select the next file in the Changes panel."
 msgstr "변경 사항 패널에서 다음 파일을 선택합니다."
@@ -1131,6 +1129,10 @@ msgstr "변경 사항 패널에서 다음 파일을 선택합니다."
 #, fuzzy
 msgid "Select the previous file in the Changes panel."
 msgstr "변경 사항 패널에서 이전 파일을 선택합니다."
+
+#: src/shared/keybindings.ts
+msgid "Send every annotation"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
@@ -1476,6 +1478,10 @@ msgstr "튀르키예어"
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "우크라이나어"
+
+#: src/shared/keybindings.ts
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

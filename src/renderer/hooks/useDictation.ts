@@ -91,11 +91,13 @@ export const dictationPopupActions: {
   clear: () => void;
   cancel: () => void;
   moveToInput: (element: HTMLInputElement) => void;
+  detachInput: (element: HTMLInputElement) => boolean;
 } = {
   commit: () => undefined,
   clear: () => undefined,
   cancel: () => undefined,
   moveToInput: () => undefined,
+  detachInput: () => false,
 };
 
 /**
@@ -627,6 +629,25 @@ export function useDictation(): void {
     if (state.partialText.length > 0) sinkRef.current?.write(sanitizeInline(state.partialText));
   }, []);
 
+  /**
+   * Take a recording hold OFF a text field that is about to unmount, leaving
+   * what was typed and erasing what the hold wrote. The hold keeps recording
+   * with nowhere to write until `moveToInput` names its next field, which
+   * writes the current partial there. A Browser pane uses it when its single
+   * note row becomes the first annotation's note: the typed text moves with
+   * the annotation, and the spoken text follows the hold, so neither is lost
+   * and neither is written twice. Answers whether the hold was on `element`.
+   */
+  const detachInput = useCallback((element: HTMLInputElement): boolean => {
+    if (!activeRef.current) return false;
+    const state = useDictationStore.getState();
+    if (state.status !== 'recording' || state.targetElement !== element) return false;
+    sinkRef.current?.clear();
+    sinkRef.current = null;
+    useDictationStore.setState({ targetElement: null });
+    return true;
+  }, []);
+
   // Wire the surface buttons to this instance.
   useEffect(() => {
     dictationPopupActions.commit = () => {
@@ -639,13 +660,15 @@ export function useDictation(): void {
       void cancelDictation();
     };
     dictationPopupActions.moveToInput = moveToInput;
+    dictationPopupActions.detachInput = detachInput;
     return () => {
       dictationPopupActions.commit = () => undefined;
       dictationPopupActions.clear = () => undefined;
       dictationPopupActions.cancel = () => undefined;
       dictationPopupActions.moveToInput = () => undefined;
+      dictationPopupActions.detachInput = () => false;
     };
-  }, [commitFinal, clearDictation, cancelDictation, moveToInput]);
+  }, [commitFinal, clearDictation, cancelDictation, moveToInput, detachInput]);
 
   // Surface first-use model download progress in the popup. `done` clears it.
   useEffect(() => {

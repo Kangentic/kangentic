@@ -3,12 +3,21 @@
 // one-shot click handler that captures a structured fingerprint of the
 // clicked element. Esc cancels and resolves null.
 //
+// Select element mode stays on across picks, and the pane injects this again
+// after each answer. Between one pick and the next script there is no picker,
+// so a guard installed once per document (`__kangenticInspectMode`) swallows
+// the page's presses for as long as the mode is on: a quick second click never
+// activates the link or button under it. The pane clears the mode when it
+// ends.
+//
 // The fingerprint is what an AI coding agent actually needs to grep the
 // codebase: selector, ARIA role + accessible name (Playwright-style),
 // data-testid, classes, ancestors, plus a tiny subset of computed styles
 // and the element's own outerHTML. Mirrors Chrome DevTools MCP's
 // "snapshot over screenshot" guidance: structured grep targets, not raw
 // rendered HTML.
+
+import { ANNOTATION_LAYER_HOST_ATTRIBUTE } from './annotations/annotationLayerScript';
 
 export interface PickedElement {
   selector: string;
@@ -40,9 +49,26 @@ export const INSPECT_SCRIPT = `
       return;
     }
     window.__kangenticInspectActive = true;
+    window.__kangenticInspectMode = true;
 
-    // Remove any prior persistent pick highlight - the new inspect replaces it.
-    document.querySelectorAll('[data-kangentic-pick]').forEach((el) => el.remove());
+    // Installed once per document. A click the armed picker takes is its own;
+    // every other press, and a click between two pickers, never reaches the
+    // page. A press on the annotation layer is left to the layer's badges.
+    if (!window.__kangenticInspectGuard) {
+      const guard = (event) => {
+        if (!window.__kangenticInspectMode) return;
+        if (event.type === 'click' && window.__kangenticInspectActive) return;
+        const target = event.target;
+        if (target && target.hasAttribute && target.hasAttribute('${ANNOTATION_LAYER_HOST_ATTRIBUTE}')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+      };
+      window.__kangenticInspectGuard = guard;
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'dblclick']) {
+        window.addEventListener(type, guard, true);
+      }
+    }
 
     const overlay = document.createElement('div');
     overlay.setAttribute('data-kangentic-inspector', '1');
@@ -108,27 +134,54 @@ export const INSPECT_SCRIPT = `
       return '';
     }
 
+    function countMatches(selector) {
+      try { return document.querySelectorAll(selector).length; } catch (caught) { return -1; }
+    }
+
+    function nthOfType(element) {
+      let index = 1;
+      let sibling = element.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === element.tagName) index += 1;
+        sibling = sibling.previousElementSibling;
+      }
+      return index;
+    }
+
+    // A selector that names exactly this element. Two id-less inputs under the
+    // same field wrapper would otherwise share one, and an annotation could
+    // neither find its element again after a reload nor tell the agent which
+    // one was meant. From the leaf up, :nth-of-type is added to one segment at
+    // a time until the page has a single match.
     function buildSelector(el) {
-      if (el.id) return el.tagName.toLowerCase() + '#' + el.id;
-      const segments = [];
+      const escape = (value) => (window.CSS && CSS.escape ? CSS.escape(value) : value);
+      if (el.id) {
+        const byId = el.tagName.toLowerCase() + '#' + escape(el.id);
+        if (countMatches(byId) === 1) return byId;
+      }
+      const parts = [];
       let current = el;
-      while (current && current !== document.body && segments.length < 5) {
+      while (current && current !== document.body && parts.length < 5) {
         const tag = current.tagName.toLowerCase();
         let segment = tag;
         const testId = current.getAttribute('data-testid') || current.getAttribute('data-test-id');
         if (current.id) {
-          segment = tag + '#' + current.id;
-          segments.unshift(segment);
+          parts.unshift({ element: current, segment: tag + '#' + escape(current.id) });
           break;
         } else if (testId) {
-          segment += '[data-testid="' + testId + '"]';
+          segment += '[data-testid="' + testId.replace(/["\\\\]/g, '\\\\$&') + '"]';
         } else if (current.classList && current.classList.length) {
-          segment += '.' + Array.from(current.classList).slice(0, 2).join('.');
+          segment += '.' + Array.from(current.classList).slice(0, 2).map(escape).join('.');
         }
-        segments.unshift(segment);
+        parts.unshift({ element: current, segment });
         current = current.parentElement;
       }
-      return segments.join(' > ');
+      const join = () => parts.map((part) => part.segment).join(' > ');
+      for (let index = parts.length - 1; index >= 0 && countMatches(join()) !== 1; index -= 1) {
+        const part = parts[index];
+        if (part.element.parentElement) part.segment += ':nth-of-type(' + nthOfType(part.element) + ')';
+      }
+      return join();
     }
 
     function captureFingerprint(el) {
@@ -165,7 +218,9 @@ export const INSPECT_SCRIPT = `
         role: getRole(el),
         accessibleName: getAccessibleName(el),
         text: (el.textContent || '').trim().slice(0, 200),
-        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        // Page coordinates, so the rect still names the element's place
+        // after the page scrolls.
+        rect: { x: rect.x + window.scrollX, y: rect.y + window.scrollY, width: rect.width, height: rect.height },
         computedStyles,
         outerHTML: (el.outerHTML || '').slice(0, 800),
         ancestors,
@@ -180,68 +235,23 @@ export const INSPECT_SCRIPT = `
       try { overlay.remove(); } catch (e) { /* ignore */ }
     }
 
-    // Convert the hover overlay into a persistent pick indicator so the user
-    // sees what they selected. Different color so it's clear this isn't the
-    // active hover anymore. Inspect listeners are detached, but new
-    // scroll/resize listeners track the element's live position so the
-    // overlay follows scrolling/reflow until cleared.
-    function persistPick(targetEl) {
-      window.__kangenticInspectActive = false;
-      document.removeEventListener('mousemove', onMove, true);
-      document.removeEventListener('click', onClick, true);
-      document.removeEventListener('keydown', onKey, true);
-      overlay.removeAttribute('data-kangentic-inspector');
-      overlay.setAttribute('data-kangentic-pick', '1');
-      overlay.style.borderColor = '#3b82f6';
-      overlay.style.background = 'rgba(59, 130, 246, 0.12)';
-      overlay.style.transition = 'none';
-
-      function syncRect() {
-        if (!targetEl.isConnected) {
-          // Element removed from DOM (SPA route, react re-render). Drop the
-          // overlay rather than stranding it at stale coordinates.
-          syncTeardown();
-          try { overlay.remove(); } catch (_) { /* ignore */ }
-          return;
-        }
-        var rect = targetEl.getBoundingClientRect();
-        overlay.style.top = rect.top + 'px';
-        overlay.style.left = rect.left + 'px';
-        overlay.style.width = rect.width + 'px';
-        overlay.style.height = rect.height + 'px';
+    // The element under the pointer. An annotation badge sits over the page in
+    // its own shadow root, so an event on it reads as the layer's host; the
+    // pick is the page element beneath it, never the badge.
+    function pageTarget(event) {
+      const target = event.target;
+      if (!target || !target.hasAttribute || !target.hasAttribute('${ANNOTATION_LAYER_HOST_ATTRIBUTE}')) return target;
+      const stack = document.elementsFromPoint(event.clientX, event.clientY);
+      for (const candidate of stack) {
+        if (isOurOverlay(candidate)) continue;
+        if (candidate.hasAttribute && candidate.hasAttribute('${ANNOTATION_LAYER_HOST_ATTRIBUTE}')) continue;
+        return candidate;
       }
-
-      function syncTeardown() {
-        window.removeEventListener('scroll', syncRect, true);
-        window.removeEventListener('resize', syncRect);
-        if (resizeObserver) resizeObserver.disconnect();
-      }
-
-      // Stash the teardown callback on the overlay so CLEAR_PICK_SCRIPT can
-      // dispose listeners when the pick is cleared from React.
-      overlay.__kangenticPickTeardown = syncTeardown;
-
-      // capture: true so we observe scrolls in any nested scrollable
-      // ancestor (Chromium dispatches scroll events on the scrollable
-      // element, not bubbling). resize handles viewport changes.
-      window.addEventListener('scroll', syncRect, true);
-      window.addEventListener('resize', syncRect);
-
-      // ResizeObserver catches in-place layout changes (font load, image
-      // load, content edits) without scroll/resize.
-      // var (not let): hoisting puts the declaration above syncTeardown so
-      // its closure can reference resizeObserver before this assignment.
-      var resizeObserver = null;
-      if (typeof ResizeObserver !== 'undefined') {
-        resizeObserver = new ResizeObserver(syncRect);
-        resizeObserver.observe(targetEl);
-      }
-
-      syncRect();
+      return null;
     }
 
     function onMove(event) {
-      const target = event.target;
+      const target = pageTarget(event);
       if (!target || isOurOverlay(target)) return;
       const rect = target.getBoundingClientRect();
       overlay.style.top = rect.top + 'px';
@@ -251,19 +261,20 @@ export const INSPECT_SCRIPT = `
     }
 
     function onClick(event) {
-      const target = event.target;
+      const target = pageTarget(event);
       if (!target || isOurOverlay(target)) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.stopImmediatePropagation) event.stopImmediatePropagation();
       const fingerprint = captureFingerprint(target);
-      persistPick(target);
+      cleanup();
       resolve(fingerprint);
     }
 
     function onKey(event) {
       if (event.key === 'Escape') {
         event.preventDefault();
+        window.__kangenticInspectMode = false;
         cleanup();
         resolve(null);
       }
@@ -274,15 +285,4 @@ export const INSPECT_SCRIPT = `
     document.addEventListener('keydown', onKey, true);
   });
 })();
-`;
-
-/** Removes any persistent pick indicator left in the page by INSPECT_SCRIPT,
- *  including its scroll/resize listeners. */
-export const CLEAR_PICK_SCRIPT = `
-document.querySelectorAll('[data-kangentic-pick]').forEach((el) => {
-  if (typeof el.__kangenticPickTeardown === 'function') {
-    try { el.__kangenticPickTeardown(); } catch (_) { /* ignore */ }
-  }
-  el.remove();
-});
 `;

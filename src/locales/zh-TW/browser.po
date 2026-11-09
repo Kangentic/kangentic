@@ -7,13 +7,21 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-TW\n"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, other {# 筆畫}}"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "20 annotations is the most one send carries. Send these, then start again."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Add a note or a mark to send"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is driving"
@@ -31,6 +39,14 @@ msgstr "已達最小縮放"
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 msgstr "代理已將此頁面設為以 {viewportWidth} x {viewportHeight} CSS 像素呈現。重設即可改回使用窗格本身的尺寸。"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotations"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "at {zoomPercent}%"
 msgstr "縮放 {zoomPercent}%"
@@ -39,18 +55,10 @@ msgstr "縮放 {zoomPercent}%"
 msgid "Back"
 msgstr "上一頁"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgctxt "Action"
 msgid "Clear"
 msgstr "清除"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Clear all strokes"
-msgstr "清除所有筆畫"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Click elements to capture their identity"
-msgstr "按一下元素以擷取其識別資訊"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Close browser"
@@ -72,21 +80,13 @@ msgstr "無法傳送給代理"
 msgid "Default URL saved"
 msgstr "已儲存預設 URL"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Draw"
 msgstr "繪圖"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Explain what I marked\""
-msgstr "例如「說明我標記的內容」"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Match the circled spacing\""
-msgstr "例如「比照圈起來的間距」"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Why is this misaligned?\""
-msgstr "例如「為什麼這裡沒有對齊？」"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Draw on the page"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Enter a valid http:// or https:// URL."
@@ -95,10 +95,6 @@ msgstr "請輸入有效的 http:// 或 https:// URL。"
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Enter in the note also sends"
 msgstr "在備註中按 Enter 也會傳送"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Esc stops inspecting"
-msgstr "按 Esc 停止檢查"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Failed to load: {finalUrl}"
@@ -117,10 +113,6 @@ msgid "https://example.com or localhost:5173"
 msgstr "https://example.com 或 localhost:5173"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-msgid "Inspect"
-msgstr "檢查"
-
-#: src/renderer/components/browser/BrowserPane.tsx
 msgid "Inspect failed"
 msgstr "檢查失敗"
 
@@ -132,6 +124,18 @@ msgstr "無效的 URL：{target}"
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "本機開發伺服器、預備環境、正式環境，或任何 http(s) 頁面。此任務會記住你上次瀏覽的位置，其他任務則各自保留。"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Made on {madeOn}. Still sent, with the capture taken there."
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Move the annotation bar"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "New annotation"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "No earlier page"
 msgstr "沒有上一頁"
@@ -140,9 +144,17 @@ msgstr "沒有上一頁"
 msgid "No forward page"
 msgstr "沒有下一頁"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Nothing drawn yet"
-msgstr "尚未繪製任何內容"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Not on page"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Note for annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Nothing marked yet"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
@@ -178,9 +190,17 @@ msgctxt "Action"
 msgid "Reload"
 msgstr "重新載入"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "Remove from queue"
-msgstr "從佇列中移除"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove {itemLabel}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove annotation {number}"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove this annotation"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
@@ -211,13 +231,26 @@ msgstr "儲存為專案預設值"
 msgid "Save as project default for all tasks"
 msgstr "儲存為專案預設值，套用於所有任務"
 
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Select element"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Send"
 msgstr "傳送"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Send every annotation"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Send to agent"
 msgstr "傳送給代理"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Start the next annotation. Enter in a note does the same."
+msgstr ""
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
@@ -227,29 +260,29 @@ msgstr ""
 msgid "This URL is the project default"
 msgstr "此 URL 為專案預設值"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Toggle draw mode"
-msgstr "切換繪圖模式"
-
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Undo"
 msgstr "復原"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Undo last stroke"
-msgstr "復原上一筆畫"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Undo the last mark"
+msgstr ""
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Webpack, generic"
 msgstr "Webpack（通用）"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What annotation {number} holds"
+msgstr ""
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What should change here?"
+msgstr ""
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "What should the agent do with this?"
 msgstr "代理應如何處理這些內容？"
-
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "Will send:"
-msgstr "將傳送："
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Zoom in"

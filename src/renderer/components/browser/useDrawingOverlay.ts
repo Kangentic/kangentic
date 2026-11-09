@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Free-draw annotation overlay. Strokes are stored in CSS px relative
-// to the canvas's bounding rect; the capture compositor scales them up to the
-// native PNG dimensions when blitting.
+// The canvas a stroke is drawn on before it joins an annotation. Strokes are
+// in CSS px relative to the canvas's bounding rect. The canvas shows a stroke
+// only until the page layer draws it, and the capture compositor blits any
+// still showing when Send captures the page.
 
 export interface DrawPoint {
   x: number;
@@ -37,6 +38,12 @@ interface UseDrawingOverlayOptions {
   lineWidth?: number;
   /** Runs as a stroke starts, whichever way it started. */
   onStrokeStart?: () => void;
+  /**
+   * Takes a finished stroke. The canvas keeps drawing it until the returned
+   * promise settles, then drops it: by then the page draws it, so the ink
+   * never blinks out between the two.
+   */
+  onStrokeEnd?: (stroke: Stroke) => Promise<void> | void;
 }
 
 /** A press on the canvas keeps focus where it is. The canvas takes no focus, so
@@ -50,6 +57,7 @@ export function useDrawingOverlay({
   color = '#ff3b3b',
   lineWidth = 3,
   onStrokeStart,
+  onStrokeEnd,
 }: UseDrawingOverlayOptions) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -105,15 +113,22 @@ export function useDrawingOverlay({
     const point = pointFromEvent(event);
     if (!point) return;
     drawingRef.current = true;
-    currentStrokeRef.current = [point];
+    const started: Stroke = [point];
+    currentStrokeRef.current = started;
     canvasRef.current?.setPointerCapture(event.pointerId);
-    setStrokes((previous) => [...previous, [point]]);
+    setStrokes((previous) => [...previous, started]);
     onStrokeStart?.();
   }, [enabled, onStrokeStart, pointFromEvent]);
 
   const onPointerUp = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drawingRef.current) return;
     drawingRef.current = false;
+    const finished = currentStrokeRef.current;
+    if (onStrokeEnd && finished.length > 0) {
+      void Promise.resolve(onStrokeEnd(finished))
+        .catch(() => undefined)
+        .finally(() => setStrokes((previous) => previous.filter((stroke) => stroke !== finished)));
+    }
     try {
       canvasRef.current?.releasePointerCapture(event.pointerId);
     } catch {
@@ -122,7 +137,7 @@ export function useDrawingOverlay({
       // release throws InvalidPointerId on some browser builds).
     }
     currentStrokeRef.current = [];
-  }, []);
+  }, [onStrokeEnd]);
 
   const onPointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!enabled) return;
@@ -154,28 +169,6 @@ export function useDrawingOverlay({
     });
   }, [enabled, onPointerDown, onPointerUp, pointFromEvent]);
 
-  const clear = useCallback(() => {
-    setStrokes([]);
-    // Defensive: reset draw state in case a previous stroke ended in a
-    // weird state (stuck pointer capture, ref leftover from an interrupted
-    // pointer sequence). Without this, the next pointerDown can fail to
-    // start a new stroke even though enabled=true.
-    drawingRef.current = false;
-    currentStrokeRef.current = [];
-    const canvas = canvasRef.current;
-    if (canvas) {
-      try {
-        // 0 is a sentinel pointerId. releasePointerCapture throws
-        // InvalidPointerId when no capture is active for that id, which
-        // is the no-op path we want. The catch absorbs the throw.
-        canvas.releasePointerCapture(0);
-      } catch {
-        // Expected when there is no active capture.
-      }
-    }
-  }, []);
-  const undo = useCallback(() => setStrokes((previous) => previous.slice(0, -1)), []);
-
   // Reset transient draw state whenever enabled toggles. Catches the case
   // where the user toggles draw off and on again to "kick" stuck state.
   useEffect(() => {
@@ -194,7 +187,5 @@ export function useDrawingOverlay({
       onPointerCancel: onPointerUp,
       onPointerLeave: onPointerUp,
     },
-    clear,
-    undo,
   };
 }

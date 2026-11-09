@@ -478,6 +478,11 @@ export const IPC = {
 
   // Browser pane: embedded webview capture-and-send
   BROWSER_CAPTURE_SEND: 'browser:captureSend',
+  // A task's annotation draft (notes, items, page captures), saved as it changes.
+  BROWSER_ANNOTATIONS_LOAD: 'browser:annotationsLoad',
+  BROWSER_ANNOTATIONS_SAVE: 'browser:annotationsSave',
+  BROWSER_ANNOTATIONS_SAVE_CAPTURE: 'browser:annotationsSaveCapture',
+  BROWSER_ANNOTATIONS_DISCARD: 'browser:annotationsDiscard',
   BROWSER_URL_GET: 'browser:urlGet',
   BROWSER_URL_SET_TASK: 'browser:urlSetTask',
   BROWSER_URL_CLEAR_TASK: 'browser:urlClearTask',

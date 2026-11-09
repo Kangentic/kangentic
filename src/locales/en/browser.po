@@ -7,13 +7,21 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, one {# stroke} other {# strokes}}"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
+msgstr "{strokeCount, plural, one {Drawing, # stroke} other {Drawing, # strokes}}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "20 annotations is the most one send carries. Send these, then start again."
+msgstr "20 annotations is the most one send carries. Send these, then start again."
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Add a note or a mark to send"
+msgstr "Add a note or a mark to send"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Agent is driving"
@@ -31,6 +39,14 @@ msgstr "Already at the smallest zoom"
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 msgstr "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotation {number}"
+msgstr "Annotation {number}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Annotations"
+msgstr "Annotations"
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "at {zoomPercent}%"
 msgstr "at {zoomPercent}%"
@@ -39,18 +55,10 @@ msgstr "at {zoomPercent}%"
 msgid "Back"
 msgstr "Back"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 msgctxt "Action"
 msgid "Clear"
 msgstr "Clear"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Clear all strokes"
-msgstr "Clear all strokes"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Click elements to capture their identity"
-msgstr "Click elements to capture their identity"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Close browser"
@@ -72,21 +80,13 @@ msgstr "Couldn't send to agent"
 msgid "Default URL saved"
 msgstr "Default URL saved"
 
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Draw"
 msgstr "Draw"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Explain what I marked\""
-msgstr "e.g. \"Explain what I marked\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Match the circled spacing\""
-msgstr "e.g. \"Match the circled spacing\""
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "e.g. \"Why is this misaligned?\""
-msgstr "e.g. \"Why is this misaligned?\""
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Draw on the page"
+msgstr "Draw on the page"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Enter a valid http:// or https:// URL."
@@ -95,10 +95,6 @@ msgstr "Enter a valid http:// or https:// URL."
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Enter in the note also sends"
 msgstr "Enter in the note also sends"
-
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Esc stops inspecting"
-msgstr "Esc stops inspecting"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Failed to load: {finalUrl}"
@@ -117,10 +113,6 @@ msgid "https://example.com or localhost:5173"
 msgstr "https://example.com or localhost:5173"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-msgid "Inspect"
-msgstr "Inspect"
-
-#: src/renderer/components/browser/BrowserPane.tsx
 msgid "Inspect failed"
 msgstr "Inspect failed"
 
@@ -132,6 +124,18 @@ msgstr "Invalid URL: {target}"
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 msgstr "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Made on {madeOn}. Still sent, with the capture taken there."
+msgstr "Made on {madeOn}. Still sent, with the capture taken there."
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Move the annotation bar"
+msgstr "Move the annotation bar"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "New annotation"
+msgstr "New annotation"
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "No earlier page"
 msgstr "No earlier page"
@@ -140,9 +144,17 @@ msgstr "No earlier page"
 msgid "No forward page"
 msgstr "No forward page"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Nothing drawn yet"
-msgstr "Nothing drawn yet"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Not on page"
+msgstr "Not on page"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Note for annotation {number}"
+msgstr "Note for annotation {number}"
+
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Nothing marked yet"
+msgstr "Nothing marked yet"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
@@ -178,9 +190,17 @@ msgctxt "Action"
 msgid "Reload"
 msgstr "Reload"
 
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "Remove from queue"
-msgstr "Remove from queue"
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove {itemLabel}"
+msgstr "Remove {itemLabel}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove annotation {number}"
+msgstr "Remove annotation {number}"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Remove this annotation"
+msgstr "Remove this annotation"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgctxt "Action"
@@ -211,13 +231,26 @@ msgstr "Save as project default"
 msgid "Save as project default for all tasks"
 msgstr "Save as project default for all tasks"
 
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Select element"
+msgstr "Select element"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Send"
 msgstr "Send"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Send every annotation"
+msgstr "Send every annotation"
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Send to agent"
 msgstr "Send to agent"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "Start the next annotation. Enter in a note does the same."
+msgstr "Start the next annotation. Enter in a note does the same."
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "The Kangentic browser opens it for this project."
@@ -227,29 +260,29 @@ msgstr "The Kangentic browser opens it for this project."
 msgid "This URL is the project default"
 msgstr "This URL is the project default"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Toggle draw mode"
-msgstr "Toggle draw mode"
-
-#: src/renderer/components/browser/BrowserPane.tsx
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
 msgid "Undo"
 msgstr "Undo"
 
-#: src/renderer/components/browser/BrowserPane.tsx
-msgid "Undo last stroke"
-msgstr "Undo last stroke"
+#: src/renderer/components/browser/annotations/AnnotationBar.tsx
+msgid "Undo the last mark"
+msgstr "Undo the last mark"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Webpack, generic"
 msgstr "Webpack, generic"
 
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What annotation {number} holds"
+msgstr "What annotation {number} holds"
+
+#: src/renderer/components/browser/annotations/AnnotationComposer.tsx
+msgid "What should change here?"
+msgstr "What should change here?"
+
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "What should the agent do with this?"
 msgstr "What should the agent do with this?"
-
-#: src/renderer/components/browser/AttachmentChips.tsx
-msgid "Will send:"
-msgstr "Will send:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
 msgid "Zoom in"

@@ -343,4 +343,4 @@ The Developer tab exposes power-user diagnostics for the activity-detection subs
 
 | Setting | Description |
 |---------|-------------|
-| Activity Engine Debug Overlay | Show a floating overlay with live activity-engine state for every running session: current `ActivityReason`, raw counters (pending tools, subagent depth, background shells), and a ring buffer of recent state transitions. Toggle from anywhere with Ctrl+Shift+D. Polls every 2 seconds while open; lazy-disables the IPC when closed. |
+| Activity Engine Debug Overlay | Show a floating overlay with live activity-engine state for every running session: current `ActivityReason`, raw counters (pending tools, subagent depth, background shells), and a ring buffer of recent state transitions. Toggle from anywhere with Ctrl+Alt+Shift+D. Polls every 2 seconds while open; lazy-disables the IPC when closed. |

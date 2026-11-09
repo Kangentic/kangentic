@@ -27,7 +27,7 @@
  *
  * The hotkey is rebound to `Alt+Shift+Q`, an unused combo. The default is
  * `Mouse:Back`, which Playwright cannot press, and `Mod+Shift+D` (the obvious
- * keyboard stand-in) is the dev-only activity debug overlay.
+ * keyboard stand-in) is the Browser pane's Draw.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type CDPSession, type Page } from '@playwright/test';
@@ -1252,7 +1252,7 @@ test.describe('dictation into the Browser pane note input', () => {
     }
   });
 
-  test('a stroke drawn during a Back hold lands on the canvas, and Back alone draws nothing', async () => {
+  test('a stroke drawn during a Back hold becomes an annotation, and Back alone draws nothing', async () => {
     const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
     try {
       await openBrowserPane(page);
@@ -1283,13 +1283,19 @@ test.describe('dictation into the Browser pane note input', () => {
       await send('mouseMoved', 'none', 9, 40);
       await send('mouseMoved', 'none', 9, 80);
       await send('mouseReleased', 'left', 8, 80);
-      await expect.poll(inkedPixels, { timeout: 5000 }).toBeGreaterThan(0);
-      const afterStroke = await inkedPixels();
+      // The finished stroke is annotation 1's drawing; the page draws it from here.
+      const drawings = page.locator('[data-testid="annotation-items-1"]');
+      await expect(drawings).toHaveText('1');
+
+      // The canvas lets the stroke go once the page layer has it.
+      await expect.poll(inkedPixels).toBe(0);
 
       // The stroke ended with Back still down, so this move adds nothing to it.
       await send('mouseMoved', 'none', 8, 20);
       expect(await dictationStatus(page)).toBe('recording');
-      expect(await inkedPixels()).toBe(afterStroke);
+      expect(await inkedPixels()).toBe(0);
+      await expect(page.locator('[data-testid="annotation-row-2"]')).toHaveCount(0);
+      await expect(drawings).toHaveText('1');
 
       await send('mouseReleased', 'back', 0, 20);
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
@@ -1330,32 +1336,34 @@ test.describe('dictation into the Browser pane note input', () => {
 
       await focusTerminal(page);
       await strokeOnCanvas(page);
-      await expect(note).toBeFocused();
+      // The stroke made annotation 1, and its note took the single row's place.
+      const annotationNote = page.locator('[data-testid="annotation-note-1"]');
+      await expect(annotationNote).toBeFocused();
 
       await backPointer(page, 'pointerdown');
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('recording');
       expect(await dictationTargetKind(page)).toBe('input');
 
       await emitPartial(page, PARTIAL_RAW);
-      await expect(note).toHaveValue(PARTIAL_SHOWN);
+      await expect(annotationNote).toHaveValue(PARTIAL_SHOWN);
       expect(await liveWritePayloads(page)).toEqual([]);
     } finally {
       await page.context().close();
     }
   });
 
-  test('the toolbar keeps focus on the note while Draw is on, and its clicks still land', async () => {
+  test('the floating bar keeps focus on the note while Draw is on, and its clicks still land', async () => {
     const page = await launch({ autoSubmit: false, hotkey: 'Mouse:Back' });
     try {
       await openBrowserPane(page);
       await page.locator('[data-testid="browser-draw-toggle"]').click();
       await strokeOnCanvas(page);
-      const note = page.locator('[data-testid="browser-note-input"]');
-      await expect(page.getByText('1 stroke')).toBeVisible();
+      await expect(page.locator('[data-testid="annotation-note-1"]')).toBeFocused();
 
-      await page.getByRole('button', { name: 'Undo' }).click();
-      await expect(page.getByText('1 stroke')).toBeHidden();
-      await expect(note).toBeFocused();
+      await page.locator('[data-testid="annotation-undo"]').click();
+      await expect(page.locator('[data-testid="annotation-row-1"]')).toHaveCount(0);
+      // Draw is still on, so the single row that came back takes the focus.
+      await expect(page.locator('[data-testid="browser-note-input"]')).toBeFocused();
     } finally {
       await page.context().close();
     }
@@ -1417,11 +1425,16 @@ test.describe('dictation into the Browser pane note input', () => {
       await send('mousePressed', 'left', 9, canvas);
       await send('mouseMoved', 'none', 9, { x: canvas.x + 40, y: canvas.y + 40 });
       await send('mouseReleased', 'left', 8, { x: canvas.x + 40, y: canvas.y + 40 });
+      // The stroke made annotation 1: the hold followed the note into it, and
+      // its words were neither carried as typed text nor written twice.
+      const annotationNote = page.locator('[data-testid="annotation-note-1"]');
+      await expect(annotationNote).toBeFocused();
       expect(await dictationTargetKind(page)).toBe('input');
+      await expect(annotationNote).toHaveValue(PARTIAL_SHOWN);
 
       await send('mouseReleased', 'back', 0, { x: canvas.x + 40, y: canvas.y + 40 });
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
-      await expect(note).toHaveValue('This is a test of dictation.');
+      await expect(annotationNote).toHaveValue('This is a test of dictation.');
     } finally {
       await page.context().close();
     }
@@ -1448,7 +1461,7 @@ test.describe('dictation into the Browser pane note input', () => {
       await send('mouseReleased', 'left', 8, 40);
       expect(await dictationTargetKind(page)).toBe('input');
       await emitPartial(page, PARTIAL_RAW);
-      await expect(page.locator('[data-testid="browser-note-input"]')).toHaveValue(PARTIAL_SHOWN);
+      await expect(page.locator('[data-testid="annotation-note-1"]')).toHaveValue(PARTIAL_SHOWN);
 
       await send('mouseReleased', 'back', 0, 40);
       await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
@@ -1465,7 +1478,7 @@ test.describe('dictation into the Browser pane note input', () => {
       const note = page.locator('[data-testid="browser-note-input"]');
       await expect(note).toBeFocused();
 
-      await page.keyboard.press('Control+D');
+      await page.keyboard.press('Control+Shift+D');
       await expect(page.locator('[data-testid="browser-overlay"]')).toHaveCSS('pointer-events', 'none');
     } finally {
       await page.context().close();
@@ -1547,12 +1560,13 @@ test.describe('dictation into the Browser pane note input', () => {
       // Draw put focus on the note, which is what asks the hold to move.
       await expect(note).toBeFocused();
       await strokeOnCanvas(page);
-      await expect(page.getByText('1 stroke')).toBeVisible();
+      const annotationNote = page.locator('[data-testid="annotation-note-1"]');
+      await expect(annotationNote).toBeVisible();
 
       await emitPartial(page, PARTIAL_RAW);
       // A fixed budget: nothing becomes true to poll for when a refusal holds.
       await page.waitForTimeout(500);
-      await expect(note).toHaveValue('');
+      await expect(annotationNote).toHaveValue('');
       expect(await dictationTargetKind(page)).not.toBe('input');
       expect(await liveWritePayloads(page)).toEqual([]);
 

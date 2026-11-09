@@ -294,7 +294,7 @@ The Mobile Devices tab hosts the desktop half of the mobile companion app's pair
 
 ## Developer
 
-Power-user settings for diagnosing the activity engine and other internal subsystems. Global-only (no per-project override). Also toggleable from anywhere via Ctrl+Shift+D.
+Power-user settings for diagnosing the activity engine and other internal subsystems. Global-only (no per-project override). Also toggleable from anywhere via Ctrl+Alt+Shift+D.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

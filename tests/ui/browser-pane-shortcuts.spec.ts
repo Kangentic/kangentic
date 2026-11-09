@@ -3,23 +3,23 @@
  *
  * BrowserPane registers a CAPTURE-phase document-level keydown listener that
  * handles:
- *   Ctrl+D / Meta+D          -- Toggle draw mode
- *   Ctrl+I / Meta+I          -- Start inspect
- *   Esc (while inspect active) -- Cancel inspect WITHOUT closing the dialog
+ *   Ctrl+Shift+D / Meta+Shift+D  -- Toggle Draw
+ *   Ctrl+Shift+C / Meta+Shift+C  -- Toggle Select element
+ *   Esc (while a mode is on)     -- End the mode WITHOUT closing the dialog
  *
- * The "in a form field" guard skips Ctrl+D and Ctrl+I when the target is
- * INPUT or TEXTAREA.
+ * The "in a form field" guard skips both when the target is an INPUT or
+ * TEXTAREA other than one of the pane's own notes.
  *
  * Headless caveats:
  *   - <webview> is mounted in the DOM as an unknown HTML element. Its Electron-
  *     specific methods (loadURL, executeJavaScript, getURL, etc.) are absent.
- *   - Ctrl+D / draw button click call cancelInspect() which calls
+ *   - Ctrl+Shift+D / draw button click call cancelInspect() which calls
  *     webviewRef.current?.executeJavaScript(...). In headless this throws
  *     synchronously (executeJavaScript is not a function on an HTMLElement),
  *     crashing BrowserPaneActive via the ErrorBoundary. Draw mode needs a test
  *     that stubs executeJavaScript on the webview first, as the toolbar tips
  *     case for Undo and Clear does.
- *   - Ctrl+I calls startInspect() -> webviewRef.current?.executeJavaScript(INSPECT_SCRIPT).
+ *   - Ctrl+Shift+C calls startInspect() -> webviewRef.current?.executeJavaScript(INSPECT_SCRIPT).
  *     Same crash. Inspect shortcuts cannot be tested in the UI tier.
  *   - Ctrl+Enter (plain Enter with ctrlKey) handling moved in the PR that
  *     introduced this spec: the shortcut is now handled by the note <input>'s
@@ -31,11 +31,11 @@
  *     the webview call.
  *
  * What IS testable in the UI tier:
- *   - Ctrl+D in a form field (URL input) is a no-op -> draw mode stays off.
+ *   - Ctrl+Shift+D in a form field (URL input) is a no-op -> draw mode stays off.
  *     This is testable because we never click outside the form field so the
  *     document listener fires but the inFormField guard prevents any draw mode
  *     change and therefore no executeJavaScript call is made.
- *   - Ctrl+I in a form field (note input) is a no-op -> inspect stays off.
+ *   - Ctrl+Shift+C in a form field (URL input) is a no-op -> inspect stays off.
  *     Same reasoning: inFormField guard fires, no startInspect, no crash.
  *   - Esc at document level when inspect is NOT active does not close the dialog.
  *     We dispatch Esc while the pane has non-inspect focus and assert the dialog
@@ -192,8 +192,8 @@ async function openBrowserPane(page: Page): Promise<void> {
 }
 
 test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => {
-  test('Ctrl+D in the URL bar (INPUT) does NOT toggle draw mode', async () => {
-    // The inFormField guard in the document-level listener prevents Ctrl+D
+  test('Ctrl+Shift+D in the URL bar (INPUT) does NOT toggle draw mode', async () => {
+    // The inFormField guard in the document-level listener prevents Ctrl+Shift+D
     // from calling setDrawMode when the event target is an INPUT element.
     // The draw button must remain in non-active state after the shortcut.
     await openBrowserPane(sharedPage);
@@ -202,16 +202,16 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
     const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
 
     // Verify draw is initially off.
-    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
 
     // Focus the URL input and fire the shortcut.
     await urlInput.click();
-    await sharedPage.keyboard.press('Control+d');
+    await sharedPage.keyboard.press('Control+Shift+d');
 
     // The draw button must remain non-active (guard fired).
     // If the guard had NOT fired, executeJavaScript would be called and
     // the component would crash -- an implicit crash assertion.
-    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
     await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
   });
 
@@ -269,24 +269,25 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
     await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
   });
 
-  test('Ctrl+I in the note input (INPUT) does NOT start inspect', async () => {
-    // The inFormField guard prevents Ctrl+I from calling startInspect() when
-    // the event target is an INPUT element. The inspect button must remain
-    // non-active and the component must not crash.
+  test('Ctrl+Shift+C in the URL bar (INPUT) does NOT start Select element', async () => {
+    // The form-field guard keeps Select element's key out of the URL bar. (A
+    // note of the pane is the one field it answers in, so the key that turned
+    // the mode on can turn it off while the user writes.) The button must stay
+    // off and the component must not crash.
     await openBrowserPane(sharedPage);
 
-    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    const urlInput = sharedPage.locator('[data-testid="browser-url-input"]');
     const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
 
-    // Inspect is initially off.
-    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    // Select element is initially off.
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
 
-    // Focus the note input and fire the shortcut.
-    await noteInput.click();
-    await sharedPage.keyboard.press('Control+i');
+    // Focus the URL bar and fire the shortcut.
+    await urlInput.click();
+    await sharedPage.keyboard.press('Control+Shift+c');
 
     // Inspect must remain off (guard fired).
-    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
     // Dialog and pane must still be visible.
     await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
     await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
@@ -561,20 +562,16 @@ test.describe('BrowserPaneActive toolbar tips', () => {
     await expect(forward).toHaveAccessibleDescription('');
   });
 
-  test('undo and clear say nothing is drawn until a stroke exists, and again once it is cleared', async () => {
+  test('the bar\'s Undo is off until a mark exists, and a stroke\'s Undo puts the single row back', async () => {
     await openBrowserPane(sharedPage);
-    const pane = sharedPage.locator('[data-testid="browser-pane"]');
-    const undo = pane.getByRole('button', { name: 'Undo', exact: true });
-    const clear = pane.getByRole('button', { name: 'Clear', exact: true });
+    const undo = sharedPage.locator('[data-testid="annotation-undo"]');
 
     await expect(undo).toBeDisabled();
-    await expect(undo).toHaveAccessibleDescription('Nothing drawn yet');
-    await expect(clear).toBeDisabled();
-    await expect(clear).toHaveAccessibleDescription('Nothing drawn yet');
+    await expect(sharedPage.locator('[data-testid="browser-note-input"]')).toBeVisible();
 
-    // Turning draw mode on cancels Inspect through the guest's executeJavaScript, which the
-    // headless <webview> stub lacks (the file header explains the crash). A resolved promise is
-    // all that call needs, so the toggle and a real drag on the canvas work.
+    // Turning draw mode on cancels Select element through the guest's executeJavaScript, which
+    // the headless <webview> stub lacks (the file header explains the crash). A resolved promise
+    // is all that call needs, so the toggle and a real drag on the canvas work.
     await sharedPage.evaluate(() => {
       const webview = document.querySelector('[data-testid="browser-webview"]');
       if (!webview) throw new Error('no webview stub');
@@ -583,26 +580,25 @@ test.describe('BrowserPaneActive toolbar tips', () => {
     await sharedPage.locator('[data-testid="browser-draw-toggle"]').click();
     const canvasBox = await sharedPage.locator('[data-testid="browser-overlay"]').boundingBox();
     if (!canvasBox) throw new Error('the draw canvas has no geometry');
-    await sharedPage.mouse.move(canvasBox.x + 40, canvasBox.y + 40);
+    await sharedPage.mouse.move(canvasBox.x + 40, canvasBox.y + 140);
     await sharedPage.mouse.down();
-    await sharedPage.mouse.move(canvasBox.x + 120, canvasBox.y + 90, { steps: 4 });
+    await sharedPage.mouse.move(canvasBox.x + 120, canvasBox.y + 190, { steps: 4 });
     await sharedPage.mouse.up();
 
+    // The stroke is annotation 1, and the composer replaced the single row.
+    await expect(sharedPage.locator('[data-testid="annotation-row-1"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="browser-note-input"]')).toHaveCount(0);
     await expect(undo).toBeEnabled();
-    await expect(undo).toHaveAccessibleDescription('Undo last stroke');
-    await expect(clear).toBeEnabled();
-    await expect(clear).toHaveAccessibleDescription('Clear all strokes');
 
-    await clear.click();
-    await expect(clear).toBeDisabled();
-    await expect(clear).toHaveAccessibleDescription('Nothing drawn yet');
+    await undo.click();
+    await expect(sharedPage.locator('[data-testid="annotation-composer"]')).toHaveCount(0);
+    await expect(sharedPage.locator('[data-testid="browser-note-input"]')).toBeVisible();
     await expect(undo).toBeDisabled();
-    await expect(undo).toHaveAccessibleDescription('Nothing drawn yet');
   });
 });
 
 test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspect/draw)', () => {
-  // Regression guard for the multi-pane collision fix: Ctrl+D / Ctrl+I now
+  // Regression guard for the multi-pane collision fix: Draw and Select element now
   // require `paneActive` (hover OR focus-within), the same gate zoom already
   // had, not just the `notFormField` guard covered above. With more than one
   // BrowserPane mounted at once (a second task's pane, a retained
@@ -612,7 +608,7 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
   // nor focused (mirrors the "Ctrl+= does NOT fire..." zoom test above) and
   // assert the pane-local callbacks never ran.
 
-  test('Ctrl+D does NOT toggle draw mode when the pane is neither hovered nor focused', async () => {
+  test('Ctrl+Shift+D does NOT toggle draw mode when the pane is neither hovered nor focused', async () => {
     // setDrawMode's updater calls cancelInspect() synchronously when turning
     // draw ON, which calls webviewRef.current?.executeJavaScript(...). The
     // headless <webview> stub has no such method, so if the gate fails to
@@ -622,7 +618,7 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
     // that draw settled back to off.
     await openBrowserPane(sharedPage);
     const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
-    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
 
     const paneBox = await sharedPage.locator('[data-testid="browser-pane"]').boundingBox();
     if (paneBox) {
@@ -633,13 +629,13 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
     });
     await sharedPage.mouse.move(0, 0);
 
-    await sharedPage.keyboard.press('Control+d');
+    await sharedPage.keyboard.press('Control+Shift+d');
 
-    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(drawButton).toHaveAttribute('aria-pressed', 'false');
     await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
   });
 
-  test('Ctrl+I does NOT start inspect when the pane is neither hovered nor focused', async () => {
+  test('Ctrl+Shift+C does NOT start Select element when the pane is neither hovered nor focused', async () => {
     // startInspect() sets inspectActive true, awaits
     // webviewRef.current?.executeJavaScript(INSPECT_SCRIPT), and its own
     // try/catch swallows the resulting TypeError into the visible error strip
@@ -650,7 +646,7 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
     // actually proves startInspect was never invoked.
     await openBrowserPane(sharedPage);
     const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
-    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
 
     const paneBox = await sharedPage.locator('[data-testid="browser-pane"]').boundingBox();
     if (paneBox) {
@@ -661,9 +657,9 @@ test.describe('BrowserPaneActive keyboard shortcuts - pane-active gating (inspec
     });
     await sharedPage.mouse.move(0, 0);
 
-    await sharedPage.keyboard.press('Control+i');
+    await sharedPage.keyboard.press('Control+Shift+c');
 
-    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    await expect(inspectButton).toHaveAttribute('aria-pressed', 'false');
     await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
     await expect(sharedPage.locator('[data-testid="browser-send-error"]')).not.toBeVisible();
   });

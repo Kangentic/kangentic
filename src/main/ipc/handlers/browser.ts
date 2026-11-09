@@ -38,10 +38,20 @@ import {
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
+  buildAnnotationsPayload,
   buildPromptPayload,
   isValidSessionId,
   isCrossDrivePath,
+  validAnnotationInputs,
 } from './browser-payload';
+import {
+  annotationCapturePath,
+  discardAnnotationDraft,
+  isAnnotationCaptureId,
+  loadAnnotationDraft,
+  saveAnnotationCapture,
+  saveAnnotationDraft,
+} from '../../browser/annotation-drafts';
 
 // Embedded webview capture-and-send. Persists the composited PNG
 // under the session's existing on-disk directory at
@@ -191,8 +201,10 @@ export function registerBrowserHandlers(context: IpcContext): void {
 
     // Always anchor at the project root so this directory lines up with
     // the session dir that resource-cleanup / cleanupTaskSession already
-    // manage. Falls back to cwd when no project is open (transient case).
-    const projectRoot = context.currentProjectPath ?? input.cwd;
+    // manage. The pane's TASK project wins over the open one, so a pane in a
+    // backgrounded project writes into its own. Falls back to cwd when no
+    // project is open (transient case).
+    const projectRoot = resolveProjectContext(context, input.projectId).projectPath ?? input.cwd;
     const captureDir = path.join(projectRoot, '.kangentic', 'sessions', input.sessionId, 'captures');
     await fs.promises.mkdir(captureDir, { recursive: true });
 
@@ -222,11 +234,45 @@ export function registerBrowserHandlers(context: IpcContext): void {
     // drives, path.relative returns the absolute target instead of a
     // walked-up path. Falling back to the absolute path keeps the file
     // reachable; the agent's @-mention parser handles either form.
+    const agentRelative = (absolutePath: string): string => {
+      const relative = path.relative(agentCwd, absolutePath);
+      return isCrossDrivePath(relative) ? absolutePath : relative;
+    };
     if (isCrossDrivePath(relativePngPath)) {
       console.warn(`[browser] capture path crosses drives (cwd=${agentCwd}); using absolute path`);
       relativePngPath = absolutePngPath;
     }
-    const payload = buildPromptPayload(input, relativePngPath);
+
+    let payload: string;
+    // From the renderer: a malformed annotation never reaches a file name or the prompt.
+    const annotations = validAnnotationInputs(input.annotations);
+    if (annotations.length === 0) {
+      payload = buildPromptPayload(input, relativePngPath);
+    } else {
+      // An annotation out of the screenshot goes with the capture taken while
+      // it was made. Copy each one the paste names next to the screenshot, so
+      // it lives and dies with the session like every other capture.
+      const captures = new Map<string, string>();
+      for (const annotation of annotations) {
+        const captureId = annotation.captureId;
+        if (annotation.inViewport || !isAnnotationCaptureId(captureId) || captures.has(captureId)) continue;
+        const target = path.join(captureDir, `annotation-${annotation.number}-${stamp}.png`);
+        try {
+          await fs.promises.copyFile(annotationCapturePath(projectRoot, input.taskId, captureId), target);
+          captures.set(captureId, agentRelative(target));
+        } catch (caught) {
+          console.warn(`[browser] annotation ${annotation.number} capture missing`, caught);
+        }
+      }
+      const detailsPath = path.join(captureDir, `annotations-${stamp}.xml`);
+      const built = buildAnnotationsPayload({ ...input, annotations }, {
+        screenshot: relativePngPath,
+        captures,
+        details: agentRelative(detailsPath),
+      });
+      if (built.detailsXml) await fs.promises.writeFile(detailsPath, built.detailsXml, 'utf-8');
+      payload = built.payload;
+    }
 
     // Look up the session's adapter to get the submission verifier for paste confirmation.
     const agentName = context.sessionManager.getSessionAgentName(input.sessionId);
@@ -252,6 +298,31 @@ export function registerBrowserHandlers(context: IpcContext): void {
     }
 
     return { filePath: absolutePngPath };
+  });
+
+  // === Annotation drafts ===
+  // Saved per task as the user annotates, so a restart or crash in the middle
+  // of a long review loses nothing. Each carries the TASK's project for the
+  // reason the URL calls below do. With no project, there is no draft to read
+  // or remove, but a write has nowhere to go and says so.
+  const draftProjectPath = (projectId?: string | null): string | null =>
+    resolveProjectContext(context, projectId).projectPath;
+  const writableDraftProjectPath = (projectId?: string | null): string => {
+    const projectPath = draftProjectPath(projectId);
+    if (!projectPath) throw new Error('No project open');
+    return projectPath;
+  };
+  ipcMain.handle(IPC.BROWSER_ANNOTATIONS_LOAD, (_event, taskId: string, projectId?: string | null) => {
+    const projectPath = draftProjectPath(projectId);
+    return projectPath ? loadAnnotationDraft(projectPath, taskId) : null;
+  });
+  ipcMain.handle(IPC.BROWSER_ANNOTATIONS_SAVE, (_event, taskId: string, draft: unknown, projectId?: string | null) =>
+    saveAnnotationDraft(writableDraftProjectPath(projectId), taskId, draft));
+  ipcMain.handle(IPC.BROWSER_ANNOTATIONS_SAVE_CAPTURE, (_event, taskId: string, pngBase64: unknown, projectId?: string | null) =>
+    saveAnnotationCapture(writableDraftProjectPath(projectId), taskId, pngBase64));
+  ipcMain.handle(IPC.BROWSER_ANNOTATIONS_DISCARD, (_event, taskId: string, projectId?: string | null) => {
+    const projectPath = draftProjectPath(projectId);
+    return projectPath ? discardAnnotationDraft(projectPath, taskId) : undefined;
   });
 
   // === URL persistence ===

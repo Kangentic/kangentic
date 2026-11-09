@@ -208,6 +208,14 @@
   // popped-out or backgrounded pane wrote to its OWN project's sidecar.
   let browserUrlProjects = {};
   let browserCaptureCalls = [];
+  // A message makes the next captureAndSend reject with it, as main does when
+  // the agent's terminal cannot take the paste.
+  let browserCaptureFailure = null;
+  // While set, captureAndSend logs its call and then waits, so a spec can act
+  // while a Send is in flight. See __mockBrowser.holdCaptureUntilReleased.
+  let browserCaptureHold = null;
+  let browserAnnotationDrafts = {};
+  let browserAnnotationCaptureCount = 0;
   let browserPaneCalls = [];
   let browserZoomSubscribers = [];
   let browserPaneOpenSubscribers = [];
@@ -7153,7 +7161,27 @@
     browser: {
       captureAndSend: async function (input) {
         browserCaptureCalls.push(input);
+        // A held Send is still in flight: the call is logged, the answer waits.
+        if (browserCaptureHold) await browserCaptureHold.promise;
+        if (browserCaptureFailure) throw new Error(browserCaptureFailure);
         return { filePath: '/mock/captures/capture-' + Date.now() + '.png' };
+      },
+      // A task's annotation draft, held in memory per task as main holds it on
+      // disk. The images are counted, not kept.
+      loadAnnotations: async function (taskId) {
+        var draft = browserAnnotationDrafts[taskId];
+        return draft ? JSON.parse(JSON.stringify(draft)) : null;
+      },
+      saveAnnotations: async function (taskId, draft) {
+        browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(draft));
+      },
+      saveAnnotationCapture: async function () {
+        browserAnnotationCaptureCount += 1;
+        var hex = (browserAnnotationCaptureCount.toString(16) + '0000000000000000').slice(0, 16);
+        return hex;
+      },
+      discardAnnotations: async function (taskId) {
+        delete browserAnnotationDrafts[taskId];
       },
       // projectId is the TASK's project (a popped-out pane outlives a project
       // switch). The mock resolves the project default from it, falling back to
@@ -7369,6 +7397,11 @@
       browserUrls = {};
       browserUrlProjects = {};
       browserCaptureCalls = [];
+      browserCaptureFailure = null;
+      if (browserCaptureHold) browserCaptureHold.release();
+      browserCaptureHold = null;
+      browserAnnotationDrafts = {};
+      browserAnnotationCaptureCount = 0;
       browserPaneCalls = [];
       browserZoomSubscribers = [];
       commandTerminalBrowserStates = {};
@@ -7390,6 +7423,31 @@
     },
     getCaptureCalls: function () {
       return browserCaptureCalls.slice();
+    },
+    /** Make every later Send reject with this message until it is set to null. */
+    failCaptureWith: function (message) {
+      browserCaptureFailure = message || null;
+    },
+    /** Make every later Send wait, after it is logged, until releaseCapture(). */
+    holdCaptureUntilReleased: function () {
+      if (browserCaptureHold) return;
+      var release;
+      var promise = new Promise(function (resolve) { release = resolve; });
+      browserCaptureHold = { promise: promise, release: release };
+    },
+    /** Let a held Send land and stop holding the next ones. */
+    releaseCapture: function () {
+      if (!browserCaptureHold) return;
+      browserCaptureHold.release();
+      browserCaptureHold = null;
+    },
+    /** The task's saved annotation draft, as main would read it back. */
+    getAnnotationDraft: function (taskId) {
+      var draft = browserAnnotationDrafts[taskId];
+      return draft ? JSON.parse(JSON.stringify(draft)) : null;
+    },
+    seedAnnotationDraft: function (taskId, draft) {
+      browserAnnotationDrafts[taskId] = JSON.parse(JSON.stringify(draft));
     },
     getPaneCalls: function () {
       return browserPaneCalls.slice();

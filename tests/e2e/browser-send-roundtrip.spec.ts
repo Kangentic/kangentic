@@ -53,7 +53,7 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
   // not surface the wrapped content as visible terminal output. The IPC
   // handler -> capture-file -> paste-engine wiring is covered at unit tier
   // (`tests/unit/browser-handler-error-translation.test.ts` and
-  // `attachment-chips`); the capture-file existence path is also covered
+  // `browser-capture-send-agent-cwd`); the capture-file existence path is also covered
   // by the `eats-first-cr` case in `browser-evidence-retry.spec.ts`. This
   // E2E remains valuable on POSIX PTYs to prove the full round-trip.
   test('Send composites capture and submits the prompt envelope to the agent PTY', async ({ freshProject }) => {
@@ -122,5 +122,49 @@ test.describe('Claude Agent -- Browser Send round-trip', () => {
     const scrollback = await waitForScrollback(page, '<browser_context>', 20000);
     expect(scrollback).toContain('<browser_context>');
     expect(scrollback).toContain('<url>');
+  });
+
+  // The page layer only runs in a real guest: the UI tier's stand-in answers
+  // its calls from a script. This draws one annotation over a live <webview>,
+  // so the layer script is injected and answers for real, and checks the
+  // numbered envelope reaches the agent.
+  test('a drawn annotation goes to the agent as a numbered annotation with its note', async ({ freshProject }) => {
+    test.fixme(process.platform === 'win32', 'ConPTY does not echo paste content into scrollback; covered at unit and UI tiers.');
+    const { page } = freshProject;
+    const title = `Browser Annotate ${runId}`;
+    await createTask(page, title, 'browser annotation round-trip');
+    await dragTaskToColumn(page, title, 'Code Review');
+    await waitForRunningSession(page);
+
+    const taskId = await getTaskIdByTitle(page, title);
+    await page.evaluate(async (id: string) => {
+      await window.electronAPI.browser.setTaskUrl(id, 'data:text/html,<h1>kangentic-browser-annotate</h1>');
+    }, taskId);
+
+    await page.locator('[data-swimlane-name="Code Review"]').locator(`text=${title}`).first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('[data-testid="browser-toggle"]').click();
+    await page.locator('[data-testid="browser-pane"]').waitFor({ state: 'visible', timeout: 5000 });
+    // The loading cover lifts on the guest's first dom-ready, which is also
+    // when the page layer can be drawn.
+    await expect(page.locator('[data-testid="browser-pane-page-loading"]')).toHaveCount(0, { timeout: 10000 });
+
+    await page.locator('[data-testid="browser-draw-toggle"]').click();
+    const box = await page.locator('[data-testid="browser-overlay"]').boundingBox();
+    if (!box) throw new Error('no draw canvas');
+    await page.mouse.move(box.x + 60, box.y + 160);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 180, box.y + 220, { steps: 6 });
+    await page.mouse.up();
+
+    const note = page.locator('[data-testid="annotation-note-1"]');
+    await expect(note).toBeVisible({ timeout: 5000 });
+    await note.fill('kangentic-annotation-note');
+    await page.locator('[data-testid="browser-send"]').click();
+
+    const scrollback = await waitForScrollback(page, '<annotations', 20000);
+    expect(scrollback).toContain('<annotation n="1">');
+    expect(scrollback).toContain('kangentic-annotation-note');
+    expect(scrollback).toContain('<drawing strokes="1"');
   });
 });
